@@ -152,8 +152,8 @@ mkdir -p "$PLUGINS_DIR"
 
 # Build flags
 if [ "$BUILD_MODE" = "release" ]; then
-    BUILD_FLAGS="--release"
-    echo -e "${BLUE}🏗️  Building in RELEASE mode${NC}"
+    BUILD_FLAGS="--release --no-debug"
+    echo -e "${BLUE}🏗️  Building in RELEASE mode (no debug info)${NC}"
 else
     BUILD_FLAGS=""
     echo -e "${BLUE}🐛 Building in DEBUG mode${NC}"

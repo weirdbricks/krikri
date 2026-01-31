@@ -5,6 +5,7 @@
 
 require "option_parser"
 require "colorize"
+require "./src/crystal_play/version"
 require "./playbook_parser"
 require "./inventory_parser"
 require "./task_executor"
@@ -18,60 +19,75 @@ verbose = false
 limit_hosts = ""
 tags = [] of String
 
-OptionParser.parse do |parser|
-  parser.banner = "Usage: crystal-play [options] playbook.yml"
-  
-  parser.on("-i INVENTORY", "--inventory=INVENTORY", "Specify inventory file") do |inv|
-    inventory_file = inv
-  end
-  
-  parser.on("-c", "--check", "Don't make changes; predict changes instead (dry-run)") do
-    check_mode = true
-  end
-  
-  parser.on("-d", "--diff", "Show file differences when changing files") do
-    diff_mode = true
-  end
-  
-  parser.on("-v", "--verbose", "Verbose output") do
-    verbose = true
-  end
-  
-  parser.on("-l SUBSET", "--limit=SUBSET", "Limit to specific hosts") do |subset|
-    limit_hosts = subset
-  end
-  
-  parser.on("-t TAGS", "--tags=TAGS", "Only run tasks with these tags") do |t|
-    tags = t.split(",")
-  end
-  
-  parser.on("-h", "--help", "Show this help") do
-    puts parser
-    puts ""
-    puts "Examples:"
-    puts "  crystal-play playbook.yml"
-    puts "  crystal-play --check --diff playbook.yml"
-    puts "  crystal-play -i inventory.ini playbook.yml"
-    puts "  crystal-play --tags deploy playbook.yml"
-    exit
-  end
-  
-  parser.unknown_args do |args|
-    if args.size == 1
-      playbook_file = args[0]
-    else
-      puts "Error: Please specify exactly one playbook file"
+begin
+  OptionParser.parse do |parser|
+    parser.banner = "Usage: crystal-ansible [options] playbook.yml"
+    
+    parser.on("-i INVENTORY", "--inventory=INVENTORY", "Specify inventory file") do |inv|
+      inventory_file = inv
+    end
+    
+    parser.on("-c", "--check", "Don't make changes; predict changes instead (dry-run)") do
+      check_mode = true
+    end
+    
+    parser.on("-d", "--diff", "Show file differences when changing files") do
+      diff_mode = true
+    end
+    
+    parser.on("-v", "--verbose", "Verbose output") do
+      verbose = true
+    end
+    
+    parser.on("-l SUBSET", "--limit=SUBSET", "Limit to specific hosts") do |subset|
+      limit_hosts = subset
+    end
+    
+    parser.on("-t TAGS", "--tags=TAGS", "Only run tasks with these tags") do |t|
+      tags = t.split(",")
+    end
+    
+    parser.on("--version", "Show version information") do
+      puts CrystalPlay.version_info
+      exit
+    end
+    
+    parser.on("-h", "--help", "Show this help") do
       puts parser
-      exit 1
+      puts ""
+      puts "Examples:"
+      puts "  crystal-ansible playbook.yml"
+      puts "  crystal-ansible --check --diff playbook.yml"
+      puts "  crystal-ansible -i inventory.ini playbook.yml"
+      puts "  crystal-ansible --tags deploy playbook.yml"
+      exit
+    end
+    
+    parser.unknown_args do |args|
+      if args.size == 1
+        playbook_file = args[0]
+      else
+        puts "Error: Please specify exactly one playbook file"
+        puts parser
+        exit 1
+      end
     end
   end
+rescue ex : OptionParser::InvalidOption
+  puts "Error: #{ex.message}".colorize(:red)
+  puts ""
+  puts "Run 'crystal-ansible --help' for usage information"
+  exit 1
+rescue ex : Exception
+  puts "Error: #{ex.message}".colorize(:red)
+  exit 1
 end
 
 # Validate args
 if playbook_file.empty?
   puts "Error: Playbook file is required"
-  puts "Usage: crystal-play [options] playbook.yml"
-  puts "Try 'crystal-play --help' for more information"
+  puts "Usage: crystal-ansible [options] playbook.yml"
+  puts "Try 'crystal-ansible --help' for more information"
   exit 1
 end
 
@@ -82,7 +98,7 @@ end
 
 # Display banner
 puts ""
-puts "CRYSTAL PLAY".colorize(:cyan).bold
+puts CrystalPlay.banner.colorize(:cyan).bold
 puts "=" * 70
 puts "Playbook: #{playbook_file}".colorize(:white)
 if check_mode
