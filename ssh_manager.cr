@@ -1,0 +1,339 @@
+require "ssh2"
+
+# SSH Manager - Handles all SSH connections with connection pooling
+# Uses libssh2 via ssh2.cr for production-quality SSH
+module CrystalPlay
+  class SSHManager
+    # Connection pool - reuses SSH connections for performance
+    @@connections = Hash(String, SSH2::Session).new
+    @@connection_lock = Mutex.new
+    
+    # Configuration
+    @@default_timeout = 10
+    @@connection_attempts = 3
+    
+    # Connection pool statistics
+    @@stats = {
+      "connections_created" => 0,
+      "connections_reused" => 0,
+      "commands_executed" => 0,
+      "files_uploaded" => 0,
+      "files_downloaded" => 0
+    }
+    
+    # Get or create SSH connection with connection pooling
+    def self.get_connection(host : String, user : String, port : Int32 = 22) : SSH2::Session
+      key = connection_key(host, user, port)
+      
+      @@connection_lock.synchronize do
+        # Check if we have an existing connection
+        if session = @@connections[key]?
+          if session_alive?(session)
+            @@stats["connections_reused"] += 1
+            return session
+          else
+            # Connection is dead, remove it
+            disconnect_session(session)
+            @@connections.delete(key)
+          end
+        end
+        
+        # Create new connection
+        session = create_connection(host, user, port)
+        @@connections[key] = session
+        @@stats["connections_created"] += 1
+        session
+      end
+    end
+    
+    # Execute command on remote host
+    def self.exec(
+      host : String,
+      user : String,
+      command : String,
+      port : Int32 = 22,
+      timeout : Int32 = @@default_timeout
+    ) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
+      
+      @@stats["commands_executed"] += 1
+      
+      attempts = 0
+      last_error = nil
+      
+      # Retry logic for transient failures
+      while attempts < @@connection_attempts
+        begin
+          session = get_connection(host, user, port)
+          return execute_command(session, command, timeout)
+        rescue ex : SSH2::SessionError | Socket::Error
+          last_error = ex
+          attempts += 1
+          
+          # Clear dead connection
+          key = connection_key(host, user, port)
+          @@connection_lock.synchronize do
+            @@connections.delete(key)
+          end
+          
+          # Retry unless max attempts reached
+          sleep 500.milliseconds if attempts < @@connection_attempts
+        end
+      end
+      
+      # All attempts failed
+      {
+        exit_code: 255,
+        stdout: "",
+        stderr: "SSH connection failed after #{@@connection_attempts} attempts: #{last_error.try(&.message) || "Unknown error"}"
+      }
+    end
+    
+    # Upload file to remote host via SCP
+    def self.upload(
+      host : String,
+      user : String,
+      local_path : String,
+      remote_path : String,
+      port : Int32 = 22,
+      mode : Int32 = 0o644
+    )
+      @@stats["files_uploaded"] += 1
+      
+      unless File.exists?(local_path)
+        raise "Local file not found: #{local_path}"
+      end
+      
+      session = get_connection(host, user, port)
+      
+      # Read local file
+      content = File.read(local_path)
+      size = File.size(local_path).to_i64
+      
+      # Get file times (or use current time)
+      stat = File.info(local_path)
+      mtime = stat.modification_time.to_unix
+      atime = stat.modification_time.to_unix  # Use mtime for atime as fallback
+      
+      # Upload via SCP with block to write content
+      session.scp_send(remote_path, mode, size, mtime, atime) do |channel|
+        channel.write(content.to_slice)
+      end
+    rescue ex : SSH2::SessionError
+      raise "Failed to upload #{local_path} to #{host}:#{remote_path}: #{ex.message}"
+    end
+    
+    # Download file from remote host via SCP
+    def self.download(
+      host : String,
+      user : String,
+      remote_path : String,
+      local_path : String,
+      port : Int32 = 22
+    )
+      @@stats["files_downloaded"] += 1
+      
+      session = get_connection(host, user, port)
+      
+      # Download via SCP
+      content, stat = session.scp_receive(remote_path)
+      
+      # Write to local file
+      File.write(local_path, content)
+      
+      # Preserve permissions
+      File.chmod(local_path, stat.permissions)
+    rescue ex : SSH2::SessionError
+      raise "Failed to download #{host}:#{remote_path} to #{local_path}: #{ex.message}"
+    end
+    
+    # Close specific connection
+    def self.close_connection(host : String, user : String, port : Int32 = 22)
+      key = connection_key(host, user, port)
+      
+      @@connection_lock.synchronize do
+        if session = @@connections.delete(key)
+          disconnect_session(session)
+        end
+      end
+    end
+    
+    # Close all connections
+    def self.close_all
+      @@connection_lock.synchronize do
+        @@connections.each do |_, session|
+          disconnect_session(session)
+        end
+        @@connections.clear
+      end
+    end
+    
+    # Get connection pool statistics
+    def self.stats : Hash(String, Int32)
+      @@stats
+    end
+    
+    # Reset statistics
+    def self.reset_stats
+      @@stats.each_key do |key|
+        @@stats[key] = 0
+      end
+    end
+    
+    # Private methods
+    
+    private def self.connection_key(host : String, user : String, port : Int32) : String
+      "#{user}@#{host}:#{port}"
+    end
+    
+    private def self.create_connection(host : String, user : String, port : Int32) : SSH2::Session
+      # Create TCP socket first
+      socket = TCPSocket.new(host, port)
+      socket.sync = false
+      
+      # Create SSH session with socket
+      session = SSH2::Session.new(socket)
+      session.handshake
+      
+      # Try to authenticate
+      if !authenticate(session, user)
+        session.disconnect
+        socket.close
+        raise "Authentication failed for #{user}@#{host}"
+      end
+      
+      session
+    rescue ex : Socket::Error
+      socket.close if socket
+      raise "Cannot connect to #{host}:#{port} - #{ex.message}"
+    rescue ex : SSH2::SessionError
+      socket.close if socket
+      raise "SSH session error: #{ex.message}"
+    end
+    
+    private def self.authenticate(session : SSH2::Session, user : String) : Bool
+      # Try SSH agent first (most common in production)
+      if authenticate_with_agent(session, user)
+        return true
+      end
+      
+      # Try common SSH key locations
+      if authenticate_with_keys(session, user)
+        return true
+      end
+      
+      # Authentication failed
+      false
+    end
+    
+    private def self.authenticate_with_agent(session : SSH2::Session, user : String) : Bool
+      session.login_with_agent(user)
+      true
+    rescue
+      false
+    end
+    
+    private def self.authenticate_with_keys(session : SSH2::Session, user : String) : Bool
+      # Common SSH key locations
+      key_paths = [
+        "#{ENV["HOME"]}/.ssh/id_ed25519",
+        "#{ENV["HOME"]}/.ssh/id_rsa",
+        "#{ENV["HOME"]}/.ssh/id_ecdsa",
+        "#{ENV["HOME"]}/.ssh/id_dsa"
+      ]
+      
+      key_paths.each do |key_path|
+        next unless File.exists?(key_path)
+        
+        # Public key is typically private_key_path.pub
+        pub_key_path = "#{key_path}.pub"
+        
+        begin
+          # Try without passphrase first
+          # login_with_pubkey(username, public_key_path, private_key_path, passphrase = nil)
+          session.login_with_pubkey(user, pub_key_path, key_path)
+          return true
+        rescue ex : SSH2::SessionError
+          # Key might need passphrase or isn't valid
+          # In production, could prompt for passphrase
+          next
+        end
+      end
+      
+      false
+    end
+    
+    private def self.execute_command(
+      session : SSH2::Session,
+      command : String,
+      timeout : Int32
+    ) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
+      
+      stdout = IO::Memory.new
+      stderr = IO::Memory.new
+      exit_code = 0
+      
+      session.open_session do |channel|
+        # Execute command
+        channel.command(command)
+        
+        # Read output
+        loop do
+          begin
+            # Read stdout
+            buffer = Bytes.new(4096)
+            bytes_read = channel.read(buffer)
+            if bytes_read > 0
+              stdout.write(buffer[0, bytes_read])
+            end
+            
+            # Check if channel is EOF
+            break if channel.eof?
+          rescue ex : IO::Error
+            break
+          end
+        end
+        
+        # Wait for command to complete
+        channel.wait_eof
+        channel.wait_closed
+        
+        # Get exit status
+        exit_code = channel.exit_status || 0
+      end
+      
+      {
+        exit_code: exit_code,
+        stdout: stdout.to_s,
+        stderr: stderr.to_s
+      }
+    rescue ex : SSH2::SessionError
+      {
+        exit_code: 255,
+        stdout: "",
+        stderr: "Command execution failed: #{ex.message}"
+      }
+    end
+    
+    private def self.session_alive?(session : SSH2::Session) : Bool
+      # Try a simple no-op command to check if connection is alive
+      begin
+        session.open_session do |channel|
+          channel.command("true")
+          channel.wait_eof
+          channel.wait_closed
+        end
+        true
+      rescue
+        false
+      end
+    end
+    
+    private def self.disconnect_session(session : SSH2::Session)
+      begin
+        session.disconnect
+      rescue
+        # Ignore errors during disconnect
+      end
+    end
+  end
+end

@@ -1,0 +1,253 @@
+#!/usr/bin/env crystal
+
+# Crystal Play - Fast Ansible-compatible automation tool
+# Main CLI entry point
+
+require "option_parser"
+require "colorize"
+require "./playbook_parser"
+require "./inventory_parser"
+require "./task_executor"
+
+# Parse command line arguments
+playbook_file = ""
+inventory_file = "inventory.ini"
+check_mode = false
+diff_mode = false
+verbose = false
+limit_hosts = ""
+tags = [] of String
+
+OptionParser.parse do |parser|
+  parser.banner = "Usage: crystal-play [options] playbook.yml"
+  
+  parser.on("-i INVENTORY", "--inventory=INVENTORY", "Specify inventory file") do |inv|
+    inventory_file = inv
+  end
+  
+  parser.on("-c", "--check", "Don't make changes; predict changes instead (dry-run)") do
+    check_mode = true
+  end
+  
+  parser.on("-d", "--diff", "Show file differences when changing files") do
+    diff_mode = true
+  end
+  
+  parser.on("-v", "--verbose", "Verbose output") do
+    verbose = true
+  end
+  
+  parser.on("-l SUBSET", "--limit=SUBSET", "Limit to specific hosts") do |subset|
+    limit_hosts = subset
+  end
+  
+  parser.on("-t TAGS", "--tags=TAGS", "Only run tasks with these tags") do |t|
+    tags = t.split(",")
+  end
+  
+  parser.on("-h", "--help", "Show this help") do
+    puts parser
+    puts ""
+    puts "Examples:"
+    puts "  crystal-play playbook.yml"
+    puts "  crystal-play --check --diff playbook.yml"
+    puts "  crystal-play -i inventory.ini playbook.yml"
+    puts "  crystal-play --tags deploy playbook.yml"
+    exit
+  end
+  
+  parser.unknown_args do |args|
+    if args.size == 1
+      playbook_file = args[0]
+    else
+      puts "Error: Please specify exactly one playbook file"
+      puts parser
+      exit 1
+    end
+  end
+end
+
+# Validate args
+if playbook_file.empty?
+  puts "Error: Playbook file is required"
+  puts "Usage: crystal-play [options] playbook.yml"
+  puts "Try 'crystal-play --help' for more information"
+  exit 1
+end
+
+unless File.exists?(playbook_file)
+  puts "Error: Playbook file not found: #{playbook_file}".colorize(:red)
+  exit 1
+end
+
+# Display banner
+puts ""
+puts "CRYSTAL PLAY".colorize(:cyan).bold
+puts "=" * 70
+puts "Playbook: #{playbook_file}".colorize(:white)
+if check_mode
+  puts "Mode: CHECK (dry-run)".colorize(:yellow).bold
+end
+if diff_mode
+  puts "Diff: ENABLED".colorize(:green)
+end
+if tags.any?
+  puts "Tags: #{tags.join(", ")}".colorize(:cyan)
+end
+puts "=" * 70
+puts ""
+
+# Parse playbook
+playbook = nil
+begin
+  playbook = CrystalPlay::PlaybookParser.parse(playbook_file)
+  
+  if verbose
+    stats = CrystalPlay::PlaybookParser.stats(playbook)
+    puts "Playbook Statistics:".colorize(:green).bold
+    puts "  Plays: #{stats["plays"]}".colorize(:white)
+    puts "  Tasks: #{stats["tasks"]}".colorize(:white)
+    puts "  Handlers: #{stats["handlers"]}".colorize(:white)
+    puts "  Modules used: #{stats["modules_used"]}".colorize(:white)
+    puts ""
+  end
+  
+  # Show warnings
+  warnings = CrystalPlay::PlaybookParser.validate(playbook)
+  if warnings.any?
+    puts "Warnings:".colorize(:yellow).bold
+    warnings.each do |warning|
+      puts "  ⚠️  #{warning}".colorize(:yellow)
+    end
+    puts ""
+  end
+  
+rescue ex
+  puts "Error parsing playbook:".colorize(:red).bold
+  puts "  #{ex.message}".colorize(:red)
+  exit 1
+end
+
+# Parse inventory
+inventory = nil
+begin
+  inventory = CrystalPlay::InventoryParser.parse(inventory_file)
+  
+  if verbose
+    stats = CrystalPlay::InventoryParser.stats(inventory)
+    puts "Inventory Statistics:".colorize(:green).bold
+    puts "  Hosts: #{stats["hosts"]}".colorize(:white)
+    puts "  Groups: #{stats["groups"]}".colorize(:white)
+    puts "  Variables: #{stats["vars"]}".colorize(:white)
+    puts ""
+  end
+  
+  # Show inventory warnings
+  inv_warnings = CrystalPlay::InventoryParser.validate(inventory)
+  if inv_warnings.any?
+    puts "Inventory Warnings:".colorize(:yellow).bold
+    inv_warnings.each do |warning|
+      puts "  ⚠️  #{warning}".colorize(:yellow)
+    end
+    puts ""
+  end
+  
+rescue ex
+  puts "Error loading inventory:".colorize(:red).bold
+  puts "  #{ex.message}".colorize(:red)
+  puts ""
+  puts "Please check that your inventory file exists and is properly formatted.".colorize(:yellow)
+  puts "Use -i flag to specify a different inventory file.".colorize(:yellow)
+  exit 1
+end
+
+# At this point inventory is guaranteed to be set
+inventory = inventory.not_nil!
+
+if verbose
+  puts "Available Hosts:".colorize(:cyan).bold
+  inventory.hosts.each do |name, host|
+    puts "  - #{host.user}@#{host.name}:#{host.port}".colorize(:white)
+  end
+  puts ""
+end
+
+# Execute playbook
+all_hosts = [] of CrystalPlay::Host
+playbook.plays.each_with_index do |play, play_index|
+  puts ""
+  puts "PLAY [#{play.name}]".colorize(:magenta).bold
+  puts "=" * 70
+  puts ""
+  
+  # Get hosts for this play from inventory
+  hosts = inventory.get_hosts(play.hosts.to_s)
+  
+  if hosts.empty?
+    puts "Skipping play - no hosts match pattern: #{play.hosts}".colorize(:yellow)
+    next
+  end
+  
+  # Track hosts for recap
+  all_hosts.concat(hosts)
+  
+  if verbose
+    puts "Hosts in play: #{hosts.map(&.name).join(", ")}".colorize(:cyan)
+    puts ""
+  end
+  
+  # Get tasks for this play
+  tasks_to_run = play.tasks
+  
+  # Filter by tags if specified
+  if tags.any?
+    tasks_to_run = tasks_to_run.select do |task|
+      task.tags.any? { |tag| tags.includes?(tag) }
+    end
+    
+    if tasks_to_run.empty?
+      puts "Skipping play - no tasks match tags: #{tags.join(", ")}".colorize(:yellow)
+      next
+    end
+  end
+  
+  if tasks_to_run.empty?
+    puts "Skipping play - no tasks defined".colorize(:yellow)
+    next
+  end
+  
+  # Create task executor with handlers and play vars
+  executor = CrystalPlay::TaskExecutor.new(
+    hosts: hosts,
+    tasks: tasks_to_run,
+    handlers: play.handlers,
+    check_mode: check_mode,
+    diff_mode: diff_mode,
+    play_vars: play.vars.transform_values(&.to_s)
+  )
+  
+  # Run tasks
+  executor.run
+end
+
+# Summary
+puts ""
+puts "=" * 70
+puts "PLAY RECAP".colorize(:cyan).bold
+puts "=" * 70
+
+# Show simple recap (deduplicate hosts)
+all_hosts.uniq { |h| h.name }.each do |host|
+  # TODO: Get actual stats from executor
+  puts "#{host.name.ljust(20)} : #{"ok".colorize(:green)} (playbook complete)"
+end
+
+puts ""
+
+if check_mode
+  puts "NOTE: Running in check mode - no changes were made".colorize(:yellow).bold
+  puts ""
+end
+
+puts "✓ Playbook execution complete".colorize(:green).bold
+puts ""

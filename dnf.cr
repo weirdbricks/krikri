@@ -1,0 +1,511 @@
+#!/usr/bin/env crystal
+
+require "json"
+require "./base_plugin"
+
+module CrystalPlay
+  # DNF plugin - manages packages with the dnf package manager
+  # Compatible with Ansible's ansible.builtin.dnf module
+  # 
+  # Supports key Ansible dnf module parameters:
+  # - name: Package name(s), group (@group), URL, or local RPM file
+  # - state: present, installed, absent, removed, latest
+  # - enablerepo: Repository to enable for this operation
+  # - disablerepo: Repository to disable for this operation  
+  # - disable_gpg_check: Disable GPG signature checking
+  # - update_only: Only update packages, don't install new ones
+  # - autoremove: Remove unneeded dependencies
+  # - security: Only install security updates (with state=latest)
+  # - bugfix: Only install bugfix updates (with state=latest)
+  # - install_weak_deps: Install weak dependencies (default: true)
+  # - skip_broken: Skip packages with broken dependencies
+  # - allow_downgrade: Allow downgrading packages
+  #
+  # Examples:
+  #   dnf:
+  #     name: httpd
+  #     state: present
+  #
+  #   dnf:
+  #     name:
+  #       - httpd
+  #       - nginx
+  #     state: latest
+  #
+  #   dnf:
+  #     name: "@Development tools"
+  #     state: present
+  class DnfPlugin < BasePlugin
+    def execute : PluginResult
+      # Parse package name(s)
+      # Can be a string, array (via list parameter), or comma-separated
+      names = parse_package_names
+      
+      if names.empty?
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Missing required parameter: name"
+        )
+      end
+      
+      # Get state (default: present)
+      state = @params["state"]? || "present"
+      
+      # Normalize state aliases
+      state = case state
+      when "installed"
+        "present"
+      when "removed"
+        "absent"
+      else
+        state
+      end
+      
+      # Validate state
+      unless ["present", "absent", "latest"].includes?(state)
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Invalid state: #{state}. Must be present, absent, or latest"
+        )
+      end
+      
+      # Handle special case: autoremove without package name
+      if is_true?(@params["autoremove"]?) && names == ["*"]
+        return handle_autoremove
+      end
+      
+      # Handle special case: upgrade all packages
+      if names == ["*"] && state == "latest"
+        return handle_upgrade_all
+      end
+      
+      # Build DNF command options
+      dnf_options = build_dnf_options
+      
+      # Process based on state
+      case state
+      when "present"
+        handle_install(names, dnf_options)
+      when "absent"
+        handle_remove(names, dnf_options)
+      when "latest"
+        handle_update(names, dnf_options)
+      else
+        PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Unexpected state: #{state}"
+        )
+      end
+    end
+    
+    # Parse package names from various parameter formats
+    private def parse_package_names : Array(String)
+      names = [] of String
+      
+      # Try 'name' parameter (can be string or list)
+      if name_param = @params["name"]?
+        # Handle comma-separated list
+        if name_param.includes?(",")
+          names = name_param.split(",").map(&.strip)
+        else
+          names = [name_param]
+        end
+      end
+      
+      # Try 'list' parameter (array of packages)
+      if list_param = @params["list"]?
+        begin
+          list_names = JSON.parse(list_param).as_a.map(&.as_s)
+          names.concat(list_names)
+        rescue
+          # If parsing fails, treat as single package
+          names << list_param
+        end
+      end
+      
+      # Try free-form parameter
+      if names.empty? && (raw_param = @params["_raw_params"]?)
+        names = raw_param.split.reject(&.empty?)
+      end
+      
+      names.uniq
+    end
+    
+    # Build DNF command line options
+    private def build_dnf_options : String
+      options = [] of String
+      
+      # Always use -y for non-interactive
+      options << "-y"
+      
+      # Enable/disable repos
+      if enablerepo = @params["enablerepo"]?
+        enablerepo.split(",").each do |repo|
+          options << "--enablerepo=#{repo.strip}"
+        end
+      end
+      
+      if disablerepo = @params["disablerepo"]?
+        disablerepo.split(",").each do |repo|
+          options << "--disablerepo=#{repo.strip}"
+        end
+      end
+      
+      # GPG check
+      if is_true?(@params["disable_gpg_check"]?)
+        options << "--nogpgcheck"
+      end
+      
+      # Security/bugfix updates
+      if is_true?(@params["security"]?)
+        options << "--security"
+      end
+      
+      if is_true?(@params["bugfix"]?)
+        options << "--bugfix"
+      end
+      
+      # Weak dependencies
+      if is_false?(@params["install_weak_deps"]?)
+        options << "--setopt=install_weak_deps=False"
+      end
+      
+      # Skip broken packages
+      if is_true?(@params["skip_broken"]?)
+        options << "--skip-broken"
+      end
+      
+      # Allow downgrade
+      if is_true?(@params["allow_downgrade"]?)
+        options << "--allowerasing"
+      end
+      
+      # Best (default in dnf, but explicit is good)
+      options << "--best" unless is_true?(@params["skip_broken"]?)
+      
+      options.join(" ")
+    end
+    
+    # Install packages
+    private def handle_install(names : Array(String), options : String) : PluginResult
+      # Check if update_only is set
+      update_only = is_true?(@params["update_only"]?)
+      
+      to_install = [] of String
+      to_update = [] of String
+      already_installed = [] of String
+      
+      # Check each package's status
+      names.each do |pkg|
+        if is_package_group?(pkg)
+          # For groups, always try to install (dnf handles idempotency)
+          to_install << pkg
+        elsif is_url_or_file?(pkg)
+          # For URLs/files, always try to install
+          to_install << pkg
+        else
+          # Check if package is installed
+          if package_installed?(pkg)
+            if update_only
+              to_update << pkg
+            else
+              already_installed << pkg
+            end
+          else
+            if update_only
+              # Don't install new packages in update_only mode
+              already_installed << pkg
+            else
+              to_install << pkg
+            end
+          end
+        end
+      end
+      
+      changed = false
+      messages = [] of String
+      all_output = [] of String
+      
+      # Install new packages
+      unless to_install.empty?
+        pkg_list = to_install.map { |p| quote_package(p) }.join(" ")
+        cmd = "dnf install #{options} #{pkg_list}"
+        
+        result = remote_exec(cmd)
+        all_output << result[:stdout]
+        
+        if result[:exit_code] == 0
+          changed = true
+          messages << "Installed: #{to_install.join(", ")}"
+        else
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "Failed to install packages",
+            stdout: result[:stdout],
+            stderr: result[:stderr],
+            exit_code: result[:exit_code]
+          )
+        end
+      end
+      
+      # Update packages (if update_only mode)
+      unless to_update.empty?
+        pkg_list = to_update.map { |p| quote_package(p) }.join(" ")
+        cmd = "dnf update #{options} #{pkg_list}"
+        
+        result = remote_exec(cmd)
+        all_output << result[:stdout]
+        
+        if result[:exit_code] == 0
+          # Check if anything was actually updated
+          if result[:stdout].includes?("Upgraded:") || result[:stdout].includes?("Installed:")
+            changed = true
+            messages << "Updated: #{to_update.join(", ")}"
+          end
+        else
+          return PluginResult.new(
+            changed: changed,
+            failed: true,
+            msg: "Failed to update packages",
+            stdout: result[:stdout],
+            stderr: result[:stderr],
+            exit_code: result[:exit_code]
+          )
+        end
+      end
+      
+      # Report already installed
+      unless already_installed.empty?
+        messages << "Already installed: #{already_installed.join(", ")}"
+      end
+      
+      msg = messages.empty? ? "No changes needed" : messages.join("; ")
+      
+      PluginResult.new(
+        changed: changed,
+        failed: false,
+        msg: msg,
+        stdout: all_output.join("\n"),
+        exit_code: 0
+      )
+    end
+    
+    # Remove packages
+    private def handle_remove(names : Array(String), options : String) : PluginResult
+      to_remove = [] of String
+      already_absent = [] of String
+      
+      # Check which packages need to be removed
+      names.each do |pkg|
+        if is_package_group?(pkg)
+          # For groups, always try to remove (dnf handles if not installed)
+          to_remove << pkg
+        else
+          if package_installed?(pkg)
+            to_remove << pkg
+          else
+            already_absent << pkg
+          end
+        end
+      end
+      
+      # Nothing to do
+      if to_remove.empty?
+        return PluginResult.new(
+          changed: false,
+          failed: false,
+          msg: "All packages already absent",
+          exit_code: 0
+        )
+      end
+      
+      # Build remove command
+      autoremove_flag = is_true?(@params["autoremove"]?) ? "" : "--setopt=clean_requirements_on_remove=False"
+      pkg_list = to_remove.map { |p| quote_package(p) }.join(" ")
+      cmd = "dnf remove #{options} #{autoremove_flag} #{pkg_list}"
+      
+      result = remote_exec(cmd)
+      
+      success = result[:exit_code] == 0
+      
+      if success
+        msg_parts = ["Removed: #{to_remove.join(", ")}"]
+        msg_parts << "Already absent: #{already_absent.join(", ")}" unless already_absent.empty?
+        
+        PluginResult.new(
+          changed: true,
+          failed: false,
+          msg: msg_parts.join("; "),
+          stdout: result[:stdout],
+          exit_code: 0
+        )
+      else
+        PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Failed to remove packages",
+          stdout: result[:stdout],
+          stderr: result[:stderr],
+          exit_code: result[:exit_code]
+        )
+      end
+    end
+    
+    # Update packages to latest version
+    private def handle_update(names : Array(String), options : String) : PluginResult
+      pkg_list = names.map { |p| quote_package(p) }.join(" ")
+      cmd = "dnf update #{options} #{pkg_list}"
+      
+      result = remote_exec(cmd)
+      
+      success = result[:exit_code] == 0
+      
+      if success
+        # Check if anything was actually updated
+        changed = result[:stdout].includes?("Upgraded:") || 
+                  result[:stdout].includes?("Installed:") ||
+                  result[:stdout].includes?("Obsoleted:")
+        
+        msg = changed ? "Packages updated to latest version" : "Packages already at latest version"
+        
+        PluginResult.new(
+          changed: changed,
+          failed: false,
+          msg: msg,
+          stdout: result[:stdout],
+          exit_code: 0
+        )
+      else
+        PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Failed to update packages",
+          stdout: result[:stdout],
+          stderr: result[:stderr],
+          exit_code: result[:exit_code]
+        )
+      end
+    end
+    
+    # Upgrade all packages
+    private def handle_upgrade_all : PluginResult
+      options = build_dnf_options
+      cmd = "dnf upgrade #{options}"
+      
+      result = remote_exec(cmd)
+      
+      success = result[:exit_code] == 0
+      
+      if success
+        changed = result[:stdout].includes?("Upgraded:") || 
+                  result[:stdout].includes?("Installed:")
+        
+        msg = changed ? "System upgraded" : "All packages already up to date"
+        
+        PluginResult.new(
+          changed: changed,
+          failed: false,
+          msg: msg,
+          stdout: result[:stdout],
+          exit_code: 0
+        )
+      else
+        PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Failed to upgrade system",
+          stdout: result[:stdout],
+          stderr: result[:stderr],
+          exit_code: result[:exit_code]
+        )
+      end
+    end
+    
+    # Handle autoremove operation
+    private def handle_autoremove : PluginResult
+      options = build_dnf_options
+      cmd = "dnf autoremove #{options}"
+      
+      result = remote_exec(cmd)
+      
+      success = result[:exit_code] == 0
+      
+      if success
+        changed = result[:stdout].includes?("Removed:")
+        
+        msg = changed ? "Removed unneeded packages" : "No unneeded packages to remove"
+        
+        PluginResult.new(
+          changed: changed,
+          failed: false,
+          msg: msg,
+          stdout: result[:stdout],
+          exit_code: 0
+        )
+      else
+        PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Autoremove failed",
+          stdout: result[:stdout],
+          stderr: result[:stderr],
+          exit_code: result[:exit_code]
+        )
+      end
+    end
+    
+    # Check if a package is installed
+    private def package_installed?(name : String) : Bool
+      # Strip version specifiers for checking
+      base_name = name.split(/[<>=]/).first.strip
+      
+      result = remote_exec("dnf list installed #{base_name} 2>/dev/null")
+      result[:exit_code] == 0
+    end
+    
+    # Check if name is a package group (starts with @)
+    private def is_package_group?(name : String) : Bool
+      name.starts_with?("@")
+    end
+    
+    # Check if name is a URL or file path
+    private def is_url_or_file?(name : String) : Bool
+      name.starts_with?("http://") || 
+      name.starts_with?("https://") || 
+      name.starts_with?("ftp://") ||
+      name.starts_with?("/")
+    end
+    
+    # Quote package name if it contains special characters
+    private def quote_package(name : String) : String
+      if name.includes?(" ") || name.includes?(">") || name.includes?("<")
+        "'#{name}'"
+      else
+        name
+      end
+    end
+    
+    # Helper: Check if parameter is truthy
+    private def is_true?(value : String?) : Bool
+      return false unless value
+      ["true", "yes", "1", "on"].includes?(value.downcase)
+    end
+    
+    # Helper: Check if parameter is falsy
+    private def is_false?(value : String?) : Bool
+      return false unless value
+      ["false", "no", "0", "off"].includes?(value.downcase)
+    end
+  end
+end
+
+# Plugin entry point
+input = STDIN.gets_to_end
+config = JSON.parse(input)
+
+plugin = CrystalPlay::DnfPlugin.new(config)
+plugin.run
