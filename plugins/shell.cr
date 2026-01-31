@@ -1,7 +1,7 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "./base_plugin"
+require "../src/crystal_play/base_plugin"
 
 module CrystalPlay
   # Shell Plugin - Execute shell commands with full shell features

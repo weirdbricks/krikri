@@ -51,7 +51,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║     Crystal Play - Build System       ║${NC}"
+echo -e "${BLUE}║     Crystal Play - Build System        ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
 echo ""
 
@@ -163,7 +163,11 @@ echo ""
 # Build main executable
 echo -e "${YELLOW}🔨 Building main executable...${NC}"
 crystal build crystal-play.cr -o "$OUTPUT_DIR/crystal-ansible" $BUILD_FLAGS
-echo -e "${GREEN}✅ Main executable built: $OUTPUT_DIR/crystal-play${NC}"
+if [ $? -ne 0 ]; then
+    echo -e "${RED}✗ Failed to build main executable${NC}"
+    exit 1
+fi
+echo -e "${GREEN}✅ Main executable built: $OUTPUT_DIR/crystal-ansible${NC}"
 echo ""
 
 # Build plugins
@@ -182,10 +186,10 @@ PLUGINS=(
 
 PLUGIN_COUNT=0
 for plugin in "${PLUGINS[@]}"; do
-    if [ -f "$plugin.cr" ]; then
+    if [ -f "plugins/$plugin.cr" ]; then
         echo -n "   Building $plugin... "
         
-        if ! OUTPUT=$(crystal build "$plugin.cr" -o "$PLUGINS_DIR/$plugin" $BUILD_FLAGS 2>&1); then
+        if ! OUTPUT=$(crystal build "plugins/$plugin.cr" -o "$PLUGINS_DIR/$plugin" $BUILD_FLAGS 2>&1); then
             echo -e "${RED}✗${NC}"
             echo ""
             echo -e "${RED}❌ Build failed for plugin: $plugin${NC}"
@@ -200,7 +204,7 @@ for plugin in "${PLUGINS[@]}"; do
         echo -e "${GREEN}✓${NC}"
         ((PLUGIN_COUNT++))
     else
-        echo -e "   ${YELLOW}⚠  Skipping $plugin (not found)${NC}"
+        echo -e "   ${YELLOW}⚠  Skipping $plugin (not found at plugins/$plugin.cr)${NC}"
     fi
 done
 
@@ -213,13 +217,13 @@ echo -e "${BLUE}╔════════════════════�
 echo -e "${BLUE}║         Build Complete! 🎉             ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "${GREEN}Executable:${NC} $OUTPUT_DIR/crystal-play"
+echo -e "${GREEN}Executable:${NC} $OUTPUT_DIR/crystal-ansible"
 echo -e "${GREEN}Plugins:${NC} $PLUGINS_DIR/ ($PLUGIN_COUNT plugins)"
 echo ""
 echo -e "${YELLOW}Quick Start:${NC}"
-echo -e "  ${BLUE}./bin/crystal-play test-facts.yml${NC}"
-echo -e "  ${BLUE}./bin/crystal-play --diff test-lineinfile.yml${NC}"
-echo -e "  ${BLUE}./bin/crystal-play --check test-handlers.yml${NC}"
+echo -e "  ${BLUE}./bin/crystal-ansible test-copy.yml${NC}"
+echo -e "  ${BLUE}./bin/crystal-ansible --diff test-copy.yml${NC}"
+echo -e "  ${BLUE}./bin/crystal-ansible --check test-copy.yml${NC}"
 echo ""
 
 # Show size information

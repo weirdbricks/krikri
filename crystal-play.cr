@@ -6,9 +6,9 @@
 require "option_parser"
 require "colorize"
 require "./src/crystal_play/version"
-require "./playbook_parser"
-require "./inventory_parser"
-require "./task_executor"
+require "./src/crystal_play/playbook_parser"
+require "./src/crystal_play/inventory_parser"
+require "./src/crystal_play/task_executor"
 
 # Parse command line arguments
 playbook_file = ""

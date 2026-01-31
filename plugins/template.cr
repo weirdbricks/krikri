@@ -3,7 +3,7 @@
 require "json"
 require "digest/md5"
 require "crinja"
-require "./base_plugin"
+require "../src/crystal_play/base_plugin"
 
 module CrystalPlay
   # Template plugin - renders Jinja2 templates to remote locations

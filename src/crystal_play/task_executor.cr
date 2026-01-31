@@ -215,18 +215,23 @@ module CrystalPlay
     end
     
     private def get_plugin_path(module_name : String) : String
+      # Strip FQCN to get simple plugin filename
+      # ansible.builtin.copy → copy
+      # ansible.legacy.command → command
+      plugin_name = module_name.sub(/^ansible\.(builtin|legacy)\./, "")
+  
       # Try compiled plugin first
-      compiled = "./bin/plugins/#{module_name}"
+      compiled = "./bin/plugins/#{plugin_name}"
       return compiled if File.exists?(compiled)
-      
+  
       # Try source file
-      source = "./plugins/#{module_name}.cr"
+      source = "./plugins/#{plugin_name}.cr"
       return source if File.exists?(source)
-      
+  
       # Not found
-      raise "Plugin not found: #{module_name}"
+      raise "Plugin not found: #{module_name} (looked for #{plugin_name})"
     end
-    
+
     private def run_plugin(plugin_path : String, config : String) : JSON::Any
       # If it's a source file, run with crystal
       if plugin_path.ends_with?(".cr")

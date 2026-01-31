@@ -1,0 +1,39 @@
+---
+# Quick Copy Plugin Test - Simple smoke test
+
+- name: Quick Copy Test
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Test 1 - Basic content copy
+      ansible.builtin.copy:
+        content: "Hello from Crystal Play!"
+        dest: /tmp/crystal-play-test.txt
+        mode: "0644"
+
+    - name: Test 2 - Verify idempotency (should be unchanged)
+      ansible.builtin.copy:
+        content: "Hello from Crystal Play!"
+        dest: /tmp/crystal-play-test.txt
+        mode: "0644"
+
+    - name: Test 3 - Verify content
+      ansible.builtin.command: cat /tmp/crystal-play-test.txt
+      register: result
+
+    - name: Test 4 - Display result
+      ansible.builtin.debug:
+        msg: "File contains: {{ result.stdout }}"
+
+    - name: Test 5 - Cleanup
+      ansible.builtin.file:
+        path: /tmp/crystal-play-test.txt
+        state: absent
+
+# Expected output:
+# - Test 1: changed=true (file created)
+# - Test 2: changed=false (identical content)
+# - Test 3: stdout="Hello from Crystal Play!"
+# - Test 4: Display message
+# - Test 5: changed=true (file removed)

@@ -2,7 +2,7 @@
 
 require "json"
 require "digest/md5"
-require "./base_plugin"
+require "../src/crystal_play/base_plugin"
 
 module CrystalPlay
   # Copy plugin - copies files to remote locations

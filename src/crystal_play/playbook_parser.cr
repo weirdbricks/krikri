@@ -95,10 +95,18 @@ module CrystalPlay
   
   # Parser for Ansible YAML playbooks
   class PlaybookParser
-    # List of available (implemented) plugins
+    
+    # List of available (implemented) plugins - using FQCN
     AVAILABLE_PLUGINS = [
-      "copy", "template", "file", "dnf", "command", "shell",
-      "service", "systemd", "apt", "yum", "user", "group"
+      "ansible.builtin.copy",
+      "ansible.builtin.template",
+      "ansible.builtin.file",
+      "ansible.builtin.lineinfile",
+      "ansible.builtin.service",
+      "ansible.builtin.shell",
+      "ansible.builtin.apt",
+      "ansible.builtin.dnf",
+      "ansible.builtin.package"
     ]
     
     # Parse playbook from file
@@ -243,7 +251,7 @@ module CrystalPlay
       
       # Check if plugin is available
       unless AVAILABLE_PLUGINS.includes?(module_name)
-        puts "  âš ï¸  Plugin '#{module_name}' not implemented yet - task will be skipped".colorize(:yellow)
+        puts "  WARNING: Plugin '#{module_name}' not implemented yet - task will be skipped".colorize(:yellow)
         raise "Plugin not available: #{module_name}"
       end
       
