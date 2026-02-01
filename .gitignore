@@ -7,3 +7,4 @@
 # Shard lock file (some prefer to commit this, some don't)
 # Uncomment the next line if you want to exclude it:
 # /shard.lock
+inventory.ini
