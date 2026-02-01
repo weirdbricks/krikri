@@ -49,6 +49,12 @@ module CrystalPlay
       # Build SSH command with ControlMaster for connection pooling
       control_path = get_control_path(host, user, port)
       
+      # Important: We pass the command through bash -c to ensure proper shell
+      # interpretation on the remote side. This prevents the local shell from
+      # interpreting operators like ||, &&, |, >, etc.
+      # We use /bin/bash instead of /bin/sh for better compatibility
+      wrapped_command = "/bin/bash -c #{shell_quote(command)}"
+      
       ssh_cmd = [
         "ssh",
         "-o", "ControlMaster=auto",
@@ -60,8 +66,7 @@ module CrystalPlay
         "-o", "StrictHostKeyChecking=accept-new",  # Auto-accept new host keys
         "-p", port.to_s,
         "#{user}@#{host}",
-        "--",
-        command
+        wrapped_command
       ]
       
       stdout = IO::Memory.new
@@ -318,6 +323,12 @@ module CrystalPlay
       # Format: /tmp/.crystal-play-ssh/user@host:port
       socket_name = "#{user}@#{host}:#{port}".gsub(/[^a-zA-Z0-9@:.-]/, "_")
       "#{@@control_path_dir}/#{socket_name}"
+    end
+    
+    # Properly quote a string for shell execution
+    # Uses single quotes and escapes any single quotes in the string
+    private def self.shell_quote(str : String) : String
+      "'#{str.gsub("'", "'\\''")}'"
     end
   end
 end

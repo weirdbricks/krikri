@@ -84,9 +84,20 @@ module CrystalPlay
         full_cmd = "cd #{chdir} && #{full_cmd}"
       end
       
-      # Execute with specified shell
-      shell_cmd = "#{executable} -c #{shell_escape(full_cmd)}"
-      result = remote_exec(shell_cmd)
+      # Execute command
+      # Note: remote_exec() already executes through a shell, so we don't need to
+      # wrap the command in another shell invocation. This allows shell operators
+      # like ||, &&, |, >, etc. to work properly.
+      # 
+      # If a custom executable is specified (not /bin/sh), we need to explicitly
+      # invoke it since remote_exec uses /bin/sh by default
+      result = if executable == "/bin/sh"
+        # Default shell - just pass the command directly
+        remote_exec(full_cmd)
+      else
+        # Custom shell - invoke it explicitly
+        remote_exec("#{executable} -c '#{full_cmd}'")
+      end
       
       # Build diff data if diff mode enabled
       diff_data = nil
@@ -108,12 +119,6 @@ module CrystalPlay
         exit_code: result[:exit_code],
         diff: diff_data
       )
-    end
-    
-    # Helper to shell-escape commands
-    private def shell_escape(str : String) : String
-      # Use single quotes and escape any single quotes in the string
-      "'" + str.gsub("'", "'\\''") + "'"
     end
     
     # Helper to convert string/bool to boolean

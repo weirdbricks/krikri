@@ -11,17 +11,23 @@ module CrystalPlay
       stderr = IO::Memory.new
       
       begin
-        process = Process.new(
-          "/bin/sh",
-          ["-c", command],
+        # Build the bash command
+        # We need to properly escape the command for shell execution
+        # Using shell: true to let the shell handle the parsing
+	File.write("/tmp/debug-command.txt", "Raw command: #{command.inspect}\nCommand bytes: #{command.bytes.inspect}\n", mode: "a")
+	STDERR.puts "DEBUG: Raw command: #{command.inspect}"
+        STDERR.puts "DEBUG: Command bytes: #{command.bytes.inspect}"
+        bash_cmd = "/bin/bash -c '#{command.gsub("'", "'\\''")}'"
+        
+        process = Process.run(
+          bash_cmd,
+          shell: true,
           output: stdout,
           error: stderr
         )
         
-        status = process.wait
-        
         {
-          exit_code: status.exit_code,
+          exit_code: process.exit_code,
           stdout: stdout.to_s,
           stderr: stderr.to_s
         }

@@ -1,0 +1,136 @@
+---
+# Service Plugin Test - Comprehensive
+# Tests systemd service management
+
+- name: Service Plugin Test
+  hosts: testservers
+  gather_facts: false
+  
+  tasks:
+    # We'll use cron service for testing since it's installed on most systems
+    # and is safe to start/stop
+    
+    # Test 1: Check if cron is installed (fallback to SSH if not)
+    - name: Test 1 - Check if cron service exists
+      ansible.builtin.shell: systemctl list-unit-files | grep -E '^(cron|crond)\.service' | awk '{print $1}' | head -1
+      register: cron_check
+      ignore_errors: yes
+    
+    - name: Show detected service
+      ansible.builtin.debug:
+        msg: "Detected service: {{ cron_check.stdout }}"
+    
+    # Set service name based on OS (cron vs crond)
+    - name: Set service name
+      ansible.builtin.shell: |
+        if systemctl list-unit-files | grep -q '^cron\.service'; then
+          echo 'cron'
+        elif systemctl list-unit-files | grep -q '^crond\.service'; then
+          echo 'crond'
+        else
+          echo 'ssh'
+        fi
+      register: service_name_result
+
+    - name: Show service we'll use for testing
+      ansible.builtin.debug:
+        msg: "Using service: {{ service_name_result.stdout }}"
+    
+    # Test 2: Stop service
+    - name: Test 2 - Stop service
+      ansible.builtin.service:
+        name: "{{ service_name_result.stdout }}"
+        state: stopped
+    
+    # Test 3: Verify service is stopped
+    - name: Test 3 - Check service status
+      ansible.builtin.shell: systemctl is-active {{ service_name_result.stdout }} || echo inactive
+      register: status_stopped
+    
+    - name: Show stopped status
+      ansible.builtin.debug:
+        msg: "Service status after stop: {{ status_stopped.stdout }}"
+    
+    # Test 4: Start service
+    - name: Test 4 - Start service
+      ansible.builtin.service:
+        name: "{{ service_name_result.stdout }}"
+        state: started
+    
+    # Test 5: Verify service is running
+    - name: Test 5 - Check service status
+      ansible.builtin.shell: systemctl is-active {{ service_name_result.stdout }}
+      register: status_running
+    
+    - name: Show running status
+      ansible.builtin.debug:
+        msg: "Service status after start: {{ status_running.stdout }}"
+    
+    # Test 6: Idempotency - start already running service (should be ok)
+    - name: Test 6 - Start already running service (idempotency)
+      ansible.builtin.service:
+        name: "{{ service_name_result.stdout }}"
+        state: started
+    
+    # Test 7: Restart service
+    - name: Test 7 - Restart service
+      ansible.builtin.service:
+        name: "{{ service_name_result.stdout }}"
+        state: restarted
+    
+    # Test 8: Check if service is enabled
+    - name: Test 8 - Check if service is enabled
+      ansible.builtin.shell: systemctl is-enabled {{ service_name_result.stdout }} || echo 'disabled'
+      register: enabled_status
+    
+    - name: Show enabled status
+      ansible.builtin.debug:
+        msg: "Service enabled status: {{ enabled_status.stdout }}"
+    
+    # Test 9: Enable service on boot
+    - name: Test 9 - Enable service on boot
+      ansible.builtin.service:
+        name: "{{ service_name_result.stdout }}"
+        enabled: yes
+    
+    # Test 10: Verify service is enabled
+    - name: Test 10 - Verify service is enabled
+      ansible.builtin.shell: systemctl is-enabled {{ service_name_result.stdout }}
+      register: enabled_check
+    
+    - name: Show enabled check
+      ansible.builtin.debug:
+        msg: "Service is now: {{ enabled_check.stdout }}"
+    
+    # Test 11: Combined - ensure started AND enabled
+    - name: Test 11 - Ensure service is started and enabled
+      ansible.builtin.service:
+        name: "{{ service_name_result.stdout }}"
+        state: started
+        enabled: yes
+    
+    # Test 12: Final status check
+    - name: Test 12 - Final status check
+      ansible.builtin.shell: |
+        echo "Active: $(systemctl is-active {{ service_name_result.stdout }})"
+        echo "Enabled: $(systemctl is-enabled {{ service_name_result.stdout }})"
+      register: final_status
+    
+    - name: Show final status
+      ansible.builtin.debug:
+        var: final_status.stdout_lines
+    
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "✓ Service plugin tests complete!"
+
+# Expected results:
+# Test 2: changed=true (service stopped)
+# Test 3: shows "inactive" or "failed"
+# Test 4: changed=true (service started)
+# Test 5: shows "active"
+# Test 6: changed=false (already running - IDEMPOTENCY)
+# Test 7: changed=true (service restarted)
+# Test 9: changed=true/false depending on current state
+# Test 11: changed=false (already in desired state - IDEMPOTENCY)
+# Test 12: Shows "Active: active" and "Enabled: enabled"

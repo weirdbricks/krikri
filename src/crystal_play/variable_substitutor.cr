@@ -75,7 +75,7 @@ module CrystalPlay
         value = evaluate_expression(expression)
         
         # Replace in result
-        result = result.sub(full_match, value)
+	result = result.sub(full_match, value.strip)
       end
       
       result
@@ -299,7 +299,9 @@ module CrystalPlay
         # Convert to string based on type
         case value.raw
         when String
-          value.as_s
+          # Strip whitespace from string values (matches Ansible behavior)
+          # This prevents issues with trailing newlines from command output
+          value.as_s.strip
         when Int64, Int32
           value.as_i.to_s
         when Float64
