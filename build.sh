@@ -183,6 +183,7 @@ PLUGINS=(
     "dnf"
     "package"
     "debug"
+    "command"
 )
 
 PLUGIN_COUNT=0
