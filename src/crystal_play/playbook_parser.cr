@@ -107,7 +107,8 @@ module CrystalPlay
       "ansible.builtin.apt",
       "ansible.builtin.dnf",
       "ansible.builtin.package",
-      "ansible.builtin.debug"
+      "ansible.builtin.debug",
+      "ansible.builtin.command"
     ]
     
     # Parse playbook from file
@@ -312,7 +313,7 @@ module CrystalPlay
         when "command", "shell"
           params["cmd"] = yaml.as_s
         else
-          params["arg"] = yaml.as_s
+          params["_raw_params"] = yaml.as_s
         end
       else
         # Other types

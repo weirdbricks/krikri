@@ -77,7 +77,7 @@ module CrystalPlay
         puts "#{host.name.ljust(20)} : #{status_parts.join("  ")}"
       end
     end
-    
+  
     private def execute_task(task : CrystalPlay::Task, host : CrystalPlay::Host)
       # Build variable context
       vars_context = build_variable_context(host, task)
@@ -233,24 +233,45 @@ module CrystalPlay
     end
 
     private def run_plugin(plugin_path : String, config : String) : JSON::Any
-      # If it's a source file, run with crystal
-      if plugin_path.ends_with?(".cr")
-        output = `echo '#{config}' | crystal run #{plugin_path} 2>&1`
-      else
-        # Compiled binary
-        output = `echo '#{config}' | #{plugin_path} 2>&1`
-      end
+      # Use Process instead of backticks for proper stdin handling
+      stdout = IO::Memory.new
+      stderr = IO::Memory.new
       
-      # Parse JSON output
       begin
-        JSON.parse(output)
-      rescue
-        # If parse fails, create error result
+        process = Process.new(
+          plugin_path,
+          input: Process::Redirect::Pipe,
+          output: stdout,
+          error: stderr
+        )
+        
+        # Write config to stdin
+        process.input.print(config)
+        process.input.close
+        
+        # Wait for completion
+        status = process.wait
+        
+        # Parse output
+        output = stdout.to_s
+        
+        begin
+          JSON.parse(output)
+        rescue
+          # If parse fails, create error result
+          JSON.parse({
+            "changed" => false,
+            "failed" => true,
+            "msg" => "Failed to parse plugin output",
+            "stdout" => output,
+            "stderr" => stderr.to_s
+          }.to_json)
+        end
+      rescue ex
         JSON.parse({
           "changed" => false,
           "failed" => true,
-          "msg" => "Failed to parse plugin output",
-          "stdout" => output
+          "msg" => "Plugin execution failed: #{ex.message}"
         }.to_json)
       end
     end
@@ -453,5 +474,5 @@ module CrystalPlay
       # Update stats (handlers count as tasks)
       update_stats(host, result)
     end
-    end
+  end
 end
