@@ -9,7 +9,7 @@ module CrystalPlay
     # Build variable context combining all variable sources
     # Priority (highest to lowest): task vars > registered vars > host vars > play vars
     def self.build(
-      play_vars : Hash(String, String),
+      play_vars : Hash(String, JSON::Any),  # CHANGED: Was Hash(String, String)
       host : Host,
       task : Task,
       registered_vars : Hash(String, JSON::Any)
@@ -18,7 +18,7 @@ module CrystalPlay
       
       # Add play-level variables (lowest priority)
       play_vars.each do |key, value|
-        context[key] = JSON::Any.new(value)
+        context[key] = value  # CHANGED: Just assign directly, it's already JSON::Any
       end
       
       # Add host variables

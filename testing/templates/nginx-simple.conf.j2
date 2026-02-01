@@ -1,0 +1,38 @@
+# Simple Test Template
+# Does not require facts gathering
+
+server {
+    listen {{ nginx_port | default('80') }};
+    server_name {{ server_name }};
+    
+    root {{ document_root }};
+    index index.html index.htm;
+    
+    # Logging
+    access_log /var/log/nginx/{{ server_name }}.access.log;
+    error_log /var/log/nginx/{{ server_name }}.error.log;
+    
+    # Server info
+    # Host: {{ inventory_hostname }}
+    
+    location / {
+        try_files $uri $uri/ =404;
+    }
+    
+    {% if enable_ssl %}
+    # SSL Configuration
+    listen 443 ssl;
+    ssl_certificate /etc/ssl/certs/{{ server_name }}.crt;
+    ssl_certificate_key /etc/ssl/private/{{ server_name }}.key;
+    {% endif %}
+    
+    {% if upstream_servers %}
+    # Upstream servers
+    {% for server in upstream_servers %}
+    # Upstream: {{ server }}
+    {% endfor %}
+    {% endif %}
+}
+
+# Additional configuration
+# Max upload size: {{ max_upload_size | default('10M') }}

@@ -6,6 +6,7 @@ require "../plugin_manager"
 require "./variable_context"
 require "./result_display"
 require "./handler_runner"
+require "../action_plugin_manager"
 
 module CrystalPlay
   # TaskExecutor - Executes tasks on hosts
@@ -16,7 +17,7 @@ module CrystalPlay
     property handlers : Array(Task)
     property check_mode : Bool
     property diff_mode : Bool
-    property play_vars : Hash(String, String)
+    property play_vars : Hash(String, JSON::Any)
     
     # Track results for recap
     @results : Hash(String, Hash(String, Int32))
@@ -89,6 +90,34 @@ module CrystalPlay
       
       # Substitute variables in task parameters
       substituted_params = substitute_task_params(task.params, substitutor)
+      
+            if ActionPluginManager.has_action_plugin?(task.module_name)
+        action_result = ActionPluginManager.execute_action(
+          task.module_name,
+          substituted_params,
+          vars_context,
+          host
+        )
+        
+        # Handle action plugin failure
+        unless action_result.success
+          error_result = JSON.parse({
+            "changed" => false,
+            "failed" => true,
+            "msg" => action_result.error_message || "Action plugin failed"
+          }.to_json)
+          
+          # Display result and update stats
+          ResultDisplay.display_result(host, error_result, @diff_mode)
+          ResultDisplay.update_stats(@results[host.name], error_result)
+          return
+        end
+        
+        # Use modified params from action plugin if provided
+        if modified_params = action_result.modified_params
+          substituted_params = modified_params
+        end
+      end
       
       # Build config for plugin
       config = build_plugin_config(task, host, substituted_params, vars_context)

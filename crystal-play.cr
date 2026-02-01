@@ -190,6 +190,9 @@ if verbose
   puts ""
 end
 
+# Set verbose mode for plugin manager
+CrystalPlay::PluginManager.verbose = verbose
+
 # Execute playbook
 all_hosts = [] of CrystalPlay::Host
 playbook.plays.each_with_index do |play, play_index|
@@ -246,7 +249,7 @@ playbook.plays.each_with_index do |play, play_index|
     handlers: play.handlers,
     check_mode: check_mode,
     diff_mode: diff_mode,
-    play_vars: play.vars.transform_values(&.to_s)
+    play_vars: play.vars
   )
   
   # Run tasks

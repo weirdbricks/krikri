@@ -11,6 +11,14 @@ module CrystalPlay
     # Cache of plugins already uploaded to remote hosts
     @@uploaded_plugins = Hash(String, Set(String)).new
     
+    # Verbose mode flag
+    @@verbose = false
+    
+    # Set verbose mode
+    def self.verbose=(value : Bool)
+      @@verbose = value
+    end
+    
     # Execute a plugin on a host (local or remote)
     def self.execute_plugin(
       plugin_name : String,
@@ -149,21 +157,25 @@ module CrystalPlay
       
       if md5_check[:exit_code] == 0 && md5_check[:stdout].strip == local_md5
         # Plugin exists with matching MD5 - reuse it!
-        print "   → Plugin '#{simple_name}' already on #{connection_host} (MD5 match)".colorize(:cyan)
-        puts ""
+        if @@verbose
+          print "   → Plugin '#{simple_name}' already on #{connection_host} (MD5 match)".colorize(:cyan)
+          puts ""
+        end
         @@uploaded_plugins[host_key].add(simple_name)
         return remote_plugin_path
       end
       
       # Plugin doesn't exist or is outdated - upload it
-      if md5_check[:exit_code] == 0
-        # Plugin exists but MD5 differs
-        print "   → Uploading plugin '#{simple_name}' to #{connection_host} (MD5 mismatch - updating)".colorize(:yellow)
-      else
-        # Plugin doesn't exist
-        print "   → Uploading plugin '#{simple_name}' to #{connection_host} (first time)".colorize(:green)
+      if @@verbose
+        if md5_check[:exit_code] == 0
+          # Plugin exists but MD5 differs
+          print "   → Uploading plugin '#{simple_name}' to #{connection_host} (MD5 mismatch - updating)".colorize(:yellow)
+        else
+          # Plugin doesn't exist
+          print "   → Uploading plugin '#{simple_name}' to #{connection_host} (first time)".colorize(:green)
+        end
+        puts ""
       end
-      puts ""
       
       # Create remote plugin directory
       SSHManager.exec(
