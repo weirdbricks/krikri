@@ -57,10 +57,11 @@ module CrystalPlay
       # Build the debug output
       debug_output = if var_name
         # Print variable name and value
-        var_value = @vars[var_name]?
+        # The var_name might be a path like "result.stdout" or just "myvar"
+        var_value = lookup_variable(var_name)
         
         if var_value
-          # Format as JSON for readability
+          # Format as readable output
           value_str = format_value(var_value)
           "#{var_name}: #{value_str}"
         else
@@ -79,11 +80,38 @@ module CrystalPlay
       )
     end
     
+    # Look up a variable (supports nested paths like "result.stdout")
+    private def lookup_variable(var_name : String) : JSON::Any?
+      # Handle nested variable access (e.g., "result.stdout")
+      if var_name.includes?(".")
+        parts = var_name.split(".")
+        current = @vars[parts[0]]?
+        
+        return nil unless current
+        
+        # Navigate through the nested structure
+        parts[1..-1].each do |part|
+          case current.raw
+          when Hash
+            current = current[part]?
+            return nil unless current
+          else
+            return nil
+          end
+        end
+        
+        return current
+      else
+        # Simple variable lookup
+        return @vars[var_name]?
+      end
+    end
+    
     # Format a JSON::Any value for display
     private def format_value(value : JSON::Any) : String
       case value.raw
       when String
-        value.as_s.inspect  # Add quotes around strings
+        value.as_s
       when Int64, Int32
         value.as_i.to_s
       when Float64
@@ -92,7 +120,17 @@ module CrystalPlay
         value.as_bool.to_s
       when Nil
         "null"
-      when Array, Hash
+      when Array
+        # For arrays, check if they're simple values or complex
+        array = value.as_a
+        if array.all? { |item| item.as_s? || item.as_i? || item.as_bool? }
+          # Simple array - format as list
+          "[" + array.map { |item| format_value(item) }.join(", ") + "]"
+        else
+          # Complex array - use JSON
+          value.to_pretty_json
+        end
+      when Hash
         # Pretty print JSON for complex types
         value.to_pretty_json
       else

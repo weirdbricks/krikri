@@ -3,8 +3,8 @@ require "colorize"
 require "../playbook_parser"
 require "../variable_substitutor"
 require "../plugin_manager"
-require "../ssh_manager"
 require "../facts_gatherer"
+require "../conditional_evaluator"
 require "./variable_context"
 require "./result_display"
 require "./handler_runner"
@@ -12,7 +12,7 @@ require "../action_plugin_manager"
 
 module CrystalPlay
   # TaskExecutor - Executes tasks on hosts
-  # Orchestrates task execution, variable substitution, facts gathering, and handler management
+  # Orchestrates task execution, variable substitution, and handler management
   class TaskExecutor
     property hosts : Array(Host)
     property tasks : Array(Task)
@@ -26,10 +26,10 @@ module CrystalPlay
     @results : Hash(String, Hash(String, Int32))
     # Track registered variables per host
     @registered_vars : Hash(String, Hash(String, JSON::Any))
-    # Track facts per host
-    @facts : Hash(String, Hash(String, JSON::Any))
     # Handler runner
     @handler_runner : HandlerRunner
+    # Facts per host
+    @facts : Hash(String, Hash(String, JSON::Any))
     
     def initialize(
       @hosts,
@@ -48,7 +48,8 @@ module CrystalPlay
         @results[host.name] = {
           "ok" => 0,
           "changed" => 0,
-          "failed" => 0
+          "failed" => 0,
+          "skipped" => 0
         }
         @registered_vars[host.name] = {} of String => JSON::Any
         @facts[host.name] = {} of String => JSON::Any
@@ -60,12 +61,11 @@ module CrystalPlay
     
     # Main execution loop
     def run
-      # Gather facts if requested
+      # Gather facts if enabled
       if @gather_facts
         gather_facts_for_all_hosts
       end
       
-      # Execute tasks
       @tasks.each do |task|
         puts "TASK [#{task.name}]".colorize(:white).bold
         puts "*" * 70
@@ -87,34 +87,24 @@ module CrystalPlay
       puts "*" * 70
       
       @hosts.each do |host|
+        # Create facts gatherer (FactsGatherer uses SSHManager internally)
+        gatherer = FactsGatherer.new(host)
+        
+        # Gather facts
         begin
-          # Create facts gatherer
-          gatherer = FactsGatherer.new(host)
-          
-          # Gather facts
           facts = gatherer.gather
-          
-          # Store facts for this host
           @facts[host.name] = facts
           
-          # Also add to registered vars so they're available in variable substitution
-          facts.each do |key, value|
-            @registered_vars[host.name][key] = value
-          end
-          
-          # Display success
+          # Show success
           connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-          puts "#{"ok".colorize(:green)}: [#{connection_host}]"
+          puts "ok: [#{connection_host}]".colorize(:green)
           
           # Update stats
           @results[host.name]["ok"] += 1
-          
         rescue ex
-          # Facts gathering failed - show warning but continue
           connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-          puts "#{"failed".colorize(:red)}: [#{connection_host}]"
-          puts "  Warning: Facts gathering failed: #{ex.message}".colorize(:yellow)
-          
+          puts "failed: [#{connection_host}]".colorize(:red)
+          puts "  Error gathering facts: #{ex.message}".colorize(:red)
           @results[host.name]["failed"] += 1
         end
       end
@@ -137,6 +127,32 @@ module CrystalPlay
         @registered_vars[host.name]
       )
       
+      # Add facts to context
+      @facts[host.name].each do |key, value|
+        vars_context[key] = value
+      end
+      
+      # Check conditional (when:)
+      if when_condition = task.when_condition
+        # Create substitutor for the condition
+        substitutor = VariableSubstitutor.new(
+          vars: vars_context,
+          host_name: host.name
+        )
+        
+        # Substitute variables in condition
+        substituted_condition = substitutor.substitute(when_condition)
+        
+        # Evaluate condition
+        unless ConditionalEvaluator.evaluate(substituted_condition, vars_context)
+          # Condition failed - skip this task
+          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+          puts "skipping: [#{connection_host}]".colorize(:cyan)
+          @results[host.name]["skipped"] += 1
+          return
+        end
+      end
+      
       # Create variable substitutor
       substitutor = VariableSubstitutor.new(
         vars: vars_context,
@@ -146,6 +162,7 @@ module CrystalPlay
       # Substitute variables in task parameters
       substituted_params = substitute_task_params(task.params, substitutor)
       
+      # Check for action plugins
       if ActionPluginManager.has_action_plugin?(task.module_name)
         action_result = ActionPluginManager.execute_action(
           task.module_name,
@@ -251,19 +268,23 @@ module CrystalPlay
     
     # Register task result as a variable
     private def register_result(host : Host, register_name : String, result : JSON::Any)
-      # Store the entire result
-      @registered_vars[host.name][register_name] = result
+      # Create a mutable copy of the result to add stdout_lines/stderr_lines
+      result_hash = JSON.parse(result.to_json).as_h
       
-      # Also make common fields easily accessible
-      if stdout = result["stdout"]?
-        @registered_vars[host.name]["#{register_name}.stdout"] = stdout
+      # Add stdout_lines by splitting stdout on newlines (Ansible behavior)
+      if stdout = result_hash["stdout"]?.try(&.as_s)
+        stdout_lines = stdout.split("\n").map { |line| JSON::Any.new(line) }
+        result_hash["stdout_lines"] = JSON::Any.new(stdout_lines)
       end
-      if stderr = result["stderr"]?
-        @registered_vars[host.name]["#{register_name}.stderr"] = stderr
+      
+      # Add stderr_lines by splitting stderr on newlines (Ansible behavior)
+      if stderr = result_hash["stderr"]?.try(&.as_s)
+        stderr_lines = stderr.split("\n").map { |line| JSON::Any.new(line) }
+        result_hash["stderr_lines"] = JSON::Any.new(stderr_lines)
       end
-      if rc = result["rc"]?
-        @registered_vars[host.name]["#{register_name}.rc"] = rc
-      end
+      
+      # Store the enhanced result
+      @registered_vars[host.name][register_name] = JSON::Any.new(result_hash)
     end
     
     # Run all notified handlers
@@ -279,13 +300,18 @@ module CrystalPlay
     
     # Execute a handler (internal - called via callback)
     private def execute_handler_internal(handler : Task, host : Host) : JSON::Any
-      # Build variable context (includes facts)
+      # Build variable context
       vars_context = VariableContext.build(
         @play_vars,
         host,
         handler,
         @registered_vars[host.name]
       )
+      
+      # Add facts to context
+      @facts[host.name].each do |key, value|
+        vars_context[key] = value
+      end
       
       # Create variable substitutor
       substitutor = VariableSubstitutor.new(

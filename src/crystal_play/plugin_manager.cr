@@ -217,18 +217,49 @@ module CrystalPlay
     private def self.execute_local_plugin(plugin_name : String, config : JSON::Any) : JSON::Any
       plugin_path = get_local_plugin_path(plugin_name)
       
-      # Execute plugin with config via stdin
-      output = `echo '#{config.to_json}' | #{plugin_path} 2>&1`
+      # Execute plugin with config via stdin using Process (NOT shell echo)
+      # This properly handles JSON with newlines and special characters
+      stdout = IO::Memory.new
+      stderr = IO::Memory.new
       
       begin
-        JSON.parse(output)
-      rescue
-        # If parsing fails, return error
+        process = Process.new(
+          plugin_path,
+          input: Process::Redirect::Pipe,
+          output: stdout,
+          error: stderr
+        )
+        
+        # Write config JSON to stdin
+        if input = process.input
+          input.print(config.to_json)
+          input.close
+        end
+        
+        # Wait for completion
+        status = process.wait
+        
+        output = stdout.to_s
+        
+        # Parse output
+        begin
+          JSON.parse(output)
+        rescue ex
+          # If parsing fails, return error with details
+          JSON.parse({
+            "changed" => false,
+            "failed" => true,
+            "msg" => "Failed to parse plugin output",
+            "stdout" => output,
+            "stderr" => stderr.to_s,
+            "parse_error" => ex.message
+          }.to_json)
+        end
+      rescue ex
         JSON.parse({
           "changed" => false,
           "failed" => true,
-          "msg" => "Failed to parse plugin output",
-          "stdout" => output
+          "msg" => "Plugin execution failed: #{ex.message}"
         }.to_json)
       end
     end

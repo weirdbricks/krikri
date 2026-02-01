@@ -1,0 +1,23 @@
+---
+# Quick Debug Test - Verify var: parameter works
+
+- name: Debug Test
+  hosts: localhost
+  gather_facts: false
+  
+  tasks:
+    - name: Run a command
+      ansible.builtin.shell: echo "Hello World"
+      register: test_result
+    
+    - name: Test 1 - Debug with var (should show stdout)
+      ansible.builtin.debug:
+        var: test_result.stdout
+    
+    - name: Test 2 - Debug with var (should show stdout_lines array)
+      ansible.builtin.debug:
+        var: test_result.stdout_lines
+    
+    - name: Test 3 - Debug with msg (should work)
+      ansible.builtin.debug:
+        msg: "Output was: {{ test_result.stdout }}"

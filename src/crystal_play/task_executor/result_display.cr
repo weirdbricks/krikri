@@ -202,6 +202,11 @@ module CrystalPlay
             status_parts << "failed=#{stats["failed"]}".colorize(:green).to_s
           end
           
+          # Skipped count (cyan if any)
+          if stats["skipped"]? && stats["skipped"] > 0
+            status_parts << "skipped=#{stats["skipped"]}".colorize(:cyan).to_s
+          end
+          
           puts "#{host.name.ljust(20)} : #{status_parts.join("  ")}"
         end
       end
