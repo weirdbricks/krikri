@@ -175,6 +175,122 @@ module CrystalPlay
       end
     end
     
+    # Upload file using rsync (more efficient for incremental updates)
+    # Returns true if successful, false if rsync not available or failed
+    def self.rsync_upload(
+      host : String,
+      user : String,
+      local_path : String,
+      remote_path : String,
+      port : Int32 = 22,
+      mode : Int32 = 0o644
+    ) : Bool
+      init
+      
+      # Check if rsync is available locally
+      rsync_check = Process.run("which", ["rsync"], 
+        output: Process::Redirect::Close, 
+        error: Process::Redirect::Close
+      )
+      
+      return false unless rsync_check.exit_code == 0
+      
+      control_path = get_control_path(host, user, port)
+      
+      # Use rsync with SSH control master
+      rsync_cmd = [
+        "rsync",
+        "-az",  # archive mode, compress
+        "--chmod=#{mode.to_s(8)}",  # set permissions
+        "-e", "ssh -o ControlMaster=auto -o ControlPath=#{control_path} -o ControlPersist=600 -o StrictHostKeyChecking=accept-new -p #{port}",
+        local_path,
+        "#{user}@#{host}:#{remote_path}"
+      ]
+      
+      result = Process.run(
+        rsync_cmd[0],
+        rsync_cmd[1..],
+        output: Process::Redirect::Pipe,
+        error: Process::Redirect::Pipe
+      )
+      
+      if result.exit_code == 0
+        @@stats["files_uploaded"] += 1
+        true
+      else
+        false
+      end
+    end
+    
+    # Batch upload multiple files using rsync (most efficient)
+    # Returns true if successful, false if rsync not available or failed
+    def self.rsync_upload_batch(
+      host : String,
+      user : String,
+      local_files : Array(String),
+      remote_dir : String,
+      port : Int32 = 22,
+      mode : Int32 = 0o755
+    ) : Bool
+      init
+      
+      return false if local_files.empty?
+      
+      # Check if rsync is available locally
+      rsync_check = Process.run("which", ["rsync"], 
+        output: Process::Redirect::Close, 
+        error: Process::Redirect::Close
+      )
+      
+      return false unless rsync_check.exit_code == 0
+      
+      control_path = get_control_path(host, user, port)
+      
+      # Convert all paths to absolute paths and get base directory
+      # rsync needs absolute paths when using --files-from with a base directory
+      absolute_files = local_files.map { |f| File.expand_path(f) }
+      
+      # Create a temporary file list for rsync
+      # This avoids command-line length limits
+      files_list = "/tmp/.crystal-play-rsync-files-#{Random::Secure.hex(4)}"
+      File.write(files_list, absolute_files.join("\n"))
+      
+      rsync_cmd = [
+        "rsync",
+        "-az",                          # archive + compress
+        "--files-from=#{files_list}",   # read file list
+        "--chmod=#{mode.to_s(8)}",      # set permissions
+        "-e", "ssh -o ControlMaster=auto -o ControlPath=#{control_path} -o ControlPersist=600 -o StrictHostKeyChecking=accept-new -p #{port}",
+        "/",                            # base directory (files in list are absolute paths)
+        "#{user}@#{host}:#{remote_dir}"
+      ]
+      
+      stdout = IO::Memory.new
+      stderr = IO::Memory.new
+      
+      result = Process.run(
+        rsync_cmd[0],
+        rsync_cmd[1..],
+        output: stdout,
+        error: stderr
+      )
+      
+      # Cleanup temp file
+      File.delete(files_list) if File.exists?(files_list)
+      
+      if result.exit_code == 0
+        @@stats["files_uploaded"] += local_files.size
+        true
+      else
+        # DEBUG: Log why rsync failed
+        STDERR.puts "DEBUG: rsync failed with exit code #{result.exit_code}"
+        STDERR.puts "DEBUG: stdout: #{stdout.to_s}"
+        STDERR.puts "DEBUG: stderr: #{stderr.to_s}"
+        STDERR.puts "DEBUG: rsync command: #{rsync_cmd.join(" ")}"
+        false
+      end
+    end
+    
     # Close specific connection
     def self.close_connection(host : String, user : String, port : Int32 = 22)
       control_path = get_control_path(host, user, port)
