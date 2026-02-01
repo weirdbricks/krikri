@@ -1,5 +1,6 @@
 require "json"
 require "digest/md5"
+require "colorize"
 require "./ssh_manager"
 require "./local_executor"
 
@@ -128,7 +129,7 @@ module CrystalPlay
       remote_plugin_dir = "/tmp/.crystal-play/plugins"
       remote_plugin_path = "#{remote_plugin_dir}/#{simple_name}"  # Use simple name for remote path
       
-      # If we've already verified in this session, skip
+      # If we've already verified in this session, skip (no output needed)
       if @@uploaded_plugins[host_key].includes?(simple_name)
         return remote_plugin_path
       end
@@ -148,11 +149,22 @@ module CrystalPlay
       
       if md5_check[:exit_code] == 0 && md5_check[:stdout].strip == local_md5
         # Plugin exists with matching MD5 - reuse it!
+        print "   → Plugin '#{simple_name}' already on #{connection_host} (MD5 match)".colorize(:cyan)
+        puts ""
         @@uploaded_plugins[host_key].add(simple_name)
         return remote_plugin_path
       end
       
       # Plugin doesn't exist or is outdated - upload it
+      if md5_check[:exit_code] == 0
+        # Plugin exists but MD5 differs
+        print "   → Uploading plugin '#{simple_name}' to #{connection_host} (MD5 mismatch - updating)".colorize(:yellow)
+      else
+        # Plugin doesn't exist
+        print "   → Uploading plugin '#{simple_name}' to #{connection_host} (first time)".colorize(:green)
+      end
+      puts ""
+      
       # Create remote plugin directory
       SSHManager.exec(
         connection_host,
