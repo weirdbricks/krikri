@@ -3,7 +3,6 @@ require "colorize"
 require "../playbook_parser"
 require "../variable_substitutor"
 require "../plugin_manager"
-require "../facts_gatherer"
 require "../conditional_evaluator"
 require "./variable_context"
 require "./result_display"
@@ -81,19 +80,64 @@ module CrystalPlay
       run_handlers
     end
     
-    # Gather facts for all hosts
+    # Gather facts for all hosts using the facts plugin
     private def gather_facts_for_all_hosts
       puts "TASK [Gathering Facts]".colorize(:white).bold
       puts "*" * 70
       
       @hosts.each do |host|
-        # Create facts gatherer (FactsGatherer uses SSHManager internally)
-        gatherer = FactsGatherer.new(host)
-        
-        # Gather facts
         begin
-          facts = gatherer.gather
-          @facts[host.name] = facts
+          # Build minimal config for facts plugin
+          vars_context = Hash(String, JSON::Any).new
+          
+          # Add host vars to context
+          host.vars.each do |key, value|
+            vars_context[key] = value
+          end
+          
+          config = {
+            "host" => {
+              "name" => host.name,
+              "user" => host.user,
+              "port" => host.port
+            },
+            "params" => {} of String => String,
+            "vars" => vars_context
+          }
+          
+          config_json = JSON.parse(config.to_json)
+          
+          # Execute facts plugin (will be uploaded and run like other plugins)
+          result = PluginManager.execute_plugin(
+            "facts",
+            config_json,
+            host,
+            vars_context
+          )
+          
+          # Check for errors
+          if result["failed"]?.try(&.as_bool)
+            error_msg = result["msg"]?.try(&.as_s) || "Unknown error"
+            raise "Facts gathering failed: #{error_msg}"
+          end
+          
+          # Extract facts from result
+          if ansible_facts = result["ansible_facts"]?
+            facts = Hash(String, JSON::Any).new
+            ansible_facts.as_h.each do |key, value|
+              facts[key] = value
+            end
+            @facts[host.name] = facts
+            
+            # DEBUG: Show how many facts we got
+            STDERR.puts "DEBUG: Got #{facts.size} facts for #{host.name}"
+            if facts.size > 0
+              STDERR.puts "DEBUG: Sample facts: #{facts.keys.first(5).join(", ")}"
+            end
+          else
+            STDERR.puts "DEBUG: No ansible_facts in result for #{host.name}"
+            STDERR.puts "DEBUG: Result keys: #{result.as_h.keys.join(", ")}"
+          end
           
           # Show success
           connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
@@ -105,6 +149,7 @@ module CrystalPlay
           connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
           puts "failed: [#{connection_host}]".colorize(:red)
           puts "  Error gathering facts: #{ex.message}".colorize(:red)
+          STDERR.puts ex.backtrace.join("\n")
           @results[host.name]["failed"] += 1
         end
       end
