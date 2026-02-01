@@ -3,6 +3,8 @@ require "digest/md5"
 require "colorize"
 require "./ssh_manager"
 require "./local_executor"
+require "./playbook_parser"
+require "./inventory_parser"
 
 module CrystalPlay
   # Plugin Manager - Handles plugin execution locally or remotely
@@ -19,144 +21,178 @@ module CrystalPlay
       @@verbose = value
     end
     
-    # Batch upload all required plugins for a playbook to remote hosts
-    # This is called ONCE before task execution to upload all plugins efficiently
+    # Pre-upload all plugins needed for a playbook to all remote hosts
+    # This is called once before task execution begins
+    # Much more efficient than uploading plugins one at a time during execution
     def self.batch_upload_plugins_for_playbook(
       playbook : Playbook,
-      hosts : Array(Host)
+      inventory : Inventory
     )
-      # 1. Scan playbook to find ALL plugins that will be used
+      # Collect all unique module names used in the playbook
       required_plugins = Set(String).new
+      
       playbook.plays.each do |play|
-        play.tasks.each { |task| required_plugins.add(task.module_name) }
-        play.handlers.each { |handler| required_plugins.add(handler.module_name) }
+        play.tasks.each do |task|
+          # Strip FQCN to get simple plugin name
+          simple_name = task.module_name.sub(/^ansible\.(builtin|legacy)\./, "")
+          required_plugins.add(simple_name)
+        end
+        
+        play.handlers.each do |handler|
+          simple_name = handler.module_name.sub(/^ansible\.(builtin|legacy)\./, "")
+          required_plugins.add(simple_name)
+        end
       end
       
       return if required_plugins.empty?
       
-      # 2. Group hosts by connection details (to batch per unique host)
-      host_groups = Hash(String, Array(Host)).new
-      hosts.each do |host|
-        # Skip local connections
-        next if is_local_connection?(host, host.vars)
+      # Collect all unique remote hosts from the playbook
+      remote_hosts = [] of Host
+      host_keys_seen = Set(String).new
+      
+      playbook.plays.each do |play|
+        hosts = inventory.get_hosts(play.hosts.to_s)
         
-        connection_host = get_connection_host(host, host.vars)
-        host_key = "#{host.user}@#{connection_host}:#{host.port}"
-        host_groups[host_key] ||= [] of Host
-        host_groups[host_key] << host
+        hosts.each do |host|
+          # Skip localhost
+          next if is_local_connection?(host, host.vars)
+          
+          # Deduplicate by connection details
+          connection_host = get_connection_host(host, host.vars)
+          host_key = "#{host.user}@#{connection_host}:#{host.port}"
+          
+          unless host_keys_seen.includes?(host_key)
+            remote_hosts << host
+            host_keys_seen.add(host_key)
+          end
+        end
       end
       
-      return if host_groups.empty?
+      return if remote_hosts.empty?
       
       puts "Preparing plugins for remote execution...".colorize(:cyan) if @@verbose
       
-      # 3. For each unique remote host, batch upload all plugins
-      host_groups.each do |host_key, host_list|
-        host = host_list.first  # All hosts in group share same connection details
-        connection_host = get_connection_host(host, host.vars)
-        
-        # Build list of local plugin paths
-        local_plugin_paths = [] of String
-        plugin_names = [] of String
-        
-        required_plugins.each do |plugin_name|
-          begin
-            simple_name = plugin_name.sub(/^ansible\.(builtin|legacy)\./, "")
-            local_path = get_local_plugin_path(plugin_name)
-            local_plugin_paths << local_path
-            plugin_names << simple_name
-          rescue
-            # Plugin not found, skip it (will error later when actually needed)
-            next
-          end
-        end
-        
-        next if local_plugin_paths.empty?
-        
-        # Ensure remote directory exists
-        remote_plugin_dir = "/tmp/.crystal-play/plugins"
-        SSHManager.exec(
-          connection_host,
-          host.user || "root",
-          "mkdir -p #{remote_plugin_dir}",
-          host.port
-        )
-        
-        # Try batch upload with rsync first
-        if @@verbose
-          puts "   → Uploading #{plugin_names.size} plugins to #{connection_host} via rsync".colorize(:green)
-        end
-        
-        success = SSHManager.rsync_upload_batch(
-          connection_host,
-          host.user || "root",
-          local_plugin_paths,
-          remote_plugin_dir,
-          host.port,
-          mode: 0o755
-        )
-        
-        if success
-          # Mark all plugins as uploaded
-          @@uploaded_plugins[host_key] ||= Set(String).new
-          plugin_names.each { |name| @@uploaded_plugins[host_key].add(name) }
-          
-          # Store MD5s for each plugin
-          plugin_names.zip(local_plugin_paths).each do |name, path|
-            local_md5 = Digest::MD5.hexdigest(File.read(path))
-            SSHManager.exec(
-              connection_host,
-              host.user || "root",
-              "echo '#{local_md5}' > #{remote_plugin_dir}/#{name}.md5",
-              host.port
-            )
-          end
-          
-          if @@verbose
-            puts "   ✓ Successfully uploaded #{plugin_names.size} plugins".colorize(:green)
-          end
-        else
-          # Rsync failed, fall back to individual scp uploads
-          if @@verbose
-            puts "   → Rsync unavailable, falling back to scp for #{connection_host}".colorize(:yellow)
-          end
-          
-          plugin_names.zip(local_plugin_paths).each do |name, path|
-            remote_path = "#{remote_plugin_dir}/#{name}"
-            
-            begin
-              SSHManager.upload(
-                connection_host,
-                host.user || "root",
-                path,
-                remote_path,
-                host.port,
-                mode: 0o755
-              )
-              
-              # Store MD5
-              local_md5 = Digest::MD5.hexdigest(File.read(path))
-              SSHManager.exec(
-                connection_host,
-                host.user || "root",
-                "echo '#{local_md5}' > #{remote_path}.md5",
-                host.port
-              )
-              
-              # Mark as uploaded
-              @@uploaded_plugins[host_key] ||= Set(String).new
-              @@uploaded_plugins[host_key].add(name)
-            rescue ex
-              # Upload failed, will retry later when plugin is actually needed
-              if @@verbose
-                puts "   ✗ Failed to upload #{name}: #{ex.message}".colorize(:red)
-              end
-            end
-          end
-        end
+      # Upload plugins to each unique remote host
+      remote_hosts.each do |host|
+        upload_plugins_to_host(host, required_plugins.to_a)
       end
       
       puts "" if @@verbose
+    end
+    
+    # Upload a set of plugins to a specific host
+    private def self.upload_plugins_to_host(host : Host, plugin_names : Array(String))
+      connection_host = get_connection_host(host, host.vars)
+      host_key = "#{host.user}@#{connection_host}:#{host.port}"
+      
+      # Initialize plugin cache for this host
+      @@uploaded_plugins[host_key] ||= Set(String).new
+      
+      remote_plugin_dir = "/tmp/.crystal-play/plugins"
+      
+      # Create remote plugin directory
+      SSHManager.exec(
+        connection_host,
+        host.user || "root",
+        "mkdir -p #{remote_plugin_dir}",
+        host.port
+      )
+      
+      # Check which plugins need uploading (check MD5)
+      plugins_to_upload = [] of String
+      local_plugin_paths = [] of String
+      
+      plugin_names.each do |plugin_name|
+        # Skip if already verified in this session
+        next if @@uploaded_plugins[host_key].includes?(plugin_name)
+        
+        # Get local plugin MD5
+        local_plugin_path = get_local_plugin_path(plugin_name)
+        local_md5 = Digest::MD5.hexdigest(File.read(local_plugin_path))
+        
+        # Check if remote plugin exists and matches our MD5
+        md5_check = SSHManager.exec(
+          connection_host,
+          host.user || "root",
+          "[ -f #{remote_plugin_dir}/#{plugin_name}.md5 ] && cat #{remote_plugin_dir}/#{plugin_name}.md5",
+          host.port
+        )
+        
+        if md5_check[:exit_code] == 0 && md5_check[:stdout].strip == local_md5
+          # Plugin exists with matching MD5 - skip upload
+          @@uploaded_plugins[host_key].add(plugin_name)
+          next
+        end
+        
+        # Plugin needs uploading
+        plugins_to_upload << plugin_name
+        local_plugin_paths << local_plugin_path
+      end
+      
+      # Nothing to upload
+      return if plugins_to_upload.empty?
+      
+      # Upload plugins in batch
+      puts "   → Uploading #{plugins_to_upload.size} plugins to #{connection_host} via rsync".colorize(:cyan) if @@verbose
+      
+      # Try rsync batch upload first
+      if SSHManager.rsync_upload_batch(
+        connection_host,
+        host.user || "root",
+        local_plugin_paths,
+        remote_plugin_dir,
+        host.port,
+        mode: 0o755
+      )
+        # Rsync succeeded - store MD5s for all plugins
+        plugins_to_upload.each do |plugin_name|
+          local_plugin_path = get_local_plugin_path(plugin_name)
+          local_md5 = Digest::MD5.hexdigest(File.read(local_plugin_path))
+          
+          # Store MD5 on remote
+          SSHManager.exec(
+            connection_host,
+            host.user || "root",
+            "echo '#{local_md5}' > #{remote_plugin_dir}/#{plugin_name}.md5",
+            host.port
+          )
+          
+          @@uploaded_plugins[host_key].add(plugin_name)
+        end
+        
+        puts "   ✓ Successfully uploaded #{plugins_to_upload.size} plugins".colorize(:green) if @@verbose
+      else
+        # Rsync failed - fall back to individual scp uploads
+        puts "   → Rsync unavailable, using scp for #{plugins_to_upload.size} plugins".colorize(:yellow) if @@verbose
+        
+        plugins_to_upload.each_with_index do |plugin_name, index|
+          local_plugin_path = get_local_plugin_path(plugin_name)
+          remote_plugin_path = "#{remote_plugin_dir}/#{plugin_name}"
+          
+          # Upload plugin
+          SSHManager.upload(
+            connection_host,
+            host.user || "root",
+            local_plugin_path,
+            remote_plugin_path,
+            host.port,
+            mode: 0o755
+          )
+          
+          # Store MD5
+          local_md5 = Digest::MD5.hexdigest(File.read(local_plugin_path))
+          SSHManager.exec(
+            connection_host,
+            host.user || "root",
+            "echo '#{local_md5}' > #{remote_plugin_path}.md5",
+            host.port
+          )
+          
+          @@uploaded_plugins[host_key].add(plugin_name)
+        end
+        
+        puts "   ✓ Uploaded #{plugins_to_upload.size} plugins via scp".colorize(:green) if @@verbose
+      end
     end
     
     # Execute a plugin on a host (local or remote)
@@ -208,11 +244,12 @@ module CrystalPlay
       # Get the actual connection host (checks ansible_host)
       connection_host = get_connection_host(host, vars)
       
-      # Ensure plugin is uploaded to remote (will be skipped if batch uploaded)
-      remote_plugin_path = ensure_plugin_uploaded(plugin_name, host, vars)
+      # Get remote plugin path
+      simple_name = plugin_name.sub(/^ansible\.(builtin|legacy)\./, "")
+      remote_plugin_dir = "/tmp/.crystal-play/plugins"
+      remote_plugin_path = "#{remote_plugin_dir}/#{simple_name}"
       
       # Modify config to tell plugin it's running locally on the remote
-      # The plugin needs to know it should execute commands locally, not via SSH
       config_hash = JSON.parse(config.to_json).as_h
       if config_hash["vars"]?
         vars_hash = config_hash["vars"].as_h
@@ -253,101 +290,6 @@ module CrystalPlay
           "stderr" => result[:stderr]
         }.to_json)
       end
-    end
-    
-    # Ensure plugin binary is uploaded to remote host
-    # Uses MD5 checksum to detect if plugin changed
-    # NOTE: This is now primarily a fallback - batch_upload_plugins_for_playbook is preferred
-    private def self.ensure_plugin_uploaded(
-      plugin_name : String,
-      host : Host,
-      vars : Hash(String, JSON::Any)
-    ) : String
-      
-      # Get the actual connection host (checks ansible_host)
-      connection_host = get_connection_host(host, vars)
-      
-      # Strip FQCN to get simple plugin name
-      simple_name = plugin_name.sub(/^ansible\.(builtin|legacy)\./, "")
-      
-      host_key = "#{host.user}@#{connection_host}:#{host.port}"
-      
-      # Check if already uploaded in this session
-      @@uploaded_plugins[host_key] ||= Set(String).new
-      
-      remote_plugin_dir = "/tmp/.crystal-play/plugins"
-      remote_plugin_path = "#{remote_plugin_dir}/#{simple_name}"
-      
-      # If we've already verified in this session, skip
-      if @@uploaded_plugins[host_key].includes?(simple_name)
-        return remote_plugin_path
-      end
-      
-      # Get local plugin MD5
-      local_plugin_path = get_local_plugin_path(plugin_name)
-      local_md5 = Digest::MD5.hexdigest(File.read(local_plugin_path))
-      
-      # Check if remote plugin exists and matches our MD5
-      md5_check = SSHManager.exec(
-        connection_host,
-        host.user || "root",
-        "[ -f #{remote_plugin_path}.md5 ] && cat #{remote_plugin_path}.md5",
-        host.port
-      )
-      
-      if md5_check[:exit_code] == 0 && md5_check[:stdout].strip == local_md5
-        # Plugin exists with matching MD5 - reuse it!
-        @@uploaded_plugins[host_key].add(simple_name)
-        return remote_plugin_path
-      end
-      
-      # Plugin doesn't exist or is outdated - upload it
-      if @@verbose
-        puts "   → Uploading plugin '#{simple_name}' to #{connection_host}".colorize(:yellow)
-      end
-      
-      # Create remote plugin directory
-      SSHManager.exec(
-        connection_host,
-        host.user || "root",
-        "mkdir -p #{remote_plugin_dir}",
-        host.port
-      )
-      
-      # Try rsync first, fallback to scp
-      upload_success = SSHManager.rsync_upload(
-        connection_host,
-        host.user || "root",
-        local_plugin_path,
-        remote_plugin_path,
-        host.port,
-        mode: 0o755
-      )
-      
-      unless upload_success
-        # Fallback to scp
-        SSHManager.upload(
-          connection_host,
-          host.user || "root",
-          local_plugin_path,
-          remote_plugin_path,
-          host.port,
-          mode: 0o755
-        )
-      end
-      
-      # Store MD5 for future checks
-      SSHManager.exec(
-        connection_host,
-        host.user || "root",
-        "echo '#{local_md5}' > #{remote_plugin_path}.md5",
-        host.port
-      )
-      
-      # Mark as uploaded
-      @@uploaded_plugins[host_key].add(simple_name)
-      
-      remote_plugin_path
     end
     
     # Get local plugin path (compiled binary)

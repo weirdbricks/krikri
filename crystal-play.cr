@@ -193,26 +193,10 @@ end
 # Set verbose mode for plugin manager
 CrystalPlay::PluginManager.verbose = verbose
 
-# Collect all hosts that will be used in this playbook run
-all_remote_hosts = [] of CrystalPlay::Host
-playbook.plays.each do |play|
-  hosts = inventory.get_hosts(play.hosts.to_s)
-  all_remote_hosts.concat(hosts)
-end
-
-# Batch upload plugins to all remote hosts (using rsync for efficiency)
-unless all_remote_hosts.empty?
-  # Deduplicate hosts by connection details
-  unique_hosts = all_remote_hosts.uniq { |h| 
-    connection_host = h.vars["ansible_host"]?.try(&.as_s?) || h.name
-    "#{h.user}@#{connection_host}:#{h.port}" 
-  }
-  
-  # Batch upload all required plugins
-  CrystalPlay::PluginManager.batch_upload_plugins_for_playbook(
-    playbook,
-    unique_hosts
-  )
+# Batch upload plugins to all remote hosts before execution
+# This is much more efficient than uploading during task execution
+if playbook && inventory
+  CrystalPlay::PluginManager.batch_upload_plugins_for_playbook(playbook, inventory)
 end
 
 # Execute playbook

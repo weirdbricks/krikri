@@ -246,47 +246,40 @@ module CrystalPlay
       
       control_path = get_control_path(host, user, port)
       
-      # Convert all paths to absolute paths and get base directory
-      # rsync needs absolute paths when using --files-from with a base directory
-      absolute_files = local_files.map { |f| File.expand_path(f) }
+      # Instead of using --files-from with complex paths, upload files individually
+      # This is still much faster than scp due to rsync's delta-transfer and single SSH connection
+      success_count = 0
       
-      # Create a temporary file list for rsync
-      # This avoids command-line length limits
-      files_list = "/tmp/.crystal-play-rsync-files-#{Random::Secure.hex(4)}"
-      File.write(files_list, absolute_files.join("\n"))
+      local_files.each do |local_file|
+        # Get just the filename
+        filename = File.basename(local_file)
+        remote_path = "#{remote_dir}/#{filename}"
+        
+        rsync_cmd = [
+          "rsync",
+          "-az",
+          "--chmod=#{mode.to_s(8)}",
+          "-e", "ssh -o ControlMaster=auto -o ControlPath=#{control_path} -o ControlPersist=600 -o StrictHostKeyChecking=accept-new -p #{port}",
+          local_file,
+          "#{user}@#{host}:#{remote_path}"
+        ]
+        
+        result = Process.run(
+          rsync_cmd[0],
+          rsync_cmd[1..],
+          output: Process::Redirect::Close,
+          error: Process::Redirect::Close
+        )
+        
+        if result.exit_code == 0
+          success_count += 1
+        end
+      end
       
-      rsync_cmd = [
-        "rsync",
-        "-az",                          # archive + compress
-        "--files-from=#{files_list}",   # read file list
-        "--chmod=#{mode.to_s(8)}",      # set permissions
-        "-e", "ssh -o ControlMaster=auto -o ControlPath=#{control_path} -o ControlPersist=600 -o StrictHostKeyChecking=accept-new -p #{port}",
-        "/",                            # base directory (files in list are absolute paths)
-        "#{user}@#{host}:#{remote_dir}"
-      ]
-      
-      stdout = IO::Memory.new
-      stderr = IO::Memory.new
-      
-      result = Process.run(
-        rsync_cmd[0],
-        rsync_cmd[1..],
-        output: stdout,
-        error: stderr
-      )
-      
-      # Cleanup temp file
-      File.delete(files_list) if File.exists?(files_list)
-      
-      if result.exit_code == 0
+      if success_count == local_files.size
         @@stats["files_uploaded"] += local_files.size
         true
       else
-        # DEBUG: Log why rsync failed
-        STDERR.puts "DEBUG: rsync failed with exit code #{result.exit_code}"
-        STDERR.puts "DEBUG: stdout: #{stdout.to_s}"
-        STDERR.puts "DEBUG: stderr: #{stderr.to_s}"
-        STDERR.puts "DEBUG: rsync command: #{rsync_cmd.join(" ")}"
         false
       end
     end

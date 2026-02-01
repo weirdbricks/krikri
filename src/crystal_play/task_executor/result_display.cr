@@ -25,6 +25,39 @@ module CrystalPlay
         
         puts "#{status}: [#{connection_host}]"
         
+        # If failed, show additional error details
+        if failed
+          # Show error message
+          if msg && !msg.empty?
+            puts "  Message: #{msg}".colorize(:red)
+          end
+          
+          # Show stderr if available
+          if stderr = result["stderr"]?.try(&.as_s)
+            if !stderr.empty?
+              puts "  Error output:".colorize(:red)
+              stderr.lines.each do |line|
+                puts "    #{line}".colorize(:red)
+              end
+            end
+          end
+          
+          # Show stdout if available (might have partial output)
+          if stdout = result["stdout"]?.try(&.as_s)
+            if !stdout.empty?
+              puts "  Output:".colorize(:yellow)
+              stdout.lines.each do |line|
+                puts "    #{line}".colorize(:yellow)
+              end
+            end
+          end
+          
+          # Show exit code if available
+          if rc = result["rc"]?.try(&.as_i)
+            puts "  Exit code: #{rc}".colorize(:red)
+          end
+        end
+        
         # Display diff if present and diff_mode enabled
         if diff_mode && result["diff"]?
           display_diff(result["diff"])
