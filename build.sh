@@ -182,6 +182,7 @@ PLUGINS=(
     "apt"
     "dnf"
     "package"
+    "debug"
 )
 
 PLUGIN_COUNT=0

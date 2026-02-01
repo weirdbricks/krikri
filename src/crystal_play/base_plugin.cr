@@ -1,7 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
+require "file_utils"
 require "./ssh_manager"
+require "./local_executor"
 
 module CrystalPlay
   # Host information
@@ -118,45 +120,80 @@ module CrystalPlay
     end
     
     # Helper methods for remote execution
-    # Uses SSHManager for real SSH connections with connection pooling
+    # Supports both SSH and local connections
+    
+    # Check if this host should use local connection
+    protected def is_local_connection? : Bool
+      # Check if ansible_connection is set to local
+      if conn = @vars["ansible_connection"]?
+        return conn.as_s? == "local"
+      end
+      
+      # Check if host is localhost
+      @host.name == "localhost"
+    end
     
     protected def remote_exec(command : String) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
-      SSHManager.exec(
-        @host.name,
-        @host.user || "root",
-        command,
-        @host.port
-      )
+      if is_local_connection?
+        # Execute locally
+        LocalExecutor.exec(command)
+      else
+        # Execute via SSH
+        SSHManager.exec(
+          @host.name,
+          @host.user || "root",
+          command,
+          @host.port
+        )
+      end
     end
     
     protected def remote_upload(local_path : String, remote_path : String)
-      SSHManager.upload(
-        @host.name,
-        @host.user || "root",
-        local_path,
-        remote_path,
-        @host.port
-      )
+      if is_local_connection?
+        # Just copy locally
+        FileUtils.cp(local_path, remote_path)
+      else
+        SSHManager.upload(
+          @host.name,
+          @host.user || "root",
+          local_path,
+          remote_path,
+          @host.port
+        )
+      end
     end
     
     protected def remote_download(remote_path : String, local_path : String)
-      SSHManager.download(
-        @host.name,
-        @host.user || "root",
-        remote_path,
-        local_path,
-        @host.port
-      )
+      if is_local_connection?
+        # Just copy locally
+        FileUtils.cp(remote_path, local_path)
+      else
+        SSHManager.download(
+          @host.name,
+          @host.user || "root",
+          remote_path,
+          local_path,
+          @host.port
+        )
+      end
     end
     
     protected def remote_file_exists?(path : String) : Bool
-      result = remote_exec("test -f #{path}")
-      result[:exit_code] == 0
+      if is_local_connection?
+        LocalExecutor.file_exists?(path)
+      else
+        result = remote_exec("test -f #{path}")
+        result[:exit_code] == 0
+      end
     end
     
     protected def remote_dir_exists?(path : String) : Bool
-      result = remote_exec("test -d #{path}")
-      result[:exit_code] == 0
+      if is_local_connection?
+        LocalExecutor.dir_exists?(path)
+      else
+        result = remote_exec("test -d #{path}")
+        result[:exit_code] == 0
+      end
     end
     
     # Helper to check if a parameter is truthy

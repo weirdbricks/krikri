@@ -106,7 +106,8 @@ module CrystalPlay
       "ansible.builtin.shell",
       "ansible.builtin.apt",
       "ansible.builtin.dnf",
-      "ansible.builtin.package"
+      "ansible.builtin.package",
+      "ansible.builtin.debug"
     ]
     
     # Parse playbook from file
@@ -248,10 +249,9 @@ module CrystalPlay
       unless module_name
         raise "No module found in task '#{name}'"
       end
-      
+
       # Check if plugin is available
       unless AVAILABLE_PLUGINS.includes?(module_name)
-        puts "  WARNING: Plugin '#{module_name}' not implemented yet - task will be skipped".colorize(:yellow)
         raise "Plugin not available: #{module_name}"
       end
       
