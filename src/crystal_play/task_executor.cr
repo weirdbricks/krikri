@@ -2,6 +2,7 @@ require "json"
 require "colorize"
 require "./playbook_parser"
 require "./variable_substitutor"
+require "./plugin_manager"
 
 module CrystalPlay
   class TaskExecutor
@@ -94,11 +95,17 @@ module CrystalPlay
       # Build config for plugin
       config = build_plugin_config_with_params(task, host, substituted_params)
       
-      # Get plugin path
+      # Get plugin path (for debug output if needed)
       plugin_path = get_plugin_path(task.module_name)
       
-      # Execute plugin
-      result = run_plugin(plugin_path, config)
+      # Execute plugin using PluginManager (handles local vs remote)
+      config_json = JSON.parse(config)
+      result = PluginManager.execute_plugin(
+        task.module_name,
+        config_json,
+        host,
+        vars_context
+      )
       
       # Handle register directive
       if register_name = task.register
@@ -232,50 +239,6 @@ module CrystalPlay
       raise "Plugin not found: #{module_name} (looked for #{plugin_name})"
     end
 
-    private def run_plugin(plugin_path : String, config : String) : JSON::Any
-      # Use Process instead of backticks for proper stdin handling
-      stdout = IO::Memory.new
-      stderr = IO::Memory.new
-      
-      begin
-        process = Process.new(
-          plugin_path,
-          input: Process::Redirect::Pipe,
-          output: stdout,
-          error: stderr
-        )
-        
-        # Write config to stdin
-        process.input.print(config)
-        process.input.close
-        
-        # Wait for completion
-        status = process.wait
-        
-        # Parse output
-        output = stdout.to_s
-        
-        begin
-          JSON.parse(output)
-        rescue
-          # If parse fails, create error result
-          JSON.parse({
-            "changed" => false,
-            "failed" => true,
-            "msg" => "Failed to parse plugin output",
-            "stdout" => output,
-            "stderr" => stderr.to_s
-          }.to_json)
-        end
-      rescue ex
-        JSON.parse({
-          "changed" => false,
-          "failed" => true,
-          "msg" => "Plugin execution failed: #{ex.message}"
-        }.to_json)
-      end
-    end
-    
     private def display_result(host : CrystalPlay::Host, result : JSON::Any)
       changed = result["changed"]?.try(&.as_bool) || false
       failed = result["failed"]?.try(&.as_bool) || false
@@ -465,8 +428,18 @@ module CrystalPlay
       # Get plugin path
       plugin_path = get_plugin_path(handler.module_name)
       
-      # Execute plugin
-      result = run_plugin(plugin_path, config)
+      # Execute plugin using PluginManager
+      config_json = JSON.parse(config)
+      
+      # Build variable context for handler
+      handler_vars_context = build_variable_context(host, handler)
+      
+      result = PluginManager.execute_plugin(
+        handler.module_name,
+        config_json,
+        host,
+        handler_vars_context
+      )
       
       # Display result
       display_result(host, result)

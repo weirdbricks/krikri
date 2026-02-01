@@ -1,0 +1,189 @@
+require "json"
+require "digest/md5"
+require "./ssh_manager"
+require "./local_executor"
+
+module CrystalPlay
+  # Plugin Manager - Handles plugin execution locally or remotely
+  # For remote hosts, uploads plugin binary and executes it there
+  class PluginManager
+    # Cache of plugins already uploaded to remote hosts
+    @@uploaded_plugins = Hash(String, Set(String)).new
+    
+    # Execute a plugin on a host (local or remote)
+    def self.execute_plugin(
+      plugin_name : String,
+      config : JSON::Any,
+      host : Host,
+      vars : Hash(String, JSON::Any)
+    ) : JSON::Any
+      
+      # Check if this is a local connection
+      is_local = is_local_connection?(host, vars)
+      
+      if is_local
+        execute_local_plugin(plugin_name, config)
+      else
+        execute_remote_plugin(plugin_name, config, host)
+      end
+    end
+    
+    # Execute plugin locally
+    private def self.execute_local_plugin(plugin_name : String, config : JSON::Any) : JSON::Any
+      plugin_path = get_local_plugin_path(plugin_name)
+      
+      # Execute plugin with config via stdin
+      output = `echo '#{config.to_json}' | #{plugin_path} 2>&1`
+      
+      begin
+        JSON.parse(output)
+      rescue
+        # If parsing fails, return error
+        JSON.parse({
+          "changed" => false,
+          "failed" => true,
+          "msg" => "Failed to parse plugin output",
+          "stdout" => output
+        }.to_json)
+      end
+    end
+    
+    # Execute plugin remotely (uploads if needed, then runs)
+    private def self.execute_remote_plugin(
+      plugin_name : String,
+      config : JSON::Any,
+      host : Host
+    ) : JSON::Any
+      
+      # Ensure plugin is uploaded to remote
+      remote_plugin_path = ensure_plugin_uploaded(plugin_name, host)
+      
+      # Execute plugin remotely with config via stdin
+      command = "echo '#{config.to_json.gsub("'", "'\\''")}' | #{remote_plugin_path}"
+      result = SSHManager.exec(
+        host.name,
+        host.user || "root",
+        command,
+        host.port
+      )
+      
+      if result[:exit_code] != 0
+        return JSON.parse({
+          "changed" => false,
+          "failed" => true,
+          "msg" => "Plugin execution failed on remote",
+          "stdout" => result[:stdout],
+          "stderr" => result[:stderr]
+        }.to_json)
+      end
+      
+      begin
+        JSON.parse(result[:stdout])
+      rescue
+        JSON.parse({
+          "changed" => false,
+          "failed" => true,
+          "msg" => "Failed to parse plugin output from remote",
+          "stdout" => result[:stdout],
+          "stderr" => result[:stderr]
+        }.to_json)
+      end
+    end
+    
+    # Ensure plugin binary is uploaded to remote host
+    # Uses MD5 checksum to detect if plugin changed
+    private def self.ensure_plugin_uploaded(plugin_name : String, host : Host) : String
+      host_key = "#{host.user}@#{host.name}:#{host.port}"
+      
+      # Check if already uploaded in this session
+      @@uploaded_plugins[host_key] ||= Set(String).new
+      
+      remote_plugin_dir = "/tmp/.crystal-play/plugins"
+      remote_plugin_path = "#{remote_plugin_dir}/#{plugin_name}"
+      
+      # If we've already verified in this session, skip
+      if @@uploaded_plugins[host_key].includes?(plugin_name)
+        return remote_plugin_path
+      end
+      
+      # Get local plugin MD5
+      local_plugin_path = get_local_plugin_path(plugin_name)
+      local_md5 = Digest::MD5.hexdigest(File.read(local_plugin_path))
+      
+      # Check if remote plugin exists and matches our MD5
+      # Store MD5 in companion file: /tmp/.crystal-play/plugins/copy.md5
+      md5_check = SSHManager.exec(
+        host.name,
+        host.user || "root",
+        "[ -f #{remote_plugin_path}.md5 ] && cat #{remote_plugin_path}.md5",
+        host.port
+      )
+      
+      if md5_check[:exit_code] == 0 && md5_check[:stdout].strip == local_md5
+        # Plugin exists with matching MD5 - reuse it!
+        @@uploaded_plugins[host_key].add(plugin_name)
+        return remote_plugin_path
+      end
+      
+      # Plugin doesn't exist or is outdated - upload it
+      # Create remote plugin directory
+      SSHManager.exec(
+        host.name,
+        host.user || "root",
+        "mkdir -p #{remote_plugin_dir}",
+        host.port
+      )
+      
+      # Upload plugin binary
+      SSHManager.upload(
+        host.name,
+        host.user || "root",
+        local_plugin_path,
+        remote_plugin_path,
+        host.port,
+        mode: 0o755  # Make executable
+      )
+      
+      # Store MD5 for future checks
+      SSHManager.exec(
+        host.name,
+        host.user || "root",
+        "echo '#{local_md5}' > #{remote_plugin_path}.md5",
+        host.port
+      )
+      
+      # Mark as uploaded
+      @@uploaded_plugins[host_key].add(plugin_name)
+      
+      remote_plugin_path
+    end
+    
+    # Get local plugin path (compiled binary)
+    private def self.get_local_plugin_path(plugin_name : String) : String
+      # Strip FQCN to get simple plugin filename
+      simple_name = plugin_name.sub(/^ansible\.(builtin|legacy)\./, "")
+      
+      # Try compiled plugin
+      compiled = "./bin/plugins/#{simple_name}"
+      return compiled if File.exists?(compiled)
+      
+      raise "Plugin binary not found: #{plugin_name} (looked for #{compiled})"
+    end
+    
+    # Check if connection is local
+    private def self.is_local_connection?(host : Host, vars : Hash(String, JSON::Any)) : Bool
+      # Check if ansible_connection is set to local
+      if conn = vars["ansible_connection"]?
+        return conn.as_s? == "local"
+      end
+      
+      # Check if host is localhost
+      host.name == "localhost"
+    end
+    
+    # Clear uploaded plugins cache (for testing)
+    def self.clear_cache
+      @@uploaded_plugins.clear
+    end
+  end
+end
