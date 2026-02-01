@@ -1,0 +1,109 @@
+---
+# Package Plugin Test - OS-agnostic package management
+# Tests auto-detection and delegation to appropriate package manager
+
+- name: Package Plugin Test
+  hosts: testservers
+  gather_facts: false
+  
+  tasks:
+    # Test 1: Detect package manager
+    - name: Test 1 - Check which package manager is available
+      ansible.builtin.shell: |
+        if which dnf >/dev/null 2>&1; then
+          echo "dnf"
+        elif which yum >/dev/null 2>&1; then
+          echo "yum"
+        elif which apt-get >/dev/null 2>&1; then
+          echo "apt"
+        else
+          echo "unknown"
+        fi
+      register: pkg_manager
+    
+    - name: Show detected package manager
+      ansible.builtin.debug:
+        msg: "Detected package manager: {{ pkg_manager.stdout }}"
+    
+    # Test 2: Install a safe, small package (tree - directory listing utility)
+    - name: Test 2 - Install tree package
+      ansible.builtin.package:
+        name: tree
+        state: present
+    
+    # Test 3: Verify installation
+    - name: Test 3 - Verify tree is installed
+      ansible.builtin.command: which tree
+      register: tree_check
+    
+    - name: Show tree location
+      ansible.builtin.debug:
+        msg: "tree installed at: {{ tree_check.stdout }}"
+    
+    # Test 4: Idempotency - install already installed package (should be ok)
+    - name: Test 4 - Install tree again (idempotency test)
+      ansible.builtin.package:
+        name: tree
+        state: present
+    
+    # Test 5: Test tree actually works
+    - name: Test 5 - Run tree command
+      ansible.builtin.shell: tree -L 1 /tmp | head -10
+      register: tree_output
+    
+    - name: Show tree output
+      ansible.builtin.debug:
+        var: tree_output.stdout_lines
+    
+    # Test 6: Remove package
+    - name: Test 6 - Remove tree package
+      ansible.builtin.package:
+        name: tree
+        state: absent
+    
+    # Test 7: Verify removal
+    - name: Test 7 - Verify tree is removed
+      ansible.builtin.shell: which tree 2>/dev/null || echo "not found"
+      register: tree_removed
+    
+    - name: Show removal status
+      ansible.builtin.debug:
+        msg: "Tree status after removal: {{ tree_removed.stdout }}"
+    
+    # Test 8: Idempotency - remove already removed package (should be ok)
+    - name: Test 8 - Remove tree again (idempotency test)
+      ansible.builtin.package:
+        name: tree
+        state: absent
+    
+    # Test 9: Reinstall for final verification
+    - name: Test 9 - Reinstall tree for final test
+      ansible.builtin.package:
+        name: tree
+        state: present
+    
+    # Test 10: Test with state=latest
+    - name: Test 10 - Ensure tree is at latest version
+      ansible.builtin.package:
+        name: tree
+        state: latest
+    
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "✓ Package plugin tests complete! (tree left installed for verification)"
+
+# Expected results:
+# Test 1: Shows detected package manager (dnf/yum/apt)
+# Test 2: changed=true (package installed)
+# Test 3: Shows /usr/bin/tree or similar
+# Test 4: changed=false (already installed - IDEMPOTENCY)
+# Test 5: Shows tree output of /tmp directory
+# Test 6: changed=true (package removed)
+# Test 7: Shows "not found"
+# Test 8: changed=false (already absent - IDEMPOTENCY)
+# Test 9: changed=true (package installed)
+# Test 10: changed=false if already latest, or changed=true if updated
+
+# To cleanup manually (remove tree):
+# Debian/Ubuntu: ssh root@host "apt-get remove -y tree"
+# RHEL/CentOS:  ssh root@host "dnf remove -y tree"

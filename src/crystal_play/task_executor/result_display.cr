@@ -25,6 +25,17 @@ module CrystalPlay
         
         puts "#{status}: [#{connection_host}]"
         
+        # Show message for successful tasks if msg is present and meaningful
+        # This allows debug plugin output to be visible
+        if !failed && msg && !msg.empty? && !["ok", "Command executed successfully", "File already exists with identical content"].includes?(msg)
+          # Format multi-line messages nicely
+          if msg.includes?("\n")
+            puts msg.split("\n").map { |line| "  #{line}" }.join("\n")
+          else
+            puts "  #{msg}".colorize(:white)
+          end
+        end
+        
         # If failed, show additional error details
         if failed
           # Show error message

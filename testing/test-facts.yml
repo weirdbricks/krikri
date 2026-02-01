@@ -1,0 +1,13 @@
+---
+- name: Debug Facts
+  hosts: testservers
+  gather_facts: true
+  
+  tasks:
+    - name: Show all OS facts
+      ansible.builtin.debug:
+        msg:
+          - "ansible_distribution: {{ ansible_distribution }}"
+          - "ansible_os_family: {{ ansible_os_family }}"
+          - "ansible_distribution_version: {{ ansible_distribution_version }}"
+          - "ansible_system: {{ ansible_system }}"

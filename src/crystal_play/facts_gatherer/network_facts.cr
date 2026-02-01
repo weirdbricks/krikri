@@ -9,9 +9,10 @@ module CrystalPlay
       # ansible_default_ipv4 - default IPv4 address
       ipv4 = execute_callback.call("ip -4 route get 1 2>/dev/null | head -1 | awk '{print $7}'")
       if ipv4 && !ipv4.strip.empty?
-        facts["ansible_default_ipv4"] = JSON::Any.new({
-          "address" => ipv4.strip
-        })
+        # Create a Hash(String, JSON::Any) for the nested structure
+        ipv4_hash = Hash(String, JSON::Any).new
+        ipv4_hash["address"] = JSON::Any.new(ipv4.strip)
+        facts["ansible_default_ipv4"] = JSON::Any.new(ipv4_hash)
       end
       
       # ansible_all_ipv4_addresses - all IPv4 addresses

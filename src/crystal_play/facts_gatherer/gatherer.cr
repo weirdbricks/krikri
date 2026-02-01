@@ -1,5 +1,6 @@
 require "json"
 require "../ssh_manager"
+require "../local_executor"
 require "../host"
 require "./hostname_facts"
 require "./os_facts"
@@ -14,10 +15,9 @@ module CrystalPlay
   # FactsGatherer - Gathers system facts about remote hosts (Ansible-compatible)
   # Populates ansible_* variables automatically
   class FactsGatherer
-    @ssh_manager : SSHManager
     @host : Host
     
-    def initialize(@ssh_manager : SSHManager, @host : Host)
+    def initialize(@host : Host)
     end
     
     # Gather all facts and return as Hash
@@ -46,8 +46,22 @@ module CrystalPlay
     # Execute command on remote host
     private def execute_command(cmd : String) : String?
       begin
-        result = @ssh_manager.execute(@host, cmd)
-        return result["stdout"].as_s if result["rc"].as_i == 0
+        # Get connection details
+        connection_host = @host.vars["ansible_host"]?.try(&.as_s?) || @host.name
+        user = @host.user || "root"
+        port = @host.port
+        
+        # Check if local connection
+        if @host.vars["ansible_connection"]?.try(&.as_s?) == "local" || @host.name == "localhost"
+          # Execute locally
+          result = LocalExecutor.exec(cmd)
+          return result[:stdout] if result[:exit_code] == 0
+        else
+          # Execute via SSH
+          result = SSHManager.exec(connection_host, user, cmd, port)
+          return result[:stdout] if result[:exit_code] == 0
+        end
+        
         nil
       rescue
         nil

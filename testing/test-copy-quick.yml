@@ -1,8 +1,8 @@
 ---
-# Quick Copy Plugin Test - Simple smoke test
+# Quick Copy Plugin Test - Remote server test
 
 - name: Quick Copy Test
-  hosts: localhost
+  hosts: testservers
   gather_facts: false
 
   tasks:

@@ -3,6 +3,8 @@ require "colorize"
 require "../playbook_parser"
 require "../variable_substitutor"
 require "../plugin_manager"
+require "../ssh_manager"
+require "../facts_gatherer"
 require "./variable_context"
 require "./result_display"
 require "./handler_runner"
@@ -10,7 +12,7 @@ require "../action_plugin_manager"
 
 module CrystalPlay
   # TaskExecutor - Executes tasks on hosts
-  # Orchestrates task execution, variable substitution, and handler management
+  # Orchestrates task execution, variable substitution, facts gathering, and handler management
   class TaskExecutor
     property hosts : Array(Host)
     property tasks : Array(Task)
@@ -18,11 +20,14 @@ module CrystalPlay
     property check_mode : Bool
     property diff_mode : Bool
     property play_vars : Hash(String, JSON::Any)
+    property gather_facts : Bool
     
     # Track results for recap
     @results : Hash(String, Hash(String, Int32))
     # Track registered variables per host
     @registered_vars : Hash(String, Hash(String, JSON::Any))
+    # Track facts per host
+    @facts : Hash(String, Hash(String, JSON::Any))
     # Handler runner
     @handler_runner : HandlerRunner
     
@@ -32,10 +37,12 @@ module CrystalPlay
       @handlers = [] of Task,
       @check_mode = false,
       @diff_mode = false,
-      @play_vars = {} of String => String
+      @play_vars = {} of String => JSON::Any,
+      @gather_facts = true
     )
       @results = Hash(String, Hash(String, Int32)).new
       @registered_vars = Hash(String, Hash(String, JSON::Any)).new
+      @facts = Hash(String, Hash(String, JSON::Any)).new
       
       @hosts.each do |host|
         @results[host.name] = {
@@ -44,6 +51,7 @@ module CrystalPlay
           "failed" => 0
         }
         @registered_vars[host.name] = {} of String => JSON::Any
+        @facts[host.name] = {} of String => JSON::Any
       end
       
       # Initialize handler runner
@@ -52,6 +60,12 @@ module CrystalPlay
     
     # Main execution loop
     def run
+      # Gather facts if requested
+      if @gather_facts
+        gather_facts_for_all_hosts
+      end
+      
+      # Execute tasks
       @tasks.each do |task|
         puts "TASK [#{task.name}]".colorize(:white).bold
         puts "*" * 70
@@ -67,6 +81,47 @@ module CrystalPlay
       run_handlers
     end
     
+    # Gather facts for all hosts
+    private def gather_facts_for_all_hosts
+      puts "TASK [Gathering Facts]".colorize(:white).bold
+      puts "*" * 70
+      
+      @hosts.each do |host|
+        begin
+          # Create facts gatherer
+          gatherer = FactsGatherer.new(host)
+          
+          # Gather facts
+          facts = gatherer.gather
+          
+          # Store facts for this host
+          @facts[host.name] = facts
+          
+          # Also add to registered vars so they're available in variable substitution
+          facts.each do |key, value|
+            @registered_vars[host.name][key] = value
+          end
+          
+          # Display success
+          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+          puts "#{"ok".colorize(:green)}: [#{connection_host}]"
+          
+          # Update stats
+          @results[host.name]["ok"] += 1
+          
+        rescue ex
+          # Facts gathering failed - show warning but continue
+          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+          puts "#{"failed".colorize(:red)}: [#{connection_host}]"
+          puts "  Warning: Facts gathering failed: #{ex.message}".colorize(:yellow)
+          
+          @results[host.name]["failed"] += 1
+        end
+      end
+      
+      puts ""
+    end
+    
     # Show execution recap
     def show_recap
       ResultDisplay.show_recap(@hosts, @results)
@@ -74,7 +129,7 @@ module CrystalPlay
     
     # Execute a single task on a host
     private def execute_task(task : Task, host : Host)
-      # Build variable context
+      # Build variable context (includes facts)
       vars_context = VariableContext.build(
         @play_vars,
         host,
@@ -91,7 +146,7 @@ module CrystalPlay
       # Substitute variables in task parameters
       substituted_params = substitute_task_params(task.params, substitutor)
       
-            if ActionPluginManager.has_action_plugin?(task.module_name)
+      if ActionPluginManager.has_action_plugin?(task.module_name)
         action_result = ActionPluginManager.execute_action(
           task.module_name,
           substituted_params,
@@ -224,7 +279,7 @@ module CrystalPlay
     
     # Execute a handler (internal - called via callback)
     private def execute_handler_internal(handler : Task, host : Host) : JSON::Any
-      # Build variable context
+      # Build variable context (includes facts)
       vars_context = VariableContext.build(
         @play_vars,
         host,

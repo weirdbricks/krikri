@@ -1,0 +1,149 @@
+---
+# Command Plugin Test - Comprehensive
+# Tests command execution without shell features
+
+- name: Command Plugin Test
+  hosts: testservers
+  gather_facts: false
+  
+  tasks:
+    # Test 1: Basic command execution
+    - name: Test 1 - Simple echo command
+      ansible.builtin.command: echo "Hello from Crystal Play"
+      register: echo_result
+    
+    - name: Show echo result
+      ansible.builtin.debug:
+        msg: "Echo output: {{ echo_result.stdout }}"
+    
+    # Test 2: Command with arguments
+    - name: Test 2 - Command with multiple arguments
+      ansible.builtin.command: ls -la /tmp
+      register: ls_result
+    
+    - name: Show ls output (first 5 lines)
+      ansible.builtin.debug:
+        msg: "{{ ls_result.stdout_lines[:5] }}"
+    
+    # Test 3: Command with chdir
+    - name: Test 3 - Command with directory change
+      ansible.builtin.command:
+        cmd: pwd
+        chdir: /var/log
+      register: pwd_result
+    
+    - name: Show pwd result
+      ansible.builtin.debug:
+        msg: "Current directory: {{ pwd_result.stdout }}"
+    
+    # Test 4: creates parameter (idempotency)
+    - name: Test 4a - Create test file
+      ansible.builtin.shell: echo "test" > /tmp/crystal-play-command-test.txt
+    
+    - name: Test 4b - Command with creates (should skip)
+      ansible.builtin.command:
+        cmd: echo "This should be skipped"
+        creates: /tmp/crystal-play-command-test.txt
+      register: creates_test
+    
+    - name: Show creates result
+      ansible.builtin.debug:
+        msg: "Creates test - skipped: {{ creates_test.skipped | default(false) }}"
+    
+    # Test 5: removes parameter (conditional execution)
+    - name: Test 5a - Command with removes (should run)
+      ansible.builtin.command:
+        cmd: echo "File exists, running command"
+        removes: /tmp/crystal-play-command-test.txt
+      register: removes_test_run
+    
+    - name: Show removes result (should run)
+      ansible.builtin.debug:
+        msg: "Removes test (file exists): {{ removes_test_run.stdout }}"
+    
+    - name: Test 5b - Delete test file
+      ansible.builtin.file:
+        path: /tmp/crystal-play-command-test.txt
+        state: absent
+    
+    - name: Test 5c - Command with removes (should skip)
+      ansible.builtin.command:
+        cmd: echo "This should be skipped"
+        removes: /tmp/crystal-play-command-test.txt
+      register: removes_test_skip
+    
+    - name: Show removes result (should skip)
+      ansible.builtin.debug:
+        msg: "Removes test (no file) - skipped: {{ removes_test_skip.skipped | default(false) }}"
+    
+    # Test 6: Command that fails (test error handling)
+    - name: Test 6 - Command that fails
+      ansible.builtin.command: ls /nonexistent-directory-12345
+      register: fail_test
+      ignore_errors: yes
+    
+    - name: Show failure handling
+      ansible.builtin.debug:
+        msg: "Failed as expected - rc: {{ fail_test.rc }}"
+    
+    # Test 7: Multi-word command
+    - name: Test 7 - Command with quoted arguments
+      ansible.builtin.command: echo "hello world" "from crystal play"
+      register: quoted_result
+    
+    - name: Show quoted result
+      ansible.builtin.debug:
+        msg: "{{ quoted_result.stdout }}"
+    
+    # Test 8: Command with pipes (should NOT work - needs shell)
+    - name: Test 8 - Verify pipes don't work in command module
+      ansible.builtin.command: echo "test" | grep test
+      register: pipe_test
+      ignore_errors: yes
+    
+    - name: Show pipe test result
+      ansible.builtin.debug:
+        msg: "Pipe test failed as expected (command doesn't support pipes): {{ pipe_test.failed }}"
+    
+    # Test 9: Registered variable access
+    - name: Test 9 - Access registered variable fields
+      ansible.builtin.command: echo "testing registration"
+      register: reg_test
+    
+    - name: Show registered fields
+      ansible.builtin.debug:
+        msg:
+          - "stdout: {{ reg_test.stdout }}"
+          - "rc: {{ reg_test.rc }}"
+          - "changed: {{ reg_test.changed }}"
+    
+    # Test 10: Long-running command
+    - name: Test 10 - Command with delay
+      ansible.builtin.command: sleep 2
+      register: sleep_test
+    
+    - name: Show sleep result
+      ansible.builtin.debug:
+        msg: "Sleep completed - rc: {{ sleep_test.rc }}"
+    
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "✓ Command plugin tests complete!"
+
+# Expected results:
+# Test 1: changed=true, shows "Hello from Crystal Play"
+# Test 2: changed=true, shows directory listing
+# Test 3: changed=true, shows "/var/log"
+# Test 4b: skipped=true (file exists, creates condition met)
+# Test 5a: changed=true (file exists, removes condition met)
+# Test 5c: skipped=true (file doesn't exist, removes condition not met)
+# Test 6: failed=true, rc!=0 (directory doesn't exist)
+# Test 7: changed=true, shows "hello world from crystal play"
+# Test 8: failed=true (pipes not supported in command module)
+# Test 9: changed=true, shows all registered fields
+# Test 10: changed=true, completes after 2 seconds
+
+# Key differences from shell module:
+# - command module does NOT support pipes (|), redirects (>), or shell operators
+# - Use shell module for those features
+# - command module is safer for untrusted input (no shell injection risk)

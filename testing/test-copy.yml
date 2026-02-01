@@ -1,0 +1,116 @@
+---
+# Copy Plugin Test - Comprehensive
+# Tests all major copy functionality
+
+- name: Copy Plugin Test
+  hosts: testservers
+  gather_facts: false
+  
+  tasks:
+    - name: Setup - Create test directory
+      ansible.builtin.file:
+        path: /tmp/crystal-play-copy-test
+        state: directory
+        mode: '0755'
+    
+    # Test 1: Content-based copy (most common)
+    - name: Test 1 - Copy inline content
+      ansible.builtin.copy:
+        content: |
+          This is test content
+          Line 2
+          Line 3
+        dest: /tmp/crystal-play-copy-test/content.txt
+        mode: '0644'
+    
+    # Test 2: Idempotency - same content again (should be ok, not changed)
+    - name: Test 2 - Copy same content (idempotency check)
+      ansible.builtin.copy:
+        content: |
+          This is test content
+          Line 2
+          Line 3
+        dest: /tmp/crystal-play-copy-test/content.txt
+        mode: '0644'
+    
+    # Test 3: Content change (should detect change)
+    - name: Test 3 - Copy different content (should change)
+      ansible.builtin.copy:
+        content: |
+          This is DIFFERENT content
+          New line 2
+        dest: /tmp/crystal-play-copy-test/content.txt
+        mode: '0644'
+    
+    # Test 4: File-based copy (src parameter)
+    - name: Test 4 - Create local source file
+      ansible.builtin.copy:
+        content: "Source file content for testing"
+        dest: /tmp/crystal-play-copy-test/source.txt
+        mode: '0644'
+    
+    - name: Test 5 - Copy from src to dest
+      ansible.builtin.copy:
+        src: /tmp/crystal-play-copy-test/source.txt
+        dest: /tmp/crystal-play-copy-test/copied.txt
+        mode: '0644'
+    
+    # Test 6: Mode/permissions
+    - name: Test 6 - Copy with specific mode
+      ansible.builtin.copy:
+        content: "File with 0600 permissions"
+        dest: /tmp/crystal-play-copy-test/restricted.txt
+        mode: '0600'
+    
+    - name: Test 7 - Verify permissions
+      ansible.builtin.shell: stat -c '%a' /tmp/crystal-play-copy-test/restricted.txt
+      register: perms
+    
+    - name: Test 8 - Show permissions
+      ansible.builtin.debug:
+        msg: "File has permissions: {{ perms.stdout }}"
+    
+    # Test 9: Backup functionality
+    - name: Test 9 - Copy with backup
+      ansible.builtin.copy:
+        content: "New content that will trigger backup"
+        dest: /tmp/crystal-play-copy-test/content.txt
+        backup: yes
+        mode: '0644'
+    
+    # Test 10: Verify files exist
+    - name: Test 10 - List all created files
+      ansible.builtin.shell: ls -lh /tmp/crystal-play-copy-test/
+      register: files
+    
+    - name: Test 11 - Show created files
+      ansible.builtin.debug:
+        var: files.stdout_lines
+    
+    # Test 12: Read and verify content
+    - name: Test 12 - Verify final content
+      ansible.builtin.command: cat /tmp/crystal-play-copy-test/content.txt
+      register: final_content
+    
+    - name: Test 13 - Show final content
+      ansible.builtin.debug:
+        msg: "Final content: {{ final_content.stdout }}"
+    
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "✓ Copy plugin tests complete! Files kept at /tmp/crystal-play-copy-test/"
+
+# Expected results:
+# Test 1: changed=true (file created)
+# Test 2: changed=false (identical content - IDEMPOTENCY)
+# Test 3: changed=true (content changed)
+# Test 4: changed=true (source file created)
+# Test 5: changed=true (file copied)
+# Test 6: changed=true (file with restricted perms created)
+# Test 7: changed=true (command always changes)
+# Test 8: Display "600"
+# Test 9: changed=true (content changed, backup created)
+# Test 10: changed=true (command always changes)
+# Test 11: Display file list
+# Test 12: changed=true (command always changes)
+# Test 13: Display "New content that will trigger backup"

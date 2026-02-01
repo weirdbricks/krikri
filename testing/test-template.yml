@@ -1,0 +1,80 @@
+---
+# Template Rendering Test
+# Tests Jinja2 template rendering with variables, filters, conditionals, and loops
+
+- name: Template Rendering Test
+  hosts: testservers
+  gather_facts: true  # Need facts for template variables
+  
+  vars:
+    server_name: crystal-play.example.com
+    document_root: /var/www/crystal-play
+    nginx_port: 8080
+    enable_ssl: true
+    max_upload_size: 50M
+    upstream_servers:
+      - server1.example.com
+      - server2.example.com
+      - server3.example.com
+  
+  tasks:
+    - name: Test 1 - Create output directory
+      ansible.builtin.file:
+        path: /tmp/crystal-play-template-test
+        state: directory
+        mode: '0755'
+    
+    - name: Test 2 - Render template with variables
+      ansible.builtin.template:
+        src: testing/templates/nginx.conf.j2
+        dest: /tmp/crystal-play-template-test/nginx.conf
+        mode: '0644'
+    
+    - name: Test 3 - Verify idempotency (should be ok on 2nd run)
+      ansible.builtin.template:
+        src: testing/templates/nginx.conf.j2
+        dest: /tmp/crystal-play-template-test/nginx.conf
+        mode: '0644'
+    
+    - name: Test 4 - Read rendered template
+      ansible.builtin.command: cat /tmp/crystal-play-template-test/nginx.conf
+      register: rendered
+    
+    - name: Test 5 - Show rendered template
+      ansible.builtin.debug:
+        msg: "{{ rendered.stdout }}"
+    
+    - name: Test 6 - Create simple template inline
+      ansible.builtin.copy:
+        content: |
+          # Simple config
+          hostname={{ inventory_hostname }}
+          user={{ ansible_user_id }}
+          processors={{ ansible_processor_vcpus }}
+        dest: /tmp/crystal-play-template-test/simple.conf
+        mode: '0644'
+    
+    - name: Test 7 - Verify simple template
+      ansible.builtin.command: cat /tmp/crystal-play-template-test/simple.conf
+      register: simple
+    
+    - name: Test 8 - Show simple template
+      ansible.builtin.debug:
+        msg: "{{ simple.stdout }}"
+    
+    - name: CLEANUP - Remove test directory
+      ansible.builtin.file:
+        path: /tmp/crystal-play-template-test
+        state: absent
+    
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "✓ Template rendering test complete!"
+
+# Features tested:
+# - Variable substitution: {{ server_name }}
+# - Filters: {{ nginx_port | default('80') }}
+# - Conditionals: {% if enable_ssl %}
+# - Loops: {% for server in upstream_servers %}
+# - Facts: {{ ansible_distribution }}
+# - Idempotency: Template re-render should be "ok"

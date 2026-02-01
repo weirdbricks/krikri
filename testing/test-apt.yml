@@ -1,0 +1,176 @@
+---
+# APT Plugin Test - Comprehensive
+# Tests Debian/Ubuntu package management
+# Skips gracefully on non-Debian systems
+
+- name: APT Plugin Test
+  hosts: testservers
+  gather_facts: true  # Need facts to detect OS
+  
+  tasks:
+    # Show OS detection
+    - name: Display OS information
+      ansible.builtin.debug:
+        msg:
+          - "Distribution: {{ ansible_distribution }}"
+          - "OS Family: {{ ansible_os_family }}"
+          - "Version: {{ ansible_distribution_version }}"
+    
+    # All remaining tasks only run on Debian/Ubuntu
+    - name: Test 1 - Check if apt is available
+      ansible.builtin.command: which apt-get
+      register: apt_check
+      ignore_errors: yes
+      when: ansible_os_family == "Debian"
+    
+    - name: Show apt availability
+      ansible.builtin.debug:
+        msg: "APT available: {{ apt_check.rc == 0 }}"
+      when: ansible_os_family == "Debian"
+    
+    - name: Skip message for non-Debian systems
+      ansible.builtin.debug:
+        msg: "⏭️  Skipping apt tests on {{ ansible_distribution }} (not a Debian-based system)"
+      when: ansible_os_family != "Debian"
+    
+    # Test 2: Update cache
+    - name: Test 2 - Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600  # Cache valid for 1 hour
+      when: ansible_os_family == "Debian"
+    
+    # Test 3: Install a package
+    - name: Test 3 - Install htop package
+      ansible.builtin.apt:
+        name: htop
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+    
+    # Test 4: Verify installation
+    - name: Test 4 - Verify htop is installed
+      ansible.builtin.command: which htop
+      register: htop_check
+      when: ansible_os_family == "Debian"
+    
+    - name: Show htop location
+      ansible.builtin.debug:
+        msg: "htop installed at: {{ htop_check.stdout }}"
+      when: ansible_os_family == "Debian"
+    
+    # Test 5: Idempotency - install already installed package
+    - name: Test 5 - Install htop again (idempotency test)
+      ansible.builtin.apt:
+        name: htop
+        state: present
+      when: ansible_os_family == "Debian"
+    
+    # Test 6: Test htop works
+    - name: Test 6 - Run htop --version
+      ansible.builtin.command: htop --version
+      register: htop_version
+      when: ansible_os_family == "Debian"
+    
+    - name: Show htop version
+      ansible.builtin.debug:
+        msg: "{{ htop_version.stdout }}"
+      when: ansible_os_family == "Debian"
+    
+    # Test 7: Install multiple packages
+    - name: Test 7 - Install multiple packages (curl, wget)
+      ansible.builtin.apt:
+        name:
+          - curl
+          - wget
+        state: present
+      when: ansible_os_family == "Debian"
+    
+    # Test 8: Verify multiple packages
+    - name: Test 8 - Verify curl and wget
+      ansible.builtin.shell: |
+        echo "curl: $(which curl)"
+        echo "wget: $(which wget)"
+      register: multi_check
+      when: ansible_os_family == "Debian"
+    
+    - name: Show multiple packages
+      ansible.builtin.debug:
+        var: multi_check.stdout_lines
+      when: ansible_os_family == "Debian"
+    
+    # Test 9: state=latest
+    - name: Test 9 - Ensure htop is at latest version
+      ansible.builtin.apt:
+        name: htop
+        state: latest
+      when: ansible_os_family == "Debian"
+    
+    # Test 10: Remove a package
+    - name: Test 10 - Remove htop
+      ansible.builtin.apt:
+        name: htop
+        state: absent
+      when: ansible_os_family == "Debian"
+    
+    # Test 11: Verify removal
+    - name: Test 11 - Verify htop is removed
+      ansible.builtin.shell: which htop 2>/dev/null || echo "not found"
+      register: htop_removed
+      when: ansible_os_family == "Debian"
+    
+    - name: Show removal status
+      ansible.builtin.debug:
+        msg: "htop status: {{ htop_removed.stdout }}"
+      when: ansible_os_family == "Debian"
+    
+    # Test 12: Idempotency - remove already removed package
+    - name: Test 12 - Remove htop again (idempotency test)
+      ansible.builtin.apt:
+        name: htop
+        state: absent
+      when: ansible_os_family == "Debian"
+    
+    # Test 13: Reinstall for final check
+    - name: Test 13 - Reinstall htop
+      ansible.builtin.apt:
+        name: htop
+        state: present
+      when: ansible_os_family == "Debian"
+    
+    # Test 14: Cache valid time (should skip cache update)
+    - name: Test 14 - Install with cache_valid_time (should not update cache)
+      ansible.builtin.apt:
+        name: htop
+        state: present
+        update_cache: yes
+        cache_valid_time: 3600  # Cache is fresh from earlier
+      when: ansible_os_family == "Debian"
+    
+    - name: SUCCESS (Debian systems)
+      ansible.builtin.debug:
+        msg: "✓ APT plugin tests complete on {{ ansible_distribution }}!"
+      when: ansible_os_family == "Debian"
+    
+    - name: SUCCESS (Non-Debian systems)
+      ansible.builtin.debug:
+        msg: "✓ APT tests skipped on {{ ansible_distribution }} (tests would run on Debian/Ubuntu)"
+      when: ansible_os_family != "Debian"
+
+# Expected results on Ubuntu/Debian:
+# Test 2: changed=true (cache updated)
+# Test 3: changed=true (package installed)
+# Test 5: changed=false (already installed - IDEMPOTENCY)
+# Test 7: changed=true/false depending on if curl/wget already installed
+# Test 9: changed=false if already latest (IDEMPOTENCY)
+# Test 10: changed=true (package removed)
+# Test 12: changed=false (already absent - IDEMPOTENCY)
+# Test 13: changed=true (package reinstalled)
+# Test 14: changed=false (cache still valid - SMART CACHING)
+
+# Expected results on CentOS/RHEL:
+# All tasks with when: ansible_os_family == "Debian" will be skipped
+# Skip messages will be shown
+
+# To cleanup manually on Ubuntu:
+# ssh root@ubuntu-host "apt-get remove -y htop curl wget"

@@ -1,0 +1,47 @@
+---
+# Minimal Template Test - Diagnose issue
+
+- name: Minimal Template Test
+  hosts: testservers
+  gather_facts: false
+  
+  vars:
+    test_var: "Hello from template"
+  
+  tasks:
+    - name: Test 1 - Create directory
+      ansible.builtin.file:
+        path: /tmp/template-debug
+        state: directory
+    
+    - name: Test 2 - Try template (will fail, but we'll see why)
+      ansible.builtin.template:
+        src: testing/templates/nginx.conf.j2
+        dest: /tmp/template-debug/test.conf
+      register: template_result
+      ignore_errors: yes
+    
+    - name: Show template result
+      ansible.builtin.debug:
+        var: template_result
+    
+    - name: Test 3 - Create simple inline template using copy
+      ansible.builtin.copy:
+        content: |
+          # Test file
+          Variable: {{ test_var }}
+          Host: {{ inventory_hostname }}
+        dest: /tmp/template-debug/inline.txt
+    
+    - name: Test 4 - Read inline template
+      ansible.builtin.command: cat /tmp/template-debug/inline.txt
+      register: inline_content
+    
+    - name: Show inline content
+      ansible.builtin.debug:
+        msg: "{{ inline_content.stdout }}"
+    
+    - name: Cleanup
+      ansible.builtin.file:
+        path: /tmp/template-debug
+        state: absent

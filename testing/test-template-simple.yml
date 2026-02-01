@@ -1,0 +1,59 @@
+---
+# Simple Template Test - No facts required
+
+- name: Simple Template Test
+  hosts: testservers
+  gather_facts: false  # No facts needed!
+  
+  vars:
+    server_name: crystal-play.example.com
+    document_root: /var/www/crystal-play
+    nginx_port: 8080
+    enable_ssl: true
+    max_upload_size: 50M
+    upstream_servers:
+      - server1.example.com
+      - server2.example.com
+      - server3.example.com
+  
+  tasks:
+    - name: Create output directory
+      ansible.builtin.file:
+        path: /tmp/crystal-play-template-test
+        state: directory
+        mode: '0755'
+    
+    - name: Render template (1st run - should change)
+      ansible.builtin.template:
+        src: testing/templates/nginx-simple.conf.j2
+        dest: /tmp/crystal-play-template-test/nginx.conf
+        mode: '0644'
+    
+    - name: Render template again (2nd run - should be ok/idempotent)
+      ansible.builtin.template:
+        src: testing/templates/nginx-simple.conf.j2
+        dest: /tmp/crystal-play-template-test/nginx.conf
+        mode: '0644'
+    
+    - name: Read rendered template
+      ansible.builtin.command: cat /tmp/crystal-play-template-test/nginx.conf
+      register: rendered
+    
+    - name: Show rendered template
+      ansible.builtin.debug:
+        msg: "{{ rendered.stdout }}"
+    
+    - name: Cleanup
+      ansible.builtin.file:
+        path: /tmp/crystal-play-template-test
+        state: absent
+    
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "✓ Template test complete!"
+
+# Expected:
+# - First template render: changed
+# - Second template render: ok (idempotent!)
+# - Template should have all variables substituted
+# - Conditionals and loops should work

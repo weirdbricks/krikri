@@ -30,25 +30,26 @@ module CrystalPlay
       if processor_count && !processor_count.strip.empty?
         count = processor_count.strip.to_i
         count = 1 if count == 0 # Default to 1 if detection fails
-        facts["ansible_processor_count"] = JSON::Any.new(count)
+        facts["ansible_processor_count"] = JSON::Any.new(count.to_i64)
       end
       
       # ansible_processor_cores - cores per CPU
       cores = execute_callback.call("cat /proc/cpuinfo | grep 'cpu cores' | head -1 | awk '{print $4}'")
       if cores && !cores.strip.empty?
-        facts["ansible_processor_cores"] = JSON::Any.new(cores.strip.to_i)
+        facts["ansible_processor_cores"] = JSON::Any.new(cores.strip.to_i.to_i64)
       end
       
       # ansible_processor_vcpus - total virtual CPUs
       vcpus = execute_callback.call("nproc 2>/dev/null || grep -c processor /proc/cpuinfo")
       if vcpus && !vcpus.strip.empty?
-        facts["ansible_processor_vcpus"] = JSON::Any.new(vcpus.strip.to_i)
+        facts["ansible_processor_vcpus"] = JSON::Any.new(vcpus.strip.to_i.to_i64)
       end
       
-      # ansible_processor - CPU model
+      # ansible_processor - CPU model (array)
       cpu_model = execute_callback.call("cat /proc/cpuinfo | grep 'model name' | head -1 | cut -d: -f2")
       if cpu_model && !cpu_model.strip.empty?
-        facts["ansible_processor"] = JSON::Any.new([cpu_model.strip])
+        # Convert Array(String) to Array(JSON::Any)
+        facts["ansible_processor"] = JSON::Any.new([JSON::Any.new(cpu_model.strip)])
       end
       
       # ansible_swaptotal_mb - swap space in MB

@@ -12,12 +12,12 @@
 # - facts_gatherer/environment_facts.cr - Environment variables
 # - facts_gatherer/date_time_facts.cr  - Date and time facts
 
-require "./facts_gatherer/gatherer"
-require "./facts_gatherer/hostname_facts"
-require "./facts_gatherer/os_facts"
-require "./facts_gatherer/network_facts"
-require "./facts_gatherer/hardware_facts"
-require "./facts_gatherer/python_facts"
-require "./facts_gatherer/user_facts"
-require "./facts_gatherer/environment_facts"
-require "./facts_gatherer/date_time_facts"
+require "./gatherer"
+require "./hostname_facts"
+require "./os_facts"
+require "./network_facts"
+require "./hardware_facts"
+require "./python_facts"
+require "./user_facts"
+require "./environment_facts"
+require "./date_time_facts"

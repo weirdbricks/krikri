@@ -1,0 +1,13 @@
+---
+- name: Simple Facts Test
+  hosts: testservers
+  gather_facts: true
+  
+  tasks:
+    - name: Echo distribution
+      ansible.builtin.shell: echo "Distribution is {{ ansible_distribution }}"
+      register: result
+    
+    - name: Show result
+      ansible.builtin.debug:
+        msg: "Result: {{ result.stdout }}"
