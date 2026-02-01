@@ -24,7 +24,7 @@ module CrystalPlay
       if is_local
         execute_local_plugin(plugin_name, config)
       else
-        execute_remote_plugin(plugin_name, config, host)
+        execute_remote_plugin(plugin_name, config, host, vars)
       end
     end
     
@@ -52,16 +52,20 @@ module CrystalPlay
     private def self.execute_remote_plugin(
       plugin_name : String,
       config : JSON::Any,
-      host : Host
+      host : Host,
+      vars : Hash(String, JSON::Any)
     ) : JSON::Any
       
+      # Get the actual connection host (checks ansible_host)
+      connection_host = get_connection_host(host, vars)
+      
       # Ensure plugin is uploaded to remote
-      remote_plugin_path = ensure_plugin_uploaded(plugin_name, host)
+      remote_plugin_path = ensure_plugin_uploaded(plugin_name, host, vars)
       
       # Execute plugin remotely with config via stdin
       command = "echo '#{config.to_json.gsub("'", "'\\''")}' | #{remote_plugin_path}"
       result = SSHManager.exec(
-        host.name,
+        connection_host,
         host.user || "root",
         command,
         host.port
@@ -92,17 +96,28 @@ module CrystalPlay
     
     # Ensure plugin binary is uploaded to remote host
     # Uses MD5 checksum to detect if plugin changed
-    private def self.ensure_plugin_uploaded(plugin_name : String, host : Host) : String
-      host_key = "#{host.user}@#{host.name}:#{host.port}"
+    private def self.ensure_plugin_uploaded(
+      plugin_name : String,
+      host : Host,
+      vars : Hash(String, JSON::Any)
+    ) : String
+      
+      # Get the actual connection host (checks ansible_host)
+      connection_host = get_connection_host(host, vars)
+      
+      # Strip FQCN to get simple plugin name
+      simple_name = plugin_name.sub(/^ansible\.(builtin|legacy)\./, "")
+      
+      host_key = "#{host.user}@#{connection_host}:#{host.port}"
       
       # Check if already uploaded in this session
       @@uploaded_plugins[host_key] ||= Set(String).new
       
       remote_plugin_dir = "/tmp/.crystal-play/plugins"
-      remote_plugin_path = "#{remote_plugin_dir}/#{plugin_name}"
+      remote_plugin_path = "#{remote_plugin_dir}/#{simple_name}"  # Use simple name for remote path
       
       # If we've already verified in this session, skip
-      if @@uploaded_plugins[host_key].includes?(plugin_name)
+      if @@uploaded_plugins[host_key].includes?(simple_name)
         return remote_plugin_path
       end
       
@@ -113,7 +128,7 @@ module CrystalPlay
       # Check if remote plugin exists and matches our MD5
       # Store MD5 in companion file: /tmp/.crystal-play/plugins/copy.md5
       md5_check = SSHManager.exec(
-        host.name,
+        connection_host,
         host.user || "root",
         "[ -f #{remote_plugin_path}.md5 ] && cat #{remote_plugin_path}.md5",
         host.port
@@ -121,14 +136,14 @@ module CrystalPlay
       
       if md5_check[:exit_code] == 0 && md5_check[:stdout].strip == local_md5
         # Plugin exists with matching MD5 - reuse it!
-        @@uploaded_plugins[host_key].add(plugin_name)
+        @@uploaded_plugins[host_key].add(simple_name)
         return remote_plugin_path
       end
       
       # Plugin doesn't exist or is outdated - upload it
       # Create remote plugin directory
       SSHManager.exec(
-        host.name,
+        connection_host,
         host.user || "root",
         "mkdir -p #{remote_plugin_dir}",
         host.port
@@ -136,7 +151,7 @@ module CrystalPlay
       
       # Upload plugin binary
       SSHManager.upload(
-        host.name,
+        connection_host,
         host.user || "root",
         local_plugin_path,
         remote_plugin_path,
@@ -146,14 +161,14 @@ module CrystalPlay
       
       # Store MD5 for future checks
       SSHManager.exec(
-        host.name,
+        connection_host,
         host.user || "root",
         "echo '#{local_md5}' > #{remote_plugin_path}.md5",
         host.port
       )
       
       # Mark as uploaded
-      @@uploaded_plugins[host_key].add(plugin_name)
+      @@uploaded_plugins[host_key].add(simple_name)
       
       remote_plugin_path
     end
@@ -179,6 +194,17 @@ module CrystalPlay
       
       # Check if host is localhost
       host.name == "localhost"
+    end
+    
+    # Get the actual hostname to connect to (checks ansible_host variable)
+    private def self.get_connection_host(host : Host, vars : Hash(String, JSON::Any)) : String
+      # Check for ansible_host variable (overrides inventory hostname)
+      if ansible_host = vars["ansible_host"]?
+        return ansible_host.as_s
+      end
+      
+      # Fall back to inventory hostname
+      host.name
     end
     
     # Clear uploaded plugins cache (for testing)

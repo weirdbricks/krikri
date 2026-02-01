@@ -81,42 +81,6 @@ fi
 echo -e "${GREEN}✅ Crystal found: $(crystal --version | head -n1)${NC}"
 echo ""
 
-# Check for system library dependencies
-echo -e "${YELLOW}🔍 Checking system dependencies...${NC}"
-
-MISSING_SYSTEM_DEPS=()
-
-# Check for libssh2 (required for ssh2 shard)
-# Try to compile a simple program that links to libssh2
-if ! echo 'int main() { return 0; }' | gcc -x c - -lssh2 -o /tmp/test_ssh2 2>/dev/null; then
-    MISSING_SYSTEM_DEPS+=("libssh2-1-dev")
-fi
-rm -f /tmp/test_ssh2
-
-if [ ${#MISSING_SYSTEM_DEPS[@]} -gt 0 ]; then
-    echo -e "${RED}❌ Missing system libraries!${NC}"
-    echo ""
-    echo -e "${YELLOW}The following system libraries are required:${NC}"
-    for dep in "${MISSING_SYSTEM_DEPS[@]}"; do
-        echo -e "  ${RED}✗${NC} $dep"
-    done
-    echo ""
-    echo -e "${BLUE}To install on Ubuntu/Debian, run:${NC}"
-    echo -e "${GREEN}  sudo apt-get install libssh2-1-dev${NC}"
-    echo ""
-    echo -e "${BLUE}To install on RHEL/Fedora, run:${NC}"
-    echo -e "${GREEN}  sudo dnf install libssh2-devel${NC}"
-    echo ""
-    echo -e "${BLUE}To install on macOS, run:${NC}"
-    echo -e "${GREEN}  brew install libssh2${NC}"
-    echo ""
-    echo -e "${YELLOW}Then run ./build.sh again${NC}"
-    exit 1
-fi
-
-echo -e "${GREEN}✅ All system dependencies found${NC}"
-echo ""
-
 # Check for required shards/dependencies
 echo -e "${YELLOW}🔍 Checking dependencies...${NC}"
 
@@ -131,16 +95,6 @@ if [ ! -d "lib" ]; then
     echo ""
     echo -e "${YELLOW}Then run ./build.sh again${NC}"
     exit 1
-fi
-
-# Check for crinja (needed for template plugin)
-if [ ! -d "lib/crinja" ]; then
-    MISSING_DEPS+=("crinja")
-fi
-
-# Check for ssh2 (needed for SSH connections)
-if [ ! -d "lib/ssh2" ]; then
-    MISSING_DEPS+=("ssh2")
 fi
 
 if [ ${#MISSING_DEPS[@]} -gt 0 ]; then

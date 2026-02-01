@@ -116,14 +116,25 @@ module CrystalPlay
       @host.name == "localhost"
     end
     
+    # Get the actual hostname to connect to (checks ansible_host variable)
+    protected def get_connection_host : String
+      # Check for ansible_host variable (overrides inventory hostname)
+      if ansible_host = @vars["ansible_host"]?
+        return ansible_host.as_s
+      end
+      
+      # Fall back to inventory hostname
+      @host.name
+    end
+    
     protected def remote_exec(command : String) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       if is_local_connection?
         # Execute locally
         LocalExecutor.exec(command)
       else
-        # Execute via SSH
+        # Execute via SSH - use ansible_host if set
         SSHManager.exec(
-          @host.name,
+          get_connection_host,
           @host.user || "root",
           command,
           @host.port
@@ -137,7 +148,7 @@ module CrystalPlay
         FileUtils.cp(local_path, remote_path)
       else
         SSHManager.upload(
-          @host.name,
+          get_connection_host,
           @host.user || "root",
           local_path,
           remote_path,
@@ -152,7 +163,7 @@ module CrystalPlay
         FileUtils.cp(remote_path, local_path)
       else
         SSHManager.download(
-          @host.name,
+          get_connection_host,
           @host.user || "root",
           remote_path,
           local_path,

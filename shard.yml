@@ -11,9 +11,6 @@ dependencies:
   crinja:
     github: straight-shoota/crinja
     branch: master 
-  ssh2:
-    github: spider-gazelle/ssh2.cr
-    branch: master
 
 crystal: ">= 1.0.0"
 
