@@ -183,7 +183,9 @@ inventory = inventory.not_nil!
 if verbose
   puts "Available Hosts:".colorize(:cyan).bold
   inventory.hosts.each do |name, host|
-    puts "  - #{host.user}@#{host.name}:#{host.port}".colorize(:white)
+    # Show ansible_host (IP) if set, otherwise show hostname
+    connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+    puts "  - #{host.user}@#{connection_host}:#{host.port}".colorize(:white)
   end
   puts ""
 end
@@ -208,7 +210,12 @@ playbook.plays.each_with_index do |play, play_index|
   all_hosts.concat(hosts)
   
   if verbose
-    puts "Hosts in play: #{hosts.map(&.name).join(", ")}".colorize(:cyan)
+    # Show connection hosts (IPs) if different from inventory names
+    host_display = hosts.map do |host|
+      connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+      connection_host
+    end.join(", ")
+    puts "Hosts in play: #{host_display}".colorize(:cyan)
     puts ""
   end
   
@@ -254,8 +261,11 @@ puts "=" * 70
 
 # Show simple recap (deduplicate hosts)
 all_hosts.uniq { |h| h.name }.each do |host|
+  # Show connection host (IP) if different from inventory name
+  connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+  
   # TODO: Get actual stats from executor
-  puts "#{host.name.ljust(20)} : #{"ok".colorize(:green)} (playbook complete)"
+  puts "#{connection_host.ljust(20)} : #{"ok".colorize(:green)} (playbook complete)"
 end
 
 puts ""

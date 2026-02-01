@@ -253,7 +253,10 @@ module CrystalPlay
         "ok".colorize(:green)
       end
       
-      puts "#{status}: [#{host.name}]"
+      # Show connection host (IP) if different from inventory name
+      connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+      
+      puts "#{status}: [#{connection_host}]"
       
       # Display diff if present and diff_mode enabled
       if @diff_mode && result["diff"]?
