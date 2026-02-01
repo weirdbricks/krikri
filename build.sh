@@ -12,11 +12,15 @@ NC='\033[0m' # No Color
 # Configuration
 OUTPUT_DIR="bin"
 PLUGINS_DIR="$OUTPUT_DIR/plugins"
-BUILD_MODE="release"
+BUILD_MODE="debug"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --release)
+            BUILD_MODE="release"
+            shift
+            ;;
         --debug)
             BUILD_MODE="debug"
             shift
@@ -33,13 +37,14 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --debug    Build with debug symbols"
+            echo "  --release  Build with optimizations (slower build, faster runtime)"
+            echo "  --debug    Build with debug symbols (default, faster build)"
             echo "  --clean    Remove build artifacts"
             echo "  --help     Show this help message"
             echo ""
             echo "Examples:"
-            echo "  $0              # Build in release mode"
-            echo "  $0 --debug      # Build in debug mode"
+            echo "  $0              # Build in debug mode (default)"
+            echo "  $0 --release    # Build in release mode"
             echo "  $0 --clean      # Clean build artifacts"
             exit 0
             ;;
@@ -51,9 +56,20 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║     Crystal Play - Build System        ║${NC}"
+echo -e "${BLUE}║     Crystal Play - Build System       ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
 echo ""
+
+# Ensure we're in the project root directory
+if [ ! -f "crystal-play.cr" ]; then
+    echo -e "${RED}❌ Error: crystal-play.cr not found!${NC}"
+    echo ""
+    echo -e "${YELLOW}Please run this script from the project root directory:${NC}"
+    echo -e "${BLUE}  cd /path/to/crystal-play${NC}"
+    echo -e "${BLUE}  ./build.sh${NC}"
+    echo ""
+    exit 1
+fi
 
 # Check for Crystal
 if ! command -v crystal &> /dev/null; then
@@ -152,8 +168,8 @@ mkdir -p "$PLUGINS_DIR"
 
 # Build flags
 if [ "$BUILD_MODE" = "release" ]; then
-    BUILD_FLAGS="--release --no-debug"
-    echo -e "${BLUE}🏗️  Building in RELEASE mode (no debug info)${NC}"
+    BUILD_FLAGS="--release"
+    echo -e "${BLUE}🏗️  Building in RELEASE mode${NC}"
 else
     BUILD_FLAGS=""
     echo -e "${BLUE}🐛 Building in DEBUG mode${NC}"
@@ -162,12 +178,36 @@ echo ""
 
 # Build main executable
 echo -e "${YELLOW}🔨 Building main executable...${NC}"
-crystal build crystal-play.cr -o "$OUTPUT_DIR/crystal-ansible" $BUILD_FLAGS
-if [ $? -ne 0 ]; then
-    echo -e "${RED}✗ Failed to build main executable${NC}"
-    exit 1
+
+MAIN_BINARY="$OUTPUT_DIR/crystal-ansible"
+MAIN_SOURCE="crystal-play.cr"
+
+# Check if main executable needs rebuilding
+NEEDS_BUILD=false
+
+if [ ! -f "$MAIN_BINARY" ]; then
+    NEEDS_BUILD=true
+elif [ "$MAIN_SOURCE" -nt "$MAIN_BINARY" ]; then
+    NEEDS_BUILD=true
 fi
-echo -e "${GREEN}✅ Main executable built: $OUTPUT_DIR/crystal-ansible${NC}"
+
+if [ "$NEEDS_BUILD" = true ]; then
+    echo -n "   Building crystal-ansible... "
+    if ! OUTPUT=$(crystal build crystal-play.cr -o "$MAIN_BINARY" $BUILD_FLAGS 2>&1); then
+        echo -e "${RED}✗${NC}"
+        echo ""
+        echo -e "${RED}❌ Build failed for main executable${NC}"
+        echo ""
+        echo "$OUTPUT"
+        echo ""
+        exit 1
+    fi
+    echo -e "${GREEN}✓${NC}"
+    echo -e "${GREEN}✅ Main executable built: $OUTPUT_DIR/crystal-ansible${NC}"
+else
+    echo -e "   ${BLUE}✓${NC} crystal-ansible (up to date)"
+    echo -e "${GREEN}✅ Main executable up to date${NC}"
+fi
 echo ""
 
 # Build plugins
@@ -179,39 +219,65 @@ PLUGINS=(
     "lineinfile"
     "service"
     "shell"
+    "command"
     "apt"
     "dnf"
     "package"
     "debug"
-    "command"
 )
 
 PLUGIN_COUNT=0
+REBUILT_COUNT=0
+
 for plugin in "${PLUGINS[@]}"; do
-    if [ -f "plugins/$plugin.cr" ]; then
-        echo -n "   Building $plugin... "
+    SOURCE="plugins/$plugin.cr"
+    
+    if [ -f "$SOURCE" ]; then
+        BINARY="$PLUGINS_DIR/$plugin"
         
-        if ! OUTPUT=$(crystal build "plugins/$plugin.cr" -o "$PLUGINS_DIR/$plugin" $BUILD_FLAGS 2>&1); then
-            echo -e "${RED}✗${NC}"
-            echo ""
-            echo -e "${RED}❌ Build failed for plugin: $plugin${NC}"
-            echo ""
-            echo "$OUTPUT"
-            echo ""
-            echo -e "${YELLOW}Fix the error above and run ./build.sh again${NC}"
-            exit 1
+        # Check if rebuild is needed
+        NEEDS_BUILD=false
+        
+        if [ ! -f "$BINARY" ]; then
+            # Binary doesn't exist
+            NEEDS_BUILD=true
+        elif [ "$SOURCE" -nt "$BINARY" ]; then
+            # Source is newer than binary
+            NEEDS_BUILD=true
         fi
         
-        chmod +x "$PLUGINS_DIR/$plugin"
-        echo -e "${GREEN}✓${NC}"
+        if [ "$NEEDS_BUILD" = true ]; then
+            echo -n "   Building $plugin... "
+            
+            if ! OUTPUT=$(crystal build "$SOURCE" -o "$BINARY" $BUILD_FLAGS 2>&1); then
+                echo -e "${RED}✗${NC}"
+                echo ""
+                echo -e "${RED}❌ Build failed for plugin: $plugin${NC}"
+                echo ""
+                echo "$OUTPUT"
+                echo ""
+                echo -e "${YELLOW}Fix the error above and run ./build.sh again${NC}"
+                exit 1
+            fi
+            
+            chmod +x "$BINARY"
+            echo -e "${GREEN}✓${NC}"
+            ((REBUILT_COUNT++))
+        else
+            echo -e "   ${BLUE}✓${NC} $plugin (up to date)"
+        fi
         ((PLUGIN_COUNT++))
     else
-        echo -e "   ${YELLOW}⚠  Skipping $plugin (not found at plugins/$plugin.cr)${NC}"
+        echo -e "   ${YELLOW}⚠  Skipping $plugin (not found)${NC}"
     fi
 done
 
 echo ""
-echo -e "${GREEN}✅ Built $PLUGIN_COUNT plugins${NC}"
+if [ $REBUILT_COUNT -gt 0 ]; then
+    echo -e "${GREEN}✅ $PLUGIN_COUNT plugins checked ($REBUILT_COUNT rebuilt)${NC}"
+else
+    echo -e "${GREEN}✅ All $PLUGIN_COUNT plugins up to date${NC}"
+fi
 echo ""
 
 # Summary
@@ -223,9 +289,9 @@ echo -e "${GREEN}Executable:${NC} $OUTPUT_DIR/crystal-ansible"
 echo -e "${GREEN}Plugins:${NC} $PLUGINS_DIR/ ($PLUGIN_COUNT plugins)"
 echo ""
 echo -e "${YELLOW}Quick Start:${NC}"
-echo -e "  ${BLUE}./bin/crystal-ansible test-copy.yml${NC}"
-echo -e "  ${BLUE}./bin/crystal-ansible --diff test-copy.yml${NC}"
-echo -e "  ${BLUE}./bin/crystal-ansible --check test-copy.yml${NC}"
+echo -e "  ${BLUE}./bin/crystal-ansible test-facts.yml${NC}"
+echo -e "  ${BLUE}./bin/crystal-ansible --diff test-lineinfile.yml${NC}"
+echo -e "  ${BLUE}./bin/crystal-ansible --check test-handlers.yml${NC}"
 echo ""
 
 # Show size information
