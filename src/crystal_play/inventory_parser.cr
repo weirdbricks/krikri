@@ -1,4 +1,5 @@
 require "yaml"
+require "./host"
 
 module CrystalPlay
   # Inventory - represents the complete inventory
@@ -357,7 +358,7 @@ module CrystalPlay
       
       # Check for hosts without required vars
       inventory.hosts.each do |name, host|
-        if host.user.empty?
+        unless host.user.presence
           warnings << "Host '#{name}' has no user specified"
         end
       end

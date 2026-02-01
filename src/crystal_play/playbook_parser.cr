@@ -1,18 +1,6 @@
 require "yaml"
 
 module CrystalPlay
-  # Represents a target host
-  class Host
-    property name : String
-    property user : String
-    property port : Int32
-    property vars : Hash(String, JSON::Any)
-    
-    def initialize(@name : String, @user : String = "root", @port : Int32 = 22)
-      @vars = Hash(String, JSON::Any).new
-    end
-  end
-  
   # Represents a single task in a playbook
   class Task
     property name : String

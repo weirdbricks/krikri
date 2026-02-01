@@ -2,28 +2,11 @@
 
 require "json"
 require "file_utils"
+require "./host"
 require "./ssh_manager"
 require "./local_executor"
 
 module CrystalPlay
-  # Host information
-  class Host
-    property name : String
-    property user : String?
-    property port : Int32
-    
-    def initialize(@name, @user = nil, @port = 22)
-    end
-    
-    def self.from_json(json : JSON::Any) : Host
-      Host.new(
-        name: json["name"].as_s,
-        user: json["user"]?.try(&.as_s),
-        port: json["port"]?.try(&.as_i) || 22
-      )
-    end
-  end
-  
   # Plugin result structure with diff support
   class PluginResult
     property changed : Bool
