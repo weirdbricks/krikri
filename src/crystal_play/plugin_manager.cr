@@ -62,8 +62,20 @@ module CrystalPlay
       # Ensure plugin is uploaded to remote
       remote_plugin_path = ensure_plugin_uploaded(plugin_name, host, vars)
       
-      # Execute plugin remotely with config via stdin
-      command = "echo '#{config.to_json.gsub("'", "'\\''")}' | #{remote_plugin_path}"
+      # Modify config to tell plugin it's running locally on the remote
+      # The plugin needs to know it should execute commands locally, not via SSH
+      config_hash = JSON.parse(config.to_json).as_h
+      if config_hash["vars"]?
+        vars_hash = config_hash["vars"].as_h
+        vars_hash["ansible_connection"] = JSON::Any.new("local")
+        config_hash["vars"] = JSON::Any.new(vars_hash)
+      else
+        config_hash["vars"] = JSON::Any.new({"ansible_connection" => JSON::Any.new("local")})
+      end
+      modified_config = JSON::Any.new(config_hash)
+      
+      # Execute plugin remotely with modified config via stdin
+      command = "echo '#{modified_config.to_json.gsub("'", "'\\''")}' | #{remote_plugin_path}"
       result = SSHManager.exec(
         connection_host,
         host.user || "root",
