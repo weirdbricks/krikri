@@ -128,15 +128,6 @@ module CrystalPlay
               facts[key] = value
             end
             @facts[host.name] = facts
-            
-            # DEBUG: Show how many facts we got
-            STDERR.puts "DEBUG: Got #{facts.size} facts for #{host.name}"
-            if facts.size > 0
-              STDERR.puts "DEBUG: Sample facts: #{facts.keys.first(5).join(", ")}"
-            end
-          else
-            STDERR.puts "DEBUG: No ansible_facts in result for #{host.name}"
-            STDERR.puts "DEBUG: Result keys: #{result.as_h.keys.join(", ")}"
           end
           
           # Show success
@@ -149,7 +140,6 @@ module CrystalPlay
           connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
           puts "failed: [#{connection_host}]".colorize(:red)
           puts "  Error gathering facts: #{ex.message}".colorize(:red)
-          STDERR.puts ex.backtrace.join("\n")
           @results[host.name]["failed"] += 1
         end
       end

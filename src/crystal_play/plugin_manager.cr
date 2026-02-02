@@ -31,7 +31,13 @@ module CrystalPlay
       # Collect all unique module names used in the playbook
       required_plugins = Set(String).new
       
+      # Track if any play needs facts gathering
+      needs_facts = false
+      
       playbook.plays.each do |play|
+        # Check if this play gathers facts
+        needs_facts = true if play.gather_facts
+        
         play.tasks.each do |task|
           # Strip FQCN to get simple plugin name
           simple_name = task.module_name.sub(/^ansible\.(builtin|legacy)\./, "")
@@ -43,6 +49,9 @@ module CrystalPlay
           required_plugins.add(simple_name)
         end
       end
+      
+      # Add facts plugin if any play needs it
+      required_plugins.add("facts") if needs_facts
       
       return if required_plugins.empty?
       
@@ -217,8 +226,7 @@ module CrystalPlay
     private def self.execute_local_plugin(plugin_name : String, config : JSON::Any) : JSON::Any
       plugin_path = get_local_plugin_path(plugin_name)
       
-      # Execute plugin with config via stdin using Process (NOT shell echo)
-      # This properly handles JSON with newlines and special characters
+      # Execute plugin with config via stdin using Process
       stdout = IO::Memory.new
       stderr = IO::Memory.new
       
@@ -230,22 +238,18 @@ module CrystalPlay
           error: stderr
         )
         
-        # Write config JSON to stdin
-        if input = process.input
-          input.print(config.to_json)
-          input.close
-        end
+        # Write config to stdin
+        process.input.print(config.to_json)
+        process.input.close
         
-        # Wait for completion
         status = process.wait
-        
         output = stdout.to_s
         
-        # Parse output
+        # Try to parse JSON output
         begin
           JSON.parse(output)
         rescue ex
-          # If parsing fails, return error with details
+          # Parsing failed - return error with details
           JSON.parse({
             "changed" => false,
             "failed" => true,
@@ -256,10 +260,12 @@ module CrystalPlay
           }.to_json)
         end
       rescue ex
+        # Execution failed
         JSON.parse({
           "changed" => false,
           "failed" => true,
-          "msg" => "Plugin execution failed: #{ex.message}"
+          "msg" => "Plugin execution failed: #{ex.message}",
+          "stderr" => stderr.to_s
         }.to_json)
       end
     end

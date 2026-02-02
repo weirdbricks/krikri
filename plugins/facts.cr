@@ -127,6 +127,7 @@ def gather_network_facts(facts)
 end
 
 def gather_hardware_facts(facts)
+  # Memory facts - manual parsing of /proc/meminfo
   if File.exists?("/proc/meminfo")
     meminfo = File.read("/proc/meminfo")
     
@@ -147,20 +148,23 @@ def gather_hardware_facts(facts)
     end
   end
   
+  # CPU facts
+  # Use Crystal's native System.cpu_count for vcpus
+  vcpus = System.cpu_count.to_i64
+  facts["ansible_processor_vcpus"] = vcpus if vcpus > 0
+  
+  # For physical processors and cores per processor, still need /proc/cpuinfo
   if File.exists?("/proc/cpuinfo")
     cpuinfo = File.read("/proc/cpuinfo")
     
     physical_ids = cpuinfo.scan(/physical id\s+:\s+(\d+)/).map(&.[1]).uniq
-    count = physical_ids.size
+    count = physical_ids.size.to_i64
     count = 1_i64 if count == 0
-    facts["ansible_processor_count"] = count.to_i64
+    facts["ansible_processor_count"] = count
     
     if match = cpuinfo.match(/cpu cores\s+:\s+(\d+)/)
       facts["ansible_processor_cores"] = match[1].to_i64
     end
-    
-    vcpus = cpuinfo.scan(/^processor\s+:/).size.to_i64
-    facts["ansible_processor_vcpus"] = vcpus if vcpus > 0
     
     if match = cpuinfo.match(/model name\s+:\s+(.+)/)
       facts["ansible_processor"] = [match[1].strip]
