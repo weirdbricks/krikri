@@ -117,6 +117,7 @@ module CrystalPlay
         stdout: result[:stdout],
         stderr: result[:stderr],
         exit_code: result[:exit_code],
+        rc: result[:exit_code],  # Add rc as alias for Ansible compatibility
         diff: diff_data
       )
     end

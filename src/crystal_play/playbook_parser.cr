@@ -249,14 +249,14 @@ module CrystalPlay
       # Parse module parameters
       task.params = parse_module_params(module_params.not_nil!, module_name)
       
-      # Parse task-level settings
-      task.when_condition = task_hash["when"]?.try(&.as_s)
-      task.register = task_hash["register"]?.try(&.as_s)
+      # Parse task-level settings - FIXED to handle boolean values safely
+      task.when_condition = task_hash["when"]?.try { |v| safe_yaml_to_string(v) }
+      task.register = task_hash["register"]?.try { |v| safe_yaml_to_string(v) }
       task.ignore_errors = task_hash["ignore_errors"]?.try(&.as_bool) || false
       task.check_mode = task_hash["check_mode"]?.try(&.as_bool)
       task.diff_mode = task_hash["diff"]?.try(&.as_bool)
       task.become = task_hash["become"]?.try(&.as_bool) || play.become
-      task.become_user = task_hash["become_user"]?.try(&.as_s) || play.become_user
+      task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
       
       # Parse notify (can be string or array)
       if notify_yaml = task_hash["notify"]?
@@ -268,7 +268,7 @@ module CrystalPlay
       end
       
       # Parse listen (string only)
-      task.listen = task_hash["listen"]?.try(&.as_s)
+      task.listen = task_hash["listen"]?.try { |v| safe_yaml_to_string(v) }
       
       # Parse tags
       if tags_yaml = task_hash["tags"]?.try(&.as_a?)
@@ -311,7 +311,26 @@ module CrystalPlay
       params
     end
     
-    # Convert YAML value to string
+    # Helper: Safely convert any YAML value to string
+    # This handles cases where YAML values might be booleans, integers, etc.
+    private def self.safe_yaml_to_string(yaml : YAML::Any) : String
+      case yaml.raw
+      when String
+        yaml.as_s
+      when Bool
+        yaml.as_bool.to_s
+      when Int64, Int32
+        yaml.as_i.to_s
+      when Float64
+        yaml.as_f.to_s
+      when Nil
+        ""
+      else
+        yaml.to_s
+      end
+    end
+    
+    # Convert YAML value to string (used for module parameters)
     private def self.stringify_value(yaml : YAML::Any) : String
       case yaml.raw
       when String
@@ -321,7 +340,11 @@ module CrystalPlay
       when Float64
         yaml.as_f.to_s
       when Bool
-        yaml.as_bool.to_s
+        begin
+          yaml.as_bool.to_s
+        rescue
+          yaml.raw.to_s
+        end
       when Nil
         ""
       when Array

@@ -169,8 +169,8 @@ module CrystalPlay
       
       # Check conditional (when:)
       if when_condition = task.when_condition
-        # Create substitutor for the condition
-        substitutor = VariableSubstitutor.new(
+        # FIXED: Use VarSubstitutor instead of VariableSubstitutor
+        substitutor = VarSubstitutor.new(
           vars: vars_context,
           host_name: host.name
         )
@@ -188,8 +188,8 @@ module CrystalPlay
         end
       end
       
-      # Create variable substitutor
-      substitutor = VariableSubstitutor.new(
+      # FIXED: Use VarSubstitutor instead of VariableSubstitutor
+      substitutor = VarSubstitutor.new(
         vars: vars_context,
         host_name: host.name
       )
@@ -265,7 +265,7 @@ module CrystalPlay
     # Substitute variables in task parameters
     private def substitute_task_params(
       params : Hash(String, String),
-      substitutor : VariableSubstitutor
+      substitutor : VarSubstitutor
     ) : Hash(String, String)
       result = Hash(String, String).new
       
@@ -348,8 +348,8 @@ module CrystalPlay
         vars_context[key] = value
       end
       
-      # Create variable substitutor
-      substitutor = VariableSubstitutor.new(
+      # FIXED: Use VarSubstitutor instead of VariableSubstitutor
+      substitutor = VarSubstitutor.new(
         vars: vars_context,
         host_name: host.name
       )

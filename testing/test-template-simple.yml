@@ -1,9 +1,11 @@
 ---
-# Simple Template Test - No facts required
+# Simple Template Test - REMOTE
+# Quick validation that template plugin works
+# Run with: ./bin/crystal-ansible -i inventory.ini test-template-simple.yml
 
-- name: Simple Template Test
+- name: Simple Template Test (Remote)
   hosts: testservers
-  gather_facts: false  # No facts needed!
+  gather_facts: false
   
   vars:
     server_name: crystal-play.example.com
@@ -28,32 +30,77 @@
         src: testing/templates/nginx-simple.conf.j2
         dest: /tmp/crystal-play-template-test/nginx.conf
         mode: '0644'
+      register: first_render
+    
+    - name: Show first render result
+      ansible.builtin.debug:
+        msg: "First render - changed: {{ first_render.changed }} (should be TRUE)"
     
     - name: Render template again (2nd run - should be ok/idempotent)
       ansible.builtin.template:
         src: testing/templates/nginx-simple.conf.j2
         dest: /tmp/crystal-play-template-test/nginx.conf
         mode: '0644'
+      register: second_render
+    
+    - name: Show second render result
+      ansible.builtin.debug:
+        msg: "Second render - changed: {{ second_render.changed }} (should be FALSE for idempotency)"
     
     - name: Read rendered template
       ansible.builtin.command: cat /tmp/crystal-play-template-test/nginx.conf
       register: rendered
     
-    - name: Show rendered template
+    - name: Show rendered template (first 15 lines)
       ansible.builtin.debug:
-        msg: "{{ rendered.stdout }}"
+        msg: "{{ rendered.stdout_lines[:15] }}"
     
-    - name: Cleanup
+    - name: Verify SSL section exists
+      ansible.builtin.shell: grep -c "SSL Configuration" /tmp/crystal-play-template-test/nginx.conf
+      register: ssl_check
+      ignore_errors: yes
+    
+    - name: Show SSL check
+      ansible.builtin.debug:
+        msg: "SSL section found: {{ ssl_check.rc == 0 }} (count: {{ ssl_check.stdout }})"
+    
+    - name: Verify upstream servers rendered
+      ansible.builtin.shell: grep -c "Upstream:" /tmp/crystal-play-template-test/nginx.conf
+      register: upstream_check
+    
+    - name: Show upstream check
+      ansible.builtin.debug:
+        msg: "Found {{ upstream_check.stdout }} upstream servers (expected 3)"
+    
+    - name: Verify port substitution
+      ansible.builtin.shell: grep -c "listen 8080" /tmp/crystal-play-template-test/nginx.conf
+      register: port_check
+    
+    - name: Show port check
+      ansible.builtin.debug:
+        msg: "Port 8080 found: {{ port_check.stdout }} times"
+    
+    - name: Summary
+      ansible.builtin.debug:
+        msg:
+          - "======================================"
+          - "Simple Template Test Results"
+          - "======================================"
+          - "First render:  {{ first_render.changed }} (should be true)"
+          - "Second render: {{ second_render.changed }} (should be false)"
+          - "SSL section:   {{ ssl_check.rc == 0 }}"
+          - "Upstreams:     {{ upstream_check.stdout }}/3"
+          - "Port correct:  {{ port_check.stdout }} occurrence(s)"
+          - "======================================"
+          - "Status: {% if not second_render.changed %}IDEMPOTENCY WORKING ✓{% else %}IDEMPOTENCY BROKEN ✗{% endif %}"
+          - "======================================"
+    
+    - name: Cleanup (disabled - keep for inspection)
       ansible.builtin.file:
         path: /tmp/crystal-play-template-test
         state: absent
+      when: false
     
-    - name: SUCCESS
+    - name: File Location
       ansible.builtin.debug:
-        msg: "✓ Template test complete!"
-
-# Expected:
-# - First template render: changed
-# - Second template render: ok (idempotent!)
-# - Template should have all variables substituted
-# - Conditionals and loops should work
+        msg: "Files kept at /tmp/crystal-play-template-test/ on remote servers"

@@ -147,7 +147,8 @@ module CrystalPlay
         msg: exit_code == 0 ? "Command executed successfully" : "Command failed with exit code #{exit_code}",
         stdout: stdout.to_s,
         stderr: stderr.to_s,
-        rc: exit_code
+        exit_code: exit_code,
+        rc: exit_code  # Add rc as alias for Ansible compatibility
       )
     end
     
