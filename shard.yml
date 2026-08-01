@@ -1,5 +1,5 @@
 name: crystal-play
-version: 0.1.0
+version: 0.2.1
 
 description: |
   Fast, Ansible-compatible automation tool written in Crystal
@@ -10,7 +10,11 @@ authors:
 dependencies:
   crinja:
     github: straight-shoota/crinja
-    branch: master 
+    branch: master
+
+development_dependencies:
+  ameba:
+    github: crystal-ameba/ameba
 
 crystal: ">= 1.0.0"
 

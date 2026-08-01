@@ -1,10 +1,16 @@
 # Crystal Play - Roadmap to Ansible Parity
 
 **Status as of 2026-08-01:** builds again on Crystal 1.20.3 (fixed `as_i` -> `as_i64`
-type mismatch in `comparison_evaluator.cr`). No automated tests exist yet. This
-roadmap sequences the remaining work from the two prior analysis docs
+type mismatch in `comparison_evaluator.cr`). Phase 0 is done: `spec/` scaffolding,
+56 unit specs (`conditional_evaluator`, `variable_substitutor/*`, `playbook_parser`),
+18 integration specs driving the built binary against `testing/*.yml` in `--check`
+mode, a GitHub Actions workflow (build + `crystal spec` + `ameba`), and an
+`.ameba.yml` TODO list grandfathering pre-existing lint debt. Bumped to `0.2.0`.
+Next up is Phase 1. This roadmap sequences the remaining work from the two prior
+analysis docs
 ([WHATS_MISSING.md](WHATS_MISSING.md), [MISSING_FEATURES_COMPREHENSIVE.md](MISSING_FEATURES_COMPREHENSIVE.md))
-into phases, with a test-foundation phase added first since none currently exists.
+into phases, with the test-foundation phase (Phase 0) landing first so every
+phase after it ships with a regression net instead of drifting untested.
 
 ---
 
@@ -31,8 +37,23 @@ the same way it did between January and now.
 
 ## Phase 1 - Essential gaps (~2-3 weeks)
 
-- Loop constructs: `with_dict`, `with_fileglob`, `with_nested`, `with_sequence`,
-  `with_indexed_items`, `until`/`retries`/`delay`
+- [x] Loop constructs (`0.2.1`): `loop`/`with_items` (already parsed but
+  previously never executed - was a dead field), `with_dict`, `with_nested`,
+  `with_sequence`, `with_indexed_items` resolved at parse time via the new
+  `LoopResolver` module; `with_fileglob` resolved at execution time (needs
+  `{{ vars }}` substitution + filesystem access); `until`/`retries`/`delay`
+  retry a task against a condition on its registered result (skipped
+  entirely in `--check` mode, since most modules refuse to act in check
+  mode anyway and retrying would just burn `retries * delay` seconds for
+  nothing). Looped + registered tasks aggregate into
+  `{"changed": .., "failed": .., "results": [...]}`, matching Ansible's
+  shape. Covered by unit specs (`loop_resolver_spec.cr`,
+  `playbook_parser_spec.cr`) and an integration fixture
+  (`testing/test-loop-quick.yml`). Access patterns that don't fit the
+  existing evaluator: tuple items (`with_nested`, `with_indexed_items`) use
+  bracket indexing (`item[0]`, `item[1]`), not Ansible's dot-tuple access
+  (`item.0`) - fine for a from-scratch reimplementation, just not
+  pixel-perfect Jinja2 compatibility.
 - Plugins: `user`, `group`, `git`, `cron`, `authorized_key`
 - `block` / `rescue` / `always` error handling
 

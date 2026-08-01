@@ -143,6 +143,9 @@ if [ ! -f "$MAIN_BINARY" ]; then
     NEEDS_BUILD=true
 elif [ "$MAIN_SOURCE" -nt "$MAIN_BINARY" ]; then
     NEEDS_BUILD=true
+elif find src -name '*.cr' -newer "$MAIN_BINARY" -print -quit | grep -q .; then
+    # crystal-play.cr's own mtime doesn't change when only its src/ deps do
+    NEEDS_BUILD=true
 fi
 
 if [ "$NEEDS_BUILD" = true ]; then

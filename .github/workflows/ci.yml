@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    container:
+      image: crystallang/crystal:1.20.3
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache shards
+        uses: actions/cache@v4
+        with:
+          path: lib
+          key: ${{ runner.os }}-shards-${{ hashFiles('shard.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-shards-
+
+      - name: Install dependencies
+        run: shards install
+
+      - name: Build main executable and plugins
+        run: ./build.sh
+
+      - name: Run specs
+        run: crystal spec
+
+      - name: Lint (ameba)
+        # Invoke the dependency's own binary directly rather than ./bin/ameba:
+        # that symlink is only (re)created by shards' postinstall hook on a
+        # fresh install, so it can go missing on a cache hit for lib/.
+        run: lib/ameba/bin/ameba

@@ -1,4 +1,5 @@
 require "yaml"
+require "./loop_resolver"
 
 module CrystalPlay
   # Represents a single task in a playbook
@@ -18,7 +19,17 @@ module CrystalPlay
     property become_user : String?
     property tags : Array(String)
     property loop : Array(JSON::Any)?
-    
+    # Loop items already resolved at parse time (loop:, with_items:,
+    # with_dict:, with_nested:, with_sequence:, with_indexed_items:).
+    property loop_items : Array(JSON::Any)?
+    # with_fileglob patterns, resolved at execution time (needs {{ vars }}
+    # substitution and filesystem access, neither available at parse time).
+    property loop_fileglob : Array(String)?
+    # until: / retries: / delay: - retry a task until a condition passes.
+    property until_condition : String?
+    property retries : Int32
+    property delay : Int32
+
     def initialize(@name : String, @module_name : String)
       @params = Hash(String, String).new
       @vars = Hash(String, JSON::Any).new
@@ -33,6 +44,11 @@ module CrystalPlay
       @become_user = nil
       @tags = [] of String
       @loop = nil
+      @loop_items = nil
+      @loop_fileglob = nil
+      @until_condition = nil
+      @retries = 3
+      @delay = 5
     end
     
     def to_s(io : IO)
@@ -166,7 +182,8 @@ module CrystalPlay
       # Parse play-level settings
       play.become = yaml["become"]?.try(&.as_bool) || false
       play.become_user = yaml["become_user"]?.try(&.as_s)
-      play.gather_facts = yaml["gather_facts"]?.try(&.as_bool) || true
+      gather_facts_yaml = yaml["gather_facts"]?
+      play.gather_facts = gather_facts_yaml ? gather_facts_yaml.as_bool : true
       
       # Parse play-level vars
       if vars_yaml = yaml["vars"]?.try(&.as_h?)
@@ -219,8 +236,10 @@ module CrystalPlay
       name = task_hash["name"]?.try(&.as_s) || "Task #{index + 1}"
       
       # Find the module (first key that's not a special keyword)
-      special_keys = ["name", "when", "register", "ignore_errors", "check_mode", 
+      special_keys = ["name", "when", "register", "ignore_errors", "check_mode",
                       "diff", "become", "become_user", "tags", "with_items", "loop",
+                      "with_dict", "with_fileglob", "with_nested", "with_sequence",
+                      "with_indexed_items", "until", "retries", "delay",
                       "notify", "changed_when", "failed_when"]
       
       module_name = nil
@@ -275,13 +294,46 @@ module CrystalPlay
         task.tags = tags_yaml.map(&.as_s)
       end
       
-      # Parse loop/with_items
+      # Parse loop / with_* (checked in this priority order; first match wins,
+      # matching how Ansible only honors one loop source per task)
       if loop_yaml = task_hash["loop"]?.try(&.as_a?)
         task.loop = loop_yaml.map { |item| JSON.parse(item.to_json) }
+        task.loop_items = task.loop
       elsif with_items = task_hash["with_items"]?.try(&.as_a?)
         task.loop = with_items.map { |item| JSON.parse(item.to_json) }
+        task.loop_items = task.loop
+      elsif with_dict = task_hash["with_dict"]?.try(&.as_h?)
+        hash = Hash(String, JSON::Any).new
+        with_dict.each { |k, v| hash[k.to_s] = JSON.parse(v.to_json) }
+        task.loop_items = LoopResolver.with_dict(hash)
+      elsif with_nested = task_hash["with_nested"]?.try(&.as_a?)
+        lists = with_nested.map do |entry|
+          if entry.as_a?
+            entry.as_a.map { |item| JSON.parse(item.to_json) }
+          else
+            [JSON.parse(entry.to_json)]
+          end
+        end
+        task.loop_items = LoopResolver.with_nested(lists)
+      elsif with_sequence = task_hash["with_sequence"]?
+        spec = safe_yaml_to_string(with_sequence)
+        task.loop_items = LoopResolver.with_sequence(spec)
+      elsif with_indexed_items = task_hash["with_indexed_items"]?.try(&.as_a?)
+        items = with_indexed_items.map { |item| JSON.parse(item.to_json) }
+        task.loop_items = LoopResolver.with_indexed_items(items)
+      elsif with_fileglob = task_hash["with_fileglob"]?
+        task.loop_fileglob = if with_fileglob.as_a?
+          with_fileglob.as_a.map(&.as_s)
+        else
+          [with_fileglob.as_s]
+        end
       end
-      
+
+      # Parse until / retries / delay
+      task.until_condition = task_hash["until"]?.try { |v| safe_yaml_to_string(v) }
+      task.retries = task_hash["retries"]?.try { |v| safe_yaml_to_string(v).to_i? } || 3
+      task.delay = task_hash["delay"]?.try { |v| safe_yaml_to_string(v).to_i? } || 5
+
       task
     end
     

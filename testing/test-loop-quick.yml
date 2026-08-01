@@ -1,0 +1,50 @@
+# Loop constructs smoke test - runs entirely on localhost with the debug
+# plugin, so it is safe to exercise for real (not just --check).
+
+- name: Loop constructs test
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: loop over a plain list
+      ansible.builtin.debug:
+        msg: "loop item: {{ item }}"
+      loop: [a, b, c]
+      register: loop_result
+
+    - name: show aggregated loop results
+      ansible.builtin.debug:
+        msg: "changed={{ loop_result.changed }}"
+
+    - name: with_items over a plain list
+      ansible.builtin.debug:
+        msg: "with_items item: {{ item }}"
+      with_items: [x, y]
+
+    - name: with_dict over a mapping
+      ansible.builtin.debug:
+        msg: "{{ item.key }}={{ item.value }}"
+      with_dict:
+        one: "1"
+        two: "2"
+
+    - name: with_nested cartesian product
+      ansible.builtin.debug:
+        msg: "nested item: {{ item }}"
+      with_nested:
+        - [a, b]
+        - [x, y]
+
+    - name: with_sequence numeric range
+      ansible.builtin.debug:
+        msg: "sequence item: {{ item }}"
+      with_sequence: "start=1 end=3"
+
+    - name: with_indexed_items pairs index with value
+      ansible.builtin.debug:
+        msg: "indexed item: {{ item }}"
+      with_indexed_items: [x, y]
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "Loop constructs tests complete!"

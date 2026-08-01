@@ -152,52 +152,91 @@ module CrystalPlay
       ResultDisplay.show_recap(@hosts, @results)
     end
     
-    # Execute a single task on a host
+    # Execute a task on a host - dispatches to the loop, retry, or plain
+    # single-execution path depending on what the task declares.
     private def execute_task(task : Task, host : Host)
-      # Build variable context (includes facts)
+      vars_context = build_vars_context(task, host)
+
+      # with_fileglob needs a substitutor (for {{ vars }} in the pattern) and
+      # the filesystem, so it can only be resolved here, not at parse time.
+      loop_items = task.loop_items || resolve_fileglob(task, host, vars_context)
+
+      if loop_items
+        execute_looped_task(task, host, vars_context, loop_items)
+        return
+      end
+
+      if (until_condition = task.until_condition) && !@check_mode
+        execute_task_with_retries(task, host, vars_context, until_condition)
+        return
+      end
+
+      result = execute_task_once(task, host, vars_context)
+      return unless result
+
+      finish_single_task(task, host, result)
+    end
+
+    # Build the base variable context (play/host/registered/task vars + facts)
+    # shared by every execution path for a task.
+    private def build_vars_context(task : Task, host : Host) : Hash(String, JSON::Any)
       vars_context = VariableContext.build(
         @play_vars,
         host,
         task,
         @registered_vars[host.name]
       )
-      
-      # Add facts to context
+
       @facts[host.name].each do |key, value|
         vars_context[key] = value
       end
-      
-      # Check conditional (when:)
+
+      vars_context
+    end
+
+    # Resolve with_fileglob patterns (if any) against the control host's
+    # filesystem, after substituting any {{ vars }} in the pattern.
+    private def resolve_fileglob(task : Task, host : Host, vars_context : Hash(String, JSON::Any)) : Array(JSON::Any)?
+      patterns = task.loop_fileglob
+      return nil unless patterns
+
+      substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+      matches = [] of String
+
+      patterns.each do |pattern|
+        substituted = substitutor.substitute(pattern)
+        matches.concat(Dir.glob(substituted))
+      end
+
+      matches.sort!
+      matches.map { |path| JSON::Any.new(path) }
+    end
+
+    # Run one attempt of a task (when: check + param substitution + action
+    # plugin + module execution). Returns nil if the when: condition skipped
+    # it (the skipped counter is already updated in that case).
+    private def execute_task_once(
+      task : Task,
+      host : Host,
+      vars_context : Hash(String, JSON::Any),
+      item_label : String? = nil
+    ) : JSON::Any?
       if when_condition = task.when_condition
-        # FIXED: Use VarSubstitutor instead of VariableSubstitutor
-        substitutor = VarSubstitutor.new(
-          vars: vars_context,
-          host_name: host.name
-        )
-        
-        # Substitute variables in condition
+        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
         substituted_condition = substitutor.substitute(when_condition)
-        
-        # Evaluate condition
+
         unless ConditionalEvaluator.evaluate(substituted_condition, vars_context)
-          # Condition failed - skip this task
           connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-          puts "skipping: [#{connection_host}]".colorize(:cyan)
+          suffix = item_label ? " => (item=#{item_label})" : ""
+          puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
           @results[host.name]["skipped"] += 1
-          return
+          return nil
         end
       end
-      
-      # FIXED: Use VarSubstitutor instead of VariableSubstitutor
-      substitutor = VarSubstitutor.new(
-        vars: vars_context,
-        host_name: host.name
-      )
-      
-      # Substitute variables in task parameters
+
+      substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       substituted_params = substitute_task_params(task.params, substitutor)
-      
-      # Check for action plugins
+
       if ActionPluginManager.has_action_plugin?(task.module_name)
         action_result = ActionPluginManager.execute_action(
           task.module_name,
@@ -205,63 +244,144 @@ module CrystalPlay
           vars_context,
           host
         )
-        
-        # Handle action plugin failure
+
         unless action_result.success
-          error_result = JSON.parse({
+          return JSON.parse({
             "changed" => false,
-            "failed" => true,
-            "msg" => action_result.error_message || "Action plugin failed"
+            "failed"  => true,
+            "msg"     => action_result.error_message || "Action plugin failed",
           }.to_json)
-          
-          # Display result and update stats
-          ResultDisplay.display_result(host, error_result, @diff_mode)
-          ResultDisplay.update_stats(@results[host.name], error_result)
-          return
         end
-        
-        # Use modified params from action plugin if provided
+
         if modified_params = action_result.modified_params
           substituted_params = modified_params
         end
       end
-      
-      # Build config for plugin
+
       config = build_plugin_config(task, host, substituted_params, vars_context)
-      
-      # Execute plugin using PluginManager (handles local vs remote)
       config_json = JSON.parse(config)
-      result = PluginManager.execute_plugin(
+
+      PluginManager.execute_plugin(
         task.module_name,
         config_json,
         host,
         vars_context
       )
-      
-      # Handle register directive
+    end
+
+    # Register / notify / display / update stats for a (non-looped) task result.
+    private def finish_single_task(task : Task, host : Host, result : JSON::Any)
       if register_name = task.register
-        if !register_name.empty?
-          register_result(host, register_name, result)
-        end
+        register_result(host, register_name, result) unless register_name.empty?
       end
-      
-      # Handle notify directive (only if task changed)
+
       changed = result["changed"]?.try(&.as_bool) || false
       if changed && (notify_list = task.notify)
-        if !notify_list.empty?
-          notify_list.each do |handler_name|
-            @handler_runner.notify(host, handler_name)
-          end
-        end
+        notify_list.each { |handler_name| @handler_runner.notify(host, handler_name) } unless notify_list.empty?
       end
-      
-      # Display result
+
       ResultDisplay.display_result(host, result, @diff_mode)
-      
-      # Update stats
       ResultDisplay.update_stats(@results[host.name], result)
     end
-    
+
+    # Execute a task once per loop item, aggregating the per-item results
+    # into a single registered variable (`{"changed": .., "results": [...]}`),
+    # matching Ansible's shape for looped, registered tasks.
+    private def execute_looped_task(
+      task : Task,
+      host : Host,
+      base_vars_context : Hash(String, JSON::Any),
+      loop_items : Array(JSON::Any)
+    )
+      results = [] of JSON::Any
+      any_changed = false
+      any_failed = false
+
+      loop_items.each do |item|
+        vars_context = base_vars_context.dup
+        vars_context["item"] = item
+
+        result = execute_task_once(task, host, vars_context, item_label: item_display(item))
+        next unless result
+
+        changed = result["changed"]?.try(&.as_bool) || false
+        failed = result["failed"]?.try(&.as_bool) || false
+        any_changed ||= changed
+        any_failed ||= failed
+
+        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item))
+        ResultDisplay.update_stats(@results[host.name], result)
+
+        result_hash = JSON.parse(result.to_json).as_h
+        result_hash["item"] = item
+        results << JSON::Any.new(result_hash)
+      end
+
+      if any_changed && (notify_list = task.notify)
+        notify_list.each { |handler_name| @handler_runner.notify(host, handler_name) } unless notify_list.empty?
+      end
+
+      if register_name = task.register
+        unless register_name.empty?
+          aggregate = {
+            "changed" => JSON::Any.new(any_changed),
+            "failed"  => JSON::Any.new(any_failed),
+            "results" => JSON::Any.new(results),
+          }
+          @registered_vars[host.name][register_name] = JSON::Any.new(aggregate)
+        end
+      end
+    end
+
+    # Render a loop item for display purposes (Ansible shows `(item=...)`).
+    private def item_display(item : JSON::Any) : String
+      item.raw.is_a?(String) ? item.as_s : item.to_json
+    end
+
+    # Run a task repeatedly (up to task.retries times, sleeping task.delay
+    # seconds between attempts) until task.until_condition evaluates true
+    # against the registered result, matching Ansible's until:/retries:/delay:.
+    # Skipped entirely in check mode: most modules refuse to act in check
+    # mode anyway, which would otherwise turn every retry loop into a slow,
+    # guaranteed-to-fail wait for no reason.
+    private def execute_task_with_retries(
+      task : Task,
+      host : Host,
+      vars_context : Hash(String, JSON::Any),
+      until_condition : String
+    )
+      register_name = task.register
+      attempts = task.retries.clamp(1..)
+      result = nil
+
+      attempts.times do |attempt|
+        result = execute_task_once(task, host, vars_context)
+        break unless result
+
+        if register_name && !register_name.empty?
+          register_result(host, register_name, result)
+          vars_context[register_name] = @registered_vars[host.name][register_name]
+        end
+
+        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+        substituted_condition = substitutor.substitute(until_condition)
+        break if ConditionalEvaluator.evaluate(substituted_condition, vars_context)
+
+        sleep(task.delay.seconds) if attempt < attempts - 1
+      end
+
+      return unless result
+
+      changed = result["changed"]?.try(&.as_bool) || false
+      if changed && (notify_list = task.notify)
+        notify_list.each { |handler_name| @handler_runner.notify(host, handler_name) } unless notify_list.empty?
+      end
+
+      ResultDisplay.display_result(host, result, @diff_mode)
+      ResultDisplay.update_stats(@results[host.name], result)
+    end
+
+
     # Substitute variables in task parameters
     private def substitute_task_params(
       params : Hash(String, String),

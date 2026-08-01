@@ -5,12 +5,14 @@ require "../host"
 module CrystalPlay
   # ResultDisplay - Handles displaying task results and diffs
   module ResultDisplay
-      # Display task result with appropriate formatting
-      def self.display_result(host : Host, result : JSON::Any, diff_mode : Bool)
+      # Display task result with appropriate formatting.
+      # item_label is set for looped tasks, rendering `ok: [host] => (item=x)`
+      # to match how Ansible annotates per-iteration output.
+      def self.display_result(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil)
         changed = result["changed"]?.try(&.as_bool) || false
         failed = result["failed"]?.try(&.as_bool) || false
         msg = result["msg"]?.try(&.as_s) || ""
-        
+
         # Status indicator
         status = if failed
           "failed".colorize(:red).bold
@@ -19,11 +21,12 @@ module CrystalPlay
         else
           "ok".colorize(:green)
         end
-        
+
         # Show connection host (IP) if different from inventory name
         connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-        
-        puts "#{status}: [#{connection_host}]"
+
+        suffix = item_label ? " => (item=#{item_label})" : ""
+        puts "#{status}: [#{connection_host}]#{suffix}"
         
         # Show message for successful tasks if msg is present and meaningful
         # This allows debug plugin output to be visible

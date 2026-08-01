@@ -8,3 +8,4 @@
 # Uncomment the next line if you want to exclude it:
 # /shard.lock
 inventory.ini
+/spec/tmp/
