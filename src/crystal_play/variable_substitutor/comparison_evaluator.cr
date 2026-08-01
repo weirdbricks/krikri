@@ -121,7 +121,7 @@ module CrystalPlay
           when String
             return value.as_s.strip
           when Int64
-            return value.as_i
+            return value.as_i64
           when Bool
             return value.as_bool
           when Nil
