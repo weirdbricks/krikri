@@ -1,0 +1,24 @@
+# cron / authorized_key smoke test - safe under --check and for real runs:
+# cron_file and authorized_key's path: override both point at throwaway
+# files under /tmp, never at a real crontab or a real user's SSH keys.
+
+- name: cron and authorized_key smoke test
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: add a cron entry to a scratch cron_file
+      ansible.builtin.cron:
+        name: "crystal-play smoke test"
+        job: "/bin/true"
+        hour: "3"
+        cron_file: /tmp/crystal-play-cron-test
+
+    - name: add an authorized key to a scratch file
+      ansible.builtin.authorized_key:
+        path: /tmp/crystal-play-authorized-keys-test
+        key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLE crystal-play@test"
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "cron/authorized_key smoke test complete!"

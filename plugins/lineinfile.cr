@@ -1,274 +1,134 @@
 #!/usr/bin/env crystal
 
-# Lineinfile Plugin for Crystal Play
-# Manages lines in text files (Ansible-compatible)
-# 
-# Supports:
-# - Ensure line exists (state: present)
-# - Remove line (state: absent)
-# - Replace line matching regex
-# - Insert before/after pattern
-# - Backreferences in replacement
-# - Create file if missing (create: yes)
-# - Backup before changes (backup: yes)
-
 require "json"
 require "file_utils"
+require "../src/crystal_play/base_plugin"
+require "../src/crystal_play/plugin_helpers/line_editor"
 
-# Parse command line arguments
-config = JSON.parse(ARGV[0])
+module CrystalPlay
+  # Lineinfile plugin - manages a single line in a text file
+  # Compatible with Ansible's ansible.builtin.lineinfile module
+  #
+  # Parameters:
+  #   path (required): File to edit
+  #   line: Line content (required for state: present, unless backrefs/regexp-only removal)
+  #   regexp: Pattern used to find the line to replace/remove
+  #   state: present (default) or absent
+  #   create: Create the file if it doesn't exist (default: no)
+  #   backup: Write a timestamped backup before changing the file (default: no)
+  #   insertafter / insertbefore: EOF/BOF/END/BEGIN or a regexp
+  #   backrefs: Substitute regexp match groups into `line` instead of replacing it wholesale
+  class LineInFilePlugin < BasePlugin
+    def execute : PluginResult
+      path = @params["path"]?
+      return missing_param("path") unless path
 
-path = config["path"].as_s
-line = config["line"]?.try(&.as_s)
-regexp = config["regexp"]?.try(&.as_s)
-state = config["state"]?.try(&.as_s) || "present"
-create = config["create"]?.try(&.as_bool) || false
-backup = config["backup"]?.try(&.as_bool) || false
-insertafter = config["insertafter"]?.try(&.as_s)
-insertbefore = config["insertbefore"]?.try(&.as_s)
-backrefs = config["backrefs"]?.try(&.as_bool) || false
-check_mode = config["check_mode"]?.try(&.as_bool) || false
+      line = @params["line"]?
+      regexp = @params["regexp"]?
+      state = @params["state"]? || "present"
+      check_mode = is_true?(@params["check_mode"]?)
 
-# Validate parameters
-if state == "present" && !line
-  puts({
-    "failed" => true,
-    "msg" => "line parameter required when state=present"
-  }.to_json)
-  exit(1)
-end
-
-if state == "absent" && !regexp && !line
-  puts({
-    "failed" => true,
-    "msg" => "regexp or line parameter required when state=absent"
-  }.to_json)
-  exit(1)
-end
-
-# Check if file exists
-file_exists = File.exists?(path)
-
-# Handle create parameter
-if !file_exists
-  if !create
-    puts({
-      "failed" => true,
-      "msg" => "File #{path} does not exist. Use create: yes to create it."
-    }.to_json)
-    exit(1)
-  end
-  
-  # Create file
-  if !check_mode
-    # Create parent directory if needed
-    dir = File.dirname(path)
-    Dir.mkdir_p(dir) unless Dir.exists?(dir)
-    
-    # Create empty file
-    File.write(path, "")
-  end
-  
-  file_exists = true
-end
-
-# Read current content
-original_content = file_exists ? File.read(path) : ""
-lines = original_content.split("\n", -1)
-
-# Remove trailing empty string if file doesn't end with newline
-lines.pop if lines.size > 0 && lines.last.empty? && !original_content.ends_with?("\n")
-
-changed = false
-new_lines = lines.dup
-
-# Helper function to check if line matches regexp
-def matches_regexp?(line_text : String, pattern : String?) : Bool
-  return false unless pattern
-  begin
-    regex = Regex.new(pattern)
-    return !!(line_text =~ regex)
-  rescue
-    return false
-  end
-end
-
-# Helper function to check if lines are equal (for exact matching)
-def lines_equal?(line1 : String, line2 : String) : Bool
-  line1.strip == line2.strip
-end
-
-# State: absent - Remove matching lines
-if state == "absent"
-  new_lines = [] of String
-  
-  lines.each do |existing_line|
-    should_remove = false
-    
-    # Check if line matches regexp
-    if regexp
-      should_remove = matches_regexp?(existing_line, regexp)
-    elsif line
-      # Exact match
-      should_remove = lines_equal?(existing_line, line.not_nil!)
-    end
-    
-    if !should_remove
-      new_lines << existing_line
-    else
-      changed = true
-    end
-  end
-end
-
-# State: present - Ensure line exists
-if state == "present"
-  line_exists = false
-  line_index = -1
-  
-  # Check if line already exists (exact or via regexp)
-  lines.each_with_index do |existing_line, index|
-    if regexp
-      # Check via regexp
-      if matches_regexp?(existing_line, regexp)
-        line_index = index
-        
-        # With backrefs, perform substitution
-        if backrefs
-          begin
-            regex = Regex.new(regexp)
-            substituted = existing_line.gsub(regex, line.not_nil!)
-            
-            if existing_line != substituted
-              new_lines[index] = substituted
-              changed = true
-            end
-            line_exists = true
-          rescue ex
-            # Regex error
-            puts({
-              "failed" => true,
-              "msg" => "Invalid regexp: #{ex.message}"
-            }.to_json)
-            exit(1)
-          end
-        else
-          # Replace entire line
-          if existing_line != line
-            new_lines[index] = line.not_nil!
-            changed = true
-          end
-          line_exists = true
-        end
-        break
+      if error = validate(state, line, regexp)
+        return error
       end
-    else
-      # Exact match
-      if lines_equal?(existing_line, line.not_nil!)
-        line_exists = true
-        break
-      end
+
+      being_created, error = ensure_file_exists(path, is_true?(@params["create"]?), check_mode)
+      return error if error
+
+      apply(path, state, line, regexp, being_created, check_mode)
     end
-  end
-  
-  # If line doesn't exist, add it
-  if !line_exists
-    # Determine where to insert
-    insert_index = -1
-    
-    if insertafter
-      if insertafter == "EOF" || insertafter == "END"
-        # Insert at end
-        insert_index = new_lines.size
+
+    # Parameter validation shared by both states.
+    private def validate(state : String, line : String?, regexp : String?) : PluginResult?
+      if state == "present" && !line
+        return PluginResult.new(changed: false, failed: true, msg: "line parameter required when state=present")
+      end
+
+      if state == "absent" && !regexp && !line
+        return PluginResult.new(changed: false, failed: true, msg: "regexp or line parameter required when state=absent")
+      end
+
+      nil
+    end
+
+    private def missing_param(name : String) : PluginResult
+      PluginResult.new(changed: false, failed: true, msg: "Missing required parameter: #{name}")
+    end
+
+    # Returns {being_created, error}. Creates an empty file (unless
+    # check_mode) when it's missing and `create:` was requested.
+    private def ensure_file_exists(path : String, create : Bool, check_mode : Bool) : {Bool, PluginResult?}
+      return {false, nil} if File.exists?(path)
+
+      unless create
+        return {false, PluginResult.new(changed: false, failed: true, msg: "File #{path} does not exist. Use create: yes to create it.")}
+      end
+
+      unless check_mode
+        dir = File.dirname(path)
+        Dir.mkdir_p(dir) unless Dir.exists?(dir)
+        File.write(path, "")
+      end
+
+      {true, nil}
+    end
+
+    # Reads the file, runs the appropriate LineEditor operation, and writes
+    # the result back (unless check_mode).
+    private def apply(path : String, state : String, line : String?, regexp : String?, being_created : Bool, check_mode : Bool) : PluginResult
+      original_content = File.exists?(path) ? File.read(path) : ""
+      new_lines, changed = edit_lines(original_content, state, line, regexp)
+      new_content = render_content(new_lines, original_content, being_created)
+
+      backup_file = should_backup?(being_created, changed, path, check_mode) ? write_backup(path) : ""
+      File.write(path, new_content) if changed && !check_mode
+
+      diff = generate_unified_diff(original_content, new_content, path, path) if changed && @diff_mode
+
+      PluginResult.new(
+        changed: changed,
+        failed: false,
+        msg: changed ? "Line modified" : "Line already present",
+        diff: diff,
+        path: path,
+        line: line || "",
+        state: state,
+        backup_file: backup_file
+      )
+    end
+
+    private def edit_lines(original_content : String, state : String, line : String?, regexp : String?) : {Array(String), Bool}
+      lines = original_content.split("\n")
+      lines.pop if lines.size > 0 && lines.last.empty? && !original_content.ends_with?("\n")
+
+      if state == "absent"
+        PluginHelpers::LineEditor.remove_matching(lines, line, regexp)
       else
-        # Find line matching insertafter pattern
-        new_lines.each_with_index do |existing_line, index|
-          if matches_regexp?(existing_line, insertafter)
-            insert_index = index + 1
-            break
-          end
-        end
-        
-        # If pattern not found, insert at end
-        if insert_index == -1
-          insert_index = new_lines.size
-        end
+        PluginHelpers::LineEditor.ensure_present(lines, line.not_nil!, regexp, is_true?(@params["backrefs"]?), @params["insertafter"]?, @params["insertbefore"]?)
       end
-    elsif insertbefore
-      if insertbefore == "BOF" || insertbefore == "BEGIN"
-        # Insert at beginning
-        insert_index = 0
-      else
-        # Find line matching insertbefore pattern
-        new_lines.each_with_index do |existing_line, index|
-          if matches_regexp?(existing_line, insertbefore)
-            insert_index = index
-            break
-          end
-        end
-        
-        # If pattern not found, insert at end
-        if insert_index == -1
-          insert_index = new_lines.size
-        end
-      end
-    else
-      # No insertion point specified - append at end
-      insert_index = new_lines.size
     end
-    
-    # Insert the line
-    if insert_index >= 0
-      new_lines.insert(insert_index, line.not_nil!)
-      changed = true
+
+    private def render_content(new_lines : Array(String), original_content : String, being_created : Bool) : String
+      content = new_lines.join("\n")
+      content += "\n" if original_content.ends_with?("\n") || (being_created && new_lines.size > 0)
+      content
+    end
+
+    private def should_backup?(being_created : Bool, changed : Bool, path : String, check_mode : Bool) : Bool
+      return false if being_created || check_mode || !changed
+      is_true?(@params["backup"]?) && File.exists?(path)
+    end
+
+    private def write_backup(path : String) : String
+      timestamp = Time.local.to_s("%Y%m%d-%H%M%S")
+      backup_file = "#{path}.#{timestamp}.bak"
+      File.copy(path, backup_file)
+      backup_file
     end
   end
 end
 
-# Generate new content
-new_content = new_lines.join("\n")
-
-# Add final newline if original had one or if file is being created
-if original_content.ends_with?("\n") || (!file_exists && new_lines.size > 0)
-  new_content += "\n"
-end
-
-# Create backup if requested and file changed
-backup_file = ""
-if backup && changed && file_exists && !check_mode
-  timestamp = Time.local.to_s("%Y%m%d-%H%M%S")
-  backup_file = "#{path}.#{timestamp}.bak"
-  File.copy(path, backup_file)
-end
-
-# Write changes (unless check mode)
-if changed && !check_mode
-  File.write(path, new_content)
-end
-
-# Build diff for diff mode
-diff = nil
-if changed && (config["diff"]?.try(&.as_bool) || false)
-  diff = {
-    "before" => original_content,
-    "after" => new_content
-  }
-end
-
-# Return result
-result = Hash(String, JSON::Any::Type).new
-result["changed"] = changed
-result["failed"] = false
-result["msg"] = changed ? "Line modified" : "Line already present"
-result["path"] = path
-result["line"] = line
-result["state"] = state
-
-result["backup_file"] = backup_file if !backup_file.empty?
-if diff
-  # Assign diff values directly - they're strings which are JSON::Any::Type
-  result["diff_before"] = diff["before"]
-  result["diff_after"] = diff["after"]
-end
-
-puts result.to_json
+input = STDIN.gets_to_end
+config = JSON.parse(input)
+plugin = CrystalPlay::LineInFilePlugin.new(config)
+plugin.run

@@ -77,8 +77,8 @@ describe CrystalPlay::PlaybookParser do
           hosts: all
           tasks:
             - name: Not implemented
-              ansible.builtin.cron:
-                job: "true"
+              ansible.builtin.mount:
+                path: /mnt/data
         YAML
       )
 

@@ -182,6 +182,11 @@ PLUGINS=(
     "package"
     "debug"
     "facts"
+    "user"
+    "group"
+    "git"
+    "cron"
+    "authorized_key"
 )
 
 PLUGIN_COUNT=0

@@ -112,7 +112,12 @@ module CrystalPlay
       "ansible.builtin.dnf",
       "ansible.builtin.package",
       "ansible.builtin.debug",
-      "ansible.builtin.command"
+      "ansible.builtin.command",
+      "ansible.builtin.user",
+      "ansible.builtin.group",
+      "ansible.builtin.git",
+      "ansible.builtin.cron",
+      "ansible.builtin.authorized_key",
     ]
     
     # Parse playbook from file

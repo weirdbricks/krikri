@@ -1,0 +1,24 @@
+# lineinfile smoke test - runs on localhost. Safe under --check (the
+# plugin honors check_mode and never writes), and safe for a real run too
+# since it only touches a throwaway file under /tmp.
+
+- name: lineinfile smoke test
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: ensure the scratch file exists
+      ansible.builtin.file:
+        path: /tmp/crystal-play-lineinfile-test.txt
+        state: touch
+
+    - name: ensure a line is present
+      ansible.builtin.lineinfile:
+        path: /tmp/crystal-play-lineinfile-test.txt
+        line: "hello from lineinfile"
+        state: present
+        create: yes
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "lineinfile smoke test complete!"

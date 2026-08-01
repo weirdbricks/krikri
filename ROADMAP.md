@@ -1,13 +1,11 @@
 # Crystal Play - Roadmap to Ansible Parity
 
 **Status as of 2026-08-01:** builds again on Crystal 1.20.3 (fixed `as_i` -> `as_i64`
-type mismatch in `comparison_evaluator.cr`). Phase 0 is done: `spec/` scaffolding,
-56 unit specs (`conditional_evaluator`, `variable_substitutor/*`, `playbook_parser`),
-18 integration specs driving the built binary against `testing/*.yml` in `--check`
-mode, a GitHub Actions workflow (build + `crystal spec` + `ameba`), and an
-`.ameba.yml` TODO list grandfathering pre-existing lint debt. Bumped to `0.2.0`.
-Next up is Phase 1. This roadmap sequences the remaining work from the two prior
-analysis docs
+type mismatch in `comparison_evaluator.cr`). Phase 0 is done (test scaffolding +
+CI). Phase 1 is in progress: loop constructs (`0.2.1`) and the five new plugins
+(`0.3.0`) are done; `block`/`rescue`/`always` error handling is next. 202 specs
+passing, `ameba` clean on all new/touched code. This roadmap sequences the
+remaining work from the two prior analysis docs
 ([WHATS_MISSING.md](WHATS_MISSING.md), [MISSING_FEATURES_COMPREHENSIVE.md](MISSING_FEATURES_COMPREHENSIVE.md))
 into phases, with the test-foundation phase (Phase 0) landing first so every
 phase after it ships with a regression net instead of drifting untested.
@@ -54,7 +52,38 @@ the same way it did between January and now.
   bracket indexing (`item[0]`, `item[1]`), not Ansible's dot-tuple access
   (`item.0`) - fine for a from-scratch reimplementation, just not
   pixel-perfect Jinja2 compatibility.
-- Plugins: `user`, `group`, `git`, `cron`, `authorized_key`
+- [x] Plugins (`0.3.0`): `user`, `group` (via `getent`/`useradd`/`usermod`/
+  `userdel`/`groupadd`/`groupmod`/`groupdel` - password management is
+  explicitly out of scope, deserves its own careful design rather than a
+  quick addition); `git` (clone/checkout/update via the `git` CLI); `cron`
+  (file-based only - `cron_file:`, matching Ansible's `/etc/cron.d` style;
+  deliberately does NOT manage a live user crontab via the `crontab`
+  command, since mutating this process's real login crontab as a side
+  effect of a test run isn't a risk worth taking); `authorized_key` (with a
+  non-standard `path:` override for safe testing against a scratch file
+  instead of a real user's `~/.ssh/authorized_keys`). Decision/parsing
+  logic factored into pure, I/O-free modules under
+  `src/crystal_play/plugin_helpers/` (`user_state.cr`, `group_state.cr`,
+  `cron_table.cr`, `authorized_keys_file.cr`) and unit tested directly;
+  plugin wrappers integration-tested by piping JSON at the real compiled
+  binaries the way `PluginManager` does (`spec/integration/{user,group,
+  git,cron,authorized_key}_spec.cr`), with `user`/`group` exercised in
+  `--check` mode only (or read-only `getent` lookups / genuine absent-state
+  no-ops) since those tests run on a developer's real machine, not just a
+  throwaway CI container, and must never actually create/modify/delete a
+  real system account or group. Also fixed three real, previously-shipped
+  bugs found while wiring these up: `lineinfile` read its config from
+  `ARGV[0]` (nothing ever passes argv - `PluginManager` always pipes JSON
+  over stdin, so this plugin silently never ran for real), then after that
+  fix still read params from the wrong JSON nesting level (top-level
+  instead of `config["params"]`), and even after both of those, its
+  `original_content.split("\n", -1)` doesn't mean "keep trailing empty
+  strings" in Crystal the way it does in Ruby - so it never actually split
+  the file into lines at all. `lineinfile` is now rewritten onto
+  `BasePlugin` like every other plugin, with its matching/insertion logic
+  extracted into `src/crystal_play/plugin_helpers/line_editor.cr` and unit
+  tested. Also fixed `build.sh`'s staleness check, which only compared
+  `crystal-play.cr`'s own mtime and so missed edits under `src/`.
 - `block` / `rescue` / `always` error handling
 
 **Result:** ~99.95% playbook coverage per prior analysis.

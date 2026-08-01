@@ -1,5 +1,5 @@
 name: crystal-play
-version: 0.2.1
+version: 0.3.0
 
 description: |
   Fast, Ansible-compatible automation tool written in Crystal
