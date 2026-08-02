@@ -1,0 +1,15 @@
+- name: loop
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: create numbered files
+      ansible.builtin.copy:
+        content: "item {{ item }}\n"
+        dest: "/work/item-{{ item }}.txt"
+      loop: [a, b, c]
+
+    - name: with_items works the same as loop
+      ansible.builtin.copy:
+        content: "wi {{ item }}\n"
+        dest: "/work/wi-{{ item }}.txt"
+      with_items: [x, y]

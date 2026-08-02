@@ -1,0 +1,27 @@
+# Sets up a throwaway local git repo as the "remote", then clones it -
+# no network needed, safe to run for real.
+- name: git
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: create the fixture repo directory
+      ansible.builtin.file:
+        path: /work/fixture-repo
+        state: directory
+
+    - name: init the fixture repo
+      ansible.builtin.shell:
+        cmd: |
+          cd /work/fixture-repo
+          git init -q -b main
+          git config user.email test@example.com
+          git config user.name Test
+          echo one > file.txt
+          git add file.txt
+          git commit -q -m 'commit 1'
+        creates: /work/fixture-repo/.git
+
+    - name: clone the fixture repo
+      ansible.builtin.git:
+        repo: /work/fixture-repo
+        dest: /work/cloned-repo

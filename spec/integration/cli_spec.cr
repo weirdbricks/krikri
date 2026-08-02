@@ -9,10 +9,11 @@ require "../spec_helper"
 # This turns the manual fixtures into a regression net for free, without
 # requiring SSH access or a target host.
 
-private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory.ini")
-private FIXTURES_DIR = File.join(PROJECT_ROOT, "testing")
+private PROJECT_ROOT                 = File.expand_path("../..", __DIR__)
+private BINARY                       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private INVENTORY                    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory.ini")
+private EXPLICIT_LOCALHOST_INVENTORY = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private FIXTURES_DIR                 = File.join(PROJECT_ROOT, "testing")
 
 Spec.before_suite do
   needs_build = !File.exists?(BINARY) || !Dir.exists?(File.join(PROJECT_ROOT, "bin", "plugins"))
@@ -22,13 +23,19 @@ Spec.before_suite do
   raise "build.sh failed while preparing integration specs" unless status.success?
 end
 
-private def run_playbook(fixture : String, mode_args : Array(String) = ["--check"]) : {Process::Status, String}
+private def run_playbook(
+  fixture : String,
+  mode_args : Array(String) = ["--check"],
+  chdir : String? = nil,
+  inventory : String = INVENTORY,
+) : {Process::Status, String}
   output = IO::Memory.new
   status = Process.run(
     BINARY,
-    mode_args + ["-i", INVENTORY, File.join(FIXTURES_DIR, fixture)],
+    mode_args + ["-i", inventory, File.join(FIXTURES_DIR, fixture)],
     output: output,
-    error: output
+    error: output,
+    chdir: chdir
   )
   {status, output.to_s}
 end
@@ -107,6 +114,36 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("always runs regardless")
     output.should_not contain("SHOULD NOT APPEAR")
     output.should contain("failed=1")
+  end
+
+  it "finds its plugins when invoked from a directory other than its own checkout" do
+    # Regression test: PluginManager used to resolve plugins via the
+    # cwd-relative path "./bin/plugins/<name>", which only worked if you
+    # first `cd`'d into the crystal-ansible checkout - unlike real
+    # ansible-playbook, which can be run from anywhere. Running with an
+    # unrelated chdir (using absolute paths for everything else) is exactly
+    # the scenario that broke.
+    Dir.mkdir_p(File.join(PROJECT_ROOT, "spec", "tmp"))
+
+    status, output = run_playbook("test-debug-quick.yml", ["--check"], chdir: File.join(PROJECT_ROOT, "spec", "tmp"))
+
+    status.success?.should be_true
+    output.should_not contain("Plugin binary not found")
+    output.should contain("PLAY RECAP")
+  end
+
+  it "runs a plugin against a host with no explicit ansible_user= (regression: Host.from_json crashed on a JSON-null user)" do
+    # spec/fixtures/inventory.ini is empty, so "localhost" always takes the
+    # separate "implicit localhost" path in InventoryParser#get_hosts,
+    # which unconditionally defaults a non-nil user - it never exercises a
+    # Host whose user is genuinely nil. An explicitly-declared
+    # `localhost ansible_connection=local` (no ansible_user=) does, and is
+    # a completely ordinary, common inventory line in the real world.
+    status, output = run_playbook("test-debug-quick.yml", [] of String, inventory: EXPLICIT_LOCALHOST_INVENTORY)
+
+    status.success?.should be_true
+    output.should_not contain("Cast from Nil to String failed")
+    output.should_not contain("Failed to parse plugin output")
   end
 
   it "skips plays whose hosts pattern matches nothing in the inventory" do

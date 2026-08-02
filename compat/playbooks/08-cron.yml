@@ -1,0 +1,35 @@
+# Ansible's cron module treats a relative cron_file as a name under
+# /etc/cron.d, but uses an absolute path as-is - so an absolute path here
+# keeps both tools writing to the exact same place. cron_file: also
+# requires user: per the module docs (needed for the cron.d line format,
+# which embeds a user field).
+- name: cron
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: add a cron entry
+      ansible.builtin.cron:
+        name: "compat test job"
+        job: "/bin/true"
+        hour: "3"
+        minute: "30"
+        user: root
+        cron_file: /work/crontab-test
+
+    - name: adding the same entry again should not change anything
+      ansible.builtin.cron:
+        name: "compat test job"
+        job: "/bin/true"
+        hour: "3"
+        minute: "30"
+        user: root
+        cron_file: /work/crontab-test
+
+    - name: change the schedule
+      ansible.builtin.cron:
+        name: "compat test job"
+        job: "/bin/true"
+        hour: "5"
+        minute: "30"
+        user: root
+        cron_file: /work/crontab-test

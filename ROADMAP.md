@@ -2,9 +2,18 @@
 
 **Status as of 2026-08-01:** builds again on Crystal 1.20.3 (fixed `as_i` -> `as_i64`
 type mismatch in `comparison_evaluator.cr`). **Phase 0 and Phase 1 are both done**
-(`0.4.0`). 215 specs passing, `ameba` clean on all new/touched code. Next up is
-Phase 2 (roles, `include_tasks`/`import_tasks`/`import_playbook`/`include_role`,
-vault). This roadmap sequences the remaining work from the two prior analysis docs
+(`0.5.0`). 224 specs passing, `ameba` clean on all new/touched code. Added a
+Docker-based compatibility harness (`compat/`, see `compat/README.md`) that runs
+the same playbooks through real `ansible-playbook` and `crystal-ansible` side by
+side and diffs the results - ground truth instead of assumptions about Ansible's
+documented behavior. Its first run found and fixed 4 real bugs: `authorized_key`
+registered under the wrong FQCN (it's `ansible.posix.authorized_key`, not
+`ansible.builtin.*` - confirmed via `ansible-doc`, not memory), plugin resolution
+breaking outside the repo checkout, `Host.from_json` crashing on a host with no
+explicit user, and `lineinfile` inserting a spurious blank line on every
+append/removal to a file already ending in a newline. Next up is Phase 2 (roles,
+`include_tasks`/`import_tasks`/`import_playbook`/`include_role`, vault). This
+roadmap sequences the remaining work from the two prior analysis docs
 ([WHATS_MISSING.md](WHATS_MISSING.md), [MISSING_FEATURES_COMPREHENSIVE.md](MISSING_FEATURES_COMPREHENSIVE.md))
 into phases, with the test-foundation phase (Phase 0) landing first so every
 phase after it ships with a regression net instead of drifting untested.

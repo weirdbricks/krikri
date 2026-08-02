@@ -7,5 +7,11 @@
 # Shard lock file (some prefer to commit this, some don't)
 # Uncomment the next line if you want to exclude it:
 # /shard.lock
-inventory.ini
+# The user's own default inventory at the repo root only - NOT anchoring
+# this with a leading / would also match spec/fixtures/*.ini, silently
+# excluding the integration-test fixtures from every commit (this
+# happened: spec/fixtures/inventory.ini was never actually committed,
+# only ever present locally on disk - a fresh clone or CI would have been
+# missing it entirely).
+/inventory.ini
 /spec/tmp/

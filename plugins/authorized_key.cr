@@ -7,7 +7,8 @@ require "../src/crystal_play/plugin_helpers/authorized_keys_file"
 module CrystalPlay
   # Authorized_key plugin - manages a public key in a user's
   # ~/.ssh/authorized_keys file
-  # Compatible with (a subset of) Ansible's ansible.builtin.authorized_key module
+  # Compatible with (a subset of) Ansible's ansible.posix.authorized_key module
+  # (this one lives in the ansible.posix collection, not ansible-core)
   #
   # Parameters:
   #   user (required unless path: is given): whose authorized_keys file to edit

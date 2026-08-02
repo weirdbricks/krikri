@@ -98,8 +98,14 @@ module CrystalPlay
     end
 
     private def edit_lines(original_content : String, state : String, line : String?, regexp : String?) : {Array(String), Bool}
+      # String#split("\n") always adds one trailing "" artifact when the
+      # content ends with "\n" (or is empty) - drop it to get the real
+      # line list. This must NOT be conditioned on ends_with?("\n"): that
+      # condition can only be true precisely when split already produced
+      # the trailing "" that needs popping, so gating on its negation (as
+      # a previous version of this code did) never actually pops anything.
       lines = original_content.split("\n")
-      lines.pop if lines.size > 0 && lines.last.empty? && !original_content.ends_with?("\n")
+      lines.pop if lines.size > 0 && lines.last.empty?
 
       if state == "absent"
         PluginHelpers::LineEditor.remove_matching(lines, line, regexp)

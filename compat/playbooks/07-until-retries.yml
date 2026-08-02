@@ -1,0 +1,15 @@
+- name: until retries
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: succeed on the 3rd attempt
+      ansible.builtin.shell: >
+        test $(cat /work/counter 2>/dev/null || echo 0) -ge 2 && echo done
+        || (echo $(( $(cat /work/counter 2>/dev/null || echo 0) + 1 )) > /work/counter; exit 1)
+      register: attempt_result
+      until: attempt_result.rc == 0
+      retries: 5
+      delay: 1
+    # No further task needed: /work/counter itself (left behind by the
+    # failed attempts) is part of the final filesystem snapshot the
+    # orchestrator already diffs, so this alone verifies retry counting.

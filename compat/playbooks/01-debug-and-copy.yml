@@ -1,0 +1,17 @@
+- name: debug and copy
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: write a file via copy content
+      ansible.builtin.copy:
+        content: "hello from compat test\n"
+        dest: /work/hello.txt
+
+    - name: debug a message
+      ansible.builtin.debug:
+        msg: "wrote the file"
+
+    - name: copying identical content again should not change anything
+      ansible.builtin.copy:
+        content: "hello from compat test\n"
+        dest: /work/hello.txt

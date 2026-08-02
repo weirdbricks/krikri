@@ -1,0 +1,26 @@
+- name: lineinfile
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: seed a file
+      ansible.builtin.copy:
+        content: |
+          first line
+          second line
+        dest: /work/lines.txt
+
+    - name: ensure a new line is present
+      ansible.builtin.lineinfile:
+        path: /work/lines.txt
+        line: "third line"
+
+    - name: adding the same line again should not change anything
+      ansible.builtin.lineinfile:
+        path: /work/lines.txt
+        line: "third line"
+
+    - name: remove a line
+      ansible.builtin.lineinfile:
+        path: /work/lines.txt
+        line: "first line"
+        state: absent

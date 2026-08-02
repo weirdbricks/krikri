@@ -70,6 +70,30 @@ describe "lineinfile plugin" do
     File.read(path).should eq("original\n")
   end
 
+  it "does not introduce a spurious blank line when appending to a file that already ends with a newline" do
+    # Regression (found via the Ansible compat harness, compat/run.cr):
+    # split("\n") always adds one trailing "" artifact when content ends
+    # with "\n" - a previous version of the pop-that-artifact guard was
+    # conditioned on the negation of exactly the case where it needed to
+    # fire, so it never actually popped anything, leaving a blank line
+    # before every appended line.
+    path = tmp_path("lineinfile-no-spurious-blank.txt")
+    File.write(path, "first line\nsecond line\n")
+
+    PluginSpecHelper.run("lineinfile", {"path" => path, "line" => "third line", "state" => "present"})
+
+    File.read(path).should eq("first line\nsecond line\nthird line\n")
+  end
+
+  it "does not leave a spurious blank line behind after removing a line" do
+    path = tmp_path("lineinfile-remove-no-blank.txt")
+    File.write(path, "first line\nsecond line\nthird line\n")
+
+    PluginSpecHelper.run("lineinfile", {"path" => path, "line" => "first line", "state" => "absent"})
+
+    File.read(path).should eq("second line\nthird line\n")
+  end
+
   it "fails with a clear message when the file does not exist and create is not set" do
     path = tmp_path("lineinfile-missing.txt")
     File.delete(path) if File.exists?(path)

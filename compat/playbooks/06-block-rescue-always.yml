@@ -1,0 +1,27 @@
+- name: block rescue always
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: block that fails and gets rescued
+      block:
+        - name: this fails
+          ansible.builtin.command: /bin/false
+        - name: never runs
+          ansible.builtin.file:
+            path: /work/should-not-exist.txt
+            state: touch
+      rescue:
+        - name: recovery task
+          ansible.builtin.file:
+            path: /work/rescued.txt
+            state: touch
+      always:
+        - name: cleanup task
+          ansible.builtin.file:
+            path: /work/always-ran.txt
+            state: touch
+
+    - name: this runs because the block above was rescued
+      ansible.builtin.file:
+        path: /work/play-continued.txt
+        state: touch

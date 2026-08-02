@@ -1,0 +1,22 @@
+- name: authorized_key
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: add a key to a scratch file
+      ansible.posix.authorized_key:
+        user: root
+        path: /work/authorized_keys
+        key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLE compat@test"
+
+    - name: adding the same key again should not change anything
+      ansible.posix.authorized_key:
+        user: root
+        path: /work/authorized_keys
+        key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLE compat@test"
+
+    - name: remove the key
+      ansible.posix.authorized_key:
+        user: root
+        path: /work/authorized_keys
+        key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLE compat@test"
+        state: absent

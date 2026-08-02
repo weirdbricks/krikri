@@ -40,12 +40,12 @@ module CrystalPlay
         
         play.tasks.each do |task|
           # Strip FQCN to get simple plugin name
-          simple_name = task.module_name.sub(/^ansible\.(builtin|legacy)\./, "")
+          simple_name = task.module_name.sub(/^ansible\.(builtin|legacy|posix)\./, "")
           required_plugins.add(simple_name)
         end
         
         play.handlers.each do |handler|
-          simple_name = handler.module_name.sub(/^ansible\.(builtin|legacy)\./, "")
+          simple_name = handler.module_name.sub(/^ansible\.(builtin|legacy|posix)\./, "")
           required_plugins.add(simple_name)
         end
       end
@@ -282,7 +282,7 @@ module CrystalPlay
       connection_host = get_connection_host(host, vars)
       
       # Get remote plugin path
-      simple_name = plugin_name.sub(/^ansible\.(builtin|legacy)\./, "")
+      simple_name = plugin_name.sub(/^ansible\.(builtin|legacy|posix)\./, "")
       remote_plugin_dir = "/tmp/.crystal-play/plugins"
       remote_plugin_path = "#{remote_plugin_dir}/#{simple_name}"
       
@@ -332,12 +332,23 @@ module CrystalPlay
     # Get local plugin path (compiled binary)
     private def self.get_local_plugin_path(plugin_name : String) : String
       # Strip FQCN to get simple plugin filename
-      simple_name = plugin_name.sub(/^ansible\.(builtin|legacy)\./, "")
-      
-      # Try compiled plugin
+      simple_name = plugin_name.sub(/^ansible\.(builtin|legacy|posix)\./, "")
+
+      # Resolve plugins/ next to the running binary itself, not relative to
+      # the current working directory - otherwise crystal-ansible could
+      # only ever be invoked from inside its own checkout (`cd
+      # /path/to/crystal-ansible && ./bin/crystal-ansible playbook.yml`),
+      # unlike real ansible-playbook, which can run from anywhere.
+      if executable = Process.executable_path
+        compiled = File.join(File.dirname(executable), "plugins", simple_name)
+        return compiled if File.exists?(compiled)
+      end
+
+      # Fall back to a cwd-relative lookup (e.g. `crystal run` in dev,
+      # where there's no real installed binary to resolve a sibling from).
       compiled = "./bin/plugins/#{simple_name}"
       return compiled if File.exists?(compiled)
-      
+
       raise "Plugin binary not found: #{plugin_name} (looked for #{compiled})"
     end
     

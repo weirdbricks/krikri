@@ -15,7 +15,7 @@
         cron_file: /tmp/crystal-play-cron-test
 
     - name: add an authorized key to a scratch file
-      ansible.builtin.authorized_key:
+      ansible.posix.authorized_key:
         path: /tmp/crystal-play-authorized-keys-test
         key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLE crystal-play@test"
 

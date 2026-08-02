@@ -1,0 +1,23 @@
+- name: file states
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: create a directory
+      ansible.builtin.file:
+        path: /work/somedir
+        state: directory
+
+    - name: touch a file inside it
+      ansible.builtin.file:
+        path: /work/somedir/touched.txt
+        state: touch
+
+    - name: create a second file, then remove it
+      ansible.builtin.file:
+        path: /work/somedir/temp.txt
+        state: touch
+
+    - name: remove the second file
+      ansible.builtin.file:
+        path: /work/somedir/temp.txt
+        state: absent

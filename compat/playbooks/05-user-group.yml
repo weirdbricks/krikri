@@ -1,0 +1,34 @@
+# Real user/group creation - only safe because this runs inside a
+# throwaway container, never on a real machine.
+- name: user and group
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: create a group
+      ansible.builtin.group:
+        name: compatgroup
+        gid: 5001
+
+    - name: create a user in that group
+      ansible.builtin.user:
+        name: compatuser
+        uid: 5001
+        group: compatgroup
+        shell: /bin/bash
+        create_home: yes
+
+    - name: creating the same user again should not change anything
+      ansible.builtin.user:
+        name: compatuser
+        uid: 5001
+        group: compatgroup
+        shell: /bin/bash
+        create_home: yes
+
+    - name: change the user's shell
+      ansible.builtin.user:
+        name: compatuser
+        shell: /bin/sh
+    # Deliberately left in place (not removed) so the final getent
+    # passwd/group snapshot has something to compare - container teardown
+    # (--rm) is the cleanup, not the playbook itself.
