@@ -1,0 +1,4 @@
+- name: base role writes a marker file
+  ansible.builtin.copy:
+    content: "base role ran\n"
+    dest: /work/base-role-marker.txt

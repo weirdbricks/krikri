@@ -1,0 +1,13 @@
+- name: show the default var (greeting_target)
+  ansible.builtin.debug:
+    msg: "greeting target: {{ greeting_target }}"
+
+- name: show the role var (greeting_style, from vars/main.yml)
+  ansible.builtin.debug:
+    msg: "greeting style: {{ greeting_style }}"
+
+- name: copy a role file (resolved relative to the role's files/ dir)
+  ansible.builtin.copy:
+    src: greeting.txt
+    dest: /tmp/crystal-play-role-greeting.txt
+  notify: announce greeting

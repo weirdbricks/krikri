@@ -1,0 +1,4 @@
+- name: announce greeting
+  ansible.builtin.copy:
+    content: "announced\n"
+    dest: /work/handler-ran.txt

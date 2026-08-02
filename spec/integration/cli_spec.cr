@@ -86,6 +86,25 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain(%(indexed item: ["1","y"]))
   end
 
+  it "runs a role: meta dependency first, applies defaults/vars/invocation-var precedence, resolves src: relative to the role's files/ dir, fires role handlers, then runs the play's own tasks" do
+    status, output = run_playbook("test-roles-quick.yml")
+
+    status.success?.should be_true
+    task_order = output.lines.select(&.starts_with?("TASK ["))
+    base_index = task_order.index(&.includes?("base role task runs first"))
+    default_index = task_order.index(&.includes?("show the default var"))
+    base_index.should_not be_nil
+    default_index.should_not be_nil
+    base_index.as(Int32).should be < default_index.as(Int32)
+
+    output.should contain("greeting target: crystal-ansible") # role invocation var overrides defaults/main.yml
+    output.should contain("greeting style: friendly")         # from vars/main.yml
+    output.should contain("Would copy")
+    output.should contain("testing/roles/greeter/files/greeting.txt")
+    output.should contain("announce greeting") # role handler fired (copy task reported changed)
+    output.should contain("SUCCESS: play task ran after role tasks")
+  end
+
   it "continues the play past a failed task when ignore_errors: yes, and does not fail the process" do
     status, output = run_playbook("test-error-handling-quick.yml", [] of String)
 

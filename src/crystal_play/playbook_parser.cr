@@ -1,5 +1,6 @@
 require "yaml"
 require "./loop_resolver"
+require "./role_loader"
 
 module CrystalPlay
   # Represents a single task in a playbook
@@ -35,6 +36,18 @@ module CrystalPlay
     property block_tasks : Array(Task)?
     property rescue_tasks : Array(Task)?
     property always_tasks : Array(Task)?
+    # Set on every task loaded from a role (tasks/main.yml and
+    # handlers/main.yml alike) by RoleLoader. role_defaults is the lowest
+    # precedence tier (role's defaults/main.yml); role_vars sits above
+    # play/host vars but below the task's own vars: (role's vars/main.yml,
+    # merged with the role invocation's own vars:). role_files_dir/
+    # role_templates_dir let the executor resolve a copy:/template: src:
+    # relative to the role's files//templates/ directory, since the
+    # plugin subprocess itself has no concept of roles.
+    property role_defaults : Hash(String, JSON::Any)?
+    property role_vars : Hash(String, JSON::Any)?
+    property role_files_dir : String?
+    property role_templates_dir : String?
 
     def initialize(@name : String, @module_name : String)
       @params = Hash(String, String).new
@@ -58,6 +71,10 @@ module CrystalPlay
       @block_tasks = nil
       @rescue_tasks = nil
       @always_tasks = nil
+      @role_defaults = nil
+      @role_vars = nil
+      @role_files_dir = nil
+      @role_templates_dir = nil
     end
 
     def block? : Bool
@@ -162,9 +179,11 @@ module CrystalPlay
         raise "Playbook must be a YAML list of plays"
       end
       
+      playbook_dir = File.dirname(path)
+
       yaml.as_a.each_with_index do |play_yaml, index|
         begin
-          play = parse_play(play_yaml, index)
+          play = parse_play(play_yaml, index, playbook_dir)
           playbook.plays << play
         rescue ex
           puts "Warning: Failed to parse play #{index + 1}: #{ex.message}".colorize(:yellow)
@@ -179,7 +198,7 @@ module CrystalPlay
     end
     
     # Parse a single play
-    private def self.parse_play(yaml : YAML::Any, index : Int32) : Play
+    private def self.parse_play(yaml : YAML::Any, index : Int32, playbook_dir : String) : Play
       unless yaml.as_h?
         raise "Play must be a YAML mapping (hash)"
       end
@@ -219,23 +238,38 @@ module CrystalPlay
         play.tags = tags_yaml.map(&.as_s)
       end
       
-      # Parse tasks
-      if tasks_yaml = yaml["tasks"]?.try(&.as_a?)
-        play.tasks = parse_tasks(tasks_yaml, play, "task in play '#{name}'")
+      # Parse roles: - their tasks/handlers run BEFORE the play's own
+      # tasks:/handlers: (matching Ansible; pre_tasks:/post_tasks: aren't
+      # implemented, so this is simplified to just roles-then-tasks).
+      role_tasks = [] of Task
+      role_handlers = [] of Task
+      if roles_yaml = yaml["roles"]?.try(&.as_a?)
+        role_tasks, role_handlers = RoleLoader.load_roles(roles_yaml, play, playbook_dir)
       end
 
-      # Parse handlers
-      if handlers_yaml = yaml["handlers"]?.try(&.as_a?)
-        play.handlers = parse_tasks(handlers_yaml, play, "handler")
+      # Parse tasks
+      own_tasks = [] of Task
+      if tasks_yaml = yaml["tasks"]?.try(&.as_a?)
+        own_tasks = parse_tasks(tasks_yaml, play, "task in play '#{name}'")
       end
+      play.tasks = role_tasks + own_tasks
+
+      # Parse handlers
+      own_handlers = [] of Task
+      if handlers_yaml = yaml["handlers"]?.try(&.as_a?)
+        own_handlers = parse_tasks(handlers_yaml, play, "handler")
+      end
+      play.handlers = role_handlers + own_handlers
 
       play
     end
 
     # Parse a list of task-shaped YAML nodes, skipping (with a warning) any
     # individual entry that fails to parse rather than failing the whole
-    # list. Shared by play.tasks, play.handlers, and block/rescue/always.
-    private def self.parse_tasks(tasks_yaml : Array(YAML::Any), play : Play, context : String) : Array(Task)
+    # list. Shared by play.tasks, play.handlers, block/rescue/always, and
+    # (via RoleLoader) a role's tasks/main.yml and handlers/main.yml -
+    # public for that last one.
+    def self.parse_tasks(tasks_yaml : Array(YAML::Any), play : Play, context : String) : Array(Task)
       tasks = [] of Task
 
       tasks_yaml.each_with_index do |task_yaml, index|

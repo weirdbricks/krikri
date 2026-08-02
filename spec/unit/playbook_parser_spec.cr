@@ -1,4 +1,5 @@
 require "../spec_helper"
+require "file_utils"
 require "../../src/crystal_play/playbook_parser"
 
 private VALID_PLAYBOOK = <<-YAML
@@ -408,6 +409,51 @@ describe CrystalPlay::PlaybookParser do
 
       warnings = CrystalPlay::PlaybookParser.validate(playbook)
       warnings.any?(&.includes?("_block")).should be_false
+    end
+  end
+
+  describe "roles: wiring" do
+    it "runs role tasks before the play's own tasks:, in role list order" do
+      root = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "playbook_parser_roles_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+      File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - name: role task
+          ansible.builtin.debug:
+            msg: from role
+        YAML
+
+      playbook_yaml = <<-YAML
+        - name: play
+          hosts: all
+          roles:
+            - myrole
+          tasks:
+            - name: own task
+              ansible.builtin.debug:
+                msg: from play
+        YAML
+
+      playbook = CrystalPlay::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
+
+      playbook.plays[0].tasks.map(&.name).should eq(["role task", "own task"])
+    end
+
+    it "raises a warning (not a hard failure) when a role can't be found, matching other unparseable-task handling" do
+      root = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "playbook_parser_missing_role_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(root)
+
+      playbook_yaml = <<-YAML
+        - name: play
+          hosts: all
+          roles:
+            - does_not_exist
+        YAML
+
+      expect_raises(Exception, /No valid plays found/) do
+        CrystalPlay::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
+      end
     end
   end
 end

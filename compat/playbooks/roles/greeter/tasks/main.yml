@@ -1,0 +1,15 @@
+- name: record the default/invocation var
+  ansible.builtin.copy:
+    content: "target={{ greeting_target }}\n"
+    dest: /work/greeting-target.txt
+
+- name: record the role var
+  ansible.builtin.copy:
+    content: "style={{ greeting_style }}\n"
+    dest: /work/greeting-style.txt
+
+- name: copy a role file (resolved relative to the role's files/ dir)
+  ansible.builtin.copy:
+    src: greeting.txt
+    dest: /work/greeting.txt
+  notify: announce greeting

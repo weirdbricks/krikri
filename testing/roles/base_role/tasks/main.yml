@@ -1,0 +1,3 @@
+- name: base role task runs first
+  ansible.builtin.debug:
+    msg: "base role ran"

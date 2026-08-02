@@ -245,6 +245,7 @@ module CrystalPlay
 
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       substituted_params = substitute_task_params(task.params, substitutor)
+      substituted_params = resolve_role_relative_src(task, substituted_params)
 
       if ActionPluginManager.has_action_plugin?(task.module_name)
         action_result = ActionPluginManager.execute_action(
@@ -479,7 +480,28 @@ module CrystalPlay
       
       result
     end
-    
+
+    # For copy:/template: tasks that came from a role, a relative src:
+    # resolves against the role's files/ or templates/ directory - the
+    # plugin subprocess itself has no concept of roles, so this has to
+    # happen here, before the config is handed off. An absolute src: (or a
+    # task not from a role) is left untouched.
+    private def resolve_role_relative_src(task : Task, params : Hash(String, String)) : Hash(String, String)
+      src = params["src"]?
+      return params if src.nil? || src.starts_with?('/')
+
+      role_dir = case task.module_name
+                 when "ansible.builtin.copy"     then task.role_files_dir
+                 when "ansible.builtin.template"  then task.role_templates_dir
+                 else                                  nil
+                 end
+      return params unless role_dir
+
+      resolved = params.dup
+      resolved["src"] = File.join(role_dir, src)
+      resolved
+    end
+
     # Build plugin configuration
     private def build_plugin_config(
       task : Task,

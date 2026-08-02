@@ -1,0 +1,3 @@
+- name: announce greeting
+  ansible.builtin.debug:
+    msg: "greeting announced"

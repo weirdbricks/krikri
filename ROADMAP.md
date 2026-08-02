@@ -1,18 +1,22 @@
 # Crystal Play - Roadmap to Ansible Parity
 
 **Status as of 2026-08-01:** builds again on Crystal 1.20.3 (fixed `as_i` -> `as_i64`
-type mismatch in `comparison_evaluator.cr`). **Phase 0 and Phase 1 are both done**
-(`0.5.0`). 224 specs passing, `ameba` clean on all new/touched code. Added a
-Docker-based compatibility harness (`compat/`, see `compat/README.md`) that runs
-the same playbooks through real `ansible-playbook` and `crystal-ansible` side by
-side and diffs the results - ground truth instead of assumptions about Ansible's
-documented behavior. Its first run found and fixed 4 real bugs: `authorized_key`
-registered under the wrong FQCN (it's `ansible.posix.authorized_key`, not
-`ansible.builtin.*` - confirmed via `ansible-doc`, not memory), plugin resolution
-breaking outside the repo checkout, `Host.from_json` crashing on a host with no
-explicit user, and `lineinfile` inserting a spurious blank line on every
-append/removal to a file already ending in a newline. Next up is Phase 2 (roles,
-`include_tasks`/`import_tasks`/`import_playbook`/`include_role`, vault). This
+type mismatch in `comparison_evaluator.cr`). **Phase 0 and Phase 1 are done**
+(`0.5.0`); **Phase 2's roles support is done** (`0.6.0`). 238 specs passing,
+`ameba` clean on all new/touched code. Added a Docker-based compatibility harness
+(`compat/`, see `compat/README.md`) that runs the same playbooks through real
+`ansible-playbook` and `crystal-ansible` side by side and diffs the results -
+ground truth instead of assumptions about Ansible's documented behavior. Its
+first run found and fixed 4 real bugs: `authorized_key` registered under the
+wrong FQCN (it's `ansible.posix.authorized_key`, not `ansible.builtin.*` -
+confirmed via `ansible-doc`, not memory), plugin resolution breaking outside the
+repo checkout, `Host.from_json` crashing on a host with no explicit user, and
+`lineinfile` inserting a spurious blank line on every append/removal to a file
+already ending in a newline. The roles compat playbook (directory resolution,
+`meta/main.yml` dependency ordering, `defaults:`/`vars:`/invocation-var
+precedence, `files/` `src:` resolution, role handlers) passed against real
+`ansible-playbook` on the first try. Next up is the rest of Phase 2
+(`include_tasks`/`import_tasks`/`import_playbook`/`include_role`, vault). This
 roadmap sequences the remaining work from the two prior analysis docs
 ([WHATS_MISSING.md](WHATS_MISSING.md), [MISSING_FEATURES_COMPREHENSIVE.md](MISSING_FEATURES_COMPREHENSIVE.md))
 into phases, with the test-foundation phase (Phase 0) landing first so every
@@ -135,8 +139,35 @@ the same way it did between January and now.
 
 ## Phase 2 - Organizational (~2-3 weeks)
 
-- Roles: `roles/<name>/{tasks,handlers,vars,files,templates,defaults,meta}`
-  directory resolution, variable precedence, `meta/main.yml` dependencies
+- [x] Roles (`0.6.0`): `roles/<name>/{tasks,handlers,vars,files,templates,
+  defaults,meta}` directory resolution (searched under `<playbook_dir>/roles/`
+  then `./roles/`, matching Ansible's common case - not the full
+  `ANSIBLE_ROLES_PATH` search); a `roles:` entry can be a bare name or a
+  mapping (`role:`/`name:`, `vars:`, `tags:`, and any other inline key -
+  Ansible treats those as vars too); `meta/main.yml` `dependencies:` run
+  before the role's own tasks, recursively, and each role loads only once
+  even if listed directly and pulled in as a dependency; role tasks/handlers
+  run before the play's own `tasks:`/`handlers:` (`pre_tasks:`/`post_tasks:`
+  aren't implemented, so this is simplified to just roles-then-tasks).
+  Variable precedence: `defaults/main.yml` (lowest) < play vars < host vars
+  < registered vars < `vars/main.yml` + the role invocation's own `vars:`
+  (invocation wins) < the task's own `vars:` (highest) - extending the
+  existing (already-simplified) `VariableContext` merge chain with two new
+  tiers read directly off the originating `Task`, rather than threading
+  extra parameters through every call site. A `copy:`/`template:` `src:`
+  that came from a role resolves relative to that role's `files:`/
+  `templates:` directory in the executor, before the config is handed to
+  the plugin subprocess (which has no concept of roles itself). Implemented
+  in a new `src/crystal_play/role_loader.cr`, reusing `PlaybookParser`'s
+  existing (now public) `parse_tasks` for tasks/main.yml and
+  handlers/main.yml, so role tasks get identical parsing (loops,
+  block/rescue/always, until/retries, etc.) to any other task. Unit tested
+  directly against real temp role directories
+  (`spec/unit/role_loader_spec.cr`, `spec/unit/playbook_parser_spec.cr`'s
+  "roles: wiring" group), integration-tested via the CLI
+  (`testing/test-roles-quick.yml` + `testing/roles/`), and verified against
+  real `ansible-playbook` via the compat harness
+  (`compat/playbooks/11-roles.yml` - passed on the first try).
 - `include_tasks` / `import_tasks` / `import_playbook` / `include_role`
 - Vault: AES256 encrypt/decrypt, `--ask-vault-pass`, `--vault-password-file`,
   inline `!vault` encrypted values
