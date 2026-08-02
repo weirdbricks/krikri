@@ -512,7 +512,7 @@ module CrystalPlay
         return
       end
 
-      yaml = YAML.parse(File.read(resolved_path))
+      yaml = YAML.parse(Vault.maybe_decrypt(File.read(resolved_path)))
       unless yaml.as_a?
         fail_include(task, host, "Included tasks file must be a YAML list: #{resolved_path}")
         return

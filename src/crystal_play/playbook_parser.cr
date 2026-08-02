@@ -1,6 +1,7 @@
 require "yaml"
 require "./loop_resolver"
 require "./role_loader"
+require "./vault"
 
 module CrystalPlay
   # Represents a single task in a playbook
@@ -194,7 +195,7 @@ module CrystalPlay
         raise "Playbook file not found: #{path}"
       end
       
-      content = File.read(path)
+      content = Vault.maybe_decrypt(File.read(path))
       parse_string(content, path)
     end
     
@@ -280,7 +281,7 @@ module CrystalPlay
       # Parse play-level vars
       if vars_yaml = yaml["vars"]?.try(&.as_h?)
         vars_yaml.each do |key, value|
-          play.vars[key.to_s] = JSON.parse(value.to_json)
+          play.vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json))
         end
       end
       
@@ -364,7 +365,7 @@ module CrystalPlay
       resolved_path = File.expand_path(file_rel, file_dir)
       raise "Imported tasks file not found: #{resolved_path}" unless File.exists?(resolved_path)
 
-      imported_yaml = YAML.parse(File.read(resolved_path))
+      imported_yaml = YAML.parse(Vault.maybe_decrypt(File.read(resolved_path)))
       raise "Imported tasks file must be a YAML list: #{resolved_path}" unless imported_yaml.as_a?
 
       imported_tasks = parse_tasks(imported_yaml.as_a, play, "task in imported #{resolved_path}", File.dirname(resolved_path))
@@ -373,7 +374,7 @@ module CrystalPlay
       import_tags = hash["tags"]?.try(&.as_a?).try(&.map(&.as_s)) || [] of String
       import_vars = Hash(String, JSON::Any).new
       if vars_yaml = hash["vars"]?.try(&.as_h?)
-        vars_yaml.each { |key, value| import_vars[key.to_s] = JSON.parse(value.to_json) }
+        vars_yaml.each { |key, value| import_vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
       end
 
       imported_tasks.each do |task|
@@ -567,7 +568,7 @@ module CrystalPlay
 
       if vars_yaml = task_hash["vars"]?.try(&.as_h?)
         vars = Hash(String, JSON::Any).new
-        vars_yaml.each { |key, value| vars[key.to_s] = JSON.parse(value.to_json) }
+        vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
         task.include_vars = vars
       end
 
@@ -605,7 +606,7 @@ module CrystalPlay
 
       if vars_yaml = task_hash["vars"]?.try(&.as_h?)
         vars = Hash(String, JSON::Any).new
-        vars_yaml.each { |key, value| vars[key.to_s] = JSON.parse(value.to_json) }
+        vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
         task.include_role_vars = vars
       end
 
@@ -635,7 +636,7 @@ module CrystalPlay
       if yaml.as_h?
         # Hash format: key-value pairs
         yaml.as_h.each do |key, value|
-          params[key.to_s] = stringify_value(value)
+          params[key.to_s] = Vault.maybe_decrypt(stringify_value(value))
         end
       elsif yaml.as_s?
         # String format: single argument (e.g., command: "echo hello")

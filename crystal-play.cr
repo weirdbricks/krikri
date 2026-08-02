@@ -9,6 +9,16 @@ require "./src/crystal_play/version"
 require "./src/crystal_play/playbook_parser"
 require "./src/crystal_play/inventory_parser"
 require "./src/crystal_play/task_executor"
+require "./src/crystal_play/vault"
+require "./src/crystal_play/vault_cli"
+
+# `crystal-ansible vault <subcommand> ...` is a completely separate CLI
+# surface from running a playbook - dispatch to it before the main
+# OptionParser even runs.
+if ARGV[0]? == "vault"
+  CrystalPlay::VaultCli.run(ARGV[1..])
+  exit
+end
 
 # Parse command line arguments
 playbook_file = ""
@@ -18,40 +28,50 @@ diff_mode = false
 verbose = false
 limit_hosts = ""
 tags = [] of String
+vault_password_file = nil
+ask_vault_pass = false
 
 begin
   OptionParser.parse do |parser|
     parser.banner = "Usage: crystal-ansible [options] playbook.yml"
-    
+
     parser.on("-i INVENTORY", "--inventory=INVENTORY", "Specify inventory file") do |inv|
       inventory_file = inv
     end
-    
+
     parser.on("-c", "--check", "Don't make changes; predict changes instead (dry-run)") do
       check_mode = true
     end
-    
+
     parser.on("-d", "--diff", "Show file differences when changing files") do
       diff_mode = true
     end
-    
+
     parser.on("-v", "--verbose", "Verbose output") do
       verbose = true
     end
-    
+
     parser.on("-l SUBSET", "--limit=SUBSET", "Limit to specific hosts") do |subset|
       limit_hosts = subset
     end
-    
+
     parser.on("-t TAGS", "--tags=TAGS", "Only run tasks with these tags") do |t|
       tags = t.split(",")
     end
-    
+
+    parser.on("--vault-password-file=FILE", "Vault password file") do |file|
+      vault_password_file = file
+    end
+
+    parser.on("--ask-vault-pass", "Prompt for the vault password") do
+      ask_vault_pass = true
+    end
+
     parser.on("--version", "Show version information") do
       puts CrystalPlay.version_info
       exit
     end
-    
+
     parser.on("-h", "--help", "Show this help") do
       puts parser
       puts ""
@@ -60,9 +80,13 @@ begin
       puts "  crystal-ansible --check --diff playbook.yml"
       puts "  crystal-ansible -i inventory.ini playbook.yml"
       puts "  crystal-ansible --tags deploy playbook.yml"
+      puts "  crystal-ansible --vault-password-file pass.txt playbook.yml"
+      puts ""
+      puts "Vault:"
+      puts "  crystal-ansible vault encrypt|decrypt|view|encrypt_string|rekey ..."
       exit
     end
-    
+
     parser.unknown_args do |args|
       if args.size == 1
         playbook_file = args[0]
@@ -96,6 +120,12 @@ unless File.exists?(playbook_file)
   exit 1
 end
 
+if password_file = vault_password_file
+  CrystalPlay::Vault.password = File.read(password_file).strip
+elsif ask_vault_pass
+  CrystalPlay::Vault.password = CrystalPlay::VaultCli.prompt_password
+end
+
 # Display banner
 puts ""
 puts CrystalPlay.banner.colorize(:cyan).bold
@@ -117,7 +147,7 @@ puts ""
 playbook = nil
 begin
   playbook = CrystalPlay::PlaybookParser.parse(playbook_file)
-  
+
   if verbose
     stats = CrystalPlay::PlaybookParser.stats(playbook)
     puts "Playbook Statistics:".colorize(:green).bold
@@ -127,7 +157,7 @@ begin
     puts "  Modules used: #{stats["modules_used"]}".colorize(:white)
     puts ""
   end
-  
+
   # Show warnings
   warnings = CrystalPlay::PlaybookParser.validate(playbook)
   if warnings.any?
@@ -137,7 +167,6 @@ begin
     end
     puts ""
   end
-  
 rescue ex
   puts "Error parsing playbook:".colorize(:red).bold
   puts "  #{ex.message}".colorize(:red)
@@ -148,7 +177,7 @@ end
 inventory = nil
 begin
   inventory = CrystalPlay::InventoryParser.parse(inventory_file)
-  
+
   if verbose
     stats = CrystalPlay::InventoryParser.stats(inventory)
     puts "Inventory Statistics:".colorize(:green).bold
@@ -157,7 +186,7 @@ begin
     puts "  Variables: #{stats["vars"]}".colorize(:white)
     puts ""
   end
-  
+
   # Show inventory warnings
   inv_warnings = CrystalPlay::InventoryParser.validate(inventory)
   if inv_warnings.any?
@@ -167,7 +196,6 @@ begin
     end
     puts ""
   end
-  
 rescue ex
   puts "Error loading inventory:".colorize(:red).bold
   puts "  #{ex.message}".colorize(:red)
@@ -207,18 +235,18 @@ playbook.plays.each_with_index do |play, play_index|
   puts "PLAY [#{play.name}]".colorize(:magenta).bold
   puts "=" * 70
   puts ""
-  
+
   # Get hosts for this play from inventory
   hosts = inventory.get_hosts(play.hosts.to_s)
-  
+
   if hosts.empty?
     puts "Skipping play - no hosts match pattern: #{play.hosts}".colorize(:yellow)
     next
   end
-  
+
   # Track hosts for recap
   all_hosts.concat(hosts)
-  
+
   if verbose
     # Show connection hosts (IPs) if different from inventory names
     host_display = hosts.map do |host|
@@ -228,27 +256,27 @@ playbook.plays.each_with_index do |play, play_index|
     puts "Hosts in play: #{host_display}".colorize(:cyan)
     puts ""
   end
-  
+
   # Get tasks for this play
   tasks_to_run = play.tasks
-  
+
   # Filter by tags if specified
   if tags.any?
     tasks_to_run = tasks_to_run.select do |task|
       task.tags.any? { |tag| tags.includes?(tag) }
     end
-    
+
     if tasks_to_run.empty?
       puts "Skipping play - no tasks match tags: #{tags.join(", ")}".colorize(:yellow)
       next
     end
   end
-  
+
   if tasks_to_run.empty?
     puts "Skipping play - no tasks defined".colorize(:yellow)
     next
   end
-  
+
   # Create task executor with handlers and play vars
   executor = CrystalPlay::TaskExecutor.new(
     hosts: hosts,
@@ -259,7 +287,7 @@ playbook.plays.each_with_index do |play, play_index|
     play_vars: play.vars,
     gather_facts: play.gather_facts
   )
-  
+
   # Run tasks
   executor.run
 

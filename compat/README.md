@@ -93,7 +93,7 @@ test with exact content assertions for the `lineinfile` bug).
 
 ## Coverage
 
-Fifteen playbooks, one per concern: `debug`/`copy`, `file` states,
+Seventeen playbooks, one per concern: `debug`/`copy`, `file` states,
 `lineinfile`, `loop`/`with_items`, real `user`/`group` creation and
 modification, `block`/`rescue`/`always`, `until`/`retries`, `cron`
 (`cron_file:`), `authorized_key`, `git` clone/checkout against a local
@@ -102,7 +102,13 @@ dependency ordering, `defaults/main.yml`/`vars/main.yml`/invocation-var
 precedence, `files/` `src:` resolution, role handlers), `import_playbook:`
 (top-level playbook composition), `import_tasks:` (static, parse-time,
 with `vars:`), `include_tasks:` (dynamic, with `vars:`/`loop:`/`when:`),
-and `include_role:` (dynamic single-role inclusion, looped).
+`include_role:` (dynamic single-role inclusion, looped), a whole playbook
+file that is itself vault-encrypted (`16-vault.yml`, real
+`ansible-vault`-encrypted with `compat/vault_pass.txt` as the password),
+and an inline `!vault`-tagged variable value inside an otherwise-plaintext
+playbook (`17-vault-inline.yml`, generated with real `ansible-vault
+encrypt_string`). Both vault playbooks are run with
+`--vault-password-file` against `compat/vault_pass.txt`.
 
 Not covered here (same gaps noted elsewhere in this repo): `apt`/`dnf`/
 `package` (would need a slower, distro-specific compat image and real

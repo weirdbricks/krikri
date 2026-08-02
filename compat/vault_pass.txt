@@ -1,0 +1,1 @@
+compat-test-vault-password

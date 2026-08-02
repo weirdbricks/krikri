@@ -1,4 +1,5 @@
 require "yaml"
+require "./vault"
 require "./host"
 
 module CrystalPlay
@@ -262,7 +263,7 @@ module CrystalPlay
           # Parse host vars
           if host_vars.as_h?
             host_vars.as_h.each do |key, value|
-              host.vars[key.to_s] = JSON.parse(value.to_json)
+              host.vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json))
               
               # Handle special ansible vars
               case key.to_s
@@ -282,7 +283,7 @@ module CrystalPlay
       # Parse group vars
       if vars_yaml = yaml["vars"]?.try(&.as_h?)
         vars_yaml.each do |key, value|
-          group.vars[key.to_s] = JSON.parse(value.to_json)
+          group.vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json))
         end
       end
       

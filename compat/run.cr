@@ -81,12 +81,19 @@ module Compat
     end
   end
 
+  # 16-vault.yml is itself vault-encrypted, and 17-vault-inline.yml has an
+  # inline `!vault`-tagged variable value - both need
+  # --vault-password-file (compat/vault_pass.txt) to read/decrypt.
+  VAULT_EXTRA_ARGS = ["--vault-password-file", "/repo/compat/vault_pass.txt"]
+  VAULT_PLAYBOOKS  = {"16-vault.yml", "17-vault-inline.yml"}
+
   def self.compare(playbook_path : String) : Result
     name = File.basename(playbook_path)
     container_path = "/repo/compat/playbooks/#{name}"
+    extra_args = VAULT_PLAYBOOKS.includes?(name) ? VAULT_EXTRA_ARGS : [] of String
 
-    ansible = run_playbook(["ansible-playbook"], container_path)
-    crystal = run_playbook(["/repo/bin/crystal-ansible"], container_path)
+    ansible = run_playbook(["ansible-playbook"] + extra_args, container_path)
+    crystal = run_playbook(["/repo/bin/crystal-ansible"] + extra_args, container_path)
 
     ansible_ok = ansible.exit_code == 0
     crystal_ok = crystal.exit_code == 0

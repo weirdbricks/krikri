@@ -1,6 +1,7 @@
 require "yaml"
 require "json"
 require "./playbook_parser"
+require "./vault"
 
 module CrystalPlay
   # RoleLoader - resolves and loads roles: entries for a play.
@@ -63,14 +64,14 @@ module CrystalPlay
 
       vars = Hash(String, JSON::Any).new
       if vars_yaml = hash["vars"]?.try(&.as_h?)
-        vars_yaml.each { |key, value| vars[key.to_s] = JSON.parse(value.to_json) }
+        vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
       end
 
       reserved = {"role", "name", "vars", "tags"}
       hash.each do |key, value|
         key_str = key.to_s
         next if reserved.includes?(key_str)
-        vars[key_str] = JSON.parse(value.to_json)
+        vars[key_str] = Vault.maybe_decrypt_json(JSON.parse(value.to_json))
       end
 
       tags = hash["tags"]?.try(&.as_a?).try(&.map(&.as_s)) || [] of String
@@ -125,7 +126,7 @@ module CrystalPlay
       meta_path = File.join(role_dir, "meta", "main.yml")
       return unless File.exists?(meta_path)
 
-      meta_yaml = YAML.parse(File.read(meta_path))
+      meta_yaml = YAML.parse(Vault.maybe_decrypt(File.read(meta_path)))
       deps = meta_yaml["dependencies"]?.try(&.as_a?)
       return unless deps
 
@@ -147,9 +148,9 @@ module CrystalPlay
       result = Hash(String, JSON::Any).new
       return result unless File.exists?(path)
 
-      yaml = YAML.parse(File.read(path))
+      yaml = YAML.parse(Vault.maybe_decrypt(File.read(path)))
       if hash = yaml.as_h?
-        hash.each { |key, value| result[key.to_s] = JSON.parse(value.to_json) }
+        hash.each { |key, value| result[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
       end
 
       result
@@ -158,7 +159,7 @@ module CrystalPlay
     private def self.load_tasks_file(path : String, play : Play) : Array(Task)
       return [] of Task unless File.exists?(path)
 
-      yaml = YAML.parse(File.read(path))
+      yaml = YAML.parse(Vault.maybe_decrypt(File.read(path)))
       return [] of Task unless yaml.as_a?
 
       PlaybookParser.parse_tasks(yaml.as_a, play, "task in #{path}", File.dirname(path))
