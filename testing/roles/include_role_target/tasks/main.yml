@@ -1,0 +1,9 @@
+- name: dynamically included role task (touches a file, reports changed)
+  ansible.builtin.file:
+    path: /tmp/crystal-play-include-role-touch.txt
+    state: touch
+  notify: dynamically included handler
+
+- name: show a default var
+  ansible.builtin.debug:
+    msg: "hello {{ target }}, item={{ item | default('none') }}"

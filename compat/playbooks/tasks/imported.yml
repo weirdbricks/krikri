@@ -1,0 +1,4 @@
+- name: imported task
+  ansible.builtin.copy:
+    content: "imported task ran, item={{ item | default('none') }}\n"
+    dest: "/work/imported-task-{{ item | default('none') }}.txt"

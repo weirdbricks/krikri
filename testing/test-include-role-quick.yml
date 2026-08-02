@@ -1,0 +1,16 @@
+# include_role smoke test - safe under --check and for real runs: the
+# only non-debug task is a file: touch against a throwaway /tmp path.
+
+- name: include_role smoke test
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - include_role:
+        name: include_role_target
+      vars:
+        target: crystal-ansible
+      loop: [x, y]
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "include_role smoke test complete!"

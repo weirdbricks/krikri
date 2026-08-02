@@ -1,0 +1,5 @@
+- name: record the target var
+  ansible.builtin.copy:
+    content: "target={{ target }} item={{ item | default('none') }}\n"
+    dest: "/work/include-role-{{ item | default('none') }}.txt"
+  notify: include role handler

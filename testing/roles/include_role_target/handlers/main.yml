@@ -1,0 +1,3 @@
+- name: dynamically included handler
+  ansible.builtin.debug:
+    msg: "dynamically included handler ran"

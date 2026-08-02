@@ -48,6 +48,26 @@ module CrystalPlay
     property role_vars : Hash(String, JSON::Any)?
     property role_files_dir : String?
     property role_templates_dir : String?
+    # include_tasks: - only set when module_name == "_include_tasks".
+    # Unlike import_tasks (resolved at parse time), the file path may be
+    # templated ({{ vars }}) and isn't resolved until this task actually
+    # runs, so both the raw path and the directory to resolve it against
+    # (wherever the include_tasks: line itself lives) are carried on the
+    # Task for the executor to use at run time.
+    property include_file : String?
+    property include_file_dir : String?
+    # vars: on an include_tasks: statement - visible to every task in the
+    # included file (unlike import_tasks:'s vars:, which is merged
+    # directly into each imported task at parse time, this has to be
+    # carried on the Task and propagated at execution time, same as loop:'s
+    # item).
+    property include_vars : Hash(String, JSON::Any)?
+    # include_role: - only set when module_name == "_include_role". The
+    # dynamic counterpart to a roles: list entry: resolved at execution
+    # time (role name may be templated), via RoleLoader, same as roles:.
+    property include_role_name : String?
+    property include_role_vars : Hash(String, JSON::Any)?
+    property include_role_dir : String?
 
     def initialize(@name : String, @module_name : String)
       @params = Hash(String, String).new
@@ -75,10 +95,24 @@ module CrystalPlay
       @role_vars = nil
       @role_files_dir = nil
       @role_templates_dir = nil
+      @include_file = nil
+      @include_file_dir = nil
+      @include_vars = nil
+      @include_role_name = nil
+      @include_role_vars = nil
+      @include_role_dir = nil
     end
 
     def block? : Bool
       @module_name == "_block"
+    end
+
+    def include_tasks? : Bool
+      @module_name == "_include_tasks"
+    end
+
+    def include_role? : Bool
+      @module_name == "_include_role"
     end
     
     def to_s(io : IO)
@@ -182,6 +216,16 @@ module CrystalPlay
       playbook_dir = File.dirname(path)
 
       yaml.as_a.each_with_index do |play_yaml, index|
+        if import_path = extract_import_playbook(play_yaml)
+          begin
+            imported = parse(File.expand_path(import_path, playbook_dir))
+            playbook.plays.concat(imported.plays)
+          rescue ex
+            puts "Warning: Failed to import playbook '#{import_path}': #{ex.message}".colorize(:yellow)
+          end
+          next
+        end
+
         begin
           play = parse_play(play_yaml, index, playbook_dir)
           playbook.plays << play
@@ -197,6 +241,13 @@ module CrystalPlay
       playbook
     end
     
+    # import_playbook: is only valid at the top level of a playbook (a list
+    # item alongside plays, not inside tasks:) - "{import_playbook: path}"
+    # rather than a normal play mapping (which requires 'hosts').
+    private def self.extract_import_playbook(yaml : YAML::Any) : String?
+      yaml.as_h?.try(&.["import_playbook"]?).try(&.as_s?)
+    end
+
     # Parse a single play
     private def self.parse_play(yaml : YAML::Any, index : Int32, playbook_dir : String) : Play
       unless yaml.as_h?
@@ -250,14 +301,14 @@ module CrystalPlay
       # Parse tasks
       own_tasks = [] of Task
       if tasks_yaml = yaml["tasks"]?.try(&.as_a?)
-        own_tasks = parse_tasks(tasks_yaml, play, "task in play '#{name}'")
+        own_tasks = parse_tasks(tasks_yaml, play, "task in play '#{name}'", playbook_dir)
       end
       play.tasks = role_tasks + own_tasks
 
       # Parse handlers
       own_handlers = [] of Task
       if handlers_yaml = yaml["handlers"]?.try(&.as_a?)
-        own_handlers = parse_tasks(handlers_yaml, play, "handler")
+        own_handlers = parse_tasks(handlers_yaml, play, "handler", playbook_dir)
       end
       play.handlers = role_handlers + own_handlers
 
@@ -268,13 +319,21 @@ module CrystalPlay
     # individual entry that fails to parse rather than failing the whole
     # list. Shared by play.tasks, play.handlers, block/rescue/always, and
     # (via RoleLoader) a role's tasks/main.yml and handlers/main.yml -
-    # public for that last one.
-    def self.parse_tasks(tasks_yaml : Array(YAML::Any), play : Play, context : String) : Array(Task)
+    # public for that last one. file_dir is the directory of whichever YAML
+    # file tasks_yaml came from - used to resolve import_tasks:/
+    # include_tasks: paths relative to that file (not the top-level
+    # playbook), and passed down unchanged for block/rescue/always since
+    # those stay within the same file.
+    def self.parse_tasks(tasks_yaml : Array(YAML::Any), play : Play, context : String, file_dir : String) : Array(Task)
       tasks = [] of Task
 
       tasks_yaml.each_with_index do |task_yaml, index|
         begin
-          tasks << parse_task(task_yaml, index, play)
+          if imported = try_parse_import_tasks(task_yaml, play, file_dir)
+            tasks.concat(imported)
+          else
+            tasks << parse_task(task_yaml, index, play, file_dir)
+          end
         rescue ex
           puts "Warning: Skipping #{context} #{index + 1}: #{ex.message}".colorize(:yellow)
         end
@@ -283,8 +342,53 @@ module CrystalPlay
       tasks
     end
 
+    # import_tasks: is resolved at PARSE time - the imported file's tasks
+    # are spliced directly into the caller's task list (returning
+    # Array(Task) rather than a single wrapping Task, unlike block:).
+    # Per ansible-doc: "Most keywords, including loops and conditionals,
+    # only apply to the imported tasks, not to this statement itself" - so
+    # the import's own when:/tags: are applied to EACH imported task
+    # individually. loop: is not supported on import_tasks (use
+    # include_tasks instead) and is simply ignored here. Returns nil when
+    # the YAML node isn't an import_tasks: entry at all.
+    private def self.try_parse_import_tasks(yaml : YAML::Any, play : Play, file_dir : String) : Array(Task)?
+      hash = yaml.as_h?
+      return nil unless hash
+
+      import_value = hash["import_tasks"]?
+      return nil unless import_value
+
+      file_rel = import_value.as_h?.try(&.["file"]?).try(&.as_s?) || import_value.as_s?
+      raise "import_tasks: missing a file path" unless file_rel
+
+      resolved_path = File.expand_path(file_rel, file_dir)
+      raise "Imported tasks file not found: #{resolved_path}" unless File.exists?(resolved_path)
+
+      imported_yaml = YAML.parse(File.read(resolved_path))
+      raise "Imported tasks file must be a YAML list: #{resolved_path}" unless imported_yaml.as_a?
+
+      imported_tasks = parse_tasks(imported_yaml.as_a, play, "task in imported #{resolved_path}", File.dirname(resolved_path))
+
+      import_when = hash["when"]?.try { |v| safe_yaml_to_string(v) }
+      import_tags = hash["tags"]?.try(&.as_a?).try(&.map(&.as_s)) || [] of String
+      import_vars = Hash(String, JSON::Any).new
+      if vars_yaml = hash["vars"]?.try(&.as_h?)
+        vars_yaml.each { |key, value| import_vars[key.to_s] = JSON.parse(value.to_json) }
+      end
+
+      imported_tasks.each do |task|
+        if import_when
+          task.when_condition = task.when_condition ? "(#{task.when_condition}) and (#{import_when})" : import_when
+        end
+        task.tags = (task.tags + import_tags).uniq
+        import_vars.each { |key, value| task.vars[key] = value }
+      end
+
+      imported_tasks
+    end
+
     # Parse a single task
-    private def self.parse_task(yaml : YAML::Any, index : Int32, play : Play) : Task
+    private def self.parse_task(yaml : YAML::Any, index : Int32, play : Play, file_dir : String) : Task
       unless yaml.as_h?
         raise "Task must be a YAML mapping (hash)"
       end
@@ -295,7 +399,15 @@ module CrystalPlay
       name = task_hash["name"]?.try(&.as_s) || "Task #{index + 1}"
 
       if block_yaml = task_hash["block"]?.try(&.as_a?)
-        return parse_block_task(name, task_hash, block_yaml, play)
+        return parse_block_task(name, task_hash, block_yaml, play, file_dir)
+      end
+
+      if include_yaml = task_hash["include_tasks"]?
+        return parse_include_tasks(name, task_hash, include_yaml, play, file_dir)
+      end
+
+      if include_role_yaml = task_hash["include_role"]?.try(&.as_h?)
+        return parse_include_role(name, task_hash, include_role_yaml, play, file_dir)
       end
 
       # Find the module (first key that's not a special keyword)
@@ -304,7 +416,7 @@ module CrystalPlay
                       "with_dict", "with_fileglob", "with_nested", "with_sequence",
                       "with_indexed_items", "until", "retries", "delay",
                       "notify", "changed_when", "failed_when",
-                      "block", "rescue", "always"]
+                      "block", "rescue", "always", "import_tasks", "include_tasks", "include_role"]
       
       module_name = nil
       module_params = nil
@@ -404,16 +516,16 @@ module CrystalPlay
     # Parse a block: task - block:/rescue:/always: are each an array of
     # nested tasks (which may themselves be blocks, so this recurses
     # naturally through parse_tasks -> parse_task -> parse_block_task).
-    private def self.parse_block_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), block_yaml : Array(YAML::Any), play : Play) : Task
+    private def self.parse_block_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), block_yaml : Array(YAML::Any), play : Play, file_dir : String) : Task
       task = Task.new(name, "_block")
-      task.block_tasks = parse_tasks(block_yaml, play, "task in block '#{name}'")
+      task.block_tasks = parse_tasks(block_yaml, play, "task in block '#{name}'", file_dir)
 
       if rescue_yaml = task_hash["rescue"]?.try(&.as_a?)
-        task.rescue_tasks = parse_tasks(rescue_yaml, play, "task in rescue of block '#{name}'")
+        task.rescue_tasks = parse_tasks(rescue_yaml, play, "task in rescue of block '#{name}'", file_dir)
       end
 
       if always_yaml = task_hash["always"]?.try(&.as_a?)
-        task.always_tasks = parse_tasks(always_yaml, play, "task in always of block '#{name}'")
+        task.always_tasks = parse_tasks(always_yaml, play, "task in always of block '#{name}'", file_dir)
       end
 
       # Block-level settings gate/apply to the block as a whole; each
@@ -425,6 +537,91 @@ module CrystalPlay
 
       if tags_yaml = task_hash["tags"]?.try(&.as_a?)
         task.tags = tags_yaml.map(&.as_s)
+      end
+
+      task
+    end
+
+    # Parse an include_tasks: task - unlike import_tasks (spliced into the
+    # task list at parse time), this is resolved at EXECUTION time: the
+    # file path may be templated, when:/tags:/loop: apply to the include
+    # statement itself (once, or once per loop item) rather than each
+    # included task individually, and the executor evaluates it via
+    # TaskExecutor#execute_include_tasks.
+    private def self.parse_include_tasks(name : String, task_hash : Hash(YAML::Any, YAML::Any), include_yaml : YAML::Any, play : Play, file_dir : String) : Task
+      file_rel = include_yaml.as_h?.try(&.["file"]?).try(&.as_s?) || include_yaml.as_s?
+      raise "include_tasks: missing a file path" unless file_rel
+
+      task = Task.new(name, "_include_tasks")
+      task.include_file = file_rel
+      task.include_file_dir = file_dir
+
+      task.when_condition = task_hash["when"]?.try { |v| safe_yaml_to_string(v) }
+      task.ignore_errors = task_hash["ignore_errors"]?.try(&.as_bool) || false
+      task.become = task_hash["become"]?.try(&.as_bool) || play.become
+      task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
+
+      if tags_yaml = task_hash["tags"]?.try(&.as_a?)
+        task.tags = tags_yaml.map(&.as_s)
+      end
+
+      if vars_yaml = task_hash["vars"]?.try(&.as_h?)
+        vars = Hash(String, JSON::Any).new
+        vars_yaml.each { |key, value| vars[key.to_s] = JSON.parse(value.to_json) }
+        task.include_vars = vars
+      end
+
+      # loop:/with_items: repeats the whole include once per item (unlike
+      # import_tasks, which doesn't support loop: at all). Only these two
+      # loop sources are supported here, not the full with_dict/with_nested/
+      # etc set a normal task gets - a reasonable scope limit given how
+      # rarely those combine with include_tasks in practice.
+      if loop_yaml = task_hash["loop"]?.try(&.as_a?)
+        task.loop_items = loop_yaml.map { |item| JSON.parse(item.to_json) }
+      elsif with_items = task_hash["with_items"]?.try(&.as_a?)
+        task.loop_items = with_items.map { |item| JSON.parse(item.to_json) }
+      end
+
+      task
+    end
+
+    # Parse an include_role: task - the dynamic counterpart to a roles:
+    # list entry, resolved at execution time via
+    # TaskExecutor#execute_include_role. name: is required; unlike a
+    # roles: entry, vars: is a normal sibling task keyword here (not
+    # nested inside include_role: itself) - confirmed via `ansible-doc -s
+    # ansible.builtin.include_role`. apply:/defaults_from:/handlers_from:/
+    # public:/rescuable:/rolespec_validate: aren't implemented.
+    # allow_duplicates: isn't implemented either - every include_role call
+    # loads the role fresh, matching its default (true) but not honoring
+    # an explicit false.
+    private def self.parse_include_role(name : String, task_hash : Hash(YAML::Any, YAML::Any), include_role_yaml : Hash(YAML::Any, YAML::Any), play : Play, file_dir : String) : Task
+      role_name = include_role_yaml["name"]?.try(&.as_s)
+      raise "include_role: missing required 'name'" unless role_name
+
+      task = Task.new(name, "_include_role")
+      task.include_role_name = role_name
+      task.include_role_dir = file_dir
+
+      if vars_yaml = task_hash["vars"]?.try(&.as_h?)
+        vars = Hash(String, JSON::Any).new
+        vars_yaml.each { |key, value| vars[key.to_s] = JSON.parse(value.to_json) }
+        task.include_role_vars = vars
+      end
+
+      task.when_condition = task_hash["when"]?.try { |v| safe_yaml_to_string(v) }
+      task.ignore_errors = task_hash["ignore_errors"]?.try(&.as_bool) || false
+      task.become = task_hash["become"]?.try(&.as_bool) || play.become
+      task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
+
+      if tags_yaml = task_hash["tags"]?.try(&.as_a?)
+        task.tags = tags_yaml.map(&.as_s)
+      end
+
+      if loop_yaml = task_hash["loop"]?.try(&.as_a?)
+        task.loop_items = loop_yaml.map { |item| JSON.parse(item.to_json) }
+      elsif with_items = task_hash["with_items"]?.try(&.as_a?)
+        task.loop_items = with_items.map { |item| JSON.parse(item.to_json) }
       end
 
       task
@@ -557,6 +754,12 @@ module CrystalPlay
           flatten_tasks(task.block_tasks || [] of Task) +
             flatten_tasks(task.rescue_tasks || [] of Task) +
             flatten_tasks(task.always_tasks || [] of Task)
+        elsif task.include_tasks? || task.include_role?
+          # Dynamic: the included content (and even the file path/role
+          # name, which may be templated) isn't known until this task
+          # actually runs, so there's nothing to flatten into and nothing
+          # to warn about as an "unimplemented plugin" here.
+          [] of Task
         else
           [task]
         end

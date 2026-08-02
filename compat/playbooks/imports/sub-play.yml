@@ -1,0 +1,8 @@
+- name: imported play
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: write a marker from the imported play
+      ansible.builtin.copy:
+        content: "imported play ran\n"
+        dest: /work/imported-play-marker.txt

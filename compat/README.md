@@ -93,13 +93,16 @@ test with exact content assertions for the `lineinfile` bug).
 
 ## Coverage
 
-Eleven playbooks, one per concern: `debug`/`copy`, `file` states,
+Fifteen playbooks, one per concern: `debug`/`copy`, `file` states,
 `lineinfile`, `loop`/`with_items`, real `user`/`group` creation and
 modification, `block`/`rescue`/`always`, `until`/`retries`, `cron`
 (`cron_file:`), `authorized_key`, `git` clone/checkout against a local
-throwaway fixture repo, and `roles:` (directory resolution, `meta/main.yml`
+throwaway fixture repo, `roles:` (directory resolution, `meta/main.yml`
 dependency ordering, `defaults/main.yml`/`vars/main.yml`/invocation-var
-precedence, `files/` `src:` resolution, role handlers).
+precedence, `files/` `src:` resolution, role handlers), `import_playbook:`
+(top-level playbook composition), `import_tasks:` (static, parse-time,
+with `vars:`), `include_tasks:` (dynamic, with `vars:`/`loop:`/`when:`),
+and `include_role:` (dynamic single-role inclusion, looped).
 
 Not covered here (same gaps noted elsewhere in this repo): `apt`/`dnf`/
 `package` (would need a slower, distro-specific compat image and real

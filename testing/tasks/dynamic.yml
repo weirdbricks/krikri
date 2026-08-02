@@ -1,0 +1,3 @@
+- name: dynamic task from include_tasks
+  ansible.builtin.debug:
+    msg: "dynamic task ran, item={{ item | default('none') }}"

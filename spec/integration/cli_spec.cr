@@ -105,6 +105,27 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("SUCCESS: play task ran after role tasks")
   end
 
+  it "runs include_tasks: once per loop item with item: in scope, and skips the whole include (not per nested task) when its own when: is false" do
+    status, output = run_playbook("test-include-tasks-quick.yml")
+
+    status.success?.should be_true
+    output.should contain("dynamic task ran, item=a")
+    output.should contain("dynamic task ran, item=b")
+    output.should contain("dynamic task ran, item=c")
+    output.scan("skipping: [localhost]").size.should eq(1) # one skip for the whole `when: false` include, not one per nested task
+    output.should contain("include_tasks smoke test complete!")
+  end
+
+  it "runs include_role: once per loop item, applies invocation vars, and fires the role's handler exactly once even though the role (and its handler) were dynamically loaded twice" do
+    status, output = run_playbook("test-include-role-quick.yml")
+
+    status.success?.should be_true
+    output.should contain("hello crystal-ansible, item=x")
+    output.should contain("hello crystal-ansible, item=y")
+    output.scan("HANDLER [dynamically included handler]").size.should eq(1)
+    output.should contain("include_role smoke test complete!")
+  end
+
   it "continues the play past a failed task when ignore_errors: yes, and does not fail the process" do
     status, output = run_playbook("test-error-handling-quick.yml", [] of String)
 

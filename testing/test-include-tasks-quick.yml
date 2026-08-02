@@ -1,0 +1,16 @@
+# include_tasks smoke test - safe under --check and for real runs (debug
+# only, no filesystem/system state touched).
+
+- name: include_tasks smoke test
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - include_tasks: tasks/dynamic.yml
+      loop: [a, b, c]
+
+    - include_tasks: tasks/dynamic.yml
+      when: false
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "include_tasks smoke test complete!"

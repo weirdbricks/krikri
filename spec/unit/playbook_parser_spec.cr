@@ -40,6 +40,13 @@ private PLAYBOOK_WITH_BLOCK = <<-YAML
             ansible.builtin.nope: {}
   YAML
 
+private def import_tasks_root(name : String) : String
+  root = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", name)
+  FileUtils.rm_rf(root) if Dir.exists?(root)
+  Dir.mkdir_p(root)
+  root
+end
+
 private def single_task(task_yaml : String) : CrystalPlay::Task
   task_block = task_yaml.strip.lines.map { |line| "    #{line}" }.join("\n")
   playbook_yaml = "- name: Loop test play\n  hosts: all\n  tasks:\n#{task_block}\n"
@@ -454,6 +461,277 @@ describe CrystalPlay::PlaybookParser do
       expect_raises(Exception, /No valid plays found/) do
         CrystalPlay::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
       end
+    end
+  end
+
+  describe "import_playbook: wiring" do
+    it "splices an imported playbook's plays in place, in order, alongside the importer's own plays" do
+      root = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "import_playbook_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(root)
+
+      File.write(File.join(root, "webservers.yml"), <<-YAML)
+        - name: webservers play
+          hosts: all
+          tasks:
+            - name: webservers task
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      File.write(File.join(root, "site.yml"), <<-YAML)
+        - import_playbook: webservers.yml
+        - name: main play
+          hosts: all
+          tasks:
+            - name: main task
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      playbook = CrystalPlay::PlaybookParser.parse(File.join(root, "site.yml"))
+
+      playbook.plays.map(&.name).should eq(["webservers play", "main play"])
+    end
+
+    it "resolves the imported path relative to the importing playbook's own directory" do
+      root = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "import_playbook_nested_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(File.join(root, "plays"))
+
+      File.write(File.join(root, "plays", "sub.yml"), <<-YAML)
+        - name: sub play
+          hosts: all
+          tasks: []
+        YAML
+
+      File.write(File.join(root, "site.yml"), <<-YAML)
+        - import_playbook: plays/sub.yml
+        YAML
+
+      playbook = CrystalPlay::PlaybookParser.parse(File.join(root, "site.yml"))
+
+      playbook.plays.map(&.name).should eq(["sub play"])
+    end
+
+    it "warns and continues (not a hard failure) when the imported file doesn't exist" do
+      root = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "import_playbook_missing_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(root)
+
+      File.write(File.join(root, "site.yml"), <<-YAML)
+        - import_playbook: does_not_exist.yml
+        - name: main play
+          hosts: all
+          tasks: []
+        YAML
+
+      playbook = CrystalPlay::PlaybookParser.parse(File.join(root, "site.yml"))
+
+      playbook.plays.map(&.name).should eq(["main play"])
+    end
+  end
+
+  describe "import_tasks: wiring" do
+    it "splices the imported file's tasks in place (not wrapped in a single pseudo-task)" do
+      root = import_tasks_root("import_tasks_spec")
+      File.write(File.join(root, "common.yml"), <<-YAML)
+        - name: imported one
+          ansible.builtin.debug:
+            msg: hi
+        - name: imported two
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+
+      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+        - name: play
+          hosts: all
+          tasks:
+            - import_tasks: common.yml
+            - name: own task
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      playbook.plays[0].tasks.map(&.name).should eq(["imported one", "imported two", "own task"])
+    end
+
+    it "applies the import's own when: to each imported task individually, ANDed with any when: the task already has" do
+      root = import_tasks_root("import_tasks_when_spec")
+      File.write(File.join(root, "common.yml"), <<-YAML)
+        - name: unconditioned
+          ansible.builtin.debug:
+            msg: hi
+        - name: already conditioned
+          ansible.builtin.debug:
+            msg: hi
+          when: other_var == "x"
+        YAML
+
+      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+        - name: play
+          hosts: all
+          tasks:
+            - import_tasks: common.yml
+              when: foo == "bar"
+        YAML
+
+      tasks = playbook.plays[0].tasks
+      tasks[0].when_condition.should eq(%(foo == "bar"))
+      tasks[1].when_condition.should eq(%((other_var == "x") and (foo == "bar")))
+    end
+
+    it "applies the import's own tags: to each imported task individually" do
+      root = import_tasks_root("import_tasks_tags_spec")
+      File.write(File.join(root, "common.yml"), <<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+
+      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+        - name: play
+          hosts: all
+          tasks:
+            - import_tasks: common.yml
+              tags: [imported]
+        YAML
+
+      playbook.plays[0].tasks[0].tags.should eq(["imported"])
+    end
+
+    it "resolves a nested import_tasks: relative to the file that contains it, not the top-level playbook" do
+      root = import_tasks_root("import_tasks_nested_spec")
+      Dir.mkdir_p(File.join(root, "sub"))
+      File.write(File.join(root, "sub", "inner.yml"), <<-YAML)
+        - name: innermost task
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+      File.write(File.join(root, "sub", "outer.yml"), <<-YAML)
+        - import_tasks: inner.yml
+        YAML
+
+      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+        - name: play
+          hosts: all
+          tasks:
+            - import_tasks: sub/outer.yml
+        YAML
+
+      playbook.plays[0].tasks.map(&.name).should eq(["innermost task"])
+    end
+
+    it "warns and continues (not a hard failure) when the imported file doesn't exist" do
+      root = import_tasks_root("import_tasks_missing_spec")
+
+      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+        - name: play
+          hosts: all
+          tasks:
+            - import_tasks: does_not_exist.yml
+            - name: own task
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      playbook.plays[0].tasks.map(&.name).should eq(["own task"])
+    end
+  end
+
+  describe "include_tasks: parsing" do
+    it "parses a bare-string include_tasks: into a single pseudo-task (not spliced at parse time)" do
+      task = single_task(<<-YAML)
+        - include_tasks: dynamic.yml
+        YAML
+
+      task.include_tasks?.should be_true
+      task.module_name.should eq("_include_tasks")
+      task.include_file.should eq("dynamic.yml")
+    end
+
+    it "parses the file: sub-key form" do
+      task = single_task(<<-YAML)
+        - include_tasks:
+            file: dynamic.yml
+        YAML
+
+      task.include_file.should eq("dynamic.yml")
+    end
+
+    it "parses when:, tags:, and loop: on the include statement itself" do
+      task = single_task(<<-YAML)
+        - include_tasks: dynamic.yml
+          when: some_var == "yes"
+          tags: [dynamic]
+          loop: [a, b, c]
+        YAML
+
+      task.when_condition.should eq(%(some_var == "yes"))
+      task.tags.should eq(["dynamic"])
+      task.loop_items.try(&.map(&.as_s)).should eq(["a", "b", "c"])
+    end
+
+    it "does not recurse into the included file's tasks at parse time (dynamic, unlike import_tasks)" do
+      task = single_task(<<-YAML)
+        - include_tasks: does_not_exist_yet.yml
+        YAML
+
+      # No error at parse time even though the file doesn't exist - it's
+      # only resolved when this task actually executes.
+      task.include_tasks?.should be_true
+    end
+  end
+
+  describe "include_role: parsing" do
+    it "parses name: into include_role_name (not spliced at parse time)" do
+      task = single_task(<<-YAML)
+        - include_role:
+            name: greeter
+        YAML
+
+      task.include_role?.should be_true
+      task.module_name.should eq("_include_role")
+      task.include_role_name.should eq("greeter")
+    end
+
+    it "skips (with a warning) an include_role: with no name: rather than failing the whole play" do
+      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML)
+        - name: play
+          hosts: all
+          tasks:
+            - include_role:
+                allow_duplicates: true
+        YAML
+
+      playbook.plays[0].tasks.should be_empty
+    end
+
+    it "treats vars: as a sibling task keyword, not nested inside include_role: (per ansible-doc)" do
+      task = single_task(<<-YAML)
+        - include_role:
+            name: greeter
+          vars:
+            target: crystal-ansible
+        YAML
+
+      task.include_role_vars.should_not be_nil
+      task.include_role_vars.as(Hash(String, JSON::Any))["target"].as_s.should eq("crystal-ansible")
+    end
+
+    it "parses when:, tags:, and loop: on the include_role statement itself" do
+      task = single_task(<<-YAML)
+        - include_role:
+            name: greeter
+          when: some_var == "yes"
+          tags: [dynamic]
+          loop: [a, b]
+        YAML
+
+      task.when_condition.should eq(%(some_var == "yes"))
+      task.tags.should eq(["dynamic"])
+      task.loop_items.try(&.map(&.as_s)).should eq(["a", "b"])
     end
   end
 end

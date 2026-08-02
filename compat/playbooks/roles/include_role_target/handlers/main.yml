@@ -1,0 +1,4 @@
+- name: include role handler
+  ansible.builtin.copy:
+    content: "handler ran\n"
+    dest: /work/include-role-handler-ran.txt

@@ -1,0 +1,9 @@
+- import_playbook: imports/sub-play.yml
+- name: main play
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: write a marker from the main play
+      ansible.builtin.copy:
+        content: "main play ran\n"
+        dest: /work/main-play-marker.txt

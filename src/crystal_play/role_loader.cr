@@ -30,6 +30,25 @@ module CrystalPlay
       {tasks, handlers}
     end
 
+    # Loads a single role by name (plus its meta/main.yml dependencies) -
+    # used by TaskExecutor#execute_include_role for include_role:, the
+    # dynamic (execution-time) counterpart to a static roles: entry. Each
+    # call gets its own fresh "seen" set, so - matching include_role's
+    # allow_duplicates: true default - repeated include_role calls for the
+    # same role name each load it again rather than being silently
+    # deduplicated the way a role listed twice under roles: would be. An
+    # explicit allow_duplicates: false isn't honored (dedup only happens
+    # within a single call's own meta dependency chain).
+    def self.load_single_role(name : String, invocation_vars : Hash(String, JSON::Any), invocation_tags : Array(String), play : Play, playbook_dir : String) : {Array(Task), Array(Task)}
+      seen = Set(String).new
+      tasks = [] of Task
+      handlers = [] of Task
+
+      load_role(name, invocation_vars, invocation_tags, play, playbook_dir, seen, tasks, handlers)
+
+      {tasks, handlers}
+    end
+
     # A roles: entry is either a bare string ("common") or a mapping with
     # role:/name: (+ optional vars:/tags:, and Ansible also treats any
     # other top-level key as a role var - `roles: [{role: app, port: 8080}]`).
@@ -142,7 +161,7 @@ module CrystalPlay
       yaml = YAML.parse(File.read(path))
       return [] of Task unless yaml.as_a?
 
-      PlaybookParser.parse_tasks(yaml.as_a, play, "task in #{path}")
+      PlaybookParser.parse_tasks(yaml.as_a, play, "task in #{path}", File.dirname(path))
     end
   end
 end

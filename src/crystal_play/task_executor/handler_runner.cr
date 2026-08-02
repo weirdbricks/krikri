@@ -42,33 +42,45 @@ module CrystalPlay
         diff_mode : Bool
       )
         return unless any_notified?
-        
+
         puts "RUNNING HANDLER".colorize(:white).bold
         puts "*" * 70
-        
+
+        # A handler runs at most once per host, no matter how many times
+        # it was notified - and, since include_role: (possibly looped) can
+        # dynamically add further Task objects that happen to share a name
+        # with an existing handler (e.g. the same role included twice),
+        # no matter how many distinct Task objects share that name either.
+        already_ran = Hash(String, Set(String)).new
+        @hosts.each { |host| already_ran[host.name] = Set(String).new }
+
         # Handlers run in definition order
         @handlers.each do |handler|
           handler_triggered = false
-          
+
           @hosts.each do |host|
+            next if already_ran[host.name].includes?(handler.name)
+
             # Check if handler should run for this host
             if should_run_handler?(handler, host)
+              already_ran[host.name].add(handler.name)
+
               unless handler_triggered
                 puts "HANDLER [#{handler.name}]".colorize(:cyan).bold
                 handler_triggered = true
               end
-              
+
               # Execute handler using the callback
               result = execute_callback.call(handler, host)
-              
+
               # Display result
               ResultDisplay.display_result(host, result, diff_mode)
-              
+
               # Update stats
               ResultDisplay.update_stats(results[host.name], result)
             end
           end
-          
+
           puts "" if handler_triggered
         end
       end

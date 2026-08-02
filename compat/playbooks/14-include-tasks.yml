@@ -1,0 +1,14 @@
+- name: include_tasks
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - include_tasks: tasks/imported.yml
+      vars:
+        item: from-include-vars
+      when: true
+
+    - include_tasks: tasks/imported.yml
+      loop: [a, b]
+
+    - include_tasks: tasks/imported.yml
+      when: false

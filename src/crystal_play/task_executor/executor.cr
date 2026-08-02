@@ -163,6 +163,8 @@ module CrystalPlay
     # single-execution path depending on what the task declares.
     private def execute_task(task : Task, host : Host)
       return execute_block(task, host) if task.block?
+      return execute_include_tasks(task, host) if task.include_tasks?
+      return execute_include_role(task, host) if task.include_role?
 
       vars_context = build_vars_context(task, host)
 
@@ -465,6 +467,149 @@ module CrystalPlay
         execute_task(nested_task, host)
         puts ""
       end
+    end
+
+    # Runs an include_tasks: task. Unlike import_tasks (spliced into the
+    # task list at parse time), this is resolved now: the file path may be
+    # templated, and when:/loop: apply to the include statement itself
+    # (gating/repeating the whole included set) rather than to each
+    # included task individually.
+    private def execute_include_tasks(task : Task, host : Host)
+      base_vars_context = build_vars_context(task, host)
+      loop_items = task.loop_items
+
+      if loop_items
+        loop_items.each do |item|
+          vars_context = base_vars_context.dup
+          vars_context["item"] = item
+          run_include_tasks_once(task, host, vars_context, item_display(item))
+        end
+      else
+        run_include_tasks_once(task, host, base_vars_context, nil)
+      end
+    end
+
+    private def run_include_tasks_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?)
+      if when_condition = task.when_condition
+        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+        substituted_condition = substitutor.substitute(when_condition)
+
+        unless ConditionalEvaluator.evaluate(substituted_condition, vars_context)
+          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+          suffix = item_label ? " => (item=#{item_label})" : ""
+          puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
+          @results[host.name]["skipped"] += 1
+          return
+        end
+      end
+
+      substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+      file_rel = substitutor.substitute(task.include_file.as(String))
+      resolved_path = File.expand_path(file_rel, task.include_file_dir.as(String))
+
+      unless File.exists?(resolved_path)
+        fail_include(task, host, "Included tasks file not found: #{resolved_path}")
+        return
+      end
+
+      yaml = YAML.parse(File.read(resolved_path))
+      unless yaml.as_a?
+        fail_include(task, host, "Included tasks file must be a YAML list: #{resolved_path}")
+        return
+      end
+
+      inherited = Play.new("", "")
+      inherited.become = task.become
+      inherited.become_user = task.become_user
+      included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path))
+
+      # Propagate this iteration's loop `item` and the include statement's
+      # own vars: into each included task's own scope: run_task_list ->
+      # execute_task rebuilds a fresh vars_context per task from scratch
+      # (play/host/registered/task vars), which wouldn't otherwise see
+      # either of these.
+      if include_vars = task.include_vars
+        included_tasks.each do |included_task|
+          include_vars.each { |key, value| included_task.vars[key] = value }
+        end
+      end
+
+      if item = vars_context["item"]?
+        included_tasks.each { |included_task| included_task.vars["item"] = item }
+      end
+
+      run_task_list(included_tasks, host)
+    rescue ex
+      fail_include(task, host, "Failed to load included tasks: #{ex.message}")
+    end
+
+    private def fail_include(task : Task, host : Host, message : String)
+      connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+      puts "failed: [#{connection_host}]".colorize(:red)
+      puts "  #{message}".colorize(:red)
+      @results[host.name]["failed"] += 1
+      halt_if_failed(task, host, true)
+    end
+
+    # Runs an include_role: task - the dynamic counterpart to a roles:
+    # list entry. Task-level keywords (when:/tags:/loop:) apply to the
+    # include_role statement itself, same as include_tasks.
+    private def execute_include_role(task : Task, host : Host)
+      base_vars_context = build_vars_context(task, host)
+      loop_items = task.loop_items
+
+      if loop_items
+        loop_items.each do |item|
+          vars_context = base_vars_context.dup
+          vars_context["item"] = item
+          run_include_role_once(task, host, vars_context, item_display(item))
+        end
+      else
+        run_include_role_once(task, host, base_vars_context, nil)
+      end
+    end
+
+    private def run_include_role_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?)
+      if when_condition = task.when_condition
+        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+        substituted_condition = substitutor.substitute(when_condition)
+
+        unless ConditionalEvaluator.evaluate(substituted_condition, vars_context)
+          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+          suffix = item_label ? " => (item=#{item_label})" : ""
+          puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
+          @results[host.name]["skipped"] += 1
+          return
+        end
+      end
+
+      substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+      role_name = substitutor.substitute(task.include_role_name.as(String))
+
+      inherited = Play.new("", "")
+      inherited.become = task.become
+      inherited.become_user = task.become_user
+
+      begin
+        included_tasks, included_handlers = RoleLoader.load_single_role(
+          role_name,
+          task.include_role_vars || Hash(String, JSON::Any).new,
+          task.tags,
+          inherited,
+          task.include_role_dir.as(String)
+        )
+      rescue ex
+        fail_include(task, host, "Failed to load role '#{role_name}': #{ex.message}")
+        return
+      end
+
+      if item = vars_context["item"]?
+        (included_tasks + included_handlers).each { |included_task| included_task.vars["item"] = item }
+      end
+
+      @handler_runner.handlers.concat(included_handlers) unless included_handlers.empty?
+
+      run_task_list(included_tasks, host)
     end
 
     # Substitute variables in task parameters

@@ -1,0 +1,7 @@
+- name: import_tasks
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - import_tasks: tasks/imported.yml
+      vars:
+        item: static

@@ -2,21 +2,25 @@
 
 **Status as of 2026-08-01:** builds again on Crystal 1.20.3 (fixed `as_i` -> `as_i64`
 type mismatch in `comparison_evaluator.cr`). **Phase 0 and Phase 1 are done**
-(`0.5.0`); **Phase 2's roles support is done** (`0.6.0`). 238 specs passing,
-`ameba` clean on all new/touched code. Added a Docker-based compatibility harness
-(`compat/`, see `compat/README.md`) that runs the same playbooks through real
-`ansible-playbook` and `crystal-ansible` side by side and diffs the results -
-ground truth instead of assumptions about Ansible's documented behavior. Its
-first run found and fixed 4 real bugs: `authorized_key` registered under the
-wrong FQCN (it's `ansible.posix.authorized_key`, not `ansible.builtin.*` -
-confirmed via `ansible-doc`, not memory), plugin resolution breaking outside the
-repo checkout, `Host.from_json` crashing on a host with no explicit user, and
-`lineinfile` inserting a spurious blank line on every append/removal to a file
-already ending in a newline. The roles compat playbook (directory resolution,
-`meta/main.yml` dependency ordering, `defaults:`/`vars:`/invocation-var
-precedence, `files/` `src:` resolution, role handlers) passed against real
-`ansible-playbook` on the first try. Next up is the rest of Phase 2
-(`include_tasks`/`import_tasks`/`import_playbook`/`include_role`, vault). This
+(`0.5.0`); **Phase 2's roles and include/import support are done** (`0.7.0`).
+264 specs passing, `ameba` clean on all new/touched code. Added a Docker-based
+compatibility harness (`compat/`, see `compat/README.md`) that runs the same
+playbooks through real `ansible-playbook` and `crystal-ansible` side by side and
+diffs the results - ground truth instead of assumptions about Ansible's
+documented behavior; 15/15 compat playbooks pass, including all of roles,
+`import_playbook:`, `import_tasks:`, `include_tasks:`, and `include_role:`.
+Along the way it (and, for one bug the file-state-diffing approach can't catch,
+plain manual testing) found and fixed 6 real bugs: `authorized_key` registered
+under the wrong FQCN (it's `ansible.posix.authorized_key`, not
+`ansible.builtin.*` - confirmed via `ansible-doc`, not memory), plugin
+resolution breaking outside the repo checkout, `Host.from_json` crashing on a
+host with no explicit user, `lineinfile` inserting a spurious blank line on
+every append/removal to a file already ending in a newline, and (both found
+while building include_role:) `include_role:` + `loop:` producing duplicate
+handler *Task objects* sharing a name, which `HandlerRunner` ran once each
+instead of deduping by name the way Ansible does, and task-level `vars:` never
+being parsed for `import_tasks:`/`include_tasks:` at all despite being a very
+common way to use them. Next up is vault (the last Phase 2 item). This
 roadmap sequences the remaining work from the two prior analysis docs
 ([WHATS_MISSING.md](WHATS_MISSING.md), [MISSING_FEATURES_COMPREHENSIVE.md](MISSING_FEATURES_COMPREHENSIVE.md))
 into phases, with the test-foundation phase (Phase 0) landing first so every
@@ -168,7 +172,60 @@ the same way it did between January and now.
   (`testing/test-roles-quick.yml` + `testing/roles/`), and verified against
   real `ansible-playbook` via the compat harness
   (`compat/playbooks/11-roles.yml` - passed on the first try).
-- `include_tasks` / `import_tasks` / `import_playbook` / `include_role`
+- [x] `import_playbook` / `import_tasks` / `include_tasks` / `include_role`
+  (`0.7.0`):
+  - `import_playbook:` is a top-level playbook-list entry (`{import_playbook:
+    path.yml}` alongside plays, not inside `tasks:` - matches Ansible)
+    resolved at parse time: the imported file is parsed recursively and its
+    plays spliced in at that position.
+  - `import_tasks:` is resolved at parse time too - the imported file's
+    tasks are spliced directly into the caller's task list (not wrapped in
+    a pseudo-task). Per `ansible-doc`: "Most keywords, including loops and
+    conditionals, only apply to the imported tasks, not to this statement
+    itself" - so the import's own `when:`/`tags:`/`vars:` are applied to
+    **each** imported task individually (`when:` ANDed with any condition
+    the task already has). `loop:` isn't supported on `import_tasks:` (use
+    `include_tasks:`) and is ignored if present.
+  - `include_tasks:` is resolved at **execution** time instead, as a
+    pseudo-module (`_include_tasks`) parallel to how `block:` already
+    works: the file path may be templated, and `when:`/`tags:`/`vars:`/
+    `loop:` (`loop:`/`with_items:` only, not the full loop-source set)
+    apply to the include statement itself - gating or repeating the whole
+    included set once per loop item, with `item:` and the include's own
+    `vars:` propagated into each included task's scope.
+  - `include_role:` is the dynamic counterpart to a `roles:` list entry,
+    also resolved at execution time (`_include_role` pseudo-module,
+    `when:`/`tags:`/`loop:` same as `include_tasks:`), via a new
+    `RoleLoader.load_single_role` reusing all of the static `roles:` path's
+    machinery (`meta/main.yml` dependencies, `defaults/main.yml`/
+    `vars/main.yml`, `files/`/`templates/` dirs). Per `ansible-doc`, `vars:`
+    is a sibling task keyword here (not nested inside `include_role:`
+    itself, unlike a `roles:` list entry's `vars:` - a real syntactic
+    difference, not an oversight). `allow_duplicates:` (default `true` for
+    `include_role:`, unlike `roles:`) is approximated by every call loading
+    the role fresh; an explicit `allow_duplicates: false` isn't honored.
+  - Building `include_role:` surfaced two real, previously-shipped bugs
+    unrelated to includes themselves: dynamically-loaded role handlers
+    (and, more generally, any two `Task` objects that happen to share a
+    `name:`) were each independently matched against the notified-handlers
+    set and run once *per Task object* rather than once *per handler
+    name* - so `include_role:` combined with `loop:` fired the same
+    handler multiple times. `HandlerRunner#run` now tracks "already ran"
+    per host, by handler name, fixing this regardless of how many
+    Task objects share that name. Second: task-level `vars:` was not
+    parsed at all for `import_tasks:`/`include_tasks:` (a very common way
+    to use them) - added scoped support for both (not the general
+    `vars:` support ordinary module tasks would need - that's a
+    separate, pre-existing gap this didn't try to close).
+  - Unit tested (`playbook_parser_spec.cr`'s `import_playbook:`/
+    `import_tasks:`/`include_tasks:`/`include_role:` parsing groups,
+    `handler_runner_spec.cr` for the dedup fix), integration-tested via
+    the CLI for the dynamic (execution-time) pieces specifically
+    (`testing/test-include-tasks-quick.yml`,
+    `testing/test-include-role-quick.yml` + `testing/roles/
+    include_role_target/`), and verified against real `ansible-playbook`
+    via the compat harness (`compat/playbooks/12` through `15` - all
+    passed).
 - Vault: AES256 encrypt/decrypt, `--ask-vault-pass`, `--vault-password-file`,
   inline `!vault` encrypted values
 

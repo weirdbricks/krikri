@@ -1,0 +1,9 @@
+- name: include_role
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - include_role:
+        name: include_role_target
+      vars:
+        target: crystal-ansible
+      loop: [x, y]
