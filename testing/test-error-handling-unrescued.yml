@@ -1,0 +1,21 @@
+# Companion to test-error-handling-quick.yml: an unrescued block failure,
+# which should halt the rest of the play for that host. Safe to run for
+# real - only /bin/false and debug on localhost.
+
+- name: unrescued error handling test
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: block with no rescue
+      block:
+        - name: this fails
+          ansible.builtin.command: /bin/false
+      always:
+        - name: cleanup still runs even without a rescue
+          ansible.builtin.debug:
+            msg: "always runs regardless"
+
+    - name: never runs (unrescued block failure halts the play)
+      ansible.builtin.debug:
+        msg: "SHOULD NOT APPEAR"

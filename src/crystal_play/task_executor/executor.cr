@@ -22,14 +22,18 @@ module CrystalPlay
     property gather_facts : Bool
     
     # Track results for recap
-    @results : Hash(String, Hash(String, Int32))
+    getter results : Hash(String, Hash(String, Int32))
     # Track registered variables per host
     @registered_vars : Hash(String, Hash(String, JSON::Any))
     # Handler runner
     @handler_runner : HandlerRunner
     # Facts per host
     @facts : Hash(String, Hash(String, JSON::Any))
-    
+    # Hosts that hit a failed task without ignore_errors: further tasks in
+    # the play are skipped for them (Ansible's default "a failure aborts
+    # the rest of the play for that host" behavior).
+    @halted_hosts : Set(String)
+
     def initialize(
       @hosts,
       @tasks,
@@ -42,13 +46,15 @@ module CrystalPlay
       @results = Hash(String, Hash(String, Int32)).new
       @registered_vars = Hash(String, Hash(String, JSON::Any)).new
       @facts = Hash(String, Hash(String, JSON::Any)).new
+      @halted_hosts = Set(String).new
       
       @hosts.each do |host|
         @results[host.name] = {
-          "ok" => 0,
+          "ok"      => 0,
           "changed" => 0,
-          "failed" => 0,
-          "skipped" => 0
+          "failed"  => 0,
+          "skipped" => 0,
+          "rescued" => 0,
         }
         @registered_vars[host.name] = {} of String => JSON::Any
         @facts[host.name] = {} of String => JSON::Any
@@ -68,11 +74,12 @@ module CrystalPlay
       @tasks.each do |task|
         puts "TASK [#{task.name}]".colorize(:white).bold
         puts "*" * 70
-        
+
         @hosts.each do |host|
+          next if @halted_hosts.includes?(host.name)
           execute_task(task, host)
         end
-        
+
         puts ""
       end
       
@@ -155,6 +162,8 @@ module CrystalPlay
     # Execute a task on a host - dispatches to the loop, retry, or plain
     # single-execution path depending on what the task declares.
     private def execute_task(task : Task, host : Host)
+      return execute_block(task, host) if task.block?
+
       vars_context = build_vars_context(task, host)
 
       # with_fileglob needs a substitutor (for {{ vars }} in the pattern) and
@@ -276,12 +285,20 @@ module CrystalPlay
       end
 
       changed = result["changed"]?.try(&.as_bool) || false
+      failed = result["failed"]?.try(&.as_bool) || false
       if changed && (notify_list = task.notify)
         notify_list.each { |handler_name| @handler_runner.notify(host, handler_name) } unless notify_list.empty?
       end
 
       ResultDisplay.display_result(host, result, @diff_mode)
-      ResultDisplay.update_stats(@results[host.name], result)
+      ResultDisplay.update_stats(@results[host.name], result, task.ignore_errors)
+      halt_if_failed(task, host, failed)
+    end
+
+    # Marks `host` as halted (no further tasks in this play run for it)
+    # when `failed` and the task didn't opt out via ignore_errors:.
+    private def halt_if_failed(task : Task, host : Host, failed : Bool)
+      @halted_hosts.add(host.name) if failed && !task.ignore_errors
     end
 
     # Execute a task once per loop item, aggregating the per-item results
@@ -310,7 +327,7 @@ module CrystalPlay
         any_failed ||= failed
 
         ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item))
-        ResultDisplay.update_stats(@results[host.name], result)
+        ResultDisplay.update_stats(@results[host.name], result, task.ignore_errors)
 
         result_hash = JSON.parse(result.to_json).as_h
         result_hash["item"] = item
@@ -331,6 +348,8 @@ module CrystalPlay
           @registered_vars[host.name][register_name] = JSON::Any.new(aggregate)
         end
       end
+
+      halt_if_failed(task, host, any_failed)
     end
 
     # Render a loop item for display purposes (Ansible shows `(item=...)`).
@@ -373,14 +392,79 @@ module CrystalPlay
       return unless result
 
       changed = result["changed"]?.try(&.as_bool) || false
+      failed = result["failed"]?.try(&.as_bool) || false
       if changed && (notify_list = task.notify)
         notify_list.each { |handler_name| @handler_runner.notify(host, handler_name) } unless notify_list.empty?
       end
 
       ResultDisplay.display_result(host, result, @diff_mode)
-      ResultDisplay.update_stats(@results[host.name], result)
+      ResultDisplay.update_stats(@results[host.name], result, task.ignore_errors)
+      halt_if_failed(task, host, failed)
     end
 
+    # Runs a block: task - the nested block_tasks, then rescue_tasks if the
+    # block failed (recovering it if rescue succeeds), then always_tasks
+    # unconditionally, re-applying the halt afterward if the block ultimately
+    # failed (unrescued, or rescue itself failed, or always: introduced a new
+    # failure) unless the block itself has ignore_errors:.
+    private def execute_block(task : Task, host : Host)
+      if when_condition = task.when_condition
+        vars_context = build_vars_context(task, host)
+        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+        substituted_condition = substitutor.substitute(when_condition)
+
+        unless ConditionalEvaluator.evaluate(substituted_condition, vars_context)
+          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+          puts "skipping: [#{connection_host}] (block)".colorize(:cyan)
+          @results[host.name]["skipped"] += 1
+          return
+        end
+      end
+
+      failed_before = @results[host.name]["failed"]
+      run_task_list(task.block_tasks || [] of Task, host)
+      block_failed = @halted_hosts.includes?(host.name)
+
+      if block_failed && (rescue_tasks = task.rescue_tasks)
+        @halted_hosts.delete(host.name)
+        run_task_list(rescue_tasks, host)
+        block_failed = @halted_hosts.includes?(host.name)
+
+        # rescue: succeeded - the block-body failures it recovered from
+        # don't count as play failures. Move them into "rescued" instead,
+        # matching Ansible's recap (failed=0 ... rescued=1).
+        unless block_failed
+          recovered = @results[host.name]["failed"] - failed_before
+          if recovered > 0
+            @results[host.name]["failed"] -= recovered
+            @results[host.name]["rescued"] += recovered
+          end
+        end
+      end
+
+      if always_tasks = task.always_tasks
+        @halted_hosts.delete(host.name)
+        run_task_list(always_tasks, host)
+        block_failed ||= @halted_hosts.includes?(host.name)
+      end
+
+      @halted_hosts.delete(host.name)
+      halt_if_failed(task, host, block_failed)
+    end
+
+    # Runs a nested task list (block:/rescue:/always:), printing its own
+    # TASK header per task since these live inside a block rather than the
+    # play's top-level task list, so `run` never prints one for them. Stops
+    # early once the host halts (a task failed without ignore_errors).
+    private def run_task_list(tasks : Array(Task), host : Host)
+      tasks.each do |nested_task|
+        break if @halted_hosts.includes?(host.name)
+        puts "TASK [#{nested_task.name}]".colorize(:white).bold
+        puts "*" * 70
+        execute_task(nested_task, host)
+        puts ""
+      end
+    end
 
     # Substitute variables in task parameters
     private def substitute_task_params(

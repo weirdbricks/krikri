@@ -201,6 +201,7 @@ end
 
 # Execute playbook
 all_hosts = [] of CrystalPlay::Host
+combined_results = Hash(String, Hash(String, Int32)).new
 playbook.plays.each_with_index do |play, play_index|
   puts ""
   puts "PLAY [#{play.name}]".colorize(:magenta).bold
@@ -261,6 +262,16 @@ playbook.plays.each_with_index do |play, play_index|
   
   # Run tasks
   executor.run
+
+  # Merge this play's per-host stats into the running total (a host can
+  # appear in more than one play).
+  executor.results.each do |host_name, host_stats|
+    if existing = combined_results[host_name]?
+      host_stats.each { |key, value| existing[key] = (existing[key]? || 0) + value }
+    else
+      combined_results[host_name] = host_stats.dup
+    end
+  end
 end
 
 # Summary
@@ -269,20 +280,21 @@ puts "=" * 70
 puts "PLAY RECAP".colorize(:cyan).bold
 puts "=" * 70
 
-# Show simple recap (deduplicate hosts)
-all_hosts.uniq { |h| h.name }.each do |host|
-  # Show connection host (IP) if different from inventory name
-  connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-  
-  # TODO: Get actual stats from executor
-  puts "#{connection_host.ljust(20)} : #{"ok".colorize(:green)} (playbook complete)"
-end
+CrystalPlay::ResultDisplay.show_recap(all_hosts.uniq { |h| h.name }, combined_results)
 
 puts ""
+
+any_failed = combined_results.values.any? { |host_stats| (host_stats["failed"]? || 0) > 0 }
 
 if check_mode
   puts "NOTE: Running in check mode - no changes were made".colorize(:yellow).bold
   puts ""
+end
+
+if any_failed
+  puts "✗ Playbook execution completed with failures".colorize(:red).bold
+  puts ""
+  exit 2
 end
 
 puts "✓ Playbook execution complete".colorize(:green).bold

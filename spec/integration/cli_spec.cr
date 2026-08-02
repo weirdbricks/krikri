@@ -22,11 +22,11 @@ Spec.before_suite do
   raise "build.sh failed while preparing integration specs" unless status.success?
 end
 
-private def run_playbook(fixture : String) : {Process::Status, String}
+private def run_playbook(fixture : String, mode_args : Array(String) = ["--check"]) : {Process::Status, String}
   output = IO::Memory.new
   status = Process.run(
     BINARY,
-    ["--check", "-i", INVENTORY, File.join(FIXTURES_DIR, fixture)],
+    mode_args + ["-i", INVENTORY, File.join(FIXTURES_DIR, fixture)],
     output: output,
     error: output
   )
@@ -77,6 +77,36 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("sequence item: 3")
     output.should contain(%(indexed item: ["0","x"]))
     output.should contain(%(indexed item: ["1","y"]))
+  end
+
+  it "continues the play past a failed task when ignore_errors: yes, and does not fail the process" do
+    status, output = run_playbook("test-error-handling-quick.yml", [] of String)
+
+    status.success?.should be_true
+    output.should contain("ignore_errors let the play continue")
+  end
+
+  it "recovers a failed block: via rescue:, always runs always:, and the play continues" do
+    status, output = run_playbook("test-error-handling-quick.yml", [] of String)
+
+    status.success?.should be_true
+    output.should contain("block was rescued")
+    output.should contain("always runs whether the block failed or not")
+    output.should contain("play continues past a rescued block")
+    output.should contain("error handling smoke test complete!")
+    output.should_not contain("SHOULD NOT APPEAR")
+    # A successfully-rescued failure shouldn't count against the play.
+    output.should contain("rescued=1")
+    output.should_not contain("failed=1")
+  end
+
+  it "halts the rest of the play when a block: fails with no rescue:, but always: still runs, and the process exits non-zero" do
+    status, output = run_playbook("test-error-handling-unrescued.yml", [] of String)
+
+    status.success?.should be_false
+    output.should contain("always runs regardless")
+    output.should_not contain("SHOULD NOT APPEAR")
+    output.should contain("failed=1")
   end
 
   it "skips plays whose hosts pattern matches nothing in the inventory" do

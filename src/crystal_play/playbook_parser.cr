@@ -29,6 +29,12 @@ module CrystalPlay
     property until_condition : String?
     property retries : Int32
     property delay : Int32
+    # block: / rescue: / always: - only set when module_name == "_block"
+    # (a pseudo-module marking this Task as a block rather than a plugin
+    # invocation). Blocks can nest, since these are themselves Task lists.
+    property block_tasks : Array(Task)?
+    property rescue_tasks : Array(Task)?
+    property always_tasks : Array(Task)?
 
     def initialize(@name : String, @module_name : String)
       @params = Hash(String, String).new
@@ -49,6 +55,13 @@ module CrystalPlay
       @until_condition = nil
       @retries = 3
       @delay = 5
+      @block_tasks = nil
+      @rescue_tasks = nil
+      @always_tasks = nil
+    end
+
+    def block? : Bool
+      @module_name == "_block"
     end
     
     def to_s(io : IO)
@@ -204,48 +217,56 @@ module CrystalPlay
       
       # Parse tasks
       if tasks_yaml = yaml["tasks"]?.try(&.as_a?)
-        tasks_yaml.each_with_index do |task_yaml, task_index|
-          begin
-            task = parse_task(task_yaml, task_index, play)
-            play.tasks << task
-          rescue ex
-            puts "Warning: Skipping task #{task_index + 1} in play '#{name}': #{ex.message}".colorize(:yellow)
-          end
-        end
+        play.tasks = parse_tasks(tasks_yaml, play, "task in play '#{name}'")
       end
-      
+
       # Parse handlers
       if handlers_yaml = yaml["handlers"]?.try(&.as_a?)
-        handlers_yaml.each_with_index do |handler_yaml, handler_index|
-          begin
-            handler = parse_task(handler_yaml, handler_index, play)
-            play.handlers << handler
-          rescue ex
-            puts "Warning: Skipping handler #{handler_index + 1}: #{ex.message}".colorize(:yellow)
-          end
-        end
+        play.handlers = parse_tasks(handlers_yaml, play, "handler")
       end
-      
+
       play
     end
-    
+
+    # Parse a list of task-shaped YAML nodes, skipping (with a warning) any
+    # individual entry that fails to parse rather than failing the whole
+    # list. Shared by play.tasks, play.handlers, and block/rescue/always.
+    private def self.parse_tasks(tasks_yaml : Array(YAML::Any), play : Play, context : String) : Array(Task)
+      tasks = [] of Task
+
+      tasks_yaml.each_with_index do |task_yaml, index|
+        begin
+          tasks << parse_task(task_yaml, index, play)
+        rescue ex
+          puts "Warning: Skipping #{context} #{index + 1}: #{ex.message}".colorize(:yellow)
+        end
+      end
+
+      tasks
+    end
+
     # Parse a single task
     private def self.parse_task(yaml : YAML::Any, index : Int32, play : Play) : Task
       unless yaml.as_h?
         raise "Task must be a YAML mapping (hash)"
       end
-      
+
       task_hash = yaml.as_h
-      
+
       # Get task name
       name = task_hash["name"]?.try(&.as_s) || "Task #{index + 1}"
-      
+
+      if block_yaml = task_hash["block"]?.try(&.as_a?)
+        return parse_block_task(name, task_hash, block_yaml, play)
+      end
+
       # Find the module (first key that's not a special keyword)
       special_keys = ["name", "when", "register", "ignore_errors", "check_mode",
                       "diff", "become", "become_user", "tags", "with_items", "loop",
                       "with_dict", "with_fileglob", "with_nested", "with_sequence",
                       "with_indexed_items", "until", "retries", "delay",
-                      "notify", "changed_when", "failed_when"]
+                      "notify", "changed_when", "failed_when",
+                      "block", "rescue", "always"]
       
       module_name = nil
       module_params = nil
@@ -341,7 +362,36 @@ module CrystalPlay
 
       task
     end
-    
+
+    # Parse a block: task - block:/rescue:/always: are each an array of
+    # nested tasks (which may themselves be blocks, so this recurses
+    # naturally through parse_tasks -> parse_task -> parse_block_task).
+    private def self.parse_block_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), block_yaml : Array(YAML::Any), play : Play) : Task
+      task = Task.new(name, "_block")
+      task.block_tasks = parse_tasks(block_yaml, play, "task in block '#{name}'")
+
+      if rescue_yaml = task_hash["rescue"]?.try(&.as_a?)
+        task.rescue_tasks = parse_tasks(rescue_yaml, play, "task in rescue of block '#{name}'")
+      end
+
+      if always_yaml = task_hash["always"]?.try(&.as_a?)
+        task.always_tasks = parse_tasks(always_yaml, play, "task in always of block '#{name}'")
+      end
+
+      # Block-level settings gate/apply to the block as a whole; each
+      # nested task still evaluates its own when:/tags:/etc in addition.
+      task.when_condition = task_hash["when"]?.try { |v| safe_yaml_to_string(v) }
+      task.ignore_errors = task_hash["ignore_errors"]?.try(&.as_bool) || false
+      task.become = task_hash["become"]?.try(&.as_bool) || play.become
+      task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
+
+      if tags_yaml = task_hash["tags"]?.try(&.as_a?)
+        task.tags = tags_yaml.map(&.as_s)
+      end
+
+      task
+    end
+
     # Parse module parameters into a hash
     private def self.parse_module_params(yaml : YAML::Any, module_name : String) : Hash(String, String)
       params = Hash(String, String).new
@@ -416,45 +466,63 @@ module CrystalPlay
     # Validate playbook structure
     def self.validate(playbook : Playbook) : Array(String)
       warnings = [] of String
-      
+
       playbook.plays.each_with_index do |play, play_index|
         # Check for tasks
         if play.tasks.empty? && play.handlers.empty?
           warnings << "Play #{play_index + 1} '#{play.name}' has no tasks"
         end
-        
-        # Check for unimplemented plugins
-        play.tasks.each do |task|
+
+        # Check for unimplemented plugins (recursing into block/rescue/always)
+        flatten_tasks(play.tasks).each do |task|
           unless AVAILABLE_PLUGINS.includes?(task.module_name)
             warnings << "Task '#{task.name}' uses unimplemented plugin: #{task.module_name}"
           end
         end
       end
-      
+
       warnings
     end
-    
+
     # Get statistics about playbook
     def self.stats(playbook : Playbook) : Hash(String, Int32)
       stats = {
-        "plays" => playbook.plays.size,
-        "tasks" => 0,
-        "handlers" => 0,
-        "modules_used" => Set(String).new.size
+        "plays"         => playbook.plays.size,
+        "tasks"         => 0,
+        "handlers"      => 0,
+        "modules_used"  => Set(String).new.size,
       }
-      
+
       modules = Set(String).new
-      
+
       playbook.plays.each do |play|
-        stats["tasks"] += play.tasks.size
-        stats["handlers"] += play.handlers.size
-        
-        play.tasks.each { |task| modules.add(task.module_name) }
-        play.handlers.each { |handler| modules.add(handler.module_name) }
+        flat_tasks = flatten_tasks(play.tasks)
+        flat_handlers = flatten_tasks(play.handlers)
+
+        stats["tasks"] += flat_tasks.size
+        stats["handlers"] += flat_handlers.size
+
+        flat_tasks.each { |task| modules.add(task.module_name) }
+        flat_handlers.each { |handler| modules.add(handler.module_name) }
       end
-      
+
       stats["modules_used"] = modules.size
       stats
+    end
+
+    # Expands block: tasks into their nested tasks (recursively, through
+    # block/rescue/always), dropping the "_block" pseudo-task entries
+    # themselves so callers only see real module invocations.
+    private def self.flatten_tasks(tasks : Array(Task)) : Array(Task)
+      tasks.flat_map do |task|
+        if task.block?
+          flatten_tasks(task.block_tasks || [] of Task) +
+            flatten_tasks(task.rescue_tasks || [] of Task) +
+            flatten_tasks(task.always_tasks || [] of Task)
+        else
+          [task]
+        end
+      end
     end
   end
 end

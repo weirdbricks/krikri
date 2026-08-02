@@ -1,11 +1,10 @@
 # Crystal Play - Roadmap to Ansible Parity
 
 **Status as of 2026-08-01:** builds again on Crystal 1.20.3 (fixed `as_i` -> `as_i64`
-type mismatch in `comparison_evaluator.cr`). Phase 0 is done (test scaffolding +
-CI). Phase 1 is in progress: loop constructs (`0.2.1`) and the five new plugins
-(`0.3.0`) are done; `block`/`rescue`/`always` error handling is next. 202 specs
-passing, `ameba` clean on all new/touched code. This roadmap sequences the
-remaining work from the two prior analysis docs
+type mismatch in `comparison_evaluator.cr`). **Phase 0 and Phase 1 are both done**
+(`0.4.0`). 215 specs passing, `ameba` clean on all new/touched code. Next up is
+Phase 2 (roles, `include_tasks`/`import_tasks`/`import_playbook`/`include_role`,
+vault). This roadmap sequences the remaining work from the two prior analysis docs
 ([WHATS_MISSING.md](WHATS_MISSING.md), [MISSING_FEATURES_COMPREHENSIVE.md](MISSING_FEATURES_COMPREHENSIVE.md))
 into phases, with the test-foundation phase (Phase 0) landing first so every
 phase after it ships with a regression net instead of drifting untested.
@@ -84,7 +83,42 @@ the same way it did between January and now.
   extracted into `src/crystal_play/plugin_helpers/line_editor.cr` and unit
   tested. Also fixed `build.sh`'s staleness check, which only compared
   `crystal-play.cr`'s own mtime and so missed edits under `src/`.
-- `block` / `rescue` / `always` error handling
+- [x] `block` / `rescue` / `always` error handling (`0.4.0`): `block:` groups
+  tasks (which may themselves nest further blocks); on an unrescued failure
+  inside the block, the host halts for the rest of the play, matching
+  `rescue:`-less Ansible behavior; `rescue:` recovers the block (failure no
+  longer halts the play) and moves the recovered failure count into a new
+  `rescued=N` recap bucket (mirroring modern `ansible-playbook`'s own
+  `rescued=` field) rather than counting it as `failed=`; `always:` runs
+  unconditionally - even after an unrescued failure - and can itself
+  introduce a new failure that re-halts the play after a successful rescue.
+  This surfaced (and required fixing) a genuinely foundational, previously
+  dead field: `ignore_errors:` was parsed but never read anywhere in
+  `TaskExecutor` - nothing ever stopped executing a play after a task
+  failed, so a `rescue:` could never have had anything to actually recover
+  *from*. Added per-host halt tracking respecting `ignore_errors:` as the
+  base this feature sits on. Fixing that in turn surfaced a second,
+  user-visible bug: `crystal-play.cr`'s final "PLAY RECAP" was entirely
+  fake - a hardcoded `"ok (playbook complete)"` per host regardless of what
+  actually happened (there was even a `# TODO: Get actual stats from
+  executor` comment sitting on it), and the process always exited `0`
+  regardless of failures. `TaskExecutor#results` is now exposed and
+  aggregated across plays into a real recap, and the process exits `2` if
+  any host ended up with `failed > 0`. `TaskExecutor` isn't realistically
+  unit-testable in isolation (heavy plugin/SSH I/O), so this is covered
+  entirely by integration specs driving the real compiled binary for real
+  (not just `--check`, since `command`/`shell` skip outright in check mode
+  and would never exercise the failure path at all):
+  `testing/test-error-handling-quick.yml` (ignore_errors, a rescued block,
+  always:) and `testing/test-error-handling-unrescued.yml` (an unrescued
+  block failure, asserting the process now exits non-zero). The
+  block:/rescue:/always: *parsing* (nesting, block-level when:/tags:/
+  ignore_errors:, validate()/stats() recursing into blocks without
+  misreporting the "_block" pseudo-module as unimplemented) is pure logic
+  and is unit tested directly in `playbook_parser_spec.cr`. Known
+  simplification: unlike Ansible, a block's `when:` does not cascade into
+  each nested task's own condition - it only gates whether the block runs
+  at all, and each nested task still evaluates its own `when:` separately.
 
 **Result:** ~99.95% playbook coverage per prior analysis.
 

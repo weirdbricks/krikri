@@ -21,6 +21,24 @@ private VALID_PLAYBOOK = <<-YAML
           state: restarted
   YAML
 
+private PLAYBOOK_WITH_BLOCK = <<-YAML
+  - name: play
+    hosts: all
+    tasks:
+      - name: my block
+        block:
+          - name: inner one
+            ansible.builtin.debug:
+              msg: one
+        rescue:
+          - name: inner two
+            ansible.builtin.debug:
+              msg: two
+        always:
+          - name: inner three
+            ansible.builtin.nope: {}
+  YAML
+
 private def single_task(task_yaml : String) : CrystalPlay::Task
   task_block = task_yaml.strip.lines.map { |line| "    #{line}" }.join("\n")
   playbook_yaml = "- name: Loop test play\n  hosts: all\n  tasks:\n#{task_block}\n"
@@ -256,6 +274,140 @@ describe CrystalPlay::PlaybookParser do
 
       task.retries.should eq(3)
       task.delay.should eq(5)
+    end
+  end
+
+  describe "block / rescue / always parsing" do
+    it "parses block: into block_tasks and marks the task as a block" do
+      task = single_task(<<-YAML)
+        - name: my block
+          block:
+            - name: inner one
+              ansible.builtin.debug:
+                msg: one
+            - name: inner two
+              ansible.builtin.debug:
+                msg: two
+        YAML
+
+      task.block?.should be_true
+      task.module_name.should eq("_block")
+      block_tasks = task.block_tasks.as(Array(CrystalPlay::Task))
+      block_tasks.map(&.name).should eq(["inner one", "inner two"])
+      block_tasks.map(&.module_name).should eq(["ansible.builtin.debug", "ansible.builtin.debug"])
+    end
+
+    it "parses rescue: and always: alongside block:" do
+      task = single_task(<<-YAML)
+        - name: my block
+          block:
+            - name: risky
+              ansible.builtin.command: /bin/false
+          rescue:
+            - name: recover
+              ansible.builtin.debug:
+                msg: recovering
+          always:
+            - name: cleanup
+              ansible.builtin.debug:
+                msg: cleaning up
+        YAML
+
+      task.block_tasks.as(Array(CrystalPlay::Task)).map(&.name).should eq(["risky"])
+      task.rescue_tasks.as(Array(CrystalPlay::Task)).map(&.name).should eq(["recover"])
+      task.always_tasks.as(Array(CrystalPlay::Task)).map(&.name).should eq(["cleanup"])
+    end
+
+    it "leaves rescue_tasks/always_tasks nil when not specified" do
+      task = single_task(<<-YAML)
+        - name: my block
+          block:
+            - name: inner
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      task.rescue_tasks.should be_nil
+      task.always_tasks.should be_nil
+    end
+
+    it "parses when:/ignore_errors:/tags: at the block level" do
+      task = single_task(<<-YAML)
+        - name: my block
+          when: some_var == "yes"
+          ignore_errors: true
+          tags: [risky]
+          block:
+            - name: inner
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      task.when_condition.should eq(%(some_var == "yes"))
+      task.ignore_errors.should be_true
+      task.tags.should eq(["risky"])
+    end
+
+    it "supports nested blocks inside a block" do
+      task = single_task(<<-YAML)
+        - name: outer
+          block:
+            - name: inner block
+              block:
+                - name: innermost
+                  ansible.builtin.debug:
+                    msg: hi
+        YAML
+
+      outer_children = task.block_tasks.as(Array(CrystalPlay::Task))
+      outer_children.size.should eq(1)
+      inner_block = outer_children[0]
+      inner_block.block?.should be_true
+      inner_block.block_tasks.as(Array(CrystalPlay::Task)).map(&.name).should eq(["innermost"])
+    end
+
+    it "skips (with a warning) an individual bad task inside a block without failing the whole block" do
+      task = single_task(<<-YAML)
+        - name: my block
+          block:
+            - name: good
+              ansible.builtin.debug:
+                msg: hi
+            - name: bad
+              ansible.builtin.nope: {}
+        YAML
+
+      task.block_tasks.as(Array(CrystalPlay::Task)).map(&.name).should eq(["good"])
+    end
+  end
+
+  describe "block/rescue/always in .validate and .stats" do
+    it "counts nested block/rescue tasks in .stats, not the block pseudo-task itself" do
+      stats = CrystalPlay::PlaybookParser.stats(CrystalPlay::PlaybookParser.parse_string(PLAYBOOK_WITH_BLOCK))
+      # inner one + inner two = 2 real tasks; "inner three" fails to parse
+      # (unimplemented plugin) so it's dropped before stats ever sees it,
+      # same as any other unparseable task.
+      stats["tasks"].should eq(2)
+      stats["modules_used"].should eq(1)
+    end
+
+    it "does not flag the block pseudo-module itself as an unimplemented plugin" do
+      # Without recursing into block_tasks, .validate would see module_name
+      # "_block" directly (it's deliberately not in AVAILABLE_PLUGINS) and
+      # spuriously warn "uses unimplemented plugin: _block" on every block.
+      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML)
+        - name: play
+          hosts: all
+          tasks:
+            - name: my block
+              block:
+                - name: inner
+                  ansible.builtin.debug:
+                    msg: hi
+        YAML
+
+      warnings = CrystalPlay::PlaybookParser.validate(playbook)
+      warnings.any?(&.includes?("_block")).should be_false
     end
   end
 end

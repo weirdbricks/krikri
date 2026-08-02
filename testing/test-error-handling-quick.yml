@@ -1,0 +1,40 @@
+# Error handling smoke test (block/rescue/always + ignore_errors). Safe to
+# run for real: only ever runs /bin/true, /bin/false, and debug on
+# localhost - no filesystem/system state touched.
+
+- name: error handling smoke test
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: a task that fails but is ignored
+      ansible.builtin.command: /bin/false
+      ignore_errors: yes
+
+    - name: this still runs because the failure above was ignored
+      ansible.builtin.debug:
+        msg: "ignore_errors let the play continue"
+
+    - name: block that fails and gets rescued
+      block:
+        - name: this fails
+          ansible.builtin.command: /bin/false
+        - name: never runs (block body stops at the first failure)
+          ansible.builtin.debug:
+            msg: "SHOULD NOT APPEAR"
+      rescue:
+        - name: recovery task
+          ansible.builtin.debug:
+            msg: "block was rescued"
+      always:
+        - name: cleanup task
+          ansible.builtin.debug:
+            msg: "always runs whether the block failed or not"
+
+    - name: this runs because the block above was successfully rescued
+      ansible.builtin.debug:
+        msg: "play continues past a rescued block"
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "error handling smoke test complete!"

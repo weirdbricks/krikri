@@ -167,12 +167,15 @@ module CrystalPlay
         end
       end
       
-      # Update stats based on task result
-      def self.update_stats(stats : Hash(String, Int32), result : JSON::Any)
+      # Update stats based on task result. A failure with ignore_errors: yes
+      # still displays as failed (see display_result) but doesn't count
+      # toward the host's failure tally - matching Ansible, where an
+      # ignored failure doesn't fail the play or the process exit code.
+      def self.update_stats(stats : Hash(String, Int32), result : JSON::Any, ignore_errors : Bool = false)
         changed = result["changed"]?.try(&.as_bool) || false
         failed = result["failed"]?.try(&.as_bool) || false
-        
-        if failed
+
+        if failed && !ignore_errors
           stats["failed"] += 1
         elsif changed
           stats["changed"] += 1
@@ -209,7 +212,12 @@ module CrystalPlay
           if stats["skipped"]? && stats["skipped"] > 0
             status_parts << "skipped=#{stats["skipped"]}".colorize(:cyan).to_s
           end
-          
+
+          # Rescued count (yellow if any) - block: failures recovered by rescue:
+          if stats["rescued"]? && stats["rescued"] > 0
+            status_parts << "rescued=#{stats["rescued"]}".colorize(:yellow).to_s
+          end
+
           puts "#{host.name.ljust(20)} : #{status_parts.join("  ")}"
         end
       end
