@@ -197,6 +197,7 @@ PLUGINS=(
     "sysctl"
     "ufw"
     "firewalld"
+    "async_status"
 )
 
 PLUGIN_COUNT=0

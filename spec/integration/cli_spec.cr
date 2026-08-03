@@ -194,6 +194,23 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("group_vars / host_vars smoke test complete!")
   end
 
+  it "runs async: tasks in the background, blocks for poll: > 0, and lets async_status: poll a poll: 0 job to completion" do
+    status, output = run_playbook(
+      "test-async-quick.yml",
+      [] of String,
+      inventory: File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-testservers-local.ini")
+    )
+
+    status.success?.should be_true
+    # poll: > 0 blocks and returns the real (finished) module result.
+    output.should contain("polled_result finished=1 changed=True")
+    # poll: 0 returns immediately with a job id, not the real result yet.
+    output.should match(/Job started: \S+/)
+    # async_status: eventually sees the fire-and-forget job finish.
+    output.should contain("job_result finished=1")
+    output.should contain("async / poll / async_status smoke test complete!")
+  end
+
   it "recovers a failed block: via rescue:, always runs always:, and the play continues" do
     status, output = run_playbook("test-error-handling-quick.yml", [] of String)
 

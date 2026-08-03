@@ -20,6 +20,32 @@ if ARGV[0]? == "vault"
   exit
 end
 
+# `crystal-ansible __async_run <module> <config_path> <status_path>` is an
+# internal-only entry point (not a user-facing subcommand): TaskExecutor's
+# async:/poll: support spawns this as a detached background process to run
+# a single module and write its result to the job's status file, so the
+# job outlives the poll loop (or the whole playbook run) rather than being
+# tied to a Fiber in the parent process. See
+# TaskExecutor#execute_async/AsyncJobs.
+if ARGV[0]? == "__async_run"
+  module_name = ARGV[1]
+  config_path = ARGV[2]
+  status_path = ARGV[3]
+
+  config_json = JSON.parse(File.read(config_path))
+  local_host = CrystalPlay::Host.new("localhost")
+  result = CrystalPlay::PluginManager.execute_plugin(module_name, config_json, local_host, {} of String => JSON::Any)
+
+  result_hash = JSON.parse(result.to_json).as_h
+  result_hash["finished"] = JSON::Any.new(1_i64)
+
+  tmp_path = "#{status_path}.tmp"
+  File.write(tmp_path, JSON::Any.new(result_hash).to_json)
+  File.rename(tmp_path, status_path)
+  File.delete(config_path) rescue nil
+  exit
+end
+
 # Parse command line arguments
 playbook_file = ""
 inventory_file = "inventory.ini"

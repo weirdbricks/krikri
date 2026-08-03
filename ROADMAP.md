@@ -770,7 +770,37 @@ the same way it did between January and now.
 - Dynamic inventory support (executable/plugin-based inventory scripts) -
   not implemented; only the group_vars:/host_vars: half of this combined
   roadmap item shipped.
-- Async execution (`async:` / `poll:`, `async_status`)
+- [x] `async:` / `poll:` / `async_status` (`0.9.10`): runs a module in the
+  background up to `async:` seconds, checking every `poll:` seconds
+  (default 10, matching real Ansible) until it finishes or the timeout
+  elapses; `poll: 0` returns immediately with an `ansible_job_id` instead
+  of waiting, to be checked later via `async_status:`. **Local connections
+  only** - genuine remote async needs a process that survives the SSH
+  session ending, which this codebase's plain exec-over-SSH model doesn't
+  support; a non-local `async:` task fails with a clear message rather
+  than silently running synchronously. The background job is a real,
+  detached OS process (a hidden `crystal-ansible __async_run <module>
+  <config> <status>` re-invocation of the same binary spawned via
+  `Process.new` without `.wait`), not a Fiber - so it survives even if the
+  poll loop or the whole playbook run finishes first, same as real
+  Ansible's job outliving the control connection. Job status lives at
+  `~/.ansible_async/<jid>` (new `src/crystal_play/async_jobs.cr`,
+  `AsyncJobs` - matches real Ansible's own on-disk convention, written
+  atomically via write-then-rename), read back by a new `async_status:`
+  plugin (`plugins/async_status.cr`, registered as
+  `ansible.builtin.async_status`) - only "status" mode, not "cleanup".
+  Verified against real `ansible-playbook` and adjusted two details that
+  weren't obvious from docs: the `poll: 0` dispatch acknowledgment reports
+  `changed: true` (not `false`), and a finished `async_status:` forwards
+  the underlying job's own `changed:` value rather than always reporting
+  `false`. Unit tested (`spec/unit/playbook_parser_spec.cr`'s "async /
+  poll parsing" group, new `spec/unit/async_jobs_spec.cr`) and integration
+  tested for real via `testing/test-async-quick.yml` (targets
+  `testservers`, like `test-copy.yml`/`test-package.yml`, so a `--check`
+  run against the generic empty inventory skips the whole play rather than
+  registering a job-less `ansible_job_id` for `async_status:` to choke
+  on) + a new `spec/fixtures/inventory-testservers-local.ini` +
+  `spec/integration/cli_spec.cr`.
 - Cloud plugins (`ec2`, `s3_bucket`, `azure_rm_*`) - optional, lowest ROI
   per usage stats (~5% of playbooks)
 

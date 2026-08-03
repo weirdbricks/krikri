@@ -1,0 +1,45 @@
+# async:/poll:/async_status: smoke test. Targets "testservers" (same
+# convention as test-copy.yml/test-package.yml/etc.) rather than
+# localhost directly: under the generic empty inventory used by every
+# other testing/*.yml fixture this play is skipped outright, which
+# matters here specifically because a --check run would skip the async
+# command task itself (command: doesn't support check mode) without
+# registering an ansible_job_id, leaving the async_status: task below with
+# nothing valid to check.
+
+- name: async / poll / async_status test
+  hosts: testservers
+  gather_facts: false
+
+  tasks:
+    - name: async with poll > 0 blocks and returns the real module result
+      ansible.builtin.command: /bin/true
+      async: 30
+      poll: 1
+      register: polled_result
+
+    - name: show the polled async result
+      ansible.builtin.debug:
+        msg: "polled_result finished={{ polled_result.finished }} changed={{ polled_result.changed }}"
+
+    - name: a fire-and-forget async task with poll 0 returns immediately
+      ansible.builtin.command: sleep 1
+      async: 30
+      poll: 0
+      register: bg_result
+
+    - name: poll the fire-and-forget job via async_status until it finishes
+      ansible.builtin.async_status:
+        jid: "{{ bg_result.ansible_job_id }}"
+      register: job_result
+      until: "{{ job_result.finished }}"
+      retries: 15
+      delay: 1
+
+    - name: show the async_status result
+      ansible.builtin.debug:
+        msg: "job_result finished={{ job_result.finished }}"
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "async / poll / async_status smoke test complete!"

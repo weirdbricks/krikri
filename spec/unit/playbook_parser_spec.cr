@@ -392,6 +392,41 @@ describe CrystalPlay::PlaybookParser do
     end
   end
 
+  describe "async / poll parsing" do
+    it "parses async and poll as integers" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: /bin/true
+          async: 30
+          poll: 5
+        YAML
+
+      task.async_seconds.should eq(30)
+      task.poll_seconds.should eq(5)
+    end
+
+    it "parses poll: 0 (fire-and-forget) as zero, not nil" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: /bin/true
+          async: 30
+          poll: 0
+        YAML
+
+      task.poll_seconds.should eq(0)
+    end
+
+    it "leaves async_seconds and poll_seconds nil when omitted" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: /bin/true
+        YAML
+
+      task.async_seconds.should be_nil
+      task.poll_seconds.should be_nil
+    end
+  end
+
   describe "block / rescue / always parsing" do
     it "parses block: into block_tasks and marks the task as a block" do
       task = single_task(<<-YAML)

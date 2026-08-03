@@ -9,6 +9,7 @@ require "./result_display"
 require "./handler_runner"
 require "../action_plugin_manager"
 require "../inventory_parser"
+require "../async_jobs"
 
 module CrystalPlay
   # TaskExecutor - Executes tasks on hosts
@@ -386,14 +387,81 @@ module CrystalPlay
       config = build_plugin_config(task, exec_host, substituted_params, vars_context)
       config_json = JSON.parse(config)
 
-      result = PluginManager.execute_plugin(
-        task.module_name,
-        config_json,
-        exec_host,
-        vars_context
-      )
+      result = if task.async_seconds && !@check_mode
+        execute_async(task, exec_host, config_json)
+      else
+        PluginManager.execute_plugin(
+          task.module_name,
+          config_json,
+          exec_host,
+          vars_context
+        )
+      end
 
       apply_changed_failed_when(task, result, vars_context, host)
+    end
+
+    # async:/poll: - runs the module as a detached background OS process
+    # (spawned via a hidden `__async_run` re-invocation of this same
+    # binary, not a Fiber, so the job survives even if the poll loop or
+    # the whole playbook run finishes first - closer to how real Ansible's
+    # background job outlives the control connection). Local connections
+    # only: genuine remote async needs a process that survives the SSH
+    # session ending, which this codebase's plain exec-over-SSH connection
+    # model doesn't support - a documented scope cut, not an oversight.
+    private def execute_async(task : Task, exec_host : Host, config_json : JSON::Any) : JSON::Any
+      is_local = exec_host.vars["ansible_connection"]?.try(&.as_s?) == "local" || exec_host.name == "localhost"
+      unless is_local
+        return JSON.parse({
+          "changed" => false,
+          "failed"  => true,
+          "msg"     => "async: is only supported for local connections in crystal-ansible",
+        }.to_json)
+      end
+
+      jid = AsyncJobs.generate_jid
+      AsyncJobs.write_status(jid, JSON.parse({
+        "started"        => 1,
+        "finished"       => 0,
+        "ansible_job_id" => jid,
+      }.to_json))
+      File.write(AsyncJobs.config_path(jid), config_json.to_json)
+
+      executable = Process.executable_path || File.join(Dir.current, "crystal-ansible")
+      Process.new(
+        executable,
+        ["__async_run", task.module_name, AsyncJobs.config_path(jid), AsyncJobs.status_path(jid)],
+        input: Process::Redirect::Close,
+        output: Process::Redirect::Close,
+        error: Process::Redirect::Close
+      )
+
+      poll = task.poll_seconds || 10
+      if poll <= 0
+        return JSON.parse({
+          "changed"        => true,
+          "started"        => 1,
+          "finished"       => 0,
+          "ansible_job_id" => jid,
+          "msg"            => "Job started: #{jid}",
+        }.to_json)
+      end
+
+      deadline = Time.instant + task.async_seconds.not_nil!.seconds
+      loop do
+        sleep poll.seconds
+        if status = AsyncJobs.read_status(jid)
+          return status if AsyncJobs.finished?(status)
+        end
+        break if Time.instant >= deadline
+      end
+
+      JSON.parse({
+        "changed"        => false,
+        "failed"         => true,
+        "msg"            => "async task did not complete within #{task.async_seconds} seconds",
+        "ansible_job_id" => jid,
+      }.to_json)
     end
 
     # Override a task's own changed/failed verdict with changed_when:/

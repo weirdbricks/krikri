@@ -57,6 +57,14 @@ module CrystalPlay
     # the play; later hosts skip it outright (no output/stats), same as
     # real Ansible.
     property run_once : Bool
+    # async: / poll: - run the module in the background (as a detached OS
+    # process, not a Fiber, so it outlives the poll loop) up to async:
+    # seconds, checking every poll: seconds (default 10, matching real
+    # Ansible) until it finishes or the async: timeout elapses; poll: 0
+    # returns immediately with the job id instead of waiting at all.
+    # Local connections only - see TaskExecutor#execute_async.
+    property async_seconds : Int32?
+    property poll_seconds : Int32?
     # block: / rescue: / always: - only set when module_name == "_block"
     # (a pseudo-module marking this Task as a block rather than a plugin
     # invocation). Blocks can nest, since these are themselves Task lists.
@@ -121,6 +129,8 @@ module CrystalPlay
       @failed_when = nil
       @delegate_to = nil
       @run_once = false
+      @async_seconds = nil
+      @poll_seconds = nil
       @block_tasks = nil
       @rescue_tasks = nil
       @always_tasks = nil
@@ -230,6 +240,7 @@ module CrystalPlay
       "ansible.posix.sysctl",
       "community.general.ufw",
       "ansible.posix.firewalld",
+      "ansible.builtin.async_status",
     ]
     
     # Parse playbook from file
@@ -480,6 +491,7 @@ module CrystalPlay
                       "with_dict", "with_fileglob", "with_nested", "with_sequence",
                       "with_indexed_items", "until", "retries", "delay",
                       "notify", "changed_when", "failed_when", "delegate_to", "run_once",
+                      "async", "poll",
                       "block", "rescue", "always", "import_tasks", "include_tasks", "include_role"]
       
       module_name = nil
@@ -588,6 +600,10 @@ module CrystalPlay
       # Parse delegate_to / run_once
       task.delegate_to = task_hash["delegate_to"]?.try { |v| safe_yaml_to_string(v) }
       task.run_once = task_hash["run_once"]?.try(&.as_bool) || false
+
+      # Parse async / poll
+      task.async_seconds = task_hash["async"]?.try { |v| safe_yaml_to_string(v).to_i? }
+      task.poll_seconds = task_hash["poll"]?.try { |v| safe_yaml_to_string(v).to_i? }
 
       task
     end
