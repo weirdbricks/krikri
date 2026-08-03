@@ -198,6 +198,9 @@ PLUGINS=(
     "ufw"
     "firewalld"
     "async_status"
+    "docker_image"
+    "docker_network"
+    "docker_container"
 )
 
 PLUGIN_COUNT=0

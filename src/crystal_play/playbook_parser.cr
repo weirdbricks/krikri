@@ -241,6 +241,9 @@ module CrystalPlay
       "community.general.ufw",
       "ansible.posix.firewalld",
       "ansible.builtin.async_status",
+      "community.docker.docker_image",
+      "community.docker.docker_network",
+      "community.docker.docker_container",
     ]
     
     # Parse playbook from file

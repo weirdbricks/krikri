@@ -224,6 +224,22 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("dynamic inventory smoke test complete!")
   end
 
+  it "manages a Docker image/network/container end to end with correct idempotency (requires a real Docker/Podman daemon)" do
+    status, output = run_playbook(
+      "test-docker-quick.yml",
+      [] of String,
+      inventory: File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-testservers-local.ini")
+    )
+
+    status.success?.should be_true
+    output.should contain("image_first=False image_idempotent=False")
+    output.should contain("network_first=True network_idempotent=False")
+    output.should contain("container_first=True container_idempotent=False")
+    output.should contain("container_stopped=True container_removed=True")
+    output.should contain("network_removed=True")
+    output.should contain("docker plugins smoke test complete!")
+  end
+
   it "recovers a failed block: via rescue:, always runs always:, and the play continues" do
     status, output = run_playbook("test-error-handling-quick.yml", [] of String)
 

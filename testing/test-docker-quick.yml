@@ -1,0 +1,103 @@
+# docker_image:/docker_network:/docker_container: smoke test. Requires a
+# real Docker Engine API (Docker or Podman, rootless is fine via
+# DOCKER_HOST) reachable from wherever this runs - same requirement
+# compat/Dockerfile already has for the compat harness, so not a new
+# dependency for this project. Targets "testservers" (same convention as
+# test-copy.yml/test-async-quick.yml/etc.): under the generic empty
+# inventory used by every other testing/*.yml fixture this play is
+# skipped outright rather than failing for lack of a daemon.
+#
+# Deliberately never removes the test_image itself (state: absent is only
+# exercised on the container/network, which this fixture owns outright) -
+# it's the same image the compat harness (compat/Dockerfile) builds and
+# reuses, so deleting it here would break other tooling relying on it
+# already being present locally.
+
+- name: docker plugins test
+  hosts: testservers
+  gather_facts: false
+
+  vars:
+    test_image: "localhost/crystal-ansible-compat:latest"
+    test_network: "crystal-ansible-test-net"
+    test_container: "crystal-ansible-test-container"
+
+  tasks:
+    - name: ensure the test image is present
+      community.docker.docker_image:
+        name: "{{ test_image }}"
+        source: pull
+        state: present
+      register: image_first
+
+    - name: ensure the test image is present (idempotent)
+      community.docker.docker_image:
+        name: "{{ test_image }}"
+        source: pull
+        state: present
+      register: image_idempotent
+
+    - name: create a test network
+      community.docker.docker_network:
+        name: "{{ test_network }}"
+        state: present
+      register: network_first
+
+    - name: create a test network (idempotent)
+      community.docker.docker_network:
+        name: "{{ test_network }}"
+        state: present
+      register: network_idempotent
+
+    - name: create and start a test container
+      community.docker.docker_container:
+        name: "{{ test_container }}"
+        image: "{{ test_image }}"
+        command: "sleep 300"
+        env:
+          FOO: bar
+        state: started
+      register: container_first
+
+    - name: create and start a test container (idempotent)
+      community.docker.docker_container:
+        name: "{{ test_container }}"
+        image: "{{ test_image }}"
+        command: "sleep 300"
+        state: started
+      register: container_idempotent
+
+    - name: stop the test container
+      community.docker.docker_container:
+        name: "{{ test_container }}"
+        state: stopped
+      register: container_stopped
+
+    - name: remove the test container
+      community.docker.docker_container:
+        name: "{{ test_container }}"
+        state: absent
+      register: container_removed
+
+    - name: remove the test network
+      community.docker.docker_network:
+        name: "{{ test_network }}"
+        state: absent
+      register: network_removed
+
+    - name: show results
+      ansible.builtin.debug:
+        msg: >-
+          image_first={{ image_first.changed }}
+          image_idempotent={{ image_idempotent.changed }}
+          network_first={{ network_first.changed }}
+          network_idempotent={{ network_idempotent.changed }}
+          container_first={{ container_first.changed }}
+          container_idempotent={{ container_idempotent.changed }}
+          container_stopped={{ container_stopped.changed }}
+          container_removed={{ container_removed.changed }}
+          network_removed={{ network_removed.changed }}
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "docker plugins smoke test complete!"

@@ -664,7 +664,116 @@ the same way it did between January and now.
     slightly different but behaviorally identical shape - a bare
     `<forward/>` element sometimes survives one path and not the other,
     cosmetic but noisy to diff directly).
-- `docker_container` / `docker_image` / `docker_network`
+- [x] `docker_image` / `docker_network` / `docker_container` (`0.9.12`):
+  unlike almost everything else in this codebase, these don't shell out
+  to a CLI (`docker`) - like real Ansible's own `community.docker`
+  collection, they talk to the Docker Engine API directly over its UNIX
+  socket. No maintained Crystal shard for this existed: the two most
+  visible candidates (`jeromegn/docker.cr`, `place-labs/crystal-docker`)
+  have been unmaintained since 2021; `marghidanu/docr` (last pushed
+  2026-06-24) was close but, verified by actually exercising it against a
+  real running daemon rather than just reading its code, had a
+  connection-lifecycle bug serious enough to make it unusable for a
+  multi-call module like this (see below). Forked to
+  [weirdbricks/docr](https://github.com/weirdbricks/docr) with the
+  authors' blessing, fixed there, and depended on directly
+  (`github: weirdbricks/docr` in `shard.yml`) rather than vendoring a
+  copy - PR upstream still pending.
+  - **Bugs found and fixed in the fork, each reproduced against a real
+    daemon before and after** (this sandbox's Podman, in rootless mode,
+    which speaks the same Docker Engine API): (1) `Client` wrapped a
+    single `UNIXSocket` into `HTTP::Client.new(io)`, which Crystal's
+    stdlib marks non-reconnectable - any realistic sequence of calls
+    (create, then start, then inspect) eventually hit `"This HTTP::Client
+    cannot be reconnected"` once the daemon closed the connection or a
+    response body wasn't fully drained. Fixed by subclassing
+    `HTTP::Client` and overriding its private `#io` to lazily open a
+    fresh socket on demand - the same pattern `HTTP::Client` itself
+    already uses to reconnect over TCP/TLS (and the same pattern this
+    workspace's own `dirless-http` `TargetedClient` uses for its own
+    custom-transport override, independently arrived at). (2) Added
+    `DOCKER_HOST` env var support - the hardcoded
+    `/var/run/docker.sock` isn't reachable at all under rootless
+    Docker/Podman. (3) `Images#push`'s block referenced an undefined
+    `response` (no block parameter) - a compile-time `NameError` the
+    moment it was actually called; fixed, and wired up the `tag:`/
+    `X-Registry-Auth` header it was supposed to send but didn't. (4)
+    `LogConfig#config` was typed as non-nullable, but a real daemon can
+    return `"Config": null` there (confirmed against Podman's journald
+    driver) - `ContainerInspectResponse.from_json` then raises on any
+    `inspect` call whose container has a null `LogConfig.Config`, which
+    in practice is most containers. Made nullable. (5)
+    `Images#delete`'s `force:`/`no_prune:` params were accepted but never
+    applied to the request - a `force: true` delete call silently behaved
+    like `force: false`.
+  - Reused across all three: `Docr::Client`/`Docr::API` for the
+    connection and typed *request*-building types (`CreateContainerConfig`,
+    `HostConfig`, `NetworkConfig`, `RestartPolicy`, `PortBinding` - safe
+    since we control what goes into them, no daemon-response-shape risk).
+    For *reading* daemon state, existence checks use a raw
+    `Docr::Client#call` (ignoring the body) rather than trusting docr's
+    typed `Images#inspect`/`Image` response type, which hasn't been
+    exercised as thoroughly as `ContainerInspectResponse` now has -
+    deliberately conservative given bug (4) above was exactly this class
+    of problem. `ContainerSummary` (from `Containers#list`) is used for
+    idempotency instead of a full `inspect`, since it already has
+    everything needed (image, command, running state) without pulling in
+    the larger, more failure-prone type graph.
+  - `docker_image`: `name:`/`tag:` (via a new pure
+    `src/crystal_play/plugin_helpers/docker_ref.cr`, unit tested,
+    `spec/unit/docker_ref_spec.cr` - also handles the Podman-vs-Docker
+    `docker.io/library/` prefix quirk found while testing, via a lenient
+    `same?` comparison), `source:` (required when `state: present`,
+    verified against real Ansible's own `required_if` - only `pull` is
+    implemented, not `build`/`load`/`local`), `state:` (`present`/
+    `absent`). Idempotency is presence-only, no digest/update checking.
+  - `docker_network`: `name:` (required), `driver:` (default `bridge`),
+    `internal:`, `attachable:`, `labels:`, `state:`. Idempotent by name;
+    a driver mismatch on an existing network triggers a delete+recreate
+    (Docker has no in-place driver change). Not implemented: `connected:`
+    (docr itself doesn't implement `NetworkConnect`/`NetworkDisconnect`
+    yet), `ipam_config:`, `enable_ipv6:`.
+  - `docker_container`: `name:` (required), `image:` (required only when
+    a container actually needs to be created/recreated - verified
+    against real `ansible-playbook` that `state: stopped`/`absent` on an
+    already-existing container needs no `image:` at all, and matched
+    that exactly rather than assuming), `state:` (`started`/`stopped`/
+    `present`/`absent`), `command:`/`entrypoint:` (plain string, naively
+    whitespace-split - same documented limitation as
+    `ansible.builtin.command`'s own `cmd:`), `env:`/`labels:` (dicts),
+    `ports:` (via a new pure
+    `src/crystal_play/plugin_helpers/docker_ports.cr`, unit tested,
+    `spec/unit/docker_ports_spec.cr` - handles `host_port:container_port`,
+    `host_ip:host_port:container_port`, and a `/udp`-style proto suffix),
+    `volumes:` (passed through as Docker's own `Binds:` syntax),
+    `restart_policy:`, `network_mode:`, `privileged:`/`auto_remove:`,
+    `pull:` (default true), `recreate:` (force recreate even if
+    unchanged). Idempotency compares only image (leniently) and command
+    against the existing container - and only for whichever of those two
+    was actually given, matching real Ansible's "only compare what you
+    told me about" behavior - not the ~40-field comparison real Ansible's
+    `docker_container` does; any other drifted setting won't trigger a
+    recreate on its own without `recreate: true`. A documented, deliberate
+    scope cut given the size of that surface. Not implemented: `networks:`
+    (multi-network attach - same docr gap as above), `healthcheck:`,
+    resource limits, `comparisons:`.
+  - Verified end-to-end against a real daemon repeatedly by hand (image
+    pull/idempotent/remove/idempotent; network create/idempotent/remove;
+    container create+start/idempotent/stop/idempotent/start again/
+    recreate-on-command-change/remove/idempotent; ports and volumes
+    landing correctly per `docker inspect`) before writing any automated
+    test. Integration tested via the CLI against the same real daemon
+    (`testing/test-docker-quick.yml` targeting `testservers`, like
+    `test-copy.yml`/`test-async-quick.yml`, so a `--check` run against the
+    generic empty inventory skips the whole play rather than needing a
+    daemon) + `spec/integration/cli_spec.cr`, and verified task-for-task
+    against real `ansible-playbook` running the identical fixture -
+    output matched exactly, including the `image:`-not-required-to-stop
+    behavior above (found by testing against real Ansible, not assumed).
+    Requires a real Docker Engine API (Docker or rootless Podman, the
+    latter already a hard dependency of `compat/Dockerfile`, so not a new
+    requirement for this project) reachable from wherever the play runs -
+    not verified/skippable like `ufw`'s environment-constrained entry.
 - `mysql_db` / `mysql_user`, `postgresql_db` / `postgresql_user`
 
 **Result:** ~99.99% playbook coverage per prior analysis.
