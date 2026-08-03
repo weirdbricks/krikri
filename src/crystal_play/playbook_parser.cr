@@ -27,10 +27,26 @@ module CrystalPlay
     # with_fileglob patterns, resolved at execution time (needs {{ vars }}
     # substitution and filesystem access, neither available at parse time).
     property loop_fileglob : Array(String)?
+    # loop:/with_items:/with_dict:/with_nested:/with_indexed_items: given as
+    # a Jinja variable reference ("{{ some_var }}") rather than a literal
+    # inline list/dict. Unresolvable at parse time since the YAML value is
+    # just a scalar string until the variable context exists, so the raw
+    # source keyword and template string are carried for the executor to
+    # resolve at execution time (mirrors loop_fileglob).
+    property loop_template_kind : String?
+    property loop_template : String?
     # until: / retries: / delay: - retry a task until a condition passes.
     property until_condition : String?
     property retries : Int32
     property delay : Int32
+    # changed_when: / failed_when: - override the module's own changed/failed
+    # verdict with a condition evaluated against the task's result (accessible
+    # via its own register: name, same as any other post-task condition; a
+    # bare literal like "false" needs no register: at all). Same string/eval
+    # pipeline as when_condition/until_condition: substituted for {{ }}
+    # expressions, then handed to ConditionalEvaluator.
+    property changed_when : String?
+    property failed_when : String?
     # block: / rescue: / always: - only set when module_name == "_block"
     # (a pseudo-module marking this Task as a block rather than a plugin
     # invocation). Blocks can nest, since these are themselves Task lists.
@@ -86,9 +102,13 @@ module CrystalPlay
       @loop = nil
       @loop_items = nil
       @loop_fileglob = nil
+      @loop_template_kind = nil
+      @loop_template = nil
       @until_condition = nil
       @retries = 3
       @delay = 5
+      @changed_when = nil
+      @failed_when = nil
       @block_tasks = nil
       @rescue_tasks = nil
       @always_tasks = nil
@@ -399,6 +419,26 @@ module CrystalPlay
       imported_tasks
     end
 
+    # Loop source keywords that support a plain literal (array or hash) at
+    # parse time, in the same priority order used when picking a loop
+    # source in parse_task. Checked here for a scalar "{{ ... }}" template
+    # value once none of them matched literally.
+    LOOP_TEMPLATE_KEYS = %w[loop with_items with_dict with_nested with_indexed_items]
+
+    # If task_hash has one of the loop-source keywords set to a scalar
+    # string that looks like a Jinja variable reference (rather than a
+    # literal inline list/dict), return {keyword, template string}.
+    private def self.find_loop_template(task_hash : Hash(YAML::Any, YAML::Any)) : {String, String}?
+      LOOP_TEMPLATE_KEYS.each do |key|
+        value = task_hash[key]?
+        next unless value
+        str = value.as_s?
+        next unless str && str.includes?("{{")
+        return {key, str}
+      end
+      nil
+    end
+
     # Parse a single task
     private def self.parse_task(yaml : YAML::Any, index : Int32, play : Play, file_dir : String) : Task
       unless yaml.as_h?
@@ -515,12 +555,23 @@ module CrystalPlay
         else
           [with_fileglob.as_s]
         end
+      elsif template_source = find_loop_template(task_hash)
+        # loop:/with_items:/with_dict:/with_nested:/with_indexed_items: given
+        # as a "{{ variable }}" reference: not a literal array/hash at parse
+        # time, so stash the raw keyword + template string for the executor
+        # to resolve once the variable context exists.
+        task.loop_template_kind = template_source[0]
+        task.loop_template = template_source[1]
       end
 
       # Parse until / retries / delay
       task.until_condition = task_hash["until"]?.try { |v| safe_yaml_to_string(v) }
       task.retries = task_hash["retries"]?.try { |v| safe_yaml_to_string(v).to_i? } || 3
       task.delay = task_hash["delay"]?.try { |v| safe_yaml_to_string(v).to_i? } || 5
+
+      # Parse changed_when / failed_when
+      task.changed_when = task_hash["changed_when"]?.try { |v| safe_yaml_to_string(v) }
+      task.failed_when = task_hash["failed_when"]?.try { |v| safe_yaml_to_string(v) }
 
       task
     end

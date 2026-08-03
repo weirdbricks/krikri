@@ -1,0 +1,29 @@
+# changed_when:/failed_when: smoke test - runs entirely on localhost with
+# command/debug, so it is safe to exercise for real (not just --check).
+
+- name: changed_when / failed_when test
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: a command that would normally report changed, forced to ok
+      ansible.builtin.command: /bin/true
+      changed_when: false
+
+    - name: a command whose changed status is derived from its own rc
+      ansible.builtin.command: /bin/true
+      register: rc_result
+      changed_when: "{{ rc_result.rc != 0 }}"
+
+    - name: a command downgraded from failed to ok via failed_when
+      ansible.builtin.command: /bin/false
+      register: downgraded
+      failed_when: false
+
+    - name: this only runs because the task above was downgraded to ok
+      ansible.builtin.debug:
+        msg: "failed_when: false let the play continue"
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "changed_when / failed_when smoke test complete!"

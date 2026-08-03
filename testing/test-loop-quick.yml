@@ -5,6 +5,12 @@
   hosts: localhost
   gather_facts: false
 
+  vars:
+    colors: [red, green, blue]
+    color_map:
+      one: "1"
+      two: "2"
+
   tasks:
     - name: loop over a plain list
       ansible.builtin.debug:
@@ -44,6 +50,16 @@
       ansible.builtin.debug:
         msg: "indexed item: {{ item }}"
       with_indexed_items: [x, y]
+
+    - name: loop over a variable reference
+      ansible.builtin.debug:
+        msg: "var loop item: {{ item }}"
+      loop: "{{ colors }}"
+
+    - name: with_dict over a variable reference
+      ansible.builtin.debug:
+        msg: "var dict: {{ item.key }}={{ item.value }}"
+      with_dict: "{{ color_map }}"
 
     - name: SUCCESS
       ansible.builtin.debug:

@@ -84,6 +84,11 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("sequence item: 3")
     output.should contain(%(indexed item: ["0","x"]))
     output.should contain(%(indexed item: ["1","y"]))
+    output.should contain("var loop item: red")
+    output.should contain("var loop item: green")
+    output.should contain("var loop item: blue")
+    output.should contain("var dict: one=1")
+    output.should contain("var dict: two=2")
   end
 
   it "runs a role: meta dependency first, applies defaults/vars/invocation-var precedence, resolves src: relative to the role's files/ dir, fires role handlers, then runs the play's own tasks" do
@@ -131,6 +136,29 @@ describe "crystal-ansible CLI (--check mode)" do
 
     status.success?.should be_true
     output.should contain("ignore_errors let the play continue")
+  end
+
+  it "overrides changed/failed via changed_when:/failed_when:" do
+    status, output = run_playbook("test-changed-when-quick.yml", [] of String)
+
+    status.success?.should be_true
+    lines = output.lines
+
+    status_after = ->(task_line : String) {
+      task_index = lines.index(&.includes?(task_line))
+      task_index.should_not be_nil
+      status_line = lines[(task_index.as(Int32) + 1)..].find { |line| line.starts_with?("ok:") || line.starts_with?("changed:") || line.starts_with?("failed:") }
+      status_line.should_not be_nil
+      status_line.as(String)
+    }
+
+    status_after.call("a command that would normally report changed, forced to ok").should start_with("ok:")
+    status_after.call("a command whose changed status is derived from its own rc").should start_with("ok:")
+    status_after.call("a command downgraded from failed to ok via failed_when").should start_with("changed:")
+
+    output.should contain("failed_when: false let the play continue")
+    output.should contain("changed_when / failed_when smoke test complete!")
+    output.should_not contain("failed=1")
   end
 
   it "recovers a failed block: via rescue:, always runs always:, and the play continues" do

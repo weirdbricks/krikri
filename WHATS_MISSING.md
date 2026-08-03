@@ -73,8 +73,8 @@ Everything that used to be listed here as high/medium priority - conditionals, f
 **Note on `ufw`:** implemented, but uniquely in this codebase, not verified end-to-end against real `ansible-playbook` - `ufw` refuses to run at all without root (even bare status queries), and no available test environment here has working netfilter access even as root. Confirmed real Ansible's own `ufw` module fails identically under the same constraint, so this is an environmental limit, not a crystal-ansible gap - see `ROADMAP.md`'s `ufw` entry for details.
 
 ### **🟢 Phase 4 - Advanced execution features**
+- ✅ `changed_when` / `failed_when` - shipped in `0.9.7`
 - `delegate_to`, `run_once`
-- `changed_when` / `failed_when`
 - Async execution (`async:` / `poll:`, `async_status`)
 - Dynamic inventory support + `group_vars` / `host_vars` directory loading
 - Cloud plugins (`ec2`, `s3_bucket`, `azure_rm_*`) - lowest ROI per usage stats (~5% of playbooks)

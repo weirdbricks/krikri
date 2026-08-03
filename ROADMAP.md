@@ -673,8 +673,38 @@ the same way it did between January and now.
 
 ## Phase 4 - Advanced execution features (~4-6 weeks)
 
+- [x] `changed_when` / `failed_when` (`0.9.7`): override a task's own
+  changed/failed verdict with a condition evaluated against the task's
+  result. Parsed identically to `until:` (`Task#changed_when`/
+  `Task#failed_when`, plain strings via `safe_yaml_to_string` so a bare
+  YAML `false` becomes the string `"false"`). Evaluated in a new
+  `TaskExecutor#apply_changed_failed_when`, called right before
+  `execute_task_once` returns (so it runs for every path that funnels
+  through it: single tasks, each iteration of a looped task, and every
+  attempt of a retried task) - same substitute-then-`ConditionalEvaluator`
+  pipeline `when:`/`until:` already use. The task's own result is made
+  available to the condition under its own `register:` name (e.g.
+  `changed_when: "{{ result.rc != 0 }}"`), mirroring real Ansible - a
+  register: is not required for a bare literal like `changed_when: false`.
+  Note: this codebase's bare (non-`{{ }}`) `ConditionalEvaluator` doesn't
+  support dotted variable access (`foo.bar`) at all - only
+  `VariableSubstitutor::ComparisonEvaluator`, reached by wrapping the whole
+  expression in `{{ }}`, does. This is a pre-existing gap shared with
+  `when:`/`until:`, not something new to this feature; any `changed_when:`/
+  `failed_when:` referencing a dotted result field needs the `{{ }}` form
+  to actually work rather than silently evaluating to a meaningless
+  default. Unit tested (`spec/unit/playbook_parser_spec.cr`'s
+  "changed_when / failed_when parsing" group) and integration tested for
+  real (not just `--check`, since `command:` skips outright in check mode)
+  via `testing/test-changed-when-quick.yml` +
+  `spec/integration/cli_spec.cr`. Verified against real `ansible-playbook`
+  manually (not via the Docker compat harness, which this fixture isn't
+  wired into) - output matched task-for-task
+  (ok/ok/changed, `changed=1` in the recap), modulo real Ansible's own
+  deprecation warning about wrapping conditionals in `{{ }}` (which this
+  codebase's evaluator, unlike real Ansible's Jinja2, actually needs for
+  the dotted-access case above).
 - `delegate_to`, `run_once`
-- `changed_when` / `failed_when`
 - Async execution (`async:` / `poll:`, `async_status`)
 - Dynamic inventory support + `group_vars` / `host_vars` directory loading
 - Cloud plugins (`ec2`, `s3_bucket`, `azure_rm_*`) - optional, lowest ROI

@@ -244,6 +244,32 @@ describe CrystalPlay::PlaybookParser do
       task.loop_items.should be_nil
     end
 
+    it "stashes a variable-referenced loop: as a template for the executor to resolve" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          loop: "{{ colors }}"
+        YAML
+
+      task.loop_items.should be_nil
+      task.loop_template_kind.should eq("loop")
+      task.loop_template.should eq("{{ colors }}")
+    end
+
+    it "stashes a variable-referenced with_dict: as a template for the executor to resolve" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item.key }}={{ item.value }}"
+          with_dict: "{{ some_dict }}"
+        YAML
+
+      task.loop_items.should be_nil
+      task.loop_template_kind.should eq("with_dict")
+      task.loop_template.should eq("{{ some_dict }}")
+    end
+
     it "leaves loop_items nil for a task without any loop source" do
       task = single_task(<<-YAML)
         - name: t
@@ -282,6 +308,41 @@ describe CrystalPlay::PlaybookParser do
 
       task.retries.should eq(3)
       task.delay.should eq(5)
+    end
+  end
+
+  describe "changed_when / failed_when parsing" do
+    it "parses changed_when and failed_when as strings" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: /bin/true
+          register: result
+          changed_when: result.rc != 0
+          failed_when: "'ERROR' in result.stdout"
+        YAML
+
+      task.changed_when.should eq("result.rc != 0")
+      task.failed_when.should eq("'ERROR' in result.stdout")
+    end
+
+    it "parses a bare boolean changed_when: false into the string \"false\"" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: /bin/true
+          changed_when: false
+        YAML
+
+      task.changed_when.should eq("false")
+    end
+
+    it "leaves changed_when and failed_when nil when omitted" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: /bin/true
+        YAML
+
+      task.changed_when.should be_nil
+      task.failed_when.should be_nil
     end
   end
 

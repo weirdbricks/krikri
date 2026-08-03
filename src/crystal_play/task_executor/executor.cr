@@ -170,7 +170,11 @@ module CrystalPlay
 
       # with_fileglob needs a substitutor (for {{ vars }} in the pattern) and
       # the filesystem, so it can only be resolved here, not at parse time.
-      loop_items = task.loop_items || resolve_fileglob(task, host, vars_context)
+      # loop_template is a loop:/with_*: keyword given as "{{ some_var }}"
+      # instead of a literal list/dict - also only resolvable once the
+      # variable context exists.
+      loop_items = task.loop_items || resolve_fileglob(task, host, vars_context) ||
+        resolve_loop_template(task, vars_context)
 
       if loop_items
         execute_looped_task(task, host, vars_context, loop_items)
@@ -223,6 +227,57 @@ module CrystalPlay
       matches.map { |path| JSON::Any.new(path) }
     end
 
+    # Resolve a loop:/with_items:/with_dict:/with_nested:/with_indexed_items:
+    # given as "{{ some_var }}" against the runtime variable context, then
+    # feed it through the same conversion each keyword uses for a literal
+    # value at parse time (see PlaybookParser#parse_task).
+    private def resolve_loop_template(task : Task, vars_context : Hash(String, JSON::Any)) : Array(JSON::Any)?
+      kind = task.loop_template_kind
+      template = task.loop_template
+      return nil unless kind && template
+
+      value = resolve_template_value(template, vars_context)
+      return nil unless value
+
+      case kind
+      when "loop", "with_items"
+        value.as_a?
+      when "with_dict"
+        hash = value.as_h?
+        return nil unless hash
+        LoopResolver.with_dict(hash.transform_keys(&.to_s))
+      when "with_nested"
+        list = value.as_a?
+        return nil unless list
+        lists = list.map { |entry| entry.as_a? || [entry] }
+        LoopResolver.with_nested(lists)
+      when "with_indexed_items"
+        list = value.as_a?
+        return nil unless list
+        LoopResolver.with_indexed_items(list)
+      end
+    end
+
+    # Resolve a bare "{{ expr }}" template (optionally with leading/trailing
+    # whitespace) to the underlying JSON value from the variable context,
+    # preserving arrays/hashes rather than flattening to a string the way
+    # VarSubstitutor#substitute does. Supports simple and dotted variable
+    # references (e.g. "some_var" or "some_dict.key"); anything more complex
+    # (filters, expressions) isn't a variable reference and returns nil.
+    private def resolve_template_value(template : String, vars_context : Hash(String, JSON::Any)) : JSON::Any?
+      match = template.strip.match(/\A\{\{\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*\}\}\z/)
+      return nil unless match
+
+      parts = match[1].split(".")
+      current = vars_context[parts[0]]?
+      parts[1..].each do |part|
+        break unless current
+        current = current.as_h?.try(&.[part]?)
+      end
+
+      current
+    end
+
     # Run one attempt of a task (when: check + param substitution + action
     # plugin + module execution). Returns nil if the when: condition skipped
     # it (the skipped counter is already updated in that case).
@@ -258,11 +313,12 @@ module CrystalPlay
         )
 
         unless action_result.success
-          return JSON.parse({
+          result = JSON.parse({
             "changed" => false,
             "failed"  => true,
             "msg"     => action_result.error_message || "Action plugin failed",
           }.to_json)
+          return apply_changed_failed_when(task, result, vars_context, host)
         end
 
         if modified_params = action_result.modified_params
@@ -273,12 +329,46 @@ module CrystalPlay
       config = build_plugin_config(task, host, substituted_params, vars_context)
       config_json = JSON.parse(config)
 
-      PluginManager.execute_plugin(
+      result = PluginManager.execute_plugin(
         task.module_name,
         config_json,
         host,
         vars_context
       )
+
+      apply_changed_failed_when(task, result, vars_context, host)
+    end
+
+    # Override a task's own changed/failed verdict with changed_when:/
+    # failed_when:, evaluated against vars_context plus the task's own result
+    # (made available under its own register: name, mirroring real Ansible -
+    # a bare literal like "false" needs no register: at all; referencing a
+    # result field like "result.rc" does). Same substitute-then-evaluate
+    # pipeline as when_condition/until_condition.
+    private def apply_changed_failed_when(task : Task, result : JSON::Any, vars_context : Hash(String, JSON::Any), host : Host) : JSON::Any
+      changed_when = task.changed_when
+      failed_when = task.failed_when
+      return result unless changed_when || failed_when
+
+      eval_context = vars_context
+      if (register_name = task.register) && !register_name.empty?
+        eval_context = vars_context.dup
+        eval_context[register_name] = result
+      end
+
+      hash = JSON.parse(result.to_json).as_h
+
+      if changed_when
+        substitutor = VarSubstitutor.new(vars: eval_context, host_name: host.name)
+        hash["changed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitutor.substitute(changed_when), eval_context))
+      end
+
+      if failed_when
+        substitutor = VarSubstitutor.new(vars: eval_context, host_name: host.name)
+        hash["failed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitutor.substitute(failed_when), eval_context))
+      end
+
+      JSON::Any.new(hash)
     end
 
     # Register / notify / display / update stats for a (non-looped) task result.
