@@ -93,7 +93,7 @@ test with exact content assertions for the `lineinfile` bug).
 
 ## Coverage
 
-Seventeen playbooks, one per concern: `debug`/`copy`, `file` states,
+Nineteen playbooks, one per concern: `debug`/`copy`, `file` states,
 `lineinfile`, `loop`/`with_items`, real `user`/`group` creation and
 modification, `block`/`rescue`/`always`, `until`/`retries`, `cron`
 (`cron_file:`), `authorized_key`, `git` clone/checkout against a local
@@ -108,7 +108,20 @@ file that is itself vault-encrypted (`16-vault.yml`, real
 and an inline `!vault`-tagged variable value inside an otherwise-plaintext
 playbook (`17-vault-inline.yml`, generated with real `ansible-vault
 encrypt_string`). Both vault playbooks are run with
-`--vault-password-file` against `compat/vault_pass.txt`.
+`--vault-password-file` against `compat/vault_pass.txt`. `stat`
+(`18-stat.yml`) covers a regular file, a missing path, a directory, and a
+symlink stat'd both with and without `follow:` - the stable fields
+(`exists`/`isreg`/`isdir`/`islnk`/`mode`/`size`/`checksum`) are written to
+a file via `register:` + `{{ }}` templating rather than compared from
+stdout, since volatile fields like `atime`/`mtime` would never match
+across two separate runs. `find` (`19-find.yml`) covers non-recursive vs
+recursive search, `excludes:`, `hidden:`, `file_type: directory`, and
+`depth:` - compared via each run's `matched` count rather than the actual
+`files` path list, since crystal-ansible's own filter engine
+(`src/crystal_play/variable_substitutor/filter_engine.cr`) doesn't yet
+support the Jinja2 `map(attribute=...)`/`sort` filters real playbooks
+would normally use to format that list for comparison - a real, separate
+gap unrelated to `find` itself.
 
 Not covered here (same gaps noted elsewhere in this repo): `apt`/`dnf`/
 `package` (would need a slower, distro-specific compat image and real

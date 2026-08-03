@@ -187,6 +187,8 @@ PLUGINS=(
     "git"
     "cron"
     "authorized_key"
+    "stat"
+    "find"
 )
 
 PLUGIN_COUNT=0

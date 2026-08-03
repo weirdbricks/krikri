@@ -187,6 +187,8 @@ module CrystalPlay
       "ansible.builtin.git",
       "ansible.builtin.cron",
       "ansible.posix.authorized_key",
+      "ansible.builtin.stat",
+      "ansible.builtin.find",
     ]
     
     # Parse playbook from file

@@ -1,0 +1,75 @@
+- name: find
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: seed top-level files
+      ansible.builtin.copy:
+        content: "a\n"
+        dest: /work/find-a.txt
+
+    - name: seed a log file that should be excluded
+      ansible.builtin.copy:
+        content: "b\n"
+        dest: /work/find-b.log
+
+    - name: seed a subdirectory
+      ansible.builtin.file:
+        path: /work/find-sub
+        state: directory
+
+    - name: seed a nested file
+      ansible.builtin.copy:
+        content: "c\n"
+        dest: /work/find-sub/find-c.txt
+
+    - name: seed a hidden nested file
+      ansible.builtin.copy:
+        content: "hidden\n"
+        dest: /work/find-sub/.find-hidden.txt
+
+    - name: find top-level txt files only (non-recursive)
+      ansible.builtin.find:
+        paths: /work
+        patterns: "find-*.txt"
+      register: top_level
+
+    - name: find recursively, excluding .log files
+      ansible.builtin.find:
+        paths: /work
+        patterns: "find-*"
+        excludes: "*.log"
+        recurse: true
+      register: recursive
+
+    - name: find recursively including hidden files
+      ansible.builtin.find:
+        paths: /work
+        patterns: "find-*"
+        recurse: true
+        hidden: true
+      register: recursive_hidden
+
+    - name: find directories only
+      ansible.builtin.find:
+        paths: /work
+        file_type: directory
+        recurse: true
+      register: dirs_only
+
+    - name: find files depth-limited to the top level even with recurse
+      ansible.builtin.find:
+        paths: /work
+        patterns: "find-*"
+        recurse: true
+        depth: 1
+      register: depth_limited
+
+    - name: write the stable match counts to a file for comparison
+      ansible.builtin.copy:
+        content: |
+          top_level_matched={{ top_level.matched }}
+          recursive_matched={{ recursive.matched }}
+          recursive_hidden_matched={{ recursive_hidden.matched }}
+          dirs_only_matched={{ dirs_only.matched }}
+          depth_limited_matched={{ depth_limited.matched }}
+        dest: /work/find-output.txt

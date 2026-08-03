@@ -1,27 +1,32 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-01:** builds again on Crystal 1.20.3 (fixed `as_i` -> `as_i64`
+**Status as of 2026-08-02:** builds again on Crystal 1.20.3 (fixed `as_i` -> `as_i64`
 type mismatch in `comparison_evaluator.cr`). **Phase 0, Phase 1, and Phase 2 are
-all done** (`0.8.0`) - roles, import/include, and vault.
-283 specs passing, `ameba` clean on all new/touched code. Added a Docker-based
+all done** (roles, import/include, and vault); **Phase 3 is in progress**
+(`0.9.0`) - `stat` and `find` are done.
+305+ specs passing, `ameba` clean on all new/touched code. Added a Docker-based
 compatibility harness (`compat/`, see `compat/README.md`) that runs the same
 playbooks through real `ansible-playbook` and `crystal-ansible` side by side and
 diffs the results - ground truth instead of assumptions about Ansible's
-documented behavior; 17/17 compat playbooks pass, including all of roles,
-`import_playbook:`, `import_tasks:`, `include_tasks:`, `include_role:`, and
+documented behavior; 19/19 compat playbooks pass, including all of roles,
+`import_playbook:`, `import_tasks:`, `include_tasks:`, `include_role:`,
 vault (both a whole vault-encrypted playbook file and an inline `!vault`
-variable). Along the way it (and, for one bug the file-state-diffing approach
-can't catch, plain manual testing) found and fixed 6 real bugs: `authorized_key`
-registered under the wrong FQCN (it's `ansible.posix.authorized_key`, not
-`ansible.builtin.*` - confirmed via `ansible-doc`, not memory), plugin
-resolution breaking outside the repo checkout, `Host.from_json` crashing on a
-host with no explicit user, `lineinfile` inserting a spurious blank line on
-every append/removal to a file already ending in a newline, and (both found
-while building include_role:) `include_role:` + `loop:` producing duplicate
-handler *Task objects* sharing a name, which `HandlerRunner` ran once each
-instead of deduping by name the way Ansible does, and task-level `vars:` never
-being parsed for `import_tasks:`/`include_tasks:` at all despite being a very
-common way to use them. Next up is Phase 3 (extended plugins). This
+variable), `stat`, and `find`. Along the way it (and, for some bugs the
+file-state-diffing approach can't catch, plain manual testing) found and fixed
+8 real bugs: `authorized_key` registered under the wrong FQCN (it's
+`ansible.posix.authorized_key`, not `ansible.builtin.*` - confirmed via
+`ansible-doc`, not memory), plugin resolution breaking outside the repo
+checkout, `Host.from_json` crashing on a host with no explicit user,
+`lineinfile` inserting a spurious blank line on every append/removal to a file
+already ending in a newline, `include_role:` + `loop:` producing duplicate
+handler *Task objects* sharing a name (which `HandlerRunner` ran once each
+instead of deduping by name), task-level `vars:` never being parsed for
+`import_tasks:`/`include_tasks:` at all, boolean variables rendering as
+Crystal's lowercase `true`/`false` in templates instead of Python/Jinja2's
+capitalized `True`/`False`, and an unset `excludes:` on `find:` excluding every
+result (an empty pattern list means "match everything" for `patterns:` but was
+wrongly reused with the same meaning for `excludes:`, where it should mean
+"exclude nothing"). Next up is the rest of Phase 3. This
 roadmap sequences the remaining work from the two prior analysis docs
 ([WHATS_MISSING.md](WHATS_MISSING.md), [MISSING_FEATURES_COMPREHENSIVE.md](MISSING_FEATURES_COMPREHENSIVE.md))
 into phases, with the test-foundation phase (Phase 0) landing first so every
@@ -278,10 +283,73 @@ the same way it did between January and now.
 
 ## Phase 3 - Extended plugins (~4-6 weeks)
 
+- [x] `stat` (`0.9.0`): read-only file/filesystem status, feeding
+  `register:` + `when:`/templating - never reports `changed`. Parameters:
+  `path` (required), `follow` (default `false`), `get_checksum` (default
+  `true`), `checksum_algorithm` (`md5`/`sha1`/`sha256`). Not implemented:
+  `get_attributes` (lsattr flags), `get_mime` (mimetype/charset via
+  `file`) - both default `true` in real Ansible but are lower-value,
+  tool-dependent extras, omitted from the returned `stat` dict entirely
+  rather than faked. Field shape (`exists`/`isreg`/`isdir`/`islnk`/`mode`/
+  `size`/`uid`/`gid`/`pw_name`/`gr_name`/`rusr`-`xoth`/`isuid`/`isgid`/
+  `lnk_target`/`lnk_source`/`checksum`/etc.) verified field-by-field
+  against real `ansible-playbook`'s actual JSON output, not assumed from
+  docs. Parsing logic lives in a new, dependency-free
+  `src/crystal_play/plugin_helpers/stat_fields.cr` (unit tested directly,
+  `spec/unit/stat_fields_spec.cr`) so `find` (below) can reuse it for its
+  per-match dicts, which real Ansible documents as "see stat module for
+  full output of each dictionary." Integration tested
+  (`spec/integration/stat_spec.cr`) and verified against real
+  `ansible-playbook` via the compat harness (`compat/playbooks/18-stat.yml`
+  - passed).
+  - Building `stat` surfaced one real, previously-shipped, unrelated bug:
+    boolean variables interpolated directly into template text (e.g.
+    `{{ stat_result.stat.exists }}` in a `copy: content:`) rendered
+    Crystal's lowercase `"true"`/`"false"` instead of Python/Jinja2's
+    capitalized `"True"`/`"False"` - confirmed by diffing against real
+    `ansible-playbook`'s actual rendered output, not assumed. Fixed in
+    `VariableLookup#format_value` (used by all three of simple/nested/
+    indexed lookup), unit tested
+    (`spec/unit/variable_lookup_spec.cr`'s boolean-rendering group). This
+    is distinct from `ComparisonEvaluator`'s own internal `"true"`/`"false"`
+    protocol for `when:` truthiness, which already tolerated both cases
+    and was left untouched.
+- [x] `find` (`0.9.0`): recursive file/directory search feeding
+  `register:`, reusing `stat_fields.cr` for each match's stat dict.
+  Parameters: `paths` (required, comma-separated), `patterns`/`excludes`
+  (comma-separated shell globs, or regexes with `use_regex: true`,
+  matched against the basename), `file_type` (`file` default/`directory`/
+  `link`/`any`), `recurse`, `depth`, `hidden` (a hidden directory is
+  skipped entirely when descending, not just direct dotfiles - matches
+  real Ansible's `os.walk`-based behavior), `size` (with `b`/`k`/`m`/`g`/
+  `t` suffix and negative-for-"at most" support), `get_checksum`/
+  `checksum_algorithm`. Not implemented: `age`/`age_stamp` (time-based
+  filtering), `contains` (content regex search), `read_whole_file`,
+  `encoding`, `mode`, `limit` - all lower-value/rarer options than the
+  core path+pattern+type search that covers the overwhelming majority of
+  real playbooks' `find:` usage. Read-only, never `changed`, like `stat`.
+  Unit tested (`spec/unit/stat_fields_spec.cr` covers the shared parsing;
+  `find`'s own glob/exclude/depth/hidden logic is integration-tested
+  directly, `spec/integration/find_spec.cr`) and verified against real
+  `ansible-playbook` via the compat harness (`compat/playbooks/19-find.yml`
+  - passed, comparing `matched` counts rather than the `files` path list
+  since crystal-ansible's filter engine doesn't yet support the Jinja2
+  `map(attribute=...)`/`sort` filters needed to format that list for a
+  stable comparison - a real, separate, pre-existing gap).
+  - Found and fixed one real bug of its own before it shipped: an unset
+    `excludes:` (the common case) was checked with the same
+    `matches_patterns?` helper used for `patterns:`, which returns `true`
+    for an empty pattern list (correct for "no patterns given = match
+    everything", wrong for "no excludes given = exclude nothing") -
+    excluding every single result. Caught by comparing actual output
+    against real `ansible-playbook` before considering this done, not by
+    the unit tests (which exercised `matches_patterns?` correctly in
+    isolation - the bug was in how `find`'s own `execute` used it for two
+    different purposes with opposite empty-list semantics).
 - `apt_repository` / `yum_repository`
 - `sysctl`, `mount`
 - `ufw` / `firewalld`
-- `stat`, `find`, `archive` / `unarchive`
+- `archive` / `unarchive`
 - `docker_container` / `docker_image` / `docker_network`
 - `mysql_db` / `mysql_user`, `postgresql_db` / `postgresql_user`
 

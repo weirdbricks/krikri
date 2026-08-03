@@ -1,0 +1,56 @@
+- name: stat
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: seed a file to stat
+      ansible.builtin.copy:
+        content: "hello stat world\n"
+        dest: /work/stat-target.txt
+        mode: '0644'
+
+    - name: seed a directory to stat
+      ansible.builtin.file:
+        path: /work/stat-dir
+        state: directory
+
+    - name: seed a symlink to stat
+      ansible.builtin.file:
+        path: /work/stat-link.txt
+        src: /work/stat-target.txt
+        state: link
+
+    - name: stat the file
+      ansible.builtin.stat:
+        path: /work/stat-target.txt
+      register: file_stat
+
+    - name: stat a missing path
+      ansible.builtin.stat:
+        path: /work/does-not-exist.txt
+      register: missing_stat
+
+    - name: stat the directory
+      ansible.builtin.stat:
+        path: /work/stat-dir
+      register: dir_stat
+
+    - name: stat the symlink without follow
+      ansible.builtin.stat:
+        path: /work/stat-link.txt
+      register: link_stat
+
+    - name: stat the symlink with follow
+      ansible.builtin.stat:
+        path: /work/stat-link.txt
+        follow: true
+      register: followed_stat
+
+    - name: write the stable stat fields to a file for comparison
+      ansible.builtin.copy:
+        content: |
+          file: exists={{ file_stat.stat.exists }} isreg={{ file_stat.stat.isreg }} mode={{ file_stat.stat.mode }} size={{ file_stat.stat.size }} checksum={{ file_stat.stat.checksum }}
+          missing: exists={{ missing_stat.stat.exists }}
+          dir: exists={{ dir_stat.stat.exists }} isdir={{ dir_stat.stat.isdir }}
+          link: exists={{ link_stat.stat.exists }} islnk={{ link_stat.stat.islnk }} isreg={{ link_stat.stat.isreg }}
+          followed: exists={{ followed_stat.stat.exists }} islnk={{ followed_stat.stat.islnk }} isreg={{ followed_stat.stat.isreg }}
+        dest: /work/stat-output.txt
