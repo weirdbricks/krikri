@@ -5,6 +5,7 @@ require "crystar"
 require "compress/gzip"
 require "compress/zip"
 require "xz"
+require "bz2"
 require "system/user"
 require "system/group"
 require "openssl/digest"
@@ -44,23 +45,21 @@ module CrystalPlay
   # implemented: attributes/selevel/serole/setype/seuser (SELinux),
   # unsafe_writes.
   #
-  # tar/gz/xz/zip are built and read natively (Crystar for tar, Compress::Gzip
-  # and Compress::Zip from Crystal's own standard library, naqvis/xz.cr - a
-  # real liblzma C binding, not a shell wrapper - for xz) rather than
-  # shelling to `tar`/`gzip`/`xz`/`zip`/`unzip` - matches real Ansible's own
+  # All five formats are now built and read natively: Crystar for tar,
+  # Compress::Gzip/Compress::Zip from Crystal's own standard library,
+  # naqvis/xz.cr (a real liblzma C binding) for xz, and weirdbricks/bz2.cr
+  # (a real libbz2 C binding, written for this project after a shard
+  # search turned up nothing usable - the only prior bz2 shard,
+  # jhbadger/Bzip, is itself a shell wrapper around `bzcat` with no writer,
+  # not a real implementation) for bz2. This matches real Ansible's own
   # archive module, which uses Python's tarfile/zipfile stdlib rather than
-  # shelling out too. bz2 is the one exception: no Crystal library exists
-  # (verified via a shard search, not assumed - the only hit, jhbadger/Bzip,
-  # is itself a shell wrapper around `bzcat` with no writer, not a real
-  # implementation), so bz2 still shells out to `bzip2`/`tar` - a genuine
-  # missing-capability gap, not an oversight, same category as `apt`/`dnf`/
-  # `firewalld`'s own shelling-out.
+  # shelling out too - no format shells out anymore.
   #
   # Idempotency is checksum-based like real Ansible, but computed by
-  # reading crystal-ansible's own previously-built archive back (natively
-  # for tar/gz/zip, still via shell for bz2/xz) rather than replicating
-  # Python's tarfile per-member header checksum exactly - this compares
-  # crystal-ansible's own archives against themselves across runs, which
+  # reading crystal-ansible's own previously-built archive back natively
+  # rather than replicating Python's tarfile per-member header checksum
+  # exactly - this compares crystal-ansible's own archives against
+  # themselves across runs, which
   # doesn't require bit-for-bit parity with Python's internal algorithm to
   # be correct. Note: upgrading from the previous shell-based
   # implementation to this one may report changed: true exactly once for
@@ -256,7 +255,12 @@ module CrystalPlay
     private def build_compress(source : String, format : String, tmp_dest : String) : Bool
       case format
       when "bz2"
-        remote_exec("bzip2 -c #{source} > #{tmp_dest}")[:exit_code] == 0
+        File.open(tmp_dest, "w") do |file|
+          Compress::BZ2::Writer.open(file) do |bz2|
+            File.open(source) { |src| IO.copy(src, bz2) }
+          end
+        end
+        true
       when "xz"
         File.open(tmp_dest, "w") do |file|
           Compress::XZ::Writer.open(file) do |xz|
@@ -286,8 +290,6 @@ module CrystalPlay
       return false if relative_members.empty?
 
       case format
-      when "bz2"
-        build_archive_via_shell(root, relative_members, format, tmp_dest)
       when "zip"
         build_zip(root, members, relative_members, tmp_dest)
       else
@@ -302,6 +304,8 @@ module CrystalPlay
           Compress::Gzip::Writer.open(file) { |gz| write_tar_entries(gz, root, members, relative_members) }
         when "xz"
           Compress::XZ::Writer.open(file) { |xz| write_tar_entries(xz, root, members, relative_members) }
+        when "bz2"
+          Compress::BZ2::Writer.open(file) { |bz2| write_tar_entries(bz2, root, members, relative_members) }
         else
           write_tar_entries(file, root, members, relative_members)
         end
@@ -381,14 +385,6 @@ module CrystalPlay
       false
     end
 
-    # bz2: no Crystal library exists, so this format still shells out -
-    # see the class doc comment.
-    private def build_archive_via_shell(root : String, relative_members : Array(String), format : String, tmp_dest : String) : Bool
-      quoted_members = relative_members.map { |member| "\"#{member}\"" }.join(" ")
-      cmd = "cd #{root} && tar --no-recursion -cjf #{tmp_dest} #{quoted_members}"
-      remote_exec(cmd)[:exit_code] == 0
-    end
-
     # A content+membership signature for `path`, used to decide whether a
     # freshly-built archive differs from what's already at dest.
     private def signature(path : String, format : String, single_compress : Bool) : String?
@@ -398,8 +394,6 @@ module CrystalPlay
         single_compress_signature(path, format)
       elsif format == "zip"
         zip_signature(path)
-      elsif format == "bz2"
-        shell_tar_signature(path, format)
       else
         tar_signature(path, format)
       end
@@ -410,9 +404,11 @@ module CrystalPlay
     private def single_compress_signature(path : String, format : String) : String?
       case format
       when "bz2"
-        result = remote_exec("bzip2 -dc #{path} 2>/dev/null | md5sum")
-        return nil unless result[:exit_code] == 0
-        result[:stdout].strip
+        digest = OpenSSL::Digest.new("MD5")
+        File.open(path) do |file|
+          Compress::BZ2::Reader.open(file) { |bz2| digest.update(bz2.gets_to_end) }
+        end
+        digest.final.hexstring
       when "xz"
         digest = OpenSSL::Digest.new("MD5")
         File.open(path) do |file|
@@ -452,6 +448,8 @@ module CrystalPlay
           Compress::Gzip::Reader.open(file) { |gz| read_tar_signature(gz, names, digest) }
         when "xz"
           Compress::XZ::Reader.open(file) { |xz| read_tar_signature(xz, names, digest) }
+        when "bz2"
+          Compress::BZ2::Reader.open(file) { |bz2| read_tar_signature(bz2, names, digest) }
         else
           read_tar_signature(file, names, digest)
         end
@@ -467,12 +465,6 @@ module CrystalPlay
           digest.update(entry.io.gets_to_end) unless entry.flag == Crystar::DIR.ord.to_u8
         end
       end
-    end
-
-    private def shell_tar_signature(path : String, format : String) : String?
-      names = remote_exec("tar tf #{path} 2>/dev/null | sort")[:stdout].strip
-      content = remote_exec("tar xf #{path} -O 2>/dev/null | md5sum")[:stdout].strip
-      "#{names}|#{content}"
     end
 
     private def remove_sources(found_paths : Array(String))

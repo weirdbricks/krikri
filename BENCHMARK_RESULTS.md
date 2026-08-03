@@ -361,3 +361,52 @@ pre-existing `tar.xz` built by the real `tar`/`xz` CLIs (simulating an
 upgrade from the old shell-based implementation) doesn't error. Full
 archive/unarchive suite (29 examples) and full project suite (495
 examples) pass.
+
+## archive follow-up 2: bz2 converted too, via a new shard written for this project
+
+**Date:** 2026-08-03
+
+The `bz2` search that came up empty for the earlier archive work was
+checked again, more thoroughly: the one hit, `jhbadger/Bzip`, isn't a
+real bzip2 implementation - it's a 353-byte wrapper that shells to
+`bzcat` internally, is read-only (no writer), and hasn't been touched
+since 2017. Genuinely nothing usable existed. `libbz2` itself, though,
+is a small, extremely stable C library (unchanged since 1996 - the same
+one Python's own `bz2` module and the `bzip2` CLI bind to), so rather
+than accept `bz2` as a permanent shell-out, a real binding was written:
+[`weirdbricks/bz2.cr`](https://github.com/weirdbricks/bz2.cr), a new
+public shard modeled directly on `naqvis/xz.cr`'s own `Writer`/`Reader`
+design (bzlib's `bz_stream` C API is close enough in shape to lzma's
+`lzma_stream` that most of xz.cr's structure - the buffered-peek
+decompression loop especially - translated over with only small
+adjustments; bzlib's simpler action/return-code model needed no filter
+chains or presets, just a block size and work factor). Requires
+`libbz2-dev` at build time, same pattern as the `liblzma-dev`/`libssl-dev`
+requirements already in place for `xz`/`OpenSSL::Digest`.
+
+Converted `format: bz2` from shelling to `tar`/`bzip2` to native
+`Compress::BZ2::Writer`/`Reader`, wrapping the same `Crystar::Writer`/
+`Reader` tar path already used for `gz`/`xz`. No archive format shells
+out anymore.
+
+### Results
+
+Like `xz.cr`, `bz2.cr` binds a real optimized C library rather than
+reimplementing the algorithm in pure Crystal, so it doesn't hit the
+`gz`-style scaling problem - native wins at both benchmarked scales:
+
+| files | shell (`tar` + `bzip2`) | native | speedup |
+|---|---|---|---|
+| 320 | 37.3ms | 23.4ms | **1.59x** |
+| 2000 | 139.8ms | 121.6ms | **1.15x** |
+
+Correctness verified both directions against the real `tar`/`bzip2`
+CLIs, the same way `xz` was: a native single-file `.bz2` decompresses
+correctly with real `bzip2 -dc`; a native `tar.bz2` lists and extracts
+correctly with real `tar tvf`/`tar xf -O`; an idempotent rerun reports
+`changed: false`; reading a pre-existing `tar.bz2` built by the real
+CLIs doesn't error. `bz2.cr` itself also has its own spec suite (8
+examples) verifying round-trips at various sizes, cross-compatibility
+with the real `bzip2` binary in both directions, and error handling on
+corrupt input. Full crystal-ansible archive/unarchive suite (29
+examples) and full project suite (495 examples) pass.

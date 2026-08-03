@@ -1,5 +1,5 @@
 name: crystal-play
-version: 0.9.17
+version: 0.9.18
 
 description: |
   Fast, Ansible-compatible automation tool written in Crystal
@@ -23,6 +23,8 @@ dependencies:
     github: naqvis/crystar
   xz:
     github: naqvis/xz.cr
+  bz2:
+    github: weirdbricks/bz2.cr
 
 development_dependencies:
   ameba:

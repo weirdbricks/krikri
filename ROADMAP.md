@@ -497,6 +497,25 @@ the same way it did between January and now.
     `tar`/`xz`; a real-CLI-built `tar.xz` readable as a pre-existing
     `dest`) plus idempotent-rerun behavior. Full details in
     `BENCHMARK_RESULTS.md`. Full project suite (495 examples) passes.
+  - **Update (`0.9.18`):** `bz2` converted too - the shard search that
+    came up empty for it in `0.9.16` was checked again more thoroughly
+    and confirmed genuinely empty (`jhbadger/Bzip` really is just a
+    `bzcat` shell wrapper with no writer), so a real one was written from
+    scratch: [`weirdbricks/bz2.cr`](https://github.com/weirdbricks/bz2.cr),
+    a new public shard binding `libbz2` directly, modeled on `naqvis/xz.cr`'s
+    own `Writer`/`Reader` design (bzlib's C API is simpler than lzma's -
+    no filter chains/presets, just a block size and work factor - so most
+    of xz.cr's structure carried over with small adjustments). Requires
+    `libbz2-dev` at build time. No archive format shells out anymore.
+    Like `xz.cr`, `bz2.cr` binds a real C library rather than
+    reimplementing the algorithm, so it doesn't hit `gz`'s scaling
+    problem either: native won outright at both benchmarked scales (320
+    files: 37.3ms -> 23.4ms, **1.59x**; 2000 files: 139.8ms -> 121.6ms,
+    **1.15x**). Correctness verified the same way as `xz` (round-trip
+    against real `bzip2`/`tar` CLIs in both directions, idempotent rerun,
+    reading a pre-existing real-CLI-built archive). `bz2.cr` has its own
+    8-example spec suite. Full details in `BENCHMARK_RESULTS.md`. Full
+    project suite (495 examples) passes.
 - [x] `unarchive` (`0.9.2`): extracts an archive into an existing
   directory - the counterpart to `archive`, but registered as
   `ansible.builtin.unarchive` (verified via `ansible-doc unarchive`),

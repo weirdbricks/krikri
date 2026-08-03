@@ -4,6 +4,10 @@ shards:
     git: https://github.com/crystal-ameba/ameba.git
     version: 1.6.4
 
+  bz2:
+    git: https://github.com/weirdbricks/bz2.cr.git
+    version: 0.1.0
+
   crinja:
     git: https://github.com/straight-shoota/crinja.git
     version: 0.9.0+git.commit.4688cc7764a113a3b1d337cb59dc0244896121e1
