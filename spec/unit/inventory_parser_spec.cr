@@ -9,6 +9,11 @@ private def write(path : String, content : String)
   File.write(path, content)
 end
 
+private def write_script(path : String, content : String)
+  write(path, content)
+  File.chmod(path, 0o755)
+end
+
 describe CrystalPlay::InventoryParser do
   before_each do
     FileUtils.rm_rf(ROOT) if Dir.exists?(ROOT)
@@ -132,6 +137,94 @@ describe CrystalPlay::InventoryParser do
       inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
 
       inventory.hosts["web1"].vars.empty?.should be_true
+    end
+  end
+
+  describe "dynamic (executable script) inventory" do
+    it "is detected by the executable bit, not the filename" do
+      write_script(File.join(ROOT, "dynamic-inventory"), <<-SH)
+        #!/bin/sh
+        [ "$1" = "--list" ] && echo '{"web": {"hosts": ["web1"]}}'
+        SH
+
+      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "dynamic-inventory"))
+
+      inventory.hosts.has_key?("web1").should be_true
+      inventory.groups["web"].hosts.has_key?("web1").should be_true
+    end
+
+    it "parses the full {hosts, vars, children} group format and _meta.hostvars" do
+      write_script(File.join(ROOT, "dynamic-inventory"), <<-SH)
+        #!/bin/sh
+        if [ "$1" = "--list" ]; then
+        cat <<'JSON'
+        {
+          "web": {"hosts": ["web1"], "vars": {"role": "webserver"}},
+          "db": {"hosts": ["db1"]},
+          "prod": {"children": ["web", "db"]},
+          "_meta": {"hostvars": {"web1": {"ansible_host": "10.0.0.1"}, "db1": {}}}
+        }
+        JSON
+        fi
+        SH
+
+      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "dynamic-inventory"))
+
+      inventory.hosts["web1"].vars["ansible_host"].as_s.should eq("10.0.0.1")
+      inventory.hosts["web1"].vars["role"].as_s.should eq("webserver")
+      inventory.groups["prod"].children.should eq(["web", "db"])
+    end
+
+    it "parses the shorthand bare-array group format" do
+      write_script(File.join(ROOT, "dynamic-inventory"), <<-SH)
+        #!/bin/sh
+        [ "$1" = "--list" ] && echo '{"web": ["web1", "web2"]}'
+        SH
+
+      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "dynamic-inventory"))
+
+      inventory.groups["web"].hosts.keys.sort.should eq(["web1", "web2"])
+    end
+
+    it "falls back to --host <name> per host when _meta is absent" do
+      write_script(File.join(ROOT, "dynamic-inventory"), <<-SH)
+        #!/bin/sh
+        if [ "$1" = "--list" ]; then
+          echo '{"web": ["web1"]}'
+        elif [ "$1" = "--host" ]; then
+          [ "$2" = "web1" ] && echo '{"ansible_host": "10.0.0.9"}' || echo '{}'
+        fi
+        SH
+
+      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "dynamic-inventory"))
+
+      inventory.hosts["web1"].vars["ansible_host"].as_s.should eq("10.0.0.9")
+    end
+
+    it "raises a clear error when the script exits non-zero" do
+      write_script(File.join(ROOT, "dynamic-inventory"), <<-SH)
+        #!/bin/sh
+        echo "boom" >&2
+        exit 1
+        SH
+
+      expect_raises(Exception, /Dynamic inventory script.*failed/) do
+        CrystalPlay::InventoryParser.parse(File.join(ROOT, "dynamic-inventory"))
+      end
+    end
+
+    it "still applies group_vars/host_vars beside the script" do
+      write_script(File.join(ROOT, "dynamic-inventory"), <<-SH)
+        #!/bin/sh
+        [ "$1" = "--list" ] && echo '{"web": {"hosts": ["web1"]}}'
+        SH
+      write(File.join(ROOT, "group_vars", "all.yml"), <<-YAML)
+        datacenter: dc1
+        YAML
+
+      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "dynamic-inventory"))
+
+      inventory.hosts["web1"].vars["datacenter"].as_s.should eq("dc1")
     end
   end
 end

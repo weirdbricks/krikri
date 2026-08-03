@@ -97,7 +97,14 @@ module CrystalPlay
       unless File.exists?(path)
         raise "Inventory file not found: #{path}"
       end
-      
+
+      # An executable inventory file is a dynamic inventory script, same
+      # detection rule real Ansible uses (the executable bit, not the
+      # extension) - see parse_dynamic.
+      if File::Info.executable?(path)
+        return parse_dynamic(path)
+      end
+
       # Detect format by extension or content
       if path.ends_with?(".yml") || path.ends_with?(".yaml")
         parse_yaml(path)
@@ -105,6 +112,138 @@ module CrystalPlay
         # Default to INI format
         parse_ini(path)
       end
+    end
+
+    # Parse a dynamic inventory: run the executable with --list and parse
+    # its JSON output, in Ansible's standard dynamic inventory shape:
+    #
+    #   {
+    #     "group1": {"hosts": ["h1", "h2"], "vars": {...}, "children": [...]},
+    #     "group2": ["h3"],                    # shorthand: bare host list
+    #     "_meta": {"hostvars": {"h1": {...}}} # optional but preferred -
+    #                                          # avoids a --host call per host
+    #   }
+    #
+    # If the script doesn't provide _meta.hostvars, falls back to the
+    # older, slower per-host `--host <name>` convention real Ansible also
+    # supports. Only inventory scripts (the original, universal dynamic
+    # inventory mechanism - any executable, any language) are implemented;
+    # Ansible's newer YAML-defined inventory *plugins* (aws_ec2.yml and
+    # friends, each with its own config schema and API calls) are not.
+    def self.parse_dynamic(path : String) : Inventory
+      inventory = Inventory.new
+
+      output = IO::Memory.new
+      error = IO::Memory.new
+      status = Process.run(path, ["--list"], output: output, error: error)
+      unless status.success?
+        raise "Dynamic inventory script '#{path}' failed (--list): #{error.to_s.strip}"
+      end
+
+      begin
+        json = JSON.parse(output.to_s)
+      rescue ex : JSON::ParseException
+        raise "Dynamic inventory script '#{path}' did not return valid JSON: #{ex.message}"
+      end
+
+      json.as_h.each do |group_name, group_data|
+        next if group_name.to_s == "_meta"
+        apply_dynamic_group(inventory, group_name.to_s, group_data)
+      end
+
+      has_meta = json["_meta"]?
+      if hostvars = has_meta.try(&.["hostvars"]?).try(&.as_h?)
+        hostvars.each do |hostname, vars_json|
+          host = get_or_create_dynamic_host(inventory, hostname.to_s)
+          apply_host_vars_json(host, vars_json)
+        end
+      elsif !has_meta
+        # No _meta at all: this script only supports the older per-host
+        # convention, so fetch each discovered host's vars individually.
+        inventory.hosts.each_value do |host|
+          fetch_dynamic_host_vars(path, host)
+        end
+      end
+
+      load_group_and_host_vars(inventory, File.dirname(path))
+      apply_group_vars(inventory)
+
+      inventory
+    end
+
+    # Apply one top-level group entry from a dynamic inventory's --list
+    # output - either the shorthand bare-array form or the full
+    # {hosts:, vars:, children:} hash form.
+    private def self.apply_dynamic_group(inventory : Inventory, group_name : String, group_data : JSON::Any)
+      group = inventory.get_or_create_group(group_name)
+
+      if hosts_array = group_data.as_a?
+        hosts_array.each { |h| group.add_host(get_or_create_dynamic_host(inventory, h.as_s)) }
+        return
+      end
+
+      hash = group_data.as_h?
+      return unless hash
+
+      if hosts_list = hash["hosts"]?.try(&.as_a?)
+        hosts_list.each { |h| group.add_host(get_or_create_dynamic_host(inventory, h.as_s)) }
+      end
+
+      if vars_hash = hash["vars"]?.try(&.as_h?)
+        vars_hash.each { |k, v| group.vars[k.to_s] = Vault.maybe_decrypt_json(JSON.parse(v.to_json)) }
+      end
+
+      if children = hash["children"]?.try(&.as_a?)
+        children.each do |c|
+          group.add_child(c.as_s)
+          inventory.get_or_create_group(c.as_s)
+        end
+      end
+    end
+
+    private def self.get_or_create_dynamic_host(inventory : Inventory, name : String) : Host
+      inventory.hosts[name]? || begin
+        host = Host.new(name)
+        inventory.add_host(host)
+        host
+      end
+    end
+
+    # Apply a hostvars hash (from _meta.hostvars or a --host call) to a
+    # host, handling ansible_user/ansible_port the same way inline
+    # inventory vars already do.
+    private def self.apply_host_vars_json(host : Host, vars_json : JSON::Any)
+      hash = vars_json.as_h?
+      return unless hash
+
+      hash.each do |key, value|
+        key_str = key.to_s
+        json_value = Vault.maybe_decrypt_json(JSON.parse(value.to_json))
+        host.vars[key_str] = json_value
+
+        case key_str
+        when "ansible_user"
+          host.user = json_value.as_s? || host.user
+        when "ansible_port"
+          host.port = json_value.as_i? || json_value.as_s?.try(&.to_i?) || host.port
+        end
+      end
+    end
+
+    # Older/simpler dynamic inventory scripts (no _meta) expect one
+    # `--host <name>` call per host instead.
+    private def self.fetch_dynamic_host_vars(path : String, host : Host)
+      output = IO::Memory.new
+      status = Process.run(path, ["--host", host.name], output: output, error: Process::Redirect::Close)
+      return unless status.success?
+
+      begin
+        json = JSON.parse(output.to_s)
+      rescue
+        return
+      end
+
+      apply_host_vars_json(host, json)
     end
     
     # Parse INI format inventory

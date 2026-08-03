@@ -767,9 +767,32 @@ the same way it did between January and now.
   (`spec/fixtures/group_host_vars/`) + `testing/test-group-host-vars-quick.yml`.
   Verified against real `ansible-playbook` against the same
   inventory/playbook - output matched exactly.
-- Dynamic inventory support (executable/plugin-based inventory scripts) -
-  not implemented; only the group_vars:/host_vars: half of this combined
-  roadmap item shipped.
+- [x] Dynamic inventory (`0.9.11`): `InventoryParser.parse` now detects an
+  executable inventory path (`File::Info.executable?` - the executable
+  bit, not the filename/extension, same rule real Ansible uses) and runs
+  it with `--list`, parsing its JSON output in Ansible's standard dynamic
+  inventory shape: each top-level key is a group, either a bare host-name
+  array (shorthand) or a `{hosts:, vars:, children:}` hash; an optional
+  `_meta.hostvars` supplies every host's vars up front. When `_meta` is
+  absent, falls back to the older, slower per-host `--host <name>`
+  convention real Ansible also supports (one process spawn per host).
+  `group_vars:`/`host_vars:` directories (see the entry above) are still
+  applied afterward, relative to the *script's* directory. This
+  implements the original, universal "any executable, any language"
+  dynamic inventory mechanism only - Ansible's newer YAML-defined
+  inventory *plugins* (`aws_ec2.yml` and friends, each with its own
+  config schema and cloud API calls) are not implemented; this was the
+  larger, still-open half of the "Dynamic inventory support +
+  group_vars/host_vars directory loading" roadmap item, now closed out.
+  Unit tested against real temp executable scripts (`spec/unit/
+  inventory_parser_spec.cr`'s "dynamic (executable script) inventory"
+  group - full format + `_meta`, shorthand array format, the `--host`
+  fallback, a non-zero-exit script raising a clear error, and
+  group_vars/ still applying on top) and integration tested via the CLI
+  against a real script (`spec/fixtures/dynamic_inventory/inventory.sh`)
+  + `testing/test-dynamic-inventory-quick.yml` +
+  `spec/integration/cli_spec.cr`. Verified against real `ansible-playbook`
+  against the same script/playbook - output matched exactly.
 - [x] `async:` / `poll:` / `async_status` (`0.9.10`): runs a module in the
   background up to `async:` seconds, checking every `poll:` seconds
   (default 10, matching real Ansible) until it finishes or the timeout

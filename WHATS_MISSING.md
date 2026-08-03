@@ -76,10 +76,12 @@ Everything that used to be listed here as high/medium priority - conditionals, f
 - ✅ `changed_when` / `failed_when` - shipped in `0.9.7`
 - ✅ `delegate_to` / `run_once` - shipped in `0.9.8`
 - ✅ `group_vars` / `host_vars` directory loading - shipped in `0.9.9`
-  (dynamic/script-based inventory itself is still not implemented)
 - ✅ `async:` / `poll:` / `async_status` - shipped in `0.9.10` (local
   connections only)
-- Cloud plugins (`ec2`, `s3_bucket`, `azure_rm_*`) - lowest ROI per usage stats (~5% of playbooks)
+- ✅ Dynamic inventory (executable script) - shipped in `0.9.11`
+  (Ansible's newer YAML-defined inventory *plugins*, e.g. `aws_ec2.yml`,
+  are not implemented)
+- Cloud plugins (`ec2`, `s3_bucket`, `azure_rm_*`) - lowest ROI per usage stats (~5% of playbooks) - the only Phase 4 item left
 
 **Workaround:** Structure playbooks with separate plays per host/delegate target.
 

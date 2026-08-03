@@ -1,0 +1,19 @@
+# Dynamic (executable script) inventory smoke test. Targets "testservers",
+# same convention as test-copy.yml/test-async-quick.yml/etc.: under the
+# generic empty static inventory used by every other testing/*.yml
+# fixture, "testservers" resolves to zero hosts and this play is skipped.
+# Run for real against spec/fixtures/dynamic_inventory/inventory.sh, whose
+# --list output connects "dynhost1" locally.
+
+- name: dynamic inventory test
+  hosts: testservers
+  gather_facts: false
+
+  tasks:
+    - name: show a var supplied by the dynamic inventory script
+      ansible.builtin.debug:
+        msg: "connection={{ ansible_connection }}"
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "dynamic inventory smoke test complete!"

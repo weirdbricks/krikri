@@ -211,6 +211,19 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("async / poll / async_status smoke test complete!")
   end
 
+  it "detects an executable inventory file as a dynamic inventory script and uses its --list JSON output" do
+    status, output = run_playbook(
+      "test-dynamic-inventory-quick.yml",
+      [] of String,
+      inventory: File.join(PROJECT_ROOT, "spec", "fixtures", "dynamic_inventory", "inventory.sh")
+    )
+
+    status.success?.should be_true
+    output.should contain("ok: [dynhost1]")
+    output.should contain("connection=local")
+    output.should contain("dynamic inventory smoke test complete!")
+  end
+
   it "recovers a failed block: via rescue:, always runs always:, and the play continues" do
     status, output = run_playbook("test-error-handling-quick.yml", [] of String)
 
