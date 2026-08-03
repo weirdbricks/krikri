@@ -1,0 +1,71 @@
+- name: yum_repository
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: create the reposdir
+      ansible.builtin.file:
+        path: /work/yum.repos.d
+        state: directory
+
+    - name: write a repo file
+      ansible.builtin.yum_repository:
+        name: epel
+        description: "EPEL YUM repo"
+        baseurl: "https://download.example/pub/epel/$releasever/$basearch/"
+        gpgcheck: true
+        gpgkey: "https://download.example/pub/epel/RPM-GPG-KEY-EPEL"
+        enabled: true
+        reposdir: /work/yum.repos.d
+      register: write_result
+
+    - name: idempotent rerun
+      ansible.builtin.yum_repository:
+        name: epel
+        description: "EPEL YUM repo"
+        baseurl: "https://download.example/pub/epel/$releasever/$basearch/"
+        gpgcheck: true
+        gpgkey: "https://download.example/pub/epel/RPM-GPG-KEY-EPEL"
+        enabled: true
+        reposdir: /work/yum.repos.d
+      register: rerun_result
+
+    - name: rewrite with a different set of keys, dropping ones not passed this time
+      ansible.builtin.yum_repository:
+        name: epel
+        description: "EPEL YUM repo"
+        baseurl: "https://download.example/pub/epel/$releasever/$basearch/"
+        priority: 10
+        reposdir: /work/yum.repos.d
+      register: rewrite_result
+
+    - name: write to a custom file
+      ansible.builtin.yum_repository:
+        name: myrepo
+        description: "My Repo"
+        baseurl: "https://example.com/repo"
+        file: custom-file
+        reposdir: /work/yum.repos.d
+      register: custom_file_result
+
+    - name: remove the epel repo
+      ansible.builtin.yum_repository:
+        name: epel
+        state: absent
+        reposdir: /work/yum.repos.d
+      register: remove_result
+
+    - name: read the custom file's content back (epel.repo is gone by this point, so only this one is checked)
+      ansible.builtin.command: cat /work/yum.repos.d/custom-file.repo
+      register: custom_file_content
+      changed_when: false
+
+    - name: write the stable results and file contents to a file for comparison
+      ansible.builtin.copy:
+        content: |
+          write_changed={{ write_result.changed }}
+          rerun_changed={{ rerun_result.changed }}
+          rewrite_changed={{ rewrite_result.changed }}
+          custom_file_changed={{ custom_file_result.changed }}
+          remove_changed={{ remove_result.changed }}
+          custom_file_content={{ custom_file_content.stdout }}
+        dest: /work/yum-repository-output.txt

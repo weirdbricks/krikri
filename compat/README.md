@@ -93,7 +93,7 @@ test with exact content assertions for the `lineinfile` bug).
 
 ## Coverage
 
-Twenty-one playbooks, one per concern: `debug`/`copy`, `file` states,
+Twenty-three playbooks, one per concern: `debug`/`copy`, `file` states,
 `lineinfile`, `loop`/`with_items`, real `user`/`group` creation and
 modification, `block`/`rescue`/`always`, `until`/`retries`, `cron`
 (`cron_file:`), `authorized_key`, `git` clone/checkout against a local
@@ -136,7 +136,17 @@ rerun (`tar --compare`-based - the same mechanism real Ansible's own
 `TgzArchive#is_unarchived` uses), zip extraction, `exclude:`, and
 `creates:` - compared via `changed`/`handler`, with the source archives
 deleted before the snapshot for the same non-byte-comparable-binary
-reason as `archive`'s own compat playbook.
+reason as `archive`'s own compat playbook. `apt_repository`
+(`22-apt-repository.yml`) covers adding a repo with a custom filename,
+an idempotent rerun, adding a second repo with a derived filename,
+removing a repo, and an idempotent rerun of the removal - this is the
+plugin that caught the `grep -v`/`&&` short-circuit bug (see
+`ROADMAP.md`), which only ever showed up running a removal *twice*, not
+once. `yum_repository` (`23-yum-repository.yml`) covers writing a
+`.repo` file, an idempotent rerun, a rewrite with a different parameter
+set (confirming keys not passed this time are dropped, not merged), a
+custom `file:` target, and removal - compared via `changed` plus each
+file's actual content read back with `command:`/`shell:`.
 
 Not covered here (same gaps noted elsewhere in this repo): `apt`/`dnf`/
 `package` (would need a slower, distro-specific compat image and real

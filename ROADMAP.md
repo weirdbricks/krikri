@@ -1,22 +1,24 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-02:** builds again on Crystal 1.20.3 (fixed `as_i` -> `as_i64`
+**Status as of 2026-08-03:** builds again on Crystal 1.20.3 (fixed `as_i` -> `as_i64`
 type mismatch in `comparison_evaluator.cr`). **Phase 0, Phase 1, and Phase 2 are
 all done** (roles, import/include, and vault); **Phase 3 is in progress**
-(`0.9.2`) - `stat`, `find`, `archive`, and `unarchive` are done.
-345+ specs passing, `ameba` clean on all new/touched code. Added a Docker-based
+(`0.9.3`) - `stat`, `find`, `archive`, `unarchive`, `apt_repository`, and
+`yum_repository` are done.
+365+ specs passing, `ameba` clean on all new/touched code. Added a Docker-based
 compatibility harness (`compat/`, see `compat/README.md`) that runs the same
 playbooks through real `ansible-playbook` and `crystal-ansible` side by side and
 diffs the results - ground truth instead of assumptions about Ansible's
-documented behavior; 21/21 compat playbooks pass, including all of roles,
+documented behavior; 23/23 compat playbooks pass, including all of roles,
 `import_playbook:`, `import_tasks:`, `include_tasks:`, `include_role:`,
 vault (both a whole vault-encrypted playbook file and an inline `!vault`
-variable), `stat`, `find`, `archive`, and `unarchive`. Along the way it (and,
-for some bugs the file-state-diffing approach can't catch, plain manual
-testing) found and fixed 11 real bugs: `authorized_key` registered under the
-wrong FQCN (it's `ansible.posix.authorized_key`, not `ansible.builtin.*` -
-confirmed via `ansible-doc`, not memory), plugin resolution breaking outside
-the repo checkout, `Host.from_json` crashing on a host with no explicit user,
+variable), `stat`, `find`, `archive`, `unarchive`, `apt_repository`, and
+`yum_repository`. Along the way it (and, for some bugs the file-state-diffing
+approach can't catch, plain manual testing) found and fixed 12 real bugs:
+`authorized_key` registered under the wrong FQCN (it's
+`ansible.posix.authorized_key`, not `ansible.builtin.*` - confirmed via
+`ansible-doc`, not memory), plugin resolution breaking outside the repo
+checkout, `Host.from_json` crashing on a host with no explicit user,
 `lineinfile` inserting a spurious blank line on every append/removal to a file
 already ending in a newline, `include_role:` + `loop:` producing duplicate
 handler *Task objects* sharing a name (which `HandlerRunner` ran once each
@@ -29,9 +31,13 @@ wrongly reused with the same meaning for `excludes:`, where it should mean
 "exclude nothing"), `archive`'s directory arguments being double-included when
 passed to `tar`/`zip` alongside their own already-walked children, `arcroot`
 being computed wrong due to a real Crystal/Python `dirname` divergence on
-trailing-slash paths, and `exclusion_patterns` silently failing to match any
+trailing-slash paths, `exclusion_patterns` silently failing to match any
 path with a subdirectory component because `*` doesn't cross `/` in Crystal's
-`File.match?`. Next up is the rest of Phase 3. This
+`File.match?`, and `apt_repository`'s removal logic silently no-oping because
+`grep -v ... && mv ...` skips the `mv` whenever `grep -v` filters out every
+line (its normal exit-1-for-zero-output-lines behavior, not an error) - the
+common case when removing the only line from a single-repo file. Next up is
+the rest of Phase 3. This
 roadmap sequences the remaining work from the two prior analysis docs
 ([WHATS_MISSING.md](WHATS_MISSING.md), [MISSING_FEATURES_COMPREHENSIVE.md](MISSING_FEATURES_COMPREHENSIVE.md))
 into phases, with the test-foundation phase (Phase 0) landing first so every
@@ -454,7 +460,72 @@ the same way it did between January and now.
     themselves are deleted before the snapshot for the same
     non-byte-comparable-binary reason `archive`'s compat playbook
     already documents).
-- `apt_repository` / `yum_repository`
+- [x] `apt_repository` (`0.9.3`): adds/removes a Debian/Ubuntu APT source
+  line under `/etc/apt/sources.list.d/`. Parameters: `repo` (a plain
+  `deb`/`deb-src` line, required), `state`, `filename`, `update_cache`
+  (default true), `mode`, `check_mode`. Idempotency checks whether the
+  normalized line already appears, enabled, in `/etc/apt/sources.list`
+  or any `sources.list.d/*.list` file, not just the target file - matches
+  real Ansible's own `SourcesList`, which reads all of them before
+  deciding whether an add/remove is a no-op. The default filename is
+  derived by a new `src/crystal_play/plugin_helpers/apt_repository_line.cr`
+  (unit tested, `spec/unit/apt_repository_line_spec.cr`) that replicates
+  real Ansible's own `_suggest_filename` logic exactly - verified by
+  reading `apt_repository.py`'s actual source and cross-checking output
+  against a direct Python re-implementation of it for several inputs, not
+  assumed from docs. Since writing to `/etc/apt/` needs root,
+  `spec/integration/apt_repository_spec.cr` exercises `check_mode` only
+  (same convention `user_spec.cr`/`group_spec.cr` already use), with the
+  real add/remove/idempotency path verified via the compat harness
+  instead (`compat/playbooks/22-apt-repository.yml` - passed).
+  - Found and fixed a real bug via that compat playbook: `grep -v`
+    exits 1 (not just "no lines found *by* -v", but "-v selected zero
+    lines to print") whenever a filter removes every line from its
+    input - the common case when removing a repo from a single-line
+    file. The remove logic was `grep -v ... > tmp && mv tmp file`,
+    so that `&&` silently skipped the `mv` on exactly this common case,
+    leaving the file untouched while still reporting `changed: true`.
+    Caught by running a removal twice in a row against real
+    `ansible-playbook` and finding crystal-ansible reported `changed:
+    true` both times (real Ansible correctly reported `true` then
+    `false`). Fixed by using `;` instead of `&&`.
+  - Not implemented: `ppa:` shorthand (resolves a PPA's GPG key and
+    codename via the Launchpad API - a real network dependency, out of
+    scope the same way other network-resolving features are throughout
+    this codebase), `codename`, `install_python_apt` (crystal-ansible
+    never shells out to python-apt in the first place),
+    `validate_certs`, `update_cache_retries`/`update_cache_retry_max_delay`.
+- [x] `yum_repository` (`0.9.3`): writes a `.repo` INI file under
+  `/etc/yum.repos.d/`. Parameters: `name` (required, the INI section),
+  `description` (required when `state: present` - real Ansible validates
+  this explicitly, confirmed via actual error message text, not assumed;
+  written as the file's `name =` key, a real, confirmed quirk - the
+  module's own `name` param is the id/section, `description` is what
+  ends up as the `name=` field), at least one of `baseurl`/`mirrorlist`/
+  `metalink` (also required, same explicit-validation-message pattern),
+  `gpgcheck`/`enabled` (booleans, rendered as `1`/`0`), `gpgkey`/
+  `exclude`/`includepkgs` (lists, space-joined on one line), `priority`,
+  `state`, `file` (defaults to `name`), `reposdir` (defaults to
+  `/etc/yum.repos.d`), `mode`/`owner`/`group`. Each run regenerates the
+  INI section from scratch using only the parameters given *that* run -
+  verified against real `ansible-playbook`: rerunning with a different
+  parameter set drops keys that were present before but aren't passed
+  this time, which is real Ansible's actual behavior, not something to
+  "fix". Unlike `apt_repository`, this plugin only writes plain files (no
+  root needed, no real yum/dnf required either - it's pure file I/O), so
+  `spec/integration/yum_repository_spec.cr` exercises the real
+  add/idempotency/rewrite/remove paths directly, all verified
+  field-for-field and byte-for-byte against real `ansible-playbook`'s
+  actual file output before being written. Also verified via the compat
+  harness (`compat/playbooks/23-yum-repository.yml` - passed). Not
+  implemented: the many lower-value/rarer yum.conf tuning knobs (`async`,
+  `bandwidth`, `cost`, `deltarpm_*`, `http_caching`, `ip_resolve`,
+  `keepalive`, `keepcache`, `metadata_expire*`, `module_hotfixes`,
+  `protect`, `repo_gpgcheck`, `retries`, `s3_enabled`,
+  `skip_if_unavailable`, `ssl*`, `throttle`, `timeout`, `ui_repoid_vars`,
+  `username`/`password`/`proxy_*`, `unsafe_writes`, `countme`,
+  `enablegroups`, `failovermethod`, `include`), SELinux options,
+  `attributes`.
 - `sysctl`, `mount`
 - `ufw` / `firewalld`
 - `docker_container` / `docker_image` / `docker_network`

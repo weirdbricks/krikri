@@ -191,6 +191,8 @@ PLUGINS=(
     "find"
     "archive"
     "unarchive"
+    "yum_repository"
+    "apt_repository"
 )
 
 PLUGIN_COUNT=0

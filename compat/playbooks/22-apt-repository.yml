@@ -1,0 +1,61 @@
+- name: apt_repository
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: add a repository (custom filename, no cache update - no real network access in this container)
+      ansible.builtin.apt_repository:
+        repo: "deb http://archive.ubuntu.com/ubuntu focal main"
+        filename: crystal-ansible-test
+        update_cache: false
+      register: add_result
+
+    - name: idempotent rerun of the same repository
+      ansible.builtin.apt_repository:
+        repo: "deb http://archive.ubuntu.com/ubuntu focal main"
+        filename: crystal-ansible-test
+        update_cache: false
+      register: rerun_result
+
+    - name: add a second repository with a default (derived) filename
+      ansible.builtin.apt_repository:
+        repo: "deb http://security.ubuntu.com/ubuntu focal-security main"
+        update_cache: false
+      register: derived_result
+
+    - name: remove the first repository
+      ansible.builtin.apt_repository:
+        repo: "deb http://archive.ubuntu.com/ubuntu focal main"
+        filename: crystal-ansible-test
+        state: absent
+        update_cache: false
+      register: remove_result
+
+    - name: idempotent rerun of the removal
+      ansible.builtin.apt_repository:
+        repo: "deb http://archive.ubuntu.com/ubuntu focal main"
+        filename: crystal-ansible-test
+        state: absent
+        update_cache: false
+      register: remove_rerun_result
+
+    - name: check whether the derived-filename file still contains the second repo line
+      ansible.builtin.shell: grep -qxF "deb http://security.ubuntu.com/ubuntu focal-security main" /etc/apt/sources.list.d/security_ubuntu_com_ubuntu.list
+      register: derived_check
+      changed_when: false
+
+    - name: check whether the custom-filename file was removed
+      ansible.builtin.stat:
+        path: /etc/apt/sources.list.d/crystal-ansible-test.list
+      register: removed_check
+
+    - name: write the stable results to a file for comparison
+      ansible.builtin.copy:
+        content: |
+          add_changed={{ add_result.changed }}
+          rerun_changed={{ rerun_result.changed }}
+          derived_changed={{ derived_result.changed }}
+          derived_check_rc={{ derived_check.rc }}
+          remove_changed={{ remove_result.changed }}
+          remove_rerun_changed={{ remove_rerun_result.changed }}
+          custom_file_exists={{ removed_check.stat.exists }}
+        dest: /work/apt-repository-output.txt
