@@ -1,0 +1,29 @@
+# delegate_to:/run_once: smoke test. Targets the "multilocal" group, which
+# only exists in spec/fixtures/inventory-multi-local.ini (two hosts, both
+# ansible_connection=local so this is safe to run for real without a
+# second machine to SSH into) - under the generic empty inventory used by
+# every other testing/*.yml fixture, "multilocal" resolves to zero hosts
+# and this play is skipped, same convention as the "testservers" fixtures.
+
+- name: delegate_to / run_once test
+  hosts: multilocal
+  gather_facts: false
+
+  tasks:
+    - name: run_once command only actually executes once
+      ansible.builtin.command: /bin/true
+      register: once_result
+      run_once: true
+
+    - name: every host can still see what run_once registered
+      ansible.builtin.debug:
+        msg: "once_result changed={{ once_result.changed }}"
+
+    - name: delegate_to keeps vars/register attributed to the original host
+      ansible.builtin.debug:
+        msg: "inventory_hostname={{ inventory_hostname }}"
+      delegate_to: localhost
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "delegate_to / run_once smoke test complete!"

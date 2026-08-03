@@ -346,6 +346,52 @@ describe CrystalPlay::PlaybookParser do
     end
   end
 
+  describe "delegate_to / run_once parsing" do
+    it "parses delegate_to as a string" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hello
+          delegate_to: localhost
+        YAML
+
+      task.delegate_to.should eq("localhost")
+    end
+
+    it "parses a templated delegate_to" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hello
+          delegate_to: "{{ target_host }}"
+        YAML
+
+      task.delegate_to.should eq("{{ target_host }}")
+    end
+
+    it "parses run_once: true" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hello
+          run_once: true
+        YAML
+
+      task.run_once.should be_true
+    end
+
+    it "defaults run_once to false and delegate_to to nil when omitted" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hello
+        YAML
+
+      task.run_once.should be_false
+      task.delegate_to.should be_nil
+    end
+  end
+
   describe "block / rescue / always parsing" do
     it "parses block: into block_tasks and marks the task as a block" do
       task = single_task(<<-YAML)

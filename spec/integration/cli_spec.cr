@@ -161,6 +161,27 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should_not contain("failed=1")
   end
 
+  it "runs run_once: only on the first host but still exposes its register: to every host, and keeps delegate_to: vars attributed to the delegating host" do
+    status, output = run_playbook(
+      "test-delegate-run-once-quick.yml",
+      [] of String,
+      inventory: File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-multi-local.ini")
+    )
+
+    status.success?.should be_true
+    # run_once: only actually executes (and is displayed/counted) for the
+    # first host in the play.
+    output.should contain("changed: [web1]")
+    output.should_not contain("changed: [web2]")
+    # but its registered result is still visible from both hosts.
+    output.scan("once_result changed=True").size.should eq(2)
+    # delegate_to: redirects the connection, not the variables - each
+    # host's own inventory_hostname still shows through.
+    output.should contain("inventory_hostname=web1")
+    output.should contain("inventory_hostname=web2")
+    output.should contain("delegate_to / run_once smoke test complete!")
+  end
+
   it "recovers a failed block: via rescue:, always runs always:, and the play continues" do
     status, output = run_playbook("test-error-handling-quick.yml", [] of String)
 

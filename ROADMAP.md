@@ -704,7 +704,42 @@ the same way it did between January and now.
   deprecation warning about wrapping conditionals in `{{ }}` (which this
   codebase's evaluator, unlike real Ansible's Jinja2, actually needs for
   the dotted-access case above).
-- `delegate_to`, `run_once`
+- [x] `delegate_to` / `run_once` (`0.9.8`): `delegate_to:` runs a task's
+  actual module/connection against a different host than the one the play
+  is iterating - variables, facts, `register:`, and recap stats stay
+  attributed to the original host, matching real Ansible (only the
+  connection is redirected, not the templating context). May be templated
+  (`{{ vars }}`), resolved at execution time against the *original* host's
+  vars context, then looked up via a new optional `TaskExecutor#@inventory`
+  (the full `Inventory`, not just the play's own resolved host list, since
+  a delegate target like `localhost` is often outside the play's own
+  `hosts:` pattern) - falling back to a bare constructed `Host` (mirroring
+  `Inventory#get_hosts`'s own implicit-localhost behavior) if the target
+  isn't in the inventory at all. Implemented by threading a second `Host`
+  (`exec_host`, defaulting to the original `host`) through
+  `execute_task_once`/`execute_looped_task`/`execute_task_with_retries`,
+  used only for the actual `PluginManager.execute_plugin`/
+  `ActionPluginManager.execute_action` calls - everything else (`when:`
+  substitution, `vars_context`, display, `register:`) keeps using the
+  original host. `run_once:` executes the task only for the first host in
+  the play's own host list; every other host skips it outright (no
+  output/stats, matching real Ansible), but still copies over whatever it
+  registered so a later task on those hosts can reference the same
+  variable (real Ansible's own run_once + register: interaction is subtler
+  in edge cases; this is a documented, simpler approximation, not a claim
+  of pixel-perfect parity). Unit tested
+  (`spec/unit/playbook_parser_spec.cr`'s "delegate_to / run_once parsing"
+  group) and integration tested for real via a new
+  `spec/fixtures/inventory-multi-local.ini` (two hosts, both
+  `ansible_connection=local` - lets multi-host behavior be exercised for
+  real without a second machine to actually SSH into) +
+  `testing/test-delegate-run-once-quick.yml` +
+  `spec/integration/cli_spec.cr`. Verified against real `ansible-playbook`
+  manually against the same inventory/playbook - task-for-task output and
+  recap matched (modulo this codebase's own pre-existing, unrelated
+  `ok`/`changed` recap-bucket convention being mutually exclusive rather
+  than real Ansible's overlapping counters, true of every feature already
+  shipped here, not something new to this one).
 - Async execution (`async:` / `poll:`, `async_status`)
 - Dynamic inventory support + `group_vars` / `host_vars` directory loading
 - Cloud plugins (`ec2`, `s3_bucket`, `azure_rm_*`) - optional, lowest ROI

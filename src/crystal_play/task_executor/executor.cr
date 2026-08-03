@@ -8,6 +8,7 @@ require "./variable_context"
 require "./result_display"
 require "./handler_runner"
 require "../action_plugin_manager"
+require "../inventory_parser"
 
 module CrystalPlay
   # TaskExecutor - Executes tasks on hosts
@@ -33,6 +34,13 @@ module CrystalPlay
     # the play are skipped for them (Ansible's default "a failure aborts
     # the rest of the play for that host" behavior).
     @halted_hosts : Set(String)
+    # Full inventory, used to resolve delegate_to: targets that aren't
+    # necessarily in this play's own host list (e.g. "localhost" when the
+    # play targets a remote group). Optional - a caller that doesn't pass
+    # one (or a delegate_to: target it can't find) falls back to a bare
+    # Host constructed from the target name, same as Inventory#get_hosts's
+    # own implicit-localhost behavior.
+    @inventory : Inventory?
 
     def initialize(
       @hosts,
@@ -41,7 +49,8 @@ module CrystalPlay
       @check_mode = false,
       @diff_mode = false,
       @play_vars = {} of String => JSON::Any,
-      @gather_facts = true
+      @gather_facts = true,
+      @inventory = nil
     )
       @results = Hash(String, Hash(String, Int32)).new
       @registered_vars = Hash(String, Hash(String, JSON::Any)).new
@@ -166,7 +175,22 @@ module CrystalPlay
       return execute_include_tasks(task, host) if task.include_tasks?
       return execute_include_role(task, host) if task.include_role?
 
+      # run_once: only the first host in the play actually executes it;
+      # later hosts get no output/stats at all, matching real Ansible - but
+      # still pick up whatever it registered, so later tasks on those hosts
+      # can reference the same variable.
+      if task.run_once && host.name != @hosts.first.name
+        copy_run_once_register(task, host)
+        return
+      end
+
       vars_context = build_vars_context(task, host)
+
+      # delegate_to: run the module against a different host's connection
+      # while vars/facts/register/stats stay attributed to `host` - resolved
+      # here (not at parse time) since it may be templated and needs the
+      # variable context to substitute against.
+      exec_host = resolve_delegate_host(task, host, vars_context)
 
       # with_fileglob needs a substitutor (for {{ vars }} in the pattern) and
       # the filesystem, so it can only be resolved here, not at parse time.
@@ -177,19 +201,51 @@ module CrystalPlay
         resolve_loop_template(task, vars_context)
 
       if loop_items
-        execute_looped_task(task, host, vars_context, loop_items)
+        execute_looped_task(task, host, vars_context, loop_items, exec_host)
         return
       end
 
       if (until_condition = task.until_condition) && !@check_mode
-        execute_task_with_retries(task, host, vars_context, until_condition)
+        execute_task_with_retries(task, host, vars_context, until_condition, exec_host)
         return
       end
 
-      result = execute_task_once(task, host, vars_context)
+      result = execute_task_once(task, host, vars_context, exec_host: exec_host)
       return unless result
 
       finish_single_task(task, host, result)
+    end
+
+    # Resolve delegate_to: to the Host whose connection the module should
+    # actually run against. Variables used to substitute a templated
+    # delegate_to: value are still `host`'s own (real Ansible doesn't
+    # delegate variables, only the connection).
+    private def resolve_delegate_host(task : Task, host : Host, vars_context : Hash(String, JSON::Any)) : Host
+      delegate_to = task.delegate_to
+      return host unless delegate_to
+
+      substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+      target_name = substitutor.substitute(delegate_to)
+
+      if (inventory = @inventory) && (resolved = inventory.get_hosts(target_name)).any?
+        return resolved.first
+      end
+
+      fallback = Host.new(target_name, ENV["USER"]? || "root", 22)
+      fallback.vars["ansible_connection"] = JSON::Any.new("local") if target_name == "localhost"
+      fallback
+    end
+
+    # run_once: on every host after the first, skip execution outright but
+    # still copy over whatever the first host's run registered, so a later
+    # task on this host referencing it doesn't see an undefined variable.
+    private def copy_run_once_register(task : Task, host : Host)
+      register_name = task.register
+      return unless register_name && !register_name.empty?
+
+      if value = @registered_vars[@hosts.first.name][register_name]?
+        @registered_vars[host.name][register_name] = value
+      end
     end
 
     # Build the base variable context (play/host/registered/task vars + facts)
@@ -285,7 +341,8 @@ module CrystalPlay
       task : Task,
       host : Host,
       vars_context : Hash(String, JSON::Any),
-      item_label : String? = nil
+      item_label : String? = nil,
+      exec_host : Host = host
     ) : JSON::Any?
       if when_condition = task.when_condition
         substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
@@ -309,7 +366,7 @@ module CrystalPlay
           task.module_name,
           substituted_params,
           vars_context,
-          host
+          exec_host
         )
 
         unless action_result.success
@@ -326,13 +383,13 @@ module CrystalPlay
         end
       end
 
-      config = build_plugin_config(task, host, substituted_params, vars_context)
+      config = build_plugin_config(task, exec_host, substituted_params, vars_context)
       config_json = JSON.parse(config)
 
       result = PluginManager.execute_plugin(
         task.module_name,
         config_json,
-        host,
+        exec_host,
         vars_context
       )
 
@@ -401,7 +458,8 @@ module CrystalPlay
       task : Task,
       host : Host,
       base_vars_context : Hash(String, JSON::Any),
-      loop_items : Array(JSON::Any)
+      loop_items : Array(JSON::Any),
+      exec_host : Host = host
     )
       results = [] of JSON::Any
       any_changed = false
@@ -411,7 +469,7 @@ module CrystalPlay
         vars_context = base_vars_context.dup
         vars_context["item"] = item
 
-        result = execute_task_once(task, host, vars_context, item_label: item_display(item))
+        result = execute_task_once(task, host, vars_context, item_label: item_display(item), exec_host: exec_host)
         next unless result
 
         changed = result["changed"]?.try(&.as_bool) || false
@@ -460,14 +518,15 @@ module CrystalPlay
       task : Task,
       host : Host,
       vars_context : Hash(String, JSON::Any),
-      until_condition : String
+      until_condition : String,
+      exec_host : Host = host
     )
       register_name = task.register
       attempts = task.retries.clamp(1..)
       result = nil
 
       attempts.times do |attempt|
-        result = execute_task_once(task, host, vars_context)
+        result = execute_task_once(task, host, vars_context, exec_host: exec_host)
         break unless result
 
         if register_name && !register_name.empty?

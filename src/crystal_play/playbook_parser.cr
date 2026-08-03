@@ -47,6 +47,16 @@ module CrystalPlay
     # expressions, then handed to ConditionalEvaluator.
     property changed_when : String?
     property failed_when : String?
+    # delegate_to: - run this task's actual module/connection against a
+    # different host than the one the play is iterating (e.g. "localhost"),
+    # while variables/facts/register/stats still belong to the original
+    # host. May be templated ({{ vars }}), so kept as a raw string and
+    # resolved at execution time (same reasoning as include_file).
+    property delegate_to : String?
+    # run_once: - only actually execute this task for the first host in
+    # the play; later hosts skip it outright (no output/stats), same as
+    # real Ansible.
+    property run_once : Bool
     # block: / rescue: / always: - only set when module_name == "_block"
     # (a pseudo-module marking this Task as a block rather than a plugin
     # invocation). Blocks can nest, since these are themselves Task lists.
@@ -109,6 +119,8 @@ module CrystalPlay
       @delay = 5
       @changed_when = nil
       @failed_when = nil
+      @delegate_to = nil
+      @run_once = false
       @block_tasks = nil
       @rescue_tasks = nil
       @always_tasks = nil
@@ -467,7 +479,7 @@ module CrystalPlay
                       "diff", "become", "become_user", "tags", "with_items", "loop",
                       "with_dict", "with_fileglob", "with_nested", "with_sequence",
                       "with_indexed_items", "until", "retries", "delay",
-                      "notify", "changed_when", "failed_when",
+                      "notify", "changed_when", "failed_when", "delegate_to", "run_once",
                       "block", "rescue", "always", "import_tasks", "include_tasks", "include_role"]
       
       module_name = nil
@@ -572,6 +584,10 @@ module CrystalPlay
       # Parse changed_when / failed_when
       task.changed_when = task_hash["changed_when"]?.try { |v| safe_yaml_to_string(v) }
       task.failed_when = task_hash["failed_when"]?.try { |v| safe_yaml_to_string(v) }
+
+      # Parse delegate_to / run_once
+      task.delegate_to = task_hash["delegate_to"]?.try { |v| safe_yaml_to_string(v) }
+      task.run_once = task_hash["run_once"]?.try(&.as_bool) || false
 
       task
     end

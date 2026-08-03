@@ -74,7 +74,7 @@ Everything that used to be listed here as high/medium priority - conditionals, f
 
 ### **🟢 Phase 4 - Advanced execution features**
 - ✅ `changed_when` / `failed_when` - shipped in `0.9.7`
-- `delegate_to`, `run_once`
+- ✅ `delegate_to` / `run_once` - shipped in `0.9.8`
 - Async execution (`async:` / `poll:`, `async_status`)
 - Dynamic inventory support + `group_vars` / `host_vars` directory loading
 - Cloud plugins (`ec2`, `s3_bucket`, `azure_rm_*`) - lowest ROI per usage stats (~5% of playbooks)

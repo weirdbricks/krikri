@@ -285,7 +285,8 @@ playbook.plays.each_with_index do |play, play_index|
     check_mode: check_mode,
     diff_mode: diff_mode,
     play_vars: play.vars,
-    gather_facts: play.gather_facts
+    gather_facts: play.gather_facts,
+    inventory: inventory
   )
 
   # Run tasks
