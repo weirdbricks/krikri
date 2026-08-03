@@ -1,0 +1,99 @@
+- name: unarchive
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: seed the source directory tree
+      ansible.builtin.file:
+        path: /work/unarchsrc/sub
+        state: directory
+
+    - name: seed source files
+      ansible.builtin.copy:
+        content: "{{ item.content }}\n"
+        dest: "/work/unarchsrc/{{ item.name }}"
+      loop:
+        - {name: a.txt, content: hello}
+        - {name: sub/b.txt, content: nested}
+
+    - name: build a tar.gz to extract from (via shell, since this playbook is testing unarchive, not archive)
+      ansible.builtin.shell: tar czf /work/unarch.tar.gz -C /work/unarchsrc .
+      changed_when: false
+
+    - name: build a zip to extract from
+      ansible.builtin.shell: cd /work && zip -qr unarch.zip unarchsrc
+
+    - name: extract the tar.gz
+      ansible.builtin.file:
+        path: /work/tar_dest
+        state: directory
+
+    - name: extract tar.gz into tar_dest
+      ansible.builtin.unarchive:
+        src: /work/unarch.tar.gz
+        dest: /work/tar_dest
+        remote_src: true
+      register: tar_result
+
+    - name: idempotent rerun of the tar.gz extraction
+      ansible.builtin.unarchive:
+        src: /work/unarch.tar.gz
+        dest: /work/tar_dest
+        remote_src: true
+      register: tar_rerun_result
+
+    - name: extract the zip
+      ansible.builtin.file:
+        path: /work/zip_dest
+        state: directory
+
+    - name: extract zip into zip_dest
+      ansible.builtin.unarchive:
+        src: /work/unarch.zip
+        dest: /work/zip_dest
+        remote_src: true
+      register: zip_result
+
+    - name: extract with an exclude
+      ansible.builtin.file:
+        path: /work/exclude_dest
+        state: directory
+
+    - name: extract tar.gz excluding sub/b.txt
+      ansible.builtin.unarchive:
+        src: /work/unarch.tar.gz
+        dest: /work/exclude_dest
+        remote_src: true
+        exclude:
+          - sub/b.txt
+      register: exclude_result
+
+    - name: creates check against an already-extracted marker
+      ansible.builtin.unarchive:
+        src: /work/unarch.tar.gz
+        dest: /work/tar_dest
+        remote_src: true
+        creates: /work/tar_dest/a.txt
+      register: creates_result
+
+    - name: write the stable results to a file for comparison
+      ansible.builtin.copy:
+        content: |
+          tar_changed={{ tar_result.changed }} tar_handler={{ tar_result.handler }}
+          tar_rerun_changed={{ tar_rerun_result.changed }}
+          zip_changed={{ zip_result.changed }} zip_handler={{ zip_result.handler }}
+          exclude_changed={{ exclude_result.changed }}
+          creates_changed={{ creates_result.changed }}
+        dest: /work/unarchive-output.txt
+
+    # The tar.gz/zip built here aren't byte-comparable across engines
+    # (tar/zip embed timestamps even for logically identical content) -
+    # same reasoning as 20-archive.yml's cleanup step. What matters
+    # (extraction succeeded, idempotency, exclude, creates:) is already
+    # captured in unarchive-output.txt above.
+    - name: remove the non-byte-comparable source archives before the compat snapshot
+      ansible.builtin.file:
+        path: "/work/{{ item }}"
+        state: absent
+      loop:
+        - unarch.tar.gz
+        - unarch.zip

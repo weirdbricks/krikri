@@ -3,20 +3,20 @@
 **Status as of 2026-08-02:** builds again on Crystal 1.20.3 (fixed `as_i` -> `as_i64`
 type mismatch in `comparison_evaluator.cr`). **Phase 0, Phase 1, and Phase 2 are
 all done** (roles, import/include, and vault); **Phase 3 is in progress**
-(`0.9.1`) - `stat`, `find`, and `archive` are done.
-335+ specs passing, `ameba` clean on all new/touched code. Added a Docker-based
+(`0.9.2`) - `stat`, `find`, `archive`, and `unarchive` are done.
+345+ specs passing, `ameba` clean on all new/touched code. Added a Docker-based
 compatibility harness (`compat/`, see `compat/README.md`) that runs the same
 playbooks through real `ansible-playbook` and `crystal-ansible` side by side and
 diffs the results - ground truth instead of assumptions about Ansible's
-documented behavior; 20/20 compat playbooks pass, including all of roles,
+documented behavior; 21/21 compat playbooks pass, including all of roles,
 `import_playbook:`, `import_tasks:`, `include_tasks:`, `include_role:`,
 vault (both a whole vault-encrypted playbook file and an inline `!vault`
-variable), `stat`, `find`, and `archive`. Along the way it (and, for some bugs
-the file-state-diffing approach can't catch, plain manual testing) found and
-fixed 11 real bugs: `authorized_key` registered under the wrong FQCN (it's
-`ansible.posix.authorized_key`, not `ansible.builtin.*` - confirmed via
-`ansible-doc`, not memory), plugin resolution breaking outside the repo
-checkout, `Host.from_json` crashing on a host with no explicit user,
+variable), `stat`, `find`, `archive`, and `unarchive`. Along the way it (and,
+for some bugs the file-state-diffing approach can't catch, plain manual
+testing) found and fixed 11 real bugs: `authorized_key` registered under the
+wrong FQCN (it's `ansible.posix.authorized_key`, not `ansible.builtin.*` -
+confirmed via `ansible-doc`, not memory), plugin resolution breaking outside
+the repo checkout, `Host.from_json` crashing on a host with no explicit user,
 `lineinfile` inserting a spurious blank line on every append/removal to a file
 already ending in a newline, `include_role:` + `loop:` producing duplicate
 handler *Task objects* sharing a name (which `HandlerRunner` ran once each
@@ -415,10 +415,48 @@ the same way it did between January and now.
     either engine guarantees) and decompressed content. Required adding
     `bzip2`/`xz-utils`/`zip`/`unzip` and the `community.general`
     collection to `compat/Dockerfile`.
+- [x] `unarchive` (`0.9.2`): extracts an archive into an existing
+  directory - the counterpart to `archive`, but registered as
+  `ansible.builtin.unarchive` (verified via `ansible-doc unarchive`),
+  unlike `archive` itself which lives in `community.general`. Parameters:
+  `src`/`dest` (both required), `creates` (skip entirely if this path
+  already exists, same idempotency shortcut `command:`/`shell:` already
+  support), `exclude`/`include` (comma-separated, passed straight through
+  to tar's `--exclude`/zip's `-x` and file-list args - real tar/zip's own
+  path-vs-basename matching semantics apply, verified against real
+  `ansible-playbook`, which itself just forwards these the same way),
+  `keep_newer`, `list_files`, `mode`/`owner`/`group` (applied to the
+  *destination directory itself*, not per extracted file - verified
+  against real `ansible-playbook`'s actual return value shape, not
+  assumed). `dest` must already exist as a directory - crystal-ansible
+  fails with the same message real Ansible does rather than
+  auto-creating it, matching real behavior exactly.
+  - Archive type is auto-detected by attempting to read it (`tar tf`,
+    then `unzip -l` as a fallback) rather than by file extension - this
+    matches real Ansible's own `can_handle_archive` handler-probing
+    approach (confirmed by reading the actual `unarchive.py` source, not
+    assumed), and means GNU tar's own compression auto-detection handles
+    gz/bz2/xz/plain tar uniformly without needing a `format:` parameter
+    the way `community.general.archive` needs one.
+  - Idempotency for tar-based archives uses `tar --compare` against
+    `dest` - the exact mechanism real Ansible's own `TgzArchive#is_unarchived`
+    uses (confirmed via source, then verified empirically: `tar --compare`
+    exits 0 with no output when nothing differs, exits 1 with a diff line
+    when something does). For zip, a simpler per-member content-checksum
+    comparison is used instead of replicating real Ansible's much more
+    involved zipinfo/permission-based check - a documented approximation,
+    not a claim of bit-for-bit parity.
+  - Unit/integration tested (`spec/integration/unarchive_spec.cr`) and
+    verified against real `ansible-playbook` via the compat harness
+    (`compat/playbooks/21-unarchive.yml` - passed): tar.gz extraction,
+    an idempotent rerun, zip extraction, `exclude:`, and `creates:`,
+    compared via `changed`/`handler` (the raw extracted archive files
+    themselves are deleted before the snapshot for the same
+    non-byte-comparable-binary reason `archive`'s compat playbook
+    already documents).
 - `apt_repository` / `yum_repository`
 - `sysctl`, `mount`
 - `ufw` / `firewalld`
-- `unarchive`
 - `docker_container` / `docker_image` / `docker_network`
 - `mysql_db` / `mysql_user`, `postgresql_db` / `postgresql_user`
 

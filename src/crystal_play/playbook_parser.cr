@@ -191,6 +191,7 @@ module CrystalPlay
       "ansible.builtin.stat",
       "ansible.builtin.find",
       "community.general.archive",
+      "ansible.builtin.unarchive",
     ]
     
     # Parse playbook from file

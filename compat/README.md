@@ -93,7 +93,7 @@ test with exact content assertions for the `lineinfile` bug).
 
 ## Coverage
 
-Twenty playbooks, one per concern: `debug`/`copy`, `file` states,
+Twenty-one playbooks, one per concern: `debug`/`copy`, `file` states,
 `lineinfile`, `loop`/`with_items`, real `user`/`group` creation and
 modification, `block`/`rescue`/`always`, `until`/`retries`, `cron`
 (`cron_file:`), `authorized_key`, `git` clone/checkout against a local
@@ -131,6 +131,12 @@ raw archive files themselves are deleted before the compat snapshot,
 since gzip/zip/tar embed timestamps and tool-specific metadata that make
 even logically-identical archives byte-different - the listing/content
 comparisons above already prove equivalence at the level that matters.
+`unarchive` (`21-unarchive.yml`) covers tar.gz extraction, an idempotent
+rerun (`tar --compare`-based - the same mechanism real Ansible's own
+`TgzArchive#is_unarchived` uses), zip extraction, `exclude:`, and
+`creates:` - compared via `changed`/`handler`, with the source archives
+deleted before the snapshot for the same non-byte-comparable-binary
+reason as `archive`'s own compat playbook.
 
 Not covered here (same gaps noted elsewhere in this repo): `apt`/`dnf`/
 `package` (would need a slower, distro-specific compat image and real

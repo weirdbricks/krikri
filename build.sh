@@ -190,6 +190,7 @@ PLUGINS=(
     "stat"
     "find"
     "archive"
+    "unarchive"
 )
 
 PLUGIN_COUNT=0
