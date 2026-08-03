@@ -248,7 +248,46 @@ module CrystalPlay
       return default unless value
       ["true", "yes", "1", "on"].includes?(value.downcase)
     end
-    
+
+    # Applies owner/group/numeric mode to a single path natively
+    # (`File.chown`/`File.chmod`) instead of shelling to
+    # `chown`/`chgrp`/`chmod` - shared by plugins (`apt_repository`,
+    # `yum_repository`) that write a single config file and then apply
+    # ownership/permissions to it. A *symbolic* mode string (`u+x`) can't
+    # be resolved without reimplementing chmod(1)'s symbolic grammar, so
+    # it still shells to `chmod` for that one case - see `file.cr`'s own
+    # class doc comment for the same trade-off, made first there.
+    # Failures (unknown owner/group name, EPERM) are swallowed, matching
+    # every prior shell-based version of this logic: none of them checked
+    # chown/chgrp/chmod's exit code either.
+    protected def apply_owner_group_mode(path : String, owner : String?, group : String?, mode : String?)
+      uid = -1
+      gid = -1
+
+      if owner
+        if user = System::User.find_by?(name: owner)
+          uid = user.id.to_i
+        end
+      end
+
+      if group
+        if grp = System::Group.find_by?(name: group)
+          gid = grp.id.to_i
+        end
+      end
+
+      File.chown(path, uid: uid, gid: gid) if uid != -1 || gid != -1
+
+      if mode
+        if numeric = mode.to_i?(8)
+          File.chmod(path, numeric)
+        else
+          remote_exec("chmod #{mode} #{path}")
+        end
+      end
+    rescue
+    end
+
     # Generate unified diff
     protected def generate_unified_diff(before : String, after : String, before_header : String = "before", after_header : String = "after") : JSON::Any
       JSON.parse({

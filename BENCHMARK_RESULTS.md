@@ -482,3 +482,60 @@ a `/bin/bash -c '...'` subprocess, even for local execution - the
 `LocalExecutor` used by `remote_exec` shells too, it just skips SSH),
 so `state: link`'s three shelled-out checks per call show the largest
 speedup. Full project suite (516 examples) passes.
+
+## apt_repository / yum_repository: shelling out vs native file editing
+
+**Date:** 2026-08-03
+
+Next in the shell-out survey after `file.cr`: `apt_repository.cr` and
+`yum_repository.cr` both turned out to be entirely file-editing plugins
+- neither one actually calls `apt-get`/`dnf`/`yum` for anything (that's
+`apt.cr`/`dnf.cr`/`package.cr`'s job). `apt_repository` was shelling to
+`ls`/`grep -qxF`/`grep -vxF`/`grep -c .`/`echo >>`/`mkdir -p`/`chmod`;
+`yum_repository` to `cat`/`rm -f`/`mkdir -p`/`chown`/`chgrp`/`chmod` -
+all replaced with `Dir.glob`/`File.each_line`/`File.read_lines`/
+`File.write`/`File.open(path, "a")`/`File.read`/`File.delete?`/
+`Dir.mkdir_p`. A new shared `BasePlugin#apply_owner_group_mode` helper
+(native `File.chown`/`File.chmod` for numeric mode, falling back to
+shelling `chmod` only for symbolic mode strings - the same trade-off
+`file.cr` already made) replaces the duplicated chown/chgrp/chmod logic
+both plugins had. `apt_repository`'s one remaining shell call,
+`apt-get update` after a change, is a genuine gap (same category as
+`apt.cr` itself), not an oversight.
+
+Unlike `unarchive` (considered as the next target and explicitly passed
+over - real Ansible's own `unarchive` module shells to `tar --diff`/
+`--extract`/`zipinfo` too, so converting it natively would mean doing
+*more* than even real Ansible attempts, with real fidelity risk on
+edge cases like hardlinks/sparse files/exact permission preservation),
+these two are unambiguous oversights: real Ansible's own
+`apt_repository`/`yum_repository` modules just read/write plain text
+files with Python's own file I/O, no subprocess involved for the
+file-editing itself either.
+
+### Correctness
+
+`apt_repository.cr` writes to real `/etc/apt/`, so its write path
+wasn't exercised directly (matching the existing spec suite's own
+convention of check-mode-only tests for this plugin) - the extracted
+line-removal logic (the specific case a code comment already flagged:
+removing the only line in a file, where `grep -v` exits 1 and a naive
+`grep ... && mv` would silently skip the mv) was verified in isolation
+against a throwaway file instead, confirming the native version handles
+it correctly with no reliance on any command's exit code.
+`yum_repository.cr` accepts a `reposdir:` override, so its full add/
+remove/idempotent-rerun cycle was exercised directly against a
+throwaway directory. Existing spec suites (`spec/integration/
+apt_repository_spec.cr`, `spec/integration/yum_repository_spec.cr`,
+`spec/unit/apt_repository_line_spec.cr` - 22 examples total) pass
+unmodified in behavior.
+
+### Results
+
+| scenario | before (shell) | after (native) | speedup |
+|---|---|---|---|
+| `apt_repository` check_mode (read-only idempotency check) | 17.27ms | 3.30ms | **5.23x** |
+| `yum_repository` add (new file) | 19.77ms | 3.60ms | **5.50x** |
+| `yum_repository` idempotent rerun | 9.45ms | 3.54ms | **2.67x** |
+
+Full project suite (516 examples) passes.

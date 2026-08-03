@@ -38,6 +38,12 @@ module CrystalPlay
   # throttle, timeout, ui_repoid_vars, username/password/proxy_*,
   # unsafe_writes, countme, enablegroups, failovermethod, include),
   # SELinux options, `attributes`.
+  #
+  # Like `apt_repository.cr`, this plugin is entirely file editing - no
+  # actual `dnf`/`yum` call anywhere in it - so it's fully native
+  # (`File.read`/`File.write`/`File.delete?`/`Dir.mkdir_p` replacing
+  # `cat`/`rm -f`/`mkdir -p`, plus `BasePlugin#apply_owner_group_mode`
+  # for `chown`/`chgrp`/`chmod`).
   class YumRepositoryPlugin < BasePlugin
     BOOL_KEYS = %w[enabled gpgcheck]
     LIST_KEYS = %w[gpgkey exclude includepkgs]
@@ -70,27 +76,31 @@ module CrystalPlay
       write_repo(name, description, path)
     end
 
+    private def read_current(path : String) : String
+      File.exists?(path) ? File.read(path) : ""
+    end
+
     private def remove_repo(name : String, path : String) : PluginResult
-      current = remote_exec("cat #{path} 2>/dev/null")[:stdout]
+      current = read_current(path)
       unless current.includes?("[#{name}]")
         return PluginResult.new(changed: false, failed: false, msg: "", repo: name, state: "absent")
       end
 
       diff = generate_unified_diff(current, "", path, path) if @diff_mode
-      remote_exec("rm -f #{path}")
+      File.delete?(path)
       PluginResult.new(changed: true, failed: false, msg: "", diff: diff, repo: name, state: "absent")
     end
 
     private def write_repo(name : String, description : String, path : String) : PluginResult
       desired = render_section(name, description)
-      current = remote_exec("cat #{path} 2>/dev/null")[:stdout]
+      current = read_current(path)
       changed = current != desired
 
       if changed
         diff = generate_unified_diff(current, desired, path, path) if @diff_mode
-        remote_exec("mkdir -p #{File.dirname(path)}")
+        Dir.mkdir_p(File.dirname(path))
         write_file(path, desired)
-        apply_attributes(path)
+        apply_owner_group_mode(path, @params["owner"]?, @params["group"]?, @params["mode"]?)
       end
 
       PluginResult.new(changed: changed, failed: false, msg: "", diff: diff, repo: name, state: "present")
@@ -132,18 +142,6 @@ module CrystalPlay
         File.write(tmp, content)
         remote_upload(tmp, path)
         File.delete(tmp)
-      end
-    end
-
-    private def apply_attributes(path : String)
-      if owner = @params["owner"]?
-        remote_exec("chown #{owner} #{path}")
-      end
-      if group = @params["group"]?
-        remote_exec("chgrp #{group} #{path}")
-      end
-      if mode = @params["mode"]?
-        remote_exec("chmod #{mode} #{path}")
       end
     end
   end
