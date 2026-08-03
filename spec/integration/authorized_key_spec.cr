@@ -63,7 +63,7 @@ describe "authorized_key plugin" do
     File.exists?(path).should be_false
   end
 
-  it "resolves the path from a user's home directory (getent) when no path override is given" do
+  it "resolves the path from a user's home directory (NSS) when no path override is given" do
     result = PluginSpecHelper.run("authorized_key", {"user" => "root", "key" => RSA_KEY, "check_mode" => "true"})
 
     result["failed"]?.try(&.as_bool).should be_falsey

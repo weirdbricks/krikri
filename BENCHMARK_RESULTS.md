@@ -539,3 +539,45 @@ unmodified in behavior.
 | `yum_repository` idempotent rerun | 9.45ms | 3.54ms | **2.67x** |
 
 Full project suite (516 examples) passes.
+
+## authorized_key: shelling out vs native home-directory lookup
+
+**Date:** 2026-08-03
+
+Next in the shell-out survey: `authorized_key.cr` only had one shell call
+left, `getent passwd <user>` in `home_directory` (resolving `user:` to a
+home path so it can build the default `~/.ssh/authorized_keys`). Replaced
+with a native `System::User.find_by?(name: user)#home_directory` lookup
+(Crystal's `System::User` reads the same NSS source `getent` does, so
+coverage is unchanged - including NSS-backed users like LDAP/SSSD).
+Falls back to the conventional `/home/<user>` (or `/root` for root) when
+the user isn't in the local passwd DB, matching the old code exactly. No
+other `remote_exec` calls remain in the plugin; it is now fully native.
+
+### Correctness
+
+Existing spec suite (`spec/integration/authorized_key_spec.cr` - 7
+examples) passes unmodified, including the `user: root` case that
+exercises `home_directory` directly (asserting the resolved path is
+`/root/.ssh/authorized_keys` - root's NSS home is `/root`, so the native
+and fallback paths agree there). All other specs use an explicit
+`path:` and never hit the shell-out, so they can't distinguish before
+from after; the `user:` case is the one that now exercises native lookup.
+
+### Results
+
+Timing the `home_directory` primitive in isolation (200 iterations each):
+`getent passwd root` shell-out vs `System::User.find_by?`.
+
+| approach | time per call |
+|---|---|
+| `getent passwd root` (subprocess) | 3.507ms |
+| native `System::User` lookup | 0.014ms |
+
+**~255x speedup** on the lookup itself. The end-to-end run also drops a
+fork/exec off the `path` resolution path (now one native call instead of
+a `/bin/bash -c 'getent ...'` subprocess), so a task that previously
+spawned a subprocess just to find the home directory now resolves it
+in-process.
+
+Full project suite (516 examples) passes.

@@ -15,7 +15,7 @@ module CrystalPlay
   #   key (required): the public key line (options + type + blob + comment)
   #   state (optional): present (default) or absent
   #   path (optional): explicit authorized_keys path, overriding the
-  #     user's home-directory default (getent passwd <user>'s home + /.ssh/authorized_keys)
+  #     user's home-directory default (the user's NSS home + /.ssh/authorized_keys)
   #   manage_dir (optional, default yes): create ~/.ssh (mode 0700) if missing
   class AuthorizedKeyPlugin < BasePlugin
     def execute : PluginResult
@@ -59,14 +59,14 @@ module CrystalPlay
       File.join(home, ".ssh", "authorized_keys")
     end
 
-    # Resolves a user's home directory via getent, falling back to the
-    # conventional /home/<user> (or /root for root) if getent isn't
-    # available or the user doesn't exist locally yet.
+    # Resolves a user's home directory natively via System::User
+    # (which looks up through NSS, the same source getent reads),
+    # falling back to the conventional /home/<user> (or /root for root)
+    # if the user doesn't exist locally yet.
     private def home_directory(user : String) : String?
-      result = remote_exec("getent passwd #{user}")
-      if result[:exit_code] == 0
-        fields = result[:stdout].strip.split(":")
-        return fields[5] if fields.size >= 6 && !fields[5].empty?
+      if sys_user = System::User.find_by?(name: user)
+        home = sys_user.home_directory
+        return home unless home.empty?
       end
 
       user == "root" ? "/root" : "/home/#{user}"
