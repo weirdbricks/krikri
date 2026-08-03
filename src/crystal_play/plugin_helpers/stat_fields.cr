@@ -2,53 +2,67 @@ require "json"
 
 module CrystalPlay
   module PluginHelpers
-    # StatFields - pure logic for turning the output of
-    # `stat -c '%a|%s|%Y|%X|%Z|%i|%d|%h|%u|%g|%U|%G|%F' <path>` into the
-    # stat-shaped JSON hash both the `stat` and `find` plugins return
-    # (`find`'s per-match dicts are documented as "see stat module for full
-    # output of each dictionary", verified against real ansible-playbook).
-    # No I/O here - readable/writeable/executable/checksum/lnk_* need a
-    # `test`/`readlink`/`*sum` call the plugin makes itself and merges in.
+    # StatFields - pure logic for turning a raw POSIX `stat`/`lstat` result
+    # into the stat-shaped JSON hash both the `stat` and `find` plugins
+    # return (`find`'s per-match dicts are documented as "see stat module
+    # for full output of each dictionary", verified against real
+    # ansible-playbook). No I/O here - the plugin itself calls
+    # `LibC.stat`/`LibC.lstat`, resolves pw_name/gr_name via
+    # `System::User`/`System::Group`, and merges in readable/writeable/
+    # executable/checksum/lnk_* (each needs its own syscall/read the
+    # plugin makes itself).
     module StatFields
-      FIELD_COUNT = 13
+      # mode here is the *raw* st_mode (type bits + permission bits, e.g.
+      # 0o100644 for a 644 regular file) - the same value `LibC::Stat#st_mode`
+      # returns, not the type-stripped octal `stat -c %a` used to produce.
+      def self.build(
+        path : String,
+        mode : Int32,
+        size : Int64,
+        uid : Int64,
+        gid : Int64,
+        pw_name : String,
+        gr_name : String,
+        atime : Int64,
+        mtime : Int64,
+        ctime : Int64,
+        inode : Int64,
+        dev : Int64,
+        nlink : Int64,
+      ) : Hash(String, JSON::Any)
+        special_digit = (mode >> 9) & 0o7
+        owner_digit = (mode >> 6) & 0o7
+        group_digit = (mode >> 3) & 0o7
+        other_digit = mode & 0o7
 
-      # Splits and parses one `stat -c` output line (as above) for `path`
-      # into the base stat fields. Returns nil if the output doesn't have
-      # the expected number of fields (corrupt/unexpected `stat` output).
-      def self.parse(path : String, stat_output : String) : Hash(String, JSON::Any)?
-        fields = stat_output.strip.split("|")
-        return nil unless fields.size == FIELD_COUNT
+        # Matches GNU stat's own `%a`: the special (setuid/setgid/sticky)
+        # digit is only included when non-zero.
+        perm_octal = special_digit == 0 ? "#{owner_digit}#{group_digit}#{other_digit}" : "#{special_digit}#{owner_digit}#{group_digit}#{other_digit}"
 
-        a, size, mtime, atime, ctime, inode, dev, nlink, uid, gid, pw_name, gr_name = fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], fields[6], fields[7], fields[8], fields[9], fields[10], fields[11]
-        file_type = fields[-1]
-
-        owner_digit = a[-3].to_i(8)
-        group_digit = a[-2].to_i(8)
-        other_digit = a[-1].to_i(8)
-        special_digit = a.size == 4 ? a[0].to_i(8) : 0
+        file_mode = mode & LibC::S_IFMT
 
         {
           "exists"  => true,
           "path"    => path,
-          "mode"    => "0#{a}",
-          "size"    => size.to_i64,
-          "uid"     => uid.to_i64,
-          "gid"     => gid.to_i64,
+          "mode"    => "0#{perm_octal}",
+          "size"    => size,
+          "uid"     => uid,
+          "gid"     => gid,
           "pw_name" => pw_name,
           "gr_name" => gr_name,
-          "atime"   => atime.to_i64,
-          "mtime"   => mtime.to_i64,
-          "ctime"   => ctime.to_i64,
-          "inode"   => inode.to_i64,
-          "dev"     => dev.to_i64,
-          "nlink"   => nlink.to_i64,
-          "isdir"   => file_type == "directory",
-          "isreg"   => file_type == "regular file" || file_type == "regular empty file",
-          "islnk"   => file_type == "symbolic link",
-          "isblk"   => file_type == "block special file",
-          "ischr"   => file_type == "character special file",
-          "isfifo"  => file_type == "fifo",
-          "issock"  => file_type == "socket",
+          "atime"   => atime,
+          "mtime"   => mtime,
+          "ctime"   => ctime,
+          "inode"   => inode,
+          "dev"     => dev,
+          "nlink"   => nlink,
+          "isdir"   => file_mode == LibC::S_IFDIR,
+          "isreg"   => file_mode == LibC::S_IFREG,
+          "islnk"   => file_mode == LibC::S_IFLNK,
+          "isblk"   => file_mode == LibC::S_IFBLK,
+          "ischr"   => file_mode == LibC::S_IFCHR,
+          "isfifo"  => file_mode == LibC::S_IFIFO,
+          "issock"  => file_mode == LibC::S_IFSOCK,
           "isuid"   => (special_digit & 4) != 0,
           "isgid"   => (special_digit & 2) != 0,
           "rusr"    => (owner_digit & 4) != 0,
@@ -63,21 +77,12 @@ module CrystalPlay
         }.transform_values { |v| JSON.parse(v.to_json) }
       end
 
-      # The file-type word (last field of the parsed output, e.g. "symbolic
-      # link", "directory", "regular file") - callers use this to decide
-      # whether to add checksum/lnk_* fields, without re-splitting.
-      def self.file_type(stat_output : String) : String?
-        fields = stat_output.strip.split("|")
-        return nil unless fields.size == FIELD_COUNT
-        fields[-1]
+      def self.regular_file?(mode : Int32) : Bool
+        (mode & LibC::S_IFMT) == LibC::S_IFREG
       end
 
-      def self.regular_file?(file_type : String) : Bool
-        file_type == "regular file" || file_type == "regular empty file"
-      end
-
-      def self.symlink?(file_type : String) : Bool
-        file_type == "symbolic link"
+      def self.symlink?(mode : Int32) : Bool
+        (mode & LibC::S_IFMT) == LibC::S_IFLNK
       end
     end
   end

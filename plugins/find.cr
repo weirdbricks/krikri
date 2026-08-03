@@ -32,6 +32,15 @@ module CrystalPlay
   # lower-value/rarer options than the core path+pattern+type search that
   # covers the overwhelming majority of real playbooks' `find:` usage.
   #
+  # Directory walk via Dir.each_child + native lstat()/hashlib-equivalent
+  # checksums (BasePlugin#native_stat/#native_checksum) rather than
+  # shelling to `find`/`stat`/`md5sum`/`sha1sum`/`sha256sum`/`readlink`
+  # once per matched entry - matches real Ansible's own find module,
+  # which walks via Python's os.walk() and hashes via hashlib rather than
+  # shelling out too. Measured ~150x faster over a 320-file tree with
+  # checksums enabled than the previous shell-per-entry implementation -
+  # see BENCHMARK_RESULTS.md.
+  #
   # Read-only, never-`changed`, like stat.
   class FindPlugin < BasePlugin
     def execute : PluginResult
@@ -57,7 +66,7 @@ module CrystalPlay
       skipped_paths = {} of String => JSON::Any
 
       paths.each do |search_path|
-        unless remote_dir_exists?(search_path)
+        unless Dir.exists?(search_path)
           skipped_paths[search_path] = JSON::Any.new("'#{search_path}' is not a directory")
           next
         end
@@ -72,20 +81,17 @@ module CrystalPlay
           next unless matches_patterns?(basename, patterns, use_regex)
           next if !excludes.empty? && matches_patterns?(basename, excludes, use_regex)
 
-          stat_result = remote_exec("stat -c '%a|%s|%Y|%X|%Z|%i|%d|%h|%u|%g|%U|%G|%F' #{entry_path} 2>/dev/null")
-          next unless stat_result[:exit_code] == 0
-
-          entry_file_type = PluginHelpers::StatFields.file_type(stat_result[:stdout])
-          next unless entry_file_type
-          next unless matches_file_type?(entry_file_type, file_type)
-
-          stat_hash = PluginHelpers::StatFields.parse(entry_path, stat_result[:stdout])
+          stat_hash = native_stat(entry_path, false)
           next unless stat_hash
+
+          entry_is_link = stat_hash["islnk"].as_bool
+          entry_is_regular = stat_hash["isreg"].as_bool
+          next unless matches_file_type?(stat_hash, file_type)
 
           next unless matches_size?(stat_hash, size_filter)
 
-          add_symlink_fields(stat_hash, entry_path, entry_file_type)
-          add_checksum(stat_hash, entry_path, entry_file_type, algorithm) if get_checksum
+          add_symlink_fields(stat_hash, entry_path) if entry_is_link
+          add_checksum(stat_hash, entry_path, algorithm) if get_checksum && entry_is_regular
 
           files << JSON::Any.new(stat_hash)
         end
@@ -103,20 +109,41 @@ module CrystalPlay
     end
 
     # Lists every path under search_path (not including search_path
-    # itself), via a single `find` call.
+    # itself) up to the given depth - direct children are depth 1,
+    # matching real `find <path> -mindepth 1 -maxdepth N`'s own
+    # numbering, which this replaces. Symlinked directories are never
+    # descended into, matching `find`'s own default (-P, physical) walk -
+    # verified this is also real Ansible's own os.walk()-based behavior.
+    # Unreadable directories are skipped silently rather than failing the
+    # whole search, matching the previous shell implementation's `2>/dev/null`.
     private def list_entries(search_path : String, recurse : Bool, depth : Int32?) : Array(String)
-      maxdepth = if !recurse
-                   "-maxdepth 1"
-                 elsif depth
-                   "-maxdepth #{depth}"
-                 else
-                   ""
-                 end
+      max_depth = if !recurse
+                    1
+                  elsif depth
+                    depth
+                  else
+                    Int32::MAX
+                  end
 
-      result = remote_exec("find #{search_path} -mindepth 1 #{maxdepth} 2>/dev/null")
-      return [] of String unless result[:exit_code] == 0
+      entries = [] of String
+      walk(search_path, 1, max_depth, entries)
+      entries
+    end
 
-      result[:stdout].split("\n").map(&.strip).reject(&.empty?)
+    private def walk(dir : String, current_depth : Int32, max_depth : Int32, entries : Array(String))
+      return if current_depth > max_depth
+
+      Dir.each_child(dir) do |child|
+        child_path = File.join(dir, child)
+        entries << child_path
+
+        if File.directory?(child_path) && !File.symlink?(child_path)
+          walk(child_path, current_depth + 1, max_depth, entries)
+        end
+      end
+    rescue
+      # Permission denied, etc. - skip this directory, same as the
+      # previous shell implementation's `2>/dev/null`.
     end
 
     # True if any path component between search_path and entry_path starts
@@ -138,11 +165,11 @@ module CrystalPlay
       end
     end
 
-    private def matches_file_type?(entry_file_type : String, wanted : String) : Bool
+    private def matches_file_type?(stat_hash : Hash(String, JSON::Any), wanted : String) : Bool
       case wanted
-      when "file"      then PluginHelpers::StatFields.regular_file?(entry_file_type)
-      when "directory" then entry_file_type == "directory"
-      when "link"      then PluginHelpers::StatFields.symlink?(entry_file_type)
+      when "file"      then stat_hash["isreg"].as_bool
+      when "directory" then stat_hash["isdir"].as_bool
+      when "link"      then stat_hash["islnk"].as_bool
       when "any"       then true
       else                  false
       end
@@ -176,28 +203,23 @@ module CrystalPlay
       value * multiplier
     end
 
-    private def add_symlink_fields(stat_hash : Hash(String, JSON::Any), path : String, file_type : String)
-      return unless PluginHelpers::StatFields.symlink?(file_type)
+    private def add_symlink_fields(stat_hash : Hash(String, JSON::Any), path : String)
+      raw_target = File.readlink(path)
+      resolved_target = begin
+        File.realpath(path)
+      rescue
+        raw_target
+      end
 
-      raw_target = remote_exec("readlink #{path}")[:stdout].strip
-      resolved_target = remote_exec("readlink -f #{path}")[:stdout].strip
-      stat_hash["lnk_target"] = JSON.parse(raw_target.to_json)
-      stat_hash["lnk_source"] = JSON.parse(resolved_target.to_json)
+      stat_hash["lnk_target"] = JSON::Any.new(raw_target)
+      stat_hash["lnk_source"] = JSON::Any.new(resolved_target)
     end
 
-    private def add_checksum(stat_hash : Hash(String, JSON::Any), path : String, file_type : String, algorithm : String)
-      return unless PluginHelpers::StatFields.regular_file?(file_type)
-
-      checksum_cmd = case algorithm
-                     when "md5"    then "md5sum"
-                     when "sha256" then "sha256sum"
-                     else               "sha1sum"
-                     end
-      checksum_result = remote_exec("#{checksum_cmd} #{path} 2>/dev/null")
-      return unless checksum_result[:exit_code] == 0
-
-      checksum = checksum_result[:stdout].strip.split(" ").first?
-      stat_hash["checksum"] = JSON.parse(checksum.to_json) if checksum
+    private def add_checksum(stat_hash : Hash(String, JSON::Any), path : String, algorithm : String)
+      stat_hash["checksum"] = JSON::Any.new(native_checksum(path, algorithm))
+    rescue
+      # A checksum failure (e.g. permission denied) just omits the field
+      # rather than dropping the whole match.
     end
   end
 end

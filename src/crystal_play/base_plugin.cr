@@ -2,9 +2,13 @@
 
 require "json"
 require "file_utils"
+require "system/user"
+require "system/group"
+require "openssl/digest"
 require "./host"
 require "./ssh_manager"
 require "./local_executor"
+require "./plugin_helpers/stat_fields"
 
 module CrystalPlay
   # Plugin result structure with diff support
@@ -189,7 +193,56 @@ module CrystalPlay
         result[:exit_code] == 0
       end
     end
-    
+
+    # A native stat()/lstat() syscall (no `stat`/`md5sum`/etc. subprocess
+    # spawn) - always operates directly on this process's own filesystem,
+    # not through remote_exec's local/SSH split: PluginManager already
+    # uploads and executes this same compiled plugin binary directly on
+    # the remote host for non-local connections (see
+    # execute_remote_plugin), so "the filesystem this process can see" IS
+    # the target host's filesystem either way. Returns nil if the path
+    # doesn't exist (or isn't statable for some other reason - permission
+    # denied, a dangling symlink with follow: true, etc.).
+    protected def native_stat(path : String, follow : Bool) : Hash(String, JSON::Any)?
+      stat = uninitialized LibC::Stat
+      result = follow ? LibC.stat(path, pointerof(stat)) : LibC.lstat(path, pointerof(stat))
+      return nil unless result == 0
+
+      pw_name = System::User.find_by?(id: stat.st_uid.to_s).try(&.username) || stat.st_uid.to_s
+      gr_name = System::Group.find_by?(id: stat.st_gid.to_s).try(&.name) || stat.st_gid.to_s
+
+      PluginHelpers::StatFields.build(
+        path,
+        mode: stat.st_mode.to_i32,
+        size: stat.st_size.to_i64,
+        uid: stat.st_uid.to_i64,
+        gid: stat.st_gid.to_i64,
+        pw_name: pw_name,
+        gr_name: gr_name,
+        atime: stat.st_atim.tv_sec.to_i64,
+        mtime: stat.st_mtim.tv_sec.to_i64,
+        ctime: stat.st_ctim.tv_sec.to_i64,
+        inode: stat.st_ino.to_i64,
+        dev: stat.st_dev.to_i64,
+        nlink: stat.st_nlink.to_i64,
+      )
+    end
+
+    # Native MD5/SHA1/SHA256 file checksum (no `md5sum`/`sha1sum`/
+    # `sha256sum` subprocess spawn) - streams the file through OpenSSL's
+    # generic EVP digest API rather than loading it fully into memory.
+    protected def native_checksum(path : String, algorithm : String) : String
+      openssl_name = case algorithm
+                     when "md5"    then "MD5"
+                     when "sha256" then "SHA256"
+                     else               "SHA1"
+                     end
+
+      digest = OpenSSL::Digest.new(openssl_name)
+      digest.file(path)
+      digest.final.hexstring
+    end
+
     # Helper to check if a parameter is truthy
     protected def is_true?(value : String?, default : Bool = false) : Bool
       return default unless value

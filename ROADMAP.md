@@ -366,6 +366,33 @@ the same way it did between January and now.
     the unit tests (which exercised `matches_patterns?` correctly in
     isolation - the bug was in how `find`'s own `execute` used it for two
     different purposes with opposite empty-list semantics).
+  - **Update (`0.9.15`):** both `stat` and `find` originally shelled out
+    to `stat`/`md5sum`/`sha1sum`/`sha256sum`/`readlink`/`test -r`/`-w`/
+    `-x`/`find` for operations Crystal's own standard library already
+    supports natively (`LibC.stat`/`lstat`, `OpenSSL::Digest`,
+    `File.readlink`/`realpath`, `File::Info.readable?`/`writable?`/
+    `executable?`, `Dir.each_child`) - unlike plugins that shell out
+    because Crystal has no equivalent library at all (`apt`/`dnf`/
+    `archive`/`firewalld`), this was just an oversight, not a missing-
+    capability gap, found while comparing this codebase's plugins
+    against real Ansible's own Python module source. Converted both to
+    native syscalls/hashing (`BasePlugin#native_stat`/`#native_checksum`,
+    a rewritten `plugin_helpers/stat_fields.cr` building the stat hash
+    from typed `LibC::Stat` fields instead of parsing `stat -c` shell
+    output, and a `Dir.each_child`-based walker replacing the `find`
+    shell command in `find.cr`). Benchmarked before and after: `stat`
+    **3.8x** faster (31.6ms -> 8.3ms per call, was spawning 5
+    subprocesses per call); `find` **35.3x** faster over a 320-file tree
+    with checksums (5,005ms -> 142ms per scan, was spawning ~640
+    subprocesses per scan - one `stat` + one checksum per matched file).
+    Output verified byte-identical against real `ansible-playbook`
+    before and after the conversion (mode, size, checksum, permission
+    bits, symlink resolution, `find`'s `matched` count). Full details
+    and methodology in `BENCHMARK_RESULTS.md`. Existing test suites
+    (`spec/unit/stat_fields_spec.cr`, `spec/integration/stat_spec.cr`,
+    `spec/integration/find_spec.cr`) pass unmodified in behavior; the
+    unit spec was rewritten to exercise the new typed API instead of
+    parsing synthetic `stat -c` strings.
 - [x] `archive` (`0.9.1`): compresses/archives files and directories.
   Registered as `community.general.archive` - verified via `ansible-doc
   archive` that, unlike most plugins in this codebase, it does NOT ship

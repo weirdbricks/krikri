@@ -139,3 +139,88 @@ way it already handled `with_fileglob:` (`src/crystal_play/playbook_parser.cr`
 `spec/unit/playbook_parser_spec.cr` and an extended
 `testing/test-loop-quick.yml` fixture exercised by
 `spec/integration/cli_spec.cr`; full suite (411 examples) passes.
+
+## stat/find: shelling out vs native syscalls
+
+**Date:** 2026-08-03
+
+Comparing real Ansible's own Python modules against crystal-ansible's
+plugins (see the earlier comparison table in this conversation) turned
+up two plugins - `stat` and `find` - that shell out to `stat`/`md5sum`/
+`sha1sum`/`sha256sum`/`readlink`/`test -r`/`-w`/`-x`/`find` for
+operations real Ansible does natively in Python (`os.stat()`, `hashlib`,
+`os.path.realpath()`, `os.access()`, `os.walk()`) - not because Crystal
+lacks the equivalent capability, but because these two plugins simply
+never used it. Unlike the other CLI-shelling divergences found in that
+comparison (`apt`/`dnf`/`apt_repository` need `python-apt`/`libdnf`
+bindings Crystal has no equivalent of; `archive` needs a tar/zip-writing
+library Crystal's stdlib doesn't ship; `firewalld` needs a D-Bus binding
+Crystal has none of), Crystal's standard library already has everything
+`stat`/`find` need built in: `LibC.stat`/`LibC.lstat`, `OpenSSL::Digest`,
+`File.readlink`/`File.realpath`, `File::Info.readable?`/`writable?`/
+`executable?`, `Dir.each_child`. So this was a self-contained fix, not a
+missing-library problem.
+
+### Methodology
+
+Benchmarked the compiled plugin binaries directly (piping the same JSON
+config `PluginManager` pipes over stdin - not a synthetic microbenchmark
+of only the checksum path), before and after converting both plugins
+from shell-command-based to native-syscall-based. `stat`: 200 single-file
+invocations with `get_checksum: true` (sha1). `find`: 30 recursive scans
+of a 320-file tree (300 top-level + 20 nested) with `get_checksum: true`.
+Both engines produce byte-identical field output (verified against real
+`ansible-playbook` on the same fixture files both before and after -
+mode, size, checksum, permission bits, symlink resolution/`follow:`,
+and `find`'s `matched` count all matched exactly).
+
+### Results
+
+| | Before (shelling out) | After (native) | Speedup |
+|---|---|---|---|
+| `stat` (mean per call) | 31.59 ms | 8.34 ms | **3.8x** |
+| `find` (mean per 320-file scan) | 5,004.72 ms | 141.95 ms | **35.3x** |
+
+`stat`'s old implementation spawned 5 subprocesses per call (`stat`,
+three separate `test -r`/`-w`/`-x`, `sha1sum`); the new one makes zero.
+`find`'s old implementation spawned one `find` subprocess for the
+directory listing, then a `stat` **and** a `sha1sum` subprocess *per
+matched file* - roughly 640 subprocess spawns for this 320-file fixture,
+which is why `find` shows the much larger speedup: subprocess spawn
+overhead (~5-8ms of fork/exec/dynamic-linking cost per call, all pure
+overhead - not attributable to the actual file I/O all these commands
+were doing anyway) dominates the shell-based version far more heavily
+when it's paid per-file in a loop than when it's paid once per task.
+
+### What changed
+
+- New `BasePlugin#native_stat`/`#native_checksum`
+  (`src/crystal_play/base_plugin.cr`) - a real `stat()`/`lstat()` syscall
+  and a streaming `OpenSSL::Digest` file hash, callable from any plugin.
+  Correct for both local *and* remote (SSH) targets without any
+  connection-branching logic of their own: `PluginManager` already
+  uploads and executes this same compiled plugin binary directly on the
+  remote host for non-local connections, so "the filesystem this
+  process can see" is the target host's filesystem either way - these
+  two helpers don't need to know or care which case they're in.
+- `src/crystal_play/plugin_helpers/stat_fields.cr` reworked from parsing
+  `stat -c '%a|%s|...'` shell output into building the same hash shape
+  directly from typed `LibC::Stat` fields (`StatFields.build`) - no
+  string round-trip, and file-type/permission-bit derivation now mirrors
+  what real Ansible's own `stat.py` does with `os.stat()`'s mode bits
+  instead of parsing GNU `stat`'s human-readable type words.
+- `plugins/stat.cr`: `stat`/`test -r`/`-w`/`-x`/`readlink`/`*sum` calls
+  replaced by `native_stat`/`File::Info.readable?` etc./`File.readlink`/
+  `native_checksum`.
+- `plugins/find.cr`: the `find` shell command replaced by a small
+  `Dir.each_child`-based recursive walker (`list_entries`/`walk`,
+  matching real `find -mindepth 1 -maxdepth N`'s own depth numbering and
+  its default behavior of not descending into symlinked directories);
+  the per-entry `stat`/`readlink`/`*sum` calls replaced the same way as
+  `stat.cr`.
+- Both plugins' full existing test suites (`spec/unit/stat_fields_spec.cr`,
+  `spec/integration/stat_spec.cr`, `spec/integration/find_spec.cr`)
+  pass unmodified in behavior (the unit spec was rewritten to exercise
+  the new typed `.build` API instead of parsing synthetic `stat -c`
+  strings, but asserts the identical output shape). Full suite (495
+  examples) passes.
