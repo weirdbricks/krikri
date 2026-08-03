@@ -479,6 +479,24 @@ the same way it did between January and now.
     475.4ms). Full methodology and both comparisons in
     `BENCHMARK_RESULTS.md`. Existing `archive`/`unarchive` test suites
     (29 examples) pass unmodified in behavior.
+  - **Update (`0.9.17`):** `xz` also converted to native, after a closer
+    shard search than the one that produced the `0.9.16` note above
+    turned up `naqvis/xz.cr` - a real `liblzma` C binding (reader +
+    writer), not the shell-wrapper dead end the same search found for
+    `bz2` (`jhbadger/Bzip`: shells to `bzcat`, read-only, unmaintained
+    since 2017 - genuinely nothing usable there, `bz2` stays shell-based).
+    New direct dependency, requires `liblzma-dev` at build time (same
+    pattern as the existing `libssl-dev` requirement for
+    `OpenSSL::Digest`). Unlike `gz` (pure-Crystal `Compress::Gzip` losing
+    to C at scale), `xz.cr` binds the same optimized `liblzma` the real
+    `xz` CLI uses, so it doesn't hit that scaling problem: native won
+    outright at both benchmarked scales (320 files: 67.4ms -> 53.2ms,
+    **1.27x**; 2000 files: 297.5ms -> 277.9ms, **1.07x**), no Ansible-
+    baseline reframing needed. Correctness verified against the real
+    `tar`/`xz` CLIs in both directions (native output readable by real
+    `tar`/`xz`; a real-CLI-built `tar.xz` readable as a pre-existing
+    `dest`) plus idempotent-rerun behavior. Full details in
+    `BENCHMARK_RESULTS.md`. Full project suite (495 examples) passes.
 - [x] `unarchive` (`0.9.2`): extracts an archive into an existing
   directory - the counterpart to `archive`, but registered as
   `ansible.builtin.unarchive` (verified via `ansible-doc unarchive`),

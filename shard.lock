@@ -28,3 +28,7 @@ shards:
     git: https://github.com/will/crystal-pg.git
     version: 0.30.0
 
+  xz:
+    git: https://github.com/naqvis/xz.cr.git
+    version: 0.1.6
+

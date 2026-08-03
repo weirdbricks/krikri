@@ -4,6 +4,7 @@ require "json"
 require "crystar"
 require "compress/gzip"
 require "compress/zip"
+require "xz"
 require "system/user"
 require "system/group"
 require "openssl/digest"
@@ -43,14 +44,16 @@ module CrystalPlay
   # implemented: attributes/selevel/serole/setype/seuser (SELinux),
   # unsafe_writes.
   #
-  # tar/gz/zip are built and read natively (Crystar for tar, Compress::Gzip
-  # and Compress::Zip from Crystal's own standard library) rather than
-  # shelling to `tar`/`gzip`/`zip`/`unzip` - matches real Ansible's own
+  # tar/gz/xz/zip are built and read natively (Crystar for tar, Compress::Gzip
+  # and Compress::Zip from Crystal's own standard library, naqvis/xz.cr - a
+  # real liblzma C binding, not a shell wrapper - for xz) rather than
+  # shelling to `tar`/`gzip`/`xz`/`zip`/`unzip` - matches real Ansible's own
   # archive module, which uses Python's tarfile/zipfile stdlib rather than
-  # shelling out too. bz2/xz are the one exception: no Crystal library for
-  # either exists (verified via a shard search, not assumed), so those two
-  # formats still shell out to `bzip2`/`xz`/`tar` - a genuine missing-
-  # capability gap, not an oversight, same category as `apt`/`dnf`/
+  # shelling out too. bz2 is the one exception: no Crystal library exists
+  # (verified via a shard search, not assumed - the only hit, jhbadger/Bzip,
+  # is itself a shell wrapper around `bzcat` with no writer, not a real
+  # implementation), so bz2 still shells out to `bzip2`/`tar` - a genuine
+  # missing-capability gap, not an oversight, same category as `apt`/`dnf`/
   # `firewalld`'s own shelling-out.
   #
   # Idempotency is checksum-based like real Ansible, but computed by
@@ -255,7 +258,12 @@ module CrystalPlay
       when "bz2"
         remote_exec("bzip2 -c #{source} > #{tmp_dest}")[:exit_code] == 0
       when "xz"
-        remote_exec("xz -c #{source} > #{tmp_dest}")[:exit_code] == 0
+        File.open(tmp_dest, "w") do |file|
+          Compress::XZ::Writer.open(file) do |xz|
+            File.open(source) { |src| IO.copy(src, xz) }
+          end
+        end
+        true
       else
         File.open(tmp_dest, "w") do |file|
           Compress::Gzip::Writer.open(file) do |gz|
@@ -278,19 +286,22 @@ module CrystalPlay
       return false if relative_members.empty?
 
       case format
-      when "bz2", "xz"
+      when "bz2"
         build_archive_via_shell(root, relative_members, format, tmp_dest)
       when "zip"
         build_zip(root, members, relative_members, tmp_dest)
       else
-        build_tar(root, members, relative_members, tmp_dest, gzip: format != "tar")
+        build_tar(root, members, relative_members, tmp_dest, format)
       end
     end
 
-    private def build_tar(root : String, members : Array(String), relative_members : Array(String), tmp_dest : String, gzip : Bool) : Bool
+    private def build_tar(root : String, members : Array(String), relative_members : Array(String), tmp_dest : String, format : String) : Bool
       File.open(tmp_dest, "w") do |file|
-        if gzip
+        case format
+        when "gz"
           Compress::Gzip::Writer.open(file) { |gz| write_tar_entries(gz, root, members, relative_members) }
+        when "xz"
+          Compress::XZ::Writer.open(file) { |xz| write_tar_entries(xz, root, members, relative_members) }
         else
           write_tar_entries(file, root, members, relative_members)
         end
@@ -370,12 +381,11 @@ module CrystalPlay
       false
     end
 
-    # bz2/xz: no Crystal library for either exists, so these two formats
-    # still shell out - see the class doc comment.
+    # bz2: no Crystal library exists, so this format still shells out -
+    # see the class doc comment.
     private def build_archive_via_shell(root : String, relative_members : Array(String), format : String, tmp_dest : String) : Bool
       quoted_members = relative_members.map { |member| "\"#{member}\"" }.join(" ")
-      tar_flag = format == "bz2" ? "j" : "J"
-      cmd = "cd #{root} && tar --no-recursion -c#{tar_flag}f #{tmp_dest} #{quoted_members}"
+      cmd = "cd #{root} && tar --no-recursion -cjf #{tmp_dest} #{quoted_members}"
       remote_exec(cmd)[:exit_code] == 0
     end
 
@@ -388,10 +398,10 @@ module CrystalPlay
         single_compress_signature(path, format)
       elsif format == "zip"
         zip_signature(path)
-      elsif format == "bz2" || format == "xz"
+      elsif format == "bz2"
         shell_tar_signature(path, format)
       else
-        tar_signature(path, format != "tar")
+        tar_signature(path, format)
       end
     rescue
       nil
@@ -404,9 +414,11 @@ module CrystalPlay
         return nil unless result[:exit_code] == 0
         result[:stdout].strip
       when "xz"
-        result = remote_exec("xz -dc #{path} 2>/dev/null | md5sum")
-        return nil unless result[:exit_code] == 0
-        result[:stdout].strip
+        digest = OpenSSL::Digest.new("MD5")
+        File.open(path) do |file|
+          Compress::XZ::Reader.open(file) { |xz| digest.update(xz.gets_to_end) }
+        end
+        digest.final.hexstring
       else
         digest = OpenSSL::Digest.new("MD5")
         File.open(path) do |file|
@@ -430,13 +442,16 @@ module CrystalPlay
       "#{names.sort!.join("\n")}|#{digest.final.hexstring}"
     end
 
-    private def tar_signature(path : String, gzip : Bool) : String
+    private def tar_signature(path : String, format : String) : String
       names = [] of String
       digest = OpenSSL::Digest.new("MD5")
 
       File.open(path) do |file|
-        if gzip
+        case format
+        when "gz"
           Compress::Gzip::Reader.open(file) { |gz| read_tar_signature(gz, names, digest) }
+        when "xz"
+          Compress::XZ::Reader.open(file) { |xz| read_tar_signature(xz, names, digest) }
         else
           read_tar_signature(file, names, digest)
         end

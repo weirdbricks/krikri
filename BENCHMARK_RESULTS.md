@@ -316,3 +316,48 @@ makes it slower again than Crystal's compiled native path.
   (`spec/integration/archive_spec.cr`,
   `spec/integration/unarchive_spec.cr`, `spec/unit/archive_paths_spec.cr`
   - 29 examples) passes unmodified in behavior.
+
+## archive follow-up: xz converted to native too
+
+**Date:** 2026-08-03
+
+The original archive writeup above said "bz2/xz still have no native
+Crystal equivalent." That was checked again more carefully by searching
+for shards rather than assuming: bz2 genuinely has nothing usable - the
+one hit, `jhbadger/Bzip`, isn't a real implementation at all, it's a
+353-byte wrapper that shells out to `bzcat` internally, is read-only
+(no writer), and hasn't been touched since 2017. xz is different:
+`naqvis/xz.cr` (same author as `crystar`) is a real `liblzma` C binding
+with both a reader and a writer, actively maintained (pushed
+2026-03-02). Added as a new direct dependency and converted `format: xz`
+from shelling to `tar`/`xz` to native `Compress::XZ::Writer`/`Reader`
+wrapping the same `Crystar::Writer`/`Reader` tar path already used for
+`gz`. `bz2` remains the sole shell-based format now, for a genuine
+missing-library reason.
+
+Requires `liblzma-dev` at build time (the shard falls back to `-llzma`
+if `pkg-config liblzma` isn't found) - same pattern as this codebase's
+existing `OpenSSL::Digest` usage needing `libssl-dev`.
+
+### Results
+
+Unlike `gz` (where Crystal's `Compress::Gzip` is a pure-Crystal
+reimplementation that loses to real `gzip`'s C code at scale), `xz.cr`
+binds directly to the same optimized `liblzma` C library the real `xz`
+CLI uses, so it doesn't hit that scaling problem - native wins at both
+tree sizes tested:
+
+| files | shell (`tar` + `xz`) | native | speedup |
+|---|---|---|---|
+| 320 | 67.4ms | 53.2ms | **1.27x** |
+| 2000 | 297.5ms | 277.9ms | **1.07x** |
+
+Correctness verified both directions against the real `tar`/`xz` CLIs:
+a native single-file `.xz` decompresses correctly with real `xz -dc`; a
+native `tar.xz` directory archive lists and extracts correctly with
+real `tar tvf`/`tar xf -O`; an idempotent rerun against crystal-ansible's
+own previous output correctly reports `changed: false`; and reading a
+pre-existing `tar.xz` built by the real `tar`/`xz` CLIs (simulating an
+upgrade from the old shell-based implementation) doesn't error. Full
+archive/unarchive suite (29 examples) and full project suite (495
+examples) pass.
