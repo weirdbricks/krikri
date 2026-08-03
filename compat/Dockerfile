@@ -21,6 +21,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     ufw \
     firewalld \
+    # link-time deps for the native-format plugins (archive's bz2/xz/z,
+    # stat/find/file's openssl checksums). xz-utils above only ships the
+    # runtime libs; the -dev packages provide the headers + pkg-config
+    # files crystal needs to link -- without liblzma-dev, the release
+    # build emitted a broken '--llzma' fallback flag and cc failed.
+    libbz2-dev \
+    liblzma-dev \
+    zlib1g-dev \
+    libssl-dev \
+    libpcre2-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Debian/Ubuntu block system-wide `pip install` (PEP 668); a venv sidesteps

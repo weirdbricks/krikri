@@ -20,3 +20,27 @@
         path: /work/authorized_keys
         key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLE compat@test"
         state: absent
+
+    # Home-directory resolution (no explicit path): exercises the
+    # user-number -> home lookup, which crystal-ansible now does natively
+    # via System::User instead of shelling to `getent passwd`. Both
+    # engines must resolve root to /root/.ssh/authorized_keys and write
+    # the identical file.
+    - name: add a key resolved from the user's home (no explicit path)
+      ansible.posix.authorized_key:
+        user: root
+        key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHOME home-resolve@test"
+      register: home_result
+
+    - name: read back the home-resolved authorized_keys file
+      ansible.builtin.command: cat /root/.ssh/authorized_keys
+      register: home_content
+      changed_when: false
+
+    - name: write the home-resolution results to /work for comparison
+      ansible.builtin.copy:
+        content: |
+          home_changed={{ home_result.changed }}
+          home_path=/root/.ssh/authorized_keys
+          home_content={{ home_content.stdout }}
+        dest: /work/authorized-key-home.txt
