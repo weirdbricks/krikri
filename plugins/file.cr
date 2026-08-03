@@ -1,12 +1,16 @@
 #!/usr/bin/env crystal
 
 require "json"
+require "file_utils"
+require "system/user"
+require "system/group"
 require "../src/crystal_play/base_plugin"
+require "../src/crystal_play/plugin_helpers/stat_fields"
 
 module CrystalPlay
   # File plugin - manages files and file properties
   # Compatible with Ansible's ansible.builtin.file module
-  # 
+  #
   # Supported states:
   # - file: Ensure path exists and is a file
   # - directory: Create directory (like mkdir -p)
@@ -39,16 +43,39 @@ module CrystalPlay
   #     path: /etc/nginx/sites-enabled/default
   #     src: /etc/nginx/sites-available/default
   #     state: link
+  #
+  # Entirely native: existence/type checks (`Dir.exists?`/`File.exists?`/
+  # `File.file?`), directory creation (`Dir.mkdir_p`), removal
+  # (`File.delete?`/`FileUtils.rm_rf`), symlink/hardlink creation
+  # (`File.symlink`/`File.link`/`File.readlink`), timestamps
+  # (`File.utime`), and numeric-mode chown/chmod (`File.chown`/
+  # `File.chmod`) replace what used to be 27 separate `remote_exec`
+  # calls - `mkdir -p`/`test -f`/`test -e`/`readlink`/`rm -f`/`rm -rf`/
+  # `ln -s`/`ln`/`touch` (all four variants)/`stat -c '%U'`/`'%G'`/`'%a'`/
+  # `chown`/`chgrp`/`chmod`. Current owner/group/mode are read via a raw
+  # `LibC.lstat` (matching what `stat -c` without `-L` does: it does NOT
+  # follow symlinks, unlike `test -e`/`test -f`/`File.exists?` which do -
+  # this file replicates that same split rather than "fixing" it, since
+  # the goal is a mechanical shell->native conversion, not a behavior
+  # change).
+  #
+  # One genuine, narrow gap remains: *symbolic* mode strings (`u+x`,
+  # `go-w`, etc.) still shell to the real `chmod` binary to apply, since
+  # correctly reimplementing chmod(1)'s symbolic-mode grammar (scopes,
+  # `+`/`-`/`=`, `X`, comma-clauses) natively is real, separate scope -
+  # numeric mode (the overwhelming majority of real playbooks) is fully
+  # native. This matches the *existing* (pre-conversion) limitation
+  # documented in `normalize_mode` below, not a new one introduced here.
   class FilePlugin < BasePlugin
     property check_mode : Bool
     property diff_mode : Bool
-    
+
     def initialize(config : JSON::Any)
       super(config)
       @check_mode = is_true?(@params["check_mode"]?)
       @diff_mode = is_true?(@params["diff_mode"]?)
     end
-    
+
     def execute : PluginResult
       # Get path (required)
       path = @params["path"]?
@@ -59,10 +86,10 @@ module CrystalPlay
           msg: "Missing required parameter: path"
         )
       end
-      
+
       # Get state (default: file)
       state = @params["state"]? || "file"
-      
+
       # Validate state
       valid_states = ["file", "directory", "link", "hard", "touch", "absent"]
       unless valid_states.includes?(state)
@@ -72,7 +99,7 @@ module CrystalPlay
           msg: "Invalid state: #{state}. Must be one of: #{valid_states.join(", ")}"
         )
       end
-      
+
       # Dispatch based on state
       case state
       when "directory"
@@ -95,16 +122,16 @@ module CrystalPlay
         )
       end
     end
-    
+
     # Handle state=directory
     private def handle_directory(path : String) : PluginResult
       # Check if directory exists
-      exists = remote_dir_exists?(path)
-      
+      exists = Dir.exists?(path)
+
       if exists
         # Directory exists, just update attributes if needed
         changed = update_attributes_if_needed(path, is_directory: true)
-        
+
         if @check_mode
           return PluginResult.new(
             changed: changed,
@@ -112,11 +139,11 @@ module CrystalPlay
             msg: changed ? "Would update directory attributes (check mode)" : "Directory already correct (check mode)"
           )
         end
-        
+
         if changed
           apply_file_attributes(path, recursive: is_true?(@params["recurse"]?))
         end
-        
+
         return PluginResult.new(
           changed: changed,
           failed: false,
@@ -124,7 +151,7 @@ module CrystalPlay
           path: path
         )
       end
-      
+
       # Directory doesn't exist, create it
       if @check_mode
         return PluginResult.new(
@@ -133,21 +160,25 @@ module CrystalPlay
           msg: "Would create directory (check mode)"
         )
       end
-      
+
       # Create directory (like mkdir -p)
-      result = remote_exec("mkdir -p #{path}")
-      if result[:exit_code] != 0
+      created = begin
+        Dir.mkdir_p(path)
+        true
+      rescue
+        false
+      end
+      unless created
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Failed to create directory",
-          stderr: result[:stderr]
+          msg: "Failed to create directory"
         )
       end
-      
+
       # Apply attributes
       apply_file_attributes(path, recursive: is_true?(@params["recurse"]?))
-      
+
       PluginResult.new(
         changed: true,
         failed: false,
@@ -155,36 +186,34 @@ module CrystalPlay
         path: path
       )
     end
-    
+
     # Handle state=file
     private def handle_file(path : String) : PluginResult
-      # Check if file exists
-      exists = remote_file_exists?(path)
-      
-      unless exists
+      # Check if path exists at all (follows symlinks, matching the
+      # original `test -f`'s own dangling-symlink-is-"missing" behavior)
+      unless File.exists?(path)
         return PluginResult.new(
           changed: false,
           failed: true,
           msg: "File does not exist: #{path}. Use state=touch to create it."
         )
       end
-      
-      # Check if it's actually a file (not directory or link)
-      check_result = remote_exec("test -f #{path}")
-      unless check_result[:exit_code] == 0
+
+      # Check if it's actually a regular file (not directory or link)
+      unless File.file?(path)
         return PluginResult.new(
           changed: false,
           failed: true,
           msg: "Path exists but is not a regular file: #{path}"
         )
       end
-      
+
       # File exists, update attributes if needed
       changed = update_attributes_if_needed(path, is_directory: false)
-      
+
       # Generate diff for attribute changes
       diff_data = changed ? get_attribute_diff(path) : nil
-      
+
       if @check_mode
         return PluginResult.new(
           changed: changed,
@@ -193,12 +222,12 @@ module CrystalPlay
           diff: diff_data
         )
       end
-      
+
       if changed
         apply_file_attributes(path)
         update_times(path)
       end
-      
+
       PluginResult.new(
         changed: changed,
         failed: false,
@@ -207,7 +236,7 @@ module CrystalPlay
         path: path
       )
     end
-    
+
     # Handle state=link (symbolic link)
     private def handle_link(path : String) : PluginResult
       src = @params["src"]?
@@ -218,15 +247,14 @@ module CrystalPlay
           msg: "src parameter required for state=link"
         )
       end
-      
+
       # Check if link already exists and points to correct target
-      link_check = remote_exec("readlink #{path}")
-      if link_check[:exit_code] == 0
-        current_target = link_check[:stdout].strip
+      current_target = try_readlink(path)
+      if current_target
         if current_target == src
           # Link exists and points to correct target
           changed = update_attributes_if_needed(path, is_directory: false)
-          
+
           if @check_mode
             return PluginResult.new(
               changed: changed,
@@ -234,11 +262,11 @@ module CrystalPlay
               msg: "Link already correct (check mode)"
             )
           end
-          
+
           if changed
             apply_file_attributes(path)
           end
-          
+
           return PluginResult.new(
             changed: changed,
             failed: false,
@@ -248,7 +276,7 @@ module CrystalPlay
           )
         end
       end
-      
+
       # Link doesn't exist or points to wrong target
       if @check_mode
         return PluginResult.new(
@@ -257,11 +285,10 @@ module CrystalPlay
           msg: "Would create symbolic link (check mode)"
         )
       end
-      
-      # Check if something exists at path
-      exists_check = remote_exec("test -e #{path}")
-      if exists_check[:exit_code] == 0
-        # Something exists at path
+
+      # Check if something exists at path (follows symlinks, matching
+      # `test -e`'s own dangling-symlink-is-"missing" behavior)
+      if File.exists?(path)
         force = is_true?(@params["force"]?)
         unless force
           return PluginResult.new(
@@ -270,25 +297,31 @@ module CrystalPlay
             msg: "Path exists and is not the correct link. Use force=yes to overwrite."
           )
         end
-        
+
         # Remove existing file/link
-        remote_exec("rm -f #{path}")
+        File.delete?(path)
       end
-      
+
       # Create symbolic link
-      result = remote_exec("ln -s #{src} #{path}")
-      if result[:exit_code] != 0
+      created = begin
+        File.symlink(src, path)
+        true
+      rescue ex
+        @last_error = ex.message
+        false
+      end
+      unless created
         return PluginResult.new(
           changed: false,
           failed: true,
           msg: "Failed to create symbolic link",
-          stderr: result[:stderr]
+          stderr: @last_error || ""
         )
       end
-      
+
       # Apply attributes (note: for links, this affects the link itself, not target)
       apply_file_attributes(path)
-      
+
       PluginResult.new(
         changed: true,
         failed: false,
@@ -297,7 +330,7 @@ module CrystalPlay
         src: src
       )
     end
-    
+
     # Handle state=hard (hard link)
     private def handle_hard_link(path : String) : PluginResult
       src = @params["src"]?
@@ -308,32 +341,29 @@ module CrystalPlay
           msg: "src parameter required for state=hard"
         )
       end
-      
-      # Check if hard link already exists
-      # Hard links have the same inode
-      inode_check = remote_exec("stat -c '%i' #{src} #{path} 2>/dev/null")
-      if inode_check[:exit_code] == 0
-        inodes = inode_check[:stdout].split("\n")
-        if inodes.size == 2 && inodes[0] == inodes[1]
-          # Hard link exists
-          if @check_mode
-            return PluginResult.new(
-              changed: false,
-              failed: false,
-              msg: "Hard link already exists (check mode)"
-            )
-          end
-          
+
+      # Check if hard link already exists (same inode)
+      src_stat = lstat(src)
+      dest_stat = lstat(path)
+      if src_stat && dest_stat && src_stat.st_ino == dest_stat.st_ino
+        # Hard link exists
+        if @check_mode
           return PluginResult.new(
             changed: false,
             failed: false,
-            msg: "Hard link already exists",
-            path: path,
-            src: src
+            msg: "Hard link already exists (check mode)"
           )
         end
+
+        return PluginResult.new(
+          changed: false,
+          failed: false,
+          msg: "Hard link already exists",
+          path: path,
+          src: src
+        )
       end
-      
+
       # Hard link doesn't exist
       if @check_mode
         return PluginResult.new(
@@ -342,10 +372,9 @@ module CrystalPlay
           msg: "Would create hard link (check mode)"
         )
       end
-      
+
       # Check if dest exists
-      exists_check = remote_exec("test -e #{path}")
-      if exists_check[:exit_code] == 0
+      if File.exists?(path)
         force = is_true?(@params["force"]?)
         unless force
           return PluginResult.new(
@@ -354,20 +383,26 @@ module CrystalPlay
             msg: "Path exists. Use force=yes to overwrite."
           )
         end
-        remote_exec("rm -f #{path}")
+        File.delete?(path)
       end
-      
+
       # Create hard link
-      result = remote_exec("ln #{src} #{path}")
-      if result[:exit_code] != 0
+      created = begin
+        File.link(src, path)
+        true
+      rescue ex
+        @last_error = ex.message
+        false
+      end
+      unless created
         return PluginResult.new(
           changed: false,
           failed: true,
           msg: "Failed to create hard link",
-          stderr: result[:stderr]
+          stderr: @last_error || ""
         )
       end
-      
+
       PluginResult.new(
         changed: true,
         failed: false,
@@ -376,12 +411,12 @@ module CrystalPlay
         src: src
       )
     end
-    
+
     # Handle state=touch
     private def handle_touch(path : String) : PluginResult
       # Check if file exists
-      exists = remote_file_exists?(path)
-      
+      exists = File.exists?(path)
+
       if exists
         # File exists, update timestamps and attributes
         if @check_mode
@@ -391,22 +426,21 @@ module CrystalPlay
             msg: "Would touch file (check mode)"
           )
         end
-        
+
         # Touch the file
-        result = remote_exec("touch #{path}")
-        if result[:exit_code] != 0
+        touched = touch_now(path)
+        unless touched
           return PluginResult.new(
             changed: false,
             failed: true,
-            msg: "Failed to touch file",
-            stderr: result[:stderr]
+            msg: "Failed to touch file"
           )
         end
-        
+
         # Update attributes and times
         apply_file_attributes(path)
         update_times(path)
-        
+
         return PluginResult.new(
           changed: true,
           failed: false,
@@ -414,7 +448,7 @@ module CrystalPlay
           path: path
         )
       end
-      
+
       # File doesn't exist, create it
       if @check_mode
         return PluginResult.new(
@@ -423,22 +457,26 @@ module CrystalPlay
           msg: "Would create file (check mode)"
         )
       end
-      
+
       # Create file
-      result = remote_exec("touch #{path}")
-      if result[:exit_code] != 0
+      created = begin
+        File.open(path, "w") { }
+        true
+      rescue
+        false
+      end
+      unless created
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Failed to create file",
-          stderr: result[:stderr]
+          msg: "Failed to create file"
         )
       end
-      
+
       # Apply attributes
       apply_file_attributes(path)
       update_times(path)
-      
+
       PluginResult.new(
         changed: true,
         failed: false,
@@ -446,12 +484,11 @@ module CrystalPlay
         path: path
       )
     end
-    
+
     # Handle state=absent
     private def handle_absent(path : String) : PluginResult
       # Check if path exists
-      exists_check = remote_exec("test -e #{path}")
-      unless exists_check[:exit_code] == 0
+      unless File.exists?(path)
         # Path doesn't exist, nothing to do
         if @check_mode
           return PluginResult.new(
@@ -460,7 +497,7 @@ module CrystalPlay
             msg: "Path already absent (check mode)"
           )
         end
-        
+
         return PluginResult.new(
           changed: false,
           failed: false,
@@ -468,7 +505,7 @@ module CrystalPlay
           path: path
         )
       end
-      
+
       # Path exists, remove it
       if @check_mode
         return PluginResult.new(
@@ -477,18 +514,24 @@ module CrystalPlay
           msg: "Would remove path (check mode)"
         )
       end
-      
-      # Use rm -rf to remove files, directories, and links
-      result = remote_exec("rm -rf #{path}")
-      if result[:exit_code] != 0
+
+      # Remove files, directories, and links (like rm -rf)
+      removed = begin
+        FileUtils.rm_rf(path)
+        true
+      rescue ex
+        @last_error = ex.message
+        false
+      end
+      unless removed
         return PluginResult.new(
           changed: false,
           failed: true,
           msg: "Failed to remove path",
-          stderr: result[:stderr]
+          stderr: @last_error || ""
         )
       end
-      
+
       PluginResult.new(
         changed: true,
         failed: false,
@@ -496,43 +539,40 @@ module CrystalPlay
         path: path
       )
     end
-    
-    # Check if attributes need updating
+
+    # Check if attributes need updating. Uses a raw `lstat` (not
+    # `File::Info`, whose `permissions.value` strips the setuid/setgid/
+    # sticky bits) so a requested numeric mode's special bits compare
+    # correctly - matches what `stat -c '%U'`/`'%G'`/`'%a'` (no `-L`,
+    # i.e. not following symlinks) did before.
     private def update_attributes_if_needed(path : String, is_directory : Bool) : Bool
       changed = false
-      
+      info = lstat(path)
+      return false unless info
+
       # Check owner
       if owner = @params["owner"]?
-        stat_result = remote_exec("stat -c '%U' #{path}")
-        if stat_result[:exit_code] == 0
-          current_owner = stat_result[:stdout].strip
-          changed = true if current_owner != owner
-        end
+        current_owner = owner_name(info.st_uid)
+        changed = true if current_owner != owner
       end
-      
+
       # Check group
       if group = @params["group"]?
-        stat_result = remote_exec("stat -c '%G' #{path}")
-        if stat_result[:exit_code] == 0
-          current_group = stat_result[:stdout].strip
-          changed = true if current_group != group
-        end
+        current_group = group_name(info.st_gid)
+        changed = true if current_group != group
       end
-      
+
       # Check mode
       if mode = @params["mode"]?
-        stat_result = remote_exec("stat -c '%a' #{path}")
-        if stat_result[:exit_code] == 0
-          current_mode = stat_result[:stdout].strip
-          # Normalize mode for comparison
-          target_mode = normalize_mode(mode)
-          changed = true if current_mode != target_mode
-        end
+        current_mode = PluginHelpers::StatFields.perm_octal(info.st_mode.to_i32)
+        # Normalize mode for comparison
+        target_mode = normalize_mode(mode)
+        changed = true if current_mode != target_mode
       end
-      
+
       changed
     end
-    
+
     # Normalize mode to octal string
     private def normalize_mode(mode : String) : String
       # If already octal (e.g., "0755"), strip leading zero
@@ -543,102 +583,194 @@ module CrystalPlay
       # For now, return as-is
       mode
     end
-    
+
     # Apply file attributes
     private def apply_file_attributes(path : String, recursive : Bool = false)
-      # Set owner
+      apply_single_file_attributes(path)
+      return unless recursive
+      walk_apply_attributes(path)
+    end
+
+    private def walk_apply_attributes(dir : String)
+      Dir.each_child(dir) do |child|
+        child_path = File.join(dir, child)
+        apply_single_file_attributes(child_path)
+        info = File.info?(child_path, follow_symlinks: false)
+        walk_apply_attributes(child_path) if info && info.directory? && !info.symlink?
+      end
+    rescue
+      # Permission denied, etc. - skip this directory rather than
+      # failing the whole task (matches the previous shell implementation
+      # not checking chown -R/chmod -R's exit code either).
+    end
+
+    private def apply_single_file_attributes(path : String)
+      uid = -1
+      gid = -1
+
       if owner = @params["owner"]?
-        cmd = recursive ? "chown -R #{owner} #{path}" : "chown #{owner} #{path}"
-        remote_exec(cmd)
+        if user = System::User.find_by?(name: owner)
+          uid = user.id.to_i
+        end
       end
-      
-      # Set group
+
       if group = @params["group"]?
-        cmd = recursive ? "chgrp -R #{group} #{path}" : "chgrp #{group} #{path}"
-        remote_exec(cmd)
+        if grp = System::Group.find_by?(name: group)
+          gid = grp.id.to_i
+        end
       end
-      
-      # Set mode
+
+      File.chown(path, uid: uid, gid: gid) if uid != -1 || gid != -1
+
       if mode = @params["mode"]?
-        cmd = recursive ? "chmod -R #{mode} #{path}" : "chmod #{mode} #{path}"
-        remote_exec(cmd)
+        apply_mode(path, mode)
+      end
+    rescue
+      # A chmod/chown failure (e.g. not running as root/owner) shouldn't
+      # fail the whole task - matches the previous shell implementation's
+      # behavior of not checking these commands' exit codes either.
+    end
+
+    private def apply_mode(path : String, mode : String)
+      if numeric = parse_numeric_mode(mode)
+        File.chmod(path, numeric)
+      else
+        # Symbolic mode (e.g. "u+x", "go-w") - see the class doc comment.
+        remote_exec("chmod #{mode} #{path}")
       end
     end
-    
+
+    private def parse_numeric_mode(mode : String) : Int32?
+      return nil unless mode =~ /\A0?[0-7]{3,4}\z/
+      mode.to_i(8)
+    end
+
     # Update access and modification times
     private def update_times(path : String)
       # Handle modification_time
       if mod_time = @params["modification_time"]?
         case mod_time.downcase
         when "now"
-          # Touch updates mtime to now
-          remote_exec("touch #{path}")
+          set_time(path, mtime: Time.utc)
         when "preserve"
           # Don't change
         else
           # Specific timestamp (YYYYMMDDhhmm.ss)
-          remote_exec("touch -m -t #{mod_time} #{path}")
+          set_time(path, mtime: parse_touch_timestamp(mod_time))
         end
       end
-      
+
       # Handle access_time
       if acc_time = @params["access_time"]?
         case acc_time.downcase
         when "now"
-          remote_exec("touch -a #{path}")
+          set_time(path, atime: Time.utc)
         when "preserve"
           # Don't change
         else
           # Specific timestamp
-          remote_exec("touch -a -t #{acc_time} #{path}")
+          set_time(path, atime: parse_touch_timestamp(acc_time))
         end
       end
     end
-    
+
+    private def touch_now(path : String) : Bool
+      File.utime(Time.utc, Time.utc, path)
+      true
+    rescue
+      false
+    end
+
+    # `File.utime` always takes both atime and mtime, so setting just one
+    # (matching `touch -a`/`touch -m`'s own single-timestamp behavior)
+    # means reading the other one's current value first. `File::Info`
+    # only exposes `modification_time`, not `access_time`, so a raw
+    # (following) `stat` is used instead - same as `native_stat`.
+    private def set_time(path : String, atime : Time? = nil, mtime : Time? = nil)
+      current = stat(path)
+      return unless current
+      new_atime = atime || Time.unix(current.st_atim.tv_sec.to_i64)
+      new_mtime = mtime || Time.unix(current.st_mtim.tv_sec.to_i64)
+      File.utime(new_atime, new_mtime, path)
+    rescue
+    end
+
+    private def stat(path : String) : LibC::Stat?
+      s = uninitialized LibC::Stat
+      result = LibC.stat(path, pointerof(s))
+      result == 0 ? s : nil
+    end
+
+    # Parses Ansible's own `modification_time`/`access_time` timestamp
+    # format, `YYYYMMDDhhmm.ss` - the same format `touch -t` expects,
+    # interpreted in local time (matching `touch -t`, not UTC).
+    private def parse_touch_timestamp(value : String) : Time
+      match = value.match(/\A(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(?:\.(\d{2}))?\z/)
+      raise ArgumentError.new("invalid timestamp: #{value}") unless match
+      year, month, day, hour, minute = match[1].to_i, match[2].to_i, match[3].to_i, match[4].to_i, match[5].to_i
+      second = match[6]?.try(&.to_i) || 0
+      Time.local(year, month, day, hour, minute, second)
+    end
+
+    private def lstat(path : String) : LibC::Stat?
+      stat = uninitialized LibC::Stat
+      result = LibC.lstat(path, pointerof(stat))
+      result == 0 ? stat : nil
+    end
+
+    private def try_readlink(path : String) : String?
+      File.readlink(path)
+    rescue
+      nil
+    end
+
+    private def owner_name(uid : LibC::UidT) : String
+      System::User.find_by?(id: uid.to_s).try(&.username) || uid.to_s
+    end
+
+    private def group_name(gid : LibC::GidT) : String
+      System::Group.find_by?(id: gid.to_s).try(&.name) || gid.to_s
+    end
+
     # Helper: Check if parameter is truthy
     private def is_true?(value : String?, default : Bool = false) : Bool
       return default unless value
       ["true", "yes", "1", "on"].includes?(value.downcase)
     end
-    
+
     # Generate attribute diff for file
     private def get_attribute_diff(path : String) : JSON::Any?
       return nil unless @diff_mode
-      
+      info = lstat(path)
+      return nil unless info
+
       before = {} of String => String
       after = {} of String => String
-      
+
       # Get current mode
       if @params["mode"]?
-        stat_result = remote_exec("stat -c '%a' #{path} 2>/dev/null")
-        if stat_result[:exit_code] == 0
-          before["mode"] = stat_result[:stdout].strip
-          after["mode"] = @params["mode"].to_s
-        end
+        before["mode"] = PluginHelpers::StatFields.perm_octal(info.st_mode.to_i32)
+        after["mode"] = @params["mode"].to_s
       end
-      
+
       # Get current owner
       if @params["owner"]?
-        stat_result = remote_exec("stat -c '%U' #{path} 2>/dev/null")
-        if stat_result[:exit_code] == 0
-          before["owner"] = stat_result[:stdout].strip
-          after["owner"] = @params["owner"].to_s
-        end
+        before["owner"] = owner_name(info.st_uid)
+        after["owner"] = @params["owner"].to_s
       end
-      
+
       # Get current group
       if @params["group"]?
-        stat_result = remote_exec("stat -c '%G' #{path} 2>/dev/null")
-        if stat_result[:exit_code] == 0
-          before["group"] = stat_result[:stdout].strip
-          after["group"] = @params["group"].to_s
-        end
+        before["group"] = group_name(info.st_gid)
+        after["group"] = @params["group"].to_s
       end
-      
+
       return nil if before.empty?
-      
+
       generate_attribute_diff(before, after)
     end
+
+    @last_error : String? = nil
   end
 end
 

@@ -35,9 +35,7 @@ module CrystalPlay
         group_digit = (mode >> 3) & 0o7
         other_digit = mode & 0o7
 
-        # Matches GNU stat's own `%a`: the special (setuid/setgid/sticky)
-        # digit is only included when non-zero.
-        perm_octal = special_digit == 0 ? "#{owner_digit}#{group_digit}#{other_digit}" : "#{special_digit}#{owner_digit}#{group_digit}#{other_digit}"
+        perm_octal = perm_octal(mode)
 
         file_mode = mode & LibC::S_IFMT
 
@@ -75,6 +73,20 @@ module CrystalPlay
           "woth"    => (other_digit & 2) != 0,
           "xoth"    => (other_digit & 1) != 0,
         }.transform_values { |v| JSON.parse(v.to_json) }
+      end
+
+      # Matches GNU `stat -c '%a'`: the type bits are stripped and the
+      # special (setuid/setgid/sticky) digit is only included when
+      # non-zero (e.g. 0o100644 -> "644", 0o104755 -> "4755"). Also used
+      # by `file.cr` to compare a freshly-lstat'd mode against a
+      # requested numeric `mode:` parameter without shelling to `stat`.
+      def self.perm_octal(mode : Int32) : String
+        special_digit = (mode >> 9) & 0o7
+        owner_digit = (mode >> 6) & 0o7
+        group_digit = (mode >> 3) & 0o7
+        other_digit = mode & 0o7
+
+        special_digit == 0 ? "#{owner_digit}#{group_digit}#{other_digit}" : "#{special_digit}#{owner_digit}#{group_digit}#{other_digit}"
       end
 
       def self.regular_file?(mode : Int32) : Bool

@@ -410,3 +410,75 @@ examples) verifying round-trips at various sizes, cross-compatibility
 with the real `bzip2` binary in both directions, and error handling on
 corrupt input. Full crystal-ansible archive/unarchive suite (29
 examples) and full project suite (495 examples) pass.
+
+## file: shelling out vs native filesystem calls
+
+**Date:** 2026-08-03
+
+A broader survey of every plugin's `remote_exec` call sites (looking for
+more `stat`/`find`-style oversights - shelling for something Crystal's
+stdlib already does natively, as opposed to a genuine missing-binding
+gap like `apt`/`dnf`/`firewalld`) turned up `file.cr` as the single
+biggest offender: 27 separate `remote_exec` calls across its six states
+(`directory`/`file`/`link`/`hard`/`touch`/`absent`), every one of them
+`mkdir -p`/`test -f`/`test -e`/`readlink`/`rm -f`/`rm -rf`/`ln -s`/`ln`/
+`touch` (all four variants)/`stat -c '%U'`/`'%G'`/`'%a'`/`chown`/
+`chgrp`/`chmod` - all with direct Crystal stdlib equivalents
+(`Dir.mkdir_p`, `File.exists?`/`File.file?`, `File.readlink`,
+`File.delete?`/`FileUtils.rm_rf`, `File.symlink`/`File.link`,
+`File.utime`, a raw `LibC.lstat` for reading current mode/owner/group,
+`File.chown`/`File.chmod` for numeric mode).
+
+One narrow, genuine gap remains: *symbolic* mode strings (`u+x`,
+`go-w`, etc.) still shell to the real `chmod` binary to apply -
+reimplementing chmod(1)'s symbolic-mode grammar (scopes, `+`/`-`/`=`,
+`X`, comma-clauses) correctly is real, separate scope, and this was
+already the weakest-supported path before conversion (the pre-existing
+code could only detect symbolic-mode changes via a string comparison
+that's essentially always "changed", never fully parsed it either).
+Numeric mode - the overwhelming majority of real playbooks - is fully
+native.
+
+A correctness subtlety worth calling out: GNU `stat -c '...'` (without
+`-L`) does *not* follow symlinks, while `test -e`/`test -f` *do* - the
+original shell implementation relied on this same split (existence
+checks follow, attribute checks don't), and the native conversion
+replicates it exactly (`File.exists?`/`File.file?` follow;
+`LibC.lstat` doesn't) rather than "fixing" it into single consistent
+behavior, since the goal was a mechanical shell->native conversion, not
+a behavior change. One actual pre-existing bug was *found* (not
+introduced) during this work and deliberately left alone for the same
+reason: `state: file`'s `modification_time`/`access_time` params only
+take effect when `owner`/`group`/`mode` also change, because
+`update_times` is only called inside the same `if changed` block that
+guards `apply_file_attributes` - present in the original shell version
+too, unrelated to this conversion, and out of scope for it.
+
+### Results
+
+No dedicated spec suite existed for `file.cr` before this (the plugin
+was previously only exercised indirectly) - `spec/integration/file_spec.cr`
+(21 examples, new) now covers all six states, idempotency, check mode,
+force-overwrite, symbolic mode, setuid/setgid/sticky bit preservation,
+and `recurse:`.
+
+Benchmarked each state's single-invocation cost (the way `file:` is
+actually used in real playbooks - once per task, often inside a loop
+over many paths - rather than one big batch): 200 iterations per
+scenario, comparing the compiled plugin binary before/after.
+
+| scenario | before (shell) | after (native) | speedup |
+|---|---|---|---|
+| `state: directory` (create) | 7.02ms | 1.85ms | **3.79x** |
+| `state: directory` (idempotent) | 4.65ms | 1.85ms | **2.51x** |
+| `state: touch` (create) | 6.87ms | 1.91ms | **3.60x** |
+| `state: file` (mode, idempotent) | 6.62ms | 1.90ms | **3.49x** |
+| `state: link` (create) | 8.79ms | 1.81ms | **4.85x** |
+| `state: absent` (remove) | 6.37ms | 1.79ms | **3.55x** |
+
+Consistent with `stat`/`find`: the win scales with how many
+`remote_exec` calls a single invocation used to make (each one spawning
+a `/bin/bash -c '...'` subprocess, even for local execution - the
+`LocalExecutor` used by `remote_exec` shells too, it just skips SSH),
+so `state: link`'s three shelled-out checks per call show the largest
+speedup. Full project suite (516 examples) passes.

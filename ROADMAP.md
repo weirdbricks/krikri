@@ -555,6 +555,46 @@ the same way it did between January and now.
     themselves are deleted before the snapshot for the same
     non-byte-comparable-binary reason `archive`'s compat playbook
     already documents).
+- [x] `file` (`0.3.0`, converted to native syscalls in `0.9.19`): the
+  `directory`/`file`/`link`/`hard`/`touch`/`absent` states, originally
+  built by shelling to `mkdir -p`/`test -f`/`test -e`/`readlink`/
+  `rm -f`/`rm -rf`/`ln -s`/`ln`/`touch`/`stat -c '%U'`/`'%G'`/`'%a'`/
+  `chown`/`chgrp`/`chmod` (27 separate `remote_exec` calls across the
+  file). A broader survey of every plugin's shell-out sites (looking for
+  more `stat`/`find`-style oversights, as opposed to genuine
+  missing-binding gaps like `apt`/`dnf`) found `file.cr` was by far the
+  biggest one - every one of those calls has a direct Crystal stdlib
+  equivalent (`Dir.mkdir_p`, `File.exists?`/`File.file?`,
+  `File.readlink`, `File.delete?`/`FileUtils.rm_rf`,
+  `File.symlink`/`File.link`, `File.utime`, a raw `LibC.lstat` for
+  current mode/owner/group since `File::Info#permissions.value` strips
+  the setuid/setgid/sticky bits, `File.chown`/`File.chmod` for numeric
+  mode). One narrow gap remains by design: *symbolic* mode (`u+x`,
+  `go-w`) still shells to real `chmod` to apply - correctly
+  reimplementing chmod(1)'s symbolic grammar is separate scope, and it
+  was already the weakest-supported path pre-conversion (change
+  detection for it was already just an always-mismatching string
+  compare). A subtle behavior split was deliberately preserved rather
+  than "fixed": GNU `stat -c` without `-L` doesn't follow symlinks while
+  `test -e`/`test -f` do, and the original shell version relied on
+  exactly that split - the native version keeps it
+  (`File.exists?`/`File.file?` follow, `LibC.lstat` doesn't). Also
+  found (not introduced) and deliberately left alone: `state: file`'s
+  `modification_time`/`access_time` only take effect when
+  `owner`/`group`/`mode` also change, since `update_times` sits inside
+  the same `if changed` guard as `apply_file_attributes` - a
+  pre-existing bug in the shell version too, out of scope for a
+  mechanical conversion.
+  - No dedicated spec suite existed for `file.cr` before this - new
+    `spec/integration/file_spec.cr` (21 examples) covers all six
+    states, idempotency, check mode, force-overwrite, symbolic mode,
+    setuid/setgid/sticky preservation, and `recurse:`.
+  - Benchmarked each state's single-invocation cost (200 iterations
+    each, comparing the compiled plugin binary before/after): 2.5x-4.9x
+    faster across every state (`state: link`'s create path, with three
+    shelled-out checks per call in the old version, shows the largest
+    win at **4.85x**). Full details in `BENCHMARK_RESULTS.md`. Full
+    project suite (516 examples) passes.
 - [x] `apt_repository` (`0.9.3`): adds/removes a Debian/Ubuntu APT source
   line under `/etc/apt/sources.list.d/`. Parameters: `repo` (a plain
   `deb`/`deb-src` line, required), `state`, `filename`, `update_cache`
