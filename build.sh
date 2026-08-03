@@ -203,6 +203,8 @@ PLUGINS=(
     "docker_container"
     "mysql_db"
     "mysql_user"
+    "postgresql_db"
+    "postgresql_user"
 )
 
 PLUGIN_COUNT=0

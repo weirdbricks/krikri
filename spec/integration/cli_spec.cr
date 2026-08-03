@@ -254,6 +254,20 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("mysql plugins smoke test complete!")
   end
 
+  it "manages a PostgreSQL database and role (with attribute flag diffing) end to end (requires a real server at 127.0.0.1:15432)" do
+    status, output = run_playbook(
+      "test-postgresql-quick.yml",
+      [] of String,
+      inventory: File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-testservers-local.ini")
+    )
+
+    status.success?.should be_true
+    output.should contain("db_first=True db_idempotent=False")
+    output.should contain("user_first=True user_idempotent=False")
+    output.should contain("user_flags_changed=True user_removed=True db_removed=True")
+    output.should contain("postgresql plugins smoke test complete!")
+  end
+
   it "recovers a failed block: via rescue:, always runs always:, and the play continues" do
     status, output = run_playbook("test-error-handling-quick.yml", [] of String)
 

@@ -29,7 +29,7 @@
 - ✅ Ansible Vault (AES256 encrypt/decrypt, `--ask-vault-pass`/`--vault-password-file`, `vault {encrypt|decrypt|view|encrypt_string|rekey}` CLI subcommands, inline `!vault` values)
 - ✅ Docker-based compatibility harness (`compat/`) cross-verifying every feature above against real `ansible-playbook`, not just documented behavior
 
-### **Plugins (32 total)**
+### **Plugins (34 total)**
 1. ✅ **copy** - File copying
 2. ✅ **template** - Jinja2 templating
 3. ✅ **file** - File/directory management
@@ -62,6 +62,8 @@
 30. ✅ **docker_container** - create/start/stop/remove Docker containers (`community.docker.docker_container`)
 31. ✅ **mysql_db** - create/remove MySQL/MariaDB databases (`community.mysql.mysql_db`)
 32. ✅ **mysql_user** - create/remove MySQL/MariaDB users + privilege diffing (`community.mysql.mysql_user`)
+33. ✅ **postgresql_db** - create/remove PostgreSQL databases (`community.postgresql.postgresql_db`)
+34. ✅ **postgresql_user** - create/remove PostgreSQL roles + attribute flag diffing (`community.postgresql.postgresql_user`)
 
 ---
 
@@ -83,9 +85,14 @@ Everything that used to be listed here as high/medium priority - conditionals, f
   [weirdbricks/crystal-mysql](https://github.com/weirdbricks/crystal-mysql)
   (upstream couldn't authenticate against MySQL 8+ or any SSL-enabled
   server at all, now fixed there)
-- `postgresql_db` / `postgresql_user` - not implemented
+- ✅ `postgresql_db` / `postgresql_user` - shipped in `0.9.14`, talking to
+  the PostgreSQL wire protocol directly (like real Ansible's own
+  community.postgresql) via
+  [will/crystal-pg](https://github.com/will/crystal-pg) - no fork needed
+  this time, it connected cleanly (SCRAM-SHA-256 auth, SSL) against a
+  real PostgreSQL 17 server on the first try.
 
-**Workaround:** Use `shell`/`command` to call the native tool directly (still applies to the PostgreSQL modules).
+Phase 3's plugin list is now fully complete - every plugin originally scoped for it has shipped.
 
 **Note on `ufw`:** implemented, but uniquely in this codebase, not verified end-to-end against real `ansible-playbook` - `ufw` refuses to run at all without root (even bare status queries), and no available test environment here has working netfilter access even as root. Confirmed real Ansible's own `ufw` module fails identically under the same constraint, so this is an environmental limit, not a crystal-ansible gap - see `ROADMAP.md`'s `ufw` entry for details.
 
@@ -110,18 +117,16 @@ Everything that used to be listed here as high/medium priority - conditionals, f
 
 | Missing Feature | Blocks % of Playbooks (est.) | Workaround Exists? |
 |----------------|----------------------|-------------------|
-| `delegate_to`/`run_once` | ~15% | Yes (separate plays) |
-| Async execution | ~10% | Yes (run sync) |
-| Dynamic inventory | ~10% (mostly cloud-heavy shops) | Partial |
-| DB modules (mysql/postgresql) | ~5-10% | Yes (shell/command) |
+| Cloud-provider dynamic inventory | ~5% (cloud-heavy shops; script-based dynamic inventory is done) | Partial |
+| Cloud plugins (ec2/s3_bucket/azure_rm_*) | ~5% | No |
 
-Conditionals, facts, loops, roles, include/import, vault, block/error-handling, and now the bulk of Phase 3's extended plugins - previously the highest-impact gaps - are all shipped, so the remaining gaps are narrower, more workaround-friendly, and concentrated in Phase 4 (advanced execution features) plus Docker/DB modules than when this document was first written.
+Conditionals, facts, loops, roles, include/import, vault, block/error-handling, Phase 3's full plugin list (including Docker and MySQL/PostgreSQL), and Phase 4's `delegate_to`/`run_once`/`changed_when`/`failed_when`/`async`/`group_vars`/dynamic inventory are all shipped as of `0.9.14`. What remains is narrow and low-impact: YAML-defined cloud inventory plugins and the explicitly-deprioritized cloud provider modules.
 
 ---
 
 ## 🎯 **RECOMMENDED NEXT STEPS**
 
-Sequenced in [ROADMAP.md](ROADMAP.md) Phase 3 (extended plugins, nearly done) then Phase 4 (advanced execution features). As of this update, only Docker modules and MySQL/PostgreSQL modules remain in Phase 3; everything else in that phase - `stat`, `find`, `archive`, `unarchive`, `apt_repository`, `yum_repository`, `sysctl`, `mount`, `ufw`, `firewalld` - is done.
+Phase 3 and Phase 4 are both complete per [ROADMAP.md](ROADMAP.md) except the optional, lowest-ROI cloud plugins (`ec2`, `s3_bucket`, `azure_rm_*`, ~5% of playbooks) and YAML-defined dynamic inventory plugins - see ROADMAP.md for the authoritative, actively-maintained status.
 
 ---
 
@@ -139,9 +144,9 @@ Sequenced in [ROADMAP.md](ROADMAP.md) Phase 3 (extended plugins, nearly done) th
 
 ⚠️ **Needs work for:**
 - Cloud-provider-driven dynamic inventory (script-based dynamic inventory is done; YAML-defined inventory *plugins* like `aws_ec2.yml` are not)
-- MySQL/PostgreSQL modules (workaround: `shell`/`command`) - Docker itself is done as of `0.9.12`
+- Cloud provider automation (`ec2`, `s3_bucket`, `azure_rm_*` - not implemented, ~5% of playbooks)
 - Extensive use of Ansible Galaxy collections beyond what's reimplemented here
 
 ---
 
-*Last updated: 2026-08-03, reflecting Phase 3 nearly complete (stat, find, archive, unarchive, apt_repository, yum_repository, sysctl, mount, ufw, firewalld). For current status, always check [ROADMAP.md](ROADMAP.md) first - this file is a periodic snapshot.*
+*Last updated: 2026-08-03, reflecting Phase 3 and Phase 4 both fully complete except optional cloud plugins. For current status, always check [ROADMAP.md](ROADMAP.md) first - this file is a periodic snapshot.*

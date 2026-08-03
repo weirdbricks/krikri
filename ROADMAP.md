@@ -869,10 +869,78 @@ the same way it did between January and now.
     venv with PyMySQL installed, since this environment's system Python
     is externally managed) running the identical fixture - output
     matched exactly.
-- `postgresql_db` / `postgresql_user` - not implemented (out of scope for
-  this pass, which covered MySQL only).
+- [x] `postgresql_db` / `postgresql_user` (`0.9.14`): same architecture as
+  the MySQL/Docker plugins above - talks to the server directly over
+  PostgreSQL's own wire protocol (real Ansible's `community.postgresql`
+  does the same, via psycopg2) rather than shelling out to `psql`/
+  `pg_dump`. Unlike the MySQL driver, **no fork was needed**:
+  [will/crystal-pg](https://github.com/will/crystal-pg) (479 stars, used
+  by 494 projects, pushed within the week this was written, and
+  independently already a dependency of this workspace's own
+  `dirless-ops` via `granite`) connected cleanly on the first try against
+  a real PostgreSQL 17 server - SCRAM-SHA-256 (the modern default auth
+  method, PostgreSQL's rough equivalent of MySQL's `caching_sha2_password`,
+  which is exactly where the MySQL driver failed) and SSL both worked
+  without any code changes, and a scan of its open issue tracker turned
+  up nothing blocking for the narrow CREATE/DROP DATABASE, CREATE/ALTER/
+  DROP ROLE, and simple `pg_catalog` query surface these two plugins
+  need.
+  - Real Ansible splits role management (`postgresql_user`) from
+    database/table privilege grants (a separate module,
+    `postgresql_privs`, not implemented here either) - `postgresql_user`
+    follows that same split rather than folding privileges into user
+    management the way this codebase's `mysql_user.cr` does (a real,
+    deliberate difference from the MySQL pair, not an inconsistency:
+    MySQL's own `GRANT` model ties privileges directly to the user
+    account; PostgreSQL's doesn't).
+  - `postgresql_db`: `name:` (required), `state:` (`present`/`absent`),
+    `owner:`, `encoding:` (both validated as identifier-safe characters
+    only, since they can't go through a bind parameter),
+    `maintenance_db:` (default `"postgres"`, matching real Ansible -
+    PostgreSQL can't `CREATE`/`DROP DATABASE` on the connection's own
+    current database), `login_host:` (default `"localhost"` - a
+    simplification versus real Ansible's own default of `""`/local unix
+    socket, matching this codebase's other plugins' TCP-first default
+    instead), `login_port:` (5432), `login_user:` (default `"postgres"`,
+    matching real Ansible), `login_password:`, `login_unix_socket:`
+    (takes precedence over `login_host:`/`login_port:` when given - via a
+    new pure `src/crystal_play/plugin_helpers/postgresql_connection.cr`,
+    unit tested; verified against `crystal-pg`'s actual `ConnInfo` parsing
+    source that a unix socket path has to go through a `host` query
+    param, not the URI's own host component). Not implemented: `state:
+    dump`/`import`, `collation:`/`lc_collate:`/`lc_ctype:`/`template:`/
+    `tablespace:`, `force:`, `session_role:`.
+  - `postgresql_user`: `name:` (required), `password:` (applied whenever
+    given, for both new and already-existing roles - unlike real Ansible,
+    which can compare a candidate password against the role's stored
+    SCRAM/MD5 verifier to stay idempotent, this always reissues `ALTER
+    ROLE ... PASSWORD` and reports `changed: true` whenever a `password:`
+    is given for an existing role, the same documented simplification
+    `mysql_user.cr` already makes), `state:` (`present`/`absent`),
+    `role_attr_flags:` (`"LOGIN,CREATEDB,NOSUPERUSER"`, real Ansible's
+    own format - via a new pure
+    `src/crystal_play/plugin_helpers/postgresql_role_flags.cr`, unit
+    tested, diffed against the role's actual `pg_roles` attribute
+    columns verified against a real PostgreSQL 17 server's schema; only
+    the flags actually given are compared, so omitting
+    `role_attr_flags:` entirely never triggers a change on its own),
+    `login_host:`/`login_port:`/`login_user:`/`login_password:`/
+    `login_unix_socket:`/`login_db:` (default `"postgres"`, matching real
+    Ansible). Not implemented: `expires:`, `conn_limit:`, `comment:`,
+    `session_role:`, `fail_on_user:`.
+  - Verified end-to-end against a real running PostgreSQL 17 server by
+    hand (database create/idempotent/remove/idempotent; role create with
+    flags/idempotent, flags changed, remove/idempotent) before writing
+    any automated test. Integration tested via the CLI against the same
+    real server (`testing/test-postgresql-quick.yml` targeting
+    `testservers`, like `test-mysql-quick.yml`) +
+    `spec/integration/cli_spec.cr`, and verified task-for-task against
+    real `ansible-playbook` (via a Python venv with psycopg2-binary
+    installed, same reasoning as the MySQL fixture's PyMySQL venv) running
+    the identical fixture - output matched exactly.
 
-**Result:** ~99.99% playbook coverage per prior analysis.
+**Result:** ~99.99% playbook coverage per prior analysis. Phase 3 is now
+fully complete - every plugin originally scoped for it has shipped.
 
 ---
 

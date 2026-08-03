@@ -1,5 +1,5 @@
 name: crystal-play
-version: 0.9.13
+version: 0.9.14
 
 description: |
   Fast, Ansible-compatible automation tool written in Crystal
@@ -17,6 +17,8 @@ dependencies:
   mysql:
     github: weirdbricks/crystal-mysql
     branch: master
+  pg:
+    github: will/crystal-pg
 
 development_dependencies:
   ameba:

@@ -1,0 +1,102 @@
+# postgresql_db:/postgresql_user: smoke test. Requires a real PostgreSQL
+# server reachable at 127.0.0.1:15432 (postgres/rootpass) - same
+# convention as test-mysql-quick.yml: targets "testservers" so a --check
+# run against the generic empty inventory skips the whole play rather
+# than needing a real server.
+
+- name: postgresql plugins test
+  hosts: testservers
+  gather_facts: false
+
+  vars:
+    test_db: crystal_ansible_test_db
+    test_user: crystal_ansible_test_user
+    login_host: 127.0.0.1
+    login_port: 15432
+    login_user: postgres
+    login_password: rootpass
+
+  tasks:
+    - name: ensure the test database is present
+      community.postgresql.postgresql_db:
+        name: "{{ test_db }}"
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: db_first
+
+    - name: ensure the test database is present (idempotent)
+      community.postgresql.postgresql_db:
+        name: "{{ test_db }}"
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: db_idempotent
+
+    - name: create the test role
+      community.postgresql.postgresql_user:
+        name: "{{ test_user }}"
+        password: secret123
+        role_attr_flags: LOGIN,CREATEDB
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: user_first
+
+    - name: create the test role (idempotent)
+      community.postgresql.postgresql_user:
+        name: "{{ test_user }}"
+        role_attr_flags: LOGIN,CREATEDB
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: user_idempotent
+
+    - name: change the role's attribute flags
+      community.postgresql.postgresql_user:
+        name: "{{ test_user }}"
+        role_attr_flags: LOGIN,NOCREATEDB,SUPERUSER
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: user_flags_changed
+
+    - name: remove the test role
+      community.postgresql.postgresql_user:
+        name: "{{ test_user }}"
+        state: absent
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: user_removed
+
+    - name: remove the test database
+      community.postgresql.postgresql_db:
+        name: "{{ test_db }}"
+        state: absent
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: db_removed
+
+    - name: show results
+      ansible.builtin.debug:
+        msg: >-
+          db_first={{ db_first.changed }}
+          db_idempotent={{ db_idempotent.changed }}
+          user_first={{ user_first.changed }}
+          user_idempotent={{ user_idempotent.changed }}
+          user_flags_changed={{ user_flags_changed.changed }}
+          user_removed={{ user_removed.changed }}
+          db_removed={{ db_removed.changed }}
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "postgresql plugins smoke test complete!"
