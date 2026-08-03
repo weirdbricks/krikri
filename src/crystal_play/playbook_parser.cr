@@ -194,6 +194,8 @@ module CrystalPlay
       "ansible.builtin.unarchive",
       "ansible.builtin.yum_repository",
       "ansible.builtin.apt_repository",
+      "ansible.posix.mount",
+      "ansible.posix.sysctl",
     ]
     
     # Parse playbook from file

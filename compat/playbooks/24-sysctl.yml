@@ -1,0 +1,57 @@
+- name: sysctl
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: seed a fake sysctl file
+      ansible.builtin.copy:
+        content: |
+          # custom sysctl
+          net.ipv4.ip_forward=0
+        dest: /work/sysctl.conf
+
+    - name: update an existing key
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_forward
+        value: "1"
+        sysctl_file: /work/sysctl.conf
+        reload: false
+      register: update_result
+
+    - name: idempotent rerun
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_forward
+        value: "1"
+        sysctl_file: /work/sysctl.conf
+        reload: false
+      register: rerun_result
+
+    - name: append a new key
+      ansible.posix.sysctl:
+        name: vm.swappiness
+        value: "10"
+        sysctl_file: /work/sysctl.conf
+        reload: false
+      register: append_result
+
+    - name: remove a key
+      ansible.posix.sysctl:
+        name: vm.swappiness
+        state: absent
+        sysctl_file: /work/sysctl.conf
+        reload: false
+      register: remove_result
+
+    - name: read the final file content back
+      ansible.builtin.command: cat /work/sysctl.conf
+      register: final_content
+      changed_when: false
+
+    - name: write the stable results to a file for comparison
+      ansible.builtin.copy:
+        content: |
+          update_changed={{ update_result.changed }}
+          rerun_changed={{ rerun_result.changed }}
+          append_changed={{ append_result.changed }}
+          remove_changed={{ remove_result.changed }}
+          final_content={{ final_content.stdout }}
+        dest: /work/sysctl-output.txt

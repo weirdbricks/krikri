@@ -193,6 +193,8 @@ PLUGINS=(
     "unarchive"
     "yum_repository"
     "apt_repository"
+    "mount"
+    "sysctl"
 )
 
 PLUGIN_COUNT=0

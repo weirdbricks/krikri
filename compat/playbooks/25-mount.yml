@@ -1,0 +1,71 @@
+- name: mount
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: seed a fake fstab file
+      ansible.builtin.copy:
+        content: |
+          # /etc/fstab: static file system information.
+          UUID=abc123 / ext4 errors=remount-ro 0 1
+        dest: /work/fstab
+
+    - name: add a new fstab entry
+      ansible.posix.mount:
+        path: /mnt/data
+        src: /dev/sdb1
+        fstype: ext4
+        state: present
+        fstab: /work/fstab
+      register: add_result
+
+    - name: idempotent rerun
+      ansible.posix.mount:
+        path: /mnt/data
+        src: /dev/sdb1
+        fstype: ext4
+        state: present
+        fstab: /work/fstab
+      register: rerun_result
+
+    - name: update the existing entry's opts
+      ansible.posix.mount:
+        path: /mnt/data
+        src: /dev/sdb1
+        fstype: ext4
+        opts: ro,noatime
+        state: present
+        fstab: /work/fstab
+      register: update_result
+
+    - name: add an entry with boot false
+      ansible.posix.mount:
+        path: /mnt/nfsdata
+        src: 192.168.1.1:/export
+        fstype: nfs
+        boot: false
+        state: present
+        fstab: /work/fstab
+      register: boot_false_result
+
+    - name: remove the nfs entry
+      ansible.posix.mount:
+        path: /mnt/nfsdata
+        state: absent_from_fstab
+        fstab: /work/fstab
+      register: remove_result
+
+    - name: read the final fstab content back
+      ansible.builtin.command: cat /work/fstab
+      register: final_content
+      changed_when: false
+
+    - name: write the stable results to a file for comparison
+      ansible.builtin.copy:
+        content: |
+          add_changed={{ add_result.changed }}
+          rerun_changed={{ rerun_result.changed }}
+          update_changed={{ update_result.changed }}
+          boot_false_changed={{ boot_false_result.changed }}
+          remove_changed={{ remove_result.changed }}
+          final_content={{ final_content.stdout }}
+        dest: /work/mount-output.txt

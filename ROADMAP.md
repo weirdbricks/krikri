@@ -3,22 +3,22 @@
 **Status as of 2026-08-03:** builds again on Crystal 1.20.3 (fixed `as_i` -> `as_i64`
 type mismatch in `comparison_evaluator.cr`). **Phase 0, Phase 1, and Phase 2 are
 all done** (roles, import/include, and vault); **Phase 3 is in progress**
-(`0.9.3`) - `stat`, `find`, `archive`, `unarchive`, `apt_repository`, and
-`yum_repository` are done.
-365+ specs passing, `ameba` clean on all new/touched code. Added a Docker-based
+(`0.9.4`) - `stat`, `find`, `archive`, `unarchive`, `apt_repository`,
+`yum_repository`, `sysctl`, and `mount` are done.
+385+ specs passing, `ameba` clean on all new/touched code. Added a Docker-based
 compatibility harness (`compat/`, see `compat/README.md`) that runs the same
 playbooks through real `ansible-playbook` and `crystal-ansible` side by side and
 diffs the results - ground truth instead of assumptions about Ansible's
-documented behavior; 23/23 compat playbooks pass, including all of roles,
+documented behavior; 25/25 compat playbooks pass, including all of roles,
 `import_playbook:`, `import_tasks:`, `include_tasks:`, `include_role:`,
 vault (both a whole vault-encrypted playbook file and an inline `!vault`
-variable), `stat`, `find`, `archive`, `unarchive`, `apt_repository`, and
-`yum_repository`. Along the way it (and, for some bugs the file-state-diffing
-approach can't catch, plain manual testing) found and fixed 12 real bugs:
-`authorized_key` registered under the wrong FQCN (it's
-`ansible.posix.authorized_key`, not `ansible.builtin.*` - confirmed via
-`ansible-doc`, not memory), plugin resolution breaking outside the repo
-checkout, `Host.from_json` crashing on a host with no explicit user,
+variable), `stat`, `find`, `archive`, `unarchive`, `apt_repository`,
+`yum_repository`, `sysctl`, and `mount`. Along the way it (and, for some bugs
+the file-state-diffing approach can't catch, plain manual testing and
+self-review) found and fixed 13 real bugs: `authorized_key` registered under
+the wrong FQCN (it's `ansible.posix.authorized_key`, not `ansible.builtin.*` -
+confirmed via `ansible-doc`, not memory), plugin resolution breaking outside
+the repo checkout, `Host.from_json` crashing on a host with no explicit user,
 `lineinfile` inserting a spurious blank line on every append/removal to a file
 already ending in a newline, `include_role:` + `loop:` producing duplicate
 handler *Task objects* sharing a name (which `HandlerRunner` ran once each
@@ -33,11 +33,13 @@ passed to `tar`/`zip` alongside their own already-walked children, `arcroot`
 being computed wrong due to a real Crystal/Python `dirname` divergence on
 trailing-slash paths, `exclusion_patterns` silently failing to match any
 path with a subdirectory component because `*` doesn't cross `/` in Crystal's
-`File.match?`, and `apt_repository`'s removal logic silently no-oping because
+`File.match?`, `apt_repository`'s removal logic silently no-oping because
 `grep -v ... && mv ...` skips the `mv` whenever `grep -v` filters out every
 line (its normal exit-1-for-zero-output-lines behavior, not an error) - the
-common case when removing the only line from a single-repo file. Next up is
-the rest of Phase 3. This
+common case when removing the only line from a single-repo file - and
+`mount`'s `check_mode` originally only guarding the real mount/umount step,
+not the fstab file write itself (caught in self-review, before it ever
+shipped). Next up is the rest of Phase 3. This
 roadmap sequences the remaining work from the two prior analysis docs
 ([WHATS_MISSING.md](WHATS_MISSING.md), [MISSING_FEATURES_COMPREHENSIVE.md](MISSING_FEATURES_COMPREHENSIVE.md))
 into phases, with the test-foundation phase (Phase 0) landing first so every
@@ -526,7 +528,55 @@ the same way it did between January and now.
   `username`/`password`/`proxy_*`, `unsafe_writes`, `countme`,
   `enablegroups`, `failovermethod`, `include`), SELinux options,
   `attributes`.
-- `sysctl`, `mount`
+- [x] `sysctl` (`0.9.4`): manages a `key=value` entry in a sysctl config
+  file, optionally applying it to the running kernel. Parameters: `name`
+  (required), `value` (required when `state: present`), `state`,
+  `sysctl_file` (default `/etc/sysctl.conf`), `sysctl_set` (also runs
+  `sysctl -w` against the running kernel, default false), `reload` (runs
+  `sysctl -p <file>` when the file changed, default true - matching real
+  Ansible's own default), `ignoreerrors`, `check_mode`. File rewrite
+  logic verified by reading the real `ansible.posix` `sysctl.py` source
+  directly, not assumed from docs: comments/blanks pass through
+  untouched, only the first occurrence of a duplicated key survives a
+  rewrite, `state: absent` drops the key's line entirely (not commented
+  out). Since `sysctl_file` is a plain parameter (not hardcoded, unlike
+  `apt_repository`'s sources.list paths), the real add/update/idempotency/
+  remove path is fully testable without root by pointing at a throwaway
+  file (`spec/integration/sysctl_spec.cr`), with `reload: false` used
+  throughout to avoid ever touching the real running kernel. Verified
+  byte-for-byte against real `ansible-playbook`'s actual file output for
+  update/append/idempotent-rerun/absent, and via the compat harness
+  (`compat/playbooks/24-sysctl.yml` - passed).
+- [x] `mount` (`0.9.4`): manages `/etc/fstab` entries and (optionally)
+  actually mounts/unmounts a filesystem. Parameters: `path` (required),
+  `src`/`fstype` (required when `state: present` or `mounted` - verified
+  against real Ansible's actual `required_if`, not assumed), `opts`
+  (default `defaults`), `dump`/`passno` (default `0`), `boot` (default
+  true - false appends `noauto` to `opts`, matching real Ansible's
+  behavior exactly, verified against actual output), `fstab` (default
+  `/etc/fstab`), `backup`, `state` (`present`/`absent`/
+  `absent_from_fstab`/`mounted`/`unmounted`), `check_mode`. Fstab line
+  format and idempotency (matched by `path`, comparing
+  src/fstype/opts/dump/passno field-by-field, updating the matching line
+  in place rather than removing+re-appending) verified by reading the
+  real `ansible.posix` `mount.py` source directly. Like `sysctl`, `fstab:`
+  is a plain overridable parameter, so `present`/`absent`/
+  `absent_from_fstab` are fully tested for real without root
+  (`spec/integration/mount_spec.cr`); `mounted`/`unmounted` (which run
+  real `mount`/`umount`) are exercised via `check_mode` only, matching
+  `user_spec.cr`/`group_spec.cr`'s established convention. Verified
+  byte-for-byte against real `ansible-playbook`'s actual fstab output,
+  and via the compat harness (`compat/playbooks/25-mount.yml` - passed).
+  Not implemented: `remounted`/`ephemeral` states (rarer, and
+  `ephemeral` has its own device-source-conflict-checking logic that's
+  out of scope), Solaris/BSD vfstab handling (Linux fstab format only).
+  - Caught and fixed one bug in self-review before it ever reached
+    testing: `check_mode` originally only guarded the actual
+    mount/umount step, not the fstab file write itself - so `--check`
+    would still really rewrite `/etc/fstab`. Fixed by threading
+    `check_mode` through the fstab-writing path too, with a regression
+    test (`spec/integration/mount_spec.cr`) asserting the file is
+    byte-for-byte untouched in check mode.
 - `ufw` / `firewalld`
 - `docker_container` / `docker_image` / `docker_network`
 - `mysql_db` / `mysql_user`, `postgresql_db` / `postgresql_user`

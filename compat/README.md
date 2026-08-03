@@ -93,7 +93,7 @@ test with exact content assertions for the `lineinfile` bug).
 
 ## Coverage
 
-Twenty-three playbooks, one per concern: `debug`/`copy`, `file` states,
+Twenty-five playbooks, one per concern: `debug`/`copy`, `file` states,
 `lineinfile`, `loop`/`with_items`, real `user`/`group` creation and
 modification, `block`/`rescue`/`always`, `until`/`retries`, `cron`
 (`cron_file:`), `authorized_key`, `git` clone/checkout against a local
@@ -146,7 +146,17 @@ once. `yum_repository` (`23-yum-repository.yml`) covers writing a
 `.repo` file, an idempotent rerun, a rewrite with a different parameter
 set (confirming keys not passed this time are dropped, not merged), a
 custom `file:` target, and removal - compared via `changed` plus each
-file's actual content read back with `command:`/`shell:`.
+file's actual content read back with `command:`/`shell:`. `sysctl`
+(`24-sysctl.yml`) covers updating an existing key, an idempotent rerun,
+appending a new key, and removing a key, all against a throwaway
+`sysctl_file:` (not the real `/etc/sysctl.conf`) with `reload: false` so
+the container's real running kernel is never touched. `mount`
+(`25-mount.yml`) covers the same shape of coverage against a throwaway
+`fstab:` file - add, idempotent rerun, update an existing entry's
+`opts:`, add with `boot: false`, and `absent_from_fstab` - `mounted`/
+`unmounted` (which run real `mount`/`umount`) aren't exercised here,
+matching how `spec/integration/mount_spec.cr` only checks those via
+`check_mode`.
 
 Not covered here (same gaps noted elsewhere in this repo): `apt`/`dnf`/
 `package` (would need a slower, distro-specific compat image and real
