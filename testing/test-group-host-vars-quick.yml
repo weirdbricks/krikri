@@ -1,0 +1,19 @@
+# group_vars:/host_vars: directory loading smoke test. Targets the "web"
+# group, which only exists in
+# spec/fixtures/group_host_vars/inventory.ini (+ its own group_vars/ and
+# host_vars/ directories) - under the generic empty inventory used by
+# every other testing/*.yml fixture, "web" resolves to zero hosts and
+# this play is skipped, same convention as the "testservers" fixtures.
+
+- name: group_vars / host_vars test
+  hosts: web
+  gather_facts: false
+
+  tasks:
+    - name: show vars loaded from group_vars/ and host_vars/
+      ansible.builtin.debug:
+        msg: "datacenter={{ datacenter }} role={{ role }} app_version={{ app_version }}"
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "group_vars / host_vars smoke test complete!"

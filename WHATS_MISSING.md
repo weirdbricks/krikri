@@ -75,8 +75,9 @@ Everything that used to be listed here as high/medium priority - conditionals, f
 ### **🟢 Phase 4 - Advanced execution features**
 - ✅ `changed_when` / `failed_when` - shipped in `0.9.7`
 - ✅ `delegate_to` / `run_once` - shipped in `0.9.8`
+- ✅ `group_vars` / `host_vars` directory loading - shipped in `0.9.9`
+  (dynamic/script-based inventory itself is still not implemented)
 - Async execution (`async:` / `poll:`, `async_status`)
-- Dynamic inventory support + `group_vars` / `host_vars` directory loading
 - Cloud plugins (`ec2`, `s3_bucket`, `azure_rm_*`) - lowest ROI per usage stats (~5% of playbooks)
 
 **Workaround:** Structure playbooks with separate plays per host/delegate target; run tasks sequentially instead of async.

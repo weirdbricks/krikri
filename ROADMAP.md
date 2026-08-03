@@ -740,8 +740,37 @@ the same way it did between January and now.
   `ok`/`changed` recap-bucket convention being mutually exclusive rather
   than real Ansible's overlapping counters, true of every feature already
   shipped here, not something new to this one).
+- [x] `group_vars` / `host_vars` directory loading (`0.9.9`): after parsing
+  an INI or YAML inventory, `InventoryParser` now also looks for
+  `group_vars/` and `host_vars/` directories next to the inventory *file*
+  (not the playbook - real Ansible checks both locations, this only
+  implements the inventory-relative one, a documented scope cut). Loads
+  `group_vars/all.yml`, `group_vars/<group>.yml` for each group, and
+  `host_vars/<hostname>.yml`, applying each host's own `ansible_user`/
+  `ansible_port` keys the same way inline inventory vars already do. Only
+  the single-file-per-name form is supported, not Ansible's
+  directory-of-multiple-files style (`group_vars/<name>/*.yml`) - the
+  common case, not full parity. Precedence (implemented via a new
+  `apply_vars_file` helper using set-if-absent, called in
+  highest-precedence-first order so the first write to a given key wins):
+  inline host vars > `host_vars/<host>.yml` > `group_vars/<group>.yml` >
+  `group_vars/all.yml` > (already-existing) inline `[group:vars]`/`vars:`
+  sections. Real Ansible's actual precedence has `host_vars/` files
+  outrank even inline host vars, but that's a rare enough collision that
+  matching this codebase's existing "host wins" convention (already used
+  for inline group vars, see `apply_group_vars`) was a reasonable trade
+  over threading a new "was this explicitly inline" flag through `Host`.
+  Unit tested directly against real temp inventory/group_vars/host_vars
+  directories (new `spec/unit/inventory_parser_spec.cr` - this component
+  had no unit specs at all before this), and integration tested via the
+  CLI against a new isolated fixture directory
+  (`spec/fixtures/group_host_vars/`) + `testing/test-group-host-vars-quick.yml`.
+  Verified against real `ansible-playbook` against the same
+  inventory/playbook - output matched exactly.
+- Dynamic inventory support (executable/plugin-based inventory scripts) -
+  not implemented; only the group_vars:/host_vars: half of this combined
+  roadmap item shipped.
 - Async execution (`async:` / `poll:`, `async_status`)
-- Dynamic inventory support + `group_vars` / `host_vars` directory loading
 - Cloud plugins (`ec2`, `s3_bucket`, `azure_rm_*`) - optional, lowest ROI
   per usage stats (~5% of playbooks)
 

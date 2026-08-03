@@ -182,6 +182,18 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("delegate_to / run_once smoke test complete!")
   end
 
+  it "loads group_vars/all.yml, group_vars/<group>.yml, and host_vars/<host>.yml from beside the inventory file" do
+    status, output = run_playbook(
+      "test-group-host-vars-quick.yml",
+      [] of String,
+      inventory: File.join(PROJECT_ROOT, "spec", "fixtures", "group_host_vars", "inventory.ini")
+    )
+
+    status.success?.should be_true
+    output.should contain("datacenter=dc1 role=webserver app_version=1.2.3")
+    output.should contain("group_vars / host_vars smoke test complete!")
+  end
+
   it "recovers a failed block: via rescue:, always runs always:, and the play continues" do
     status, output = run_playbook("test-error-handling-quick.yml", [] of String)
 

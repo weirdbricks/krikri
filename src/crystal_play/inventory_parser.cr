@@ -158,30 +158,36 @@ module CrystalPlay
         end
       end
       
-      # Apply group vars to hosts
+      # group_vars/host_vars directory files, then the inventory's own
+      # inline [group:vars] sections - see load_group_and_host_vars for why
+      # that order matters.
+      load_group_and_host_vars(inventory, File.dirname(path))
       apply_group_vars(inventory)
-      
+
       inventory
     end
-    
+
     # Parse YAML format inventory
     def self.parse_yaml(path : String) : Inventory
       inventory = Inventory.new
-      
+
       begin
         yaml = YAML.parse(File.read(path))
       rescue ex : YAML::ParseException
         raise "Invalid YAML in inventory file: #{ex.message}"
       end
-      
+
       # YAML inventory structure
       if all_group = yaml["all"]?
         parse_yaml_group("all", all_group, inventory)
       end
-      
-      # Apply group vars
+
+      # group_vars/host_vars directory files, then the inventory's own
+      # inline vars: blocks - see load_group_and_host_vars for why that
+      # order matters.
+      load_group_and_host_vars(inventory, File.dirname(path))
       apply_group_vars(inventory)
-      
+
       inventory
     end
     
@@ -296,6 +302,76 @@ module CrystalPlay
       end
     end
     
+    # Load group_vars/*.yml and host_vars/*.yml from directories adjacent
+    # to the inventory file (its own directory, not the playbook's - a
+    # simplification versus real Ansible, which checks both) and apply
+    # them to matching hosts. Only a single group_vars/<name>.yml /
+    # host_vars/<name>.yml file per name is supported, not the
+    # directory-of-multiple-files style Ansible also allows
+    # (group_vars/<name>/*.yml) - the common case, not full parity.
+    #
+    # Applied host_vars/<host> -> group_vars/<group> -> group_vars/all
+    # order using set-if-absent (a host's vars already present - from an
+    # inline inventory host line, or a higher-precedence file already
+    # applied - are never overwritten), so the net precedence is: inline
+    # host vars > host_vars file > group_vars file > (afterward, in
+    # apply_group_vars) inline group vars. Real Ansible's actual
+    # precedence has host_vars files outrank inline host vars too, but
+    # group_vars/host_vars files and inline vars on the
+    # very same key is a rare enough combination that this simpler,
+    # documented approximation is a reasonable trade rather than
+    # threading a second "was this explicitly inline" flag through Host.
+    private def self.load_group_and_host_vars(inventory : Inventory, inventory_dir : String)
+      group_vars_dir = File.join(inventory_dir, "group_vars")
+      host_vars_dir = File.join(inventory_dir, "host_vars")
+
+      # Set-if-absent (apply_vars_file) means whichever of these runs
+      # *first* wins a given key, so highest-precedence goes first:
+      # host_vars/<hostname> > group_vars/<group> > group_vars/all.
+      inventory.hosts.each do |name, host|
+        apply_vars_file([host], File.join(host_vars_dir, name))
+      end
+
+      inventory.groups.each do |group_name, group|
+        next if group_name == "all"
+        apply_vars_file(group.hosts.values, File.join(group_vars_dir, group_name))
+      end
+
+      apply_vars_file(inventory.hosts.values, File.join(group_vars_dir, "all"))
+    end
+
+    # Load base_path.yml (or .yaml) if it exists and apply its top-level
+    # keys to every given host, skipping any key the host already has -
+    # see load_group_and_host_vars for the precedence this establishes.
+    private def self.apply_vars_file(hosts : Array(Host), base_path : String)
+      path = {"#{base_path}.yml", "#{base_path}.yaml"}.find { |p| File.exists?(p) }
+      return unless path
+
+      begin
+        yaml = YAML.parse(File.read(path))
+      rescue ex : YAML::ParseException
+        raise "Invalid YAML in #{path}: #{ex.message}"
+      end
+      return unless hash = yaml.as_h?
+
+      hosts.each do |host|
+        hash.each do |key, value|
+          key_str = key.to_s
+          next if host.vars.has_key?(key_str)
+
+          json_value = Vault.maybe_decrypt_json(JSON.parse(value.to_json))
+          host.vars[key_str] = json_value
+
+          case key_str
+          when "ansible_user"
+            host.user = json_value.as_s? || host.user
+          when "ansible_port"
+            host.port = json_value.as_i? || json_value.as_s?.try(&.to_i?) || host.port
+          end
+        end
+      end
+    end
+
     # Apply group variables to hosts
     private def self.apply_group_vars(inventory : Inventory)
       inventory.groups.each do |group_name, group|
