@@ -457,6 +457,28 @@ the same way it did between January and now.
     either engine guarantees) and decompressed content. Required adding
     `bzip2`/`xz-utils`/`zip`/`unzip` and the `community.general`
     collection to `compat/Dockerfile`.
+  - **Update (`0.9.16`):** `tar`/`gz`/`zip` formats converted from
+    shelling to the `tar`/`gzip`/`zip` CLIs to native Crystal: `zip` via
+    the stdlib's `Compress::Zip`, `tar`/`gz` via `naqvis/crystar` (a new
+    direct `shard.yml` dependency, previously only transitive via
+    `docr`) wrapped in `Compress::Gzip::Writer` for `gz`. `bz2`/`xz`
+    still shell to `tar`/`bzip2`/`xz` - no native Crystal library exists
+    for either. Benchmarked before/after against the shell CLIs at two
+    scales (320 and 2000 files): `zip` won outright at both (1.6x faster
+    both times); `tar`/`gz` won small (1.3-1.4x, subprocess-spawn
+    overhead dominates) but lost at 2000 files (1.3-2.0x *slower* than
+    real `tar`/`gzip`'s optimized C). Investigating further revealed
+    that comparison was measuring the wrong baseline: real Ansible's own
+    `community.general.archive` doesn't shell out either - it builds
+    archives with Python's `tarfile`/`zipfile` stdlib, which, like
+    `crystar`, is pure-language rather than C-accelerated. Benchmarking
+    against what real Ansible actually does (Python 3.13 `tarfile`, same
+    2000-file tree) rather than the `tar`/`gzip` CLIs it doesn't use:
+    crystal-ansible's native tar is **1.3x faster** than real Ansible
+    (259ms vs. 347.7ms) and native gz is **2.7x faster** (176ms vs.
+    475.4ms). Full methodology and both comparisons in
+    `BENCHMARK_RESULTS.md`. Existing `archive`/`unarchive` test suites
+    (29 examples) pass unmodified in behavior.
 - [x] `unarchive` (`0.9.2`): extracts an archive into an existing
   directory - the counterpart to `archive`, but registered as
   `ansible.builtin.unarchive` (verified via `ansible-doc unarchive`),

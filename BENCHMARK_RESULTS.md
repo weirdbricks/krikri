@@ -224,3 +224,95 @@ when it's paid per-file in a loop than when it's paid once per task.
   the new typed `.build` API instead of parsing synthetic `stat -c`
   strings, but asserts the identical output shape). Full suite (495
   examples) passes.
+
+## archive: shelling out vs native tar/zip writing
+
+**Date:** 2026-08-03
+
+`archive` was the other CLI-shelling plugin flagged in the comparison
+table, marked at the time as needing "a tar/zip-writing library Crystal's
+stdlib doesn't ship." That turned out to be half true: Crystal's stdlib
+ships a full native `Compress::Zip` reader/writer, and `naqvis/crystar`
+(already a transitive dependency via `docr`) provides a pure-Crystal tar
+reader/writer. `bz2`/`xz` still have no native Crystal equivalent, so
+`archive.cr` still shells to `tar`/`bzip2`/`xz` for those two formats
+only; `tar`, `gz`, and `zip` are now fully native.
+
+### Methodology
+
+Two comparisons, because the first one turned out to be measuring the
+wrong thing:
+
+1. **vs. shelling to the real `tar`/`gzip`/`zip` CLIs** (crystal-ansible's
+   own prior implementation) - a Crystal benchmark harness piping the
+   same JSON config over stdin to the compiled plugin binary, timed with
+   `Time.instant`, at two tree sizes (320 files, 2000 files), 10-20
+   iterations each.
+2. **vs. what real Ansible's `archive` module actually does** - it turns
+   out `community.general.archive` never shells out either; it builds
+   archives with Python's `tarfile`/`zipfile` stdlib modules directly
+   (confirmed by reading its source). Python's `tarfile` is pure Python,
+   not a C-accelerated module, so comparison (1) - our native Crystal vs.
+   optimized C `tar`/`gzip` binaries - was never the comparison that
+   matters. Comparison (2) benchmarks the actual target: real Ansible's
+   own `tarfile`-based implementation, building the same 2000-file tree
+   with Python 3.13's `tarfile.open(..., "w")` / `"w:gz"`, 10 iterations.
+
+### Results
+
+**(1) vs. shell `tar`/`gzip`/`zip` CLIs:**
+
+| format | 320 files | 2000 files |
+|---|---|---|
+| tar | 34.6ms &rarr; 25.8ms (**1.3x faster**) | 129.3ms &rarr; 259.0ms (**2.0x slower**) |
+| gz | 48.1ms &rarr; 34.8ms (**1.4x faster**) | 136.1ms &rarr; 176.0ms (**1.3x slower**) |
+| zip | 44.0ms &rarr; 27.6ms (**1.6x faster**) | 239.9ms &rarr; 146.5ms (**1.6x faster**) |
+
+zip wins outright at every scale. tar/gz win at small scale (avoiding
+subprocess spawn overhead - a ~10-15ms fixed cost - dominates) but lose
+at 2000 files: `crystar`'s per-entry write path (stat + header struct +
+whole-file read into memory) and Crystal's pure-Crystal `Compress::Gzip`
+add up to more per-file overhead than GNU `tar`/`gzip`'s highly optimized
+C I/O loop, which has next to nothing to do per file for uncompressed
+tar. Two rounds of optimization (caching `System::User`/`System::Group`
+name lookups per uid/gid instead of per file; caching `File::Info` so
+`collect_members`'s walk and header-building don't each stat the same
+path) narrowed but did not close this gap.
+
+**(2) vs. real Ansible's own `tarfile`-based implementation, 2000 files:**
+
+| format | shell `tar`/`gzip` (not what Ansible does) | crystal-ansible (native) | real Ansible (Python `tarfile`) |
+|---|---|---|---|
+| tar | 129.3ms | 259.0ms | **347.7ms** |
+| tar.gz | 136.1ms | 176.0ms | **475.4ms** |
+
+Against the thing crystal-ansible is actually trying to beat, native
+wins clearly: **1.3x faster than real Ansible for tar, 2.7x faster for
+gz**. The comparison-(1) "regression" was an artifact of benchmarking
+against optimized C that real Ansible doesn't use either - Python's
+`tarfile`, like `crystar`, pays per-entry object/dict overhead that GNU
+`tar`'s C loop doesn't, and Python's interpreter overhead on top of that
+makes it slower again than Crystal's compiled native path.
+
+### What changed
+
+- `plugins/archive.cr`: `expand_paths` (native `Dir.glob`/`File.exists?`/
+  `File.symlink?`), `collect_members`/`walk` (native `Dir.each_child`
+  recursion, replacing shelled `find`), `build_zip` (native
+  `Compress::Zip::Writer`, including `zip.add_dir` for explicit directory
+  entries to match real `zip`'s behavior), `build_tar`/`write_tar_entries`
+  (native `Crystar::Writer`, gzip-wrapped via `Compress::Gzip::Writer` for
+  `format: gz`), `signature`/`*_signature` methods (native reading via
+  `Compress::Gzip::Reader`/`Compress::Zip::Reader`/`Crystar::Reader` for
+  gz/zip/tar signature checks, `shell_tar_signature` kept for bz2/xz
+  only), `remove_sources` (native `FileUtils.rm_rf`),
+  `apply_dest_attributes` (native `File.chown`/`File.chmod` via
+  `System::User`/`System::Group` name resolution), `dest_stat_fields`
+  (now reuses `BasePlugin#native_stat`). `build_archive_via_shell`
+  remains for `bz2`/`xz` only, which have no native Crystal library.
+- New `crystar` dependency in `shard.yml` (`github: naqvis/crystar`) -
+  already present transitively via `docr`, now a direct dependency.
+- Full integration/unit suite for archive/unarchive
+  (`spec/integration/archive_spec.cr`,
+  `spec/integration/unarchive_spec.cr`, `spec/unit/archive_paths_spec.cr`
+  - 29 examples) passes unmodified in behavior.

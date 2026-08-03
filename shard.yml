@@ -1,5 +1,5 @@
 name: crystal-play
-version: 0.9.15
+version: 0.9.16
 
 description: |
   Fast, Ansible-compatible automation tool written in Crystal
@@ -19,6 +19,8 @@ dependencies:
     branch: master
   pg:
     github: will/crystal-pg
+  crystar:
+    github: naqvis/crystar
 
 development_dependencies:
   ameba:
