@@ -2,8 +2,8 @@
 
 ## Comprehensive Analysis of Missing Features
 
-**Current Status:** Phase 0-2 complete, Phase 3 in progress (see [ROADMAP.md](ROADMAP.md) for the live, detailed tracking - this document is a periodic high-level snapshot, not the source of truth).
-**Date:** 2026-08-02 (originally written 2026-01-29; most of what it once called "missing" has since shipped)
+**Current Status:** Phase 0-2 complete, Phase 3 well underway (see [ROADMAP.md](ROADMAP.md) for the live, detailed tracking - this document is a periodic high-level snapshot, not the source of truth).
+**Date:** 2026-08-03 (originally written 2026-01-29; most of what it once called "missing" has since shipped)
 
 ---
 
@@ -29,7 +29,7 @@
 - ✅ Ansible Vault (AES256 encrypt/decrypt, `--ask-vault-pass`/`--vault-password-file`, `vault {encrypt|decrypt|view|encrypt_string|rekey}` CLI subcommands, inline `!vault` values)
 - ✅ Docker-based compatibility harness (`compat/`) cross-verifying every feature above against real `ansible-playbook`, not just documented behavior
 
-### **Plugins (20 total)**
+### **Plugins (27 total)**
 1. ✅ **copy** - File copying
 2. ✅ **template** - Jinja2 templating
 3. ✅ **file** - File/directory management
@@ -50,22 +50,27 @@
 18. ✅ **stat** - Read-only file/filesystem status
 19. ✅ **find** - Recursive file/directory search
 20. ✅ **archive** - Compress/archive files and directories (`community.general.archive`)
+21. ✅ **unarchive** - Extract an archive into a directory
+22. ✅ **apt_repository** - Add/remove a Debian/Ubuntu APT source
+23. ✅ **yum_repository** - Write a YUM/DNF `.repo` file
+24. ✅ **sysctl** - Manage a sysctl config entry
+25. ✅ **mount** - Manage `/etc/fstab` entries (and optionally mount/unmount)
+26. ✅ **ufw** - Uncomplicated Firewall rules (`community.general.ufw`)
+27. ✅ **firewalld** - firewalld zone configuration, offline mode (`ansible.posix.firewalld`)
 
 ---
 
 ## ⏳ **WHAT'S STILL MISSING (Priority Order)**
 
-Everything that used to be listed here as high/medium priority - conditionals, facts, advanced loops, roles, include/import, vault, blocks/error handling - is done (see above). What's left is genuinely Phase 3/4 territory: extended plugins and advanced execution features. See [ROADMAP.md](ROADMAP.md) Phase 3/Phase 4 for the authoritative, actively-maintained list; the summary below won't be kept as current as that file.
+Everything that used to be listed here as high/medium priority - conditionals, facts, advanced loops, roles, include/import, vault, blocks/error handling - is done (see above), and Phase 3 is now mostly done too: `stat`, `find`, `archive`, `unarchive`, `apt_repository`, `yum_repository`, `sysctl`, `mount`, `ufw`, and `firewalld` have all shipped. What's left is a narrower slice of Phase 3 plus all of Phase 4. See [ROADMAP.md](ROADMAP.md) for the authoritative, actively-maintained list; the summary below won't be kept as current as that file.
 
-### **🟡 Phase 3 - Extended plugins**
-- `apt_repository` / `yum_repository`
-- `sysctl`, `mount`
-- `ufw` / `firewalld`
-- `unarchive` (the `archive` plugin's counterpart is done; `unarchive` itself is not)
+### **🟡 Phase 3 remainder - extended plugins**
 - `docker_container` / `docker_image` / `docker_network`
 - `mysql_db` / `mysql_user`, `postgresql_db` / `postgresql_user`
 
 **Workaround:** Use `shell`/`command` to call the native tool directly.
+
+**Note on `ufw`:** implemented, but uniquely in this codebase, not verified end-to-end against real `ansible-playbook` - `ufw` refuses to run at all without root (even bare status queries), and no available test environment here has working netfilter access even as root. Confirmed real Ansible's own `ufw` module fails identically under the same constraint, so this is an environmental limit, not a crystal-ansible gap - see `ROADMAP.md`'s `ufw` entry for details.
 
 ### **🟢 Phase 4 - Advanced execution features**
 - `delegate_to`, `run_once`
@@ -84,20 +89,18 @@ Everything that used to be listed here as high/medium priority - conditionals, f
 
 | Missing Feature | Blocks % of Playbooks (est.) | Workaround Exists? |
 |----------------|----------------------|-------------------|
-| `apt_repository`/`yum_repository` | ~15% | Yes (shell/command) |
-| `unarchive` | ~10% | Yes (shell/command) |
 | `delegate_to`/`run_once` | ~15% | Yes (separate plays) |
 | Async execution | ~10% | Yes (run sync) |
 | Dynamic inventory | ~10% (mostly cloud-heavy shops) | Partial |
 | Docker/DB modules | ~15-20% combined | Yes (shell/command) |
 
-Conditionals, facts, loops, roles, include/import, vault, and block/error-handling - previously the highest-impact gaps - are all shipped, so the remaining gaps are narrower and more workaround-friendly than when this document was first written.
+Conditionals, facts, loops, roles, include/import, vault, block/error-handling, and now the bulk of Phase 3's extended plugins - previously the highest-impact gaps - are all shipped, so the remaining gaps are narrower, more workaround-friendly, and concentrated in Phase 4 (advanced execution features) plus Docker/DB modules than when this document was first written.
 
 ---
 
 ## 🎯 **RECOMMENDED NEXT STEPS**
 
-Sequenced in [ROADMAP.md](ROADMAP.md) Phase 3 (extended plugins, in progress) then Phase 4 (advanced execution features). `stat`, `find`, and `archive` are done as of this update; next up per the roadmap is the rest of Phase 3 (`apt_repository`/`yum_repository`, `sysctl`/`mount`, `ufw`/`firewalld`, `unarchive`, Docker modules, MySQL/PostgreSQL modules).
+Sequenced in [ROADMAP.md](ROADMAP.md) Phase 3 (extended plugins, nearly done) then Phase 4 (advanced execution features). As of this update, only Docker modules and MySQL/PostgreSQL modules remain in Phase 3; everything else in that phase - `stat`, `find`, `archive`, `unarchive`, `apt_repository`, `yum_repository`, `sysctl`, `mount`, `ufw`, `firewalld` - is done.
 
 ---
 
@@ -111,6 +114,7 @@ Sequenced in [ROADMAP.md](ROADMAP.md) Phase 3 (extended plugins, in progress) th
 - Infrastructure as Code with real conditional logic and OS-aware facts
 - Multi-play, multi-role playbooks organized via `roles:`/`import_playbook:`/`include_tasks:`
 - Encrypted secrets via Ansible Vault, matching real `ansible-vault`'s file format and CLI
+- System configuration: package repositories, sysctl, fstab/mounts, and (with the caveats noted above) firewall rules via `ufw`/`firewalld`
 
 ⚠️ **Needs work for:**
 - Playbooks relying on `delegate_to`/`run_once`/async execution
@@ -120,4 +124,4 @@ Sequenced in [ROADMAP.md](ROADMAP.md) Phase 3 (extended plugins, in progress) th
 
 ---
 
-*Last updated: 2026-08-02, reflecting Phase 0-2 completion and Phase 3 progress (stat, find, archive). For current status, always check [ROADMAP.md](ROADMAP.md) first - this file is a periodic snapshot.*
+*Last updated: 2026-08-03, reflecting Phase 3 nearly complete (stat, find, archive, unarchive, apt_repository, yum_repository, sysctl, mount, ufw, firewalld). For current status, always check [ROADMAP.md](ROADMAP.md) first - this file is a periodic snapshot.*
