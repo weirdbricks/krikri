@@ -29,7 +29,7 @@
 - ✅ Ansible Vault (AES256 encrypt/decrypt, `--ask-vault-pass`/`--vault-password-file`, `vault {encrypt|decrypt|view|encrypt_string|rekey}` CLI subcommands, inline `!vault` values)
 - ✅ Docker-based compatibility harness (`compat/`) cross-verifying every feature above against real `ansible-playbook`, not just documented behavior
 
-### **Plugins (30 total)**
+### **Plugins (32 total)**
 1. ✅ **copy** - File copying
 2. ✅ **template** - Jinja2 templating
 3. ✅ **file** - File/directory management
@@ -60,6 +60,8 @@
 28. ✅ **docker_image** - pull/remove Docker images (`community.docker.docker_image`)
 29. ✅ **docker_network** - create/remove Docker networks (`community.docker.docker_network`)
 30. ✅ **docker_container** - create/start/stop/remove Docker containers (`community.docker.docker_container`)
+31. ✅ **mysql_db** - create/remove MySQL/MariaDB databases (`community.mysql.mysql_db`)
+32. ✅ **mysql_user** - create/remove MySQL/MariaDB users + privilege diffing (`community.mysql.mysql_user`)
 
 ---
 
@@ -75,9 +77,15 @@ Everything that used to be listed here as high/medium priority - conditionals, f
   Docker API shard, [weirdbricks/docr](https://github.com/weirdbricks/docr)
   (upstream had a connection-reuse bug serious enough to make it unusable
   for a multi-call module, now fixed there)
-- `mysql_db` / `mysql_user`, `postgresql_db` / `postgresql_user`
+- ✅ `mysql_db` / `mysql_user` - shipped in `0.9.13`, talking to the
+  MySQL wire protocol directly (like real Ansible's own community.mysql)
+  via a fork of the official `crystal-lang/crystal-mysql` driver,
+  [weirdbricks/crystal-mysql](https://github.com/weirdbricks/crystal-mysql)
+  (upstream couldn't authenticate against MySQL 8+ or any SSL-enabled
+  server at all, now fixed there)
+- `postgresql_db` / `postgresql_user` - not implemented
 
-**Workaround:** Use `shell`/`command` to call the native tool directly (still applies to the MySQL/PostgreSQL modules).
+**Workaround:** Use `shell`/`command` to call the native tool directly (still applies to the PostgreSQL modules).
 
 **Note on `ufw`:** implemented, but uniquely in this codebase, not verified end-to-end against real `ansible-playbook` - `ufw` refuses to run at all without root (even bare status queries), and no available test environment here has working netfilter access even as root. Confirmed real Ansible's own `ufw` module fails identically under the same constraint, so this is an environmental limit, not a crystal-ansible gap - see `ROADMAP.md`'s `ufw` entry for details.
 

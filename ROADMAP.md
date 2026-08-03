@@ -774,7 +774,103 @@ the same way it did between January and now.
     latter already a hard dependency of `compat/Dockerfile`, so not a new
     requirement for this project) reachable from wherever the play runs -
     not verified/skippable like `ufw`'s environment-constrained entry.
-- `mysql_db` / `mysql_user`, `postgresql_db` / `postgresql_user`
+- [x] `mysql_db` / `mysql_user` (`0.9.13`): like the Docker plugins above,
+  talks to the server directly over MySQL's own wire protocol (real
+  Ansible's `community.mysql` does the same, via PyMySQL) rather than
+  shelling out to the `mysql` CLI. No maintained third-party Crystal
+  MySQL shard exists, but the official `crystal-lang/crystal-mysql` (+
+  `crystal-lang/crystal-db`) does - actively maintained, so used
+  directly rather than hunting for alternatives. Verified by actually
+  connecting to real running MySQL 8.4 and MariaDB 11 servers rather than
+  trusting the README: found it couldn't complete a handshake against
+  either at all (long-open upstream issues #62/#99/#123). Forked to
+  [weirdbricks/crystal-mysql](https://github.com/weirdbricks/crystal-mysql)
+  and fixed there (depended on directly via `shard.yml`, not vendored;
+  PR upstream still pending):
+  - **caching_sha2_password** (MySQL 8's default auth plugin since 8.0,
+    and the *only* one available at all since MySQL removed
+    `mysql_native_password` support entirely in 8.4) wasn't implemented -
+    the driver only ever declared/computed `mysql_native_password`'s
+    challenge-response, so any MySQL 8+ server with default settings
+    couldn't authenticate at all (`"packet 254 not implemented"`,
+    matching upstream issue #62 - that's the AuthSwitchRequest the server
+    sends when the client's guessed plugin is wrong). Fixed by capturing
+    the server's actual declared plugin from the handshake (previously
+    read and discarded) and implementing both plugins' scramble algorithm
+    (verified against PyMySQL's own reference implementation) plus a
+    proper AuthSwitchRequest/AuthMoreData state machine - AuthMoreData's
+    "full authentication required" sub-case is answered with the
+    plaintext password once the channel is already secure (TLS or a unix
+    socket), the correct MySQL protocol response there, not a shortcut;
+    over a genuinely plaintext, unencrypted TCP connection with a cold
+    server-side cache, completing it would need an RSA public-key
+    exchange this driver doesn't implement, so that specific combination
+    raises a clear error instead of failing deep in a confusing spot.
+  - Separately, `write_ssl_request` declared a reduced capability-flag
+    subset compared to the real handshake response that followed it -
+    some servers hold the client to whatever it announced in the
+    SSLRequest for the rest of the connection, so this mismatch got the
+    real handshake rejected with `"Client does not support authentication
+    protocol requested by server"` under any SSL mode other than
+    `disabled`, reproduced against both real MySQL 8.4 and MariaDB 11.
+    Fixed by declaring the identical capability set in both packets.
+  - The upstream spec suite (run against a live MariaDB 11 instance, not
+    part of this project but used to sanity-check the fork didn't
+    regress anything) goes from 9 failures/errors on unmodified upstream
+    to 7 with this fork - the 2 now-passing were both broken by the
+    SSLRequest bug above; the remaining 7 are pre-existing MariaDB
+    11-vs-MySQL environment differences (a newer default collation name,
+    `performance_schema.session_status` behaving differently, and an
+    `Int32`-vs-`Int64` `BIGINT` read mismatch already tracked in issue
+    #99), confirmed identical against unmodified upstream.
+  - `mysql_db`: `name:` (required), `state:` (`present`/`absent`),
+    `encoding:`/`collation:` (validated as bare identifier-safe
+    characters only, since they can't go through a bind parameter),
+    `login_host:`/`login_port:`/`login_user:`/`login_password:`/
+    `login_unix_socket:` (a new pure
+    `src/crystal_play/plugin_helpers/mysql_connection.cr`, unit tested,
+    builds the connection URI - `login_unix_socket:` takes precedence
+    over `login_host:`/`login_port:` when given). Not implemented:
+    `state: dump`/`import` (mysqldump-based backup/restore),
+    `config_file:` (`~/.my.cnf` credential lookup).
+  - `mysql_user`: `name:` (required), `password:` (only applied when
+    creating a new user, or when an existing user's password is updated
+    under `update_password: always`, the default - matching real
+    Ansible's own default, though unlike real Ansible this can't compare
+    password hashes to stay idempotent, so it reissues `ALTER USER ...
+    IDENTIFIED BY` and reports `changed: true` every time a `password:`
+    is given for an existing user; `update_password: on_create` avoids
+    this if password drift-detection isn't needed - a documented
+    simplification, not an oversight), `host:` (default `"localhost"`,
+    verified against real Ansible's own default - not `"%"`), `state:`
+    (`present`/`absent`), `priv:` (`"db.table:PRIV1,PRIV2"`, multiple
+    grants separated by `/`, same format real Ansible uses - via a new
+    pure `src/crystal_play/plugin_helpers/mysql_privileges.cr`, unit
+    tested against real `SHOW GRANTS` output captured from a live
+    MariaDB server, including the always-present `GRANT USAGE ON *.*`
+    identity row every account has regardless of actual privileges,
+    which has to be filtered out rather than compared against). A
+    privilege mismatch `REVOKE`s everything and re-`GRANT`s the whole
+    desired set from scratch rather than computing a minimal add/remove
+    delta - simpler, and just as idempotent, just not the smallest
+    possible set of statements. Not implemented: `update_password:
+    on_new_username`, `plugin:`/`plugin_hash_string:`/
+    `plugin_auth_string:` (non-password auth methods), `append_privs:`/
+    `subtract_privs:`, `host_all:`, `resource_limits:`, `locked:`,
+    `config_file:`.
+  - Verified end-to-end against real running MySQL 8.4 and MariaDB 11
+    servers by hand (database create/idempotent/remove/idempotent; user
+    create/idempotent, privilege set/idempotent/changed, remove/
+    idempotent) before writing any automated test. Integration tested
+    via the CLI against the same real MariaDB server
+    (`testing/test-mysql-quick.yml` targeting `testservers`, like
+    `test-docker-quick.yml`) + `spec/integration/cli_spec.cr`, and
+    verified task-for-task against real `ansible-playbook` (via a Python
+    venv with PyMySQL installed, since this environment's system Python
+    is externally managed) running the identical fixture - output
+    matched exactly.
+- `postgresql_db` / `postgresql_user` - not implemented (out of scope for
+  this pass, which covered MySQL only).
 
 **Result:** ~99.99% playbook coverage per prior analysis.
 

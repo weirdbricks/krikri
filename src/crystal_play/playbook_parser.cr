@@ -244,6 +244,8 @@ module CrystalPlay
       "community.docker.docker_image",
       "community.docker.docker_network",
       "community.docker.docker_container",
+      "community.mysql.mysql_db",
+      "community.mysql.mysql_user",
     ]
     
     # Parse playbook from file

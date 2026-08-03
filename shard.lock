@@ -12,7 +12,15 @@ shards:
     git: https://github.com/naqvis/crystar.git
     version: 0.4.0
 
+  db:
+    git: https://github.com/crystal-lang/crystal-db.git
+    version: 0.14.0
+
   docr:
     git: https://github.com/weirdbricks/docr.git
     version: 0.1.4+git.commit.401e733fca070088ac195198ec0a0c9228c8be59
+
+  mysql:
+    git: https://github.com/weirdbricks/crystal-mysql.git
+    version: 0.17.0+git.commit.2be3bf2a32ced0ffc288c7e25f15f748c9ca8b4b
 

@@ -1,0 +1,106 @@
+# mysql_db:/mysql_user: smoke test. Requires a real MySQL/MariaDB server
+# reachable at 127.0.0.1:13306 (root/rootpass) - same convention as
+# test-docker-quick.yml: targets "testservers" so a --check run against
+# the generic empty inventory skips the whole play rather than needing a
+# real server.
+
+- name: mysql plugins test
+  hosts: testservers
+  gather_facts: false
+
+  vars:
+    test_db: crystal_ansible_test_db
+    test_user: crystal_ansible_test_user
+    login_host: 127.0.0.1
+    login_port: 13306
+    login_user: root
+    login_password: rootpass
+
+  tasks:
+    - name: ensure the test database is present
+      community.mysql.mysql_db:
+        name: "{{ test_db }}"
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: db_first
+
+    - name: ensure the test database is present (idempotent)
+      community.mysql.mysql_db:
+        name: "{{ test_db }}"
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: db_idempotent
+
+    - name: create the test user with privileges
+      community.mysql.mysql_user:
+        name: "{{ test_user }}"
+        host: "%"
+        password: secret123
+        priv: "{{ test_db }}.*:SELECT,INSERT"
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: user_first
+
+    - name: create the test user with privileges (idempotent)
+      community.mysql.mysql_user:
+        name: "{{ test_user }}"
+        host: "%"
+        priv: "{{ test_db }}.*:SELECT,INSERT"
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: user_idempotent
+
+    - name: change the user's privileges
+      community.mysql.mysql_user:
+        name: "{{ test_user }}"
+        host: "%"
+        priv: "{{ test_db }}.*:ALL"
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: user_priv_changed
+
+    - name: remove the test user
+      community.mysql.mysql_user:
+        name: "{{ test_user }}"
+        host: "%"
+        state: absent
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: user_removed
+
+    - name: remove the test database
+      community.mysql.mysql_db:
+        name: "{{ test_db }}"
+        state: absent
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: db_removed
+
+    - name: show results
+      ansible.builtin.debug:
+        msg: >-
+          db_first={{ db_first.changed }}
+          db_idempotent={{ db_idempotent.changed }}
+          user_first={{ user_first.changed }}
+          user_idempotent={{ user_idempotent.changed }}
+          user_priv_changed={{ user_priv_changed.changed }}
+          user_removed={{ user_removed.changed }}
+          db_removed={{ db_removed.changed }}
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "mysql plugins smoke test complete!"

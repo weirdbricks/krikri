@@ -201,6 +201,8 @@ PLUGINS=(
     "docker_image"
     "docker_network"
     "docker_container"
+    "mysql_db"
+    "mysql_user"
 )
 
 PLUGIN_COUNT=0
