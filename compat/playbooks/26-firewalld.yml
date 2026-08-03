@@ -1,0 +1,85 @@
+- name: firewalld
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: enable a service in the public zone
+      ansible.posix.firewalld:
+        zone: public
+        service: http
+        state: enabled
+        offline: true
+        permanent: true
+      register: enable_result
+
+    - name: idempotent rerun
+      ansible.posix.firewalld:
+        zone: public
+        service: http
+        state: enabled
+        offline: true
+        permanent: true
+      register: rerun_result
+
+    - name: add a rich rule
+      ansible.posix.firewalld:
+        zone: public
+        rich_rule: 'rule family="ipv4" source address="192.168.1.0/24" accept'
+        state: enabled
+        offline: true
+        permanent: true
+      register: rich_rule_result
+
+    - name: add masquerade
+      ansible.posix.firewalld:
+        zone: public
+        masquerade: true
+        state: enabled
+        offline: true
+        permanent: true
+      register: masquerade_result
+
+    - name: disable the service
+      ansible.posix.firewalld:
+        zone: public
+        service: http
+        state: disabled
+        offline: true
+        permanent: true
+      register: disable_result
+
+    - name: idempotent rerun of the disable
+      ansible.posix.firewalld:
+        zone: public
+        service: http
+        state: disabled
+        offline: true
+        permanent: true
+      register: disable_rerun_result
+
+    # Query state via firewall-offline-cmd's own --query-<thing> rather
+    # than diffing the raw zone XML: real Ansible's firewalld module
+    # leaves the zone file in a very slightly different (but
+    # behaviorally identical) shape than driving firewall-offline-cmd
+    # directly does - a bare <forward/> element sometimes survives one
+    # path and not the other. It's cosmetic (that empty element doesn't
+    # change what the zone actually does) but would make a raw file diff
+    # noisy, so query the actual state instead.
+    - name: query final state via firewall-offline-cmd
+      ansible.builtin.shell: |
+        echo "service=$(firewall-offline-cmd --zone=public --query-service=http; echo $?)"
+        echo "rich_rule=$(firewall-offline-cmd --zone=public --query-rich-rule='rule family="ipv4" source address="192.168.1.0/24" accept'; echo $?)"
+        echo "masquerade=$(firewall-offline-cmd --zone=public --query-masquerade; echo $?)"
+      register: final_state
+      changed_when: false
+
+    - name: write the stable results to a file for comparison
+      ansible.builtin.copy:
+        content: |
+          enable_changed={{ enable_result.changed }}
+          rerun_changed={{ rerun_result.changed }}
+          rich_rule_changed={{ rich_rule_result.changed }}
+          masquerade_changed={{ masquerade_result.changed }}
+          disable_changed={{ disable_result.changed }}
+          disable_rerun_changed={{ disable_rerun_result.changed }}
+          final_state={{ final_state.stdout }}
+        dest: /work/firewalld-output.txt

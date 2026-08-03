@@ -19,6 +19,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xz-utils \
     zip \
     unzip \
+    ufw \
+    firewalld \
     && rm -rf /var/lib/apt/lists/*
 
 # Debian/Ubuntu block system-wide `pip install` (PEP 668); a venv sidesteps

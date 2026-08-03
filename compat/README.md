@@ -93,7 +93,7 @@ test with exact content assertions for the `lineinfile` bug).
 
 ## Coverage
 
-Twenty-five playbooks, one per concern: `debug`/`copy`, `file` states,
+Twenty-six playbooks, one per concern: `debug`/`copy`, `file` states,
 `lineinfile`, `loop`/`with_items`, real `user`/`group` creation and
 modification, `block`/`rescue`/`always`, `until`/`retries`, `cron`
 (`cron_file:`), `authorized_key`, `git` clone/checkout against a local
@@ -156,7 +156,22 @@ the container's real running kernel is never touched. `mount`
 `opts:`, add with `boot: false`, and `absent_from_fstab` - `mounted`/
 `unmounted` (which run real `mount`/`umount`) aren't exercised here,
 matching how `spec/integration/mount_spec.cr` only checks those via
-`check_mode`.
+`check_mode`. `firewalld` (`26-firewalld.yml`, `offline: true,
+permanent: true` throughout - see `ROADMAP.md` for why) covers enabling
+a service, an idempotent rerun, a rich rule, masquerade, disabling the
+service, and an idempotent disable rerun - compared via `changed` plus
+`firewall-offline-cmd --query-<thing>` state checks rather than a raw
+zone-file diff, since real Ansible's own module leaves the zone XML in a
+very slightly different (but behaviorally identical) shape.
+
+`ufw` has no compat playbook, unusually for this repo - `ufw` itself
+refuses to run at all without root (even a bare `ufw status` fails), and
+the container lacks working netfilter access even running as root.
+Confirmed this isn't crystal-ansible-specific: real `ansible-playbook`'s
+own `community.general.ufw` module fails identically in the same
+container, even in `--check` mode. See `ROADMAP.md`'s `ufw` entry for
+what verification *was* possible (unit tests on the pure
+command-construction logic).
 
 Not covered here (same gaps noted elsewhere in this repo): `apt`/`dnf`/
 `package` (would need a slower, distro-specific compat image and real

@@ -195,6 +195,8 @@ PLUGINS=(
     "apt_repository"
     "mount"
     "sysctl"
+    "ufw"
+    "firewalld"
 )
 
 PLUGIN_COUNT=0

@@ -196,6 +196,8 @@ module CrystalPlay
       "ansible.builtin.apt_repository",
       "ansible.posix.mount",
       "ansible.posix.sysctl",
+      "community.general.ufw",
+      "ansible.posix.firewalld",
     ]
     
     # Parse playbook from file

@@ -3,22 +3,24 @@
 **Status as of 2026-08-03:** builds again on Crystal 1.20.3 (fixed `as_i` -> `as_i64`
 type mismatch in `comparison_evaluator.cr`). **Phase 0, Phase 1, and Phase 2 are
 all done** (roles, import/include, and vault); **Phase 3 is in progress**
-(`0.9.4`) - `stat`, `find`, `archive`, `unarchive`, `apt_repository`,
-`yum_repository`, `sysctl`, and `mount` are done.
-385+ specs passing, `ameba` clean on all new/touched code. Added a Docker-based
+(`0.9.5`) - `stat`, `find`, `archive`, `unarchive`, `apt_repository`,
+`yum_repository`, `sysctl`, `mount`, `ufw`, and `firewalld` are done.
+405+ specs passing, `ameba` clean on all new/touched code. Added a Docker-based
 compatibility harness (`compat/`, see `compat/README.md`) that runs the same
 playbooks through real `ansible-playbook` and `crystal-ansible` side by side and
 diffs the results - ground truth instead of assumptions about Ansible's
-documented behavior; 25/25 compat playbooks pass, including all of roles,
+documented behavior; 26/26 compat playbooks pass, including all of roles,
 `import_playbook:`, `import_tasks:`, `include_tasks:`, `include_role:`,
 vault (both a whole vault-encrypted playbook file and an inline `!vault`
 variable), `stat`, `find`, `archive`, `unarchive`, `apt_repository`,
-`yum_repository`, `sysctl`, and `mount`. Along the way it (and, for some bugs
-the file-state-diffing approach can't catch, plain manual testing and
-self-review) found and fixed 13 real bugs: `authorized_key` registered under
-the wrong FQCN (it's `ansible.posix.authorized_key`, not `ansible.builtin.*` -
-confirmed via `ansible-doc`, not memory), plugin resolution breaking outside
-the repo checkout, `Host.from_json` crashing on a host with no explicit user,
+`yum_repository`, `sysctl`, `mount`, and `firewalld` (`ufw` is the one
+exception - see its own entry below for why it couldn't be verified there).
+Along the way it (and, for some bugs the file-state-diffing approach can't
+catch, plain manual testing, self-review, and unit-test writing) found and
+fixed 15 real bugs: `authorized_key` registered under the wrong FQCN (it's
+`ansible.posix.authorized_key`, not `ansible.builtin.*` - confirmed via
+`ansible-doc`, not memory), plugin resolution breaking outside the repo
+checkout, `Host.from_json` crashing on a host with no explicit user,
 `lineinfile` inserting a spurious blank line on every append/removal to a file
 already ending in a newline, `include_role:` + `loop:` producing duplicate
 handler *Task objects* sharing a name (which `HandlerRunner` ran once each
@@ -36,10 +38,15 @@ path with a subdirectory component because `*` doesn't cross `/` in Crystal's
 `File.match?`, `apt_repository`'s removal logic silently no-oping because
 `grep -v ... && mv ...` skips the `mv` whenever `grep -v` filters out every
 line (its normal exit-1-for-zero-output-lines behavior, not an error) - the
-common case when removing the only line from a single-repo file - and
-`mount`'s `check_mode` originally only guarding the real mount/umount step,
-not the fstab file write itself (caught in self-review, before it ever
-shipped). Next up is the rest of Phase 3. This
+common case when removing the only line from a single-repo file, `mount`'s
+`check_mode` originally only guarding the real mount/umount step, not the
+fstab file write itself (caught in self-review, before it ever shipped),
+`ufw`'s `from_ip`/`from_port`/`to_ip`/`to_port` handling wrongly pairing ip
+with port instead of treating all four as independent appends (caught writing
+unit tests, since real end-to-end verification wasn't possible for this one -
+see below), and `firewalld`'s rule values being interpolated into shell
+commands unquoted, breaking on a `rich_rule` containing spaces and embedded
+double quotes. Next up is the rest of Phase 3. This
 roadmap sequences the remaining work from the two prior analysis docs
 ([WHATS_MISSING.md](WHATS_MISSING.md), [MISSING_FEATURES_COMPREHENSIVE.md](MISSING_FEATURES_COMPREHENSIVE.md))
 into phases, with the test-foundation phase (Phase 0) landing first so every
@@ -577,7 +584,86 @@ the same way it did between January and now.
     `check_mode` through the fstab-writing path too, with a regression
     test (`spec/integration/mount_spec.cr`) asserting the file is
     byte-for-byte untouched in check mode.
-- `ufw` / `firewalld`
+- [x] `ufw` (`0.9.5`): manages the Uncomplicated Firewall. Registered as
+  `community.general.ufw`, not `ansible.builtin.ufw` - verified via
+  `ansible-doc ufw`. Parameters: `state` (`enabled`/`disabled`/
+  `reloaded`/`reset`), `logging`, `default` (+ `direction`), `rule`
+  (`allow`/`deny`/`reject`/`limit`) plus `direction`/`interface`/
+  `interface_in`/`interface_out`/`log`/`from_ip`/`from_port`/`to_ip`/
+  `to_port`/`proto`/`name` (app profile)/`comment`/`delete`/`insert`/
+  `route`, `check_mode`. Command shape (the "long format":
+  `ufw [--dry-run] [route] [delete | insert NUM]
+  allow|deny|reject|limit [in|out on INTERFACE] [log] [from ADDRESS
+  [port PORT]] [to ADDRESS [port PORT]] [proto protocol] [app
+  application] [comment COMMENT]`) and the "Skipping" no-op signal
+  verified by reading community.general's actual `ufw.py` source
+  directly. Pure command-construction logic extracted into a new
+  `src/crystal_play/plugin_helpers/ufw_command.cr`, unit tested
+  (`spec/unit/ufw_command_spec.cr`) - a real bug was caught writing those
+  tests: `from_ip`/`from_port`/`to_ip`/`to_port` are four *independent*
+  appends in real Ansible's source (a flat list of key/template pairs,
+  each checked on its own), not two ip+port pairs - a port given without
+  its matching ip is still appended alone, which an initial
+  ip-gated implementation got wrong.
+  - **Not compat-harness verified, unlike every other plugin in this
+    codebase.** `ufw` refuses to run at all without root - even a bare
+    `ufw status` fails with "ERROR: You need to be root to run this
+    script" - and the compat harness's container lacks working netfilter
+    access even running as root (confirmed: `ufw status` fails inside it
+    with an iptables permission error unrelated to ufw itself).
+    Confirmed this isn't a crystal-ansible-specific gap: running real
+    `ansible-playbook`'s own `community.general.ufw` module against the
+    exact same container, even in `--check` mode, fails identically
+    (`ERROR: problem running iptables: ... Permission denied`) - so no
+    engine could be verified end-to-end here. Test coverage is unit
+    tests on the pure command-building logic only.
+- [x] `firewalld` (`0.9.5`): manages firewalld zone configuration.
+  Registered as `ansible.posix.firewalld`. Parameters: `zone`, `state`
+  (`enabled`/`present` add, `disabled`/`absent` remove), `permanent`,
+  `offline`, plus exactly one of `service`/`port`/`rich_rule`/`source`/
+  `masquerade` (matching real Ansible's own `mutually_exclusive`
+  constraint), `check_mode`. Only `offline: true, permanent: true` is
+  implemented - this is real Ansible's own "offline mode", which edits
+  firewalld's on-disk zone XML via the `firewall-offline-cmd` companion
+  tool without needing a running firewalld daemon at all, unlike the
+  more common live/D-Bus mode (`offline: false`, the real default) which
+  needs an actual running `firewalld` service - the same category of gap
+  already excluded for `service:` in this codebase (no init system in
+  the compat container). A task without `offline: true` fails with a
+  clear message. `firewall-offline-cmd`'s exact command shape and
+  quirks - none of which `ansible-doc` documents, since they belong to
+  the underlying CLI tool, not the Ansible module - were verified
+  empirically against a real firewalld 2.1.1 install in a real
+  container, in a new `src/crystal_play/plugin_helpers/firewalld_command.cr`
+  (unit tested, `spec/unit/firewalld_command_spec.cr`):
+  `--query-<thing>=<value>` exits 0/prints "yes" when present, exits
+  1/prints "no" when absent (used for idempotency); `service` removal
+  needs the special `--remove-service-from-zone=` form - the plain
+  `--remove-service` is a legacy "lokkit" option that flatly refuses to
+  combine with `--zone=` at all (a real, confirmed error: "Can't use
+  lokkit options with other options") - while `port`/`rich_rule`/
+  `source`/`masquerade` removal use the ordinary `--remove-<thing>=`
+  form directly.
+  - Found and fixed a real bug before it shipped: rule values were
+    interpolated into the shell command unquoted, which broke on a
+    `rich_rule` value (containing both spaces and embedded double
+    quotes, e.g. `rule family="ipv4" source address="..." accept`)
+    against a real `firewall-offline-cmd` - caught by actually running it
+    in a container, not by unit tests in isolation. Fixed by
+    single-quoting every value (double quotes would conflict with a
+    rich_rule's own embedded double quotes; single quotes don't need
+    escaping them).
+  - Unlike `ufw`, this one *is* genuinely verified end-to-end: offline
+    mode needs no daemon and no special container capabilities, so both
+    real `ansible-playbook` and crystal-ansible run it for real via the
+    compat harness (`compat/playbooks/26-firewalld.yml` - passed):
+    enabling a service, an idempotent rerun, a rich rule, masquerade,
+    disabling the service, and an idempotent disable rerun - compared via
+    `changed` plus `--query-<thing>` state checks (not a raw zone-file
+    diff: real Ansible's own module leaves the zone XML in a very
+    slightly different but behaviorally identical shape - a bare
+    `<forward/>` element sometimes survives one path and not the other,
+    cosmetic but noisy to diff directly).
 - `docker_container` / `docker_image` / `docker_network`
 - `mysql_db` / `mysql_user`, `postgresql_db` / `postgresql_user`
 
