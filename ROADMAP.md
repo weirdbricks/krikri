@@ -3,17 +3,17 @@
 **Status as of 2026-08-02:** builds again on Crystal 1.20.3 (fixed `as_i` -> `as_i64`
 type mismatch in `comparison_evaluator.cr`). **Phase 0, Phase 1, and Phase 2 are
 all done** (roles, import/include, and vault); **Phase 3 is in progress**
-(`0.9.0`) - `stat` and `find` are done.
-305+ specs passing, `ameba` clean on all new/touched code. Added a Docker-based
+(`0.9.1`) - `stat`, `find`, and `archive` are done.
+335+ specs passing, `ameba` clean on all new/touched code. Added a Docker-based
 compatibility harness (`compat/`, see `compat/README.md`) that runs the same
 playbooks through real `ansible-playbook` and `crystal-ansible` side by side and
 diffs the results - ground truth instead of assumptions about Ansible's
-documented behavior; 19/19 compat playbooks pass, including all of roles,
+documented behavior; 20/20 compat playbooks pass, including all of roles,
 `import_playbook:`, `import_tasks:`, `include_tasks:`, `include_role:`,
 vault (both a whole vault-encrypted playbook file and an inline `!vault`
-variable), `stat`, and `find`. Along the way it (and, for some bugs the
-file-state-diffing approach can't catch, plain manual testing) found and fixed
-8 real bugs: `authorized_key` registered under the wrong FQCN (it's
+variable), `stat`, `find`, and `archive`. Along the way it (and, for some bugs
+the file-state-diffing approach can't catch, plain manual testing) found and
+fixed 11 real bugs: `authorized_key` registered under the wrong FQCN (it's
 `ansible.posix.authorized_key`, not `ansible.builtin.*` - confirmed via
 `ansible-doc`, not memory), plugin resolution breaking outside the repo
 checkout, `Host.from_json` crashing on a host with no explicit user,
@@ -23,10 +23,15 @@ handler *Task objects* sharing a name (which `HandlerRunner` ran once each
 instead of deduping by name), task-level `vars:` never being parsed for
 `import_tasks:`/`include_tasks:` at all, boolean variables rendering as
 Crystal's lowercase `true`/`false` in templates instead of Python/Jinja2's
-capitalized `True`/`False`, and an unset `excludes:` on `find:` excluding every
+capitalized `True`/`False`, an unset `excludes:` on `find:` excluding every
 result (an empty pattern list means "match everything" for `patterns:` but was
 wrongly reused with the same meaning for `excludes:`, where it should mean
-"exclude nothing"). Next up is the rest of Phase 3. This
+"exclude nothing"), `archive`'s directory arguments being double-included when
+passed to `tar`/`zip` alongside their own already-walked children, `arcroot`
+being computed wrong due to a real Crystal/Python `dirname` divergence on
+trailing-slash paths, and `exclusion_patterns` silently failing to match any
+path with a subdirectory component because `*` doesn't cross `/` in Crystal's
+`File.match?`. Next up is the rest of Phase 3. This
 roadmap sequences the remaining work from the two prior analysis docs
 ([WHATS_MISSING.md](WHATS_MISSING.md), [MISSING_FEATURES_COMPREHENSIVE.md](MISSING_FEATURES_COMPREHENSIVE.md))
 into phases, with the test-foundation phase (Phase 0) landing first so every
@@ -346,10 +351,74 @@ the same way it did between January and now.
     the unit tests (which exercised `matches_patterns?` correctly in
     isolation - the bug was in how `find`'s own `execute` used it for two
     different purposes with opposite empty-list semantics).
+- [x] `archive` (`0.9.1`): compresses/archives files and directories.
+  Registered as `community.general.archive` - verified via `ansible-doc
+  archive` that, unlike most plugins in this codebase, it does NOT ship
+  with ansible-core (it lives in the separate community.general
+  collection), an assumption that was initially wrong and had to be
+  corrected after the fact. `PluginManager`'s FQCN-stripping regex
+  extended to recognize the `community.general.` prefix too, alongside
+  the existing `ansible.(builtin|legacy|posix)` handling. Parameters:
+  `path` (required, comma-separated, shell-glob-aware), `dest`
+  (required), `format` (`bz2`/`gz` default/`tar`/`xz`/`zip`),
+  `force_archive`, `remove`, `exclusion_patterns` (comma-separated
+  basename globs), `mode`/`owner`/`group` on the resulting dest file. A
+  single regular file with a compression-only format (gz/bz2/xz) and no
+  `force_archive:` is compressed directly, not wrapped in a tar - `tar`/
+  `zip` formats and multi-path/directory inputs always build a real
+  archive, matching real Ansible's own behavior exactly (verified, not
+  assumed). `arcroot` is computed via a new
+  `src/crystal_play/plugin_helpers/archive_paths.cr` (unit tested,
+  `spec/unit/archive_paths_spec.cr`) replicating community.general's own
+  `common_path()` formula bit-for-bit. Idempotency is checksum-based like
+  real Ansible, but computed via shell tools (tar/zip listings + a
+  content checksum) rather than replicating Python's tarfile per-member
+  header checksum exactly. Not implemented: `exclude_path` - verified
+  against a real community.general 11.2.1 install that this documented
+  option is actually a no-op there (named files still end up in the
+  archive), so implementing it "correctly" per the docs would make
+  crystal-ansible diverge from real Ansible's actual behavior, not match
+  it; `exclusion_patterns` (which does work) is supported instead. Also
+  not implemented: SELinux options, `unsafe_writes`.
+  - Found and fixed three real bugs before shipping, all caught by
+    diffing actual output against real `ansible-playbook`, not by unit
+    tests in isolation:
+    1. Passing a directory argument to `tar`/`zip` AND its own
+       recursively-walked children as separate arguments double-included
+       the children (tar/zip already recurse into any directory argument
+       on their own). Fixed by reading community.general's actual
+       `archive.py` source: a requested directory's own entry is never
+       added as an archive member, only its descendants (`os.walk`
+       adds every subdirectory/file it finds, never the walked root
+       itself) - each member is now added individually with the
+       archiver's own recursion disabled (`tar --no-recursion`; zip
+       needs no `-r` since every member, files and subdirectories alike,
+       is already listed explicitly).
+    2. `arcroot` was computed via `File.dirname` on a trailing-slash
+       path, silently wrong: Crystal's `File.dirname("/a/b/")` returns
+       `/a` (one level up), while Python's `os.path.dirname("/a/b/")`
+       returns `/a/b` (just strips the trailing slash) - real Ansible's
+       `common_path()` formula relies on the latter. Fixed with a
+       dedicated `python_dirname` helper.
+    3. `exclusion_patterns` were matched against each member's full path
+       relative to the archive root via `File.match?`, which doesn't let
+       `*` cross `/` - a pattern like `*skip*` silently failed to match
+       `sub/skip.txt`. Fixed by matching against the basename instead
+       (same convention already used by `find`'s own `patterns:`/
+       `excludes:`).
+  - Verified against real `ansible-playbook` via the compat harness
+    (`compat/playbooks/20-archive.yml` - passed): single-file
+    compress-only, whole-directory tar.gz, an idempotent rerun,
+    `exclusion_patterns:`, and a partial run with a missing path mixed
+    in, compared via `dest_state`/`changed` plus each archive's own `tar
+    tzf`/`unzip -Z1` listing (sorted - member order isn't a contract
+    either engine guarantees) and decompressed content. Required adding
+    `bzip2`/`xz-utils`/`zip`/`unzip` and the `community.general`
+    collection to `compat/Dockerfile`.
 - `apt_repository` / `yum_repository`
 - `sysctl`, `mount`
 - `ufw` / `firewalld`
-- `archive` / `unarchive`
+- `unarchive`
 - `docker_container` / `docker_image` / `docker_network`
 - `mysql_db` / `mysql_user`, `postgresql_db` / `postgresql_user`
 

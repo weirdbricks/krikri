@@ -189,6 +189,7 @@ PLUGINS=(
     "authorized_key"
     "stat"
     "find"
+    "archive"
 )
 
 PLUGIN_COUNT=0

@@ -166,10 +166,11 @@ module CrystalPlay
   class PlaybookParser
     
     # List of available (implemented) plugins - using FQCN. Almost all of
-    # these are ansible.builtin.* (bundled with ansible-core); authorized_key
-    # is the one exception - in real Ansible it lives in the separate
-    # ansible.posix collection, not ansible-core, so it needs its own prefix
-    # here too (verified against a real ansible-core install, not assumed).
+    # these are ansible.builtin.* (bundled with ansible-core); two
+    # exceptions verified against a real ansible-core install (not
+    # assumed): authorized_key lives in the separate ansible.posix
+    # collection, and archive/unarchive live in community.general - neither
+    # ships with ansible-core itself.
     AVAILABLE_PLUGINS = [
       "ansible.builtin.copy",
       "ansible.builtin.template",
@@ -189,6 +190,7 @@ module CrystalPlay
       "ansible.posix.authorized_key",
       "ansible.builtin.stat",
       "ansible.builtin.find",
+      "community.general.archive",
     ]
     
     # Parse playbook from file

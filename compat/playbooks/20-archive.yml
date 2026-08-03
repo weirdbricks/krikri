@@ -1,0 +1,99 @@
+- name: archive
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: seed the source directory tree
+      ansible.builtin.file:
+        path: /work/archsrc/sub
+        state: directory
+
+    - name: seed source files
+      ansible.builtin.copy:
+        content: "{{ item.content }}\n"
+        dest: "/work/archsrc/{{ item.name }}"
+      loop:
+        - {name: a.txt, content: hello}
+        - {name: b.txt, content: world}
+        - {name: sub/c.txt, content: nested}
+
+    - name: compress a single file directly (default gz format)
+      community.general.archive:
+        path: /work/archsrc/a.txt
+        dest: /work/single.gz
+      register: single_result
+
+    - name: archive the whole source directory as tar.gz
+      community.general.archive:
+        path: /work/archsrc
+        dest: /work/dir.tar.gz
+      register: dir_result
+
+    - name: idempotent rerun of the same directory archive
+      community.general.archive:
+        path: /work/archsrc
+        dest: /work/dir.tar.gz
+      register: rerun_result
+
+    - name: archive with exclusion_patterns
+      community.general.archive:
+        path: /work/archsrc
+        dest: /work/excluded.zip
+        format: zip
+        exclusion_patterns: "*b.txt*"
+      register: exclude_result
+
+    - name: archive with a missing path mixed in
+      community.general.archive:
+        path:
+          - /work/archsrc/a.txt
+          - /work/does-not-exist.txt
+        dest: /work/partial.tar.gz
+      register: partial_result
+
+    # Member order within an archive isn't a meaningful contract to match
+    # (neither GNU tar's directory-argument order nor Python's os.walk
+    # order is sorted) - sorted here so this comparison is about content,
+    # not incidental ordering.
+    - name: list the tar.gz archive contents, sorted (same system tar binary either way, so this text is directly comparable)
+      ansible.builtin.shell: tar tzf /work/dir.tar.gz | sort
+      register: dir_listing
+      changed_when: false
+
+    - name: list the zip archive contents, sorted
+      ansible.builtin.shell: unzip -Z1 /work/excluded.zip | sort
+      register: zip_listing
+      changed_when: false
+
+    - name: decompress the single-file gz and read its content back
+      ansible.builtin.command: gzip -dc /work/single.gz
+      register: single_content
+      changed_when: false
+
+    - name: write the stable results to a file for comparison
+      ansible.builtin.copy:
+        content: |
+          single_dest_state={{ single_result.dest_state }} single_changed={{ single_result.changed }}
+          single_content={{ single_content.stdout }}
+          dir_dest_state={{ dir_result.dest_state }} dir_changed={{ dir_result.changed }}
+          dir_listing={{ dir_listing.stdout }}
+          rerun_changed={{ rerun_result.changed }}
+          exclude_dest_state={{ exclude_result.dest_state }}
+          zip_listing={{ zip_listing.stdout }}
+          partial_dest_state={{ partial_result.dest_state }}
+        dest: /work/archive-output.txt
+
+    # The archive binaries themselves aren't byte-comparable across engines
+    # (gzip/zip/tar embed timestamps and tool-specific metadata even for
+    # logically identical content) - the compat harness's snapshot diffs
+    # every file's checksum, so leaving them in /work would always FAIL on
+    # binary noise despite matching content, which archive-output.txt
+    # above already proves via each tool's own listing/decompression.
+    - name: remove the non-byte-comparable archive binaries before the compat snapshot
+      ansible.builtin.file:
+        path: "/work/{{ item }}"
+        state: absent
+      loop:
+        - single.gz
+        - dir.tar.gz
+        - excluded.zip
+        - partial.tar.gz

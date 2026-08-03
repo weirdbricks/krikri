@@ -15,6 +15,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cron \
     openssh-client \
     ca-certificates \
+    bzip2 \
+    xz-utils \
+    zip \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # Debian/Ubuntu block system-wide `pip install` (PEP 668); a venv sidesteps
@@ -25,8 +29,9 @@ ENV PATH="/opt/ansible-venv/bin:${PATH}"
 
 # authorized_key isn't part of ansible-core - it lives in the separate
 # ansible.posix collection (crystal-ansible registers it as
-# ansible.posix.authorized_key to match).
-RUN ansible-galaxy collection install ansible.posix
+# ansible.posix.authorized_key to match). archive/unarchive likewise live
+# in community.general, not ansible-core.
+RUN ansible-galaxy collection install ansible.posix community.general
 
 WORKDIR /repo
 COPY . /repo

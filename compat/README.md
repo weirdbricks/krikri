@@ -93,7 +93,7 @@ test with exact content assertions for the `lineinfile` bug).
 
 ## Coverage
 
-Nineteen playbooks, one per concern: `debug`/`copy`, `file` states,
+Twenty playbooks, one per concern: `debug`/`copy`, `file` states,
 `lineinfile`, `loop`/`with_items`, real `user`/`group` creation and
 modification, `block`/`rescue`/`always`, `until`/`retries`, `cron`
 (`cron_file:`), `authorized_key`, `git` clone/checkout against a local
@@ -121,7 +121,16 @@ recursive search, `excludes:`, `hidden:`, `file_type: directory`, and
 (`src/crystal_play/variable_substitutor/filter_engine.cr`) doesn't yet
 support the Jinja2 `map(attribute=...)`/`sort` filters real playbooks
 would normally use to format that list for comparison - a real, separate
-gap unrelated to `find` itself.
+gap unrelated to `find` itself. `archive` (`20-archive.yml`) covers a
+single-file compress-only run, a whole-directory tar.gz build, an
+idempotent rerun, `exclusion_patterns:`, and a partial run with a missing
+path mixed in - compared via `dest_state`/`changed` plus each archive's
+own `tar tzf`/`unzip -Z1` listing and `gzip -dc` content (sorted, since
+member order isn't a meaningful contract either engine guarantees). The
+raw archive files themselves are deleted before the compat snapshot,
+since gzip/zip/tar embed timestamps and tool-specific metadata that make
+even logically-identical archives byte-different - the listing/content
+comparisons above already prove equivalence at the level that matters.
 
 Not covered here (same gaps noted elsewhere in this repo): `apt`/`dnf`/
 `package` (would need a slower, distro-specific compat image and real
