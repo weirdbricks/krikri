@@ -85,4 +85,68 @@ describe "wait_for plugin" do
     result = PluginSpecHelper.run("wait_for", {"timeout" => "0"})
     result["changed"].as_bool.should be_false
   end
+
+  it "fails clearly when state: drained is given without a port:" do
+    result = PluginSpecHelper.run("wait_for", {"state" => "drained", "timeout" => "1"})
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("state: drained should only be used for checking a port in the wait_for module")
+  end
+
+  it "fails clearly when exclude_hosts: is given without state: drained" do
+    result = PluginSpecHelper.run("wait_for", {"port" => "80", "exclude_hosts" => "10.0.0.1", "timeout" => "1"})
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("exclude_hosts should only be with state=drained")
+  end
+
+  it "fails clearly for a non-IPv4 host: with state: drained" do
+    result = PluginSpecHelper.run("wait_for", {"port" => "80", "state" => "drained", "host" => "::1", "timeout" => "1"})
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("state: drained only supports a literal IPv4 host:")
+  end
+
+  it "succeeds immediately with state: drained on a port nothing is connected to" do
+    server = TCPServer.new("127.0.0.1", 0)
+    port = server.local_address.port
+    server.close # closed immediately - never actually accepted a connection
+
+    result = PluginSpecHelper.run("wait_for", {"port" => port.to_s, "state" => "drained", "timeout" => "3"})
+    result["failed"].as_bool.should be_false
+  end
+
+  it "times out with state: drained while a real ESTABLISHED connection is still open on that port" do
+    server = TCPServer.new("127.0.0.1", 0)
+    port = server.local_address.port
+    client = TCPSocket.new("127.0.0.1", port)
+    accepted = server.accept
+
+    result = PluginSpecHelper.run("wait_for", {"port" => port.to_s, "state" => "drained", "timeout" => "1", "sleep" => "1"})
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("Timeout when waiting for 127.0.0.1:#{port} to drain")
+  ensure
+    client.try(&.close)
+    accepted.try(&.close)
+    server.try(&.close)
+  end
+
+  it "reports drained once active_connection_states: is scoped away from the connection's actual state" do
+    server = TCPServer.new("127.0.0.1", 0)
+    port = server.local_address.port
+    client = TCPSocket.new("127.0.0.1", port)
+    accepted = server.accept
+
+    # The real connection is ESTABLISHED, not SYN_SENT - scoping
+    # active_connection_states: to a state that can never match proves
+    # the parameter is actually threaded through, not just accepted and
+    # ignored.
+    result = PluginSpecHelper.run("wait_for", {
+      "port" => port.to_s, "state" => "drained", "active_connection_states" => "SYN_SENT", "timeout" => "3",
+    })
+
+    result["failed"].as_bool.should be_false
+  ensure
+    client.try(&.close)
+    accepted.try(&.close)
+    server.try(&.close)
+  end
 end

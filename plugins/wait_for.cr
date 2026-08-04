@@ -3,6 +3,7 @@
 require "json"
 require "socket"
 require "../src/crystal_play/base_plugin"
+require "../src/crystal_play/plugin_helpers/proc_net_tcp"
 
 module CrystalPlay
   # wait_for plugin (ansible.builtin.wait_for) - polls until a port becomes
@@ -15,13 +16,26 @@ module CrystalPlay
   # plugin reuses verbatim) and never reports changed - it only ever waits,
   # never mutates anything.
   #
-  # Not implemented: `drained` (active TCP connection draining - needs
-  # /proc/net-style connection-state inspection with no faithful native
-  # Crystal equivalent), `exclude_hosts`/`active_connection_states`
-  # (drained-only options), `search_regex` matched against an open socket
-  # (only file-content matching is implemented, per this entry's own
-  # original scope) - all lower-value than the core port/path/regex-in-file
-  # polling path.
+  # state: drained polls /proc/net/tcp (IPv4 only - see
+  # PluginHelpers::ProcNetTcp's own class doc for why IPv6 is a scope
+  # cut) directly, matching real Ansible's own `LinuxTCPConnectionInfo`
+  # strategy - the file's own hex encoding (byte-reversed IP octets, a
+  # plain 4-digit hex port, and a two-digit connection-state code) was
+  # verified against this machine's own real /proc/net/tcp output, and
+  # the state-code mapping against ansible/modules/wait_for.py's own
+  # source, not assumed. `active_connection_states:` (default
+  # ESTABLISHED/FIN_WAIT1/FIN_WAIT2/SYN_RECV/SYN_SENT/TIME_WAIT, matching
+  # real Ansible's own default) and `exclude_hosts:` (IPv4 literals only,
+  # same scope cut as `host:` itself - no DNS resolution) are both
+  # supported. `host:` must resolve to a literal IPv4 address for
+  # `drained:` specifically (this plugin's other states already default
+  # `host:` to a literal, so this only matters if a hostname is passed
+  # explicitly) - fails clearly rather than silently matching nothing.
+  #
+  # Not implemented: `search_regex` matched against an open socket (only
+  # file-content matching is implemented, per this entry's own original
+  # scope) - lower-value than the core port/path/regex-in-file polling
+  # path.
   class WaitForPlugin < BasePlugin
     def execute : PluginResult
       if is_true?(@params["check_mode"]?)
@@ -30,7 +44,8 @@ module CrystalPlay
 
       port = @params["port"]?.try(&.to_i)
       path = @params["path"]?
-      if error = validate(port, path)
+      state = @params["state"]? || "started"
+      if error = validate(port, path, state)
         return error
       end
 
@@ -38,6 +53,10 @@ module CrystalPlay
       timeout = (@params["timeout"]? || "300").to_i
       started = Time.monotonic
       sleep(delay.seconds) if delay > 0
+
+      if result = try_drained(port, state, timeout, started)
+        return result
+      end
 
       # With no port/path given, wait_for is just a plain sleep for the
       # full timeout - matches real Ansible's own documented behavior
@@ -52,16 +71,68 @@ module CrystalPlay
       poll_until_satisfied(port, path, timeout, started)
     end
 
-    private def validate(port : Int32?, path : String?) : PluginResult?
+    # Returns nil (fall through to the ordinary port/path polling below)
+    # unless state: is drained - #validate already confirmed a drained:
+    # request has both a port: and a host: that resolves to a literal
+    # IPv4 address, but re-checking here (rather than asserting with
+    # `not_nil!`) keeps the compiler's own narrowing doing the work
+    # instead. Split out of #execute to keep its own branch count down
+    # (ameba's cyclomatic-complexity budget).
+    private def try_drained(port : Int32?, state : String, timeout : Int32, started : Time::Span) : PluginResult?
+      return nil unless state == "drained"
+      return nil unless (drained_port = port) && (host_hex = PluginHelpers::ProcNetTcp.ipv4_to_hex(@params["host"]? || "127.0.0.1"))
+
+      poll_drained(drained_port, host_hex, timeout, started)
+    end
+
+    private def validate(port : Int32?, path : String?, state : String) : PluginResult?
       if port && path
         return PluginResult.new(changed: false, failed: true, msg: "path and port are mutually exclusive parameters")
       end
 
-      if (@params["state"]? || "started") == "drained"
-        return PluginResult.new(changed: false, failed: true, msg: "state: drained is not implemented")
+      if state == "drained"
+        unless port
+          return PluginResult.new(changed: false, failed: true, msg: "state: drained should only be used for checking a port in the wait_for module")
+        end
+        unless PluginHelpers::ProcNetTcp.ipv4_to_hex(@params["host"]? || "127.0.0.1")
+          return PluginResult.new(changed: false, failed: true, msg: "state: drained only supports a literal IPv4 host:")
+        end
+      elsif @params["exclude_hosts"]?
+        return PluginResult.new(changed: false, failed: true, msg: "exclude_hosts should only be with state=drained")
       end
 
       nil
+    end
+
+    # Polls /proc/net/tcp until no active connection matches host:/port:
+    # (see PluginHelpers::ProcNetTcp's own class doc for the exact
+    # matching rules and IPv4-only scope).
+    private def poll_drained(port : Int32, host_hex : String, timeout : Int32, started : Time::Span) : PluginResult
+      host = @params["host"]? || "127.0.0.1"
+      port_hex = PluginHelpers::ProcNetTcp.port_to_hex(port)
+      active_states = @params["active_connection_states"]?.try { |raw| raw.split(',').map(&.strip) } || PluginHelpers::ProcNetTcp::DEFAULT_ACTIVE_STATES
+      exclude_hexes = @params["exclude_hosts"]?.try { |raw| raw.split(',').map(&.strip).compact_map { |excluded| PluginHelpers::ProcNetTcp.ipv4_to_hex(excluded) } } || [] of String
+      sleep_interval = (@params["sleep"]? || "1").to_i.seconds
+      deadline = Time.monotonic + timeout.seconds
+
+      loop do
+        connections = PluginHelpers::ProcNetTcp.parse(read_proc_net_tcp)
+        active = PluginHelpers::ProcNetTcp.count_active(connections, host_hex, port_hex, active_states, exclude_hexes)
+        return success_result(nil, nil, started) if active == 0
+
+        break if Time.monotonic >= deadline
+        sleep(sleep_interval)
+      end
+
+      PluginResult.new(
+        changed: false, failed: true,
+        msg: @params["msg"]? || "Timeout when waiting for #{host}:#{port} to drain",
+        elapsed: (Time.monotonic - started).total_seconds.to_i
+      )
+    end
+
+    private def read_proc_net_tcp : String
+      File.exists?("/proc/net/tcp") ? File.read("/proc/net/tcp") : ""
     end
 
     private def poll_until_satisfied(port : Int32?, path : String?, timeout : Int32, started : Time::Span) : PluginResult

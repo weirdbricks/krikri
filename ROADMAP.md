@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.45`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.46`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -19,20 +19,23 @@ at Phase 5's completion: `stat`'s `get_mime`/`get_attributes` (`0.9.36`),
 have all shipped - work has now moved on to closing the *remaining*
 documented per-plugin scope cuts one at a time in pursuit of fuller
 `ansible-core`/`community.*` parity, most recently `postgresql_privs`
-(`0.9.44`, previously not implemented at all) and `mount`'s `remounted`
-state (`0.9.45`) - see "Also still open" near the end of Phase 5 for
-what's left and the running list of what's already been closed past that
-point. 665/667 specs pass (the 2 exceptions need a live MySQL/PostgreSQL
-server at `127.0.0.1:13306`/`15432` reachable with real `mysql`/`psql`
-client binaries, neither installed on this host directly - see the
-`0.9.40` entry for how they were verified anyway), `ameba` clean on all
-new/touched code. A Docker-based compatibility harness (`compat/`, see
-`compat/README.md`) runs the same playbooks through real `ansible-playbook`
-and `crystal-ansible` side by side and diffs the resulting filesystem state
-+ exit codes - ground truth instead of assumptions; **38/38 compat
-playbooks pass** (`mount`'s own `remounted` verification happened outside
-the harness - its containers run unprivileged and can't mount anything at
-all, the same constraint that already keeps `mounted`/`unmounted` out of
+(`0.9.44`, previously not implemented at all), `mount`'s `remounted`
+state (`0.9.45`), and `wait_for`'s `state: drained` (`0.9.46`) - see "Also
+still open" near the end of Phase 5 for what's left and the running list
+of what's already been closed past that point. 681/683 specs pass (the 2
+exceptions need a live MySQL/PostgreSQL server at `127.0.0.1:13306`/
+`15432` reachable with real `mysql`/`psql` client binaries, neither
+installed on this host directly - see the `0.9.40` entry for how they were
+verified anyway), `ameba` clean on all new/touched code. A Docker-based
+compatibility harness (`compat/`, see `compat/README.md`) runs the same
+playbooks through real `ansible-playbook` and `crystal-ansible` side by
+side and diffs the resulting filesystem state + exit codes - ground truth
+instead of assumptions; **38/38 compat playbooks pass** (`mount`'s own
+`remounted` and `wait_for`'s own `drained:` verification both happened
+outside the harness instead, for two different reasons documented in
+their own `0.9.45`/`0.9.46` entries - its containers run unprivileged and
+can't mount anything at all, the same constraint that already keeps
+`mounted`/`unmounted` out of
 `compat/playbooks/25-mount.yml` too - see the `0.9.45` entry for how it
 was verified instead) - see each entry below and `compat/README.md`'s
 Coverage section for what each one caught.
@@ -1642,11 +1645,9 @@ first, then `blockinfile`, `uri`, `assert`, `wait_for`, `fetch`, `pause`.
   real Ansible's own `match_groupdict`/`match_groups` output likewise
   excludes) - `match_groupdict` itself is always returned empty (named
   captures aren't implemented, a documented simplification). Never
-  `changed`. Not implemented: `state: drained` (needs `/proc/net`-style
-  TCP connection-state inspection with no faithful native Crystal
-  equivalent - fails clearly with a dedicated message rather than
-  silently misbehaving), `exclude_hosts`/`active_connection_states`
-  (drained-only options). Integration tested
+  `changed`. `state: drained` and its `exclude_hosts`/
+  `active_connection_states` options were added in `0.9.46` (see that
+  entry near the end of Phase 5) - not a scope cut anymore. Integration tested
   (`spec/integration/wait_for_spec.cr`, 12 examples): mutually-exclusive
   `port:`/`path:` validation, the check-mode skip, a closed-port timeout
   with the exact message, a custom `msg:`, an already-open port
@@ -2054,6 +2055,69 @@ compat playbook's own task wouldn't have suggested was there).
   - `crystal spec`/`ameba` both clean (665 examples, same 2 pre-existing
     DB-client-dependent failures as always, unrelated to this).
 
+- [x] `wait_for` `state: drained` (`0.9.46`): polls `/proc/net/tcp` (IPv4
+  only, see the new `src/crystal_play/plugin_helpers/proc_net_tcp.cr`'s
+  own class doc for why IPv6 - `/proc/net/tcp6`, a meaningfully more
+  involved per-4-byte-word-swapped hex encoding - is a documented scope
+  cut) until no active connection matches `host:`/`port:`. The file's own
+  hex encoding (byte-reversed IPv4 octets, e.g. `"127.0.0.1"` ->
+  `"0100007F"`, plain 4-digit-hex port, two-digit connection-state code)
+  was verified against this machine's own real `/proc/net/tcp` output,
+  and the state-code table against real `ansible/modules/wait_for.py`'s
+  own `get_connection_state_id` function source, not assumed from docs -
+  `ansible-doc`'s own prose doesn't spell either out. `active_connection_states:`
+  (comma-separated, default `ESTABLISHED,FIN_WAIT1,FIN_WAIT2,SYN_RECV,
+  SYN_SENT,TIME_WAIT`, matching real Ansible's own default) and
+  `exclude_hosts:` (comma-separated, IPv4 literals only - same scope cut
+  as `host:` itself, no DNS resolution) are both implemented; `path` and
+  `drained:` stay mutually exclusive (real Ansible: "state=drained should
+  only be used for checking a port," reused verbatim as this plugin's own
+  error message), and `exclude_hosts:` given without `state: drained`
+  fails clearly rather than silently doing nothing.
+  - Pure parsing/matching logic (hex conversion, `/proc/net/tcp` line
+    parsing, the active-connection count) lives in the new
+    `proc_net_tcp.cr` helper, no I/O, unit tested directly
+    (`spec/unit/proc_net_tcp_spec.cr`, 10 examples) against a real
+    `/proc/net/tcp` sample captured from a live host (a LISTEN-state
+    connection correctly excluded - `LISTEN` isn't one of the six
+    default active states - alongside a synthetic `ESTABLISHED` one that
+    is), not a fabricated one.
+  - Verified against a *real* draining connection, not simulated: a
+    genuine `nc`-held TCP connection on a real port, confirmed present in
+    `/proc/net/tcp` by hand first, correctly timing out `state: drained`
+    with real Ansible's own exact message
+    (`"Timeout when waiting for {host}:{port} to drain"`); the connection
+    then killed and a fresh run succeeding immediately once it cleared.
+    Also verified the `active_connection_states:` override actually gets
+    threaded through and isn't just accepted-and-ignored: an open
+    `ESTABLISHED` connection scoped to `active_connection_states:
+    SYN_SENT` (a state it can never be in) reports drained immediately
+    rather than timing out. Both the timeout and immediate-success cases
+    re-run against real `ansible-playbook` directly (this environment
+    needed `psutil` installed first - real Ansible's own `wait_for`
+    requires it for `drained:`, confirmed via its own `HAS_PSUTIL`
+    check) - byte-identical output on both engines in both cases.
+  - Not added to the compat harness's own `compat/playbooks/32-wait-for.yml`
+    - holding a real connection open across two *separate* fresh
+    containers (one per engine, the harness's own per-comparison model)
+    isn't something the existing playbook infrastructure sets up, and
+    building that machinery was judged lower value than the direct
+    real-`ansible-playbook` comparison already described above, which
+    already proves byte-identical behavior. New integration spec coverage
+    instead (`spec/integration/wait_for_spec.cr`, 6 new examples: missing
+    `port:`, `exclude_hosts:` without `drained:`, a non-IPv4 `host:`, an
+    immediate success against nothing listening, a real
+    `TCPServer`/`TCPSocket`-backed `ESTABLISHED` connection timing out,
+    and that same connection reporting drained once
+    `active_connection_states:` is scoped away from its real state).
+  - `crystal spec`/`ameba` both clean (681 examples, same 2 pre-existing
+    DB-client-dependent failures as always, unrelated to this).
+  - `execute`'s own branch count needed splitting the `state: drained`
+    dispatch into a new `#try_drained` helper to stay under ameba's
+    cyclomatic-complexity budget, mirroring the same real-refactor
+    pattern (not a cosmetic split) the `postgresql_privs` entry above
+    already used for the same reason.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**
@@ -2071,7 +2135,6 @@ the exact "not implemented" list it's tracked against:**
 - `docker_*`: no `networks:`/`connected:`/TLS options.
 - `yum_repository`: many minor `yum.conf` tuning knobs.
 - `mount`: no `ephemeral` state (`remounted` closed in `0.9.45`).
-- `wait_for`: no `state: drained`.
 - `user`/`group`: no password management.
 - `apt_repository`: no `ppa:` shorthand (needs live Launchpad API access).
 
