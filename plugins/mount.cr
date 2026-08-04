@@ -31,6 +31,17 @@ module CrystalPlay
   # updates the matching line in place (preserving every other line
   # byte-for-byte) rather than removing and re-appending.
   #
+  # Native vs shell-out: the fstab file-editing calls (`cat` -> native
+  # `File.read_lines(chomp: false)`, `cp` backup -> native `File.copy`,
+  # `mkdir -p` -> native `Dir.mkdir_p`) are converted to native Crystal
+  # for local connections, like the other file plugins - but, unlike
+  # those, mount genuinely supports remote hosts (its fstab write path
+  # already branches on `is_local_connection?`), so each one keeps an
+  # SSH branch back to the shell command for non-local hosts, where a
+  # native `File.*` call would read/write the control node's filesystem
+  # instead of the target's. The actual `mount`/`umount`/`mountpoint`
+  # calls are genuine system operations and stay shelled-out either way.
+  #
   # Not implemented: `remounted` and `ephemeral` states (rarer, and
   # `ephemeral` in particular has real Ansible's own device-source-conflict
   # checking logic that's out of scope here), Solaris/BSD-specific vfstab
@@ -156,7 +167,15 @@ module CrystalPlay
 
     private def read_fstab(fstab : String) : Array(String)
       return [] of String unless remote_file_exists?(fstab)
-      remote_exec("cat #{fstab}")[:stdout].lines(chomp: false)
+      if is_local_connection?
+        # chomp: false so the trailing newline is kept on every line,
+        # letting `lines.join` in write_fstab reproduce the file
+        # byte-for-byte (same contract the old `cat ... | lines(chomp:
+        # false)` satisfied).
+        File.read_lines(fstab, chomp: false)
+      else
+        remote_exec("cat #{fstab}")[:stdout].lines(chomp: false)
+      end
     end
 
     private def write_fstab(fstab : String, lines : Array(String))
@@ -173,7 +192,11 @@ module CrystalPlay
 
     private def backup_fstab(fstab : String) : String
       backup_path = "#{fstab}.#{Time.utc.to_unix}.bak"
-      remote_exec("cp #{fstab} #{backup_path}")
+      if is_local_connection?
+        File.copy(fstab, backup_path)
+      else
+        remote_exec("cp #{fstab} #{backup_path}")
+      end
       backup_path
     end
 
@@ -200,7 +223,11 @@ module CrystalPlay
       return false if currently_mounted?(path)
       return true if check_mode
 
-      remote_exec("mkdir -p #{path}")
+      if is_local_connection?
+        Dir.mkdir_p(path)
+      else
+        remote_exec("mkdir -p #{path}")
+      end
       src = @params["src"]? || ""
       fstype = @params["fstype"]? || ""
       opts = desired_opts

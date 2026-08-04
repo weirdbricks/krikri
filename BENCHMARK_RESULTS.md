@@ -581,3 +581,56 @@ spawned a subprocess just to find the home directory now resolves it
 in-process.
 
 Full project suite (516 examples) passes.
+
+## mount: shelling out vs native fstab file editing
+
+**Date:** 2026-08-03
+
+Next in the shell-out survey: `mount.cr`. It manages `/etc/fstab`
+entries; the fstab file-editing calls were shelled out while the actual
+`mount`/`umount`/`mountpoint` calls are genuine system operations. The
+file calls are now native Crystal for local connections (`cat` ->
+`File.read_lines(chomp: false)`, `cp` backup -> `File.copy`, `mkdir -p`
+-> `Dir.mkdir_p`).
+
+Unlike the pure-file plugins, mount genuinely supports remote hosts: its
+`write_fstab` already branched on `is_local_connection?` before this
+change. So each converted call keeps an SSH branch back to the shell
+command for non-local hosts (`cat`/`cp`/`mkdir -p`), where a native
+`File.*` call would - wrongly - read/write the control node's filesystem
+instead of the target's. Native conversion only applies to the local
+path, which is what the existing spec suite and compat harness exercise.
+The `mount`/`umount`/`mountpoint` calls remain shelled-out either way
+(real syscalls, and they must go over SSH on remote hosts - same
+category as `apt.cr`'s `apt-get`, not an oversight).
+
+### Correctness
+
+`read_fstab` originally did `remote_exec("cat ...")` then
+`.lines(chomp: false)` so every line kept its trailing newline and
+`write_fstab`'s `lines.join` reproduced the file byte-for-byte. The
+native path uses `File.read_lines(fstab, chomp: false)`, which satisfies
+the same contract. Existing spec suite (`spec/integration/mount_spec.cr`
+- 10 examples, exercising append/idempotent/in-place-update/noauto/
+absent_from_fstab/not-present/check-mode-write-guard) passes unmodified.
+Verified 1:1 against real `ansible.posix.mount` via the compat harness
+(`compat/playbooks/25-mount.yml` with a local `fstab:` override -
+present/rerun/in-place-update/boot:false/absent_from_fstab cycles - each
+hit the native read + write path).
+
+### Results
+
+Timing the fstab read in isolation (300 iterations against a ~10-line
+sample file): shell `cat` subprocess vs native `File.read_lines(chomp:
+false)`.
+
+| approach | time per call |
+|---|---|
+| `cat <fstab>` (subprocess) | 3.390ms |
+| native `File.read_lines(chomp: false)` | 0.021ms |
+
+**~162x speedup** on the read. End-to-end this drops a fork/exec off the
+fstab read for every present/absent/absent_from_fstab/mounted/unmounted
+invocation on local hosts.
+
+Full project suite (516 examples) passes.

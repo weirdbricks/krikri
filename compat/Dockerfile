@@ -47,7 +47,11 @@ RUN ansible-galaxy collection install ansible.posix community.general
 
 WORKDIR /repo
 COPY . /repo
-RUN shards install && ./build.sh --release
+# Debug build: the harness compares behavior (exit codes + filesystem
+# state), not performance, and a debug build recompiles in a fraction of
+# the time - important because any source change invalidates this layer.
+# Release vs. debug produces identical plugin output for compat purposes.
+RUN shards install && ./build.sh
 
 # Playbooks run here; each `docker run --rm` gets a fresh, empty /work from
 # the image layer, discarded when the container exits.
