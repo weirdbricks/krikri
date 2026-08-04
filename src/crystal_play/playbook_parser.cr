@@ -811,7 +811,21 @@ module CrystalPlay
       when Nil
         ""
       when Array
-        yaml.as_a.map { |item| stringify_value(item) }.join(",")
+        # A list of scalars (real Ansible's `type: list, elements: str/int`)
+        # stays comma-joined, the format every existing plugin's list
+        # params already expect. A list of dicts (`elements: dict`, e.g.
+        # docker_container's networks:) can't be represented that way at
+        # all - comma-joining each element's own `yaml.to_json` Hash
+        # output produces several JSON objects glued together with commas
+        # and no wrapping brackets, which isn't valid JSON once there's
+        # more than one element, and is indistinguishable from a single
+        # scalar for exactly one - so it's emitted as a real JSON array
+        # instead, decodable via `JSON.parse(json).as_a`.
+        if yaml.as_a.any? { |item| item.raw.is_a?(Hash) }
+          yaml.to_json
+        else
+          yaml.as_a.map { |item| stringify_value(item) }.join(",")
+        end
       when Hash
         yaml.to_json
       else

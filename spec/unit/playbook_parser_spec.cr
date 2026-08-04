@@ -876,4 +876,61 @@ describe CrystalPlay::PlaybookParser do
       task.loop_items.try(&.map(&.as_s)).should eq(["a", "b"])
     end
   end
+
+  describe "module param encoding" do
+    # A plain list (real Ansible's `type: list, elements: str`) stays
+    # comma-joined - the format every existing plugin's list params
+    # already expect (ports:, volumes:, includepkgs:, ...).
+    it "comma-joins a plain scalar list param" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          loop: [a, b]
+        YAML
+
+      other_task = single_task(<<-YAML)
+        - name: t
+          community.docker.docker_container:
+            includepkgs: [foo, bar, baz]
+        YAML
+      other_task.params["includepkgs"].should eq("foo,bar,baz")
+      task.params["msg"].should eq("{{ item }}")
+    end
+
+    # A list of dicts (real Ansible's `type: list, elements: dict`, e.g.
+    # docker_container's networks:) can't be comma-joined at all - each
+    # element's own Hash#to_json output glued together with commas isn't
+    # valid JSON once there's more than one element. It's emitted as a
+    # real JSON array instead, decodable via `JSON.parse(json).as_a`.
+    it "emits a list of dicts as a real JSON array, not comma-joined Hash blobs" do
+      task = single_task(<<-YAML)
+        - name: t
+          community.docker.docker_container:
+            networks:
+              - name: net-a
+                aliases: [alias-a]
+              - name: net-b
+        YAML
+
+      parsed = JSON.parse(task.params["networks"]).as_a
+      parsed.size.should eq(2)
+      parsed[0]["name"].as_s.should eq("net-a")
+      parsed[0]["aliases"].as_a.map(&.as_s).should eq(["alias-a"])
+      parsed[1]["name"].as_s.should eq("net-b")
+    end
+
+    it "still emits a single-element dict list as valid JSON (not just a bare Hash blob)" do
+      task = single_task(<<-YAML)
+        - name: t
+          community.docker.docker_container:
+            networks:
+              - name: solo-net
+        YAML
+
+      parsed = JSON.parse(task.params["networks"]).as_a
+      parsed.size.should eq(1)
+      parsed[0]["name"].as_s.should eq("solo-net")
+    end
+  end
 end

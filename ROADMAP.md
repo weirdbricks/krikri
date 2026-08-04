@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.50`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.51`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -23,11 +23,14 @@ documented per-plugin scope cuts one at a time in pursuit of fuller
 state (`0.9.45`), `wait_for`'s `state: drained` (`0.9.46`), and
 `apt_repository`'s `ppa:` shorthand (`0.9.47`), `user`'s `password:`/
 `update_password:`/`password_lock:` (`0.9.48`), `mount`'s
-`state: ephemeral` (`0.9.49`), and `yum_repository`'s tuning-knob
+`state: ephemeral` (`0.9.49`), `yum_repository`'s tuning-knob
 expansion plus a real `baseurl:`/`gpgkey:` multi-value list-join bug fix
-(`0.9.50`) - see "Also still open" near the end of
+(`0.9.50`), and `docker_container`'s `networks:` plus `docker_network`'s
+`connected:`/`appends:` (`0.9.51`, along with a real engine-level bug fix
+to how list-of-dict module params get encoded - see that entry) - see
+"Also still open" near the end of
 Phase 5 for what's left and the running list of what's already been
-closed past that point. 710/712 specs pass (the 2 exceptions need a live
+closed past that point. 713/715 specs pass (the 2 exceptions need a live
 MySQL/PostgreSQL server at `127.0.0.1:13306`/`15432` reachable with real
 `mysql`/`psql` client binaries, neither installed on this host directly -
 see the `0.9.40` entry for how they were verified anyway), `ameba` clean
@@ -37,9 +40,10 @@ see `compat/README.md`) runs the same playbooks through real
 resulting filesystem state + exit codes - ground truth instead of
 assumptions; **38/38 compat playbooks pass** (`mount`'s own `remounted`/
 `ephemeral`, `wait_for`'s own `drained:`, `apt_repository`'s own `ppa:`,
-and `user`'s own `password:` verification all happened outside the
-harness instead, for different reasons documented in their own
-`0.9.45`-`0.9.49` entries - see each for how it was verified instead;
+`user`'s own `password:`, and `docker_container`/`docker_network`'s own
+`networks:`/`connected:` verification all happened outside the harness
+instead, for different reasons documented in their own `0.9.45`-`0.9.51`
+entries - see each for how it was verified instead;
 `yum_repository`'s `0.9.50` work is covered by an extended
 `23-yum-repository.yml` harness entry instead) - see each entry below and
 `compat/README.md`'s Coverage section for what each one caught.
@@ -2383,6 +2387,88 @@ compat playbook's own task wouldn't have suggested was there).
     file-content read-back - full compat harness run: **38/38 passed**.
   - `crystal spec`/`ameba` both clean (712 examples, same 2 pre-existing
     DB-client-dependent failures as always, unrelated to this).
+
+- [x] `docker_container`'s `networks:` and `docker_network`'s
+  `connected:`/`appends:` (`0.9.51`): both attach/detach containers to/
+  from networks via `POST /networks/{id}/connect`/`disconnect` on the
+  Docker Engine API, called directly through `Docr::Client#call` (the
+  same raw-HTTP-escape-hatch pattern `image_exists?` already used in
+  `docker_container.cr`) - docr's own `Networks#connect`/`#disconnect`
+  are unimplemented stubs (`# TODO: Implement this`, empty body), so this
+  isn't a docr modification, just working around what it doesn't cover.
+  - `docker_container`'s `networks:` (JSON array of `{name, aliases,
+    links, ipv4_address, ipv6_address}`, decoded via
+    `RequestedNetwork.from_json`): connects the container to whichever
+    requested networks it isn't already a member of (checked via
+    `api.containers.inspect(id).network_settings.networks`, a real full
+    container-inspect call - the `list(all: true)` summary type
+    `find_container` already used doesn't carry `NetworkSettings` at
+    all). Checked/applied on every run, including when nothing else
+    about the container needed to change - real Ansible's own default
+    (non-`comparisons: strict`) behavior never disconnects a container
+    from a network just because it's absent from `networks:`, matched
+    here by never disconnecting at all (no purge support - see the scope
+    cut below).
+  - `docker_network`'s `connected:` (comma-separated container names/
+    IDs) + `appends:` (bool, default `false`, real Ansible's own
+    `incremental` alias not implemented): by default the list is
+    canonical - real Ansible's own documented behavior of disconnecting
+    any currently-connected container not in the list, matched here via
+    `Network.containers` (a `Hash(String, NetworkContainer)` already on
+    the `Network` type returned by `networks.inspect`, keyed by container
+    ID with `.name` on each value) diffed against the requested list;
+    `appends: true` only connects what's missing and never disconnects
+    anything, matching real Ansible's own opt-in incremental mode.
+  - A real engine-level bug found and fixed in the process, not specific
+    to Docker: `PlaybookParser#stringify_value`'s `Array` branch
+    comma-joined every element's own `stringify_value` output
+    unconditionally - fine for a real Ansible `type: list, elements: str`
+    param (`' '`/`','`-joinable scalars), but for `elements: dict`
+    (`networks:` itself, a list of hashes) each element recursed into the
+    `Hash` branch (`yaml.to_json`) and the results got glued together
+    with bare commas: valid-ish for exactly one element (indistinguishable
+    from a plain Hash param), completely invalid JSON for more than one
+    (`{...},{...}` with no wrapping brackets) - `JSON.parse` on the
+    plugin side raised a cast error immediately when `networks:` had two
+    entries. Fixed by checking whether any element of the YAML array is
+    itself a Hash and, if so, emitting the whole array as real JSON
+    (`yaml.to_json`) instead of the comma-join - plain scalar lists (the
+    overwhelming majority of existing list params across every plugin)
+    are completely unaffected, verified by the full spec suite staying
+    green with no changes needed anywhere else.
+  - Not implemented: `comparisons: strict`/`networks: strict` on
+    `docker_container` (no way to opt into purging networks not listed);
+    `networks_cli_compatible:` (this plugin always leaves whatever
+    `network_mode:`/Docker's own default produced alone and only ever
+    *adds* the requested networks on top); `mac_address:` per network
+    endpoint; `docker_network`'s `force:` (the "disconnect everyone,
+    delete, and recreate the network" override, distinct from the
+    existing driver-mismatch auto-recreate).
+  - Verified against a real (rootless/podman-backed, but Docker-API-
+    compatible) daemon on this host, not simulated: created a container,
+    attached it to one network with an alias, reran idempotently
+    (`changed: false`), then added a second network on top and confirmed
+    via `docker inspect`/`docker network inspect` that only the missing
+    network got connected, both with correct aliases - the identical
+    sequence run through real `ansible-playbook`'s own
+    `community.docker.docker_container`/`docker_network` against the
+    same daemon produced the same `changed:`/`ok:` sequence
+    (`True, False, True` for the container networks test;
+    `True, False, True, True` for the network `connected:`/`appends:`
+    canonical-vs-incremental test) and the same final network membership.
+  - Not added to the compat harness (`compat/`) - its containers have no
+    Docker socket access at all (nested Docker-in-Docker isn't set up
+    there), the same reason no `docker_*` playbook has ever been in
+    `compat/playbooks/`; verified directly against a real daemon instead,
+    as documented above.
+  - `crystal spec`/`ameba` both clean (715 examples, same 2 pre-existing
+    DB-client-dependent failures as always, unrelated to this) -
+    `ensure_present`/`ensure_stopped`'s cyclomatic complexity (already
+    over budget before this change, a pre-existing condition) needed the
+    repeated "nothing else changed, still sync networks" tail extracted
+    into a shared `no_op_networks_result` helper to avoid making it
+    worse.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**
@@ -2397,7 +2483,18 @@ the exact "not implemented" list it's tracked against:**
   `tablespace`/`type`/`procedure`/`parameter` (only `table`/`sequence`/
   `schema`/`database` implemented), `ALL_IN_SCHEMA`, `target_roles:`,
   `session_role:`, `fail_on_role:`.
-- `docker_*`: no `networks:`/`connected:`/TLS options.
+- `docker_*` (`0.9.51`): no TLS options for connecting to a remote Docker
+  daemon (`tls:`/`tls_verify:`/`tls_hostname:`/`cacert_path:`/
+  `cert_path:`/`key_path:`) - `docr`'s own `Client` is hardwired to a
+  local UNIX socket at the transport layer (its `#io` override always
+  opens a `UNIXSocket`, with no TCP/TLS branch at all - not a missing
+  option so much as a missing connection mode), so this would mean
+  extending `docr` itself with real TCP+TLS support (parsing a
+  `tcp://host:port` `DOCKER_HOST`, building an `OpenSSL::SSL::Context`
+  from the cert/key/CA paths) and verifying it against an actual
+  TLS-configured remote `dockerd`, neither available in this sandbox - a
+  meaningfully bigger lift than the `networks:`/`connected:` work above,
+  left open rather than half-implemented and unverifiable.
 
 Cross-cutting engine gaps this section used to track here - Jinja2
 filter-chaining and `become:`/`become_user:` privilege escalation - are
