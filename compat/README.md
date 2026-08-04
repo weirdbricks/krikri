@@ -93,7 +93,7 @@ test with exact content assertions for the `lineinfile` bug).
 
 ## Coverage
 
-Thirty-seven playbooks, one per concern: `debug`/`copy`, `file` states,
+Thirty-eight playbooks, one per concern: `debug`/`copy`, `file` states,
 `lineinfile`, `loop`/`with_items`, real `user`/`group` creation and
 modification, `block`/`rescue`/`always`, `until`/`retries`, `cron`
 (`cron_file:`), `authorized_key`, `git` clone/checkout against a local
@@ -197,14 +197,16 @@ sleep, a `minutes:` sleep, and the `seconds:`/`minutes:` mutual-exclusion
 failure. `mysql_db`/`postgresql_db` `state: dump`/`import`(`restore`)
 (`35-mysql-db.yml`/`36-postgresql-db.yml`) each start their own throwaway
 server inside the container via its init.d script (no systemd in this
-image) and cover: a seed import/restore, a plain-SQL dump, a
-gzip-compressed dump (native `Compress::Gzip`, no `gzip` subprocess), both
-dumps restored into a second database with the row count verified after
-each round trip, and a missing-`target:` failure (both engines must fail
-the same way). The raw dump files are deleted before the `/work` snapshot
-- `mysqldump`/`pg_dump` both embed a timestamp comment, so even logically
-identical dumps are byte-different across the two engines' separate runs;
-the row-count round trips already prove the content matched.
+image) and cover: a seed import/restore, a plain-SQL dump plus
+gzip/bzip2/xz-compressed dumps (native `Compress::Gzip`/`Compress::BZ2`/
+`Compress::XZ`, no `gzip`/`bzip2`/`xz` subprocess - the latter two added
+in `0.9.43`), each dump restored into a second database with the row
+count verified after each round trip, and a missing-`target:` failure
+(both engines must fail the same way). The raw dump files are deleted
+before the `/work` snapshot - `mysqldump`/`pg_dump` both embed a
+timestamp comment, so even logically identical dumps are byte-different
+across the two engines' separate runs; the row-count round trips already
+prove the content matched.
 `postgresql_db`'s compat playbook sets the `postgres` superuser's password
 via a plain `su postgres -c '...'` shell command rather than
 `become:`/`become_user:` - at the time this playbook was written,
@@ -236,6 +238,18 @@ matches, not the exact error text, the same way `find`'s own compat
 playbook compares `matched` counts rather than exact path lists).
 `compat/Dockerfile` needed `sudo` added to its package list for this,
 which wasn't there before since nothing in this codebase used it.
+
+`postgresql_privs` (`38-postgresql-privs.yml`, `0.9.44`) covers the four
+object types this codebase implements (`table`, `sequence` isn't
+exercised directly but shares `table`'s own code path, `schema`,
+`database`) - a `table` grant, an idempotent re-grant, `grant_option:
+true` then `grant_option: false` on a separate table (verifying the
+underlying privilege survives losing just its grant option), a partial
+revoke leaving one of two granted privileges intact, a `schema` grant,
+and a `database` grant. Compared via each task's `changed:` plus the
+actual final `relacl::text` read back for both test tables (not just
+booleans) - `postgresql_privs.cr`'s own class doc has the full ACL-format
+verification notes.
 
 Building `32-wait-for.yml` found a real, previously-unknown bug unrelated
 to `wait_for` itself: `LocalExecutor.exec` (backing `shell:`/`command:`

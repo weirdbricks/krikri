@@ -1,0 +1,187 @@
+# Compat coverage for postgresql_privs (shipped in 0.9.44): only the
+# common object types this codebase implements - table (with grant
+# revoked, grant_option granted then revoked leaving the underlying
+# privilege intact), schema, and database - are exercised here.
+# default_privs/foreign_data_wrapper/foreign_server/function/group/
+# language/tablespace/type/procedure/parameter are all real Ansible
+# `type:` choices this codebase doesn't implement (documented scope cut,
+# see plugins/postgresql_privs.cr), so aren't covered here either - this
+# playbook is deliberately scoped to prove the four implemented types
+# work, not to be a full postgresql_privs feature matrix.
+#
+# The playbook starts its own throwaway PostgreSQL cluster inside the
+# container via the init.d script (no systemd in this image), the same
+# convention 36-postgresql-db.yml already uses.
+
+- name: postgresql_privs compat
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    login_host: 127.0.0.1
+    login_user: postgres
+    login_password: compatpass
+    login_db: compatprivsdb
+
+  tasks:
+    - name: start postgresql
+      ansible.builtin.shell: service postgresql start
+      changed_when: false
+
+    - name: wait for postgresql to accept connections
+      ansible.builtin.wait_for:
+        port: 5432
+        timeout: 60
+
+    # crystal-ansible parses become:/become_user: but plain su avoids any
+    # doubt either way - same convention 36-postgresql-db.yml uses.
+    - name: set a password for the postgres superuser
+      ansible.builtin.shell: |
+        su postgres -c "psql -c \"ALTER USER postgres PASSWORD 'compatpass';\""
+      changed_when: false
+
+    - name: create the test database
+      community.postgresql.postgresql_db:
+        name: "{{ login_db }}"
+        state: present
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+
+    - name: create a throwaway role to grant privileges to
+      community.postgresql.postgresql_user:
+        name: compatprivsrole
+        state: present
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+
+    - name: create two test tables
+      ansible.builtin.shell: |
+        PGPASSWORD=compatpass psql --host=127.0.0.1 --username=postgres --dbname={{ login_db }} \
+          -c "CREATE TABLE t (id int); CREATE TABLE t2 (id int);"
+      changed_when: false
+
+    - name: grant SELECT+UPDATE on t to the role
+      community.postgresql.postgresql_privs:
+        type: table
+        objs: t
+        privs: SELECT,UPDATE
+        roles: compatprivsrole
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: grant_first
+
+    - name: grant SELECT+UPDATE on t again (idempotent)
+      community.postgresql.postgresql_privs:
+        type: table
+        objs: t
+        privs: SELECT,UPDATE
+        roles: compatprivsrole
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: grant_idempotent
+
+    - name: grant SELECT WITH GRANT OPTION on t2
+      community.postgresql.postgresql_privs:
+        type: table
+        objs: t2
+        privs: SELECT
+        roles: compatprivsrole
+        grant_option: true
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: grant_option_on
+
+    - name: revoke just the grant option on t2 (privilege itself stays)
+      community.postgresql.postgresql_privs:
+        type: table
+        objs: t2
+        privs: SELECT
+        roles: compatprivsrole
+        grant_option: false
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: grant_option_off
+
+    - name: revoke UPDATE on t
+      community.postgresql.postgresql_privs:
+        type: table
+        objs: t
+        privs: UPDATE
+        roles: compatprivsrole
+        state: absent
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: revoke_update
+
+    - name: grant USAGE+CREATE on the public schema
+      community.postgresql.postgresql_privs:
+        type: schema
+        objs: public
+        privs: USAGE,CREATE
+        roles: compatprivsrole
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: grant_schema
+
+    - name: grant CONNECT on the database itself
+      community.postgresql.postgresql_privs:
+        type: database
+        objs: "{{ login_db }}"
+        privs: CONNECT
+        roles: compatprivsrole
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: grant_database
+
+    - name: read back the final table ACLs
+      ansible.builtin.shell: >-
+        PGPASSWORD=compatpass psql --host=127.0.0.1 --username=postgres --dbname={{ login_db }}
+        -t -c "SELECT relacl::text FROM pg_class WHERE relname IN ('t','t2') ORDER BY relname" | tr -d ' ' | tr '\n' ';'
+      register: final_table_acls
+      changed_when: false
+
+    - name: record results
+      ansible.builtin.copy:
+        content: |
+          grant_first={{ grant_first.changed }}
+          grant_idempotent={{ grant_idempotent.changed }}
+          grant_option_on={{ grant_option_on.changed }}
+          grant_option_off={{ grant_option_off.changed }}
+          revoke_update={{ revoke_update.changed }}
+          grant_schema={{ grant_schema.changed }}
+          grant_database={{ grant_database.changed }}
+          final_table_acls={{ final_table_acls.stdout }}
+        dest: /work/results.txt
+
+    - name: clean up
+      community.postgresql.postgresql_db:
+        name: "{{ login_db }}"
+        state: absent
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+
+    - name: remove the throwaway role
+      community.postgresql.postgresql_user:
+        name: compatprivsrole
+        state: absent
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"

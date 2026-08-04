@@ -213,6 +213,7 @@ PLUGINS=(
     "mysql_user"
     "postgresql_db"
     "postgresql_user"
+    "postgresql_privs"
 )
 
 PLUGIN_COUNT=0

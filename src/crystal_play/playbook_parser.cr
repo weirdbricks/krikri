@@ -247,6 +247,7 @@ module CrystalPlay
       "community.mysql.mysql_user",
       "community.postgresql.postgresql_db",
       "community.postgresql.postgresql_user",
+      "community.postgresql.postgresql_privs",
       "ansible.builtin.set_fact",
       "ansible.builtin.get_url",
       "ansible.builtin.blockinfile",

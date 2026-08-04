@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.43`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.44`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -18,18 +18,19 @@ at Phase 5's completion: `stat`'s `get_mime`/`get_attributes` (`0.9.36`),
 `import`(`restore`) (`0.9.40`, `.bz2`/`.xz` compression added `0.9.43`)
 have all shipped - work has now moved on to closing the *remaining*
 documented per-plugin scope cuts one at a time in pursuit of fuller
-`ansible-core`/`community.*` parity (see "Also still open" near the end of
-Phase 5 for what's left and the running list of what's already been closed
-past that point). 651/653 specs pass (the 2 exceptions need a live
-MySQL/PostgreSQL server at `127.0.0.1:13306`/`15432` reachable with real
-`mysql`/`psql` client binaries, neither installed on this host directly -
-see the `0.9.40` entry for how they were verified anyway), `ameba` clean on
-all new/touched code. A Docker-based compatibility harness (`compat/`, see
-`compat/README.md`) runs the same playbooks through real `ansible-playbook`
-and `crystal-ansible` side by side and diffs the resulting filesystem state
-+ exit codes - ground truth instead of assumptions; **37/37 compat
-playbooks pass** - see each entry below and `compat/README.md`'s Coverage
-section for what each one caught.
+`ansible-core`/`community.*` parity, most recently `postgresql_privs`
+(`0.9.44`, previously not implemented at all) - see "Also still open" near
+the end of Phase 5 for what's left and the running list of what's already
+been closed past that point. 664/666 specs pass (the 2 exceptions need a
+live MySQL/PostgreSQL server at `127.0.0.1:13306`/`15432` reachable with
+real `mysql`/`psql` client binaries, neither installed on this host
+directly - see the `0.9.40` entry for how they were verified anyway),
+`ameba` clean on all new/touched code. A Docker-based compatibility
+harness (`compat/`, see `compat/README.md`) runs the same playbooks
+through real `ansible-playbook` and `crystal-ansible` side by side and
+diffs the resulting filesystem state + exit codes - ground truth instead
+of assumptions; **38/38 compat playbooks pass** - see each entry below and
+`compat/README.md`'s Coverage section for what each one caught.
 
 Two cross-cutting efforts also landed since Phases 3/4 were marked done:
 
@@ -1933,6 +1934,78 @@ compat playbook's own task wouldn't have suggested was there).
     two already-shipped plugins' own compression-format dispatch, not a
     new code path.
 
+- [x] `postgresql_privs` (`0.9.44`): grants/revokes PostgreSQL privileges
+  on database objects - the module real Ansible splits out from role
+  management (`postgresql_user`, already implemented) rather than tying
+  privileges to the account the way `mysql_user.cr` does (`postgresql_user.cr`'s
+  own class doc already noted this split; this entry closes the "not
+  implemented either" half of that note). Only `type: table`/`sequence`/
+  `schema`/`database` are implemented - real Ansible's own module also
+  supports `default_privs`/`foreign_data_wrapper`/`foreign_server`/
+  `function`/`group`/`language`/`tablespace`/`type`/`procedure`/
+  `parameter`, all a documented scope cut (see `plugins/postgresql_privs.cr`'s
+  own class doc) - the four implemented types cover the overwhelming
+  majority of real playbooks' `postgresql_privs:` usage (table/schema/
+  database grants), not the exotic object types.
+  - Idempotency is computed from the object's own real ACL array
+    (`relacl`/`nspacl`/`datacl`, cast to `::text` in the query and parsed
+    by a new `src/crystal_play/plugin_helpers/postgresql_acl.cr` - the
+    same representation `\dp`/`\dn+`/`\l+` render), not from a
+    `has_*_privilege()` boolean check - the latter would also return true
+    for a privilege a role only has *indirectly* (via `PUBLIC` or group
+    membership), which would wrongly skip a real, missing direct GRANT.
+    Format verified against a real PostgreSQL 17 server, not assumed from
+    docs: `{postgres=arwdDxtm/postgres,bob=rw/postgres,alice=r*/postgres}`
+    - comma-separated `grantee=privs/grantor` entries; an empty grantee
+      (`=r/postgres`) means `PUBLIC`; a `*` immediately following a
+      privilege letter means *that specific privilege* carries `WITH
+      GRANT OPTION` (not a whole-entry flag - `r*w` is SELECT WITH GRANT
+      OPTION plus a plain UPDATE on the same entry). A missing/`NULL` ACL
+      column parses to "nothing granted", a documented simplification
+      matching how `postgresql_user.cr` already doesn't compare inherited
+      role membership either. `PostgresqlAcl` is pure parsing/lookup
+      logic, no I/O, unit tested directly
+      (`spec/unit/postgresql_acl_spec.cr`, 13 examples) including the
+      real ACL string above, `PUBLIC`'s empty-grantee entry, and
+      per-privilege (not per-entry) grant-option tracking.
+  - `grant_option:` support matches real Ansible's own documented
+    behavior for revoking *just* the grant option while leaving the
+    privilege itself intact (`state: present` + `grant_option: false`) -
+    a real correctness bug caught in this codebase's own first draft, not
+    in review: the revoke-grant-option path was originally computed and
+    executed as a side effect buried inside the per-privilege loop,
+    outside the function's own `to_grant`/`to_revoke` delta lists, so
+    neither the `check_mode` short-circuit nor the returned `changed`
+    value ever saw it - a `grant_option: false` call would have silently
+    done nothing under `--check` while claiming to. Fixed by making
+    `to_revoke_option` a first-class third list alongside `to_grant`/
+    `to_revoke`, computed at the same place and time as the other two.
+  - `objs:` defaults to the connected database itself for `type: database`
+    when omitted, matching real Ansible's own behavior (verified via
+    `ansible-doc`, not assumed) - not implemented for the other three
+    types, where `objs:` stays required. `ALL_IN_SCHEMA` isn't
+    implemented either - a documented scope cut alongside the unsupported
+    `type:` choices above.
+  - Verified end-to-end against a real running PostgreSQL server by hand
+    first (grant, idempotent re-grant, `grant_option: true` then `false`
+    on a separate table, a partial revoke leaving one of two granted
+    privileges intact) before writing the compat playbook, then via a new
+    `compat/playbooks/38-postgresql-privs.yml` covering all four
+    implemented types (table grant/idempotent-regrant/partial-revoke,
+    schema grant, database grant, and the grant-option add/remove
+    sequence) run through the full harness: **38/38 compat playbooks
+    pass**, byte-for-byte identical `results.txt` (including the actual
+    final `relacl::text` read back for both test tables, not just
+    `changed:` booleans) against real `ansible-playbook`.
+  - `crystal spec`/`ameba` both clean (664 examples +
+    `postgresql_acl_spec.cr`'s 13 new ones, same 2 pre-existing
+    DB-client-dependent failures as always). `postgresql_privs.cr`'s own
+    `execute` needed splitting into `resolve_params!`/`apply_all_grants`/
+    `apply_grants`/`grant_delta`/`execute_grant_statements` to stay under
+    ameba's cyclomatic-complexity budget - a real refactor driven by the
+    linter catching genuinely tangled control flow in the first draft,
+    not a cosmetic split.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**
@@ -1942,8 +2015,11 @@ the exact "not implemented" list it's tracked against:**
   `.tar`/`.pgc`/`.dir` restore formats (`pg_restore`-based, a different
   restore mechanism, not just another compression codec); `mysql_db`'s
   `config_file:`, `all_databases:`, various `mysqldump` tuning knobs.
-- `postgresql_user`: no privilege grants (`postgresql_privs` module not
-  implemented at all).
+- `postgresql_privs` (`0.9.44`): `type: default_privs`/
+  `foreign_data_wrapper`/`foreign_server`/`function`/`group`/`language`/
+  `tablespace`/`type`/`procedure`/`parameter` (only `table`/`sequence`/
+  `schema`/`database` implemented), `ALL_IN_SCHEMA`, `target_roles:`,
+  `session_role:`, `fail_on_role:`.
 - `docker_*`: no `networks:`/`connected:`/TLS options.
 - `yum_repository`: many minor `yum.conf` tuning knobs.
 - `mount`: no `remounted`/`ephemeral` states.
