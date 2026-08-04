@@ -48,7 +48,7 @@
     - name: write the stable stat fields to a file for comparison
       ansible.builtin.copy:
         content: |
-          file: exists={{ file_stat.stat.exists }} isreg={{ file_stat.stat.isreg }} mode={{ file_stat.stat.mode }} size={{ file_stat.stat.size }} checksum={{ file_stat.stat.checksum }}
+          file: exists={{ file_stat.stat.exists }} isreg={{ file_stat.stat.isreg }} mode={{ file_stat.stat.mode }} size={{ file_stat.stat.size }} checksum={{ file_stat.stat.checksum }} mimetype={{ file_stat.stat.mimetype }} attr_flags={{ file_stat.stat.attr_flags }}
           missing: exists={{ missing_stat.stat.exists }}
           dir: exists={{ dir_stat.stat.exists }} isdir={{ dir_stat.stat.isdir }}
           link: exists={{ link_stat.stat.exists }} islnk={{ link_stat.stat.islnk }} isreg={{ link_stat.stat.isreg }}

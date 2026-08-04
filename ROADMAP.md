@@ -1,16 +1,17 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.35`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.36`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
 `0.9.24`, `get_url` `0.9.25`/`0.9.32`, `blockinfile` `0.9.26`, `uri` `0.9.27`,
 `assert` `0.9.28`, `wait_for` `0.9.29`, `fetch` `0.9.30`, `pause` `0.9.31`).
-Two of the three remaining cross-cutting engine gaps are also now fixed:
-dotted-variable access in bare conditionals (`0.9.34`) and the recap
-`ok`/`changed` counter overlap (`0.9.35`) - only the Jinja2
-filter-chaining gap remains open (see the note near the end of Phase 5;
-it needs a real architectural change, not a quick add). 606/608 specs
+Two of the three cross-cutting engine gaps are now fixed: dotted-variable
+access in bare conditionals (`0.9.34`) and the recap `ok`/`changed` counter
+overlap (`0.9.35`) - only the Jinja2 filter-chaining gap remains open (see
+the note near the end of Phase 5; it needs a real architectural change, not
+a quick add). Work has also started on the per-plugin scope-cut grab-bag:
+`stat`'s `get_mime`/`get_attributes` shipped in `0.9.36`. 617/619 specs
 pass (the 2 exceptions need a live MySQL/PostgreSQL server at
 `127.0.0.1:13306`/`15432`), `ameba` clean on all
 new/touched code. A
@@ -320,14 +321,41 @@ the same way it did between January and now.
 
 ## Phase 3 - Extended plugins (~4-6 weeks)
 
-- [x] `stat` (`0.9.0`): read-only file/filesystem status, feeding
-  `register:` + `when:`/templating - never reports `changed`. Parameters:
-  `path` (required), `follow` (default `false`), `get_checksum` (default
-  `true`), `checksum_algorithm` (`md5`/`sha1`/`sha256`). Not implemented:
-  `get_attributes` (lsattr flags), `get_mime` (mimetype/charset via
-  `file`) - both default `true` in real Ansible but are lower-value,
-  tool-dependent extras, omitted from the returned `stat` dict entirely
-  rather than faked. Field shape (`exists`/`isreg`/`isdir`/`islnk`/`mode`/
+- [x] `stat` (`0.9.0`; `get_mime`/`get_attributes` added in `0.9.36`):
+  read-only file/filesystem status, feeding `register:` +
+  `when:`/templating - never reports `changed`. Parameters: `path`
+  (required), `follow` (default `false`), `get_checksum` (default
+  `true`), `checksum_algorithm` (`md5`/`sha1`/`sha256`), `get_mime`
+  (default `true`) and `get_attributes` (default `true`) - both were
+  originally left unimplemented as "lower-value, tool-dependent extras,"
+  but both default to `true` in real Ansible, meaning most real playbooks
+  calling `stat:` with no extra options already expected these fields;
+  closed as part of the roadmap's cross-cutting-gaps cleanup rather than
+  staying a permanent scope cut. Neither is a missed native-conversion
+  opportunity like `stat`'s own core fields used to be - both shell out in
+  real Ansible's own `module_utils/basic.py` too (`file
+  --mime-type --mime-encoding <path>` for `get_mime`, `lsattr -vd <path>`
+  for `get_attributes`; neither has a native Crystal or Python stdlib
+  equivalent), so this plugin does the same via the existing local/remote
+  `remote_exec` split. Parsing logic (the `"path: mimetype; charset=x"`
+  and `"version flags path"` output shapes, plus the `lsattr` single-letter
+  flag → attribute-name table, e.g. `e` → `extents`) lives in a new, pure
+  `src/crystal_play/plugin_helpers/file_attributes.cr` (unit tested,
+  `spec/unit/file_attributes_spec.cr`), verified against a real ext4-backed
+  file's actual `file`/`lsattr` output field-for-field, not assumed from
+  the real Ansible source's own parsing code (which was also read
+  directly, not guessed). On failure - e.g. a filesystem `lsattr` doesn't
+  support, like tmpfs, or a missing `file`/`lsattr` binary - falls back to
+  real Ansible's own documented fallback values (`mimetype`/`charset:
+  "unknown"`; `version: null`, `attr_flags: ""`, `attributes: []`) rather
+  than failing the task, verified against a real `ansible-playbook` run
+  against exactly such a path (an empty file on tmpfs). Integration tested
+  (`spec/integration/stat_spec.cr`, 4 new examples: mime fields present by
+  default and absent with `get_mime: false`, attribute fields present by
+  default and absent with `get_attributes: false`) and verified against
+  real `ansible-playbook` via the compat harness
+  (`compat/playbooks/18-stat.yml`, extended to compare `mimetype`/
+  `attr_flags` too - passed). Field shape (`exists`/`isreg`/`isdir`/`islnk`/`mode`/
   `size`/`uid`/`gid`/`pw_name`/`gr_name`/`rusr`-`xoth`/`isuid`/`isgid`/
   `lnk_target`/`lnk_source`/`checksum`/etc.) verified field-by-field
   against real `ansible-playbook`'s actual JSON output, not assumed from
@@ -1665,10 +1693,11 @@ compat playbook's own task wouldn't have suggested was there).
 
 **Also still open (lower priority - see each shipping plugin's class doc for the
 exact "not implemented" list):** the documented per-plugin scope cuts (e.g.
-`stat` `get_mime`/`get_attributes`, `find` `age`/`contains`, `archive`
-`exclude_path`, `ufw` `insert_relative_to`, `mysql_db`/`postgresql_db`
-`state: dump/import`, `postgresql_user` grants / `postgresql_privs`,
-`docker_*` `networks`/`connected:`/tls), and the remaining cross-cutting
+`find` `age`/`contains`, `archive` `exclude_path`, `ufw`
+`insert_relative_to`, `mysql_db`/`postgresql_db` `state: dump/import`,
+`postgresql_user` grants / `postgresql_privs`, `docker_*`
+`networks`/`connected:`/tls - `stat`'s own `get_mime`/`get_attributes` cut
+is now closed, see its entry above), and the remaining cross-cutting
 engine gap: missing Jinja2 filters such as `map(attribute=...)` and `sort`
 (a real, separate limitation from dotted-variable access below - the
 `{{ }}`-wrapped filter pipeline only ever splits on the *first* `|`, so even

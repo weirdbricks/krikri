@@ -116,4 +116,50 @@ describe "stat plugin" do
 
     result["changed"].as_bool.should be_false
   end
+
+  it "includes mimetype/charset by default (get_mime defaults to true, matching real Ansible)" do
+    path = tmp_path("stat-mime.txt")
+    File.write(path, "hello")
+
+    result = PluginSpecHelper.run("stat", {"path" => path})
+    stat = result["stat"]
+
+    stat.as_h.has_key?("mimetype").should be_true
+    stat.as_h.has_key?("charset").should be_true
+    stat["mimetype"].as_s.should_not be_empty
+  end
+
+  it "omits mimetype/charset when get_mime: false" do
+    path = tmp_path("stat-no-mime.txt")
+    File.write(path, "hello")
+
+    result = PluginSpecHelper.run("stat", {"path" => path, "get_mime" => "false"})
+
+    result["stat"].as_h.has_key?("mimetype").should be_false
+    result["stat"].as_h.has_key?("charset").should be_false
+  end
+
+  it "includes attr_flags/attributes by default (get_attributes defaults to true, matching real Ansible)" do
+    path = tmp_path("stat-attrs.txt")
+    File.write(path, "hello")
+
+    result = PluginSpecHelper.run("stat", {"path" => path})
+    stat = result["stat"]
+
+    stat.as_h.has_key?("attr_flags").should be_true
+    stat.as_h.has_key?("attributes").should be_true
+    stat.as_h.has_key?("version").should be_true
+    stat["attributes"].as_a.should be_a(Array(JSON::Any))
+  end
+
+  it "omits attr_flags/attributes/version when get_attributes: false" do
+    path = tmp_path("stat-no-attrs.txt")
+    File.write(path, "hello")
+
+    result = PluginSpecHelper.run("stat", {"path" => path, "get_attributes" => "false"})
+
+    result["stat"].as_h.has_key?("attr_flags").should be_false
+    result["stat"].as_h.has_key?("attributes").should be_false
+    result["stat"].as_h.has_key?("version").should be_false
+  end
 end
