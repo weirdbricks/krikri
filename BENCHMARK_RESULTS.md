@@ -634,3 +634,48 @@ fstab read for every present/absent/absent_from_fstab/mounted/unmounted
 invocation on local hosts.
 
 Full project suite (516 examples) passes.
+
+## sysctl: shelling out vs native config-file read
+
+**Date:** 2026-08-03
+
+Next in the shell-out survey: `sysctl.cr`. Most of its work is editing a
+sysctl config file; the one remaining file-op shell call was the read
+(`cat`), now native `File.read_lines` for local connections. The two
+live-kernel calls - `sysctl -w` (sysctl_set:) and `sysctl -p <file>`
+(reload:) - are genuine system operations with no native Crystal
+equivalent and stay shelled-out (same category as apt.cr's apt-get).
+
+Mount-like, sysctl genuinely supports remote hosts (its `write_lines`
+already branched on `is_local_connection?`), so the read keeps an SSH
+`cat` branch for non-local hosts; native conversion applies to the local
+path. The local native read uses `File.read_lines` (chomp: true), which
+reproduces the old shell path's line shape exactly (split + drop the
+trailing "" artifact) for every normal input; for an empty seed file it
+yields [] instead of [""], which matches real Ansible's splitlines()
+more closely - both are a no-op on the changed flag.
+
+### Correctness
+
+Existing spec suite (`spec/integration/sysctl_spec.cr` - 9 examples,
+covering in-place update/append/absent/idempotent/create-from-scratch/
+check-mode/param-validation) passes unmodified. Verified 1:1 against
+real `ansible.posix.sysctl` via the compat harness
+(`compat/playbooks/24-sysctl.yml` with a local `sysctl_file:`, reload:
+false so the live-kernel call is never hit - update/rerun/append/remove
+all traverse the native read + write path).
+
+### Results
+
+Timing the config read in isolation (300 iterations against a ~4-line
+sample): shell `cat` subprocess vs native `File.read_lines`.
+
+| approach | time per call |
+|---|---|
+| `cat <file>` (subprocess) | 3.251ms |
+| native `File.read_lines` | 0.018ms |
+
+**~184x speedup** on the read. End-to-end this drops a fork/exec off the
+file read for every sysctl present/absent invocation on local hosts.
+
+Full project suite (516 examples) passes.

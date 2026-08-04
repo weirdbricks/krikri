@@ -31,6 +31,14 @@ module CrystalPlay
   # duplicates are dropped when the file is rewritten), state: absent
   # drops the line entirely rather than commenting it out.
   #
+  # Native vs shell-out: the config-file read (`cat` -> native
+  # `File.read_lines`) is now native for local connections (its write
+  # path already branched on `is_local_connection?`, and the read keeps
+  # an SSH `cat` branch for non-local hosts for the same reason as
+  # mount.cr). The two live-kernel calls - `sysctl -w` (sysctl_set:) and
+  # `sysctl -p <file>` (reload:) - are genuine system operations with no
+  # native Crystal equivalent and stay shelled-out.
+  #
   # Not implemented: BSD/Solaris-specific sysctl command syntax (Linux
   # `sysctl -w key=value` / `sysctl -p file` only).
   class SysctlPlugin < BasePlugin
@@ -98,14 +106,23 @@ module CrystalPlay
 
     # `String#split("\n")` always produces one trailing "" artifact when
     # content ends with "\n" - dropped here so a round-trip read+rewrite
-    # doesn't accumulate a spurious blank line each time.
+    # doesn't accumulate a spurious blank line each time. Natively,
+    # `File.read_lines` (chomp: true) already yields exactly this shape.
     private def read_lines(sysctl_file : String) : Array(String)
       return [] of String unless remote_file_exists?(sysctl_file)
 
-      content = remote_exec("cat #{sysctl_file}")[:stdout]
-      lines = content.split("\n")
-      lines.pop if !lines.empty? && lines.last.empty? && content.ends_with?("\n")
-      lines
+      if is_local_connection?
+        # File.read_lines of an empty file yields [] (matching real
+        # Ansible's splitlines()), which is slightly more correct than the
+        # old shell path's [""] artifact - both are a no-op for the
+        # changed-flag, so the only difference is an empty seed file.
+        File.read_lines(sysctl_file)
+      else
+        content = remote_exec("cat #{sysctl_file}")[:stdout]
+        lines = content.split("\n")
+        lines.pop if !lines.empty? && lines.last.empty? && content.ends_with?("\n")
+        lines
+      end
     end
 
     private def write_lines(sysctl_file : String, lines : Array(String))
