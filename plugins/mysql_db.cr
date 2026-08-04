@@ -52,16 +52,36 @@ module CrystalPlay
   #   present/absent above) verified against a real `ansible-playbook`
   #   run with `community.mysql.mysql_db` against a real MariaDB 11
   #   server, not assumed from the docs.
+  # - state: dump/import only: `config_file:` (a `my.cnf`-format options
+  #   file, passed as `--defaults-extra-file=` - real Ansible's own
+  #   mysqldump/mysql invocation demands this be the very first flag, so
+  #   it's built first here too, not just appended anywhere) /
+  #   `restrict_config_file:` (bool - `--defaults-file=` instead, meaning
+  #   *only* `config_file:` is read, no other implicit option files).
+  #   `name: all` (real Ansible has no separate `all_databases:` boolean
+  #   param at all despite this plugin's own prior doc comment claiming
+  #   otherwise - verified against its actual `argument_spec` - it's
+  #   triggered by passing the literal db name `all`) uses
+  #   `--all-databases` for dump and skips `--one-database <name>`
+  #   entirely for import, matching real Ansible's own `db_dump`/
+  #   `db_import`.
+  # - state: dump only: `single_transaction:`/`skip_lock_tables:`/
+  #   `hex_blob:` (bools), `ignore_tables:` (comma-separated
+  #   `database_name.table_name` entries, one `--ignore-table=` per
+  #   entry), `master_data:` (0 (default, omitted)/1/2 -
+  #   `--master-data=N`; real Ansible switches to `--source-data=N` for
+  #   MySQL, not MariaDB, servers at 8.2.0+, a version/implementation
+  #   check this plugin doesn't replicate - `--master-data=` is accepted
+  #   by every server this project targets, a documented simplification),
+  #   `dump_extra_args:` (a raw string appended as-is, same "no
+  #   validation, passed straight through" treatment as `mysqldump`
+  #   itself gives it).
   # - check_mode
   #
-  # Not implemented: `config_file:` (`~/.my.cnf` credential lookup),
-  # `all_databases:`,
-  # `ignore_tables:`/`hex_blob:`/
-  # `master_data:`/`dump_extra_args:`/`single_transaction:`/
-  # `skip_lock_tables:` (mysqldump tuning knobs), encoding:/collation:
-  # validation against the server's actually supported charsets - an
-  # invalid value is passed straight through and surfaces as whatever
-  # error the server itself returns.
+  # Not implemented: encoding:/collation: validation against the
+  # server's actually supported charsets - an invalid value is passed
+  # straight through and surfaces as whatever error the server itself
+  # returns; dump/import's own `--default-character-set=`.
   class MysqlDbPlugin < BasePlugin
     def execute : PluginResult
       name = @params["name"]?
@@ -142,7 +162,22 @@ module CrystalPlay
     end
 
     private def run_dump(name : String, target : String) : PluginResult
-      cmd = "mysqldump #{login_flags} #{quote(name)} --quick"
+      all_databases = name == "all"
+
+      cmd = String.build do |cmd_str|
+        cmd_str << "mysqldump " << config_file_flag << login_flags << " "
+        cmd_str << (all_databases ? "--all-databases" : quote(name))
+        cmd_str << " --skip-lock-tables" if is_true?(@params["skip_lock_tables"]?)
+        cmd_str << " --single-transaction=true" if is_true?(@params["single_transaction"]?)
+        cmd_str << " --quick"
+        ignore_tables.each { |table| cmd_str << " --ignore-table=" << quote(table) }
+        cmd_str << " --hex-blob" if is_true?(@params["hex_blob"]?)
+        if master_data = @params["master_data"]?
+          cmd_str << " --master-data=" << master_data unless master_data == "0"
+        end
+        cmd_str << " " << @params["dump_extra_args"] if @params["dump_extra_args"]?
+      end
+
       result = remote_exec(cmd)
       return PluginResult.new(changed: false, failed: true, msg: result[:stderr]) unless result[:exit_code] == 0
 
@@ -156,7 +191,11 @@ module CrystalPlay
       return PluginResult.new(changed: false, failed: true, msg: "target #{target} does not exist") unless remote_file_exists?(target)
 
       sql_path = read_target_as_sql_file(target)
-      cmd = "mysql #{login_flags} --one-database #{quote(name)} < #{quote(sql_path)}"
+      cmd = String.build do |cmd_str|
+        cmd_str << "mysql " << config_file_flag << login_flags
+        cmd_str << " --one-database " << quote(name) unless name == "all"
+      end
+      cmd += " < #{quote(sql_path)}"
       result = remote_exec(cmd)
       File.delete?(sql_path) if sql_path != target
 
@@ -164,6 +203,21 @@ module CrystalPlay
       PluginResult.new(changed: true, failed: false, msg: "", db: name, db_list: [name])
     rescue ex
       PluginResult.new(changed: false, failed: true, msg: "Failed to import #{target}: #{ex.message}")
+    end
+
+    # mysqldump/mysql demand --defaults-extra-file/--defaults-file be the
+    # very first option - built and prepended separately from
+    # login_flags for that reason, not folded into it.
+    private def config_file_flag : String
+      config_file = @params["config_file"]?
+      return "" unless config_file
+
+      flag = is_true?(@params["restrict_config_file"]?) ? "--defaults-file=" : "--defaults-extra-file="
+      "#{flag}#{quote(config_file)} "
+    end
+
+    private def ignore_tables : Array(String)
+      @params["ignore_tables"]?.try(&.split(',').map(&.strip).reject(&.empty?)) || [] of String
     end
 
     private def login_flags : String

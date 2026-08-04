@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.52`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.53`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -29,8 +29,9 @@ expansion plus a real `baseurl:`/`gpgkey:` multi-value list-join bug fix
 `connected:`/`appends:` (`0.9.51`, along with a real engine-level bug fix
 to how list-of-dict module params get encoded - see that entry), and
 `mysql_db`'s `.zst` compression plus `postgresql_db`'s `.tar`/`.pgc`/
-`.dir` `pg_restore`-based formats (`0.9.52`) - see
-"Also still open" near the end of
+`.dir` `pg_restore`-based formats (`0.9.52`), and `mysql_db`'s
+`config_file:`/`name: all`/remaining `mysqldump` tuning knobs (`0.9.53`)
+- see "Also still open" near the end of
 Phase 5 for what's left and the running list of what's already been
 closed past that point. All 715 specs pass in an environment with
 `mysql`/`mysqldump`/`psql`/`pg_dump`/`pg_restore` client binaries on
@@ -2555,14 +2556,78 @@ compat playbook's own task wouldn't have suggested was there).
     exceptions return in the default environment without them, as
     documented above.
 
+- [x] `mysql_db`'s `config_file:`/`restrict_config_file:`, `name: all`,
+  and the remaining `mysqldump` tuning knobs (`0.9.53`):
+  - `config_file:` (a `my.cnf`-format options file) is passed as
+    `--defaults-extra-file=` - real Ansible's own mysqldump/mysql
+    invocation demands this be the *very first* flag on the command
+    line, so it's built and prepended separately from the existing
+    `login_flags` helper rather than folded into it.
+    `restrict_config_file:` (bool) switches that to `--defaults-file=`
+    instead (only the named file is read, not also whatever implicit
+    option files `mysqldump`/`mysql` would otherwise pick up).
+  - A real discrepancy found and fixed in this plugin's own prior doc
+    comment along the way: it previously listed `all_databases:` as a
+    separate not-implemented boolean parameter, but real Ansible's own
+    `mysql_db.py` `argument_spec` has no such param at all - it's
+    triggered by passing the literal string `all` as `name:` itself
+    (`"If name=all it works like --all-databases option for mysqldump"`,
+    verified against the actual source, not the doc comment's own
+    prior, incorrect claim). Implemented that way here too: `name: all`
+    on `state: dump` uses `--all-databases` instead of a specific db
+    name, and on `state: import` skips `--one-database <name>` entirely
+    (import always imports whatever's in the target file already) -
+    `state: present`/`absent` don't get any special-case treatment for
+    `name: all` (would just try to `CREATE`/`DROP DATABASE` literally
+    named `all`), matching real Ansible's own docs that `name: all` is
+    only meaningful for `dump`/`import`.
+  - `mysqldump` tuning knobs, `state: dump` only (real Ansible's own
+    `db_dump()`/`db_import()` split - these aren't accepted by
+    `state: import` at all): `single_transaction:`/`skip_lock_tables:`/
+    `hex_blob:` (bools, `--single-transaction=true`/`--skip-lock-tables`/
+    `--hex-blob`), `ignore_tables:` (comma-separated
+    `database_name.table_name` entries, one `--ignore-table=` flag per
+    entry), `master_data:` (`0`(default, omitted)/`1`/`2` -
+    `--master-data=N`; real Ansible switches to `--source-data=N`
+    instead for MySQL, not MariaDB, servers at version 8.2.0+, a
+    server-implementation/version check this plugin doesn't replicate -
+    `--master-data=` is accepted by every server this project actually
+    targets/tests against, a documented simplification), `dump_extra_args:`
+    (a raw string appended to the command as-is, the same "no
+    validation, passed straight through" treatment `mysqldump` itself
+    gives it).
+  - Verified against a real live MariaDB 11 server, not simulated: dumped
+    a database via `config_file:` (host/port still passed explicitly,
+    since real Ansible's own `login_host:`/`login_port:` both default to
+    `localhost`/`3306` and are *always* emitted regardless of
+    `config_file:` too - verified against its source - so a bare
+    `config_file:` without explicit `login_host:`/`login_port:` fails to
+    connect the exact same way in both this plugin and real Ansible, not
+    a divergence) with `ignore_tables:` excluding a `secret` table,
+    `hex_blob:`/`skip_lock_tables:`/`single_transaction:`/
+    `dump_extra_args: "--comments"` all set, imported the dump into a
+    fresh database via `config_file:` again, and confirmed only the
+    non-ignored table survived the round trip (`SHOW TABLES` returning
+    just `t`, not `secret`); separately dumped with `name: all` and
+    confirmed `--all-databases` produced a dump containing every
+    database on the server (`CREATE DATABASE` for all 4 present, not
+    just one). The identical sequence run through real
+    `ansible-playbook`'s own `community.mysql.mysql_db` (via the same
+    throwaway venv used for the `0.9.52` verification) against the same
+    server produced the identical `changed:`/table-list results.
+  - `testing/test-mysql-quick.yml` (the fixture
+    `spec/integration/cli_spec.cr`'s own MySQL spec drives against a real
+    server) extended with a `config_file:`/`ignore_tables:`/tuning-knobs
+    dump-then-restore-then-verify-tables round trip, and the spec's
+    assertions updated to match.
+  - `crystal spec`/`ameba` both clean (715 examples; same 2 known
+    exceptions without live client binaries/servers on `PATH`, both pass
+    for real with them present, same as the `0.9.52` entry above).
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**
 
-- `mysql_db` (`0.9.52`): `config_file:` (`~/.my.cnf` credential lookup),
-  `all_databases:`, `ignore_tables:`/`hex_blob:`/`master_data:`/
-  `dump_extra_args:`/`single_transaction:`/`skip_lock_tables:`
-  (`mysqldump` tuning knobs).
 - `postgresql_privs` (`0.9.44`): `type: default_privs`/
   `foreign_data_wrapper`/`foreign_server`/`function`/`group`/`language`/
   `tablespace`/`type`/`procedure`/`parameter` (only `table`/`sequence`/

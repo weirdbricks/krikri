@@ -63,7 +63,18 @@
         content: |
           CREATE TABLE IF NOT EXISTS t (id INT PRIMARY KEY, name VARCHAR(50));
           INSERT INTO t VALUES (1, 'alice'), (2, 'bob');
+          CREATE TABLE IF NOT EXISTS secret (id INT PRIMARY KEY, val VARCHAR(50));
+          INSERT INTO secret VALUES (1, 'shh');
         dest: /tmp/crystal-ansible-mysql-seed.sql
+
+    - name: write a my.cnf-format config_file with login credentials
+      ansible.builtin.copy:
+        content: |
+          [client]
+          user={{ login_user }}
+          password={{ login_password }}
+        dest: /tmp/crystal-ansible-mysql-my.cnf
+        mode: "0600"
 
     - name: import the seed data
       community.mysql.mysql_db:
@@ -168,6 +179,56 @@
         login_user: "{{ login_user }}"
         login_password: "{{ login_password }}"
 
+    - name: dump the database via config_file, ignoring the secret table, with tuning knobs
+      community.mysql.mysql_db:
+        name: "{{ test_db }}"
+        state: dump
+        target: /tmp/crystal-ansible-mysql-dump-knobs.sql
+        config_file: /tmp/crystal-ansible-mysql-my.cnf
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        ignore_tables:
+          - "{{ test_db }}.secret"
+        hex_blob: true
+        skip_lock_tables: true
+        single_transaction: true
+        dump_extra_args: "--comments"
+      register: db_dump_knobs
+
+    - name: create a fourth database to restore the tuning-knobs dump into
+      community.mysql.mysql_db:
+        name: "{{ test_db }}_knobs"
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+
+    - name: import the tuning-knobs dump via config_file
+      community.mysql.mysql_db:
+        name: "{{ test_db }}_knobs"
+        state: import
+        target: /tmp/crystal-ansible-mysql-dump-knobs.sql
+        config_file: /tmp/crystal-ansible-mysql-my.cnf
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+      register: db_import_knobs
+
+    - name: verify t round-tripped and secret was excluded by ignore_tables
+      ansible.builtin.shell: >-
+        mysql --host={{ login_host }} --port={{ login_port }} --user={{ login_user }}
+        --password={{ login_password }} -N -e "SHOW TABLES FROM {{ test_db }}_knobs" | grep -v '^$' | sort | tr '\n' ','
+      register: knobs_tables
+      changed_when: false
+
+    - name: remove the fourth database
+      community.mysql.mysql_db:
+        name: "{{ test_db }}_knobs"
+        state: absent
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+
     - name: change the user's privileges
       community.mysql.mysql_user:
         name: "{{ test_user }}"
@@ -212,6 +273,9 @@
           db_dump_zst={{ db_dump_zst.changed }}
           db_import_zst={{ db_import_zst.changed }}
           restored_count_zst={{ restored_count_zst.stdout }}
+          db_dump_knobs={{ db_dump_knobs.changed }}
+          db_import_knobs={{ db_import_knobs.changed }}
+          knobs_tables={{ knobs_tables.stdout }}
           user_first={{ user_first.changed }}
           user_idempotent={{ user_idempotent.changed }}
           user_priv_changed={{ user_priv_changed.changed }}
