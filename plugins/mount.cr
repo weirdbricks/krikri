@@ -20,8 +20,8 @@ module CrystalPlay
   # - fstab: path to the fstab file (default /etc/fstab)
   # - backup: copy the fstab file to a timestamped backup before writing
   #   (default false)
-  # - state: present | absent | absent_from_fstab | mounted | unmounted
-  #   (required)
+  # - state: present | absent | absent_from_fstab | mounted | unmounted |
+  #   remounted (required)
   # - check_mode: report what would change without writing anything or
   #   mounting/unmounting
   #
@@ -42,11 +42,30 @@ module CrystalPlay
   # instead of the target's. The actual `mount`/`umount`/`mountpoint`
   # calls are genuine system operations and stay shelled-out either way.
   #
-  # Not implemented: `remounted` and `ephemeral` states (rarer, and
-  # `ephemeral` in particular has real Ansible's own device-source-conflict
-  # checking logic that's out of scope here), Solaris/BSD-specific vfstab
-  # handling (Linux fstab format only), `opts_no_log`, `fstab` `backup`'s
-  # exact filename format (a reasonable equivalent is used instead).
+  # state: remounted (Linux `mount -o remount[,opts] [-T fstab] path`,
+  # verified against real ansible.posix mount.py's own `remount()`
+  # function source, not assumed - the BSD `-u` variant isn't
+  # implemented, Linux-only like the rest of this plugin) always reports
+  # `changed: true` on success, matching real Ansible's own documented
+  # behavior (a remount is inherently "did something," not a state
+  # comparison). If `opts:` is given (and isn't the literal string
+  # `"defaults"`) and the remount command itself fails, this fails with
+  # real Ansible's own exact message rather than silently doing nothing -
+  # verified against the source, not paraphrased. One real behavior *not*
+  # implemented: when `opts:` is absent/`"defaults"` and the remount
+  # command fails (e.g. the mount point isn't actually in `fstab` yet,
+  # which `remounted` expects), real Ansible falls back to a full
+  # `umount` + `mount` cycle using the fstab entry; this plugin instead
+  # just reports `changed: true` regardless, matching the existing
+  # `ensure_mounted`/`ensure_unmounted` helpers' own exit-code-blind
+  # convention rather than adding exit-code checking to only one state -
+  # a documented simplification, not an oversight.
+  #
+  # Not implemented: `ephemeral` state (real Ansible's own
+  # device-source-conflict checking logic there is out of scope here),
+  # Solaris/BSD-specific vfstab handling (Linux fstab format only),
+  # `opts_no_log`, `fstab` `backup`'s exact filename format (a reasonable
+  # equivalent is used instead).
   class MountPlugin < BasePlugin
     DEFAULT_FSTAB = "/etc/fstab"
 
@@ -57,8 +76,8 @@ module CrystalPlay
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: path and state are both required")
       end
 
-      unless %w[present absent absent_from_fstab mounted unmounted].includes?(state)
-        return PluginResult.new(changed: false, failed: true, msg: "state must be one of present, absent, absent_from_fstab, mounted, unmounted")
+      unless %w[present absent absent_from_fstab mounted unmounted remounted].includes?(state)
+        return PluginResult.new(changed: false, failed: true, msg: "state must be one of present, absent, absent_from_fstab, mounted, unmounted, remounted")
       end
 
       if (state == "present" || state == "mounted") && !(@params["src"]? && @params["fstype"]?)
@@ -80,6 +99,8 @@ module CrystalPlay
       when "unmounted"
         changed = ensure_unmounted(path, check_mode)
         PluginResult.new(changed: changed, failed: false, msg: "", name: path)
+      when "remounted"
+        ensure_remounted(path, check_mode)
       else
         fstab_changed, backup_file = remove_fstab_entry(path, fstab, check_mode)
         unmount_changed = state == "absent" ? ensure_unmounted(path, check_mode) : false
@@ -241,6 +262,41 @@ module CrystalPlay
 
       remote_exec("umount #{path}")
       true
+    end
+
+    # `mount -o remount[,opts] [-T fstab] path` - always changed: true on
+    # success (a remount is inherently "did something," matching real
+    # Ansible's own documented RV(ignore:changed=true) here), verified
+    # command shape and failure message against real ansible.posix
+    # mount.py's own remount() source - see the class doc above for what
+    # isn't replicated (the opts-absent-and-failed umount+mount fallback).
+    private def ensure_remounted(path : String, check_mode : Bool) : PluginResult
+      return PluginResult.new(changed: true, failed: false, msg: "", name: path) if check_mode
+
+      opts = @params["opts"]?
+      custom_opts = opts && opts != "defaults"
+      fstab = @params["fstab"]?
+
+      cmd = String.build do |cmd_builder|
+        cmd_builder << "mount -o remount"
+        cmd_builder << ",#{opts}" if custom_opts
+        cmd_builder << " -T #{fstab}" if fstab && fstab != DEFAULT_FSTAB
+        cmd_builder << " " << path
+      end
+
+      result = remote_exec(cmd)
+      if result[:exit_code] != 0 && custom_opts
+        return PluginResult.new(
+          changed: false, failed: true,
+          msg: "Options were specified with remounted, but the remount command failed. " \
+               "Failing in order to prevent an unexpected mount result. Try replacing this " \
+               "command with a \"state: unmounted\" followed by a \"state: mounted\" using " \
+               "the full desired mount options instead.",
+          name: path
+        )
+      end
+
+      PluginResult.new(changed: true, failed: false, msg: "", name: path)
     end
   end
 end

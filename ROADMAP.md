@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.44`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.45`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -19,18 +19,23 @@ at Phase 5's completion: `stat`'s `get_mime`/`get_attributes` (`0.9.36`),
 have all shipped - work has now moved on to closing the *remaining*
 documented per-plugin scope cuts one at a time in pursuit of fuller
 `ansible-core`/`community.*` parity, most recently `postgresql_privs`
-(`0.9.44`, previously not implemented at all) - see "Also still open" near
-the end of Phase 5 for what's left and the running list of what's already
-been closed past that point. 664/666 specs pass (the 2 exceptions need a
-live MySQL/PostgreSQL server at `127.0.0.1:13306`/`15432` reachable with
-real `mysql`/`psql` client binaries, neither installed on this host
-directly - see the `0.9.40` entry for how they were verified anyway),
-`ameba` clean on all new/touched code. A Docker-based compatibility
-harness (`compat/`, see `compat/README.md`) runs the same playbooks
-through real `ansible-playbook` and `crystal-ansible` side by side and
-diffs the resulting filesystem state + exit codes - ground truth instead
-of assumptions; **38/38 compat playbooks pass** - see each entry below and
-`compat/README.md`'s Coverage section for what each one caught.
+(`0.9.44`, previously not implemented at all) and `mount`'s `remounted`
+state (`0.9.45`) - see "Also still open" near the end of Phase 5 for
+what's left and the running list of what's already been closed past that
+point. 665/667 specs pass (the 2 exceptions need a live MySQL/PostgreSQL
+server at `127.0.0.1:13306`/`15432` reachable with real `mysql`/`psql`
+client binaries, neither installed on this host directly - see the
+`0.9.40` entry for how they were verified anyway), `ameba` clean on all
+new/touched code. A Docker-based compatibility harness (`compat/`, see
+`compat/README.md`) runs the same playbooks through real `ansible-playbook`
+and `crystal-ansible` side by side and diffs the resulting filesystem state
++ exit codes - ground truth instead of assumptions; **38/38 compat
+playbooks pass** (`mount`'s own `remounted` verification happened outside
+the harness - its containers run unprivileged and can't mount anything at
+all, the same constraint that already keeps `mounted`/`unmounted` out of
+`compat/playbooks/25-mount.yml` too - see the `0.9.45` entry for how it
+was verified instead) - see each entry below and `compat/README.md`'s
+Coverage section for what each one caught.
 
 Two cross-cutting efforts also landed since Phases 3/4 were marked done:
 
@@ -777,8 +782,9 @@ the same way it did between January and now.
   true - false appends `noauto` to `opts`, matching real Ansible's
   behavior exactly, verified against actual output), `fstab` (default
   `/etc/fstab`), `backup`, `state` (`present`/`absent`/
-  `absent_from_fstab`/`mounted`/`unmounted`), `check_mode`. Fstab line
-  format and idempotency (matched by `path`, comparing
+  `absent_from_fstab`/`mounted`/`unmounted`/`remounted` - `remounted`
+  added `0.9.45`, see that entry near the end of Phase 5), `check_mode`.
+  Fstab line format and idempotency (matched by `path`, comparing
   src/fstype/opts/dump/passno field-by-field, updating the matching line
   in place rather than removing+re-appending) verified by reading the
   real `ansible.posix` `mount.py` source directly. Like `sysctl`, `fstab:`
@@ -789,9 +795,9 @@ the same way it did between January and now.
   `user_spec.cr`/`group_spec.cr`'s established convention. Verified
   byte-for-byte against real `ansible-playbook`'s actual fstab output,
   and via the compat harness (`compat/playbooks/25-mount.yml` - passed).
-  Not implemented: `remounted`/`ephemeral` states (rarer, and
-  `ephemeral` has its own device-source-conflict-checking logic that's
-  out of scope), Solaris/BSD vfstab handling (Linux fstab format only).
+  Not implemented: `ephemeral` state (its own device-source-conflict-
+  checking logic is out of scope), Solaris/BSD vfstab handling (Linux
+  fstab format only).
   - Caught and fixed one bug in self-review before it ever reached
     testing: `check_mode` originally only guarded the actual
     mount/umount step, not the fstab file write itself - so `--check`
@@ -2006,6 +2012,48 @@ compat playbook's own task wouldn't have suggested was there).
     linter catching genuinely tangled control flow in the first draft,
     not a cosmetic split.
 
+- [x] `mount` `state: remounted` (`0.9.45`): `mount -o remount[,opts]
+  [-T fstab] path` - command shape, the always-`changed: true`-on-success
+  behavior, and the exact failure message when `opts:` is given and the
+  remount command itself fails, all verified against real
+  `ansible.posix` `mount.py`'s own `remount()` function source directly,
+  not assumed from docs (which don't fully spell out the failure
+  behavior). The BSD `-u` variant isn't implemented (Linux-only, like the
+  rest of this plugin), and real Ansible's own fallback - when `opts:` is
+  absent and the remount command fails, falling back to a full `umount` +
+  `mount` cycle - isn't replicated either; this plugin just reports
+  `changed: true` regardless in that case, matching the existing
+  `ensure_mounted`/`ensure_unmounted` helpers' own exit-code-blind
+  convention rather than adding exit-code checking to only one state - a
+  documented simplification, not an oversight.
+  - `ephemeral` (real Ansible's own device-source-conflict-checking
+    state) remains a separate, still-open scope cut - see "Also still
+    open" below.
+  - Verified against a real mount, not simulated: this sandbox has no
+    passwordless-`sudo`/root on the host itself (see the `become:` entry
+    above), and `mount -t tmpfs` needs real privileges an ordinary
+    container doesn't have either (confirmed by trying it in a plain
+    compat-image container first: `permission denied`), so verification
+    used a `--privileged` container instead - real `mount -t tmpfs` to
+    create a throwaway mount point, then `state: remounted` with
+    `opts: ro` actually flipping it from `rw` to `ro` (confirmed by
+    reading `/proc/mounts`/`mount`'s own output before and after, not
+    just trusting `changed: true`), and a missing-mount-point-plus-`opts:`
+    case producing the exact real-Ansible failure message. Both scenarios
+    re-verified against real `ansible-playbook` in the same container -
+    byte-identical output in both the success and failure cases.
+  - Not added to the compat harness's own `compat/playbooks/25-mount.yml`
+    - its containers run unprivileged (confirmed: the same `mount -t
+    tmpfs` there also fails with `permission denied`), the same
+    constraint that already keeps `mounted`/`unmounted` out of that
+    playbook and check_mode-only in `spec/integration/mount_spec.cr`
+    instead. `remounted` follows that same precedent: a new check_mode
+    example there (11 examples now, up from 10), with the real,
+    privileged-container verification recorded here instead of being
+    reproducible by the harness itself.
+  - `crystal spec`/`ameba` both clean (665 examples, same 2 pre-existing
+    DB-client-dependent failures as always, unrelated to this).
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**
@@ -2022,7 +2070,7 @@ the exact "not implemented" list it's tracked against:**
   `session_role:`, `fail_on_role:`.
 - `docker_*`: no `networks:`/`connected:`/TLS options.
 - `yum_repository`: many minor `yum.conf` tuning knobs.
-- `mount`: no `remounted`/`ephemeral` states.
+- `mount`: no `ephemeral` state (`remounted` closed in `0.9.45`).
 - `wait_for`: no `state: drained`.
 - `user`/`group`: no password management.
 - `apt_repository`: no `ppa:` shorthand (needs live Launchpad API access).

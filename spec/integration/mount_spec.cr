@@ -112,4 +112,20 @@ describe "mount plugin" do
     result["changed"].as_bool.should be_true
     File.read(fstab).should eq("UUID=abc / ext4 errors=remount-ro 0 1\n")
   end
+
+  # state: remounted needs a genuinely already-mounted filesystem to
+  # remount (verified for real separately - see ROADMAP.md - against a
+  # real tmpfs mount inside a --privileged container, since the shared
+  # CI/dev sandbox this spec suite runs in can't mount anything at all
+  # without one), so only its check_mode path - which never touches a
+  # real mount - is exercised here. Same convention state: mounted/
+  # unmounted's own specs above already use.
+  it "reports it would remount (check mode, no real remount attempted)" do
+    result = PluginSpecHelper.run("mount", {
+      "path" => "/mnt/checkmode", "state" => "remounted", "check_mode" => "true",
+    })
+
+    result["changed"].as_bool.should be_true
+    result["failed"].as_bool.should be_false
+  end
 end
