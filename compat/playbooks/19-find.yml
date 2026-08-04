@@ -93,4 +93,5 @@
           depth_limited_matched={{ depth_limited.matched }}
           contains_matched={{ contains_match.matched }}
           age_matched={{ age_match.matched }}
+          recursive_paths={{ recursive.files | map(attribute='path') | sort | join(',') }}
         dest: /work/find-output.txt

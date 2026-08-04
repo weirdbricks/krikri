@@ -66,22 +66,35 @@ module CrystalPlay
         (expr.includes?("<") && !expr.includes?("<="))
       end
       
-      # Evaluate expression with filter
-      # Example: myvar | default('value')
+      # Evaluate expression with a (possibly chained) filter pipeline.
+      # Example: myvar | default('value'), or items | sort | join(',')
+      #
+      # Splits on *every* top-level `|` (not just the first), and resolves
+      # the head expression to a real JSON::Any (an array/hash, not a
+      # pre-stringified String) so FilterEngine can carry actual structure
+      # from one filter to the next - `sort`'s real array output feeding
+      # into `join`, not a JSON-encoded string `sort` had no choice but to
+      # return before.
       private def evaluate_with_filter(expr : String) : String
-        parts = expr.split("|", 2)
-        var_expr = parts[0].strip
-        filter_expr = parts[1].strip
-        
-        # Get the variable value (recursively evaluate if complex)
-        value = if var_expr.includes?("[") || var_expr.includes?(".")
-          evaluate(var_expr)
-        else
-          @lookup.simple(var_expr)
-        end
-        
-        # Apply filter
-        @filter.apply(value, filter_expr)
+        segments = FilterEngine.split_chain(expr)
+        var_expr = segments[0]
+
+        value = if var_expr.includes?("[")
+                  # Array slicing (`list[0:2]`) and plain indexing
+                  # (`list[0]`) aren't resolved to JSON::Any directly here
+                  # (ArraySlicer/VariableLookup#indexed both still only
+                  # return pre-formatted Strings) - fall back to the
+                  # existing String-returning path and re-parse it, rather
+                  # than duplicating that logic. "undefined" isn't valid
+                  # JSON, so it maps to a real JSON null.
+                  rendered = evaluate(var_expr)
+                  JSON.parse(rendered) rescue JSON::Any.new(rendered)
+                else
+                  @lookup.resolve(var_expr) || JSON::Any.new(nil)
+                end
+
+        result = segments[1..].reduce(value) { |acc, filter_expr| @filter.apply(acc, filter_expr) }
+        @lookup.format_value(result)
       end
     end
   end

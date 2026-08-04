@@ -1,33 +1,33 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.41`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.42`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
 `0.9.24`, `get_url` `0.9.25`/`0.9.32`, `blockinfile` `0.9.26`, `uri` `0.9.27`,
 `assert` `0.9.28`, `wait_for` `0.9.29`, `fetch` `0.9.30`, `pause` `0.9.31`).
-Three of the three cross-cutting engine gaps this roadmap has ever tracked
-are now fixed: dotted-variable access in bare conditionals (`0.9.34`), the
-recap `ok`/`changed` counter overlap (`0.9.35`), and `become:`/
-`become_user:` privilege escalation (`0.9.41`, see that entry near the end
-of Phase 5) - only the Jinja2 filter-chaining gap remains open (see the
-note near the end of Phase 5; it needs a real architectural change, not a
-quick add). The per-plugin scope-cut grab-bag is fully closed: `stat`'s
-`get_mime`/`get_attributes` (`0.9.36`), `find`'s `age`/`age_stamp`/
-`contains`/`read_whole_file` (`0.9.37`), `archive`'s `exclude_path`
-(`0.9.38`), `ufw`'s `insert_relative_to` (`0.9.39`), and `mysql_db`/
-`postgresql_db`'s `state: dump`/`import`(`restore`) (`0.9.40`) have all
-shipped. 639/641 specs pass (the 2 exceptions need a live MySQL/PostgreSQL
-server at `127.0.0.1:13306`/`15432` reachable with real `mysql`/`psql`
-client binaries, neither installed on this host directly - see the
-`0.9.40` entry for how they were verified anyway), `ameba` clean on all
-new/touched code. A Docker-based compatibility harness (`compat/`, see
+**All four cross-cutting engine gaps this roadmap has ever tracked are now
+fixed:** dotted-variable access in bare conditionals (`0.9.34`), the recap
+`ok`/`changed` counter overlap (`0.9.35`), `become:`/`become_user:`
+privilege escalation (`0.9.41`), and Jinja2 filter-chaining (`0.9.42`, see
+that entry near the end of Phase 5). The per-plugin scope-cut grab-bag is
+fully closed: `stat`'s `get_mime`/`get_attributes` (`0.9.36`), `find`'s
+`age`/`age_stamp`/`contains`/`read_whole_file` (`0.9.37`), `archive`'s
+`exclude_path` (`0.9.38`), `ufw`'s `insert_relative_to` (`0.9.39`), and
+`mysql_db`/`postgresql_db`'s `state: dump`/`import`(`restore`) (`0.9.40`)
+have all shipped. 651/653 specs pass (the 2 exceptions need a live
+MySQL/PostgreSQL server at `127.0.0.1:13306`/`15432` reachable with real
+`mysql`/`psql` client binaries, neither installed on this host directly -
+see the `0.9.40` entry for how they were verified anyway), `ameba` clean on
+all new/touched code. A Docker-based compatibility harness (`compat/`, see
 `compat/README.md`) runs the same playbooks through real `ansible-playbook`
 and `crystal-ansible` side by side and diffs the resulting filesystem state
 + exit codes - ground truth instead of assumptions; **37/37 compat
-playbooks pass**, including a fresh compat playbook per Phase 5 module
-(`compat/playbooks/27-set-fact.yml` through `34-pause.yml`), one each for
-`mysql_db`/`postgresql_db`'s dump/import support
+playbooks pass** (`19-find.yml` extended in `0.9.42` to also compare the
+actual sorted file list, not just match counts, now that the filter chain
+it needs works - see that entry), including a fresh compat playbook per
+Phase 5 module (`compat/playbooks/27-set-fact.yml` through `34-pause.yml`),
+one each for `mysql_db`/`postgresql_db`'s dump/import support
 (`35-mysql-db.yml`/`36-postgresql-db.yml`), and one for `become:`
 (`37-become.yml`, the one compat playbook that deliberately runs as root to
 exercise a real privilege drop) - see each entry below and
@@ -429,12 +429,13 @@ the same way it did between January and now.
   no-match/whole-file match/no-content-match, and `contains` being a no-op
   when `file_type` isn't `file`) and verified against real
   `ansible-playbook` via the compat harness (`compat/playbooks/19-find.yml`,
-  extended with a `contains:` and an `age: "-1d"` task - passed, comparing
-  `matched` counts rather than the `files` path list since
-  crystal-ansible's filter engine doesn't yet support the Jinja2
+  extended with a `contains:` and an `age: "-1d"` task - passed, originally
+  comparing `matched` counts rather than the `files` path list since
+  crystal-ansible's filter engine didn't yet support the Jinja2
   `map(attribute=...)`/`sort` filters needed to format that list for a
-  stable comparison - a real, separate, still-open gap, see the note near
-  the end of Phase 5).
+  stable comparison - fixed once filter-chaining shipped, see the `0.9.42`
+  entry near the end of Phase 5; `19-find.yml` now compares the actual
+  sorted path list too).
   - Found and fixed one real bug of its own before it shipped: an unset
     `excludes:` (the common case) was checked with the same
     `matches_patterns?` helper used for `patterns:`, which returns `true`
@@ -1912,19 +1913,84 @@ exact "not implemented" list):** the documented per-plugin scope cuts (e.g.
 `get_mime`/`get_attributes`, `find`'s own `age`/`contains`, `archive`'s own
 `exclude_path`, and `ufw`'s own `insert_relative_to` cuts are now closed,
 see their entries above; `mysql_db`/`postgresql_db` `state: dump/import`
-is now closed too, see its entry above), and two remaining cross-cutting
-engine gaps: missing Jinja2 filters such as `map(attribute=...)` and `sort`
-(a real, separate limitation from dotted-variable access below - the
-`{{ }}`-wrapped filter pipeline only ever splits on the *first* `|`, so even
-a single supported filter chained after another, e.g. `x | sort | join(',')`,
-doesn't work today; fixing this properly needs the filter engine to carry
-structured `JSON::Any` values through the whole chain instead of collapsing
-to a string after each step - a real architectural change, not a quick
-filter-by-filter add, and bigger in scope than it looks from this one-line
-mention). `become:`/`become_user:` privilege escalation is now fixed - see
-the `0.9.41` entry below. Cloud plugins (`ec2`, `s3_bucket`, `azure_rm_*`)
+is now closed too, see its entry above). Both cross-cutting engine gaps
+this section used to track here - Jinja2 filter-chaining and `become:`/
+`become_user:` privilege escalation - are now fixed; see the `0.9.42` and
+`0.9.41` entries below. Cloud plugins (`ec2`, `s3_bucket`, `azure_rm_*`)
 and inventory *plugins* (`aws_ec2.yml` et al.) remain explicitly lowest-ROI
 and are not planned.
+
+**Fixed in `0.9.42`:** the `{{ }}`-wrapped filter pipeline only ever split
+on the *first* `|`, so a single filter chained after another (e.g. `x |
+sort | join(',')`) silently did nothing beyond the first filter - the
+whole pipeline collapsed to a plain `String` after every single filter
+application, so even when a second filter's *name* parsed correctly, it
+had no real array/hash structure left to operate on (`sort`'s own
+string-only output couldn't feed `join` a real array). This was the
+`find`/`stat` compat playbooks' own documented blocker for comparing a
+real path list rather than just a match count (see `19-find.yml`'s
+`ROADMAP.md`/`compat/README.md` notes) - a real, separate limitation from
+the dotted-variable-access fix above, not the same gap.
+
+Fixed by rewriting `FilterEngine` to operate on `JSON::Any` instead of
+`String` end to end, and by having `ExpressionEvaluator` split a `{{ }}`
+expression on *every* top-level `|` (via a new `FilterEngine.split_chain`,
+which correctly ignores a `|` inside a quoted argument or a parenthesized
+filter's own arg list - e.g. `replace('a|b', 'c') | upper` is two filters,
+not three) rather than just the first one, then fold each filter over the
+running `JSON::Any` value in order. Only the *final* value in the chain is
+stringified for template interpolation (via
+`VariableLookup#format_value`, now public so both the plain-lookup path
+and the filter-chain path render booleans/arrays/hashes identically).
+`VariableLookup` also gained a new `#resolve` method returning the raw
+`JSON::Any` for a variable (simple/nested/indexed access) rather than a
+pre-formatted `String`, so the filter chain has real structure to start
+from - `simple`/`nested`/`indexed` themselves keep their existing
+`String`-returning signatures and behavior (now implemented as thin
+wrappers around `#resolve` + `#format_value`), so no other caller needed
+to change.
+
+- New filters, several of them needed to make chaining *useful* rather
+  than just mechanically correct, verified against real `ansible-playbook`
+  output rather than assumed from Jinja2 docs: `sort` (now a real
+  array-returning filter; a string-encoded array was never sortable in
+  any useful sense before), `unique`, `reverse`, `join(sep)`, `list`,
+  `first`, `last`, `min`, `max`, `int`, `float`, `string`, `bool`, `abs`,
+  and `map(attribute='x')` (only the `attribute=` form - real Jinja2's
+  `map()` also has a bare filter-name form, e.g. `list | map('upper')`,
+  not implemented here since `attribute=` is the one real playbooks
+  combine with `stat:`/`find:`'s own dict-list output). `length`/`count`
+  now correctly report an array/hash's element count rather than always
+  treating the value as a string to measure characters of. `split` now
+  returns the *whole* split array rather than only ever the first element
+  (a documented "for simplicity" cut before this) - a real behavior
+  change, but one that makes it actually useful for chaining
+  (`x | split(',') | length`), and nothing in this codebase depended on
+  the old first-element-only behavior (grepped for other callers before
+  changing it).
+- `default('fallback')` now parses an unquoted, purely-numeric argument as
+  a real number (`default(0)`) rather than always producing a string -
+  otherwise a filter chained after `default(0)` would see the string
+  `"0"` instead of a real `0`, breaking any numeric filter/comparison
+  downstream. A quoted argument (`default('0')`) still stays a string,
+  matching real Jinja2.
+- Verified against real `ansible-playbook` directly (not just the compat
+  harness): a three-task smoke playbook covering `sort | join(',')`,
+  `map(attribute='path') | sort | join(',')` (the exact shape `find:`'s
+  own docs point at - "see stat module for full output of each
+  dictionary" - and the harness's own previously-blocked comparison), and
+  `unique | length`, all producing byte-identical output on both engines.
+  `compat/playbooks/19-find.yml` was then extended with a
+  `recursive.files | map(attribute='path') | sort | join(',')` line of
+  its own (verified the same way, standalone, before running the full
+  harness) - closing the gap `compat/README.md`'s `find` entry has
+  documented since that playbook was first written.
+- New unit coverage in `spec/unit/filter_engine_spec.cr` (rewritten for
+  the `JSON::Any` API - the whole point of this change, so the old
+  `String`-only assertions couldn't just be left in place), including a
+  dedicated `map(attribute=...) | sort | join(',')` chain example and a
+  `split_chain` example asserting a `|` inside a quoted filter argument
+  isn't treated as a chain separator.
 
 **Fixed in `0.9.41`:** `become:`/`become_user:` were parsed and threaded
 through `Task`/`TaskExecutor` (including block/role inheritance) but never
@@ -2131,8 +2197,8 @@ already-shipped core engine, plugins, and compatibility harness.
 Roughly 12-18 weeks of focused work across Phases 1-4, plus Phase 0 up front.
 **Phases 0-5 are all now complete** (Phase 5 as of `0.9.31`, with full
 compat-harness coverage for all eight of its modules added at `0.9.32`).
-What remains is the lower-priority scope-cut list and the one remaining
-cross-cutting engine gap at the end of the Phase 5 section (Jinja2
-filter-chaining - see that entry above; `become:`/`become_user:` privilege
-escalation, the other cross-cutting gap this roadmap tracked, shipped in
-`0.9.41`).
+All four cross-cutting engine gaps this roadmap ever tracked are now fixed
+(dotted-variable access `0.9.34`, recap counter overlap `0.9.35`, `become:`
+`0.9.41`, Jinja2 filter-chaining `0.9.42` - see each entry above). What
+remains is only the lower-priority per-plugin scope-cut list documented in
+each shipping plugin's own entry.

@@ -116,12 +116,14 @@ a file via `register:` + `{{ }}` templating rather than compared from
 stdout, since volatile fields like `atime`/`mtime` would never match
 across two separate runs. `find` (`19-find.yml`) covers non-recursive vs
 recursive search, `excludes:`, `hidden:`, `file_type: directory`, and
-`depth:` - compared via each run's `matched` count rather than the actual
-`files` path list, since crystal-ansible's own filter engine
-(`src/crystal_play/variable_substitutor/filter_engine.cr`) doesn't yet
-support the Jinja2 `map(attribute=...)`/`sort` filters real playbooks
-would normally use to format that list for comparison - a real, separate
-gap unrelated to `find` itself. `archive` (`20-archive.yml`) covers a
+`depth:` - compared via each run's `matched` count, plus (since
+`map(attribute=...)`/`sort`/`join` filter-chaining shipped, see
+`ROADMAP.md`) the actual sorted `files` path list itself
+(`recursive.files | map(attribute='path') | sort | join(',')`), closing
+what was previously a real, separate gap unrelated to `find` itself: this
+codebase's filter engine only ever split a `{{ }}` pipeline on the first
+`|`, so a single chained filter after another silently did nothing.
+`archive` (`20-archive.yml`) covers a
 single-file compress-only run, a whole-directory tar.gz build, an
 idempotent rerun, `exclusion_patterns:`, and a partial run with a missing
 path mixed in - compared via `dest_state`/`changed` plus each archive's
