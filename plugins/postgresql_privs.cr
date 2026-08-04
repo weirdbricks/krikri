@@ -20,16 +20,24 @@ module CrystalPlay
   #
   # Supported parameters:
   # - type: `table` (default) / `sequence` / `schema` / `database` /
-  #   `language` / `tablespace` / `type` - real Ansible's own module also
-  #   supports `default_privs`/`foreign_data_wrapper`/`foreign_server`/
-  #   `function`/`group`/`procedure`/`parameter`; those remaining ones
-  #   are a documented scope cut (see below), not an oversight - `group`
-  #   is a fundamentally different SQL construct (role membership, not an
-  #   ACL grant at all), `default_privs` operates on `pg_default_acl`
-  #   (future objects, not existing ones - a different mechanism
-  #   entirely, not just another object type), and `function`/`procedure`
-  #   need signature-aware `objs:` parsing (`name(arg_types)`) this
-  #   plugin doesn't implement.
+  #   `language` / `tablespace` / `type` / `foreign_data_wrapper` /
+  #   `foreign_server` / `parameter` (PostgreSQL 15+ only - `pg_parameter_acl`
+  #   doesn't exist before that; privs: `SET`/`ALTER_SYSTEM`, the latter
+  #   mapped to the real two-word SQL privilege `ALTER SYSTEM` when
+  #   building the GRANT/REVOKE statement, matching real Ansible's own
+  #   privilege-name spelling and its own `'_'` -> `' '` substitution) /
+  #   `group` (role membership - `GRANT role TO role`, not an ACL grant
+  #   at all, so `privs:` isn't accepted for it at all, matching real
+  #   Ansible's own validation; idempotency and `grant_option:` here mean
+  #   membership presence/`WITH ADMIN OPTION` respectively, checked
+  #   directly against `pg_auth_members` rather than any ACL array -
+  #   group membership isn't stored as one). Real Ansible's own module
+  #   also supports `default_privs`/`function`/`procedure`; those remain
+  #   a documented scope cut (see below) - `default_privs` operates on
+  #   `pg_default_acl` (future objects, not existing ones - a different
+  #   mechanism entirely, not just another object type), and
+  #   `function`/`procedure` need signature-aware `objs:` parsing
+  #   (`name(arg_types)`) this plugin doesn't implement.
   # - objs: comma-separated list of object names `type` applies to
   #   (required for `table`/`sequence`/`schema`/`language`/`tablespace`/
   #   `type`; for `database`, defaults to the connected database itself
@@ -92,8 +100,7 @@ module CrystalPlay
   # (`postgresql_user.cr` already doesn't compare inherited role
   # membership either).
   #
-  # Not implemented: `type: default_privs`/`foreign_data_wrapper`/
-  # `foreign_server`/`function`/`group`/`procedure`/`parameter`,
+  # Not implemented: `type: default_privs`/`function`/`procedure`,
   # `ALL_IN_SCHEMA` for `function`/`procedure` (not implemented at all,
   # per above), `target_roles:` (only meaningful for `default_privs`),
   # `trust_input:` (this plugin always quotes identifiers itself
@@ -158,7 +165,11 @@ module CrystalPlay
       end
       return PluginResult.new(changed: false, failed: false, msg: "No valid roles provided, nothing to do") if roles.empty?
 
-      changed = apply_all_grants(database, p.type, objs, p.schema, roles, p.privs, p.state, p.grant_option, p.check_mode)
+      changed = if p.type == "group"
+                  apply_all_group_grants(database, objs, roles, p.state, p.grant_option, p.check_mode)
+                else
+                  apply_all_grants(database, p.type, objs, p.schema, roles, p.privs, p.state, p.grant_option, p.check_mode)
+                end
       PluginResult.new(changed: changed, failed: false, msg: changed ? "Privileges updated" : "Privileges already up to date")
     end
 
@@ -167,18 +178,26 @@ module CrystalPlay
     private def resolve_params! : ResolvedParams
       type = @params["type"]? || "table"
       state = @params["state"]? || "present"
-      valid_types = PluginHelpers::PostgresqlAcl::PRIV_LETTERS.keys
+      valid_types = PluginHelpers::PostgresqlAcl::PRIV_LETTERS.keys + ["group"]
       raise "type must be one of #{valid_types.join(", ")}, got '#{type}'" unless valid_types.includes?(type)
       raise "state must be 'present' or 'absent', got '#{state}'" unless state == "present" || state == "absent"
 
       privs_param = @params["privs"]?
       roles_param = @params["roles"]?
-      raise "privs and roles are both required" unless privs_param && roles_param
+      raise "roles is required" unless roles_param
+
+      privs = if type == "group"
+                raise "privs is not allowed for type 'group'" if privs_param
+                [] of String
+              elsif privs_param
+                PluginHelpers::PostgresqlAcl.resolve_privs(type, privs_param)
+              else
+                raise "privs is required for type '#{type}'"
+              end
 
       login_db = @params["login_db"]? || "postgres"
       schema = @params["schema"]? || "public"
       roles_raw = roles_param.split(',').map(&.strip).reject(&.empty?)
-      privs = PluginHelpers::PostgresqlAcl.resolve_privs(type, privs_param)
       objs, all_in_schema = resolve_objs!(type, login_db)
       validate_identifiers!(schema, objs, roles_raw)
 
@@ -338,29 +357,119 @@ module CrystalPlay
 
       unless to_grant.empty?
         option_clause = grant_option == true ? " WITH GRANT OPTION" : ""
-        db.exec "GRANT #{to_grant.join(", ")} ON #{object_kind(type)} #{target} TO #{grantee}#{option_clause}"
+        db.exec "GRANT #{sql_priv_list(to_grant)} ON #{object_kind(type)} #{target} TO #{grantee}#{option_clause}"
       end
 
       unless to_revoke.empty?
-        db.exec "REVOKE #{to_revoke.join(", ")} ON #{object_kind(type)} #{target} FROM #{grantee}"
+        db.exec "REVOKE #{sql_priv_list(to_revoke)} ON #{object_kind(type)} #{target} FROM #{grantee}"
       end
 
       unless to_revoke_option.empty?
-        db.exec "REVOKE GRANT OPTION FOR #{to_revoke_option.join(", ")} ON #{object_kind(type)} #{target} FROM #{grantee}"
+        db.exec "REVOKE GRANT OPTION FOR #{sql_priv_list(to_revoke_option)} ON #{object_kind(type)} #{target} FROM #{grantee}"
       end
     end
 
-    private def object_kind(type : String) : String
-      case type
-      when "table"      then "TABLE"
-      when "sequence"   then "SEQUENCE"
-      when "schema"     then "SCHEMA"
-      when "database"   then "DATABASE"
-      when "language"   then "LANGUAGE"
-      when "tablespace" then "TABLESPACE"
-      when "type"       then "TYPE"
-      else                   raise "unsupported type: #{type}"
+    # Real Ansible's own VALID_PRIVS spells the parameter: type's second
+    # privilege `ALTER_SYSTEM` (an underscore, since a bare privilege
+    # name can't contain a space) but the actual SQL keyword is the
+    # two-word `ALTER SYSTEM` - swapped back here, the same
+    # underscore-to-space substitution real Ansible's own query building
+    # does (`','.join(privs).replace('_', ' ')`). A no-op for every
+    # other privilege name in this codebase, none of which contain an
+    # underscore.
+    private def sql_priv_list(privs : Array(String)) : String
+      privs.map(&.gsub('_', ' ')).join(", ")
+    end
+
+    # type: group is a fundamentally different SQL construct from every
+    # other type above - `GRANT role TO role` (role membership, checked
+    # against `pg_auth_members`), not `GRANT priv ON object TO role` (an
+    # ACL entry on `relacl`/`nspacl`/etc.) - so it bypasses
+    # PostgresqlAcl/apply_all_grants entirely rather than being shoehorned
+    # into the privilege-letter machinery above. objs: here are the
+    # group/role names being granted; roles: are the members receiving
+    # membership in them (real Ansible's own naming, kept as-is even
+    # though "objs"/"roles" read oddly for this one type).
+    private def apply_all_group_grants(
+      db : DB::Database, groups : Array(String), members : Array(String),
+      state : String, grant_option : Bool?, check_mode : Bool,
+    ) : Bool
+      changed = false
+
+      groups.each do |group|
+        members.each do |member|
+          changed |= apply_group_grant(db, group, member, state, grant_option, check_mode)
+        end
       end
+
+      changed
+    end
+
+    private def apply_group_grant(
+      db : DB::Database, group : String, member : String,
+      state : String, grant_option : Bool?, check_mode : Bool,
+    ) : Bool
+      is_member, has_admin = group_membership(db, group, member)
+
+      if state == "present"
+        apply_group_grant_present(db, group, member, grant_option, is_member, has_admin, check_mode)
+      else
+        return false unless is_member
+        return true if check_mode
+
+        db.exec %(REVOKE #{quote_ident(group)} FROM #{quote_ident(member)})
+        true
+      end
+    end
+
+    private def apply_group_grant_present(
+      db : DB::Database, group : String, member : String, grant_option : Bool?,
+      is_member : Bool, has_admin : Bool, check_mode : Bool,
+    ) : Bool
+      needs_grant = !is_member || (grant_option == true && !has_admin)
+      needs_revoke_admin = !needs_grant && grant_option == false && has_admin
+      return false unless needs_grant || needs_revoke_admin
+      return true if check_mode
+
+      if needs_grant
+        option_clause = grant_option == true ? " WITH ADMIN OPTION" : ""
+        db.exec %(GRANT #{quote_ident(group)} TO #{quote_ident(member)}#{option_clause})
+      else
+        db.exec %(REVOKE ADMIN OPTION FOR #{quote_ident(group)} FROM #{quote_ident(member)})
+      end
+      true
+    end
+
+    # {is_member, has_admin_option} for (group, member) - queried
+    # directly against pg_auth_members (verified against a real
+    # PostgreSQL 17 server: no rows at all means not a member, exactly
+    # one row with admin_option true/false otherwise), not derived from
+    # any ACL array - group membership isn't stored as an aclitem[] at
+    # all, unlike every other type this plugin handles.
+    private def group_membership(db : DB::Database, group : String, member : String) : {Bool, Bool}
+      admin_option = db.query_one? <<-SQL, group, member, as: Bool?
+        SELECT am.admin_option FROM pg_catalog.pg_auth_members am
+        JOIN pg_catalog.pg_roles g ON g.oid = am.roleid
+        JOIN pg_catalog.pg_roles m ON m.oid = am.member
+        WHERE g.rolname = $1 AND m.rolname = $2
+      SQL
+
+      {!admin_option.nil?, admin_option == true}
+    end
+
+    # Maps our own snake_case type: value to the actual SQL keyword(s)
+    # GRANT/REVOKE ON expects - a plain lookup table rather than a
+    # case/when chain (ameba's cyclomatic-complexity budget counts each
+    # `when` as a branch; a Hash literal isn't branching at all).
+    OBJECT_KINDS = {
+      "table" => "TABLE", "sequence" => "SEQUENCE", "schema" => "SCHEMA", "database" => "DATABASE",
+      "language" => "LANGUAGE", "tablespace" => "TABLESPACE", "type" => "TYPE",
+      "foreign_data_wrapper" => "FOREIGN DATA WRAPPER", "foreign_server" => "FOREIGN SERVER",
+      "parameter" => "PARAMETER",
+    }
+
+    private def object_kind(type : String) : String
+      OBJECT_KINDS[type]? || raise "unsupported type: #{type}"
     end
 
     private def qualified_object(type : String, obj : String, schema : String) : String
@@ -375,26 +484,30 @@ module CrystalPlay
     # doesn't exist, surfaced as a clear failure by the caller's own
     # DB::ConnectionRefused/PQError rescues if the subsequent GRANT then
     # fails against a nonexistent object).
+    # {acl_column, table_name, name_column} for every type whose ACL
+    # lookup is a plain "single row by name" query - everything except
+    # table/sequence/type below, which each need a real join/extra
+    # WHERE clause instead of a single name match. table/column names
+    # here are fixed Postgres catalog names hardcoded by this table
+    # itself, never user input - only obj (always a $1 bind parameter)
+    # comes from outside.
+    SIMPLE_ACL_QUERIES = {
+      "schema"     => {"nspacl", "pg_namespace", "nspname"},
+      "database"   => {"datacl", "pg_database", "datname"},
+      "language"   => {"lanacl", "pg_language", "lanname"},
+      "tablespace" => {"spcacl", "pg_tablespace", "spcname"},
+
+      "foreign_data_wrapper" => {"fdwacl", "pg_foreign_data_wrapper", "fdwname"},
+      "foreign_server"       => {"srvacl", "pg_foreign_server", "srvname"},
+      "parameter"            => {"paracl", "pg_parameter_acl", "parname"},
+    }
+
     private def fetch_acl(db : DB::Database, type : String, obj : String, schema : String) : String?
       case type
       when "table"
-        db.query_one? <<-SQL, schema, obj, as: String?
-          SELECT relacl::text FROM pg_class
-          WHERE relname = $2 AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = $1)
-        SQL
+        fetch_relacl(db, schema, obj, sequence_only: false)
       when "sequence"
-        db.query_one? <<-SQL, schema, obj, as: String?
-          SELECT relacl::text FROM pg_class
-          WHERE relname = $2 AND relkind = 'S' AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = $1)
-        SQL
-      when "schema"
-        db.query_one? "SELECT nspacl::text FROM pg_namespace WHERE nspname = $1", obj, as: String?
-      when "database"
-        db.query_one? "SELECT datacl::text FROM pg_database WHERE datname = $1", obj, as: String?
-      when "language"
-        db.query_one? "SELECT lanacl::text FROM pg_language WHERE lanname = $1", obj, as: String?
-      when "tablespace"
-        db.query_one? "SELECT spcacl::text FROM pg_tablespace WHERE spcname = $1", obj, as: String?
+        fetch_relacl(db, schema, obj, sequence_only: true)
       when "type"
         db.query_one? <<-SQL, schema, obj, as: String?
           SELECT t.typacl::text FROM pg_type t
@@ -402,8 +515,17 @@ module CrystalPlay
           WHERE n.nspname = $1 AND t.typname = $2
         SQL
       else
-        raise "unsupported type: #{type}"
+        acl_column, table_name, name_column = SIMPLE_ACL_QUERIES[type]? || raise "unsupported type: #{type}"
+        db.query_one? "SELECT #{acl_column}::text FROM #{table_name} WHERE #{name_column} = $1", obj, as: String?
       end
+    end
+
+    private def fetch_relacl(db : DB::Database, schema : String, obj : String, sequence_only : Bool) : String?
+      relkind_clause = sequence_only ? "AND relkind = 'S' " : ""
+      db.query_one? <<-SQL, schema, obj, as: String?
+        SELECT relacl::text FROM pg_class
+        WHERE relname = $2 #{relkind_clause}AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = $1)
+      SQL
     end
 
     private def identifier_safe?(value : String) : Bool

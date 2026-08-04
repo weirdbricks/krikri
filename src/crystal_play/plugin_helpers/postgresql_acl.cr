@@ -30,12 +30,23 @@ module CrystalPlay
           "SELECT" => 'r', "INSERT" => 'a', "UPDATE" => 'w', "DELETE" => 'd',
           "TRUNCATE" => 'D', "REFERENCES" => 'x', "TRIGGER" => 't', "MAINTAIN" => 'm',
         },
-        "sequence"   => {"SELECT" => 'r', "UPDATE" => 'w', "USAGE" => 'U'},
-        "schema"     => {"CREATE" => 'C', "USAGE" => 'U'},
-        "database"   => {"CREATE" => 'C', "CONNECT" => 'c', "TEMPORARY" => 'T', "TEMP" => 'T'},
-        "language"   => {"USAGE" => 'U'},
-        "tablespace" => {"CREATE" => 'C'},
-        "type"       => {"USAGE" => 'U'},
+        "sequence"             => {"SELECT" => 'r', "UPDATE" => 'w', "USAGE" => 'U'},
+        "schema"               => {"CREATE" => 'C', "USAGE" => 'U'},
+        "database"             => {"CREATE" => 'C', "CONNECT" => 'c', "TEMPORARY" => 'T', "TEMP" => 'T'},
+        "language"             => {"USAGE" => 'U'},
+        "tablespace"           => {"CREATE" => 'C'},
+        "type"                 => {"USAGE" => 'U'},
+        "foreign_data_wrapper" => {"USAGE" => 'U'},
+        "foreign_server"       => {"USAGE" => 'U'},
+        # PostgreSQL 15+ only (`pg_parameter_acl` doesn't exist before
+        # that) - verified against a real PostgreSQL 17 server, not
+        # assumed. `ALTER_SYSTEM` (the name real Ansible's own
+        # VALID_PRIVS uses, since privilege names can't contain spaces
+        # as bare identifiers) maps to the real two-word SQL privilege
+        # `ALTER SYSTEM` - see PostgresqlPrivsPlugin#sql_priv_list for
+        # where the underscore gets turned back into a space when
+        # building the actual GRANT/REVOKE statement.
+        "parameter" => {"SET" => 's', "ALTER_SYSTEM" => 'A'},
       }
 
       # "ALL"/"ALL PRIVILEGES" expands to every privilege real PostgreSQL
@@ -46,17 +57,26 @@ module CrystalPlay
       # server (ALL does not imply MAINTAIN pre-17, and even on 17 the
       # module's own real-Ansible behavior this codebase matches doesn't
       # special-case it in ALL's expansion either).
+      # A lookup table rather than a case/when chain, same reasoning as
+      # PostgresqlPrivsPlugin::OBJECT_KINDS - keeps this well under
+      # ameba's cyclomatic-complexity budget regardless of how many
+      # object types get added.
+      ALL_PRIVS = {
+        "table"      => %w[SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER],
+        "sequence"   => %w[SELECT UPDATE USAGE],
+        "schema"     => %w[CREATE USAGE],
+        "database"   => %w[CREATE CONNECT TEMPORARY],
+        "language"   => %w[USAGE],
+        "tablespace" => %w[CREATE],
+        "type"       => %w[USAGE],
+
+        "foreign_data_wrapper" => %w[USAGE],
+        "foreign_server"       => %w[USAGE],
+        "parameter"            => %w[SET ALTER_SYSTEM],
+      }
+
       def self.all_privs(type : String) : Array(String)
-        case type
-        when "table"      then %w[SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER]
-        when "sequence"   then %w[SELECT UPDATE USAGE]
-        when "schema"     then %w[CREATE USAGE]
-        when "database"   then %w[CREATE CONNECT TEMPORARY]
-        when "language"   then %w[USAGE]
-        when "tablespace" then %w[CREATE]
-        when "type"       then %w[USAGE]
-        else                   raise "unknown privilege type: #{type.inspect}"
-        end
+        ALL_PRIVS[type]? || raise "unknown privilege type: #{type.inspect}"
       end
 
       # Resolves "ALL"/"ALL PRIVILEGES" or a comma-separated privs: list

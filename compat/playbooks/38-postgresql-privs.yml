@@ -1,18 +1,21 @@
 # Compat coverage for postgresql_privs (shipped in 0.9.44; language/
-# tablespace/type/ALL_IN_SCHEMA/fail_on_role added in 0.9.54): the object
-# types this codebase implements - table (with grant revoked,
+# tablespace/type/ALL_IN_SCHEMA/fail_on_role added in 0.9.54;
+# foreign_data_wrapper/foreign_server/parameter/group added in 0.9.56):
+# the object types this codebase implements - table (with grant revoked,
 # grant_option granted then revoked leaving the underlying privilege
-# intact), schema, database, language, tablespace, and type - are
-# exercised here, plus ALL_IN_SCHEMA (table) and fail_on_role: false.
-# default_privs/foreign_data_wrapper/foreign_server/function/group/
-# procedure/parameter are all real Ansible `type:` choices this codebase
-# doesn't implement (documented scope cut, see
-# plugins/postgresql_privs.cr), so aren't covered here either - this
-# playbook is deliberately scoped to prove the implemented surface
-# works, not to be a full postgresql_privs feature matrix. session_role:
-# isn't covered here either - verified manually instead against a real
-# server (see the 0.9.54 ROADMAP entry), to avoid the extra role-
-# membership setup complexity in this already-multi-role playbook.
+# intact), schema, database, language, tablespace, type,
+# foreign_data_wrapper, foreign_server, parameter, and group (role
+# membership, a fundamentally different SQL construct - see
+# plugins/postgresql_privs.cr) - are exercised here, plus ALL_IN_SCHEMA
+# (table) and fail_on_role: false. default_privs/function/procedure are
+# real Ansible `type:` choices this codebase doesn't implement
+# (documented scope cut, see plugins/postgresql_privs.cr), so aren't
+# covered here either - this playbook is deliberately scoped to prove
+# the implemented surface works, not to be a full postgresql_privs
+# feature matrix. session_role: isn't covered here either - verified
+# manually instead against a real server (see the 0.9.54 ROADMAP entry),
+# to avoid the extra role-membership setup complexity in this already
+# multi-role playbook.
 #
 # The playbook starts its own throwaway PostgreSQL cluster inside the
 # container via the init.d script (no systemd in this image), the same
@@ -229,6 +232,120 @@
         login_db: "{{ login_db }}"
       register: grant_missing_role_soft
 
+    - name: create a throwaway foreign data wrapper and server
+      ansible.builtin.shell: |
+        PGPASSWORD=compatpass psql --host=127.0.0.1 --username=postgres --dbname={{ login_db }} \
+          -c "CREATE FOREIGN DATA WRAPPER compatfdw; CREATE SERVER compatsrv FOREIGN DATA WRAPPER compatfdw;"
+      changed_when: false
+
+    - name: grant USAGE on the foreign data wrapper
+      community.postgresql.postgresql_privs:
+        type: foreign_data_wrapper
+        objs: compatfdw
+        privs: USAGE
+        roles: compatprivsrole
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: grant_fdw
+
+    - name: grant USAGE on the foreign server
+      community.postgresql.postgresql_privs:
+        type: foreign_server
+        objs: compatsrv
+        privs: USAGE
+        roles: compatprivsrole
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: grant_srv
+
+    - name: grant SET and ALTER_SYSTEM on the work_mem parameter
+      community.postgresql.postgresql_privs:
+        type: parameter
+        objs: work_mem
+        privs: SET,ALTER_SYSTEM
+        roles: compatprivsrole
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: grant_param
+
+    - name: revoke just ALTER_SYSTEM on work_mem (SET stays granted)
+      community.postgresql.postgresql_privs:
+        type: parameter
+        objs: work_mem
+        privs: ALTER_SYSTEM
+        roles: compatprivsrole
+        state: absent
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: revoke_param
+
+    - name: create a throwaway group role
+      ansible.builtin.shell: |
+        PGPASSWORD=compatpass psql --host=127.0.0.1 --username=postgres --dbname={{ login_db }} \
+          -c "CREATE ROLE compatprivsgroup;"
+      changed_when: false
+
+    - name: grant group membership (compatprivsgroup -> compatprivsrole)
+      community.postgresql.postgresql_privs:
+        type: group
+        objs: compatprivsgroup
+        roles: compatprivsrole
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: grant_group
+
+    - name: idempotent rerun of group membership
+      community.postgresql.postgresql_privs:
+        type: group
+        objs: compatprivsgroup
+        roles: compatprivsrole
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: grant_group_idempotent
+
+    - name: grant group membership WITH ADMIN OPTION
+      community.postgresql.postgresql_privs:
+        type: group
+        objs: compatprivsgroup
+        roles: compatprivsrole
+        grant_option: true
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: grant_group_admin
+
+    - name: revoke group membership
+      community.postgresql.postgresql_privs:
+        type: group
+        objs: compatprivsgroup
+        roles: compatprivsrole
+        state: absent
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: revoke_group
+
+    - name: read back the new types' ACLs
+      ansible.builtin.shell: >-
+        PGPASSWORD=compatpass psql --host=127.0.0.1 --username=postgres --dbname={{ login_db }}
+        -tAc "SELECT fdwacl::text FROM pg_foreign_data_wrapper WHERE fdwname='compatfdw'; SELECT srvacl::text FROM pg_foreign_server WHERE srvname='compatsrv'; SELECT paracl::text FROM pg_parameter_acl WHERE parname='work_mem'; SELECT count(*) FROM pg_auth_members am JOIN pg_roles g ON g.oid=am.roleid JOIN pg_roles m ON m.oid=am.member WHERE g.rolname='compatprivsgroup' AND m.rolname='compatprivsrole';"
+      register: new_types_acls
+      changed_when: false
+
     - name: read back the mood type's ACL
       ansible.builtin.shell: >-
         PGPASSWORD=compatpass psql --host=127.0.0.1 --username=postgres --dbname={{ login_db }}
@@ -265,6 +382,15 @@
           grant_type={{ grant_type.changed }}
           grant_all_in_schema={{ grant_all_in_schema.changed }}
           grant_missing_role_soft={{ grant_missing_role_soft.changed }}
+          grant_fdw={{ grant_fdw.changed }}
+          grant_srv={{ grant_srv.changed }}
+          grant_param={{ grant_param.changed }}
+          revoke_param={{ revoke_param.changed }}
+          grant_group={{ grant_group.changed }}
+          grant_group_idempotent={{ grant_group_idempotent.changed }}
+          grant_group_admin={{ grant_group_admin.changed }}
+          revoke_group={{ revoke_group.changed }}
+          new_types_acls={{ new_types_acls.stdout }}
           mood_acl={{ mood_acl.stdout }}
           t3_acl={{ t3_acl.stdout }}
           final_table_acls={{ final_table_acls.stdout }}

@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.55`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.56`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -34,7 +34,9 @@ to how list-of-dict module params get encoded - see that entry), and
 `postgresql_privs`' `type: language`/`tablespace`/`type`,
 `ALL_IN_SCHEMA`, `session_role:`, and `fail_on_role:` (`0.9.54`), and
 `docker_*`'s TLS options for connecting to a remote Docker daemon
-(`0.9.55`) - see "Also still open" near the end of
+(`0.9.55`), and `postgresql_privs`' `type: foreign_data_wrapper`/
+`foreign_server`/`parameter`/`group` (`0.9.56`) - see "Also still
+open" near the end of
 Phase 5 for what's left and the running list of what's already been
 closed past that point. All 715 specs pass in an environment with
 `mysql`/`mysqldump`/`psql`/`pg_dump`/`pg_restore` client binaries on
@@ -2774,14 +2776,79 @@ compat playbook's own task wouldn't have suggested was there).
     ameba findings in any of the three docker_*.cr plugins or the new
     `docker_client.cr` helper.
 
+- [x] `postgresql_privs`' `type: foreign_data_wrapper`/`foreign_server`/
+  `parameter`/`group` (`0.9.56`):
+  - `foreign_data_wrapper`/`foreign_server` reuse the exact same
+    ACL-parsing architecture as every other type so far (`PostgresqlAcl`,
+    both `USAGE`/`'U'` - verified against a real server's actual
+    `fdwacl`/`srvacl` output, not assumed), cluster-wide objects like
+    `language:`/`tablespace:` (not schema-qualified).
+  - `parameter` (PostgreSQL 15+ only - `pg_parameter_acl` doesn't exist
+    on older servers) supports two privileges: `SET`/`'s'` and
+    `ALTER_SYSTEM`/`'A'` - real Ansible's own `VALID_PRIVS` spells the
+    second one with an underscore since a bare privilege name can't
+    contain a space, but the real SQL keyword is the two-word `ALTER
+    SYSTEM`; a new `sql_priv_list` helper swaps the underscore back to a
+    space when building the actual GRANT/REVOKE statement (matching real
+    Ansible's own `','.join(privs).replace('_', ' ')`) - a no-op for
+    every other privilege name in this codebase, none of which contain
+    an underscore.
+  - `group` is a fundamentally different SQL construct from every other
+    type - `GRANT role TO role` (role membership, checked against
+    `pg_auth_members`), not `GRANT priv ON object TO role` (an ACL entry
+    on some `*acl` column) - so it bypasses `PostgresqlAcl`/
+    `apply_all_grants` entirely via a new parallel `apply_all_group_grants`/
+    `apply_group_grant`/`group_membership` path instead of being
+    shoehorned into the privilege-letter machinery every other type
+    shares. `privs:` isn't accepted for `type: group` at all (raises
+    clearly if given, matching real Ansible's own validation);
+    `grant_option:` means `WITH ADMIN OPTION` instead of `WITH GRANT
+    OPTION`; idempotency is a direct membership-row check
+    (`is_member`/`has_admin_option`, verified against a real server: no
+    matching row at all means not a member, exactly one row with
+    `admin_option` true/false otherwise) rather than any ACL array
+    lookup - `objs:` here are the group/role names being granted,
+    `roles:` are the members receiving membership in them, real
+    Ansible's own naming kept as-is even though it reads oddly for this
+    one type.
+  - `object_kind`/`fetch_acl`'s per-type `case`/`when` chains (and
+    `PostgresqlAcl.all_privs`'s own) were refactored into lookup-table
+    dispatch (`OBJECT_KINDS`/`SIMPLE_ACL_QUERIES`/`ALL_PRIVS` Hash
+    constants) rather than growing the `case` further - each `when`
+    branch counts against ameba's cyclomatic-complexity budget, a Hash
+    literal doesn't, and four more types on top of the seven already
+    there would have pushed every one of them over it. Not a rewrite for
+    its own sake - same behavior, verified by the full spec suite
+    staying green with no assertion changes needed anywhere.
+  - Verified against a real live PostgreSQL 17 server, not simulated:
+    granted `USAGE` on a throwaway foreign data wrapper and foreign
+    server, granted `SET`+`ALTER_SYSTEM` on the `work_mem` parameter then
+    revoked just `ALTER_SYSTEM` (confirming the underlying `SET` grant
+    survived, via the real `paracl` array), and ran the full
+    grant/idempotent-rerun/`WITH ADMIN OPTION`/revoke sequence for
+    `type: group` membership (confirmed via a direct `pg_auth_members`
+    row-count query at each step, not just the plugin's own `changed:`
+    claim). The identical sequence run through real `ansible-playbook`'s
+    own `community.postgresql.postgresql_privs` (via the same throwaway
+    venv used for the `0.9.52`-`0.9.55` verification) against the same
+    server produced identical `changed:` results and an identical final
+    ACL/membership dump.
+  - `compat/playbooks/38-postgresql-privs.yml` extended with
+    `foreign_data_wrapper:`/`foreign_server:`/`parameter:`/`group:`
+    coverage (grant, idempotent rerun, `WITH ADMIN OPTION`, and revoke
+    for `group:`; grant-then-partial-revoke for `parameter:`) - full
+    compat harness run confirms it end to end.
+  - `crystal spec`/`ameba` both clean (715 examples, same 2 pre-existing
+    DB-client-dependent failures as always, unrelated to this).
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**
 
-- `postgresql_privs` (`0.9.54`): `type: default_privs`/
-  `foreign_data_wrapper`/`foreign_server`/`function`/`group`/`procedure`/
-  `parameter` (only `table`/`sequence`/`schema`/`database`/`language`/
-  `tablespace`/`type` implemented), `ALL_IN_SCHEMA` for `function`/
+- `postgresql_privs` (`0.9.56`): `type: default_privs`/`function`/
+  `procedure` (only `table`/`sequence`/`schema`/`database`/`language`/
+  `tablespace`/`type`/`foreign_data_wrapper`/`foreign_server`/
+  `parameter`/`group` implemented), `ALL_IN_SCHEMA` for `function`/
   `procedure` (not implemented at all, per above), `target_roles:` (only
   meaningful for `default_privs`).
 - `docker_*` (`0.9.55`): `tls_hostname:` (connect-vs-verify-hostname
