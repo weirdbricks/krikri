@@ -3,14 +3,16 @@
 require "json"
 require "docr"
 require "../src/crystal_play/base_plugin"
+require "../src/crystal_play/plugin_helpers/docker_client"
 
 module CrystalPlay
   # Docker network plugin - creates/removes a Docker network.
   # Compatible with Ansible's community.docker.docker_network module.
   #
   # See plugins/docker_image.cr's module comment for the shared
-  # architecture note (talks to the Docker Engine API directly over its
-  # UNIX socket via the weirdbricks/docr fork, local daemon only).
+  # architecture note (talks to the Docker Engine API directly, local
+  # UNIX socket by default or a remote daemon over TCP(+TLS) via
+  # docker_host:/TLS params below, via the weirdbricks/docr fork).
   #
   # Supported parameters:
   # - name: network name (required)
@@ -28,6 +30,11 @@ module CrystalPlay
   #   for `POST /networks/{id}/connect`/`disconnect` - docr's own
   #   Networks#connect/#disconnect are unimplemented stubs.
   # - appends: bool, default false - see connected: above.
+  # - docker_host: / tls: / validate_certs: (alias tls_verify:) / cacert_path: /
+  #   cert_path: / key_path: - connect to a remote Docker daemon over
+  #   TCP(+TLS) instead of the local UNIX socket - see
+  #   PluginHelpers::DockerClient's own doc comment for exact behavior
+  #   and its one documented scope cut (tls_hostname:).
   # - state: present (default) / absent
   # - check_mode
   #
@@ -45,7 +52,8 @@ module CrystalPlay
   # Not implemented: `force:` (real Ansible's "disconnect everyone, delete
   # and recreate the network" override, distinct from the driver-mismatch
   # auto-recreate above), ipam_config:, enable_ipv6:, custom driver
-  # options:.
+  # options:, `tls_hostname:`/`api_version:` (see
+  # PluginHelpers::DockerClient).
   class DockerNetworkPlugin < BasePlugin
     def execute : PluginResult
       name = @params["name"]?
@@ -62,7 +70,7 @@ module CrystalPlay
       state = @params["state"]? || "present"
       check_mode = is_true?(@params["check_mode"]?)
 
-      client = Docr::Client.new
+      client, docker_host_description = PluginHelpers::DockerClient.build(@params)
       api = Docr::API.new(client)
 
       existing = find_network(api, name)
@@ -188,10 +196,6 @@ module CrystalPlay
 
     private def find_network(api : Docr::API, name : String) : Docr::Types::Network?
       api.networks.list.find { |net| net.name == name }
-    end
-
-    private def docker_host_description : String
-      ENV["DOCKER_HOST"]? || "default socket #{Docr::Client::DEFAULT_SOCKET_PATH}"
     end
   end
 end

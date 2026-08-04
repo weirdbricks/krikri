@@ -5,14 +5,16 @@ require "docr"
 require "../src/crystal_play/base_plugin"
 require "../src/crystal_play/plugin_helpers/docker_ref"
 require "../src/crystal_play/plugin_helpers/docker_ports"
+require "../src/crystal_play/plugin_helpers/docker_client"
 
 module CrystalPlay
   # Docker container plugin - creates/starts/stops/removes a container.
   # Compatible with Ansible's community.docker.docker_container module.
   #
   # See plugins/docker_image.cr's module comment for the shared
-  # architecture note (talks to the Docker Engine API directly over its
-  # UNIX socket via the weirdbricks/docr fork, local daemon only).
+  # architecture note (talks to the Docker Engine API directly, local
+  # UNIX socket by default or a remote daemon over TCP(+TLS) via
+  # docker_host:/TLS params below, via the weirdbricks/docr fork).
   #
   # Supported parameters:
   # - name: container name (required)
@@ -46,6 +48,11 @@ module CrystalPlay
   #   used by image_exists? below - not a docr modification. Checked (and
   #   connected to, if missing) on every run, including when the container
   #   already matches on image/command and nothing else would change.
+  # - docker_host: / tls: / validate_certs: (alias tls_verify:) / cacert_path: /
+  #   cert_path: / key_path: - connect to a remote Docker daemon over
+  #   TCP(+TLS) instead of the local UNIX socket - see
+  #   PluginHelpers::DockerClient's own doc comment for exact behavior
+  #   and its one documented scope cut (tls_hostname:).
   # - check_mode
   #
   # Idempotency compares only image (leniently, see DockerRef.same?) and
@@ -72,7 +79,8 @@ module CrystalPlay
   # ever *adds* the requested networks on top); `mac_address:` on a
   # per-network endpoint (only ipv4_address:/ipv6_address:/aliases:/
   # links: per network); healthcheck:, resource limits (memory/cpu),
-  # device_requests:, container_default_behavior:.
+  # device_requests:, container_default_behavior:, `tls_hostname:`/
+  # `api_version:` (see PluginHelpers::DockerClient).
   class DockerContainerPlugin < BasePlugin
     record RequestedNetwork,
       name : String,
@@ -100,7 +108,7 @@ module CrystalPlay
       state = @params["state"]? || "started"
       check_mode = is_true?(@params["check_mode"]?)
 
-      client = Docr::Client.new
+      client, docker_host_description = PluginHelpers::DockerClient.build(@params)
       api = Docr::API.new(client)
       existing = find_container(api, name)
 
@@ -384,10 +392,6 @@ module CrystalPlay
       end
 
       {exposed_ports, port_bindings}
-    end
-
-    private def docker_host_description : String
-      ENV["DOCKER_HOST"]? || "default socket #{Docr::Client::DEFAULT_SOCKET_PATH}"
     end
   end
 end

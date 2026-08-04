@@ -4,18 +4,22 @@ require "json"
 require "docr"
 require "../src/crystal_play/base_plugin"
 require "../src/crystal_play/plugin_helpers/docker_ref"
+require "../src/crystal_play/plugin_helpers/docker_client"
 
 module CrystalPlay
   # Docker image plugin - pulls or removes a local Docker image.
   # Compatible with Ansible's community.docker.docker_image module.
   #
-  # Talks to the Docker Engine API directly over its UNIX socket (real
-  # Ansible's own community.docker collection does the same, via the
-  # Docker SDK for Python) using the docr shard - see the weirdbricks/docr
-  # fork's commit history for the reconnect/DOCKER_HOST/nullable-field
-  # fixes this plugin depends on; upstream marghidanu/docr as of 0.1.4 has
-  # a "This HTTP::Client cannot be reconnected" bug that surfaces on
-  # anything past a single call.
+  # Talks to the Docker Engine API directly - a local UNIX socket by
+  # default, or a remote daemon over TCP(+TLS) via docker_host:/TLS
+  # params below (see PluginHelpers::DockerClient) - the same thing real
+  # Ansible's own community.docker collection does, via the Docker SDK
+  # for Python, using the docr shard. See the weirdbricks/docr fork's
+  # commit history for the reconnect/DOCKER_HOST/nullable-field/TCP+TLS
+  # fixes this plugin depends on; upstream marghidanu/docr as of 0.1.4
+  # has a "This HTTP::Client cannot be reconnected" bug that surfaces on
+  # anything past a single call, and no way to reach a remote daemon at
+  # all.
   #
   # Supported parameters:
   # - name: image reference, with or without a tag (required)
@@ -28,10 +32,15 @@ module CrystalPlay
   #   source: values) are not
   # - check_mode
   #
-  # Not implemented: force_tag, force_source, docker_host/tls connection
-  # options (this plugin always talks to the local daemon - DOCKER_HOST
-  # env var or /var/run/docker.sock, same as every other plugin in this
-  # codebase being local-first), build/archive/repository sources.
+  # - docker_host: / tls: / validate_certs: (alias tls_verify:) / cacert_path: /
+  #   cert_path: / key_path: - connect to a remote Docker daemon over
+  #   TCP(+TLS) instead of the local UNIX socket - see
+  #   PluginHelpers::DockerClient's own doc comment for exact behavior
+  #   and its one documented scope cut (tls_hostname:).
+  #
+  # Not implemented: force_tag, force_source, `tls_hostname:` (see
+  # PluginHelpers::DockerClient), `api_version:`, build/archive/
+  # repository sources.
   class DockerImagePlugin < BasePlugin
     def execute : PluginResult
       name = @params["name"]?
@@ -56,7 +65,7 @@ module CrystalPlay
       ref_tag = @params["tag"]? || default_tag
       full_ref = PluginHelpers::DockerRef.join(ref_name, ref_tag)
 
-      client = Docr::Client.new
+      client, docker_host_description = PluginHelpers::DockerClient.build(@params)
       api = Docr::API.new(client)
 
       exists = image_exists?(client, full_ref)
@@ -102,10 +111,6 @@ module CrystalPlay
     rescue ex : Docr::Errors::DockerAPIError
       return false if ex.status_code == 404
       raise ex
-    end
-
-    private def docker_host_description : String
-      ENV["DOCKER_HOST"]? || "default socket #{Docr::Client::DEFAULT_SOCKET_PATH}"
     end
   end
 end

@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.54`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.55`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -31,9 +31,10 @@ to how list-of-dict module params get encoded - see that entry), and
 `mysql_db`'s `.zst` compression plus `postgresql_db`'s `.tar`/`.pgc`/
 `.dir` `pg_restore`-based formats (`0.9.52`), `mysql_db`'s
 `config_file:`/`name: all`/remaining `mysqldump` tuning knobs (`0.9.53`),
-and `postgresql_privs`' `type: language`/`tablespace`/`type`,
-`ALL_IN_SCHEMA`, `session_role:`, and `fail_on_role:` (`0.9.54`) - see
-"Also still open" near the end of
+`postgresql_privs`' `type: language`/`tablespace`/`type`,
+`ALL_IN_SCHEMA`, `session_role:`, and `fail_on_role:` (`0.9.54`), and
+`docker_*`'s TLS options for connecting to a remote Docker daemon
+(`0.9.55`) - see "Also still open" near the end of
 Phase 5 for what's left and the running list of what's already been
 closed past that point. All 715 specs pass in an environment with
 `mysql`/`mysqldump`/`psql`/`pg_dump`/`pg_restore` client binaries on
@@ -2697,6 +2698,82 @@ compat playbook's own task wouldn't have suggested was there).
   - `crystal spec`/`ameba` both clean (715 examples, same 2 pre-existing
     DB-client-dependent failures as always, unrelated to this).
 
+- [x] `docker_*`'s TLS options for connecting to a remote Docker daemon
+  (`0.9.55`): `docker_host:` (`tcp://`/`https://` URL, falling back to
+  `DOCKER_HOST` for the local-socket case exactly as before), `tls:`
+  (TLS without verification), `validate_certs:`/alias `tls_verify:` (TLS
+  *with* verification - takes precedence over `tls:` if both are given,
+  verified against real Ansible's own documented behavior, not assumed),
+  `cacert_path:`/`cert_path:`/`key_path:`.
+  - This closes out the one remaining item this roadmap had flagged as a
+    "meaningfully bigger lift" than everything else picked off so far
+    (`0.9.51`'s own "still open" note): `docr`'s `Client` was hardwired
+    to a local UNIX socket at the transport layer (its `#io` override
+    always opened a `UNIXSocket`, with no TCP/TLS branch at all). Fixed
+    in `docr` itself (a real shard change, committed and pushed to
+    `weirdbricks/docr` upstream, then pulled back in via `shards update
+    docr` - not a local-only patch): `Client` gained a second
+    `initialize(host, port, tls)` overload, and `#io` now calls `super`
+    (deferring to `HTTP::Client`'s own already-correct TCP/TLS
+    connection logic, the standard-library class `Docr::Client` itself
+    subclasses) instead of always forcing a `UNIXSocket`, whenever
+    constructed that way - not a from-scratch TCP/TLS implementation,
+    just no longer overriding it away.
+  - New shared `PluginHelpers::DockerClient` module (`src/crystal_play/
+    plugin_helpers/docker_client.cr`) builds the `Docr::Client` (UNIX
+    socket or TCP+TLS) from a docker_*.cr plugin's own params, replacing
+    each of `docker_container.cr`/`docker_network.cr`/`docker_image.cr`'s
+    own previously-duplicated `Docr::Client.new`/`docker_host_description`
+    - one real implementation shared three ways, not three copies kept
+    in sync by hand.
+  - A real bug caught and fixed before it shipped, not assumed correct
+    from reading the docs alone: the first implementation inferred TLS
+    from the mere *presence* of `cacert_path:`/`cert_path:`/`key_path:`,
+    but real Ansible's own `community.docker` collection requires an
+    explicit `tls:` or `validate_certs:` flag - cert paths alone do
+    nothing on their own. Caught by literally getting real Ansible's own
+    exact error back (`"Client sent an HTTP request to an HTTPS
+    server"`) when comparing against it side by side with only cert
+    paths set and no explicit flag, then fixing this plugin to require
+    the same explicit flag before it also produced the identical error
+    correctly instead of silently connecting over plain TCP.
+  - Verified against a real, genuinely TLS-secured remote Docker daemon,
+    not simulated: a `docker:dind` container generated real CA/server/
+    client certificates via its own standard `DOCKER_TLS_CERTDIR`
+    mechanism, exposed on a TCP port. Confirmed via `curl` first that
+    the daemon actually enforces mutual TLS (a request with the client
+    cert succeeds, the identical request without one gets nothing back).
+    Then: a real image pull over `docker_host: tcp://.../`
+    `validate_certs: true` with the real CA/cert/key paths (`changed:
+    true`, confirmed via a direct authenticated `curl` to the same
+    daemon that the image really landed there, not just a local
+    coincidence), an idempotent rerun (`changed: false`), and the same
+    request with no cert params at all failing to connect - real
+    Ansible's own `community.docker.docker_image` (via the same
+    throwaway venv used for the `0.9.52`-`0.9.54` verification, with
+    `requests`/`docker` Python packages added) run against the exact
+    same daemon produced the identical `changed:`/failure results,
+    including that same literal "Client sent an HTTP request to an
+    HTTPS server" error text for the no-certs case.
+  - Not implemented: `tls_hostname:` (real Ansible's own "connect to
+    this host/IP but verify the certificate against a *different*
+    hostname" override, for the common docker-machine-style setup where
+    a cert is issued for "localhost" but reached via a forwarded IP) -
+    would need a further `docr` `#io` customization beyond deferring to
+    `HTTP::Client`'s own logic via `super` (which always verifies
+    against the same host it connects to), a real additional connect-
+    vs-verify-hostname split not attempted here; `api_version:` (no API
+    version negotiation at all, on a local socket either);
+    `DOCKER_TLS`/`DOCKER_TLS_VERIFY`/`DOCKER_CERT_PATH` environment
+    variable fallbacks (only `DOCKER_HOST` is honored as an env var,
+    matching this codebase's existing convention - the TLS params
+    themselves must be passed as module params, not read from the
+    Docker CLI's own env var convention).
+  - `crystal spec`/`ameba` both clean (715 examples, same 2 pre-existing
+    DB-client-dependent failures as always, unrelated to this) - no new
+    ameba findings in any of the three docker_*.cr plugins or the new
+    `docker_client.cr` helper.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**
@@ -2707,18 +2784,10 @@ the exact "not implemented" list it's tracked against:**
   `tablespace`/`type` implemented), `ALL_IN_SCHEMA` for `function`/
   `procedure` (not implemented at all, per above), `target_roles:` (only
   meaningful for `default_privs`).
-- `docker_*` (`0.9.51`): no TLS options for connecting to a remote Docker
-  daemon (`tls:`/`tls_verify:`/`tls_hostname:`/`cacert_path:`/
-  `cert_path:`/`key_path:`) - `docr`'s own `Client` is hardwired to a
-  local UNIX socket at the transport layer (its `#io` override always
-  opens a `UNIXSocket`, with no TCP/TLS branch at all - not a missing
-  option so much as a missing connection mode), so this would mean
-  extending `docr` itself with real TCP+TLS support (parsing a
-  `tcp://host:port` `DOCKER_HOST`, building an `OpenSSL::SSL::Context`
-  from the cert/key/CA paths) and verifying it against an actual
-  TLS-configured remote `dockerd`, neither available in this sandbox - a
-  meaningfully bigger lift than the `networks:`/`connected:` work above,
-  left open rather than half-implemented and unverifiable.
+- `docker_*` (`0.9.55`): `tls_hostname:` (connect-vs-verify-hostname
+  split - see that entry for why), `api_version:`, `DOCKER_TLS`/
+  `DOCKER_TLS_VERIFY`/`DOCKER_CERT_PATH` environment variable fallbacks
+  (only `DOCKER_HOST` is honored as an env var).
 
 Cross-cutting engine gaps this section used to track here - Jinja2
 filter-chaining and `become:`/`become_user:` privilege escalation - are
