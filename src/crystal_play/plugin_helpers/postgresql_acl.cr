@@ -30,9 +30,12 @@ module CrystalPlay
           "SELECT" => 'r', "INSERT" => 'a', "UPDATE" => 'w', "DELETE" => 'd',
           "TRUNCATE" => 'D', "REFERENCES" => 'x', "TRIGGER" => 't', "MAINTAIN" => 'm',
         },
-        "sequence" => {"SELECT" => 'r', "UPDATE" => 'w', "USAGE" => 'U'},
-        "schema"   => {"CREATE" => 'C', "USAGE" => 'U'},
-        "database" => {"CREATE" => 'C', "CONNECT" => 'c', "TEMPORARY" => 'T', "TEMP" => 'T'},
+        "sequence"   => {"SELECT" => 'r', "UPDATE" => 'w', "USAGE" => 'U'},
+        "schema"     => {"CREATE" => 'C', "USAGE" => 'U'},
+        "database"   => {"CREATE" => 'C', "CONNECT" => 'c', "TEMPORARY" => 'T', "TEMP" => 'T'},
+        "language"   => {"USAGE" => 'U'},
+        "tablespace" => {"CREATE" => 'C'},
+        "type"       => {"USAGE" => 'U'},
       }
 
       # "ALL"/"ALL PRIVILEGES" expands to every privilege real PostgreSQL
@@ -45,11 +48,14 @@ module CrystalPlay
       # special-case it in ALL's expansion either).
       def self.all_privs(type : String) : Array(String)
         case type
-        when "table"    then %w[SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER]
-        when "sequence" then %w[SELECT UPDATE USAGE]
-        when "schema"   then %w[CREATE USAGE]
-        when "database" then %w[CREATE CONNECT TEMPORARY]
-        else                 raise "unknown privilege type: #{type.inspect}"
+        when "table"      then %w[SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER]
+        when "sequence"   then %w[SELECT UPDATE USAGE]
+        when "schema"     then %w[CREATE USAGE]
+        when "database"   then %w[CREATE CONNECT TEMPORARY]
+        when "language"   then %w[USAGE]
+        when "tablespace" then %w[CREATE]
+        when "type"       then %w[USAGE]
+        else                   raise "unknown privilege type: #{type.inspect}"
         end
       end
 

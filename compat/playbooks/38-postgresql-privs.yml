@@ -1,13 +1,18 @@
-# Compat coverage for postgresql_privs (shipped in 0.9.44): only the
-# common object types this codebase implements - table (with grant
-# revoked, grant_option granted then revoked leaving the underlying
-# privilege intact), schema, and database - are exercised here.
+# Compat coverage for postgresql_privs (shipped in 0.9.44; language/
+# tablespace/type/ALL_IN_SCHEMA/fail_on_role added in 0.9.54): the object
+# types this codebase implements - table (with grant revoked,
+# grant_option granted then revoked leaving the underlying privilege
+# intact), schema, database, language, tablespace, and type - are
+# exercised here, plus ALL_IN_SCHEMA (table) and fail_on_role: false.
 # default_privs/foreign_data_wrapper/foreign_server/function/group/
-# language/tablespace/type/procedure/parameter are all real Ansible
-# `type:` choices this codebase doesn't implement (documented scope cut,
-# see plugins/postgresql_privs.cr), so aren't covered here either - this
-# playbook is deliberately scoped to prove the four implemented types
-# work, not to be a full postgresql_privs feature matrix.
+# procedure/parameter are all real Ansible `type:` choices this codebase
+# doesn't implement (documented scope cut, see
+# plugins/postgresql_privs.cr), so aren't covered here either - this
+# playbook is deliberately scoped to prove the implemented surface
+# works, not to be a full postgresql_privs feature matrix. session_role:
+# isn't covered here either - verified manually instead against a real
+# server (see the 0.9.54 ROADMAP entry), to avoid the extra role-
+# membership setup complexity in this already-multi-role playbook.
 #
 # The playbook starts its own throwaway PostgreSQL cluster inside the
 # container via the init.d script (no systemd in this image), the same
@@ -150,6 +155,94 @@
         login_db: "{{ login_db }}"
       register: grant_database
 
+    - name: grant USAGE on the plpgsql language
+      community.postgresql.postgresql_privs:
+        type: language
+        objs: plpgsql
+        privs: USAGE
+        roles: compatprivsrole
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: grant_language
+
+    - name: grant CREATE on the pg_default tablespace
+      community.postgresql.postgresql_privs:
+        type: tablespace
+        objs: pg_default
+        privs: CREATE
+        roles: compatprivsrole
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: grant_tablespace
+
+    - name: create a throwaway enum type
+      ansible.builtin.shell: |
+        PGPASSWORD=compatpass psql --host=127.0.0.1 --username=postgres --dbname={{ login_db }} \
+          -c "CREATE TYPE mood AS ENUM ('sad','ok','happy');"
+      changed_when: false
+
+    - name: grant USAGE on the mood type
+      community.postgresql.postgresql_privs:
+        type: type
+        objs: mood
+        privs: USAGE
+        roles: compatprivsrole
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: grant_type
+
+    - name: create a third table for ALL_IN_SCHEMA coverage
+      ansible.builtin.shell: |
+        PGPASSWORD=compatpass psql --host=127.0.0.1 --username=postgres --dbname={{ login_db }} \
+          -c "CREATE TABLE t3 (id int);"
+      changed_when: false
+
+    - name: grant SELECT on every table in the public schema
+      community.postgresql.postgresql_privs:
+        type: table
+        objs: ALL_IN_SCHEMA
+        schema: public
+        privs: SELECT
+        roles: compatprivsrole
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: grant_all_in_schema
+
+    - name: attempt a grant for a nonexistent role with fail_on_role false
+      community.postgresql.postgresql_privs:
+        type: table
+        objs: t3
+        privs: SELECT
+        roles: does_not_exist_role
+        fail_on_role: false
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: grant_missing_role_soft
+
+    - name: read back the mood type's ACL
+      ansible.builtin.shell: >-
+        PGPASSWORD=compatpass psql --host=127.0.0.1 --username=postgres --dbname={{ login_db }}
+        -tAc "SELECT typacl::text FROM pg_type WHERE typname = 'mood'"
+      register: mood_acl
+      changed_when: false
+
+    - name: read back t3's ACL (proves ALL_IN_SCHEMA covered it too)
+      ansible.builtin.shell: >-
+        PGPASSWORD=compatpass psql --host=127.0.0.1 --username=postgres --dbname={{ login_db }}
+        -tAc "SELECT relacl::text FROM pg_class WHERE relname = 't3'"
+      register: t3_acl
+      changed_when: false
+
     - name: read back the final table ACLs
       ansible.builtin.shell: >-
         PGPASSWORD=compatpass psql --host=127.0.0.1 --username=postgres --dbname={{ login_db }}
@@ -167,6 +260,13 @@
           revoke_update={{ revoke_update.changed }}
           grant_schema={{ grant_schema.changed }}
           grant_database={{ grant_database.changed }}
+          grant_language={{ grant_language.changed }}
+          grant_tablespace={{ grant_tablespace.changed }}
+          grant_type={{ grant_type.changed }}
+          grant_all_in_schema={{ grant_all_in_schema.changed }}
+          grant_missing_role_soft={{ grant_missing_role_soft.changed }}
+          mood_acl={{ mood_acl.stdout }}
+          t3_acl={{ t3_acl.stdout }}
           final_table_acls={{ final_table_acls.stdout }}
         dest: /work/results.txt
 

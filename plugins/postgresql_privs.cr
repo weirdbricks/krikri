@@ -19,18 +19,28 @@ module CrystalPlay
   # - this plugin follows the same split.
   #
   # Supported parameters:
-  # - type: `table` (default) / `sequence` / `schema` / `database` - real
-  #   Ansible's own module also supports `default_privs`/
-  #   `foreign_data_wrapper`/`foreign_server`/`function`/`group`/
-  #   `language`/`tablespace`/`type`/`procedure`/`parameter`; only the
-  #   four most commonly used in real playbooks are implemented here, a
-  #   documented scope cut (see below), not an oversight.
+  # - type: `table` (default) / `sequence` / `schema` / `database` /
+  #   `language` / `tablespace` / `type` - real Ansible's own module also
+  #   supports `default_privs`/`foreign_data_wrapper`/`foreign_server`/
+  #   `function`/`group`/`procedure`/`parameter`; those remaining ones
+  #   are a documented scope cut (see below), not an oversight - `group`
+  #   is a fundamentally different SQL construct (role membership, not an
+  #   ACL grant at all), `default_privs` operates on `pg_default_acl`
+  #   (future objects, not existing ones - a different mechanism
+  #   entirely, not just another object type), and `function`/`procedure`
+  #   need signature-aware `objs:` parsing (`name(arg_types)`) this
+  #   plugin doesn't implement.
   # - objs: comma-separated list of object names `type` applies to
-  #   (required for `table`/`sequence`/`schema`; for `database`, defaults
-  #   to the connected database itself when omitted, matching real
-  #   Ansible's own behavior - GRANT ON DATABASE almost always targets
-  #   "whichever database this connection is for"). `ALL_IN_SCHEMA` isn't
-  #   implemented - a documented scope cut.
+  #   (required for `table`/`sequence`/`schema`/`language`/`tablespace`/
+  #   `type`; for `database`, defaults to the connected database itself
+  #   when omitted, matching real Ansible's own behavior - GRANT ON
+  #   DATABASE almost always targets "whichever database this connection
+  #   is for"). The literal value `ALL_IN_SCHEMA` is supported for
+  #   `table`/`sequence` only (real Ansible also allows it for
+  #   `function`/`procedure`, not implemented here per above) - expands
+  #   to every table/sequence currently in `schema:`, queried fresh each
+  #   run (verified against real Ansible's own `relkind in ('r', 'v',
+  #   'm', 'p', 'f')` filter for tables).
   # - privs: comma-separated list of privilege names, or `ALL`/
   #   `ALL PRIVILEGES` (expands per `type` - see
   #   `PluginHelpers::PostgresqlAcl.all_privs`)
@@ -42,8 +52,26 @@ module CrystalPlay
   #   documented way to revoke just the grant option while keeping the
   #   privilege itself: `state: present` + `grant_option: false`) - when
   #   omitted, grant option is left untouched either way.
-  # - schema: schema containing `objs` for `table:`/`sequence:` (default
-  #   `"public"`, matching real Ansible's own default)
+  # - schema: schema containing `objs` for `table:`/`sequence:`/`type:`
+  #   (default `"public"`, matching real Ansible's own default) -
+  #   `language:`/`tablespace:` aren't schema-qualified at all in real
+  #   PostgreSQL (cluster-wide objects), matching real Ansible's own
+  #   `obj_ids` construction.
+  # - session_role: `SET ROLE "role"` immediately after connecting,
+  #   before anything else - the specified role must already be one
+  #   `login_user:` is a member of (a plain PostgreSQL server-side error
+  #   otherwise, surfaced via this plugin's existing `PQError` rescue,
+  #   not a custom message the way real Ansible's own
+  #   `"Could not switch to role %s"` is - a minor scope cut, not a
+  #   behavior difference in what actually happens).
+  # - fail_on_role: bool, default `true` - when a role in `roles:`
+  #   doesn't exist (checked via `pg_roles`, `PUBLIC` always considered
+  #   to exist), `true` fails the whole task immediately (matching real
+  #   Ansible's own default); `false` skips just that role and continues
+  #   with whichever others do exist, same as real Ansible's own
+  #   `module.warn(...)` + continue behavior. If none of the requested
+  #   roles exist, `changed: false` with no error, matching real
+  #   Ansible's own "nothing to do" exit.
   # - login_host (default "localhost"), login_port (default 5432),
   #   login_user (default "postgres"), login_password,
   #   login_unix_socket, login_db (database to connect to - default
@@ -65,22 +93,28 @@ module CrystalPlay
   # membership either).
   #
   # Not implemented: `type: default_privs`/`foreign_data_wrapper`/
-  # `foreign_server`/`function`/`group`/`language`/`tablespace`/`type`/
-  # `procedure`/`parameter`, `ALL_IN_SCHEMA`, `target_roles:`,
-  # `session_role:`, `fail_on_role:`, `trust_input:` (this plugin always
-  # quotes identifiers itself instead), the granular `ssl_*` params (not
-  # supported by any plugin in this codebase - `login_*` only).
+  # `foreign_server`/`function`/`group`/`procedure`/`parameter`,
+  # `ALL_IN_SCHEMA` for `function`/`procedure` (not implemented at all,
+  # per above), `target_roles:` (only meaningful for `default_privs`),
+  # `trust_input:` (this plugin always quotes identifiers itself
+  # instead), the granular `ssl_*` params (not supported by any plugin in
+  # this codebase - `login_*` only).
   class PostgresqlPrivsPlugin < BasePlugin
-    TYPES_WITH_SCHEMA = {"table", "sequence"}
+    TYPES_WITH_SCHEMA   = {"table", "sequence", "type"}
+    ALL_IN_SCHEMA_TYPES = {"table", "sequence"}
 
     # Every parameter #execute needs, once parsed and validated -
     # bundling them lets #resolve_params! raise on the first problem it
     # finds and #execute stay a single begin/rescue instead of a chain of
     # `if error ... return` guards (ameba's cyclomatic-complexity budget).
+    # objs/roles_raw are only partly resolved here: `all_in_schema:`
+    # objs (queried live) and role existence (checked against
+    # `pg_roles`) both need an open DB connection, so that final
+    # resolution happens in #execute after connecting, not here.
     record ResolvedParams,
-      type : String, state : String, privs : Array(String), roles : Array(String),
-      objs : Array(String), schema : String, login_db : String,
-      check_mode : Bool, grant_option : Bool?
+      type : String, state : String, privs : Array(String), roles_raw : Array(String),
+      objs : Array(String), all_in_schema : Bool, schema : String, login_db : String,
+      check_mode : Bool, grant_option : Bool?, session_role : String?, fail_on_role : Bool
 
     def execute : PluginResult
       begin
@@ -99,8 +133,11 @@ module CrystalPlay
       )
 
       DB.open(uri) do |database|
-        changed = apply_all_grants(database, p.type, p.objs, p.schema, p.roles, p.privs, p.state, p.grant_option, p.check_mode)
-        PluginResult.new(changed: changed, failed: false, msg: changed ? "Privileges updated" : "Privileges already up to date")
+        if session_role = p.session_role
+          database.exec %(SET ROLE "#{session_role.gsub('"', "\"\"")}")
+        end
+
+        run_grants(database, p)
       end
     rescue ex : DB::ConnectionRefused
       PluginResult.new(changed: false, failed: true, msg: "Could not connect to the PostgreSQL server: #{ex.message}")
@@ -108,12 +145,30 @@ module CrystalPlay
       PluginResult.new(changed: false, failed: true, msg: "PostgreSQL error: #{ex.message}")
     end
 
+    # Resolves objs/roles against the live DB (needed for
+    # all_in_schema:/role-existence, see ResolvedParams' own doc comment)
+    # and applies the grants - split out of #execute to keep its own
+    # branch count down (ameba's cyclomatic-complexity budget).
+    private def run_grants(database : DB::Database, p : ResolvedParams) : PluginResult
+      objs = p.all_in_schema ? all_objs_in_schema(database, p.type, p.schema) : p.objs
+      roles = begin
+        resolve_roles!(database, p.roles_raw, p.fail_on_role)
+      rescue ex
+        return PluginResult.new(changed: false, failed: true, msg: ex.message || "invalid role")
+      end
+      return PluginResult.new(changed: false, failed: false, msg: "No valid roles provided, nothing to do") if roles.empty?
+
+      changed = apply_all_grants(database, p.type, objs, p.schema, roles, p.privs, p.state, p.grant_option, p.check_mode)
+      PluginResult.new(changed: changed, failed: false, msg: changed ? "Privileges updated" : "Privileges already up to date")
+    end
+
     # Parses and validates every parameter, raising with a clear message
     # on the first problem found (caught by #execute).
     private def resolve_params! : ResolvedParams
       type = @params["type"]? || "table"
       state = @params["state"]? || "present"
-      raise "type must be one of table, sequence, schema, database, got '#{type}'" unless PluginHelpers::PostgresqlAcl::PRIV_LETTERS.has_key?(type)
+      valid_types = PluginHelpers::PostgresqlAcl::PRIV_LETTERS.keys
+      raise "type must be one of #{valid_types.join(", ")}, got '#{type}'" unless valid_types.includes?(type)
       raise "state must be 'present' or 'absent', got '#{state}'" unless state == "present" || state == "absent"
 
       privs_param = @params["privs"]?
@@ -122,32 +177,43 @@ module CrystalPlay
 
       login_db = @params["login_db"]? || "postgres"
       schema = @params["schema"]? || "public"
-      roles = roles_param.split(',').map(&.strip).reject(&.empty?)
+      roles_raw = roles_param.split(',').map(&.strip).reject(&.empty?)
       privs = PluginHelpers::PostgresqlAcl.resolve_privs(type, privs_param)
-      objs = resolve_objs!(type, login_db)
-      validate_identifiers!(schema, objs, roles)
+      objs, all_in_schema = resolve_objs!(type, login_db)
+      validate_identifiers!(schema, objs, roles_raw)
 
       ResolvedParams.new(
-        type: type, state: state, privs: privs, roles: roles, objs: objs, schema: schema, login_db: login_db,
-        check_mode: is_true?(@params["check_mode"]?), grant_option: @params["grant_option"]?.try { |v| is_true?(v) },
+        type: type, state: state, privs: privs, roles_raw: roles_raw, objs: objs, all_in_schema: all_in_schema,
+        schema: schema, login_db: login_db, check_mode: is_true?(@params["check_mode"]?),
+        grant_option: @params["grant_option"]?.try { |v| is_true?(v) },
+        session_role: @params["session_role"]?, fail_on_role: is_true?(@params["fail_on_role"]?, default: true),
       )
     end
 
-    # objs: is required for table/sequence/schema; for database, it
-    # defaults to the connected database itself when omitted (see the
-    # class doc above for why). Raises (caught alongside
-    # PostgresqlAcl.resolve_privs's own errors in #execute) rather than
-    # returning nil, so the caller doesn't need an extra nil-check
-    # branch just to get Array(String) instead of Array(String)?.
-    private def resolve_objs!(type : String, login_db : String) : Array(String)
-      objs = if raw = @params["objs"]?
-               raw.split(',').map(&.strip).reject(&.empty?)
+    # objs: is required for table/sequence/schema/language/tablespace/
+    # type; for database, it defaults to the connected database itself
+    # when omitted (see the class doc above for why). `ALL_IN_SCHEMA`
+    # (table/sequence only) is returned as `all_in_schema: true` with an
+    # empty objs list - resolved live against the DB in #execute, not
+    # here. Raises (caught alongside PostgresqlAcl.resolve_privs's own
+    # errors in #execute) rather than returning nil, so the caller
+    # doesn't need an extra nil-check branch just to get Array(String)
+    # instead of Array(String)?.
+    private def resolve_objs!(type : String, login_db : String) : {Array(String), Bool}
+      objs_param = @params["objs"]?
+      if objs_param == "ALL_IN_SCHEMA"
+        raise "objs: ALL_IN_SCHEMA can only be used for type: table or sequence, got '#{type}'" unless ALL_IN_SCHEMA_TYPES.includes?(type)
+        return {[] of String, true}
+      end
+
+      objs = if objs_param
+               objs_param.split(',').map(&.strip).reject(&.empty?)
              elsif type == "database"
                [login_db]
              end
 
       raise "objs is required for type '#{type}'" if objs.nil? || objs.empty?
-      objs
+      {objs, false}
     end
 
     private def validate_identifiers!(schema : String, objs : Array(String), roles : Array(String))
@@ -156,6 +222,40 @@ module CrystalPlay
               roles.all? { |role| role == "PUBLIC" || identifier_safe?(role) }
 
       raise "objs/roles/schema may only contain letters, digits, and underscores" unless valid
+    end
+
+    # Queries every table/sequence currently in schema, fresh each run -
+    # real Ansible's own ALL_IN_SCHEMA behavior (dynamic membership, not
+    # a fixed list captured once). relkind filter for tables matches real
+    # Ansible's own query exactly (r/v/m/p/f - ordinary/view/materialized
+    # view/partitioned/foreign tables), not just 'r'.
+    private def all_objs_in_schema(db : DB::Database, type : String, schema : String) : Array(String)
+      relkinds = type == "table" ? "'r', 'v', 'm', 'p', 'f'" : "'S'"
+      db.query_all <<-SQL, schema, as: String
+        SELECT c.relname FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = $1 AND c.relkind IN (#{relkinds})
+        ORDER BY c.relname
+      SQL
+    end
+
+    # Checks each requested role against pg_roles (PUBLIC always exists,
+    # matching real Ansible's own is_implicit_role short-circuit).
+    # fail_on_role: true raises immediately on the first missing role
+    # (caught by #execute's own rescue right at the call site);
+    # fail_on_role: false skips just that role and continues - #execute
+    # treats an empty result as "nothing to do", matching real Ansible's
+    # own behavior exactly.
+    private def resolve_roles!(db : DB::Database, roles_raw : Array(String), fail_on_role : Bool) : Array(String)
+      roles_raw.select do |role|
+        next true if role == "PUBLIC"
+
+        exists = db.query_one? "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = $1", role, as: Int32?
+        next true if exists
+
+        raise "Role '#{role}' does not exist" if fail_on_role
+        false
+      end
     end
 
     # Loops every (obj, role) pair, computing and applying each one's own
@@ -252,11 +352,14 @@ module CrystalPlay
 
     private def object_kind(type : String) : String
       case type
-      when "table"    then "TABLE"
-      when "sequence" then "SEQUENCE"
-      when "schema"   then "SCHEMA"
-      when "database" then "DATABASE"
-      else                 raise "unsupported type: #{type}"
+      when "table"      then "TABLE"
+      when "sequence"   then "SEQUENCE"
+      when "schema"     then "SCHEMA"
+      when "database"   then "DATABASE"
+      when "language"   then "LANGUAGE"
+      when "tablespace" then "TABLESPACE"
+      when "type"       then "TYPE"
+      else                   raise "unsupported type: #{type}"
       end
     end
 
@@ -288,6 +391,16 @@ module CrystalPlay
         db.query_one? "SELECT nspacl::text FROM pg_namespace WHERE nspname = $1", obj, as: String?
       when "database"
         db.query_one? "SELECT datacl::text FROM pg_database WHERE datname = $1", obj, as: String?
+      when "language"
+        db.query_one? "SELECT lanacl::text FROM pg_language WHERE lanname = $1", obj, as: String?
+      when "tablespace"
+        db.query_one? "SELECT spcacl::text FROM pg_tablespace WHERE spcname = $1", obj, as: String?
+      when "type"
+        db.query_one? <<-SQL, schema, obj, as: String?
+          SELECT t.typacl::text FROM pg_type t
+          JOIN pg_namespace n ON n.oid = t.typnamespace
+          WHERE n.nspname = $1 AND t.typname = $2
+        SQL
       else
         raise "unsupported type: #{type}"
       end

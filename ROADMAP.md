@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.53`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.54`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -29,9 +29,11 @@ expansion plus a real `baseurl:`/`gpgkey:` multi-value list-join bug fix
 `connected:`/`appends:` (`0.9.51`, along with a real engine-level bug fix
 to how list-of-dict module params get encoded - see that entry), and
 `mysql_db`'s `.zst` compression plus `postgresql_db`'s `.tar`/`.pgc`/
-`.dir` `pg_restore`-based formats (`0.9.52`), and `mysql_db`'s
-`config_file:`/`name: all`/remaining `mysqldump` tuning knobs (`0.9.53`)
-- see "Also still open" near the end of
+`.dir` `pg_restore`-based formats (`0.9.52`), `mysql_db`'s
+`config_file:`/`name: all`/remaining `mysqldump` tuning knobs (`0.9.53`),
+and `postgresql_privs`' `type: language`/`tablespace`/`type`,
+`ALL_IN_SCHEMA`, `session_role:`, and `fail_on_role:` (`0.9.54`) - see
+"Also still open" near the end of
 Phase 5 for what's left and the running list of what's already been
 closed past that point. All 715 specs pass in an environment with
 `mysql`/`mysqldump`/`psql`/`pg_dump`/`pg_restore` client binaries on
@@ -2624,15 +2626,87 @@ compat playbook's own task wouldn't have suggested was there).
     exceptions without live client binaries/servers on `PATH`, both pass
     for real with them present, same as the `0.9.52` entry above).
 
+- [x] `postgresql_privs`' `type: language`/`tablespace`/`type`,
+  `ALL_IN_SCHEMA`, `session_role:`, and `fail_on_role:` (`0.9.54`):
+  - `type: language`/`tablespace`/`type` reuse the exact same
+    ACL-parsing architecture as the four types shipped in `0.9.44`
+    (`PostgresqlAcl`'s `PRIV_LETTERS`/`all_privs`, now with `language` =>
+    `USAGE`/`'U'`, `tablespace` => `CREATE`/`'C'`, `type` => `USAGE`/`'U'`
+    - verified against a real PostgreSQL 17 server's actual
+    `lanacl`/`spcacl`/`typacl` output, not assumed from docs) - new
+    `fetch_acl`/`object_kind` cases reading `pg_language.lanacl`/
+    `pg_tablespace.spcacl`/`pg_type.typacl` (`type` joined against
+    `pg_namespace` for schema-qualification, matching real Ansible's own
+    `obj_ids` construction; `language`/`tablespace` are cluster-wide, not
+    schema-qualified at all, also matching real Ansible).
+  - `ALL_IN_SCHEMA` (`table`/`sequence` only - real Ansible also allows
+    it for `function`/`procedure`, still not implemented here) queries
+    every table/sequence currently in `schema:` fresh each run via
+    `pg_class`/`pg_namespace`, not a fixed list captured once - the
+    `relkind IN ('r','v','m','p','f')` filter for tables matches real
+    Ansible's own query exactly (ordinary/view/materialized view/
+    partitioned/foreign tables, not just plain `'r'` tables).
+  - `session_role:` issues `SET ROLE "role"` immediately after
+    connecting, before anything else - a plain PostgreSQL server-side
+    error (not real Ansible's own custom `"Could not switch to role"`
+    message) surfaces via this plugin's existing `PQError` rescue if the
+    switch fails, a minor scope cut in error-message wording only, not
+    in what actually happens.
+  - `fail_on_role:` (default `true`, matching real Ansible) checks each
+    requested role against `pg_roles` before granting anything (`PUBLIC`
+    always considered to exist, matching real Ansible's own
+    `is_implicit_role` short-circuit) - `true` fails the whole task
+    immediately on the first missing role; `false` skips just that role
+    and continues with whichever others do exist; if none exist,
+    `changed: false` with no error ("No valid roles provided, nothing to
+    do"), matching real Ansible's own exit behavior exactly, not a
+    generic PostgreSQL "role does not exist" GRANT failure the way it
+    would surface without this check at all.
+  - Resolving `ALL_IN_SCHEMA`'s objs and checking role existence both
+    need an open DB connection, unlike every other parameter this
+    plugin's own `resolve_params!` already validates before connecting -
+    `execute` was restructured so `ResolvedParams` carries an
+    `all_in_schema: Bool` sentinel and raw, unfiltered `roles_raw`
+    instead of a plain resolved `Array(String)` for both, with the
+    actual DB-dependent resolution (`all_objs_in_schema`/
+    `resolve_roles!`) happening in a new `run_grants` helper called
+    after `SET ROLE`/connecting - a real restructure, not just additive
+    code, needed to keep `#execute` under ameba's cyclomatic-complexity
+    budget once the DB-dependent branches were added.
+  - Verified against a real live PostgreSQL 17 server, not simulated:
+    granted `USAGE` on `plpgsql` (language), `CREATE` on `pg_default`
+    (tablespace), `USAGE` on a throwaway `mood` enum type (idempotent on
+    rerun), `ALL_IN_SCHEMA` `SELECT` across three tables (confirmed via
+    `pg_class.relacl` that all three, including one created *after* the
+    grant task was written, ended up covered), a `fail_on_role: false`
+    grant for a nonexistent role (`changed: false`, no error), the
+    default `fail_on_role: true` behavior for the same
+    (`failed: true`, `"Role '...' does not exist"`), and `session_role:
+    postgres` (a no-op self-switch, confirming the mechanism doesn't
+    break anything). The identical sequence run through real
+    `ansible-playbook`'s own `community.postgresql.postgresql_privs`
+    (via the same throwaway venv used for the `0.9.52`/`0.9.53`
+    verification) against the same server produced identical
+    `changed:`/`failed:` results and an identical final ACL dump.
+  - `compat/playbooks/38-postgresql-privs.yml` extended with
+    `language:`/`tablespace:`/`type:`/`ALL_IN_SCHEMA`/`fail_on_role:
+    false` coverage - full compat harness run confirms it end to end
+    (`session_role:` intentionally left out of the harness playbook to
+    avoid extra role-membership setup complexity in an already
+    multi-role playbook - verified manually instead, per above).
+  - `crystal spec`/`ameba` both clean (715 examples, same 2 pre-existing
+    DB-client-dependent failures as always, unrelated to this).
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**
 
-- `postgresql_privs` (`0.9.44`): `type: default_privs`/
-  `foreign_data_wrapper`/`foreign_server`/`function`/`group`/`language`/
-  `tablespace`/`type`/`procedure`/`parameter` (only `table`/`sequence`/
-  `schema`/`database` implemented), `ALL_IN_SCHEMA`, `target_roles:`,
-  `session_role:`, `fail_on_role:`.
+- `postgresql_privs` (`0.9.54`): `type: default_privs`/
+  `foreign_data_wrapper`/`foreign_server`/`function`/`group`/`procedure`/
+  `parameter` (only `table`/`sequence`/`schema`/`database`/`language`/
+  `tablespace`/`type` implemented), `ALL_IN_SCHEMA` for `function`/
+  `procedure` (not implemented at all, per above), `target_roles:` (only
+  meaningful for `default_privs`).
 - `docker_*` (`0.9.51`): no TLS options for connecting to a remote Docker
   daemon (`tls:`/`tls_verify:`/`tls_hostname:`/`cacert_path:`/
   `cert_path:`/`key_path:`) - `docr`'s own `Client` is hardwired to a
