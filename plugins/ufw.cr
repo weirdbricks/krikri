@@ -34,10 +34,16 @@ module CrystalPlay
   # behavior has not been confirmed against a real, working ufw
   # installation the way every other plugin in this codebase has been.
   #
-  # Not implemented: `insert_relative_to` values other than the default
-  # `zero` (first-ipv4/last-ipv4/first-ipv6/last-ipv6 need to parse
-  # `ufw status numbered` first, which needs working netfilter access to
-  # verify at all).
+  # `insert_relative_to` (`zero` default / `first-ipv4` / `last-ipv4` /
+  # `first-ipv6` / `last-ipv6`) resolves the actual `ufw insert NUM`
+  # position by first running `ufw status numbered` and parsing it - see
+  # `PluginHelpers::UfwCommand.resolve_insert`, which reproduces
+  # community.general's own rule-number arithmetic (including its
+  # no-rules-yet fallback positions and its
+  # insert-past-the-end-means-append-instead behavior) field-for-field
+  # from source. Like the rest of this plugin, the arithmetic itself is
+  # source-verified but not further behavior-verified end-to-end (see the
+  # netfilter-access note above).
   class UfwPlugin < BasePlugin
     def execute : PluginResult
       if state = @params["state"]?
@@ -85,11 +91,35 @@ module CrystalPlay
 
     private def run_rule : PluginResult
       check_mode = is_true?(@params["check_mode"]?)
-      cmd = PluginHelpers::UfwCommand.rule_command(@params, dry_run: check_mode)
+      cmd = PluginHelpers::UfwCommand.rule_command(resolved_insert_params, dry_run: check_mode)
 
       result = remote_exec(cmd)
       changed = PluginHelpers::UfwCommand.changed_from_output?(result[:stdout])
       PluginResult.new(changed: changed, failed: result[:exit_code] != 0, msg: result[:stdout])
+    end
+
+    # `insert_relative_to:` other than the default `zero` needs to query
+    # `ufw status numbered` before the rule command can even be built -
+    # `zero` (by far the common case) needs no query at all. Returns a
+    # copy of @params with `insert` replaced by the resolved absolute
+    # position, or removed entirely if that position would fall past the
+    # last existing rule (real Ansible's own "just append, no insert
+    # flag" fallback for that case).
+    private def resolved_insert_params : Hash(String, String)
+      insert = @params["insert"]?.try(&.to_i?)
+      relative_to = @params["insert_relative_to"]? || "zero"
+      return @params unless insert && relative_to != "zero"
+
+      status = remote_exec("ufw status numbered")
+      resolved = PluginHelpers::UfwCommand.resolve_insert(insert, relative_to, status[:stdout])
+
+      params = @params.dup
+      if resolved
+        params["insert"] = resolved.to_s
+      else
+        params.delete("insert")
+      end
+      params
     end
   end
 end

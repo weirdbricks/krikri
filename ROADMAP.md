@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.38`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.39`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -12,9 +12,10 @@ overlap (`0.9.35`) - only the Jinja2 filter-chaining gap remains open (see
 the note near the end of Phase 5; it needs a real architectural change, not
 a quick add). Work is also underway on the per-plugin scope-cut grab-bag:
 `stat`'s `get_mime`/`get_attributes` (`0.9.36`), `find`'s
-`age`/`age_stamp`/`contains`/`read_whole_file` (`0.9.37`), and `archive`'s
-`exclude_path` (`0.9.38`) have all shipped. 628/630 specs pass (the 2
-exceptions need a live MySQL/PostgreSQL
+`age`/`age_stamp`/`contains`/`read_whole_file` (`0.9.37`), `archive`'s
+`exclude_path` (`0.9.38`), and `ufw`'s `insert_relative_to` (`0.9.39`) have
+all shipped. 636/638 specs pass (the 2 exceptions need a live
+MySQL/PostgreSQL
 server at
 `127.0.0.1:13306`/`15432`), `ameba` clean on all
 new/touched code. A
@@ -797,14 +798,33 @@ the same way it did between January and now.
     `check_mode` through the fstab-writing path too, with a regression
     test (`spec/integration/mount_spec.cr`) asserting the file is
     byte-for-byte untouched in check mode.
-- [x] `ufw` (`0.9.5`): manages the Uncomplicated Firewall. Registered as
-  `community.general.ufw`, not `ansible.builtin.ufw` - verified via
-  `ansible-doc ufw`. Parameters: `state` (`enabled`/`disabled`/
-  `reloaded`/`reset`), `logging`, `default` (+ `direction`), `rule`
-  (`allow`/`deny`/`reject`/`limit`) plus `direction`/`interface`/
-  `interface_in`/`interface_out`/`log`/`from_ip`/`from_port`/`to_ip`/
-  `to_port`/`proto`/`name` (app profile)/`comment`/`delete`/`insert`/
-  `route`, `check_mode`. Command shape (the "long format":
+- [x] `ufw` (`0.9.5`; `insert_relative_to` added in `0.9.39`): manages the
+  Uncomplicated Firewall. Registered as `community.general.ufw`, not
+  `ansible.builtin.ufw` - verified via `ansible-doc ufw`. Parameters:
+  `state` (`enabled`/`disabled`/`reloaded`/`reset`), `logging`, `default`
+  (+ `direction`), `rule` (`allow`/`deny`/`reject`/`limit`) plus
+  `direction`/`interface`/`interface_in`/`interface_out`/`log`/`from_ip`/
+  `from_port`/`to_ip`/`to_port`/`proto`/`name` (app profile)/`comment`/
+  `delete`/`insert`/`insert_relative_to` (`zero` default/`first-ipv4`/
+  `last-ipv4`/`first-ipv6`/`last-ipv6`)/`route`, `check_mode`. A non-`zero`
+  `insert_relative_to:` needs the *actual* rule-number arithmetic, not
+  just a command-shape template like every other parameter here: it first
+  runs `ufw status numbered` and parses it (`^\[\s*(\d+)\]\s` per line,
+  `(v6)` marking an IPv6 rule), then resolves `insert:` to an absolute
+  position via the exact same computation as community.general's own
+  source (including its "no ipv4/ipv6 rules yet" fallback positions and
+  its insert-past-the-last-rule-means-just-append-instead behavior,
+  since real `ufw` itself rejects an insert number larger than the
+  maximum rule number) - copied field-for-field from `ufw.py`, not
+  derived from the docs' prose, and cross-checked against a direct Python
+  re-implementation of that same source for 9 inputs covering all four
+  non-`zero` values, an empty ruleset, and the past-the-end case, not
+  just eyeballed. Lives in `PluginHelpers::UfwCommand.resolve_insert`
+  (unit tested, `spec/unit/ufw_command_spec.cr`'s own describe block),
+  with the plugin resolving it once via `remote_exec("ufw status
+  numbered")` before building the rule command, only when
+  `insert_relative_to:` isn't the (common, no-query-needed) `zero`
+  default. Command shape (the "long format":
   `ufw [--dry-run] [route] [delete | insert NUM]
   allow|deny|reject|limit [in|out on INTERFACE] [log] [from ADDRESS
   [port PORT]] [to ADDRESS [port PORT]] [proto protocol] [app
@@ -1735,11 +1755,11 @@ compat playbook's own task wouldn't have suggested was there).
 
 **Also still open (lower priority - see each shipping plugin's class doc for the
 exact "not implemented" list):** the documented per-plugin scope cuts (e.g.
-`ufw` `insert_relative_to`, `mysql_db`/`postgresql_db` `state: dump/import`,
-`postgresql_user` grants / `postgresql_privs`, `docker_*`
-`networks`/`connected:`/tls - `stat`'s own `get_mime`/`get_attributes`,
-`find`'s own `age`/`contains`, and `archive`'s own `exclude_path` cuts are
-now closed, see their entries above), and the remaining cross-cutting
+`mysql_db`/`postgresql_db` `state: dump/import`, `postgresql_user` grants /
+`postgresql_privs`, `docker_*` `networks`/`connected:`/tls - `stat`'s own
+`get_mime`/`get_attributes`, `find`'s own `age`/`contains`, `archive`'s own
+`exclude_path`, and `ufw`'s own `insert_relative_to` cuts are now closed,
+see their entries above), and the remaining cross-cutting
 engine gap: missing Jinja2 filters such as `map(attribute=...)` and `sort`
 (a real, separate limitation from dotted-variable access below - the
 `{{ }}`-wrapped filter pipeline only ever splits on the *first* `|`, so even

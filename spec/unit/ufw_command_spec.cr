@@ -76,4 +76,56 @@ describe CrystalPlay::PluginHelpers::UfwCommand do
       CrystalPlay::PluginHelpers::UfwCommand.changed_from_output?("Rule added").should be_true
     end
   end
+
+  describe ".resolve_insert" do
+    # 3 IPv4 rules (1-3) + 2 IPv6 rules (4-5), the same shape real `ufw
+    # status numbered` produces - each expectation below was cross-checked
+    # against a direct Python re-implementation of community.general's own
+    # ufw.py resolution algorithm (read from its actual source, not
+    # guessed) for the exact same inputs, not derived from the docs' prose.
+    numbered_status = <<-STATUS
+      Status: active
+
+           To                         Action      From
+           --                         ------      ----
+      [ 1] 22/tcp                     ALLOW IN    Anywhere
+      [ 2] 80/tcp                     ALLOW IN    Anywhere
+      [ 3] 443/tcp                    ALLOW IN    Anywhere
+      [ 4] 22/tcp (v6)                ALLOW IN    Anywhere (v6)
+      [ 5] 80/tcp (v6)                ALLOW IN    Anywhere (v6)
+      STATUS
+
+    it "passes insert through unchanged for the default 'zero'" do
+      CrystalPlay::PluginHelpers::UfwCommand.resolve_insert(3, "zero", numbered_status).should eq(3)
+    end
+
+    it "resolves relative to the first ipv4 rule" do
+      CrystalPlay::PluginHelpers::UfwCommand.resolve_insert(0, "first-ipv4", numbered_status).should eq(1)
+    end
+
+    it "resolves relative to the last ipv4 rule (the roadmap's own doc example: -1 is the third-to-last ipv4 rule)" do
+      CrystalPlay::PluginHelpers::UfwCommand.resolve_insert(-1, "last-ipv4", numbered_status).should eq(2)
+    end
+
+    it "resolves relative to the first ipv6 rule" do
+      CrystalPlay::PluginHelpers::UfwCommand.resolve_insert(0, "first-ipv6", numbered_status).should eq(4)
+    end
+
+    it "resolves relative to the last ipv6 rule" do
+      CrystalPlay::PluginHelpers::UfwCommand.resolve_insert(0, "last-ipv6", numbered_status).should eq(5)
+    end
+
+    it "returns nil when the resolved position would fall past the last existing rule" do
+      CrystalPlay::PluginHelpers::UfwCommand.resolve_insert(1, "last-ipv6", numbered_status).should be_nil
+    end
+
+    it "falls back to position 1 for first-ipv4/last-ipv4 when there are no rules yet" do
+      CrystalPlay::PluginHelpers::UfwCommand.resolve_insert(0, "first-ipv4", "").should be_nil
+      CrystalPlay::PluginHelpers::UfwCommand.resolve_insert(0, "last-ipv4", "").should be_nil
+    end
+
+    it "resolves relative to an empty ruleset for first-ipv6 (no ipv4 rules means relative_to is 1)" do
+      CrystalPlay::PluginHelpers::UfwCommand.resolve_insert(-1, "first-ipv6", "").should eq(0)
+    end
+  end
 end

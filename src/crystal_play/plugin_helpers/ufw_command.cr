@@ -101,6 +101,53 @@ module CrystalPlay
       def self.changed_from_output?(output : String) : Bool
         !output.includes?("Skipping")
       end
+
+      # Resolves `insert:`/`insert_relative_to:` into the actual absolute
+      # `ufw insert NUM` position, given `ufw status numbered`'s own
+      # output. `zero` (the default) is a pure passthrough - the caller
+      # only needs this for the other four values. Algorithm (including
+      # the "no ipv4/ipv6 rules yet" fallback positions and the
+      # insert-past-the-end-means-no-insert-flag-at-all case) copied
+      # field-for-field from community.general's actual ufw.py source,
+      # not derived from the docs' prose - it's the one piece of this
+      # plugin dense enough that reproducing it from the English
+      # description alone would very likely have drifted from the real
+      # rule-number arithmetic.
+      #
+      # Returns nil if the resolved position would fall past the last
+      # existing rule - real ufw rejects an insert number larger than the
+      # maximum rule number, so real Ansible drops the `insert` flag
+      # entirely in that case (the rule is just appended normally)
+      # instead of sending a command ufw would refuse.
+      def self.resolve_insert(insert : Int32, relative_to_cmd : String, numbered_status : String) : Int32?
+        return insert if relative_to_cmd == "zero"
+
+        lines = numbered_lines(numbered_status)
+        last_number = lines.max_of?(&.[0]) || 0
+        insert_to = insert + relative_to(relative_to_cmd, lines, last_number)
+        insert_to > last_number ? nil : insert_to
+      end
+
+      private def self.numbered_lines(numbered_status : String) : Array({Int32, Bool})
+        line_re = /^\[\s*(\d+)\]\s/
+        numbered_status.lines.compact_map do |line|
+          next unless match = line.match(line_re)
+          {match[1].to_i, line.includes?("(v6)")}
+        end
+      end
+
+      private def self.relative_to(relative_to_cmd : String, lines : Array({Int32, Bool}), last_number : Int32) : Int32
+        max_ipv4 = lines.select { |(_, ipv6)| !ipv6 }.max_of?(&.[0])
+        has_ipv6 = lines.any? { |(_, ipv6)| ipv6 }
+
+        case relative_to_cmd
+        when "first-ipv4" then 1
+        when "last-ipv4"  then max_ipv4 || 1
+        when "first-ipv6" then max_ipv4 ? max_ipv4 + 1 : 1
+        when "last-ipv6"  then has_ipv6 ? last_number : last_number + 1
+        else                   0
+        end
+      end
     end
   end
 end
