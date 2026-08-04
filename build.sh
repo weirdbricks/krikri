@@ -182,6 +182,7 @@ PLUGINS=(
     "package"
     "debug"
     "facts"
+    "set_fact"
     "user"
     "group"
     "git"

@@ -248,6 +248,7 @@ module CrystalPlay
       "community.mysql.mysql_user",
       "community.postgresql.postgresql_db",
       "community.postgresql.postgresql_user",
+      "ansible.builtin.set_fact",
     ]
     
     # Parse playbook from file

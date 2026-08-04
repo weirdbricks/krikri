@@ -266,6 +266,21 @@ module CrystalPlay
       vars_context
     end
 
+    # Merge a task result's `ansible_facts` (if any) into the host's fact
+    # store, the same generic mechanism gather_facts_for_all_hosts already
+    # uses for the "facts" plugin's result - set_fact (and anything else
+    # that returns ansible_facts) rides this without any special-casing.
+    # build_vars_context applies @facts after every other tier, matching
+    # real Ansible's own high precedence for set_fact.
+    private def merge_ansible_facts(host : Host, result : JSON::Any)
+      return unless ansible_facts = result["ansible_facts"]?
+      return unless facts_hash = ansible_facts.as_h?
+
+      facts_hash.each do |key, value|
+        @facts[host.name][key] = value
+      end
+    end
+
     # Resolve with_fileglob patterns (if any) against the control host's
     # filesystem, after substituting any {{ vars }} in the pattern.
     private def resolve_fileglob(task : Task, host : Host, vars_context : Hash(String, JSON::Any)) : Array(JSON::Any)?
@@ -498,6 +513,8 @@ module CrystalPlay
 
     # Register / notify / display / update stats for a (non-looped) task result.
     private def finish_single_task(task : Task, host : Host, result : JSON::Any)
+      merge_ansible_facts(host, result)
+
       if register_name = task.register
         register_result(host, register_name, result) unless register_name.empty?
       end
@@ -539,6 +556,8 @@ module CrystalPlay
 
         result = execute_task_once(task, host, vars_context, item_label: item_display(item), exec_host: exec_host)
         next unless result
+
+        merge_ansible_facts(host, result)
 
         changed = result["changed"]?.try(&.as_bool) || false
         failed = result["failed"]?.try(&.as_bool) || false

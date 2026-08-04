@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-03 (currently at `0.9.23`):** **all of Phase 0, Phase 1,
+**Status as of 2026-08-03 (currently at `0.9.24`):** **all of Phase 0, Phase 1,
 Phase 2, Phase 3, and Phase 4 are done** - see the checkboxes in each phase
 section below (roles, import/include, vault, every Phase 3 plugin, and every
 Phase 4 advanced-execution feature). 514/516 specs pass (the 2 exceptions need
@@ -1256,19 +1256,34 @@ commit.
 Recommended order (by real-world frequency, descending): `get_url` + `set_fact`
 first, then `blockinfile`, `uri`, `assert`, `wait_for`, `fetch`, `pause`.
 
-- [ ] `set_fact` (action plugin, `ansible.builtin.set_fact`): sets arbitrary
-  variables for subsequent tasks on the same host. Parameters: any number of
-  `key=value` pairs (values templated), plus `cacheable:` (bool, default `no` -
-  whether to persist into the fact cache; safe to accept-and-ignore at first if
-  there is no fact-cache plugin). Runs entirely on the control node, never
-  `changed`, works in check mode (it only mutates in-memory vars). Implement as
-  a new action plugin registered in `ACTION_PLUGINS`, writing the keys into the
-  host's vars context (see how `register:` feeds vars, and `template.cr`'s
-  action plugin for the shape). Set_fact has high variable precedence in real
-  Ansible (it overrides most lower-precedence sources). Unit spec: parsing +
-  that the vars are visible to a subsequent `debug:`/`command:`. Compat: a
-  playbook that `set_fact`s a value then uses it in a later task's `when:`/
-  template.
+- [x] `set_fact` (`0.9.24`): sets arbitrary variables for subsequent tasks on
+  the same host. Parameters: any number of `key=value` pairs (values already
+  templated by `TaskExecutor` before any plugin sees them), plus `cacheable:`
+  (accepted and ignored - there's no fact-cache plugin here to persist into).
+  Implemented as a plain module (`plugins/set_fact.cr`), not an action plugin
+  as originally scoped in this entry: set_fact needs no controller-only
+  special-casing because it does nothing controller-specific - it just echoes
+  its own params back as `ansible_facts` (typed via best-effort bool/int/
+  float/string coercion, since every param arrives as a plain string), the
+  same result field the existing `facts` plugin already returns from
+  `gather_facts_for_all_hosts`. `TaskExecutor` gained a small generic
+  `merge_ansible_facts` step (called after every single and every looped task
+  execution, not just fact-gathering) that merges any task result's
+  `ansible_facts` into that host's fact store; `build_vars_context` already
+  applied `@facts` after every other variable tier, which gives set_fact the
+  high precedence real Ansible's own docs describe, with no extra precedence
+  logic needed. Never reports `changed`, and is safe under `--check` since it
+  never touches the filesystem or network. Registered in
+  `PlaybookParser::AVAILABLE_PLUGINS` and `build.sh`'s `PLUGINS` list like any
+  other module. Unit/integration tested
+  (`spec/integration/set_fact_spec.cr`: ansible_facts shape, bool/int/float/
+  string coercion, `cacheable:` not leaking through as a literal fact) and
+  via the CLI directly (`spec/integration/cli_spec.cr`'s dedicated
+  `test-set-fact-quick.yml` assertion: a later `debug:` sees a string and an
+  int fact, a `when:` gates on a bool fact, and a second `set_fact:` on the
+  same key overwrites it for a task afterward) - not yet verified against
+  real `ansible-playbook` via the compat harness (no
+  `compat/playbooks/27-set-fact.yml` added in this pass).
 - [ ] `assert` (action plugin, `ansible.builtin.assert`): fail (or pass) based
   on a list of conditions, for role pre-flight validation. Parameters: `that:`
   (required, list of condition expressions), `fail_msg:` (default "assertion

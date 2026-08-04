@@ -110,6 +110,16 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("SUCCESS: play task ran after role tasks")
   end
 
+  it "set_fact sets vars visible to later tasks (string/bool/int, when: gating, and overwrite)" do
+    status, output = run_playbook("test-set-fact-quick.yml")
+
+    status.success?.should be_true
+    output.should contain("greeting is hello from set_fact")
+    output.should contain("retry_count is 3")
+    output.should contain("is_ready gated task ran")
+    output.should contain("greeting is updated greeting")
+  end
+
   it "runs include_tasks: once per loop item with item: in scope, and skips the whole include (not per nested task) when its own when: is false" do
     status, output = run_playbook("test-include-tasks-quick.yml")
 

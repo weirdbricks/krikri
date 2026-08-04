@@ -1,0 +1,34 @@
+# set_fact smoke test - runs entirely on localhost with set_fact/debug, so
+# it is safe to exercise for real (not just --check).
+
+- name: set_fact test
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: set a string, a bool, and an int fact
+      ansible.builtin.set_fact:
+        greeting: "hello from set_fact"
+        is_ready: true
+        retry_count: 3
+
+    - name: show the string fact
+      ansible.builtin.debug:
+        msg: "greeting is {{ greeting }}"
+
+    - name: show the int fact
+      ansible.builtin.debug:
+        msg: "retry_count is {{ retry_count }}"
+
+    - name: only runs when the bool fact is true
+      ansible.builtin.debug:
+        msg: "is_ready gated task ran"
+      when: is_ready
+
+    - name: overwrite an existing var with set_fact
+      ansible.builtin.set_fact:
+        greeting: "updated greeting"
+
+    - name: show the overwritten fact
+      ansible.builtin.debug:
+        msg: "greeting is {{ greeting }}"
