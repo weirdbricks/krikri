@@ -15,10 +15,47 @@ module CrystalPlay
   #   `name=` field in yum.conf terms - verified against real
   #   ansible-playbook's actual file output, not assumed)
   # - baseurl / mirrorlist / metalink: at least one required when
-  #   state=present (matches real Ansible's own validation)
-  # - gpgcheck / enabled: booleans, rendered as 1/0
-  # - gpgkey / exclude / includepkgs: lists, space-joined on one line
-  # - priority
+  #   state=present (matches real Ansible's own validation). `baseurl`/
+  #   `gpgkey` are comma-separated lists (real Ansible's own `type: list`) -
+  #   real Ansible joins them with `\n` before handing the value to
+  #   Python's `configparser`, which itself then renders a multi-line
+  #   value as a tab-indented continuation line
+  #   (`baseurl = http://a\n\thttp://b\n`, verified directly against real
+  #   `configparser` output, not assumed), not a bare embedded newline -
+  #   `exclude`/`includepkgs` below stay space-joined on one line instead,
+  #   a real, different treatment verified against real Ansible's own
+  #   source (`'\n'.join(v)` vs `' '.join(v)`); a real,
+  #   previously-mis-categorized bug in this codebase fixed alongside the
+  #   knobs below (`baseurl` used to be treated as a single plain string,
+  #   silently wrong for the multi-URL case real Ansible's own `list` type
+  #   supports).
+  # - gpgcheck / enabled / countme / enablegroups / keepalive /
+  #   module_hotfixes / protect / repo_gpgcheck / s3_enabled /
+  #   skip_if_unavailable / ssl_check_cert_permissions / sslverify:
+  #   booleans, rendered as 1/0
+  # - gpgkey (see baseurl above) / exclude / includepkgs: lists,
+  #   `exclude`/`includepkgs` space-joined on one line
+  # - priority, bandwidth, cost, deltarpm_metadata_percentage,
+  #   deltarpm_percentage, failovermethod, gpgcakey, http_caching,
+  #   include, ip_resolve, keepcache, metadata_expire,
+  #   metadata_expire_filter, mirrorlist_expire, password, proxy,
+  #   proxy_password, proxy_username, retries, sslcacert, sslclientcert,
+  #   sslclientkey, throttle, timeout, ui_repoid_vars, username: plain
+  #   string/int values written as-is - real Ansible validates a handful
+  #   of these against a fixed choice list (`failovermethod`,
+  #   `http_caching`, `ip_resolve`, `keepcache`), which this plugin
+  #   doesn't replicate (a real, minor scope cut - an invalid value is
+  #   passed straight through and surfaces as whatever error `dnf`/`yum`
+  #   itself gives, the same "no client-side choice validation" pattern
+  #   several other plugins in this codebase already have). Several of
+  #   these (`deltarpm_metadata_percentage`, `gpgcakey`, `http_caching`,
+  #   `keepalive`, `metadata_expire_filter`, `mirrorlist_expire`,
+  #   `protect`, `ssl_check_cert_permissions`, `ui_repoid_vars`) are
+  #   themselves deprecated in real Ansible as of 2.20-2.22 ("has no
+  #   effect with dnf as an underlying package manager") - real Ansible
+  #   still *writes* them to the file (only emits a deprecation warning),
+  #   so this plugin does too, matching actual file output rather than
+  #   the deprecation status.
   # - state: present (default) | absent
   # - file: filename without the `.repo` extension (default: `name`)
   # - reposdir: directory to write into (default: /etc/yum.repos.d)
@@ -31,13 +68,11 @@ module CrystalPlay
   # aren't passed this time. Not a bug to "fix" - matching this exactly is
   # the point.
   #
-  # Not implemented: the many lower-value/rarer yum.conf tuning knobs
-  # (async, bandwidth, cost, deltarpm_*, http_caching, ip_resolve,
-  # keepalive, keepcache, metadata_expire*, module_hotfixes, protect,
-  # repo_gpgcheck, retries, s3_enabled, skip_if_unavailable, ssl*,
-  # throttle, timeout, ui_repoid_vars, username/password/proxy_*,
-  # unsafe_writes, countme, enablegroups, failovermethod, include),
-  # SELinux options, `attributes`.
+  # Not implemented: `async` (a legacy, Python-reserved-word-workaround
+  # param, essentially unused in real playbooks), `exclude:`'s
+  # `excludepkgs` alias, `no_log` redaction of `password:`/
+  # `proxy_password:` from output (not implemented by any plugin in this
+  # codebase), SELinux options, `attributes`, `unsafe_writes`.
   #
   # Like `apt_repository.cr`, this plugin is entirely file editing - no
   # actual `dnf`/`yum` call anywhere in it - so it's fully native
@@ -45,9 +80,22 @@ module CrystalPlay
   # `cat`/`rm -f`/`mkdir -p`, plus `BasePlugin#apply_owner_group_mode`
   # for `chown`/`chgrp`/`chmod`).
   class YumRepositoryPlugin < BasePlugin
-    BOOL_KEYS = %w[enabled gpgcheck]
-    LIST_KEYS = %w[gpgkey exclude includepkgs]
-    STR_KEYS  = %w[baseurl mirrorlist metalink priority]
+    BOOL_KEYS = %w[
+      enabled gpgcheck countme enablegroups keepalive module_hotfixes protect
+      repo_gpgcheck s3_enabled skip_if_unavailable ssl_check_cert_permissions sslverify
+    ]
+    # Space-joined on one line (exclude/includepkgs); baseurl/gpgkey are
+    # newline-joined instead, see NEWLINE_LIST_KEYS below - real Ansible's
+    # own `' '.join(v)` vs `'\n'.join(v)`, not the same treatment.
+    LIST_KEYS         = %w[exclude includepkgs]
+    NEWLINE_LIST_KEYS = %w[baseurl gpgkey]
+    STR_KEYS          = %w[
+      mirrorlist metalink priority bandwidth cost deltarpm_metadata_percentage
+      deltarpm_percentage failovermethod gpgcakey http_caching include ip_resolve
+      keepcache metadata_expire metadata_expire_filter mirrorlist_expire password
+      proxy proxy_password proxy_username retries sslcacert sslclientcert
+      sslclientkey throttle timeout ui_repoid_vars username
+    ]
 
     def execute : PluginResult
       name = @params["name"]?
@@ -124,6 +172,17 @@ module CrystalPlay
       LIST_KEYS.each do |key|
         if value = @params[key]?
           lines[key] = value.split(",").map(&.strip).reject(&.empty?).join(" ")
+        end
+      end
+
+      NEWLINE_LIST_KEYS.each do |key|
+        if value = @params[key]?
+          # Python's configparser (what real Ansible's own module uses to
+          # write the file) renders a multi-line value as a tab-indented
+          # continuation line, not a bare embedded newline - verified
+          # directly against real configparser output, not assumed:
+          # "baseurl = http://a\n\thttp://b\n", not "...a\nhttp://b\n".
+          lines[key] = value.split(",").map(&.strip).reject(&.empty?).join("\n\t")
         end
       end
 

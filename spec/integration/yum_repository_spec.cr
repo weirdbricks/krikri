@@ -102,15 +102,66 @@ describe "yum_repository plugin" do
     result["msg"].as_s.should contain("baseurl")
   end
 
-  it "space-joins list parameters like gpgkey on one line" do
+  it "space-joins list parameters like includepkgs on one line" do
     PluginSpecHelper.run("yum_repository", {
       "name"        => "listtest",
       "description" => "d",
       "baseurl"     => "https://example.com",
+      "includepkgs" => "foo,bar",
+      "reposdir"    => TMP_DIR,
+    })
+
+    File.read(repo_path("listtest")).should contain("includepkgs = foo bar")
+  end
+
+  # baseurl/gpgkey are real Ansible's own `type: list` params, joined with
+  # a tab-indented continuation line rather than a space when there's more
+  # than one - verified directly against real Python configparser output
+  # (what real Ansible's own module uses to write the file), not assumed.
+  # A single value renders as a plain `key = value` line either way, with
+  # no continuation - only multiple values trigger it.
+  it "tab-continuation-joins multi-value baseurl/gpgkey, matching real configparser output" do
+    PluginSpecHelper.run("yum_repository", {
+      "name"        => "multitest",
+      "description" => "d",
+      "baseurl"     => "https://a.example.com,https://b.example.com",
       "gpgkey"      => "https://example.com/key1,https://example.com/key2",
       "reposdir"    => TMP_DIR,
     })
 
-    File.read(repo_path("listtest")).should contain("gpgkey = https://example.com/key1 https://example.com/key2")
+    content = File.read(repo_path("multitest"))
+    content.should contain("baseurl = https://a.example.com\n\thttps://b.example.com\n")
+    content.should contain("gpgkey = https://example.com/key1\n\thttps://example.com/key2\n")
+  end
+
+  it "renders a single-value baseurl/gpgkey without a continuation line" do
+    PluginSpecHelper.run("yum_repository", {
+      "name"        => "singletest",
+      "description" => "d",
+      "baseurl"     => "https://example.com",
+      "gpgkey"      => "https://example.com/key1",
+      "reposdir"    => TMP_DIR,
+    })
+
+    content = File.read(repo_path("singletest"))
+    content.should contain("baseurl = https://example.com\n")
+    content.should contain("gpgkey = https://example.com/key1\n")
+  end
+
+  it "writes newly-added tuning knobs as plain key = value lines" do
+    PluginSpecHelper.run("yum_repository", {
+      "name"        => "knobstest",
+      "description" => "d",
+      "baseurl"     => "https://example.com",
+      "cost"        => "500",
+      "proxy"       => "http://proxy.example.com:8080",
+      "sslverify"   => "false",
+      "reposdir"    => TMP_DIR,
+    })
+
+    content = File.read(repo_path("knobstest"))
+    content.should contain("cost = 500")
+    content.should contain("proxy = http://proxy.example.com:8080")
+    content.should contain("sslverify = 0")
   end
 end

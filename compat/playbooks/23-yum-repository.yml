@@ -54,9 +54,37 @@
         reposdir: /work/yum.repos.d
       register: remove_result
 
+    # baseurl:/gpgkey: are real Ansible's own type: list params - multiple
+    # values render as a tab-indented continuation line (real Python
+    # configparser's own multi-line value format), not a space, unlike
+    # exclude:/includepkgs: below.
+    - name: write a repo with multi-value baseurl/gpgkey and several new tuning knobs
+      ansible.builtin.yum_repository:
+        name: multitest
+        description: "Multi-value test repo"
+        baseurl:
+          - "https://a.example/repo"
+          - "https://b.example/repo"
+        gpgkey:
+          - "https://a.example/RPM-GPG-KEY"
+          - "https://b.example/RPM-GPG-KEY"
+        includepkgs:
+          - foo
+          - bar
+        cost: 500
+        proxy: "http://proxy.example:8080"
+        sslverify: false
+        reposdir: /work/yum.repos.d
+      register: multi_result
+
     - name: read the custom file's content back (epel.repo is gone by this point, so only this one is checked)
       ansible.builtin.command: cat /work/yum.repos.d/custom-file.repo
       register: custom_file_content
+      changed_when: false
+
+    - name: read the multi-value repo's content back
+      ansible.builtin.command: cat /work/yum.repos.d/multitest.repo
+      register: multi_content
       changed_when: false
 
     - name: write the stable results and file contents to a file for comparison
@@ -67,5 +95,7 @@
           rewrite_changed={{ rewrite_result.changed }}
           custom_file_changed={{ custom_file_result.changed }}
           remove_changed={{ remove_result.changed }}
+          multi_changed={{ multi_result.changed }}
           custom_file_content={{ custom_file_content.stdout }}
+          multi_content={{ multi_content.stdout }}
         dest: /work/yum-repository-output.txt

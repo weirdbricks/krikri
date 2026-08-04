@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.49`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.50`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -22,10 +22,12 @@ documented per-plugin scope cuts one at a time in pursuit of fuller
 (`0.9.44`, previously not implemented at all), `mount`'s `remounted`
 state (`0.9.45`), `wait_for`'s `state: drained` (`0.9.46`), and
 `apt_repository`'s `ppa:` shorthand (`0.9.47`), `user`'s `password:`/
-`update_password:`/`password_lock:` (`0.9.48`), and `mount`'s
-`state: ephemeral` (`0.9.49`) - see "Also still open" near the end of
+`update_password:`/`password_lock:` (`0.9.48`), `mount`'s
+`state: ephemeral` (`0.9.49`), and `yum_repository`'s tuning-knob
+expansion plus a real `baseurl:`/`gpgkey:` multi-value list-join bug fix
+(`0.9.50`) - see "Also still open" near the end of
 Phase 5 for what's left and the running list of what's already been
-closed past that point. 709/711 specs pass (the 2 exceptions need a live
+closed past that point. 710/712 specs pass (the 2 exceptions need a live
 MySQL/PostgreSQL server at `127.0.0.1:13306`/`15432` reachable with real
 `mysql`/`psql` client binaries, neither installed on this host directly -
 see the `0.9.40` entry for how they were verified anyway), `ameba` clean
@@ -37,9 +39,10 @@ assumptions; **38/38 compat playbooks pass** (`mount`'s own `remounted`/
 `ephemeral`, `wait_for`'s own `drained:`, `apt_repository`'s own `ppa:`,
 and `user`'s own `password:` verification all happened outside the
 harness instead, for different reasons documented in their own
-`0.9.45`-`0.9.49` entries - see each for how it was verified instead) -
-see each entry below and `compat/README.md`'s
-Coverage section for what each one caught.
+`0.9.45`-`0.9.49` entries - see each for how it was verified instead;
+`yum_repository`'s `0.9.50` work is covered by an extended
+`23-yum-repository.yml` harness entry instead) - see each entry below and
+`compat/README.md`'s Coverage section for what each one caught.
 
 Two cross-cutting efforts also landed since Phases 3/4 were marked done:
 
@@ -2328,6 +2331,58 @@ compat playbook's own task wouldn't have suggested was there).
   - `crystal spec`/`ameba` both clean (709 examples, same 2 pre-existing
     DB-client-dependent failures as always, unrelated to this) - purely
     additive to an already-shipped plugin, no existing behavior touched.
+
+- [x] `yum_repository` tuning-knob expansion + a real `baseurl:`/`gpgkey:`
+  bug fix (`0.9.50`): `baseurl:` was previously mis-categorized as a
+  single plain string (`STR_KEYS`), silently wrong for the multi-URL case
+  real Ansible's own `type: list` param actually supports - real Ansible
+  joins `baseurl:`/`gpgkey:` with `'\n'.join(v)` before handing the value
+  to Python's `configparser` (verified by reading the real module source,
+  not `ansible-doc`), which itself renders a multi-line value as a
+  tab-indented continuation line (`baseurl = http://a\n\thttp://b\n`,
+  confirmed directly against real `configparser` output via
+  `python3 -c "import configparser; ..."`), not a bare embedded newline -
+  a real, previously undiscovered bug in this codebase, not just a
+  missing knob. `exclude:`/`includepkgs:` keep the old, correct,
+  space-joined-on-one-line treatment (`' '.join(v)` in real Ansible's own
+  source - a genuinely different join, not the same list type getting
+  two different renderings by mistake). Also added the remaining bool/
+  string tuning knobs: `countme`, `enablegroups`, `keepalive`,
+  `module_hotfixes`, `protect`, `repo_gpgcheck`, `s3_enabled`,
+  `skip_if_unavailable`, `ssl_check_cert_permissions`, `sslverify`
+  (bools); `bandwidth`, `cost`, `deltarpm_metadata_percentage`,
+  `deltarpm_percentage`, `failovermethod`, `gpgcakey`, `http_caching`,
+  `include`, `ip_resolve`, `keepcache`, `metadata_expire`,
+  `metadata_expire_filter`, `mirrorlist_expire`, `password`, `proxy`,
+  `proxy_password`, `proxy_username`, `retries`, `sslcacert`,
+  `sslclientcert`, `sslclientkey`, `throttle`, `timeout`,
+  `ui_repoid_vars`, `username` (strings/ints, written as-is - no
+  client-side choice validation for the handful real Ansible restricts to
+  a fixed list, a documented minor scope cut matching several other
+  plugins in this codebase). Several of these
+  (`deltarpm_metadata_percentage`, `gpgcakey`, `http_caching`,
+  `keepalive`, `metadata_expire_filter`, `mirrorlist_expire`, `protect`,
+  `ssl_check_cert_permissions`, `ui_repoid_vars`) are themselves
+  deprecated in real Ansible 2.20-2.22 ("has no effect with dnf as an
+  underlying package manager") - real Ansible still *writes* them (only
+  warns), so this plugin does too, matching actual file output rather
+  than the deprecation status.
+  - Verified locally against real `ansible-playbook`, byte-for-byte
+    identical output for both single-value and multi-value
+    `baseurl:`/`gpgkey:` plus the new knobs (`cost:`, `proxy:`,
+    `sslverify:`).
+  - `spec/integration/yum_repository_spec.cr`: fixed a pre-existing test
+    that asserted the *old, buggy* space-joined behavior for `gpgkey:`
+    (rewritten to use `includepkgs:` for that assertion instead, matching
+    the established pattern of updating stale tests when a real behavior
+    bug gets fixed, not just adding new ones around it); added dedicated
+    tests for the tab-continuation join, the single-value no-continuation
+    case, and the new tuning knobs.
+  - `compat/playbooks/23-yum-repository.yml` extended with a multi-value
+    `baseurl:`/`gpgkey:`/`includepkgs:` task plus several new knobs and a
+    file-content read-back - full compat harness run: **38/38 passed**.
+  - `crystal spec`/`ameba` both clean (712 examples, same 2 pre-existing
+    DB-client-dependent failures as always, unrelated to this).
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**
@@ -2343,7 +2398,6 @@ the exact "not implemented" list it's tracked against:**
   `schema`/`database` implemented), `ALL_IN_SCHEMA`, `target_roles:`,
   `session_role:`, `fail_on_role:`.
 - `docker_*`: no `networks:`/`connected:`/TLS options.
-- `yum_repository`: many minor `yum.conf` tuning knobs.
 
 Cross-cutting engine gaps this section used to track here - Jinja2
 filter-chaining and `become:`/`become_user:` privilege escalation - are
