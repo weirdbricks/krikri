@@ -1,7 +1,8 @@
 # Compat coverage for postgresql_db's state: dump / restore (shipped in
-# 0.9.40): seed restore, plain + gzip dump, restoring each dump into a
-# second database, row-count round-trip verification, and the
-# missing-target failure path. Real Ansible's own keyword here is
+# 0.9.40; .bz2/.xz compression added in 0.9.43): seed restore, plain +
+# gzip + bzip2 + xz dump, restoring each dump into a second database,
+# row-count round-trip verification, and the missing-target failure path.
+# Real Ansible's own keyword here is
 # `restore`, not `import` like mysql_db's equivalent - see ROADMAP.md.
 # The playbook starts its own throwaway PostgreSQL cluster inside the
 # container via the init.d script (no systemd in this image), the same
@@ -156,6 +157,96 @@
       register: restored_rows_gz
       changed_when: false
 
+    - name: dump the database, bzip2-compressed
+      community.postgresql.postgresql_db:
+        name: compatdb
+        state: dump
+        target: /work/dump.sql.bz2
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: dump_bz2
+
+    - name: dump the database, xz-compressed
+      community.postgresql.postgresql_db:
+        name: compatdb
+        state: dump
+        target: /work/dump.sql.xz
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: dump_xz
+
+    - name: drop the second database again (bz2 round trip)
+      community.postgresql.postgresql_db:
+        name: compatdb_restored
+        state: absent
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: restored_dropped_bz2
+
+    - name: recreate the second database for the bz2 round trip
+      community.postgresql.postgresql_db:
+        name: compatdb_restored
+        state: present
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: restored_recreated_bz2
+
+    - name: restore the bz2 dump into the second database
+      community.postgresql.postgresql_db:
+        name: compatdb_restored
+        state: restore
+        target: /work/dump.sql.bz2
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: restore_bz2
+
+    - name: verify the bz2-dump round trip
+      ansible.builtin.shell: >-
+        PGPASSWORD=compatpass psql --host=127.0.0.1 --username=postgres
+        --dbname=compatdb_restored -t -c "SELECT COUNT(*) FROM t" | tr -d ' \n'
+      register: restored_rows_bz2
+      changed_when: false
+
+    - name: drop the second database again (xz round trip)
+      community.postgresql.postgresql_db:
+        name: compatdb_restored
+        state: absent
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: restored_dropped_xz
+
+    - name: recreate the second database for the xz round trip
+      community.postgresql.postgresql_db:
+        name: compatdb_restored
+        state: present
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: restored_recreated_xz
+
+    - name: restore the xz dump into the second database
+      community.postgresql.postgresql_db:
+        name: compatdb_restored
+        state: restore
+        target: /work/dump.sql.xz
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: restore_xz
+
+    - name: verify the xz-dump round trip
+      ansible.builtin.shell: >-
+        PGPASSWORD=compatpass psql --host=127.0.0.1 --username=postgres
+        --dbname=compatdb_restored -t -c "SELECT COUNT(*) FROM t" | tr -d ' \n'
+      register: restored_rows_xz
+      changed_when: false
+
     - name: restore from a missing target (both engines must fail)
       block:
         - name: this task must fail
@@ -185,6 +276,12 @@
           restored_recreated={{ restored_recreated.changed }}
           restore_gz={{ restore_gz.changed }}
           restored_rows_gz={{ restored_rows_gz.stdout }}
+          dump_bz2={{ dump_bz2.changed }}
+          dump_xz={{ dump_xz.changed }}
+          restore_bz2={{ restore_bz2.changed }}
+          restored_rows_bz2={{ restored_rows_bz2.stdout }}
+          restore_xz={{ restore_xz.changed }}
+          restored_rows_xz={{ restored_rows_xz.stdout }}
         dest: /work/results.txt
 
     - name: clean up the databases
@@ -210,3 +307,5 @@
         - /work/seed.sql
         - /work/dump.sql
         - /work/dump.sql.gz
+        - /work/dump.sql.bz2
+        - /work/dump.sql.xz

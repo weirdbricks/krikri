@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.42`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.43`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -9,13 +9,18 @@ advanced-execution feature, and all eight Phase 5 modules: `set_fact`
 **All four cross-cutting engine gaps this roadmap has ever tracked are now
 fixed:** dotted-variable access in bare conditionals (`0.9.34`), the recap
 `ok`/`changed` counter overlap (`0.9.35`), `become:`/`become_user:`
-privilege escalation (`0.9.41`), and Jinja2 filter-chaining (`0.9.42`, see
-that entry near the end of Phase 5). The per-plugin scope-cut grab-bag is
-fully closed: `stat`'s `get_mime`/`get_attributes` (`0.9.36`), `find`'s
-`age`/`age_stamp`/`contains`/`read_whole_file` (`0.9.37`), `archive`'s
-`exclude_path` (`0.9.38`), `ufw`'s `insert_relative_to` (`0.9.39`), and
-`mysql_db`/`postgresql_db`'s `state: dump`/`import`(`restore`) (`0.9.40`)
-have all shipped. 651/653 specs pass (the 2 exceptions need a live
+privilege escalation (`0.9.41`), and Jinja2 filter-chaining (`0.9.42`). The
+per-plugin scope-cut grab-bag is fully closed for every plugin that had one
+at Phase 5's completion: `stat`'s `get_mime`/`get_attributes` (`0.9.36`),
+`find`'s `age`/`age_stamp`/`contains`/`read_whole_file` (`0.9.37`),
+`archive`'s `exclude_path` (`0.9.38`), `ufw`'s `insert_relative_to`
+(`0.9.39`), and `mysql_db`/`postgresql_db`'s `state: dump`/
+`import`(`restore`) (`0.9.40`, `.bz2`/`.xz` compression added `0.9.43`)
+have all shipped - work has now moved on to closing the *remaining*
+documented per-plugin scope cuts one at a time in pursuit of fuller
+`ansible-core`/`community.*` parity (see "Also still open" near the end of
+Phase 5 for what's left and the running list of what's already been closed
+past that point). 651/653 specs pass (the 2 exceptions need a live
 MySQL/PostgreSQL server at `127.0.0.1:13306`/`15432` reachable with real
 `mysql`/`psql` client binaries, neither installed on this host directly -
 see the `0.9.40` entry for how they were verified anyway), `ameba` clean on
@@ -23,25 +28,8 @@ all new/touched code. A Docker-based compatibility harness (`compat/`, see
 `compat/README.md`) runs the same playbooks through real `ansible-playbook`
 and `crystal-ansible` side by side and diffs the resulting filesystem state
 + exit codes - ground truth instead of assumptions; **37/37 compat
-playbooks pass** (`19-find.yml` extended in `0.9.42` to also compare the
-actual sorted file list, not just match counts, now that the filter chain
-it needs works - see that entry), including a fresh compat playbook per
-Phase 5 module (`compat/playbooks/27-set-fact.yml` through `34-pause.yml`),
-one each for `mysql_db`/`postgresql_db`'s dump/import support
-(`35-mysql-db.yml`/`36-postgresql-db.yml`), and one for `become:`
-(`37-become.yml`, the one compat playbook that deliberately runs as root to
-exercise a real privilege drop) - see each entry below and
-`compat/README.md`'s Coverage section for what each one caught, including a
-real `get_url` field-naming bug (fixed in `0.9.32`), a real
-`LocalExecutor`/`shell:` hang bug (fixed in `0.9.33` - see the Phase 5
-wrap-up note below, which also caught and fixed a related `build.sh`
-staleness-check gap that let the fix silently not take effect on the first
-attempt), a compat-image venv isolation bug that broke every
-`postgresql_*` compat playbook regardless of crystal-ansible's own
-correctness, a real `mysql_connection.cr` TLS-negotiation crash against a
-common MariaDB server config (both fixed in `0.9.40`, see that entry), and
-the `become:`/`become_user:` no-op itself, first noticed while writing
-`36-postgresql-db.yml` and fixed in `0.9.41` (see that entry).
+playbooks pass** - see each entry below and `compat/README.md`'s Coverage
+section for what each one caught.
 
 Two cross-cutting efforts also landed since Phases 3/4 were marked done:
 
@@ -1078,9 +1066,10 @@ the same way it did between January and now.
     over `login_host:`/`login_port:` when given; also always forces
     `ssl-mode=disabled` on the connection - see the `0.9.40` entry near the
     end of this file for why). `state: dump`/`import` (mysqldump-based
-    backup/restore, `0.9.40`) - see that entry for the full writeup. Not
-    implemented: `.bz2`/`.xz`/`.zst` compression (only `.gz`, natively via
-    `Compress::Gzip`), `config_file:` (`~/.my.cnf` credential lookup).
+    backup/restore, `0.9.40`; `.bz2`/`.xz` compression added in `0.9.43`)
+    - see those entries for the full writeup. Not implemented: `.zst`
+    compression (no Crystal zstd binding is vendored in this codebase
+    yet), `config_file:` (`~/.my.cnf` credential lookup).
   - `mysql_user`: `name:` (required), `password:` (only applied when
     creating a new user, or when an existing user's password is updated
     under `update_password: always`, the default - matching real
@@ -1157,12 +1146,13 @@ the same way it did between January and now.
     source that a unix socket path has to go through a `host` query
     param, not the URI's own host component). `state: dump`/`restore`
     (real Ansible's own keyword is `restore`, not `import` like
-    `mysql_db`'s equivalent, `0.9.40`) - see that entry near the end of
-    this file for the full writeup. Not implemented: `.tar`/`.pgc`/`.dir`
-    formats (`pg_restore`-based) and `.bz2`/`.xz` compression for
-    dump/restore (only plain `.sql` and `.gz`, natively via
-    `Compress::Gzip`), `collation:`/`lc_collate:`/`lc_ctype:`/`template:`/
-    `tablespace:`, `force:`, `session_role:`.
+    `mysql_db`'s equivalent, `0.9.40`; `.bz2`/`.xz` compression added in
+    `0.9.43`) - see those entries near the end of this file for the full
+    writeup. Not implemented: `.tar`/`.pgc`/`.dir` formats (`pg_restore`-
+    based - a genuinely different restore mechanism, not just another
+    compression codec) and `.zst` compression (no Crystal zstd binding is
+    vendored in this codebase yet), `collation:`/`lc_collate:`/
+    `lc_ctype:`/`template:`/`tablespace:`, `force:`, `session_role:`.
   - `postgresql_user`: `name:` (required), `password:` (applied whenever
     given, for both new and already-existing roles - unlike real Ansible,
     which can compare a candidate password against the role's stored
@@ -1906,19 +1896,69 @@ compat playbook's own task wouldn't have suggested was there).
   has no `mysql`/`psql` client binaries on the host itself, only inside
   the throwaway containers used for verification above).
 
-**Also still open (lower priority - see each shipping plugin's class doc for the
-exact "not implemented" list):** the documented per-plugin scope cuts (e.g.
-`postgresql_user` grants /
-`postgresql_privs`, `docker_*` `networks`/`connected:`/tls - `stat`'s own
-`get_mime`/`get_attributes`, `find`'s own `age`/`contains`, `archive`'s own
-`exclude_path`, and `ufw`'s own `insert_relative_to` cuts are now closed,
-see their entries above; `mysql_db`/`postgresql_db` `state: dump/import`
-is now closed too, see its entry above). Both cross-cutting engine gaps
-this section used to track here - Jinja2 filter-chaining and `become:`/
-`become_user:` privilege escalation - are now fixed; see the `0.9.42` and
-`0.9.41` entries below. Cloud plugins (`ec2`, `s3_bucket`, `azure_rm_*`)
-and inventory *plugins* (`aws_ec2.yml` et al.) remain explicitly lowest-ROI
-and are not planned.
+- [x] `mysql_db`/`postgresql_db` `.bz2`/`.xz` dump/restore compression
+  (`0.9.43`): the `0.9.40` entry above shipped only `.gz` and explicitly
+  scoped `.bz2`/`.xz`/`.zst` out; closed for `.bz2`/`.xz` here by reusing
+  the same `xz.cr`/`bz2.cr` shards `archive.cr`/`unarchive.cr` already
+  depend on (`Compress::XZ::Writer`/`Reader`, `Compress::BZ2::Writer`/
+  `Reader`) rather than adding a new dependency - both plugins' own
+  `write_target`/`read_target_as_sql_file` helpers just gained two more
+  `case`/`ends_with?` branches alongside the existing `.gz` one, no new
+  logic shape. `.zst` stays a documented scope cut: no Crystal zstd
+  binding is vendored in this codebase, unlike gzip (stdlib), xz, and bz2
+  (both already required for `archive:`/`unarchive:`) - real Ansible
+  itself only gained `.zst` support for `mysql_db` in `community.mysql`
+  3.12.0 and never added it to `postgresql_db` at all (verified via
+  `ansible-doc`, not assumed), so this isn't a symmetric three-format gap
+  to begin with.
+  - Verified real-server round trips for both formats and both plugins
+    (seed import/restore → dump `.bz2` and `.xz` → restore each into a
+    second database → row count matches) against the same live
+    `mariadb:11`/`postgres:17` containers used for the `0.9.40` work,
+    before touching the compat playbooks at all.
+  - `compat/playbooks/35-mysql-db.yml`/`36-postgresql-db.yml` each
+    extended with the same dump/restore/verify/cleanup shape the existing
+    `.gz` coverage already has, for both new formats - `results.txt`
+    grew `dump_bz2`/`dump_xz`/`import_bz2`(`restore_bz2`)/
+    `restored_rows_bz2`/`import_xz`(`restore_xz`)/`restored_rows_xz`
+    fields alongside the existing `.gz` ones, and the volatile-dump-
+    artifact cleanup list grew the two new extensions. Verified via the
+    full compat harness: **37/37 compat playbooks pass**, both new
+    playbooks producing byte-identical `results.txt` against real
+    `ansible-playbook` (the `.bz2`/`.xz` dump files themselves excluded
+    from the snapshot, same reasoning as `.gz`'s own - `mysqldump`/
+    `pg_dump` embed a timestamp comment regardless of compression format).
+  - `crystal spec`/`ameba` both stayed at their pre-existing baselines
+    (no new failures, no new lint findings) - this was purely additive to
+    two already-shipped plugins' own compression-format dispatch, not a
+    new code path.
+
+**Also still open - now being worked through one at a time toward fuller
+`ansible-core`/`community.*` parity, see each plugin's own class doc for
+the exact "not implemented" list it's tracked against:**
+
+- `mysql_db`/`postgresql_db`: `.zst` compression (no Crystal zstd binding
+  vendored yet - `.bz2`/`.xz` closed in `0.9.43`); `postgresql_db`'s
+  `.tar`/`.pgc`/`.dir` restore formats (`pg_restore`-based, a different
+  restore mechanism, not just another compression codec); `mysql_db`'s
+  `config_file:`, `all_databases:`, various `mysqldump` tuning knobs.
+- `postgresql_user`: no privilege grants (`postgresql_privs` module not
+  implemented at all).
+- `docker_*`: no `networks:`/`connected:`/TLS options.
+- `yum_repository`: many minor `yum.conf` tuning knobs.
+- `mount`: no `remounted`/`ephemeral` states.
+- `wait_for`: no `state: drained`.
+- `user`/`group`: no password management.
+- `apt_repository`: no `ppa:` shorthand (needs live Launchpad API access).
+
+Cross-cutting engine gaps this section used to track here - Jinja2
+filter-chaining and `become:`/`become_user:` privilege escalation - are
+both now fixed; see the `0.9.42` and `0.9.41` entries below. Cloud plugins
+(`ec2`, `s3_bucket`, `azure_rm_*`) and inventory *plugins* (`aws_ec2.yml`
+et al.) remain explicitly lowest-ROI and are not planned - everything else
+in this list is being picked off incrementally, each verified against real
+`ansible-playbook` directly and via the compat harness the same way every
+other entry in this file has been, not assumed from documentation.
 
 **Fixed in `0.9.42`:** the `{{ }}`-wrapped filter pipeline only ever split
 on the *first* `|`, so a single filter chained after another (e.g. `x |

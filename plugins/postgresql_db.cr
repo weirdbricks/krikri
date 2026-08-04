@@ -3,6 +3,8 @@
 require "json"
 require "pg"
 require "compress/gzip"
+require "xz"
+require "bz2"
 require "../src/crystal_play/base_plugin"
 require "../src/crystal_play/plugin_helpers/postgresql_connection"
 
@@ -39,11 +41,13 @@ module CrystalPlay
   #   out to `pg_dump`/`psql`, since dump/restore need the actual client
   #   binaries - there's no wire-protocol equivalent of "give me a full
   #   logical SQL dump." `target:` is required for both. Only the plain
-  #   `.sql` format is supported, natively `.gz`-compressed via Crystal's
-  #   own `Compress::Gzip` rather than shelling to `gzip` (matching
-  #   `mysql_db.cr`'s own reasoning) - real Ansible's `.tar`/`.pgc`/
-  #   `.dir` formats (handled by `pg_restore` instead of plain `psql`) are
-  #   a documented scope cut, see below. Password passed via a `PGPASSWORD=`
+  #   `.sql` format is supported, natively compressed via
+  #   `Compress::Gzip`/`Compress::XZ`/`Compress::BZ2` (`.gz`/`.xz`/`.bz2`)
+  #   rather than shelling to `gzip`/`xz`/`bzip2` (matching `mysql_db.cr`'s
+  #   own reasoning) - real Ansible's `.tar`/`.pgc`/`.dir` formats (handled
+  #   by `pg_restore` instead of plain `psql`, a genuinely different
+  #   restore mechanism, not just another compression codec) remain a
+  #   documented scope cut, see below. Password passed via a `PGPASSWORD=`
   #   environment-variable prefix in the shell command (matches real
   #   Ansible - psql/pg_dump don't take a password CLI flag at all).
   #   Command shape (`pg_dump dbname --host=H --port=P --username=U` /
@@ -57,8 +61,9 @@ module CrystalPlay
   # - check_mode
   #
   # Not implemented: `.tar`/`.pgc`/`.dir` formats (`pg_restore`-based,
-  # see above) and `.bz2`/`.xz` compression for dump/restore (only plain
-  # `.sql` and `.gz`), `collation:`/`lc_collate:`/`lc_ctype:`/`template:`/
+  # see above; `.zst` compression is also not implemented - no Crystal
+  # zstd binding is vendored in this codebase yet), `collation:`/
+  # `lc_collate:`/`lc_ctype:`/`template:`/
   # `tablespace:`, `force:` (terminate other connections before DROP
   # DATABASE), `session_role:`, `trust_input:` (SQL-injection guard on
   # option values - this plugin always quotes identifiers itself instead).
@@ -185,31 +190,41 @@ module CrystalPlay
       "'" + s.gsub("'", "'\\''") + "'"
     end
 
-    # Writes dump content to target, gzip-compressing natively (no `gzip`
-    # subprocess) when target ends in .gz.
+    # Writes dump content to target, compressing natively (no `gzip`/
+    # `bzip2`/`xz` subprocess) when target ends in .gz/.bz2/.xz.
     private def write_target(target : String, content : String)
-      if target.ends_with?(".gz")
-        File.open(target, "w") do |file|
+      File.open(target, "w") do |file|
+        case
+        when target.ends_with?(".gz")
           Compress::Gzip::Writer.open(file, &.print(content))
+        when target.ends_with?(".bz2")
+          Compress::BZ2::Writer.open(file, &.print(content))
+        when target.ends_with?(".xz")
+          Compress::XZ::Writer.open(file, &.print(content))
+        else
+          file.print(content)
         end
-      else
-        File.write(target, content)
       end
     end
 
     # Returns a path to plain SQL content ready for `psql --file=path`:
     # target itself when it's already plain, or a decompressed temp copy
-    # when target ends in .gz (native `Compress::Gzip::Reader`, no `gzip`
-    # subprocess) - the caller deletes the temp copy afterward.
+    # when target ends in .gz/.bz2/.xz (native readers, no subprocess) -
+    # the caller deletes the temp copy afterward.
     private def read_target_as_sql_file(target : String) : String
-      return target unless target.ends_with?(".gz")
+      return target unless target.ends_with?(".gz") || target.ends_with?(".bz2") || target.ends_with?(".xz")
 
       tmp_path = "#{target}.#{Process.pid}.sql"
-      File.open(target) do |file|
-        Compress::Gzip::Reader.open(file) do |reader|
-          File.write(tmp_path, reader.gets_to_end)
+      content = File.open(target) do |file|
+        if target.ends_with?(".gz")
+          Compress::Gzip::Reader.open(file, &.gets_to_end)
+        elsif target.ends_with?(".bz2")
+          Compress::BZ2::Reader.open(file, &.gets_to_end)
+        else
+          Compress::XZ::Reader.open(file, &.gets_to_end)
         end
       end
+      File.write(tmp_path, content)
       tmp_path
     end
 

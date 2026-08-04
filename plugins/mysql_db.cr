@@ -3,6 +3,8 @@
 require "json"
 require "mysql"
 require "compress/gzip"
+require "xz"
+require "bz2"
 require "../src/crystal_play/base_plugin"
 require "../src/crystal_play/plugin_helpers/mysql_connection"
 
@@ -31,12 +33,13 @@ module CrystalPlay
   #   full logical SQL dump"). `target:` is required for both. Real
   #   Ansible pipes dump/import through `gzip`/`bzip2`/`xz` shell
   #   binaries for a compressed `target:`; this plugin instead reads/
-  #   writes the compressed file natively via Crystal's own stdlib
-  #   `Compress::Gzip` (only `.gz` - `.bz2`/`.xz` are a documented scope
-  #   cut, see below) rather than shelling to `gzip`, matching this
+  #   writes the compressed file natively via `Compress::Gzip`
+  #   (stdlib)/`Compress::XZ`/`Compress::BZ2` (`.gz`/`.xz`/`.bz2` - `.zst`
+  #   is a documented scope cut, no Crystal zstd binding is vendored here
+  #   yet) rather than shelling to `gzip`/`xz`/`bzip2`, matching this
   #   codebase's general preference for native codecs over shelling out
-  #   where one's already available (`archive.cr` already depends on
-  #   `Compress::Gzip` for the same reason). Command shape (`mysqldump
+  #   where one's already available (`archive.cr` already depends on all
+  #   three for the same reason). Command shape (`mysqldump
   #   --user=U --password='PW' --host=H --port=P dbname --quick` /
   #   `mysql --user=U --password='PW' --host=H --port=P --one-database
   #   dbname < target`, including the `--quick`/`--one-database` flags
@@ -47,9 +50,9 @@ module CrystalPlay
   #   server, not assumed from the docs.
   # - check_mode
   #
-  # Not implemented: `.bz2`/`.xz`/`.zst` compression for dump/import
-  # (only `.gz`, see above), `config_file:` (`~/.my.cnf` credential
-  # lookup), `all_databases:`, `ignore_tables:`/`hex_blob:`/
+  # Not implemented: `.zst` compression for dump/import (see above),
+  # `config_file:` (`~/.my.cnf` credential lookup), `all_databases:`,
+  # `ignore_tables:`/`hex_blob:`/
   # `master_data:`/`dump_extra_args:`/`single_transaction:`/
   # `skip_lock_tables:` (mysqldump tuning knobs), encoding:/collation:
   # validation against the server's actually supported charsets - an
@@ -180,31 +183,45 @@ module CrystalPlay
       "'" + s.gsub("'", "'\\''") + "'"
     end
 
-    # Writes dump content to target, gzip-compressing natively (no `gzip`
-    # subprocess) when target ends in .gz.
+    # Writes dump content to target, compressing natively (no `gzip`/
+    # `bzip2`/`xz` subprocess) when target ends in .gz/.bz2/.xz - same
+    # codecs (and the same "native over shelling out" preference)
+    # archive.cr already depends on. .zst stays a documented scope cut:
+    # no Crystal zstd binding is vendored in this codebase yet, unlike
+    # gzip (stdlib), xz, and bz2 (both already required for archive:).
     private def write_target(target : String, content : String)
-      if target.ends_with?(".gz")
-        File.open(target, "w") do |file|
+      File.open(target, "w") do |file|
+        case
+        when target.ends_with?(".gz")
           Compress::Gzip::Writer.open(file, &.print(content))
+        when target.ends_with?(".bz2")
+          Compress::BZ2::Writer.open(file, &.print(content))
+        when target.ends_with?(".xz")
+          Compress::XZ::Writer.open(file, &.print(content))
+        else
+          file.print(content)
         end
-      else
-        File.write(target, content)
       end
     end
 
     # Returns a path to plain SQL content ready for `mysql ... < path`:
     # target itself when it's already plain, or a decompressed temp copy
-    # when target ends in .gz (native `Compress::Gzip::Reader`, no `gzip`
-    # subprocess) - the caller deletes the temp copy afterward.
+    # when target ends in .gz/.bz2/.xz (native readers, no subprocess) -
+    # the caller deletes the temp copy afterward.
     private def read_target_as_sql_file(target : String) : String
-      return target unless target.ends_with?(".gz")
+      return target unless target.ends_with?(".gz") || target.ends_with?(".bz2") || target.ends_with?(".xz")
 
       tmp_path = "#{target}.#{Process.pid}.sql"
-      File.open(target) do |file|
-        Compress::Gzip::Reader.open(file) do |reader|
-          File.write(tmp_path, reader.gets_to_end)
+      content = File.open(target) do |file|
+        if target.ends_with?(".gz")
+          Compress::Gzip::Reader.open(file, &.gets_to_end)
+        elsif target.ends_with?(".bz2")
+          Compress::BZ2::Reader.open(file, &.gets_to_end)
+        else
+          Compress::XZ::Reader.open(file, &.gets_to_end)
         end
       end
+      File.write(tmp_path, content)
       tmp_path
     end
 
