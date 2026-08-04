@@ -1,53 +1,53 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-03:** builds again on Crystal 1.20.3 (fixed `as_i` -> `as_i64`
-type mismatch in `comparison_evaluator.cr`). **Phase 0, Phase 1, and Phase 2 are
-all done** (roles, import/include, and vault); **Phase 3 is in progress**
-(`0.9.5`) - `stat`, `find`, `archive`, `unarchive`, `apt_repository`,
-`yum_repository`, `sysctl`, `mount`, `ufw`, and `firewalld` are done.
-405+ specs passing, `ameba` clean on all new/touched code. Added a Docker-based
-compatibility harness (`compat/`, see `compat/README.md`) that runs the same
-playbooks through real `ansible-playbook` and `crystal-ansible` side by side and
-diffs the results - ground truth instead of assumptions about Ansible's
-documented behavior; 26/26 compat playbooks pass, including all of roles,
-`import_playbook:`, `import_tasks:`, `include_tasks:`, `include_role:`,
-vault (both a whole vault-encrypted playbook file and an inline `!vault`
-variable), `stat`, `find`, `archive`, `unarchive`, `apt_repository`,
-`yum_repository`, `sysctl`, `mount`, and `firewalld` (`ufw` is the one
-exception - see its own entry below for why it couldn't be verified there).
-Along the way it (and, for some bugs the file-state-diffing approach can't
-catch, plain manual testing, self-review, and unit-test writing) found and
-fixed 15 real bugs: `authorized_key` registered under the wrong FQCN (it's
-`ansible.posix.authorized_key`, not `ansible.builtin.*` - confirmed via
-`ansible-doc`, not memory), plugin resolution breaking outside the repo
-checkout, `Host.from_json` crashing on a host with no explicit user,
-`lineinfile` inserting a spurious blank line on every append/removal to a file
-already ending in a newline, `include_role:` + `loop:` producing duplicate
-handler *Task objects* sharing a name (which `HandlerRunner` ran once each
-instead of deduping by name), task-level `vars:` never being parsed for
-`import_tasks:`/`include_tasks:` at all, boolean variables rendering as
-Crystal's lowercase `true`/`false` in templates instead of Python/Jinja2's
-capitalized `True`/`False`, an unset `excludes:` on `find:` excluding every
-result (an empty pattern list means "match everything" for `patterns:` but was
-wrongly reused with the same meaning for `excludes:`, where it should mean
-"exclude nothing"), `archive`'s directory arguments being double-included when
-passed to `tar`/`zip` alongside their own already-walked children, `arcroot`
-being computed wrong due to a real Crystal/Python `dirname` divergence on
-trailing-slash paths, `exclusion_patterns` silently failing to match any
-path with a subdirectory component because `*` doesn't cross `/` in Crystal's
-`File.match?`, `apt_repository`'s removal logic silently no-oping because
-`grep -v ... && mv ...` skips the `mv` whenever `grep -v` filters out every
-line (its normal exit-1-for-zero-output-lines behavior, not an error) - the
-common case when removing the only line from a single-repo file, `mount`'s
-`check_mode` originally only guarding the real mount/umount step, not the
-fstab file write itself (caught in self-review, before it ever shipped),
-`ufw`'s `from_ip`/`from_port`/`to_ip`/`to_port` handling wrongly pairing ip
-with port instead of treating all four as independent appends (caught writing
-unit tests, since real end-to-end verification wasn't possible for this one -
-see below), and `firewalld`'s rule values being interpolated into shell
-commands unquoted, breaking on a `rich_rule` containing spaces and embedded
-double quotes. Next up is the rest of Phase 3. This
-roadmap sequences the remaining work from the two prior analysis docs
+**Status as of 2026-08-03 (currently at `0.9.23`):** **all of Phase 0, Phase 1,
+Phase 2, Phase 3, and Phase 4 are done** - see the checkboxes in each phase
+section below (roles, import/include, vault, every Phase 3 plugin, and every
+Phase 4 advanced-execution feature). 514/516 specs pass (the 2 exceptions need
+a live MySQL/PostgreSQL server at `127.0.0.1:13306`/`15432`), `ameba` clean on
+all new/touched code. A Docker-based compatibility harness (`compat/`, see
+`compat/README.md`) runs the same playbooks through real `ansible-playbook` and
+`crystal-ansible` side by side and diffs the resulting filesystem state + exit
+codes - ground truth instead of assumptions; **26/26 compat playbooks pass**.
+
+Two cross-cutting efforts also landed since Phases 3/4 were marked done:
+
+- **Native syscall conversion (0.9.15-0.9.23):** a survey found most plugins
+  shelled out to `/bin/bash` subprocesses for operations Crystal can do with
+  stdlib syscalls. Nearly all are now native (5x-250x faster, and more robust -
+  no reliance on command exit codes): `stat`/`find` (0.9.15), `archive`
+  tar/gz/zip/xz/bz2 (0.9.16-0.9.18), `file` (0.9.19), `apt_repository`/
+  `yum_repository` (0.9.20), `authorized_key` (0.9.21), `mount` (0.9.22),
+  `sysctl` (0.9.23). Timings per plugin are in `BENCHMARK_RESULTS.md`. The
+  deliberate exceptions - genuine system/network operations with no faithful
+  native Crystal equivalent - are documented per-plugin and stay shelled out
+  (`apt`/`dnf`/`package` package-manager calls, `mount`/`umount`,
+  `sysctl -w`/`-p`, `service` systemctl, `git`, `ufw`, `firewalld`). Plugins
+  that genuinely support remote hosts (`mount`, `sysctl`, `authorized_key`)
+  keep an SSH branch per converted call; the pure-local file plugins do not.
+  The `compat/Dockerfile` image build was fixed (it had silently broken when
+  `archive` went native - the image lacked the `-dev` link deps) and switched
+  to a **debug** build for faster iteration; the `authorized_key` playbook was
+  extended to cover user home resolution.
+
+- **Bug-fix history:** the harness plus manual testing, self-review, and unit
+  tests found and fixed many real bugs across Phases 1-4 (FQCN mis-registration,
+  templating/boolean-render divergences, `grep`-exit-code edge cases, variable/
+  include parsing gaps, `find`/`archive` path-matching bugs, check-mode guards,
+  and more). These are recorded in the commit history (`git log`); they are not
+  repeated here to keep this header scannable.
+
+**The real parity gap (Phase 5, active work):** the roadmap's earlier claim of
+"full parity for Linux server automation" was overstated - several *very common*
+`ansible.builtin` modules are entirely missing (`set_fact`, `get_url`,
+`blockinfile`, `uri`, `assert`, `wait_for`, `fetch`, `pause`). A playbook using
+even a routine `set_fact` or `get_url` fails today with "Plugin binary not
+found". These are tracked as **Phase 5**, the current priority. During this
+survey the roadmap (and the sibling `WHATS_MISSING.md` /
+`MISSING_FEATURES_COMPREHENSIVE.md`) were found stale relative to the code and
+git history; this header and Phase 5 supersede them.
+
+This roadmap sequences work from the two prior analysis docs
 ([WHATS_MISSING.md](WHATS_MISSING.md), [MISSING_FEATURES_COMPREHENSIVE.md](MISSING_FEATURES_COMPREHENSIVE.md))
 into phases, with the test-foundation phase (Phase 0) landing first so every
 phase after it ships with a regression net instead of drifting untested.
@@ -1226,10 +1226,169 @@ fully complete - every plugin originally scoped for it has shipped.
 - Cloud plugins (`ec2`, `s3_bucket`, `azure_rm_*`) - optional, lowest ROI
   per usage stats (~5% of playbooks)
 
-**Result:** full Ansible parity for Linux server automation.
+**Result:** Phases 1-4 complete as of `0.9.23` (the core engine, all Phase 3
+plugins, and all advanced-execution features). Full *routine* Linux parity is
+the Phase 5 goal below - the common-module gaps it tracks are what a "full
+parity" claim was previously missing.
+
+---
+
+## Phase 5 - Missing common modules (the real parity gap) (~2-3 weeks)
+
+This is the **current priority**. The checked phases below cover a lot, but not
+some of the most frequently-used `ansible.builtin` modules - each of these is
+entirely missing today, and a playbook using any of them fails with "Plugin
+binary not found". The concrete defect is checked into this roadmap so helper
+agents can pick one up independently; each entry below gives the parameters,
+the implementation approach for *this* codebase (action-plugin vs module,
+native vs exec, local/remote, check-mode), and the verification plan (unit spec
++ compat playbook diffed against real `ansible-playbook`, following the
+established `compat/` pattern).
+
+The action-plugin layer lives in `src/crystal_play/action_plugin_manager.cr`
+(an `ACTION_PLUGINS` registry; today it only handles `template`) - action
+plugins run on the control node and never touch the target. Modules are
+`plugins/<name>.cr` binaries (see `plugins/template.cr` for the standalone-binary
+shape) dispatched via `bin/plugins/`. Follow the existing conventions: `ameba`
+clean, unit specs where the logic is pure, integration specs via
+`spec/integration/cli_spec.cr`, `PluginSpecHelper.run`, and a compat playbook
+under `compat/playbooks/NN-*.yml` diffed 1:1. Bump version (patch, `0.9.x`) per
+commit.
+
+Recommended order (by real-world frequency, descending): `get_url` + `set_fact`
+first, then `blockinfile`, `uri`, `assert`, `wait_for`, `fetch`, `pause`.
+
+- [ ] `set_fact` (action plugin, `ansible.builtin.set_fact`): sets arbitrary
+  variables for subsequent tasks on the same host. Parameters: any number of
+  `key=value` pairs (values templated), plus `cacheable:` (bool, default `no` -
+  whether to persist into the fact cache; safe to accept-and-ignore at first if
+  there is no fact-cache plugin). Runs entirely on the control node, never
+  `changed`, works in check mode (it only mutates in-memory vars). Implement as
+  a new action plugin registered in `ACTION_PLUGINS`, writing the keys into the
+  host's vars context (see how `register:` feeds vars, and `template.cr`'s
+  action plugin for the shape). Set_fact has high variable precedence in real
+  Ansible (it overrides most lower-precedence sources). Unit spec: parsing +
+  that the vars are visible to a subsequent `debug:`/`command:`. Compat: a
+  playbook that `set_fact`s a value then uses it in a later task's `when:`/
+  template.
+- [ ] `assert` (action plugin, `ansible.builtin.assert`): fail (or pass) based
+  on a list of conditions, for role pre-flight validation. Parameters: `that:`
+  (required, list of condition expressions), `fail_msg:` (default "assertion
+  failed"), `success_msg:`. Runs on the control node, never `changed`, works in
+  check mode (the verdict is evaluated even under `--check`). Evaluate each `that`
+  condition with the same `ConditionalEvaluator` pipeline `when:`/`until:`
+  already use; if any is false, return `failed: true` with `fail_msg` (real
+  Ansible aggregates the failing assertion text). Note the same bare-vs-`{{ }}`
+  dotted-access caveat as `when:` (see the `changed_when` Phase 4 entry). Unit
+  spec: truthy/falsy/aggregation. Compat: a playbook that asserts true and one
+  that asserts false, diffing failed status.
+- [ ] `get_url` (module, `ansible.builtin.get_url`): download a URL to a file
+  on the target. Parameters: `url` (required), `dest` (required),
+  `mode`/`owner`/`group` (apply perms after download), `force` (default `no` -
+  skip if `dest` already exists), `checksum` (e.g. `"sha256:<hex>"`, verified
+  before/after), `url_username`/`url_password` (basic auth), `validate_certs`
+  (default `yes`; allow `no` to skip TLS verification), `timeout` (default 10),
+  `headers` (dict), `http_agent`, `backup`. Fetch with Crystal stdlib
+  `HTTP::Client` (native - no `curl`/`wget` for the local case; for remote
+  hosts, either shell `curl`/`wget` on the target via `remote_exec` or error
+  clearly, mirroring how the package-manager plugins handle their genuine
+  remote gaps). Idempotent: `dest` existing + `force: no` -> unchanged; download
+  only when needed. Check mode reports what it would download without writing.
+  Unit spec: checksum validation + force/not-force logic (pure parts);
+  integration spec with a local HTTP server (`python3 -m http.server` or a tiny
+  Crystal socket) serving a file into a temp dir. Compat: playbook that starts a
+  local HTTP server task then `get_url`s from it, diffing the downloaded file's
+  checksum.
+- [ ] `blockinfile` (module, `ansible.builtin.blockinfile`): insert or update a
+  marker-delimited block of text in a file - the natural follow-on to the
+  already-native `lineinfile`, and the cleanest native fit in this phase.
+  Parameters: `path` (required), `block` (required text; alias `content`),
+  `state` (present/absent, default present), `marker` (default
+  `# BEGIN ANSIBLE MANAGED BLOCK`), `marker_begin`/`marker_end` (default `null`,
+  override begin/end markers independently; `{mark}` is the placeholder),
+  `insertafter` (EOF default, or a regex), `insertbefore` (regex, or BOF),
+  `create` (default `no` - create the file if missing), `mode`/`owner`/`group`
+  (via the shared `BasePlugin#apply_owner_group_mode`), `backup`. Entirely
+  native file editing (`File.read_lines`/`File.write`), mirroring `lineinfile.cr`
+  including its `create`/mode handling and a local/remote split only if
+  needed. Idempotent on the exact `marker_begin`/`block`/`marker_end` block.
+  Check mode reports would-change without writing. Unit spec on the block
+  replace/remove/idempotent logic; integration spec via `PluginSpecHelper.run`.
+  Compat: playbook that inserts, updates, and removes a block, diffing the file
+  contents + `changed` flags.
+- [ ] `uri` (module, `ansible.builtin.uri`): make an HTTP request (API calls,
+  health checks, webhooks). Parameters: `url` (required), `method` (default
+  GET), `body` (default `null`), `body_format` (`json`/`form`/`raw`),
+  `headers` (dict), `status_code` (list, default `[200]` - fail if the response
+  status isn't in it), `return_content` (bool, default `no` - echo the body into
+  `result.content`), `timeout`, `url_username`/`url_password`,
+  `validate_certs`, `follow_redirects` (default `safe`). Returns via `register:`:
+  `status`, `content`, `json`, `location`, `msg`. Native `HTTP::Client`
+  (local); for remote, shell `curl`/`wget` or error clearly. `changed:` follows
+  real Ansible: mutating methods (POST/PUT/DELETE) report `changed: true`, GET/
+  HEAD report `false`. Check mode must **not** send mutating requests (real
+  Ansible only allows GET/HEAD under `--check`). Response-body size cap to avoid
+  buffering a huge download. Integration spec against a local HTTP server
+  asserting `status`/`content`/`changed`; compat playbook diffing the
+  registered `status`/`content`.
+- [ ] `wait_for` (module, `ansible.builtin.wait_for`): poll until a condition
+  (port/service/file) is met, used to gate tasks on readiness. Parameters:
+  `host` (default 127.0.0.1)/`port` (wait until connectable), `path` (wait
+  until file exists/absent), `search_regex` (match in a file), `state`
+  (started/present for up, stopped/absent for down; `drained`), `timeout`
+  (default 300), `delay` (sleep before polling starts), `connect_timeout`
+  (default 5), `sleep` (default 1), `msg`. Native: `TCPSocket` connect attempt
+  for `port`, `File.exists?`/`File.delete?` for `path`, file read + regex for
+  `search_regex` - poll in a loop with `sleep` until the condition or `timeout`,
+  failing with `msg` on timeout. Never `changed` (it never modifies state; real
+  Ansible reports `changed: false`). Local fully native; remote connect checked
+  via the target's address. Unit spec: poll/loop/timeout logic (pure);
+  integration spec with a local socket that comes up after a short delay.
+  Compat: playbook that starts a local server task then `wait_for:` its port.
+- [ ] `fetch` (module, `ansible.builtin.fetch`): pull a file from the target to
+  the control node - the inverse of `copy`. Parameters: `src` (required, file
+  on target), `dest` (required, control-node path), `flat` (bool, default `no`
+  - when `no`, `dest` is a directory and the file is stored under a
+  `hostname/path` suffix; when `yes`, `dest` is the literal file path or a
+  dir), `validate_checksum` (checksum before/after transfer; delete the
+  control-node copy on mismatch), `fail_on_missing` (default `yes`). For local
+  connections it's a plain `File.copy`; for remote it uses `remote_download`
+  (opposite of `copy`'s `remote_upload`). Idempotent if the control-node copy
+  already matches. Integration spec via `PluginSpecHelper.run` with a local
+  `src`/`dest`; compat playbook: `copy` a file, then `fetch` it back into
+  `/work/fetch-dest` and diff the result (both engines fetch on the control
+  node, which in the harness container is the same filesystem).
+- [ ] `pause` (module, `ansible.builtin.pause`): wait or (interactively) prompt.
+  Parameters: `seconds` (int), `minutes` (int, combined with `seconds`),
+  `prompt`, `echo` (default `no`). crystal-ansible has no interactive TTY/prompt
+  model, so implement the countdown only (`seconds` + `minutes*60` of
+  `sleep`) - the documented scope cut vs real Ansible's interactive prompt, and
+  non-interactive real Ansible already just sleeps. Never `changed`. Trivial:
+  unit/integration spec asserting it sleeps ~N seconds; compat playbook with a
+  1-second `pause` (passes trivially, mostly a smoke test).
+
+**Also still open (lower priority - see each shipping plugin's class doc for the
+exact "not implemented" list):** the documented per-plugin scope cuts (e.g.
+`stat` `get_mime`/`get_attributes`, `find` `age`/`contains`, `archive`
+`exclude_path`, `ufw` `insert_relative_to`, `mysql_db`/`postgresql_db`
+`state: dump/import`, `postgresql_user` grants / `postgresql_privs`,
+`docker_*` `networks`/`connected:`/tls), and the cross-cutting engine gaps
+(dotted-variable access in **bare** - non-`{{ }}` - conditionals used by
+`when:`/`until:`/`changed_when:`/`failed_when:`; missing Jinja2 filters such as
+`map(attribute=...)` and `sort`; the recap `ok`/`changed` counters being
+mutually exclusive rather than real Ansible's overlapping ones). Cloud plugins
+(`ec2`, `s3_bucket`, `azure_rm_*`) and inventory *plugins* (`aws_ec2.yml` et
+al.) remain explicitly lowest-ROI and are not planned.
+
+**Result (with Phase 5 complete):** genuine parity for routine Linux server
+automation - the full set of commonly-used `ansible.builtin` modules plus the
+already-shipped core engine, plugins, and compatibility harness.
 
 ---
 
 ## Total estimate
 
 Roughly 12-18 weeks of focused work across Phases 1-4, plus Phase 0 up front.
+**Phases 1-4 are now complete** (as of `0.9.23`); the remaining planned work is
+**Phase 5** (missing common modules, ~2-3 weeks) plus the lower-priority scope
+cuts and engine gaps listed at the end of Phase 5.
