@@ -1,13 +1,16 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.33`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.34`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
 `0.9.24`, `get_url` `0.9.25`/`0.9.32`, `blockinfile` `0.9.26`, `uri` `0.9.27`,
 `assert` `0.9.28`, `wait_for` `0.9.29`, `fetch` `0.9.30`, `pause` `0.9.31`).
-595/597 specs pass (the 2 exceptions need a live MySQL/PostgreSQL server at
-`127.0.0.1:13306`/`15432`), `ameba` clean on all new/touched code. A
+One of the two remaining cross-cutting engine gaps - dotted-variable access
+in bare conditionals - is also now fixed (`0.9.34`, see the note near the
+end of Phase 5). 601/603 specs pass (the 2 exceptions need a live
+MySQL/PostgreSQL server at `127.0.0.1:13306`/`15432`), `ameba` clean on all
+new/touched code. A
 Docker-based compatibility harness (`compat/`, see `compat/README.md`) runs
 the same playbooks through real `ansible-playbook` and `crystal-ansible` side
 by side and diffs the resulting filesystem state + exit codes - ground truth
@@ -1662,13 +1665,47 @@ exact "not implemented" list):** the documented per-plugin scope cuts (e.g.
 `stat` `get_mime`/`get_attributes`, `find` `age`/`contains`, `archive`
 `exclude_path`, `ufw` `insert_relative_to`, `mysql_db`/`postgresql_db`
 `state: dump/import`, `postgresql_user` grants / `postgresql_privs`,
-`docker_*` `networks`/`connected:`/tls), and the cross-cutting engine gaps
-(dotted-variable access in **bare** - non-`{{ }}` - conditionals used by
-`when:`/`until:`/`changed_when:`/`failed_when:`; missing Jinja2 filters such as
-`map(attribute=...)` and `sort`; the recap `ok`/`changed` counters being
-mutually exclusive rather than real Ansible's overlapping ones). Cloud plugins
-(`ec2`, `s3_bucket`, `azure_rm_*`) and inventory *plugins* (`aws_ec2.yml` et
-al.) remain explicitly lowest-ROI and are not planned.
+`docker_*` `networks`/`connected:`/tls), and the remaining cross-cutting
+engine gap: missing Jinja2 filters such as `map(attribute=...)` and `sort`
+(a real, separate limitation from dotted-variable access below - the
+`{{ }}`-wrapped filter pipeline only ever splits on the *first* `|`, so even
+a single supported filter chained after another, e.g. `x | sort | join(',')`,
+doesn't work today; fixing this properly needs the filter engine to carry
+structured `JSON::Any` values through the whole chain instead of collapsing
+to a string after each step - a real architectural change, not a quick
+filter-by-filter add, and bigger in scope than it looks from this one-line
+mention), plus the recap `ok`/`changed` counters being mutually exclusive
+rather than real Ansible's overlapping ones. Cloud plugins (`ec2`,
+`s3_bucket`, `azure_rm_*`) and inventory *plugins* (`aws_ec2.yml` et al.)
+remain explicitly lowest-ROI and are not planned.
+
+**Fixed in `0.9.34`:** dotted-variable access in **bare** (non-`{{ }}`)
+conditionals used by `when:`/`until:`/`changed_when:`/`failed_when:` - this
+was the *other* half of the cross-cutting gap above, and turned out to be
+much more tractable than the filter-chaining one, so it was picked up
+first. `ConditionalEvaluator#evaluate_value` previously did a plain
+`vars.has_key?(expr)` lookup with no path-splitting at all, so a condition
+like `when: result.rc == 0` (the ordinary, unwrapped way real Ansible
+expects `when:` to be written - not a niche case) silently evaluated
+`result.rc` to undefined instead of the real value; only the `{{ }}`-wrapped
+`ComparisonEvaluator` path (reached by writing `when: "{{ result.rc == 0
+}}"` instead) supported dotted access before this. Fixed by adding a
+`resolve_dotted` helper that splits on `.` and navigates a `JSON::Any` Hash
+structure to arbitrary depth (`stat_result.stat.exists` works, not just one
+level), falling back to the existing bare-lookup path unchanged when there's
+no `.` or the first segment isn't a real variable. Guarded against float
+literals (`1.5`) also containing a `.` - the guard is that a real dotted
+path's first segment (e.g. `result`) never itself parses as a float, so
+`expr.to_f64?` cheaply distinguishes the two without needing a full
+expression grammar. Verified against real `ansible-playbook` side by side
+(not assumed): a bare single-level `result.rc == 0`/`!= 0` pair and a bare
+two-level `stat_result.stat.exists` all produced identical
+run/skip/run task outcomes on both engines for the same playbook.
+Regression-tested in `spec/unit/conditional_evaluator_spec.cr` (6 new
+examples: single-level equality, two-level nested truthiness, a
+dotted-field-resolving-to-false case, a missing dotted field treated as
+undefined rather than erroring, the float-literal guard, and confirming
+plain non-dotted variables still work unchanged).
 
 **Cross-cutting bug found while building `compat/playbooks/32-wait-for.yml`
 (fixed in `0.9.33`):** `LocalExecutor.exec` (used by `shell:`/`command:` on

@@ -108,4 +108,53 @@ describe CrystalPlay::ConditionalEvaluator do
       CrystalPlay::ConditionalEvaluator.evaluate("name", v).should be_false
     end
   end
+
+  describe "dotted variable access" do
+    # Regression tests for a real, previously-shipped gap: this bare
+    # (non-{{ }}) evaluator only ever did a plain vars.has_key?(expr)
+    # lookup, so a when:/until:/changed_when:/failed_when: referencing a
+    # dotted result field (the ordinary, unwrapped way real Ansible
+    # expects when: to be written) silently evaluated to undefined
+    # instead of the real value.
+    it "resolves a single-level dotted field for equality" do
+      v = Hash(String, JSON::Any).new
+      v["result"] = JSON.parse(%({"rc": 0}))
+      CrystalPlay::ConditionalEvaluator.evaluate("result.rc == 0", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("result.rc != 0", v).should be_false
+    end
+
+    it "resolves a two-level (nested) dotted field for truthiness" do
+      v = Hash(String, JSON::Any).new
+      v["stat_result"] = JSON.parse(%({"stat": {"exists": true}}))
+      CrystalPlay::ConditionalEvaluator.evaluate("stat_result.stat.exists", v).should be_true
+    end
+
+    it "treats a dotted field resolving to false as falsy" do
+      v = Hash(String, JSON::Any).new
+      v["stat_result"] = JSON.parse(%({"stat": {"exists": false}}))
+      CrystalPlay::ConditionalEvaluator.evaluate("stat_result.stat.exists", v).should be_false
+    end
+
+    it "treats a missing dotted field as undefined (falsy), not an error" do
+      v = Hash(String, JSON::Any).new
+      v["result"] = JSON.parse(%({"rc": 0}))
+      CrystalPlay::ConditionalEvaluator.evaluate("result.nonexistent", v).should be_false
+    end
+
+    it "does not treat a float literal's decimal point as a dotted variable path" do
+      # A float literal like "1.5" also contains a "." - without the
+      # to_f64? guard, evaluate_value would split it into ["1", "5"] and,
+      # if a variable literally named "1" happened to exist, resolve it as
+      # a dotted lookup ("look up variable 1, then its nested field 5")
+      # instead of treating "1.5" as the numeric literal it is.
+      v = Hash(String, JSON::Any).new
+      v["1"] = JSON.parse(%({"5": "unexpected"}))
+      CrystalPlay::ConditionalEvaluator.evaluate(%(1.5 == "unexpected"), v).should be_false
+    end
+
+    it "still evaluates a plain (non-dotted) variable normally" do
+      v = vars({"foo" => "bar"} of String => JSON::Any::Type)
+      CrystalPlay::ConditionalEvaluator.evaluate(%(foo == "bar"), v).should be_true
+    end
+  end
 end
