@@ -93,7 +93,7 @@ test with exact content assertions for the `lineinfile` bug).
 
 ## Coverage
 
-Thirty-four playbooks, one per concern: `debug`/`copy`, `file` states,
+Thirty-six playbooks, one per concern: `debug`/`copy`, `file` states,
 `lineinfile`, `loop`/`with_items`, real `user`/`group` creation and
 modification, `block`/`rescue`/`always`, `until`/`retries`, `cron`
 (`cron_file:`), `authorized_key`, `git` clone/checkout against a local
@@ -192,7 +192,24 @@ hostname/path layout, an idempotent rerun, `flat: true` to both a
 directory and a literal path, and a missing source with
 `fail_on_missing: false`. `pause` (`34-pause.yml`) covers a `seconds:`
 sleep, a `minutes:` sleep, and the `seconds:`/`minutes:` mutual-exclusion
-failure.
+failure. `mysql_db`/`postgresql_db` `state: dump`/`import`(`restore`)
+(`35-mysql-db.yml`/`36-postgresql-db.yml`) each start their own throwaway
+server inside the container via its init.d script (no systemd in this
+image) and cover: a seed import/restore, a plain-SQL dump, a
+gzip-compressed dump (native `Compress::Gzip`, no `gzip` subprocess), both
+dumps restored into a second database with the row count verified after
+each round trip, and a missing-`target:` failure (both engines must fail
+the same way). The raw dump files are deleted before the `/work` snapshot
+- `mysqldump`/`pg_dump` both embed a timestamp comment, so even logically
+identical dumps are byte-different across the two engines' separate runs;
+the row-count round trips already prove the content matched.
+`postgresql_db`'s compat playbook sets the `postgres` superuser's password
+via a plain `su postgres -c '...'` shell command rather than
+`become:`/`become_user:` - crystal-ansible parses `become:` but doesn't
+actually apply privilege escalation to command execution yet (a real,
+previously-undocumented gap found while writing this playbook - see
+`ROADMAP.md`), so using it here would have silently run as root on one
+engine and as `postgres` on the other.
 
 Building `32-wait-for.yml` found a real, previously-unknown bug unrelated
 to `wait_for` itself: `LocalExecutor.exec` (backing `shell:`/`command:`

@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.39`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.40`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -8,29 +8,34 @@ advanced-execution feature, and all eight Phase 5 modules: `set_fact`
 `assert` `0.9.28`, `wait_for` `0.9.29`, `fetch` `0.9.30`, `pause` `0.9.31`).
 Two of the three cross-cutting engine gaps are now fixed: dotted-variable
 access in bare conditionals (`0.9.34`) and the recap `ok`/`changed` counter
-overlap (`0.9.35`) - only the Jinja2 filter-chaining gap remains open (see
-the note near the end of Phase 5; it needs a real architectural change, not
-a quick add). Work is also underway on the per-plugin scope-cut grab-bag:
-`stat`'s `get_mime`/`get_attributes` (`0.9.36`), `find`'s
-`age`/`age_stamp`/`contains`/`read_whole_file` (`0.9.37`), `archive`'s
-`exclude_path` (`0.9.38`), and `ufw`'s `insert_relative_to` (`0.9.39`) have
-all shipped. 636/638 specs pass (the 2 exceptions need a live
-MySQL/PostgreSQL
-server at
-`127.0.0.1:13306`/`15432`), `ameba` clean on all
-new/touched code. A
+overlap (`0.9.35`) - the Jinja2 filter-chaining gap and a newly-documented
+`become:`/`become_user:` no-op remain open (see the notes near the end of
+Phase 5; both need real architectural changes, not quick adds). The
+per-plugin scope-cut grab-bag is now fully closed: `stat`'s `get_mime`/
+`get_attributes` (`0.9.36`), `find`'s `age`/`age_stamp`/`contains`/
+`read_whole_file` (`0.9.37`), `archive`'s `exclude_path` (`0.9.38`), `ufw`'s
+`insert_relative_to` (`0.9.39`), and `mysql_db`/`postgresql_db`'s `state:
+dump`/`import`(`restore`) (`0.9.40`) have all shipped. 637/638 specs pass
+(the 2 exceptions need a live MySQL/PostgreSQL server at
+`127.0.0.1:13306`/`15432` reachable with real `mysql`/`psql` client
+binaries, neither installed on this host directly - see the `0.9.40` entry
+for how they were verified anyway), `ameba` clean on all new/touched code. A
 Docker-based compatibility harness (`compat/`, see `compat/README.md`) runs
 the same playbooks through real `ansible-playbook` and `crystal-ansible` side
 by side and diffs the resulting filesystem state + exit codes - ground truth
-instead of assumptions; **34/34 compat playbooks pass**, including a fresh
+instead of assumptions; **36/36 compat playbooks pass**, including a fresh
 compat playbook per Phase 5 module (`compat/playbooks/27-set-fact.yml`
-through `34-pause.yml`) added and verified in this pass - see each Phase 5
+through `34-pause.yml`) plus one each for `mysql_db`/`postgresql_db`'s new
+dump/import support (`35-mysql-db.yml`/`36-postgresql-db.yml`) - see each
 entry below and `compat/README.md`'s Coverage section for what each one
-caught, including a real `get_url` field-naming bug (fixed in `0.9.32`) and
-a real `LocalExecutor`/`shell:` hang bug (fixed in `0.9.33` - see the Phase
-5 wrap-up note below, which also caught and fixed a related `build.sh`
+caught, including a real `get_url` field-naming bug (fixed in `0.9.32`), a
+real `LocalExecutor`/`shell:` hang bug (fixed in `0.9.33` - see the Phase 5
+wrap-up note below, which also caught and fixed a related `build.sh`
 staleness-check gap that let the fix silently not take effect on the first
-attempt).
+attempt), a compat-image venv isolation bug that broke every
+`postgresql_*` compat playbook regardless of crystal-ansible's own
+correctness, and a real `mysql_connection.cr` TLS-negotiation crash against
+a common MariaDB server config (both fixed in `0.9.40`, see that entry).
 
 Two cross-cutting efforts also landed since Phases 3/4 were marked done:
 
@@ -1063,9 +1068,12 @@ the same way it did between January and now.
     `login_unix_socket:` (a new pure
     `src/crystal_play/plugin_helpers/mysql_connection.cr`, unit tested,
     builds the connection URI - `login_unix_socket:` takes precedence
-    over `login_host:`/`login_port:` when given). Not implemented:
-    `state: dump`/`import` (mysqldump-based backup/restore),
-    `config_file:` (`~/.my.cnf` credential lookup).
+    over `login_host:`/`login_port:` when given; also always forces
+    `ssl-mode=disabled` on the connection - see the `0.9.40` entry near the
+    end of this file for why). `state: dump`/`import` (mysqldump-based
+    backup/restore, `0.9.40`) - see that entry for the full writeup. Not
+    implemented: `.bz2`/`.xz`/`.zst` compression (only `.gz`, natively via
+    `Compress::Gzip`), `config_file:` (`~/.my.cnf` credential lookup).
   - `mysql_user`: `name:` (required), `password:` (only applied when
     creating a new user, or when an existing user's password is updated
     under `update_password: always`, the default - matching real
@@ -1140,8 +1148,13 @@ the same way it did between January and now.
     new pure `src/crystal_play/plugin_helpers/postgresql_connection.cr`,
     unit tested; verified against `crystal-pg`'s actual `ConnInfo` parsing
     source that a unix socket path has to go through a `host` query
-    param, not the URI's own host component). Not implemented: `state:
-    dump`/`import`, `collation:`/`lc_collate:`/`lc_ctype:`/`template:`/
+    param, not the URI's own host component). `state: dump`/`restore`
+    (real Ansible's own keyword is `restore`, not `import` like
+    `mysql_db`'s equivalent, `0.9.40`) - see that entry near the end of
+    this file for the full writeup. Not implemented: `.tar`/`.pgc`/`.dir`
+    formats (`pg_restore`-based) and `.bz2`/`.xz` compression for
+    dump/restore (only plain `.sql` and `.gz`, natively via
+    `Compress::Gzip`), `collation:`/`lc_collate:`/`lc_ctype:`/`template:`/
     `tablespace:`, `force:`, `session_role:`.
   - `postgresql_user`: `name:` (required), `password:` (applied whenever
     given, for both new and already-existing roles - unlike real Ansible,
@@ -1753,14 +1766,148 @@ fixed: a `get_url` result-field name (`checksum` should have been
 themselves, unrelated to any Phase 5 module, that a plain reading of the
 compat playbook's own task wouldn't have suggested was there).
 
+- [x] `mysql_db`/`postgresql_db` `state: dump`/`import` (`0.9.40`):
+  implementation was written and verified end-to-end against real running
+  servers in an earlier pass, left uncommitted with a handoff note, then
+  picked back up, given a compat-harness playbook each
+  (`compat/playbooks/35-mysql-db.yml`/`36-postgresql-db.yml`), re-verified
+  against the same live-container setup plus the compat harness itself, and
+  committed. What shipped:
+- `mysql_db.cr`: `state: dump` shells `mysqldump #{login_flags} dbname
+  --quick`, capturing stdout via `remote_exec` and writing it to `target:`
+  (natively gzip-compressed via `Compress::Gzip::Writer` when `target:` ends
+  in `.gz`, no `gzip` subprocess - `.bz2`/`.xz`/`.zst` are **not**
+  implemented, a real scope cut, not an oversight). `state: import` shells
+  `mysql #{login_flags} --one-database dbname < path` (decompressing a
+  `.gz` target to a temp file first via `Compress::Gzip::Reader` when
+  needed). `login_flags` builds `--user=`/`--password=`/`--host=`/`--port=`
+  (or `--socket=` when `login_unix_socket:` is given) from the same
+  `login_*` params `present`/`absent` already use. Both always report
+  `changed: true` on success (dump/import are not idempotency-checked at
+  all in real Ansible either) and return `{changed, failed, msg, db,
+  db_list}`, matching real Ansible's own field shape - verified against a
+  real `ansible-playbook` run with `community.mysql.mysql_db` against a
+  real MariaDB 11 server (see verification notes below), not assumed.
+- `postgresql_db.cr`: same shape, but the real Ansible keyword is `state:
+  restore`, **not** `import` like `mysql_db`'s - verified via `ansible-doc
+  community.postgresql.postgresql_db`, don't assume it matches
+  `mysql_db`'s naming. Shells `pg_dump #{name} #{login_flags}` for dump,
+  `psql --dbname=#{name} #{login_flags} --file=path` for restore, with the
+  password passed via a `PGPASSWORD=` environment-variable prefix in the
+  shell command (real `pg_dump`/`psql` take no password CLI flag at all -
+  verified, not guessed). Real Ansible's `.tar`/`.pgc`/`.dir` formats
+  (`pg_restore`-based) are **not** implemented, only plain `.sql` and
+  `.gz` - a real scope cut. `dump:`'s `msg:` is empty on success;
+  `restore:`'s `msg:` is `psql`'s actual stdout (not empty) - verified,
+  this asymmetry is real Ansible's own behavior, not a bug to fix.
+- Both: `target:` is required for dump/import/restore (fails clearly if
+  missing); import/restore fails clearly if `target:` doesn't exist;
+  `check_mode:` reports `changed: true` with a "Would dump/import/restore"
+  message without touching anything for real.
+- `testing/test-mysql-quick.yml`/`test-postgresql-quick.yml` were extended
+  with dump/import(/restore)/gzip round-trip tasks (seed data → dump
+  gzip-compressed → restore into a second database → verify the row count
+  survived the round trip), and `spec/integration/cli_spec.cr`'s two
+  existing "requires a real server" tests were extended to assert on the
+  new `db_import`/`db_dump`/`db_import_gz`/`restored_count` (mysql) and
+  `db_restore`/`db_dump`/`db_restore_gz`/`restored_count` (postgresql)
+  output lines. One pre-existing, unrelated fixture bug was found and
+  fixed while wiring this up: the "verify the restored data round-tripped"
+  task used `ansible.builtin.command:` with a quoted `-e "SELECT ..."`
+  argument, which this codebase's own `command:` module (unlike real
+  Ansible's) doesn't parse correctly (documented limitation: "doesn't
+  handle quoted arguments perfectly") - switched to `ansible.builtin.shell:`
+  instead, which goes through `/bin/bash -c` and handles the quoting fine.
+- Verification method (first pass): this sandbox has no `mysqldump`/
+  `mysql`/`psql`/`pg_dump` client binaries installed and no `sudo`/apt
+  access to add them, so testing happened by launching real `mariadb:11`
+  and `postgres:17` Docker containers plus a separate Debian container
+  (`apt-get install` works fine as root *inside* a fresh container) with
+  the client tools installed, `--network host` so it could reach the DB
+  containers on `127.0.0.1:13306`/`15432`, and the freshly-built `bin/`
+  copied in via `docker cp`. Confirmed byte-identical dump content against
+  real `ansible-playbook`'s own `mysqldump` output (diffed, modulo the dump
+  timestamp comment line), successful round-trip imports/restores (row
+  counts verified via direct `mysql`/`psql` queries), and ran the full,
+  YAML-driven `testing/test-mysql-quick.yml`/`test-postgresql-quick.yml`
+  fixtures end-to-end through the actual compiled `crystal-ansible`
+  binary (not just the raw plugin binaries) - both completed with
+  `failed=0` and the exact expected debug output line.
+- Compat-harness playbooks (`compat/playbooks/35-mysql-db.yml`/
+  `36-postgresql-db.yml`, second pass): each starts its own throwaway
+  server inside the compat container via its init.d script and covers a
+  seed import/restore, a plain-SQL dump, a gzip-compressed dump (native
+  `Compress::Gzip`, no `gzip` subprocess), both dumps restored into a
+  second database with the row count verified after each round trip, and
+  a missing-`target:` failure (both engines must fail the same way).
+  Required extending `compat/Dockerfile` with `mariadb-server`/
+  `postgresql`/their clients and `python3-pymysql`/`python3-psycopg2` (what
+  real Ansible's own `community.mysql`/`community.postgresql` modules
+  import on the target's system Python) plus the `community.mysql`/
+  `community.postgresql` collections. Building these two playbooks found
+  two more real, previously-shipped bugs, neither related to dump/import
+  itself:
+  1. **The venv running real `ansible-playbook` inside the compat
+     container couldn't see the apt-installed `psycopg2`** - `python3 -m
+     venv` isolates site-packages by default, and
+     `community.postgresql.postgresql_db` imports `psycopg2` directly
+     (unlike `mysql_db`, which only ever shells out to `mysqldump`/`mysql`,
+     never imports a Python DB driver) - every `postgresql_db`/
+     `postgresql_user` compat task failed with "Failed to import the
+     required Python library (psycopg2)" regardless of crystal-ansible's
+     own correctness. Fixed by adding `--system-site-packages` to the
+     venv creation in `compat/Dockerfile`.
+  2. **`mysql_connection.cr`'s built connection URI crashed against a
+     common, valid MariaDB config**: any server compiled with OpenSSL
+     support but never given a cert/key (`have_ssl: DISABLED`, the Debian
+     `mariadb-server` package's out-of-the-box state) still advertises the
+     SSL capability flag in its handshake, and the vendored `mysql` shard's
+     default (`ssl-mode: preferred`) unconditionally attempts a TLS
+     handshake whenever that flag is set - failing with a confusing
+     `SSL_connect: error:0A00010B:SSL routines::wrong version number`
+     instead of falling back to plaintext (a documented limitation of the
+     shard itself: "Preferred" doesn't actually retry non-SSL on failure).
+     100% reproducible against a fresh Debian-package MariaDB, though it
+     happened not to trigger against the official `mariadb:11` Docker
+     image used in the first verification pass above (different SSL build
+     configuration) - which is why it wasn't caught until the compat
+     harness exercised a different server image. There's no `login_*`/
+     `ssl_*` param exposed anywhere in this codebase's `mysql_db`/
+     `mysql_user` plugins for TLS configuration in the first place, so
+     there's no way for a caller to opt out short of a code change - fixed
+     by always appending `ssl-mode=disabled` to the connection URI in
+     `MysqlConnection.build_uri` (`spec/unit/mysql_connection_spec.cr`
+     updated for the new URI shape plus a dedicated regression example).
+  Both fixes verified directly (manually re-running the affected playbook
+  against the exact reproducing server config before and after each fix,
+  not just re-running the full harness and hoping) and then confirmed via
+  a full harness run: **36/36 compat playbooks pass**, including both new
+  ones, byte-for-byte identical `/work` snapshots against real
+  `ansible-playbook` (dump files themselves excluded from the snapshot,
+  like `archive`'s/`unarchive`'s own compat playbooks - `mysqldump`/
+  `pg_dump` embed a timestamp comment, so even logically identical dumps
+  are byte-different across the two engines' separate runs; the row-count
+  round trips already prove the content matched). `postgresql_db`'s compat
+  playbook also surfaced that **`become:`/`become_user:` are parsed but
+  never actually applied to command execution** - see the cross-cutting
+  gaps note below. `ameba` is clean on every file this touched (matching
+  the pre-existing baseline exactly - confirmed by diffing against the
+  pre-change baseline, not just eyeballing the count), and `crystal spec`
+  passes at 637/638 (one more example than before, from the new
+  `mysql_connection_spec.cr` regression case; same 2 pre-existing
+  DB-client-dependent failures as always, unrelated to this - this sandbox
+  has no `mysql`/`psql` client binaries on the host itself, only inside
+  the throwaway containers used for verification above).
+
 **Also still open (lower priority - see each shipping plugin's class doc for the
 exact "not implemented" list):** the documented per-plugin scope cuts (e.g.
-`mysql_db`/`postgresql_db` `state: dump/import`, `postgresql_user` grants /
+`postgresql_user` grants /
 `postgresql_privs`, `docker_*` `networks`/`connected:`/tls - `stat`'s own
 `get_mime`/`get_attributes`, `find`'s own `age`/`contains`, `archive`'s own
 `exclude_path`, and `ufw`'s own `insert_relative_to` cuts are now closed,
-see their entries above), and the remaining cross-cutting
-engine gap: missing Jinja2 filters such as `map(attribute=...)` and `sort`
+see their entries above; `mysql_db`/`postgresql_db` `state: dump/import`
+is now closed too, see its entry above), and two remaining cross-cutting
+engine gaps: missing Jinja2 filters such as `map(attribute=...)` and `sort`
 (a real, separate limitation from dotted-variable access below - the
 `{{ }}`-wrapped filter pipeline only ever splits on the *first* `|`, so even
 a single supported filter chained after another, e.g. `x | sort | join(',')`,
@@ -1768,9 +1915,22 @@ doesn't work today; fixing this properly needs the filter engine to carry
 structured `JSON::Any` values through the whole chain instead of collapsing
 to a string after each step - a real architectural change, not a quick
 filter-by-filter add, and bigger in scope than it looks from this one-line
-mention). Cloud plugins (`ec2`, `s3_bucket`, `azure_rm_*`) and inventory
-*plugins* (`aws_ec2.yml` et al.) remain explicitly lowest-ROI and are not
-planned.
+mention); and **`become:`/`become_user:` are parsed and threaded through
+`Task`/`TaskExecutor` (including block/role inheritance) but never actually
+applied anywhere command/plugin execution happens** - no `sudo`/`su`
+wrapping in `LocalExecutor`, `SSHManager`, or `PluginManager`, so a
+playbook that relies on `become: true` to run as a different user silently
+runs as whatever user crystal-ansible itself was invoked as instead. Found
+while writing `compat/playbooks/36-postgresql-db.yml` (worked around there
+with a plain `su postgres -c '...'` shell command instead of `become:`,
+since using it as written would have silently diverged between engines -
+see `compat/README.md`'s coverage section). Not yet fixed; real privilege
+escalation needs `sudo -n -u <user> -- <command>`-style wrapping added to
+each executor's actual invocation path, a nontrivial change (SSH's
+remote-side command construction and the local plugin-binary-exec path are
+both affected) rather than a quick add. Cloud plugins (`ec2`, `s3_bucket`,
+`azure_rm_*`) and inventory *plugins* (`aws_ec2.yml` et al.) remain
+explicitly lowest-ROI and are not planned.
 
 **Fixed in `0.9.35`:** the recap `ok`/`changed` counters being mutually
 exclusive rather than real Ansible's overlapping ones. Verified against a
@@ -1886,7 +2046,9 @@ already-shipped core engine, plugins, and compatibility harness.
 ## Total estimate
 
 Roughly 12-18 weeks of focused work across Phases 1-4, plus Phase 0 up front.
-**Phases 0-5 are all now complete** (Phase 5 as of `0.9.31`). What remains is
-the lower-priority scope-cut list and cross-cutting engine gaps at the end of
-the Phase 5 section, plus adding compat-harness coverage for the eight Phase 5
-modules (none have one yet - see each entry above).
+**Phases 0-5 are all now complete** (Phase 5 as of `0.9.31`, with full
+compat-harness coverage for all eight of its modules added at `0.9.32`).
+What remains is the lower-priority scope-cut list and the two remaining
+cross-cutting engine gaps at the end of the Phase 5 section (Jinja2
+filter-chaining, and `become:`/`become_user:` not actually applying
+privilege escalation - see each entry above).

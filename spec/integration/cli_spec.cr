@@ -259,6 +259,8 @@ describe "crystal-ansible CLI (--check mode)" do
 
     status.success?.should be_true
     output.should contain("db_first=True db_idempotent=False")
+    output.should contain("db_import=True db_dump=True db_import_gz=True")
+    output.should contain("restored_count=2")
     output.should contain("user_first=True user_idempotent=False")
     output.should contain("user_priv_changed=True user_removed=True db_removed=True")
     output.should contain("mysql plugins smoke test complete!")
@@ -273,6 +275,8 @@ describe "crystal-ansible CLI (--check mode)" do
 
     status.success?.should be_true
     output.should contain("db_first=True db_idempotent=False")
+    output.should contain("db_restore=True db_dump=True db_restore_gz=True")
+    output.should contain("restored_count=2")
     output.should contain("user_first=True user_idempotent=False")
     output.should contain("user_flags_changed=True user_removed=True db_removed=True")
     output.should contain("postgresql plugins smoke test complete!")

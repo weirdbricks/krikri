@@ -21,6 +21,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     ufw \
     firewalld \
+    # DB servers + clients for the mysql_db/postgresql_db dump/import
+    # compat playbooks (35/36): the playbooks start each server inside
+    # the container via its init.d script (no systemd needed). Server and
+    # client come from the same distro release, so pg_dump/mysqldump never
+    # hit a server-vs-client version mismatch. python3-pymysql /
+    # python3-psycopg2 are what real Ansible's own community.mysql /
+    # community.postgresql modules import on the *target*'s system python.
+    mariadb-server \
+    mariadb-client \
+    postgresql \
+    postgresql-client \
+    python3-pymysql \
+    python3-psycopg2 \
     # link-time deps for the native-format plugins (archive's bz2/xz/z,
     # stat/find/file's openssl checksums). xz-utils above only ships the
     # runtime libs; the -dev packages provide the headers + pkg-config
@@ -34,16 +47,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Debian/Ubuntu block system-wide `pip install` (PEP 668); a venv sidesteps
-# that without needing --break-system-packages.
-RUN python3 -m venv /opt/ansible-venv \
+# that without needing --break-system-packages. --system-site-packages
+# lets the venv see the apt-installed python3-psycopg2/python3-pymysql
+# above - community.postgresql.postgresql_db imports psycopg2 directly
+# (not a subprocess call like mysql_db's mysqldump/mysql shelling), so
+# without this the venv's own isolated site-packages can't find it and
+# every postgresql_* task fails with "Failed to import the required
+# Python library (psycopg2)" regardless of the module's own correctness.
+RUN python3 -m venv --system-site-packages /opt/ansible-venv \
     && /opt/ansible-venv/bin/pip install --no-cache-dir ansible-core
 ENV PATH="/opt/ansible-venv/bin:${PATH}"
 
 # authorized_key isn't part of ansible-core - it lives in the separate
 # ansible.posix collection (crystal-ansible registers it as
 # ansible.posix.authorized_key to match). archive/unarchive likewise live
-# in community.general, not ansible-core.
-RUN ansible-galaxy collection install ansible.posix community.general
+# in community.general, not ansible-core. mysql_db/mysql_user and
+# postgresql_db/postgresql_user live in community.mysql /
+# community.postgresql.
+RUN ansible-galaxy collection install ansible.posix community.general \
+    community.mysql community.postgresql
 
 WORKDIR /repo
 COPY . /repo

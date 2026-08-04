@@ -2,6 +2,7 @@
 
 require "json"
 require "mysql"
+require "compress/gzip"
 require "../src/crystal_play/base_plugin"
 require "../src/crystal_play/plugin_helpers/mysql_connection"
 
@@ -24,13 +25,36 @@ module CrystalPlay
   # - login_host (default "localhost"), login_port (default 3306),
   #   login_user, login_password, login_unix_socket (takes precedence
   #   over login_host/login_port when given)
+  # - state: dump / import: shells out to `mysqldump`/`mysql` (real
+  #   Ansible's own module does the same - dump/restore need the actual
+  #   client binaries, there's no wire-protocol equivalent of "give me a
+  #   full logical SQL dump"). `target:` is required for both. Real
+  #   Ansible pipes dump/import through `gzip`/`bzip2`/`xz` shell
+  #   binaries for a compressed `target:`; this plugin instead reads/
+  #   writes the compressed file natively via Crystal's own stdlib
+  #   `Compress::Gzip` (only `.gz` - `.bz2`/`.xz` are a documented scope
+  #   cut, see below) rather than shelling to `gzip`, matching this
+  #   codebase's general preference for native codecs over shelling out
+  #   where one's already available (`archive.cr` already depends on
+  #   `Compress::Gzip` for the same reason). Command shape (`mysqldump
+  #   --user=U --password='PW' --host=H --port=P dbname --quick` /
+  #   `mysql --user=U --password='PW' --host=H --port=P --one-database
+  #   dbname < target`, including the `--quick`/`--one-database` flags
+  #   defaulting on) and the always-`changed: true`-on-success behavior
+  #   (dump/import are not idempotency-checked at all, unlike
+  #   present/absent above) verified against a real `ansible-playbook`
+  #   run with `community.mysql.mysql_db` against a real MariaDB 11
+  #   server, not assumed from the docs.
   # - check_mode
   #
-  # Not implemented: state: dump/import (real Ansible's mysqldump-based
-  # backup/restore), config_file: (~/.my.cnf credential lookup),
-  # encoding:/collation: validation against the server's actually
-  # supported charsets - an invalid value is passed straight through and
-  # surfaces as whatever error the server itself returns.
+  # Not implemented: `.bz2`/`.xz`/`.zst` compression for dump/import
+  # (only `.gz`, see above), `config_file:` (`~/.my.cnf` credential
+  # lookup), `all_databases:`, `ignore_tables:`/`hex_blob:`/
+  # `master_data:`/`dump_extra_args:`/`single_transaction:`/
+  # `skip_lock_tables:` (mysqldump tuning knobs), encoding:/collation:
+  # validation against the server's actually supported charsets - an
+  # invalid value is passed straight through and surfaces as whatever
+  # error the server itself returns.
   class MysqlDbPlugin < BasePlugin
     def execute : PluginResult
       name = @params["name"]?
@@ -40,6 +64,10 @@ module CrystalPlay
 
       state = @params["state"]? || "present"
       check_mode = is_true?(@params["check_mode"]?)
+
+      if state == "dump" || state == "import"
+        return run_dump_or_import(state, name)
+      end
 
       uri = PluginHelpers::MysqlConnection.build_uri(
         host: @params["login_host"]?,
@@ -92,6 +120,92 @@ module CrystalPlay
 
       db.exec "DROP DATABASE #{quote_ident(name)}"
       PluginResult.new(changed: true, failed: false, msg: "Removed database #{name}")
+    end
+
+    private def run_dump_or_import(state : String, name : String) : PluginResult
+      target = @params["target"]?
+      return PluginResult.new(changed: false, failed: true, msg: "target is required when state is dump or import") unless target
+
+      check_mode = is_true?(@params["check_mode"]?)
+      if check_mode
+        return PluginResult.new(changed: true, failed: false, msg: "Would #{state} database #{name} #{state == "dump" ? "to" : "from"} #{target} (check mode)")
+      end
+
+      state == "dump" ? run_dump(name, target) : run_import(name, target)
+    end
+
+    private def run_dump(name : String, target : String) : PluginResult
+      cmd = "mysqldump #{login_flags} #{quote(name)} --quick"
+      result = remote_exec(cmd)
+      return PluginResult.new(changed: false, failed: true, msg: result[:stderr]) unless result[:exit_code] == 0
+
+      write_target(target, result[:stdout])
+      PluginResult.new(changed: true, failed: false, msg: "", db: name, db_list: [name])
+    rescue ex
+      PluginResult.new(changed: false, failed: true, msg: "Failed to write dump to #{target}: #{ex.message}")
+    end
+
+    private def run_import(name : String, target : String) : PluginResult
+      return PluginResult.new(changed: false, failed: true, msg: "target #{target} does not exist") unless remote_file_exists?(target)
+
+      sql_path = read_target_as_sql_file(target)
+      cmd = "mysql #{login_flags} --one-database #{quote(name)} < #{quote(sql_path)}"
+      result = remote_exec(cmd)
+      File.delete?(sql_path) if sql_path != target
+
+      return PluginResult.new(changed: false, failed: true, msg: result[:stderr]) unless result[:exit_code] == 0
+      PluginResult.new(changed: true, failed: false, msg: "", db: name, db_list: [name])
+    rescue ex
+      PluginResult.new(changed: false, failed: true, msg: "Failed to import #{target}: #{ex.message}")
+    end
+
+    private def login_flags : String
+      String.build do |flags|
+        flags << "--user=" << quote(@params["login_user"]) << " " if @params["login_user"]?
+        flags << "--password=" << quote(@params["login_password"]) << " " if @params["login_password"]?
+        if socket = @params["login_unix_socket"]?
+          flags << "--socket=" << quote(socket) << " "
+        else
+          flags << "--host=" << quote(@params["login_host"]? || "localhost") << " "
+          flags << "--port=" << (@params["login_port"]? || "3306") << " "
+        end
+      end.strip
+    end
+
+    # Shell-quotes a value for interpolation into a remote_exec command
+    # (same helper as postgresql_db.cr's) - login values and the db name
+    # all flow into a /bin/bash -c command line, so an embedded quote has
+    # to be escaped, not just wrapped.
+    private def quote(s : String) : String
+      "'" + s.gsub("'", "'\\''") + "'"
+    end
+
+    # Writes dump content to target, gzip-compressing natively (no `gzip`
+    # subprocess) when target ends in .gz.
+    private def write_target(target : String, content : String)
+      if target.ends_with?(".gz")
+        File.open(target, "w") do |file|
+          Compress::Gzip::Writer.open(file, &.print(content))
+        end
+      else
+        File.write(target, content)
+      end
+    end
+
+    # Returns a path to plain SQL content ready for `mysql ... < path`:
+    # target itself when it's already plain, or a decompressed temp copy
+    # when target ends in .gz (native `Compress::Gzip::Reader`, no `gzip`
+    # subprocess) - the caller deletes the temp copy afterward.
+    private def read_target_as_sql_file(target : String) : String
+      return target unless target.ends_with?(".gz")
+
+      tmp_path = "#{target}.#{Process.pid}.sql"
+      File.open(target) do |file|
+        Compress::Gzip::Reader.open(file) do |reader|
+          File.write(tmp_path, reader.gets_to_end)
+        end
+      end
+      tmp_path
     end
 
     # encoding:/collation: are bare SQL identifiers (not values), so they

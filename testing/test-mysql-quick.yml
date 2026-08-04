@@ -58,6 +58,70 @@
         login_password: "{{ login_password }}"
       register: user_idempotent
 
+    - name: write the seed SQL
+      ansible.builtin.copy:
+        content: |
+          CREATE TABLE IF NOT EXISTS t (id INT PRIMARY KEY, name VARCHAR(50));
+          INSERT INTO t VALUES (1, 'alice'), (2, 'bob');
+        dest: /tmp/crystal-ansible-mysql-seed.sql
+
+    - name: import the seed data
+      community.mysql.mysql_db:
+        name: "{{ test_db }}"
+        state: import
+        target: /tmp/crystal-ansible-mysql-seed.sql
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: db_import
+
+    - name: dump the database, gzip-compressed
+      community.mysql.mysql_db:
+        name: "{{ test_db }}"
+        state: dump
+        target: /tmp/crystal-ansible-mysql-dump.sql.gz
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: db_dump
+
+    - name: create a second database to restore the dump into
+      community.mysql.mysql_db:
+        name: "{{ test_db }}_restored"
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+
+    - name: import the gzip-compressed dump into the second database
+      community.mysql.mysql_db:
+        name: "{{ test_db }}_restored"
+        state: import
+        target: /tmp/crystal-ansible-mysql-dump.sql.gz
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: db_import_gz
+
+    - name: verify the restored data round-tripped correctly
+      ansible.builtin.shell: >-
+        mysql --host={{ login_host }} --port={{ login_port }} --user={{ login_user }}
+        --password={{ login_password }} -N -e "SELECT COUNT(*) FROM {{ test_db }}_restored.t"
+      register: restored_count
+      changed_when: false
+
+    - name: remove the second database
+      community.mysql.mysql_db:
+        name: "{{ test_db }}_restored"
+        state: absent
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+
     - name: change the user's privileges
       community.mysql.mysql_user:
         name: "{{ test_user }}"
@@ -95,6 +159,10 @@
         msg: >-
           db_first={{ db_first.changed }}
           db_idempotent={{ db_idempotent.changed }}
+          db_import={{ db_import.changed }}
+          db_dump={{ db_dump.changed }}
+          db_import_gz={{ db_import_gz.changed }}
+          restored_count={{ restored_count.stdout }}
           user_first={{ user_first.changed }}
           user_idempotent={{ user_idempotent.changed }}
           user_priv_changed={{ user_priv_changed.changed }}

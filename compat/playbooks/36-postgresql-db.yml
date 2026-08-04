@@ -1,0 +1,212 @@
+# Compat coverage for postgresql_db's state: dump / restore (shipped in
+# 0.9.40): seed restore, plain + gzip dump, restoring each dump into a
+# second database, row-count round-trip verification, and the
+# missing-target failure path. Real Ansible's own keyword here is
+# `restore`, not `import` like mysql_db's equivalent - see ROADMAP.md.
+# The playbook starts its own throwaway PostgreSQL cluster inside the
+# container via the init.d script (no systemd in this image), the same
+# server-and-client-from-the-same-distro pairing the Dockerfile installs.
+#
+# The /work comparison deliberately keeps only deterministic artifacts
+# (results.txt + missing-target.txt): pg_dump embeds a timestamp comment,
+# so even logically identical dumps are byte-different across two separate
+# runs - the raw dump files are deleted before the snapshot, and the
+# row-count round trips already prove the dump content was correct.
+#
+# The two "verify the ... round trip" tasks below pipe psql's `-t` output
+# through `tr -d ' \n'`: psql pads a `-t` count with leading whitespace,
+# and crystal-ansible's `{{ }}` string interpolation strips it
+# (variable_lookup.cr's format_value - a pre-existing, unrelated gap, not
+# introduced by mysql_db/postgresql_db dump/restore) while real Ansible's
+# Jinja2 preserves it verbatim. Stripping it ourselves here keeps the
+# comparison about the row count, not that divergence.
+
+- name: postgresql_db dump/restore compat
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    login_host: 127.0.0.1
+    login_user: postgres
+    login_password: compatpass
+
+  tasks:
+    - name: start postgresql
+      ansible.builtin.shell: service postgresql start
+      changed_when: false
+
+    - name: wait for postgresql to accept connections
+      ansible.builtin.wait_for:
+        port: 5432
+        timeout: 60
+
+    # crystal-ansible parses become:/become_user: but doesn't actually
+    # apply privilege escalation to command execution (see ROADMAP.md) -
+    # using it here would silently run as root on one engine and as
+    # postgres on the other. su directly instead, which is plain shell and
+    # behaves identically on both engines.
+    - name: set a password for the postgres superuser
+      ansible.builtin.shell: |
+        su postgres -c "psql -c \"ALTER USER postgres PASSWORD 'compatpass';\""
+      changed_when: false
+
+    - name: create the test database
+      community.postgresql.postgresql_db:
+        name: compatdb
+        state: present
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: db_created
+
+    - name: write the seed SQL
+      ansible.builtin.copy:
+        content: |
+          CREATE TABLE t (id INT PRIMARY KEY, name VARCHAR(50));
+          INSERT INTO t VALUES (1, 'alice'), (2, 'bob');
+        dest: /work/seed.sql
+
+    - name: restore the seed data
+      community.postgresql.postgresql_db:
+        name: compatdb
+        state: restore
+        target: /work/seed.sql
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: seed_restore
+
+    - name: dump the database, plain SQL
+      community.postgresql.postgresql_db:
+        name: compatdb
+        state: dump
+        target: /work/dump.sql
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: dump_plain
+
+    - name: dump the database, gzip-compressed
+      community.postgresql.postgresql_db:
+        name: compatdb
+        state: dump
+        target: /work/dump.sql.gz
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: dump_gz
+
+    - name: create a second database to restore into
+      community.postgresql.postgresql_db:
+        name: compatdb_restored
+        state: present
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+
+    - name: restore the plain dump into the second database
+      community.postgresql.postgresql_db:
+        name: compatdb_restored
+        state: restore
+        target: /work/dump.sql
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: restore_plain
+
+    - name: verify the plain-dump round trip
+      ansible.builtin.shell: >-
+        PGPASSWORD=compatpass psql --host=127.0.0.1 --username=postgres
+        --dbname=compatdb_restored -t -c "SELECT COUNT(*) FROM t" | tr -d ' \n'
+      register: restored_rows_plain
+      changed_when: false
+
+    - name: drop the second database again
+      community.postgresql.postgresql_db:
+        name: compatdb_restored
+        state: absent
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: restored_dropped
+
+    - name: recreate the second database for the gzip round trip
+      community.postgresql.postgresql_db:
+        name: compatdb_restored
+        state: present
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: restored_recreated
+
+    - name: restore the gzip dump into the second database
+      community.postgresql.postgresql_db:
+        name: compatdb_restored
+        state: restore
+        target: /work/dump.sql.gz
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: restore_gz
+
+    - name: verify the gzip-dump round trip
+      ansible.builtin.shell: >-
+        PGPASSWORD=compatpass psql --host=127.0.0.1 --username=postgres
+        --dbname=compatdb_restored -t -c "SELECT COUNT(*) FROM t" | tr -d ' \n'
+      register: restored_rows_gz
+      changed_when: false
+
+    - name: restore from a missing target (both engines must fail)
+      block:
+        - name: this task must fail
+          community.postgresql.postgresql_db:
+            name: compatdb
+            state: restore
+            target: /work/no-such-file.sql
+            login_host: "{{ login_host }}"
+            login_user: "{{ login_user }}"
+            login_password: "{{ login_password }}"
+      rescue:
+        - name: record the expected failure
+          ansible.builtin.copy:
+            content: "restore_missing_failed=yes\n"
+            dest: /work/missing-target.txt
+
+    - name: record results
+      ansible.builtin.copy:
+        content: |
+          db_created={{ db_created.changed }}
+          seed_restore={{ seed_restore.changed }}
+          dump_plain={{ dump_plain.changed }}
+          dump_gz={{ dump_gz.changed }}
+          restore_plain={{ restore_plain.changed }}
+          restored_rows_plain={{ restored_rows_plain.stdout }}
+          restored_dropped={{ restored_dropped.changed }}
+          restored_recreated={{ restored_recreated.changed }}
+          restore_gz={{ restore_gz.changed }}
+          restored_rows_gz={{ restored_rows_gz.stdout }}
+        dest: /work/results.txt
+
+    - name: clean up the databases
+      community.postgresql.postgresql_db:
+        name: "{{ item }}"
+        state: absent
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      loop:
+        - compatdb_restored
+        - compatdb
+
+    # pg_dump embeds a timestamp comment, so these are byte-different
+    # across the two engines' separate runs even when logically identical -
+    # delete them before the snapshot (the round-trip row counts above
+    # already prove the content).
+    - name: remove the volatile dump artifacts
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /work/seed.sql
+        - /work/dump.sql
+        - /work/dump.sql.gz

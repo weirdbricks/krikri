@@ -35,6 +35,70 @@
         login_password: "{{ login_password }}"
       register: db_idempotent
 
+    - name: write the seed SQL
+      ansible.builtin.copy:
+        content: |
+          CREATE TABLE IF NOT EXISTS t (id INT PRIMARY KEY, name TEXT);
+          INSERT INTO t VALUES (1, 'alice'), (2, 'bob');
+        dest: /tmp/crystal-ansible-pg-seed.sql
+
+    - name: restore the seed data
+      community.postgresql.postgresql_db:
+        name: "{{ test_db }}"
+        state: restore
+        target: /tmp/crystal-ansible-pg-seed.sql
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: db_restore
+
+    - name: dump the database, gzip-compressed
+      community.postgresql.postgresql_db:
+        name: "{{ test_db }}"
+        state: dump
+        target: /tmp/crystal-ansible-pg-dump.sql.gz
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: db_dump
+
+    - name: create a second database to restore the dump into
+      community.postgresql.postgresql_db:
+        name: "{{ test_db }}_restored"
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+
+    - name: restore the gzip-compressed dump into the second database
+      community.postgresql.postgresql_db:
+        name: "{{ test_db }}_restored"
+        state: restore
+        target: /tmp/crystal-ansible-pg-dump.sql.gz
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: db_restore_gz
+
+    - name: verify the restored data round-tripped correctly
+      ansible.builtin.shell: >-
+        psql postgresql://{{ login_user }}:{{ login_password }}@{{ login_host }}:{{ login_port }}/{{ test_db }}_restored
+        -tAc "SELECT COUNT(*) FROM t"
+      register: restored_count
+      changed_when: false
+
+    - name: remove the second database
+      community.postgresql.postgresql_db:
+        name: "{{ test_db }}_restored"
+        state: absent
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+
     - name: create the test role
       community.postgresql.postgresql_user:
         name: "{{ test_user }}"
@@ -91,6 +155,10 @@
         msg: >-
           db_first={{ db_first.changed }}
           db_idempotent={{ db_idempotent.changed }}
+          db_restore={{ db_restore.changed }}
+          db_dump={{ db_dump.changed }}
+          db_restore_gz={{ db_restore_gz.changed }}
+          restored_count={{ restored_count.stdout }}
           user_first={{ user_first.changed }}
           user_idempotent={{ user_idempotent.changed }}
           user_flags_changed={{ user_flags_changed.changed }}

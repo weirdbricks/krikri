@@ -1,0 +1,199 @@
+# Compat coverage for mysql_db's state: dump / import (shipped in 0.9.40):
+# seed import, plain + gzip dump, importing each dump into a second
+# database, row-count round-trip verification, and the missing-target
+# failure path. The playbook starts its own throwaway MariaDB inside the
+# container via the init.d script (no systemd in this image), the same
+# server-and-client-from-the-same-distro pairing the Dockerfile installs.
+#
+# The /work comparison deliberately keeps only deterministic artifacts
+# (results.txt + missing-target.txt): mysqldump embeds a timestamp comment,
+# so even logically identical dumps are byte-different across two separate
+# runs - the raw dump files are deleted before the snapshot, and the
+# row-count round trips already prove the dump content was correct.
+
+- name: mysql_db dump/import compat
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    login_host: 127.0.0.1
+    login_user: compat
+    login_password: compatpass
+
+  tasks:
+    - name: start mariadb
+      ansible.builtin.shell: service mariadb start
+      changed_when: false
+
+    - name: wait for mariadb to accept connections
+      ansible.builtin.wait_for:
+        port: 3306
+        timeout: 60
+
+    - name: create a TCP login user for the db modules
+      ansible.builtin.shell: |
+        mysql -e "CREATE USER IF NOT EXISTS 'compat'@'127.0.0.1' IDENTIFIED BY 'compatpass';
+                  GRANT ALL PRIVILEGES ON *.* TO 'compat'@'127.0.0.1' WITH GRANT OPTION;
+                  FLUSH PRIVILEGES;"
+      changed_when: false
+
+    - name: create the test database
+      community.mysql.mysql_db:
+        name: compatdb
+        state: present
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: db_created
+
+    - name: write the seed SQL
+      ansible.builtin.copy:
+        content: |
+          CREATE TABLE t (id INT PRIMARY KEY, name VARCHAR(50));
+          INSERT INTO t VALUES (1, 'alice'), (2, 'bob');
+        dest: /work/seed.sql
+
+    - name: import the seed data
+      community.mysql.mysql_db:
+        name: compatdb
+        state: import
+        target: /work/seed.sql
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: seed_import
+
+    - name: dump the database, plain SQL
+      community.mysql.mysql_db:
+        name: compatdb
+        state: dump
+        target: /work/dump.sql
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: dump_plain
+
+    - name: dump the database, gzip-compressed
+      community.mysql.mysql_db:
+        name: compatdb
+        state: dump
+        target: /work/dump.sql.gz
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: dump_gz
+
+    - name: create a second database to restore into
+      community.mysql.mysql_db:
+        name: compatdb_restored
+        state: present
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+
+    - name: import the plain dump into the second database
+      community.mysql.mysql_db:
+        name: compatdb_restored
+        state: import
+        target: /work/dump.sql
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: import_plain
+
+    - name: verify the plain-dump round trip
+      ansible.builtin.shell: >-
+        mysql --host=127.0.0.1 --user=compat --password=compatpass -N -e
+        "SELECT COUNT(*) FROM compatdb_restored.t"
+      register: restored_rows_plain
+      changed_when: false
+
+    - name: drop the second database again
+      community.mysql.mysql_db:
+        name: compatdb_restored
+        state: absent
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: restored_dropped
+
+    - name: recreate the second database for the gzip round trip
+      community.mysql.mysql_db:
+        name: compatdb_restored
+        state: present
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: restored_recreated
+
+    - name: import the gzip dump into the second database
+      community.mysql.mysql_db:
+        name: compatdb_restored
+        state: import
+        target: /work/dump.sql.gz
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: import_gz
+
+    - name: verify the gzip-dump round trip
+      ansible.builtin.shell: >-
+        mysql --host=127.0.0.1 --user=compat --password=compatpass -N -e
+        "SELECT COUNT(*) FROM compatdb_restored.t"
+      register: restored_rows_gz
+      changed_when: false
+
+    - name: import from a missing target (both engines must fail)
+      block:
+        - name: this task must fail
+          community.mysql.mysql_db:
+            name: compatdb
+            state: import
+            target: /work/no-such-file.sql
+            login_host: "{{ login_host }}"
+            login_user: "{{ login_user }}"
+            login_password: "{{ login_password }}"
+      rescue:
+        - name: record the expected failure
+          ansible.builtin.copy:
+            content: "import_missing_failed=yes\n"
+            dest: /work/missing-target.txt
+
+    - name: record results
+      ansible.builtin.copy:
+        content: |
+          db_created={{ db_created.changed }}
+          seed_import={{ seed_import.changed }}
+          dump_plain={{ dump_plain.changed }}
+          dump_gz={{ dump_gz.changed }}
+          import_plain={{ import_plain.changed }}
+          restored_rows_plain={{ restored_rows_plain.stdout }}
+          restored_dropped={{ restored_dropped.changed }}
+          restored_recreated={{ restored_recreated.changed }}
+          import_gz={{ import_gz.changed }}
+          restored_rows_gz={{ restored_rows_gz.stdout }}
+        dest: /work/results.txt
+
+    - name: clean up the databases
+      community.mysql.mysql_db:
+        name: "{{ item }}"
+        state: absent
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      loop:
+        - compatdb_restored
+        - compatdb
+
+    # mysqldump embeds a timestamp comment, so these are byte-different
+    # across the two engines' separate runs even when logically identical -
+    # delete them before the snapshot (the round-trip row counts above
+    # already prove the content).
+    - name: remove the volatile dump artifacts
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /work/seed.sql
+        - /work/dump.sql
+        - /work/dump.sql.gz
