@@ -43,14 +43,12 @@ Two cross-cutting efforts also landed since Phases 3/4 were marked done:
 `blockinfile`, `uri`, `assert`, `wait_for`, `fetch`, `pause`). A playbook using
 even a routine `set_fact` or `get_url` fails today with "Plugin binary not
 found". These are tracked as **Phase 5**, the current priority. During this
-survey the roadmap (and the sibling `WHATS_MISSING.md` /
-`MISSING_FEATURES_COMPREHENSIVE.md`) were found stale relative to the code and
-git history; this header and Phase 5 supersede them.
+survey the roadmap was found stale relative to the code and git history; this
+header and Phase 5 supersede it.
 
-This roadmap sequences work from the two prior analysis docs
-([WHATS_MISSING.md](WHATS_MISSING.md), [MISSING_FEATURES_COMPREHENSIVE.md](MISSING_FEATURES_COMPREHENSIVE.md))
-into phases, with the test-foundation phase (Phase 0) landing first so every
-phase after it ships with a regression net instead of drifting untested.
+This roadmap sequences work into phases, with the test-foundation phase
+(Phase 0) landing first so every phase after it ships with a regression net
+instead of drifting untested.
 
 ---
 

@@ -141,7 +141,7 @@ Supports standard Ansible playbook syntax. See [Ansible documentation](https://d
 
 ## 🚧 Limitations
 
-See [WHATS_MISSING.md](WHATS_MISSING.md) and [MISSING_FEATURES_COMPREHENSIVE.md](MISSING_FEATURES_COMPREHENSIVE.md) for details on features not yet implemented.
+See [ROADMAP.md](ROADMAP.md) for the live, detailed tracking of what is implemented, what is not, and what is planned next.
 
 ---
 
