@@ -110,7 +110,7 @@ module CrystalPlay
       flags = PluginHelpers::UserState.usermod_flags(
         current,
         @params["uid"]?,
-        @params["group"]?,
+        resolve_gid(@params["group"]?),
         @params["shell"]?,
         @params["home"]?,
         @params["comment"]?
@@ -133,6 +133,29 @@ module CrystalPlay
       return command_failure("modify user", result) unless result[:exit_code] == 0
 
       PluginResult.new(changed: true, failed: false, msg: "User modified")
+    end
+
+    # `getent passwd`'s own primary-group field is always a raw GID
+    # number, but group: is commonly given as a group *name* (the far
+    # more common real-playbook usage) - comparing a name against that
+    # numeric current GID string-for-string never matches, so every run
+    # would emit `usermod -g <name>` again even when the account already
+    # has exactly that group, making the whole modify() path silently
+    # non-idempotent whenever group: is a name rather than a raw GID.
+    # Found via a real playbook run over real SSH reporting changed: true
+    # on every single rerun despite nothing actually changing. Resolved
+    # to a GID here (via `getent group`) before comparison - already-
+    # numeric input is passed through unchanged, and usermod itself
+    # accepts a GID just as well as a name, so this resolved value is
+    # correct for both the comparison and the eventual usermod call.
+    private def resolve_gid(group : String?) : String?
+      return nil unless group
+      return group if group.matches?(/\A\d+\z/)
+
+      result = remote_exec("getent group #{group}")
+      return group unless result[:exit_code] == 0
+
+      result[:stdout].strip.split(':')[2]? || group
     end
 
     private def shadow_password(name : String) : String?

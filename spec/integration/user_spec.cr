@@ -17,6 +17,15 @@ describe "user plugin" do
     result["failed"]?.try(&.as_bool).should be_falsey
   end
 
+  it "reports no change when group: is given by name and already matches (getent passwd's own gid field is numeric, not a name)" do
+    root_group_name = `id -gn root`.strip
+
+    result = PluginSpecHelper.run("user", {"name" => "root", "group" => root_group_name, "check_mode" => "true"})
+
+    result["changed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
+  end
+
   it "reports it would modify an existing user when an attribute differs (check mode, no real change)" do
     result = PluginSpecHelper.run("user", {"name" => "root", "shell" => "/bin/totally-fake-shell", "check_mode" => "true"})
 

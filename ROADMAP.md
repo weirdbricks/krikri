@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.57`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.58`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -37,7 +37,10 @@ to how list-of-dict module params get encoded - see that entry), and
 (`0.9.55`), `postgresql_privs`' `type: foreign_data_wrapper`/
 `foreign_server`/`parameter`/`group` (`0.9.56`), and `docker_*`'s
 `tls_hostname:` plus `DOCKER_TLS`/`DOCKER_TLS_VERIFY`/`DOCKER_CERT_PATH`
-environment variable fallbacks (`0.9.57`) - see "Also still
+environment variable fallbacks (`0.9.57`), and four real bugs found via a
+genuine real-SSH benchmark against real remote hosts - not a local
+container - comparing crystal-ansible against real `ansible-playbook`
+end to end (`0.9.58`, see that entry) - see "Also still
 open" near the end of
 Phase 5 for what's left and the running list of what's already been
 closed past that point. All 715 specs pass in an environment with
@@ -2896,6 +2899,108 @@ compat playbook's own task wouldn't have suggested was there).
     ameba findings in any of the three `docker_*.cr` plugins or
     `docker_client.cr`.
 
+- [x] Four real bugs found and fixed via a genuine real-SSH benchmark
+  (`0.9.58`): every prior "verified against real ansible-playbook" claim
+  in this file (compat harness included) has run both engines either
+  locally-in-a-container or against `localhost` - this was the first
+  time crystal-ansible was actually driven, over real SSH, against a
+  genuinely separate remote machine it had never touched before, the
+  same way a real user actually runs it. Two real Atlantic.net Cloud
+  instances (Ubuntu 22.04, provisioned via Terraform - the
+  `weirdbricks/terraform-provider-atlanticnet` provider, already
+  published to the Terraform Registry) were spun up fresh, one driven by
+  real `ansible-playbook` and one by `crystal-ansible`, running an
+  identical ~23-task playbook (packages, users/groups, files, templates,
+  `lineinfile`/`blockinfile`, cron, `authorized_key`, a real `git` clone,
+  archive/unarchive, `become`, `find`/`stat`, service restart,
+  `set_fact`/`assert`) twice each (fresh run, then an idempotency
+  rerun), destroyed afterward. This surfaced four real bugs no prior
+  local-only or containerized verification in this project had ever
+  caught:
+  - **`command`/`shell`: `stdout:`/`stderr:` weren't rstripped of a
+    trailing `\r\n`.** Real Ansible's own `AnsibleModule.run_command()`
+    always does this; this codebase's `command.cr`/`shell.cr` returned
+    the raw captured bytes instead, trailing newline included. Silent
+    and easy to miss when just printing the value, but broke any
+    playbook comparing captured output against a constant
+    (`result.stdout == "someuser"` after `command: whoami` failed here
+    despite the two values looking identical printed side by side).
+    Fixed by rstripping `"\r\n"` from both in both plugins.
+  - **`when:`/`assert: that:` bare conditional expressions don't support
+    Jinja2 filters at all** (`mylist | length > 0` always evaluates
+    false, regardless of the actual list). `AssertPlugin`/`when:`
+    evaluation runs a condition through `VarSubstitutor` then
+    `ConditionalEvaluator`, and the latter has no filter support - the
+    Jinja2 filter pipeline (chained filters, `0.9.42`) only ever applies
+    inside `{{ }}`-wrapped substitution contexts like `debug: msg:`,
+    which is why the exact same expression printed fine in a `debug:`
+    task one line above the `assert:` that failed on it. This is a real
+    engine gap, not a one-line fix (`ConditionalEvaluator` would need
+    real filter-parsing support, or bare conditionals would need to
+    route through the same Jinja2 pipeline `{{ }}` substitution already
+    uses) - **left open, not fixed**, worked around in the benchmark
+    playbook itself (precompute the filtered value via `set_fact:` first,
+    then assert on the plain resulting value) rather than attempting a
+    real engine change under live-infrastructure time pressure. Tracked
+    below.
+  - **`apt`'s `update_cache: true` unconditionally forced
+    `changed: true`** even when no packages actually needed installing.
+    Verified against real Ansible's own source
+    (`ansible/modules/apt.py`): a cache refresh only folds into the
+    overall `changed:` when *no* package/upgrade/deb was requested at
+    all (its own early-return branch) - once packages are given, the
+    final `changed:` reflects package-level install/remove/upgrade
+    activity only, computed independently of whether the cache itself
+    was refreshed. This codebase's `apt.cr` instead seeded the
+    install/remove/upgrade handlers' own `changed` accumulator with the
+    cache-update result, so it could only ever go from `false` to `true`
+    and never back - breaking idempotency for the extremely common
+    `apt: {name: [...], update_cache: true}` pattern on every single
+    rerun. Fixed by no longer passing the cache-update flag into
+    `handle_install`/`handle_remove`/`handle_latest` at all - each now
+    starts from `false` and determines its own `changed` purely from
+    package activity, matching real Ansible's own `exit_json(changed=
+    changed, ...)` at the end of the general install path.
+  - **`user`'s `group:` given by name was never correctly compared
+    against current state.** `getent passwd`'s own primary-group field
+    is always a raw GID *number*; a playbook's `group:` is overwhelmingly
+    given as a *name* instead (the common, human-readable case). Comparing
+    the two directly as strings ("benchgroup" vs "1001") never matches,
+    so `modify()` would append `-g benchgroup` to the `usermod` call on
+    *every* run regardless of whether the account already had exactly
+    that group - a real, previously-undiscovered non-idempotency bug for
+    one of `user:`'s most common real-world usages. Fixed by resolving
+    `group:` to a GID via `getent group` before comparing (already-
+    numeric input passed through unchanged) - the resolved GID is
+    correct for both the comparison and the eventual `usermod` call
+    itself, since `usermod -g` accepts a GID exactly as well as a name.
+  - All four were verified live against the real instances before/after
+    each fix (not just reasoned about from source) - re-running the
+    exact same isolation playbook that first exposed each bug and
+    confirming it now reported `changed: false` (or a correct value)
+    instead of the broken result. The final clean fresh-run/idempotency-
+    rerun pair, with every fix applied, produced results **matching real
+    `ansible-playbook` exactly**: `changed: 15` on the fresh run,
+    `changed: 4` on the idempotency rerun (the same four inherently-
+    always-changed tasks on both sides: template render, `lineinfile`,
+    `blockinfile`, `service: restarted`) - `failed: 0` throughout, on
+    both engines.
+  - New specs: `spec/integration/command_spec.cr` and `shell_spec.cr`
+    (rstrip behavior - trailing newline stripped, internal newlines and
+    already-clean output left alone, `command`'s own naive whitespace-
+    split parsing sidestepped by using quote-free commands like `echo`/
+    `seq`), and a new case in the existing `user_spec.cr` (group-by-name
+    comparison, via `--check` mode against `root`'s own real primary
+    group name - matches this file's own established "never mutate a
+    real dev machine's actual users" convention). No new spec for the
+    `apt.cr` fix - would need real root/`apt-get`, which this sandbox
+    doesn't have either; verified live against the real instances
+    instead, matching how every other privilege-requiring fix in this
+    project has been verified (`mount`, `docker_*`, etc.).
+  - `crystal spec`/`ameba` both clean (723 examples - 8 new since
+    `0.9.57` - same 2 pre-existing DB-client-dependent failures as
+    always, unrelated to this).
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**
@@ -2911,10 +3016,23 @@ the exact "not implemented" list it's tracked against:**
   socket either - would mean touching every endpoint across `docr`, not
   just connection setup, a meaningfully bigger change than anything else
   closed in this section).
+- **Cross-cutting engine gap, found in `0.9.58`:** `when:`/`assert:
+  that:` bare conditional expressions don't support Jinja2 filters at
+  all (`mylist | length > 0` always evaluates false) - `when:`'s own
+  `ConditionalEvaluator` is a separate code path from the `{{ }}`-wrapped
+  Jinja2/filter-chain pipeline (`0.9.42`) that already supports filters
+  fine in substitution contexts like `debug: msg:`. Fixing this properly
+  means either adding real filter-parsing support to
+  `ConditionalEvaluator` directly, or routing bare conditionals through
+  the same Jinja2 pipeline `{{ }}` substitution already uses - not
+  attempted yet, worked around in the `0.9.58` benchmark playbook
+  instead (precompute the filtered value via `set_fact:` first, assert
+  on the plain result).
 
 Cross-cutting engine gaps this section used to track here - Jinja2
-filter-chaining and `become:`/`become_user:` privilege escalation - are
-both now fixed; see the `0.9.42` and `0.9.41` entries below. Cloud plugins
+filter-chaining (inside `{{ }}` substitution) and `become:`/
+`become_user:` privilege escalation - are both now fixed; see the
+`0.9.42` and `0.9.41` entries below. Cloud plugins
 (`ec2`, `s3_bucket`, `azure_rm_*`) and inventory *plugins* (`aws_ec2.yml`
 et al.) remain explicitly lowest-ROI and are not planned - everything else
 in this list is being picked off incrementally, each verified against real

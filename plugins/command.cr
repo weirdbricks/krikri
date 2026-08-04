@@ -6,7 +6,7 @@ require "../src/crystal_play/base_plugin"
 module CrystalPlay
   # Command plugin - executes commands
   # Compatible with Ansible's ansible.builtin.command module
-  # 
+  #
   # Parameters:
   #   cmd: Command to execute (or use _raw_params for free-form)
   #   chdir: Change directory before executing
@@ -22,18 +22,27 @@ module CrystalPlay
   #   args:
   #     chdir: /opt/myapp
   #     creates: /opt/myapp/built.flag
+  #
+  # stdout:/stderr: are rstripped of a trailing \r\n before being returned
+  # (matching real Ansible's own AnsibleModule.run_command(), which does
+  # the same) - found the hard way, not assumed: a real playbook
+  # comparing `result.stdout == "someuser"` after `command: whoami`
+  # failed here despite the values looking identical when printed,
+  # because the captured stdout still had its trailing newline; real
+  # ansible-playbook strips it, so real playbooks are routinely written
+  # assuming stdout has no trailing newline.
   class CommandPlugin < BasePlugin
     property check_mode : Bool
-    
+
     def initialize(config : JSON::Any)
       super(config)
       @check_mode = is_true?(@params["check_mode"]?)
     end
-    
+
     def execute : PluginResult
       # Get command (supports both 'cmd' and free-form)
       cmd = @params["cmd"]? || @params["_raw_params"]?
-      
+
       unless cmd
         return PluginResult.new(
           changed: false,
@@ -41,7 +50,7 @@ module CrystalPlay
           msg: "Missing required parameter: cmd"
         )
       end
-      
+
       # Check creates parameter (idempotency)
       if creates = @params["creates"]?
         if File.exists?(creates)
@@ -53,7 +62,7 @@ module CrystalPlay
           )
         end
       end
-      
+
       # Check removes parameter (conditional execution)
       if removes = @params["removes"]?
         unless File.exists?(removes)
@@ -65,7 +74,7 @@ module CrystalPlay
           )
         end
       end
-      
+
       # Command module doesn't support check mode (Ansible behavior)
       if @check_mode
         return PluginResult.new(
@@ -75,11 +84,11 @@ module CrystalPlay
           skipped: true
         )
       end
-      
+
       # Get optional parameters
       chdir = @params["chdir"]?
       stdin_data = @params["stdin"]?
-      
+
       # Change directory if requested
       original_dir = Dir.current
       if chdir
@@ -93,12 +102,12 @@ module CrystalPlay
           )
         end
       end
-      
+
       # Execute command using Crystal's Process
       stdout = IO::Memory.new
       stderr = IO::Memory.new
       exit_code = 0
-      
+
       begin
         # Parse command into array (simple split on spaces)
         # Note: This doesn't handle quoted arguments perfectly
@@ -106,7 +115,7 @@ module CrystalPlay
         cmd_parts = parse_command(cmd)
         command_name = cmd_parts.first
         args = cmd_parts[1..]
-        
+
         process = Process.new(
           command_name,
           args,
@@ -114,20 +123,19 @@ module CrystalPlay
           error: stderr,
           input: stdin_data ? Process::Redirect::Pipe : Process::Redirect::Close
         )
-        
+
         # Send stdin if provided
         if stdin_data && process.input
           process.input.print(stdin_data)
           process.input.close
         end
-        
+
         status = process.wait
         exit_code = status.exit_code
-        
       rescue ex
         # Restore directory
         Dir.cd(original_dir) if chdir
-        
+
         return PluginResult.new(
           changed: false,
           failed: true,
@@ -135,23 +143,23 @@ module CrystalPlay
           stderr: ex.message
         )
       end
-      
+
       # Restore directory
       Dir.cd(original_dir) if chdir
-      
+
       # Command module always reports changed (unless skipped)
       # This matches Ansible behavior
       PluginResult.new(
         changed: true,
         failed: exit_code != 0,
         msg: exit_code == 0 ? "Command executed successfully" : "Command failed with exit code #{exit_code}",
-        stdout: stdout.to_s,
-        stderr: stderr.to_s,
+        stdout: stdout.to_s.rstrip("\r\n"),
+        stderr: stderr.to_s.rstrip("\r\n"),
         exit_code: exit_code,
-        rc: exit_code  # Add rc as alias for Ansible compatibility
+        rc: exit_code # Add rc as alias for Ansible compatibility
       )
     end
-    
+
     # Parse command string into command and arguments
     # Simple implementation - just splits on spaces
     # TODO: Handle quoted arguments properly
@@ -160,7 +168,7 @@ module CrystalPlay
       # For complex commands with quotes, users should use shell module
       cmd.split(/\s+/).reject(&.empty?)
     end
-    
+
     # Helper: Check if parameter is truthy
     private def is_true?(value : String?, default : Bool = false) : Bool
       return default unless value

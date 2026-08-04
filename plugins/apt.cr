@@ -5,7 +5,7 @@ require "../src/crystal_play/base_plugin"
 
 module CrystalPlay
   # APT Plugin - Debian/Ubuntu package management
-  # 
+  #
   # Parameters:
   #   name (optional): Package name or list of packages
   #   state (optional): present, absent, latest (default: present)
@@ -29,21 +29,21 @@ module CrystalPlay
   #     update_cache: yes
   class AptPlugin < BasePlugin
     property check_mode : Bool
-    
+
     def initialize(config : JSON::Any)
       super(config)
       @check_mode = is_true?(@params["check_mode"]?)
     end
-    
+
     def execute : PluginResult
       # Get state (default: present)
       state = @params["state"]? || "present"
       update_cache = is_true?(@params["update_cache"]?)
       cache_valid_time = @params["cache_valid_time"]?.try(&.to_i) || 0
-      
+
       changed = false
       messages = [] of String
-      
+
       # Handle cache update
       if update_cache
         if should_update_cache?(cache_valid_time)
@@ -65,10 +65,10 @@ module CrystalPlay
           end
         end
       end
-      
+
       # Get package name(s) - can be optional if just updating cache
       name_param = @params["name"]?
-      
+
       # If no package name provided, just return cache update result
       unless name_param
         if update_cache
@@ -86,18 +86,29 @@ module CrystalPlay
           )
         end
       end
-      
+
       # Parse package names - handle both single string and comma-separated list
       packages = parse_package_names(name_param)
-      
-      # Process each package based on state
+
+      # Process each package based on state. Real Ansible's own apt
+      # module only ever folds a cache update into the overall changed:
+      # when no package/upgrade/deb was requested at all (its own
+      # early-return branch, matched above) - once packages are given,
+      # changed: reflects package-level install/remove/upgrade activity
+      # only, never whether apt-get update itself refreshed anything
+      # (verified against its actual source: `m.exit_json(changed=changed,
+      # ...)` at the end of the general install path is computed from
+      # scratch there, not seeded from the cache-update flag). Found via
+      # a real playbook run over real SSH where update_cache: true
+      # alongside an already-fully-installed package list still reported
+      # changed: true on every single rerun.
       case state
       when "present"
-        handle_install(packages, messages, changed)
+        handle_install(packages, messages, false)
       when "absent"
-        handle_remove(packages, messages, changed)
+        handle_remove(packages, messages, false)
       when "latest"
-        handle_latest(packages, messages, changed)
+        handle_latest(packages, messages, false)
       else
         return PluginResult.new(
           changed: false,
@@ -106,19 +117,19 @@ module CrystalPlay
         )
       end
     end
-    
+
     # Parse package names from parameter (handles comma-separated or single)
     private def parse_package_names(name_param : String) : Array(String)
       # Split by comma and clean up whitespace
       packages = name_param.split(",").map(&.strip).reject(&.empty?)
       packages
     end
-    
+
     # Handle installing packages
     private def handle_install(packages : Array(String), messages : Array(String), changed : Bool) : PluginResult
       to_install = [] of String
       already_installed = [] of String
-      
+
       # Check which packages need installation
       packages.each do |pkg|
         check_result = remote_exec("dpkg -l #{pkg} 2>/dev/null | grep '^ii'")
@@ -128,7 +139,7 @@ module CrystalPlay
           to_install << pkg
         end
       end
-      
+
       # Install packages that aren't already installed
       unless to_install.empty?
         if @check_mode
@@ -151,29 +162,29 @@ module CrystalPlay
           end
         end
       end
-      
+
       # Report already installed packages
       unless already_installed.empty?
         messages << "Package#{already_installed.size > 1 ? "s" : ""} #{already_installed.join(", ")} already installed"
       end
-      
+
       msg = messages.empty? ? "No changes needed" : messages.join(", ")
       if @check_mode && changed
         msg += " (check mode)"
       end
-      
+
       PluginResult.new(
         changed: changed,
         failed: false,
         msg: msg
       )
     end
-    
+
     # Handle removing packages
     private def handle_remove(packages : Array(String), messages : Array(String), changed : Bool) : PluginResult
       to_remove = [] of String
       already_absent = [] of String
-      
+
       # Check which packages need removal
       packages.each do |pkg|
         check_result = remote_exec("dpkg -l #{pkg} 2>/dev/null | grep '^ii'")
@@ -183,7 +194,7 @@ module CrystalPlay
           already_absent << pkg
         end
       end
-      
+
       # Remove packages that are installed
       unless to_remove.empty?
         if @check_mode
@@ -204,24 +215,24 @@ module CrystalPlay
           end
         end
       end
-      
+
       # Report already absent packages
       unless already_absent.empty?
         messages << "Package#{already_absent.size > 1 ? "s" : ""} #{already_absent.join(", ")} not installed"
       end
-      
+
       msg = messages.empty? ? "No changes needed" : messages.join(", ")
       if @check_mode && changed
         msg += " (check mode)"
       end
-      
+
       PluginResult.new(
         changed: changed,
         failed: false,
         msg: msg
       )
     end
-    
+
     # Handle upgrading packages to latest
     private def handle_latest(packages : Array(String), messages : Array(String), changed : Bool) : PluginResult
       if @check_mode
@@ -237,7 +248,7 @@ module CrystalPlay
       else
         pkg_list = packages.join(" ")
         upgrade_result = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade #{pkg_list}")
-        
+
         # Check if anything was actually upgraded
         was_upgraded = !upgrade_result[:stdout].includes?("already the newest version")
         if was_upgraded
@@ -247,32 +258,32 @@ module CrystalPlay
           messages << "Package#{packages.size > 1 ? "s" : ""} #{packages.join(", ")} already at latest version"
         end
       end
-      
+
       msg = messages.empty? ? "No changes needed" : messages.join(", ")
       if @check_mode && changed
         msg += " (check mode)"
       end
-      
+
       PluginResult.new(
         changed: changed,
         failed: false,
         msg: msg
       )
     end
-    
+
     # Check if cache should be updated based on validity time
     private def should_update_cache?(cache_valid_time : Int32) : Bool
       return true if cache_valid_time == 0
-      
+
       # Check last update time of apt lists
       result = remote_exec("stat -c %Y /var/lib/apt/lists/partial 2>/dev/null || echo 0")
       last_update = result[:stdout].strip.to_i
       current_time = Time.utc.to_unix
-      
+
       age = current_time - last_update
       age > cache_valid_time
     end
-    
+
     # Helper to convert string/bool to boolean
     private def is_true?(value) : Bool
       return false if value.nil?
