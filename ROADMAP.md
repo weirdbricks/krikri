@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.48`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.49`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -21,23 +21,24 @@ documented per-plugin scope cuts one at a time in pursuit of fuller
 `ansible-core`/`community.*` parity, most recently `postgresql_privs`
 (`0.9.44`, previously not implemented at all), `mount`'s `remounted`
 state (`0.9.45`), `wait_for`'s `state: drained` (`0.9.46`), and
-`apt_repository`'s `ppa:` shorthand (`0.9.47`), and `user`'s `password:`/
-`update_password:`/`password_lock:` (`0.9.48`) - see "Also still open"
-near the end of Phase 5 for what's left and the running list of what's
-already been closed past that point. 709/711 specs pass (the 2 exceptions
-need a live MySQL/PostgreSQL server at `127.0.0.1:13306`/`15432` reachable
-with real `mysql`/`psql` client binaries, neither installed on this host
-directly - see the `0.9.40` entry for how they were verified anyway),
-`ameba` clean on all new/touched code. A Docker-based compatibility
-harness (`compat/`, see `compat/README.md`) runs the same playbooks
-through real `ansible-playbook` and `crystal-ansible` side by side and
-diffs the resulting filesystem state + exit codes - ground truth instead
-of assumptions; **38/38 compat playbooks pass** (`mount`'s own
-`remounted`, `wait_for`'s own `drained:`, `apt_repository`'s own `ppa:`,
+`apt_repository`'s `ppa:` shorthand (`0.9.47`), `user`'s `password:`/
+`update_password:`/`password_lock:` (`0.9.48`), and `mount`'s
+`state: ephemeral` (`0.9.49`) - see "Also still open" near the end of
+Phase 5 for what's left and the running list of what's already been
+closed past that point. 709/711 specs pass (the 2 exceptions need a live
+MySQL/PostgreSQL server at `127.0.0.1:13306`/`15432` reachable with real
+`mysql`/`psql` client binaries, neither installed on this host directly -
+see the `0.9.40` entry for how they were verified anyway), `ameba` clean
+on all new/touched code. A Docker-based compatibility harness (`compat/`,
+see `compat/README.md`) runs the same playbooks through real
+`ansible-playbook` and `crystal-ansible` side by side and diffs the
+resulting filesystem state + exit codes - ground truth instead of
+assumptions; **38/38 compat playbooks pass** (`mount`'s own `remounted`/
+`ephemeral`, `wait_for`'s own `drained:`, `apt_repository`'s own `ppa:`,
 and `user`'s own `password:` verification all happened outside the
 harness instead, for different reasons documented in their own
-`0.9.45`/`0.9.46`/`0.9.47`/`0.9.48` entries - see each for how it was
-verified instead) - see each entry below and `compat/README.md`'s
+`0.9.45`-`0.9.49` entries - see each for how it was verified instead) -
+see each entry below and `compat/README.md`'s
 Coverage section for what each one caught.
 
 Two cross-cutting efforts also landed since Phases 3/4 were marked done:
@@ -799,9 +800,9 @@ the same way it did between January and now.
   `user_spec.cr`/`group_spec.cr`'s established convention. Verified
   byte-for-byte against real `ansible-playbook`'s actual fstab output,
   and via the compat harness (`compat/playbooks/25-mount.yml` - passed).
-  Not implemented: `ephemeral` state (its own device-source-conflict-
-  checking logic is out of scope), Solaris/BSD vfstab handling (Linux
-  fstab format only).
+  `ephemeral` state (its own device-source-conflict-checking logic)
+  shipped in `0.9.49`, see that entry near the end of Phase 5. Not
+  implemented: Solaris/BSD vfstab handling (Linux fstab format only).
   - Caught and fixed one bug in self-review before it ever reached
     testing: `check_mode` originally only guarded the actual
     mount/umount step, not the fstab file write itself - so `--check`
@@ -2283,6 +2284,50 @@ compat playbook's own task wouldn't have suggested was there).
     (not cosmetic) several other entries above already used for the same
     reason.
 
+- [x] `mount` `state: ephemeral` (`0.9.49`): mounts without ever touching
+  `fstab` at all, matching real Ansible's own "The fstab is completely
+  ignored" documented behavior - `fstab:`/`backup:`/`dump:`/`passno:` are
+  all still accepted but silently have no effect, matching real Ansible
+  exactly (verified against its source, not assumed from the one-line
+  doc summary). `path`/`src`/`fstype` required, same as `present`/
+  `mounted` (verified against real Ansible's own `required_if`). If the
+  mount point isn't currently mounted, creates it and mounts for real
+  (`mount -t <fstype> -o <opts> <src> <path>`) - `opts:` still gets
+  `boot: false`'s `noauto` treatment even though there's no fstab entry
+  to append it to (confirmed against real Ansible's own source, which
+  computes that unconditionally before the state-specific fstab skip).
+  If it's *already* mounted, compares the mount table's actual current
+  source device against the requested `src:` (a new
+  `current_mount_source`, reading `/proc/mounts` directly - no
+  `findmnt` dependency, matching this codebase's general preference for
+  not requiring extra binaries) - a match triggers a remount (`mount -o
+  remount -t <fstype> [-o <opts>] <src> <path>`, verified to be a
+  distinctly *different* command shape from `state: remounted`'s own
+  `mount -o remount[,opts] [-T fstab] path` by reading real Ansible's
+  shared `remount()` function source directly, not assumed just because
+  both states call the same function); a mismatch fails clearly with
+  real Ansible's own exact message rather than risking an unwanted
+  unmount/override. Always `changed: true` on success either way,
+  matching real Ansible's own documented behavior exactly.
+  - Verified against a real mount, not simulated, in a `--privileged`
+    container (same constraint `state: remounted`'s own `0.9.45` entry
+    already documents - this sandbox has no passwordless `sudo`, and an
+    ordinary container can't mount at all): a real `tmpfs` mount
+    (confirmed via `mount | grep <path>` actually showing it live), a
+    second `state: ephemeral` call with the identical `src:` correctly
+    remounting (`changed: true`, matching real Ansible's own "always
+    remounts when already correctly mounted" behavior), and a third call
+    with a *different* `src:` correctly failing with real Ansible's own
+    exact error message rather than silently unmounting/overriding
+    anything - all three outcomes re-verified byte-for-byte against real
+    `ansible-playbook` performing the identical sequence in a second
+    container.
+  - Not added to the compat harness's own `compat/playbooks/25-mount.yml`
+    - the same unprivileged-container constraint that already keeps
+    `mounted`/`unmounted`/`remounted` out of it applies here too.
+  - `crystal spec`/`ameba` both clean (709 examples, same 2 pre-existing
+    DB-client-dependent failures as always, unrelated to this) - purely
+    additive to an already-shipped plugin, no existing behavior touched.
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**
@@ -2299,7 +2344,6 @@ the exact "not implemented" list it's tracked against:**
   `session_role:`, `fail_on_role:`.
 - `docker_*`: no `networks:`/`connected:`/TLS options.
 - `yum_repository`: many minor `yum.conf` tuning knobs.
-- `mount`: no `ephemeral` state (`remounted` closed in `0.9.45`).
 
 Cross-cutting engine gaps this section used to track here - Jinja2
 filter-chaining and `become:`/`become_user:` privilege escalation - are

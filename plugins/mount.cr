@@ -61,11 +61,35 @@ module CrystalPlay
   # convention rather than adding exit-code checking to only one state -
   # a documented simplification, not an oversight.
   #
-  # Not implemented: `ephemeral` state (real Ansible's own
-  # device-source-conflict checking logic there is out of scope here),
-  # Solaris/BSD-specific vfstab handling (Linux fstab format only),
-  # `opts_no_log`, `fstab` `backup`'s exact filename format (a reasonable
-  # equivalent is used instead).
+  # state: ephemeral (`path`/`src`/`fstype` required, same as
+  # `present`/`mounted` - verified against real Ansible's own
+  # `required_if`) mounts without ever touching `fstab` at all, matching
+  # real Ansible's own "The fstab is completely ignored" behavior -
+  # `fstab:`/`backup:`/`dump:`/`passno:` are all accepted but silently
+  # have no effect here, same as real Ansible. If the mount point isn't
+  # currently mounted, this creates it (`mkdir -p`) and mounts for real
+  # (`mount -t <fstype> -o <opts> <src> <path>`, `opts:` verified to still
+  # get `boot: false`'s `noauto` treatment even though there's no fstab
+  # entry to append it to - confirmed against real Ansible's own source,
+  # which computes that unconditionally before the ephemeral-specific
+  # fstab skip). If it's *already* mounted, real Ansible compares the
+  # mount table's actual current source device against the requested
+  # `src:` (a new `current_mount_source`, reading `/proc/mounts` - no
+  # `findmnt` dependency, matching the same "no new binary requirement"
+  # preference the rest of this codebase already has) - a match triggers
+  # a remount (reusing the exact same `mount -o remount[,opts]` shape
+  # `state: remounted` already implements above); a mismatch fails
+  # clearly with real Ansible's own exact message rather than risking an
+  # unwanted unmount/override, matching its own documented behavior:
+  # "the module will fail to avoid unexpected unmount or mount point
+  # override." Always `changed: true` on success either way (both the
+  # fresh-mount and the source-matches-so-remount paths set it), matching
+  # real Ansible's own documented behavior exactly - verified against its
+  # source, not just the one-line doc summary.
+  #
+  # Not implemented: Solaris/BSD-specific vfstab handling (Linux fstab
+  # format only), `opts_no_log`, `fstab` `backup`'s exact filename format
+  # (a reasonable equivalent is used instead).
   class MountPlugin < BasePlugin
     DEFAULT_FSTAB = "/etc/fstab"
 
@@ -76,11 +100,11 @@ module CrystalPlay
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: path and state are both required")
       end
 
-      unless %w[present absent absent_from_fstab mounted unmounted remounted].includes?(state)
-        return PluginResult.new(changed: false, failed: true, msg: "state must be one of present, absent, absent_from_fstab, mounted, unmounted, remounted")
+      unless %w[present absent absent_from_fstab mounted unmounted remounted ephemeral].includes?(state)
+        return PluginResult.new(changed: false, failed: true, msg: "state must be one of present, absent, absent_from_fstab, mounted, unmounted, remounted, ephemeral")
       end
 
-      if (state == "present" || state == "mounted") && !(@params["src"]? && @params["fstype"]?)
+      if %w[present mounted ephemeral].includes?(state) && !(@params["src"]? && @params["fstype"]?)
         return PluginResult.new(changed: false, failed: true, msg: "state is #{state} but all of the following are missing: src, fstype")
       end
 
@@ -101,6 +125,8 @@ module CrystalPlay
         PluginResult.new(changed: changed, failed: false, msg: "", name: path)
       when "remounted"
         ensure_remounted(path, check_mode)
+      when "ephemeral"
+        ensure_ephemeral(path, check_mode)
       else
         fstab_changed, backup_file = remove_fstab_entry(path, fstab, check_mode)
         unmount_changed = state == "absent" ? ensure_unmounted(path, check_mode) : false
@@ -297,6 +323,92 @@ module CrystalPlay
       end
 
       PluginResult.new(changed: true, failed: false, msg: "", name: path)
+    end
+
+    # Mounts without ever touching fstab - see the class doc above for
+    # the full breakdown. `src`/`fstype` are guaranteed present by
+    # #execute's own validation before this is ever called.
+    private def ensure_ephemeral(path : String, check_mode : Bool) : PluginResult
+      src = @params["src"]? || ""
+      fstype = @params["fstype"]? || ""
+
+      if currently_mounted?(path)
+        return ensure_ephemeral_remount(path, src, fstype, check_mode)
+      end
+
+      return PluginResult.new(changed: true, failed: false, msg: "Would mount (check mode)", name: path) if check_mode
+
+      if is_local_connection?
+        Dir.mkdir_p(path)
+      else
+        remote_exec("mkdir -p #{path}")
+      end
+
+      remote_exec("mount -t #{fstype} -o #{desired_opts} #{src} #{path}")
+      PluginResult.new(changed: true, failed: false, msg: "", name: path)
+    end
+
+    # Real Ansible compares the mount table's actual current source
+    # device against the requested src: before touching an already-
+    # mounted ephemeral mount point - a match triggers a remount, a
+    # mismatch fails clearly rather than risking an unwanted unmount or
+    # override of a mount point this task doesn't actually own.
+    private def ensure_ephemeral_remount(path : String, src : String, fstype : String, check_mode : Bool) : PluginResult
+      unless current_mount_source(path) == src
+        return PluginResult.new(
+          changed: false, failed: true,
+          msg: "Ephemeral mount point is already mounted with a different source than the specified one. " \
+               "Failing in order to prevent an unwanted unmount or override operation. Try replacing this " \
+               "command with a \"state: unmounted\" followed by a \"state: ephemeral\", or use a different " \
+               "destination path.",
+          name: path
+        )
+      end
+
+      return PluginResult.new(changed: true, failed: false, msg: "", name: path) if check_mode
+
+      remote_exec(ephemeral_remount_command(path, src, fstype))
+      PluginResult.new(changed: true, failed: false, msg: "", name: path)
+    end
+
+    # `mount -o remount -t <fstype> [-o <opts>] <src> <path>` - a
+    # distinctly different shape from state: remounted's own `mount -o
+    # remount[,opts] [-T fstab] path`, verified against real Ansible's
+    # own `remount()` source: for `state: ephemeral` specifically, the
+    # `-o remount` from the opts-aware branch (only taken for
+    # `state: remounted`) is skipped in favor of a second, separate
+    # `-o <opts>` coming from the same `_set_ephemeral_args` helper the
+    # fresh-mount path above also uses, and `fstype`/`src` are appended
+    # too (real Ansible's own `remount()` needs both regardless of
+    # `state:`, since `mount -o remount` alone can't re-derive them the
+    # way an fstab-backed remount can).
+    private def ephemeral_remount_command(path : String, src : String, fstype : String) : String
+      opts = desired_opts
+      String.build do |cmd|
+        cmd << "mount -o remount -t " << fstype
+        cmd << " -o " << opts if opts != "defaults"
+        cmd << " " << src << " " << path
+      end
+    end
+
+    # Reads /proc/mounts (no `findmnt` dependency, matching this
+    # codebase's general preference for not requiring extra binaries)
+    # for the source device currently mounted at *path*, or nil if
+    # nothing is.
+    private def current_mount_source(path : String) : String?
+      content = is_local_connection? ? read_proc_mounts : remote_exec("cat /proc/mounts")[:stdout]
+
+      content.each_line do |line|
+        fields = line.split
+        next unless fields.size >= 2 && fields[1] == path
+        return fields[0]
+      end
+
+      nil
+    end
+
+    private def read_proc_mounts : String
+      File.exists?("/proc/mounts") ? File.read("/proc/mounts") : ""
     end
   end
 end
