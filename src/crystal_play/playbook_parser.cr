@@ -157,12 +157,12 @@ module CrystalPlay
     def include_role? : Bool
       @module_name == "_include_role"
     end
-    
+
     def to_s(io : IO)
       io << "Task(#{@name}, #{@module_name})"
     end
   end
-  
+
   # Represents a play (collection of tasks for specific hosts)
   class Play
     property name : String
@@ -174,7 +174,7 @@ module CrystalPlay
     property gather_facts : Bool
     property tags : Array(String)
     property handlers : Array(Task)
-    
+
     def initialize(@name : String, @hosts : String | Array(String))
       @tasks = [] of Task
       @vars = Hash(String, JSON::Any).new
@@ -184,29 +184,28 @@ module CrystalPlay
       @tags = [] of String
       @handlers = [] of Task
     end
-    
+
     def to_s(io : IO)
       io << "Play(#{@name}, hosts: #{@hosts}, #{@tasks.size} tasks)"
     end
   end
-  
+
   # Represents an entire playbook
   class Playbook
     property plays : Array(Play)
     property path : String
-    
+
     def initialize(@path : String)
       @plays = [] of Play
     end
-    
+
     def to_s(io : IO)
       io << "Playbook(#{@path}, #{@plays.size} plays)"
     end
   end
-  
+
   # Parser for Ansible YAML playbooks
   class PlaybookParser
-    
     # List of available (implemented) plugins - using FQCN. Almost all of
     # these are ansible.builtin.* (bundled with ansible-core); two
     # exceptions verified against a real ansible-core install (not
@@ -249,33 +248,40 @@ module CrystalPlay
       "community.postgresql.postgresql_db",
       "community.postgresql.postgresql_user",
       "ansible.builtin.set_fact",
+      "ansible.builtin.get_url",
+      "ansible.builtin.blockinfile",
+      "ansible.builtin.uri",
+      "ansible.builtin.assert",
+      "ansible.builtin.wait_for",
+      "ansible.builtin.fetch",
+      "ansible.builtin.pause",
     ]
-    
+
     # Parse playbook from file
     def self.parse(path : String) : Playbook
       unless File.exists?(path)
         raise "Playbook file not found: #{path}"
       end
-      
+
       content = Vault.maybe_decrypt(File.read(path))
       parse_string(content, path)
     end
-    
+
     # Parse playbook from string
     def self.parse_string(content : String, path : String = "playbook.yml") : Playbook
       playbook = Playbook.new(path)
-      
+
       begin
         yaml = YAML.parse(content)
       rescue ex : YAML::ParseException
         raise "Invalid YAML in #{path}: #{ex.message}"
       end
-      
+
       # Playbook is an array of plays
       unless yaml.as_a?
         raise "Playbook must be a YAML list of plays"
       end
-      
+
       playbook_dir = File.dirname(path)
 
       yaml.as_a.each_with_index do |play_yaml, index|
@@ -296,14 +302,14 @@ module CrystalPlay
           puts "Warning: Failed to parse play #{index + 1}: #{ex.message}".colorize(:yellow)
         end
       end
-      
+
       if playbook.plays.empty?
         raise "No valid plays found in playbook"
       end
-      
+
       playbook
     end
-    
+
     # import_playbook: is only valid at the top level of a playbook (a list
     # item alongside plays, not inside tasks:) - "{import_playbook: path}"
     # rather than a normal play mapping (which requires 'hosts').
@@ -316,42 +322,42 @@ module CrystalPlay
       unless yaml.as_h?
         raise "Play must be a YAML mapping (hash)"
       end
-      
+
       # Get play name
       name = yaml["name"]?.try(&.as_s) || "Play #{index + 1}"
-      
+
       # Get hosts (required)
       hosts_yaml = yaml["hosts"]?
       unless hosts_yaml
         raise "Play '#{name}' missing required 'hosts' field"
       end
-      
+
       hosts = if hosts_yaml.as_a?
-        hosts_yaml.as_a.map(&.as_s)
-      else
-        hosts_yaml.as_s
-      end
-      
+                hosts_yaml.as_a.map(&.as_s)
+              else
+                hosts_yaml.as_s
+              end
+
       play = Play.new(name, hosts)
-      
+
       # Parse play-level settings
       play.become = yaml["become"]?.try(&.as_bool) || false
       play.become_user = yaml["become_user"]?.try(&.as_s)
       gather_facts_yaml = yaml["gather_facts"]?
       play.gather_facts = gather_facts_yaml ? gather_facts_yaml.as_bool : true
-      
+
       # Parse play-level vars
       if vars_yaml = yaml["vars"]?.try(&.as_h?)
         vars_yaml.each do |key, value|
           play.vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json))
         end
       end
-      
+
       # Parse tags
       if tags_yaml = yaml["tags"]?.try(&.as_a?)
         play.tags = tags_yaml.map(&.as_s)
       end
-      
+
       # Parse roles: - their tasks/handlers run BEFORE the play's own
       # tasks:/handlers: (matching Ansible; pre_tasks:/post_tasks: aren't
       # implemented, so this is simplified to just roles-then-tasks).
@@ -501,10 +507,10 @@ module CrystalPlay
                       "notify", "changed_when", "failed_when", "delegate_to", "run_once",
                       "async", "poll",
                       "block", "rescue", "always", "import_tasks", "include_tasks", "include_role"]
-      
+
       module_name = nil
       module_params = nil
-      
+
       task_hash.each do |key, value|
         key_str = key.to_s
         unless special_keys.includes?(key_str)
@@ -513,7 +519,7 @@ module CrystalPlay
           break
         end
       end
-      
+
       unless module_name
         raise "No module found in task '#{name}'"
       end
@@ -522,12 +528,12 @@ module CrystalPlay
       unless AVAILABLE_PLUGINS.includes?(module_name)
         raise "Plugin not available: #{module_name}"
       end
-      
+
       task = Task.new(name, module_name)
-      
+
       # Parse module parameters
       task.params = parse_module_params(module_params.not_nil!, module_name)
-      
+
       # Parse task-level settings - FIXED to handle boolean values safely
       task.when_condition = task_hash["when"]?.try { |v| safe_yaml_to_string(v) }
       task.register = task_hash["register"]?.try { |v| safe_yaml_to_string(v) }
@@ -536,7 +542,7 @@ module CrystalPlay
       task.diff_mode = task_hash["diff"]?.try(&.as_bool)
       task.become = task_hash["become"]?.try(&.as_bool) || play.become
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
-      
+
       # Parse notify (can be string or array)
       if notify_yaml = task_hash["notify"]?
         if notify_yaml.as_s?
@@ -545,15 +551,15 @@ module CrystalPlay
           task.notify = notify_yaml.as_a.map(&.as_s)
         end
       end
-      
+
       # Parse listen (string only)
       task.listen = task_hash["listen"]?.try { |v| safe_yaml_to_string(v) }
-      
+
       # Parse tags
       if tags_yaml = task_hash["tags"]?.try(&.as_a?)
         task.tags = tags_yaml.map(&.as_s)
       end
-      
+
       # Parse loop / with_* (checked in this priority order; first match wins,
       # matching how Ansible only honors one loop source per task)
       if loop_yaml = task_hash["loop"]?.try(&.as_a?)
@@ -583,10 +589,10 @@ module CrystalPlay
         task.loop_items = LoopResolver.with_indexed_items(items)
       elsif with_fileglob = task_hash["with_fileglob"]?
         task.loop_fileglob = if with_fileglob.as_a?
-          with_fileglob.as_a.map(&.as_s)
-        else
-          [with_fileglob.as_s]
-        end
+                               with_fileglob.as_a.map(&.as_s)
+                             else
+                               [with_fileglob.as_s]
+                             end
       elsif template_source = find_loop_template(task_hash)
         # loop:/with_items:/with_dict:/with_nested:/with_indexed_items: given
         # as a "{{ variable }}" reference: not a literal array/hash at parse
@@ -733,12 +739,23 @@ module CrystalPlay
     # Parse module parameters into a hash
     private def self.parse_module_params(yaml : YAML::Any, module_name : String) : Hash(String, String)
       params = Hash(String, String).new
-      
+
       # Handle different parameter formats
       if yaml.as_h?
         # Hash format: key-value pairs
         yaml.as_h.each do |key, value|
-          params[key.to_s] = Vault.maybe_decrypt(stringify_value(value))
+          if module_name == "ansible.builtin.assert" && key.to_s == "that"
+            # `that:` is a list of independent condition strings (or, per
+            # real Ansible, a single bare string) - stringify_value's own
+            # Array handling joins with a comma, which would corrupt any
+            # condition that itself contains one (e.g. a list literal like
+            # `x in [1, 2, 3]`), so this is JSON-encoded instead and
+            # decoded back into an Array(String) on the plugin side.
+            conditions = value.as_a?.try(&.map { |item| stringify_value(item) }) || [stringify_value(value)]
+            params[key.to_s] = conditions.to_json
+          else
+            params[key.to_s] = Vault.maybe_decrypt(stringify_value(value))
+          end
         end
       elsif yaml.as_s?
         # String format: single argument (e.g., command: "echo hello")
@@ -752,10 +769,10 @@ module CrystalPlay
         # Other types
         params["value"] = stringify_value(yaml)
       end
-      
+
       params
     end
-    
+
     # Helper: Safely convert any YAML value to string
     # This handles cases where YAML values might be booleans, integers, etc.
     private def self.safe_yaml_to_string(yaml : YAML::Any) : String
@@ -774,7 +791,7 @@ module CrystalPlay
         yaml.to_s
       end
     end
-    
+
     # Convert YAML value to string (used for module parameters)
     private def self.stringify_value(yaml : YAML::Any) : String
       case yaml.raw
@@ -800,7 +817,7 @@ module CrystalPlay
         yaml.to_s
       end
     end
-    
+
     # Validate playbook structure
     def self.validate(playbook : Playbook) : Array(String)
       warnings = [] of String
@@ -825,10 +842,10 @@ module CrystalPlay
     # Get statistics about playbook
     def self.stats(playbook : Playbook) : Hash(String, Int32)
       stats = {
-        "plays"         => playbook.plays.size,
-        "tasks"         => 0,
-        "handlers"      => 0,
-        "modules_used"  => Set(String).new.size,
+        "plays"        => playbook.plays.size,
+        "tasks"        => 0,
+        "handlers"     => 0,
+        "modules_used" => Set(String).new.size,
       }
 
       modules = Set(String).new

@@ -1,14 +1,19 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-03 (currently at `0.9.24`):** **all of Phase 0, Phase 1,
-Phase 2, Phase 3, and Phase 4 are done** - see the checkboxes in each phase
-section below (roles, import/include, vault, every Phase 3 plugin, and every
-Phase 4 advanced-execution feature). 514/516 specs pass (the 2 exceptions need
-a live MySQL/PostgreSQL server at `127.0.0.1:13306`/`15432`), `ameba` clean on
-all new/touched code. A Docker-based compatibility harness (`compat/`, see
-`compat/README.md`) runs the same playbooks through real `ansible-playbook` and
-`crystal-ansible` side by side and diffs the resulting filesystem state + exit
-codes - ground truth instead of assumptions; **26/26 compat playbooks pass**.
+**Status as of 2026-08-04 (currently at `0.9.31`):** **all of Phase 0 through
+Phase 5 are done** - see the checkboxes in each phase section below (roles,
+import/include, vault, every Phase 3 plugin, every Phase 4
+advanced-execution feature, and all eight Phase 5 modules: `set_fact`
+`0.9.24`, `get_url` `0.9.25`, `blockinfile` `0.9.26`, `uri` `0.9.27`,
+`assert` `0.9.28`, `wait_for` `0.9.29`, `fetch` `0.9.30`, `pause` `0.9.31`).
+591/593 specs pass (the 2 exceptions need a live MySQL/PostgreSQL server at
+`127.0.0.1:13306`/`15432`), `ameba` clean on all new/touched code. A
+Docker-based compatibility harness (`compat/`, see `compat/README.md`) runs
+the same playbooks through real `ansible-playbook` and `crystal-ansible` side
+by side and diffs the resulting filesystem state + exit codes - ground truth
+instead of assumptions; **26/26 compat playbooks pass**, though none of the
+eight Phase 5 modules has a compat playbook yet - see the Phase 5 wrap-up
+note for details, that's the natural next step for whoever picks this up.
 
 Two cross-cutting efforts also landed since Phases 3/4 were marked done:
 
@@ -37,14 +42,16 @@ Two cross-cutting efforts also landed since Phases 3/4 were marked done:
   and more). These are recorded in the commit history (`git log`); they are not
   repeated here to keep this header scannable.
 
-**The real parity gap (Phase 5, active work):** the roadmap's earlier claim of
+**The real parity gap (Phase 5, now complete):** the roadmap's earlier claim of
 "full parity for Linux server automation" was overstated - several *very common*
-`ansible.builtin` modules are entirely missing (`set_fact`, `get_url`,
-`blockinfile`, `uri`, `assert`, `wait_for`, `fetch`, `pause`). A playbook using
-even a routine `set_fact` or `get_url` fails today with "Plugin binary not
-found". These are tracked as **Phase 5**, the current priority. During this
-survey the roadmap was found stale relative to the code and git history; this
-header and Phase 5 supersede it.
+`ansible.builtin` modules were entirely missing (`set_fact`, `get_url`,
+`blockinfile`, `uri`, `assert`, `wait_for`, `fetch`, `pause`), each failing
+with "Plugin binary not found." All eight have now shipped (`0.9.24`-`0.9.31`,
+see each entry under Phase 5 below for what was actually implemented,
+including several points where this roadmap's own scoping - written before
+any of them were built - turned out to be wrong once checked against real
+`ansible-playbook` runs). The remaining lower-priority scope cuts and engine
+gaps are listed at the end of the Phase 5 section.
 
 This roadmap sequences work into phases, with the test-foundation phase
 (Phase 0) landing first so every phase after it ships with a regression net
@@ -1284,101 +1291,337 @@ first, then `blockinfile`, `uri`, `assert`, `wait_for`, `fetch`, `pause`.
   same key overwrites it for a task afterward) - not yet verified against
   real `ansible-playbook` via the compat harness (no
   `compat/playbooks/27-set-fact.yml` added in this pass).
-- [ ] `assert` (action plugin, `ansible.builtin.assert`): fail (or pass) based
-  on a list of conditions, for role pre-flight validation. Parameters: `that:`
-  (required, list of condition expressions), `fail_msg:` (default "assertion
-  failed"), `success_msg:`. Runs on the control node, never `changed`, works in
-  check mode (the verdict is evaluated even under `--check`). Evaluate each `that`
-  condition with the same `ConditionalEvaluator` pipeline `when:`/`until:`
-  already use; if any is false, return `failed: true` with `fail_msg` (real
-  Ansible aggregates the failing assertion text). Note the same bare-vs-`{{ }}`
-  dotted-access caveat as `when:` (see the `changed_when` Phase 4 entry). Unit
-  spec: truthy/falsy/aggregation. Compat: a playbook that asserts true and one
-  that asserts false, diffing failed status.
-- [ ] `get_url` (module, `ansible.builtin.get_url`): download a URL to a file
-  on the target. Parameters: `url` (required), `dest` (required),
-  `mode`/`owner`/`group` (apply perms after download), `force` (default `no` -
-  skip if `dest` already exists), `checksum` (e.g. `"sha256:<hex>"`, verified
-  before/after), `url_username`/`url_password` (basic auth), `validate_certs`
-  (default `yes`; allow `no` to skip TLS verification), `timeout` (default 10),
-  `headers` (dict), `http_agent`, `backup`. Fetch with Crystal stdlib
-  `HTTP::Client` (native - no `curl`/`wget` for the local case; for remote
-  hosts, either shell `curl`/`wget` on the target via `remote_exec` or error
-  clearly, mirroring how the package-manager plugins handle their genuine
-  remote gaps). Idempotent: `dest` existing + `force: no` -> unchanged; download
-  only when needed. Check mode reports what it would download without writing.
-  Unit spec: checksum validation + force/not-force logic (pure parts);
-  integration spec with a local HTTP server (`python3 -m http.server` or a tiny
-  Crystal socket) serving a file into a temp dir. Compat: playbook that starts a
-  local HTTP server task then `get_url`s from it, diffing the downloaded file's
-  checksum.
-- [ ] `blockinfile` (module, `ansible.builtin.blockinfile`): insert or update a
-  marker-delimited block of text in a file - the natural follow-on to the
-  already-native `lineinfile`, and the cleanest native fit in this phase.
-  Parameters: `path` (required), `block` (required text; alias `content`),
-  `state` (present/absent, default present), `marker` (default
-  `# BEGIN ANSIBLE MANAGED BLOCK`), `marker_begin`/`marker_end` (default `null`,
-  override begin/end markers independently; `{mark}` is the placeholder),
-  `insertafter` (EOF default, or a regex), `insertbefore` (regex, or BOF),
-  `create` (default `no` - create the file if missing), `mode`/`owner`/`group`
-  (via the shared `BasePlugin#apply_owner_group_mode`), `backup`. Entirely
-  native file editing (`File.read_lines`/`File.write`), mirroring `lineinfile.cr`
-  including its `create`/mode handling and a local/remote split only if
-  needed. Idempotent on the exact `marker_begin`/`block`/`marker_end` block.
-  Check mode reports would-change without writing. Unit spec on the block
-  replace/remove/idempotent logic; integration spec via `PluginSpecHelper.run`.
-  Compat: playbook that inserts, updates, and removes a block, diffing the file
-  contents + `changed` flags.
-- [ ] `uri` (module, `ansible.builtin.uri`): make an HTTP request (API calls,
-  health checks, webhooks). Parameters: `url` (required), `method` (default
-  GET), `body` (default `null`), `body_format` (`json`/`form`/`raw`),
-  `headers` (dict), `status_code` (list, default `[200]` - fail if the response
-  status isn't in it), `return_content` (bool, default `no` - echo the body into
-  `result.content`), `timeout`, `url_username`/`url_password`,
-  `validate_certs`, `follow_redirects` (default `safe`). Returns via `register:`:
-  `status`, `content`, `json`, `location`, `msg`. Native `HTTP::Client`
-  (local); for remote, shell `curl`/`wget` or error clearly. `changed:` follows
-  real Ansible: mutating methods (POST/PUT/DELETE) report `changed: true`, GET/
-  HEAD report `false`. Check mode must **not** send mutating requests (real
-  Ansible only allows GET/HEAD under `--check`). Response-body size cap to avoid
-  buffering a huge download. Integration spec against a local HTTP server
-  asserting `status`/`content`/`changed`; compat playbook diffing the
-  registered `status`/`content`.
-- [ ] `wait_for` (module, `ansible.builtin.wait_for`): poll until a condition
-  (port/service/file) is met, used to gate tasks on readiness. Parameters:
-  `host` (default 127.0.0.1)/`port` (wait until connectable), `path` (wait
-  until file exists/absent), `search_regex` (match in a file), `state`
-  (started/present for up, stopped/absent for down; `drained`), `timeout`
-  (default 300), `delay` (sleep before polling starts), `connect_timeout`
-  (default 5), `sleep` (default 1), `msg`. Native: `TCPSocket` connect attempt
-  for `port`, `File.exists?`/`File.delete?` for `path`, file read + regex for
-  `search_regex` - poll in a loop with `sleep` until the condition or `timeout`,
-  failing with `msg` on timeout. Never `changed` (it never modifies state; real
-  Ansible reports `changed: false`). Local fully native; remote connect checked
-  via the target's address. Unit spec: poll/loop/timeout logic (pure);
-  integration spec with a local socket that comes up after a short delay.
-  Compat: playbook that starts a local server task then `wait_for:` its port.
-- [ ] `fetch` (module, `ansible.builtin.fetch`): pull a file from the target to
-  the control node - the inverse of `copy`. Parameters: `src` (required, file
-  on target), `dest` (required, control-node path), `flat` (bool, default `no`
-  - when `no`, `dest` is a directory and the file is stored under a
-  `hostname/path` suffix; when `yes`, `dest` is the literal file path or a
-  dir), `validate_checksum` (checksum before/after transfer; delete the
-  control-node copy on mismatch), `fail_on_missing` (default `yes`). For local
-  connections it's a plain `File.copy`; for remote it uses `remote_download`
-  (opposite of `copy`'s `remote_upload`). Idempotent if the control-node copy
-  already matches. Integration spec via `PluginSpecHelper.run` with a local
-  `src`/`dest`; compat playbook: `copy` a file, then `fetch` it back into
-  `/work/fetch-dest` and diff the result (both engines fetch on the control
-  node, which in the harness container is the same filesystem).
-- [ ] `pause` (module, `ansible.builtin.pause`): wait or (interactively) prompt.
-  Parameters: `seconds` (int), `minutes` (int, combined with `seconds`),
-  `prompt`, `echo` (default `no`). crystal-ansible has no interactive TTY/prompt
-  model, so implement the countdown only (`seconds` + `minutes*60` of
-  `sleep`) - the documented scope cut vs real Ansible's interactive prompt, and
-  non-interactive real Ansible already just sleeps. Never `changed`. Trivial:
-  unit/integration spec asserting it sleeps ~N seconds; compat playbook with a
-  1-second `pause` (passes trivially, mostly a smoke test).
+- [x] `assert` (`0.9.28`): fails (or passes) based on a list of `that:`
+  conditions, for role pre-flight validation. Parameters: `that:` (required;
+  either a list of condition strings or, per real Ansible, a single bare
+  string), `fail_msg:` (alias `msg:` - a real, still-working alias kept
+  from a pre-2.7 rename, verified via `ansible-doc`, not assumed obsolete),
+  `success_msg:`. Implemented as a **plain module**
+  (`plugins/assert.cr`), not the control-node-only action plugin this
+  entry originally scoped: `that:` conditions only ever reference
+  variables already resolved into `@vars` (the plugin process already
+  receives the full vars_context every other plugin's params were already
+  substituted against), so there's no filesystem/network access or
+  controller-vs-target split to make - the same "doesn't need
+  action-plugin machinery" finding `set_fact` made in `0.9.24`. Reuses
+  `ConditionalEvaluator`/`VarSubstitutor` directly (both plain, dependency-
+  light classes, not something `TaskExecutor`-only) for the identical
+  bare-vs-`{{ }}` dotted-access pipeline `when:`/`until:`/`changed_when:`
+  already use. `that:` needed a small playbook-parser special case
+  (`playbook_parser.cr`'s `parse_module_params`): the generic YAML-list
+  stringifier joins array params with a comma, which would silently
+  corrupt any condition containing one (e.g. `x in [1, 2, 3]`), so `that:`
+  is JSON-encoded instead (`Array(String).from_json` on the plugin side) -
+  a real, if narrow, correctness bug in the generic path that this entry's
+  original "same `ConditionalEvaluator` pipeline" framing didn't surface,
+  found while actually wiring the list through rather than assumed. Two
+  more behaviors were verified against real `ansible-playbook` runs rather
+  than trusted from `ansible-doc`, both different from this entry's
+  original guess: evaluation **stops at the first failing condition**
+  (conditions are not aggregated - `ansible-doc`'s "optional custom
+  message" phrasing doesn't actually say either way), and a failed result
+  carries `assertion:` (the raw, unsubstituted condition text) and
+  `evaluated_to: false` alongside `msg:`; the default messages are
+  exactly `"Assertion failed"` / `"All assertions passed"`. Never
+  `changed`; runs and evaluates identically under check mode (there's no
+  state change to gate on). Integration tested
+  (`spec/integration/assert_spec.cr`, 8 examples): missing `that:`, all-
+  pass with the default success message, first-failure with the default
+  fail message plus `assertion:`/`evaluated_to:`, custom `fail_msg:`, the
+  `msg:` alias, custom `success_msg:`, a `{{ }}`-wrapped dotted condition,
+  and `changed: false`. Also verified end-to-end through the real compiled
+  `crystal-ansible` binary against a playbook mirroring the real-Ansible
+  comparison fixture above - task-for-task output matched. Not yet
+  verified against real `ansible-playbook` via the compat harness (no
+  `compat/playbooks/30-assert.yml` added in this pass, same documented gap
+  `set_fact`/`get_url`/`blockinfile`/`uri` shipped with).
+- [x] `get_url` (`0.9.25`): downloads a URL to a file. Parameters: `url`
+  (required), `dest` (required; a directory `dest` downloads to
+  `dest/<basename of the URL path>`, matching real Ansible), `mode`/`owner`/
+  `group` (applied via the existing shared `apply_owner_group_mode`),
+  `force` (default `no`), `checksum` (`"sha256:<hex>"`-style, algorithm
+  read via `native_checksum` - same helper `stat`/`find` already use),
+  `url_username`/`url_password` (HTTP basic auth), `validate_certs`
+  (default `yes`; `no` sets the TLS context's `verify_mode` to `NONE`),
+  `timeout` (default 10, applied to both connect and read), `headers`
+  (comma-separated `Key: Value` pairs - simpler than real Ansible's own
+  format but covers the common case), `http_agent` (default
+  `"ansible-httpget"`, matching real Ansible's own default User-Agent),
+  `backup`. Implemented as a plain module (`plugins/get_url.cr`), not the
+  local-only/remote-exec-fallback split this entry originally scoped:
+  fetches natively via stdlib `HTTP::Client` in every case, including
+  remote hosts, with **no** `curl`/`wget` fallback needed at all - the
+  scoping note above assumed a plugin process only ever runs on the
+  control node, but (re-discovering the same fact `native_stat`'s doc
+  comment already recorded) `PluginManager` uploads and executes this
+  same compiled plugin binary directly on the target host for non-local
+  connections, so an `HTTP::Client` call made from inside this process
+  already runs on whichever host - local or remote - the task is
+  targeting, the same reason `stat`/`find`'s native syscalls already work
+  remotely with no SSH branch. Downloads to a `<dest>.<pid>.tmp` sibling
+  file first, verifies the checksum there (deleting the tmp file on any
+  failure, never disturbing an existing `dest`), then `File.rename`s it
+  into place - so a failed or checksum-mismatched download can't corrupt
+  or partially overwrite a pre-existing `dest`. A checksum mismatch on an
+  *existing* `dest` triggers a re-download regardless of `force:` - the
+  checksum is treated as its own freshness check, matching real Ansible's
+  behavior (not deriving `force:` from checksum presence would leave
+  `checksum:`-only playbooks unable to ever self-heal a corrupted
+  download). Redirects (3xx + `Location:`) are followed manually up to 10
+  hops, since Crystal's `HTTP::Client` doesn't do this itself - a real gap
+  in the sense that most `get_url:` targets in practice (GitHub releases,
+  CDN-fronted downloads) redirect at least once. Check mode reports
+  `changed` without making any request. Not implemented: `checksum_url`
+  (fetching the expected checksum from a second URL rather than passing it
+  literally), `unredirected_headers`, `ciphers`, client TLS certs
+  (`client_cert`/`client_key`), `use_proxy`/proxy env handling, `unsafe_writes`,
+  SELinux options - all lower-value than the core
+  fetch+checksum+idempotency path. Unit-shaped logic (checksum parsing,
+  existing-dest skip/force/checksum-mismatch branching, redirect
+  resolution) lives directly on the plugin class rather than a separate
+  `plugin_helpers/` module, since none of it is meaningfully testable
+  without also exercising `native_checksum`/the filesystem - covered
+  instead by a dedicated integration suite
+  (`spec/integration/get_url_spec.cr`, 9 examples) against a real
+  in-process `HTTP::Server` (stdlib, not `python3 -m http.server`, so the
+  spec has no external process dependency): new download, checksum match/
+  mismatch, idempotent rerun, skip-without-force, overwrite-with-force,
+  check mode, a 404, a redirect, and missing-required-argument errors.
+  Not yet verified against real `ansible-playbook` via the compat harness
+  (no `compat/playbooks/27-get-url.yml` added in this pass, same
+  documented gap `set_fact` shipped with in `0.9.24`).
+- [x] `blockinfile` (`0.9.26`): inserts/updates/removes a marker-delimited
+  block of text in a file - the natural follow-on to the already-native
+  `lineinfile`. Parameters: `path` (required), `block` (alias `content`;
+  a missing or empty `block` is treated as `state: absent` regardless of
+  `state:`, matching real Ansible - verified, not assumed), `state`
+  (present/absent, default present), `marker` (default
+  `# {mark} ANSIBLE MANAGED BLOCK`), `marker_begin`/`marker_end` (default
+  `BEGIN`/`END`, substituted into `{mark}`), `insertafter`/`insertbefore`
+  (same regex/EOF/BOF semantics `lineinfile` already implements -
+  `LineEditor.insertion_index` made public and reused directly rather than
+  duplicated), `create`, `mode`/`owner`/`group` (via the shared
+  `BasePlugin#apply_owner_group_mode`), `backup`. Marker-matching/insertion
+  logic factored into a new pure `src/crystal_play/plugin_helpers/block_editor.cr`
+  (`BlockEditor`, unit tested directly, `spec/unit/block_editor_spec.cr`):
+  begin/end markers are matched by exact line equality (not regex), an
+  existing block's position never moves - only its interior is replaced -
+  and a begin marker with no matching end line found after it (a block
+  torn apart by hand-edits) is treated as "not found," taking the same
+  fresh-insert path a missing begin does, rather than erroring or matching
+  partially. Every one of these behaviors, plus the exact message text
+  (`"Block inserted"`/`"Block removed"`/`""` on no-op/`"File created"` when
+  the write happens on the same call that created the file), was verified
+  against real `ansible-playbook` runs (not assumed from `ansible-doc`)
+  before being encoded - `File created` also came out of that
+  verification and is a real, if slightly surprising, quirk of the
+  upstream module rather than a crystal-ansible invention.
+  Integration tested (`spec/integration/blockinfile_spec.cr`, 9 examples):
+  fresh insert + idempotent rerun, content update in place,
+  `state: absent` removal, empty-block-means-absent, custom markers,
+  `insertbefore`, file creation, missing-file-without-create failure, and
+  check mode. Not yet verified against real `ansible-playbook` via the
+  compat harness (no `compat/playbooks/28-blockinfile.yml` added in this
+  pass, same documented gap `set_fact`/`get_url` shipped with).
+- [x] `uri` (`0.9.27`): makes an HTTP request (API calls, health checks,
+  webhooks). Parameters: `url` (required), `method` (default GET), `body`,
+  `body_format` (`raw` default/`json`/`form-urlencoded` - real Ansible's
+  own three most-used values, not the `json`/`form`/`raw` this entry
+  originally guessed at; `form-multipart` isn't implemented), `headers`
+  (a JSON-object string - the playbook parser already JSON-encodes any
+  YAML dict param before a plugin sees it, the same convention
+  `docker_container.cr`'s `env:`/`labels:` already rely on), `status_code`
+  (comma-separated ints, default `200`), `return_content`,
+  `url_username`/`url_password`, `validate_certs`, `timeout` (default 30,
+  matching real Ansible's own default - not `get_url`'s 10),
+  `follow_redirects` (`safe` default - GET/HEAD only; `all`/`yes`; `none`/
+  `no`). Two behaviors this entry's scoping got wrong were caught only by
+  actually running real `ansible-playbook` against a local test server
+  side by side, not by trusting `ansible-doc`: (1) **real Ansible's `uri`
+  module has no check-mode support at all** - even a bare GET is skipped
+  outright under `--check` (`"This action (uri) does not support check
+  mode."`), not just mutating methods as this entry assumed, so
+  crystal-ansible's version skips unconditionally under `check_mode:`,
+  the same `skipped: true` convention `command.cr` already uses for its
+  own check-mode gap; (2) **`changed:` is always `false`**, verified
+  against the real module's actual Python source (`resp['changed'] =
+  False`, only ever flipped by `dest:`-file-writing, which isn't
+  implemented here) - it is not a POST/PUT/DELETE-vs-GET/HEAD distinction
+  at all, contrary to this entry's original guess. Redirects are followed
+  manually (`HTTP::Client` doesn't do this itself, same as `get_url`), with
+  a 303 (or a 301/302 responding to a POST) downgrading the follow-up
+  request to GET, matching real browser/urllib behavior; `redirected:` in
+  the result reflects whether a hop actually happened. A JSON
+  `Content-Type` response always populates both `content` and `json` in
+  the result regardless of `return_content:` (matches real Ansible
+  exactly - `return_content:` only gates plain-text bodies). `location:`
+  is included whenever a `Location` header is present, even when the
+  redirect wasn't followed. `form-urlencoded` bodies are properly
+  form-encoded (`URI::Params.build`) from the JSON-object `body:` the
+  playbook parser hands over, not passed through as literal JSON text.
+  Not implemented: `dest:` (download-to-file, `get_url:`'s job), `src:`,
+  `force_basic_auth`, `creates:`/`removes:`, `unix_socket`, client TLS
+  certs, `use_proxy`, SELinux options, `unredirected_headers`,
+  `use_gssapi`/`use_netrc` - all lower-value than the core
+  request+status+content path. Integration tested
+  (`spec/integration/uri_spec.cr`, 12 examples) against a real in-process
+  `HTTP::Server` (same pattern `get_url_spec.cr` established): GET with
+  and without `return_content`, automatic JSON parsing, a failing status
+  code and a custom `status_code:` list accepting it, a POST body with a
+  registered status, form-urlencoded encoding, redirect-followed with
+  `redirected: true`, `follow_redirects: none` leaving the 302 unfollowed,
+  `changed: false` on a mutating POST, and the check-mode skip. Not yet
+  verified against real `ansible-playbook` via the compat harness (no
+  `compat/playbooks/29-uri.yml` added in this pass, same documented gap
+  `set_fact`/`get_url`/`blockinfile` shipped with).
+- [x] `wait_for` (`0.9.29`): polls until a port/file/regex-in-file condition
+  is met, used to gate tasks on readiness. Parameters: `host` (default
+  127.0.0.1)/`port` (wait until connectable, mutually exclusive with
+  `path`), `path` (wait until file exists/absent), `search_regex` (matched
+  against a file's content only - not an open socket's, per this entry's
+  own original scope), `state` (`started`/`present` for up,
+  `stopped`/`absent` for down), `timeout` (default 300), `delay` (sleep
+  before polling starts), `connect_timeout` (default 5), `sleep` (default
+  1), `msg` (overrides the default timeout message). Native `TCPSocket`
+  connect attempt for `port`, `File.exists?` for `path`, `File.read` +
+  `Regex#match` (multiline) for `search_regex`. Two behaviors were
+  verified against real `ansible-playbook` runs rather than assumed from
+  `ansible-doc`, one of which this entry's own scoping got wrong: (1)
+  **with no `port:`/`path:` given, `wait_for:` always sleeps for the
+  *full* `timeout:`** ("used without other conditions it is equivalent of
+  just sleeping," confirmed to genuinely not return early) - an initial
+  implementation treated the no-condition case as trivially
+  already-satisfied and returned instantly, which is wrong; (2) **real
+  Ansible's `wait_for` has no check-mode support at all**, skipping
+  outright under `--check` with the exact text
+  `"remote module (wait_for) does not support check mode"`, reused
+  verbatim here via the same `skipped: true` convention `command.cr`/
+  `uri.cr` already use for their own check-mode gaps. Timeout messages
+  match real Ansible's own wording exactly (verified, not guessed):
+  `"Timeout when waiting for #{host}:#{port}"`,
+  `"Timeout when waiting for file #{path}"`, and
+  `"Timeout when waiting for search string #{regex} in #{path}"`. A
+  successful `search_regex` match populates `match_groups` from the
+  regex's own capture groups (excluding the full match at index 0, which
+  real Ansible's own `match_groupdict`/`match_groups` output likewise
+  excludes) - `match_groupdict` itself is always returned empty (named
+  captures aren't implemented, a documented simplification). Never
+  `changed`. Not implemented: `state: drained` (needs `/proc/net`-style
+  TCP connection-state inspection with no faithful native Crystal
+  equivalent - fails clearly with a dedicated message rather than
+  silently misbehaving), `exclude_hosts`/`active_connection_states`
+  (drained-only options). Integration tested
+  (`spec/integration/wait_for_spec.cr`, 12 examples): mutually-exclusive
+  `port:`/`path:` validation, the check-mode skip, a closed-port timeout
+  with the exact message, a custom `msg:`, an already-open port
+  succeeding immediately (via a real `TCPServer` bound to an OS-assigned
+  port), `state: stopped` against an already-closed port, an
+  already-existing path, a missing-path timeout with the exact message,
+  `state: absent` against an already-missing path, a matching
+  `search_regex`, a non-matching `search_regex` timeout with the exact
+  message, and `changed: false`. Not yet verified against real
+  `ansible-playbook` via the compat harness (no
+  `compat/playbooks/31-wait-for.yml` added in this pass, same documented
+  gap `set_fact`/`get_url`/`blockinfile`/`uri`/`assert` shipped with).
+- [x] `fetch` (`0.9.30`): pulls a file from the target to the control node -
+  the inverse of `copy`. Parameters: `src` (required), `dest` (required),
+  `flat` (default `no` - `dest/<inventory_hostname>/<src, leading slash
+  and all>`; `yes` writes straight to `dest`, or `dest/<basename of src>`
+  when `dest` ends with a path separator, verified field-for-field against
+  real `ansible-playbook`'s actual output, not assumed), `validate_checksum`
+  (default `yes`, used for pre-transfer idempotency as well as
+  post-transfer validation - real Ansible's own docs only mention the
+  latter, but the source checksum has to be known before deciding whether
+  to transfer at all, so this codebase uses it for both), `fail_on_missing`
+  (default `yes`). Implementing this surfaced a real architectural gap
+  this entry's "for remote connections it uses `remote_download`" framing
+  glossed over: every other plugin's compiled binary gets uploaded and
+  *executed directly on the remote target* for a non-local connection
+  (`PluginManager#execute_remote_plugin`, forcing `ansible_connection:
+  local` into that copy's own config so its internal filesystem calls
+  correctly mean "the target's filesystem") - fine for plugins that only
+  ever read/write wherever they happen to run, but exactly backwards for
+  `fetch`, which needs to run *on the controller* and pull via SSH. Fixed
+  by adding a small `PluginManager::CONTROLLER_ONLY_PLUGINS` set
+  (currently just `fetch`) that bypasses the local/remote dispatch
+  entirely and always runs the plugin locally via `execute_local_plugin`,
+  with the original (non-overridden) host/vars intact - from there,
+  `BasePlugin#remote_download` already did exactly the right thing
+  (`FileUtils.cp` for a genuinely local target, `SSHManager.download` for
+  a real remote one) with no further change needed. The one similarly
+  "genuine remote operation, no native equivalent" case: computing the
+  *source*'s checksum before transfer needs `native_checksum` (an
+  `OpenSSL::Digest` read on this process's own filesystem) for a local
+  target, but a real remote target's bytes aren't reachable from the
+  controller process at all until fetched - shells `sha1sum` over SSH via
+  `remote_exec` for that one case only, the same category of gap this
+  codebase's other plugins (`apt`/`dnf`/`service`/...) already carve out.
+  Real Ansible's own `fetch` documents full check-mode support but
+  actually skips outright under `--check` with
+  `"check mode not (yet) supported for this module"` (verified against a
+  real `ansible-playbook --check` run, not the docs) - reused verbatim
+  here via the same `skipped: true` convention `uri.cr`/`wait_for.cr`
+  already use for their own check-mode gaps. `checksum`/`md5sum` (sha1 and
+  md5 of the fetched file) and, on an actual transfer,
+  `remote_checksum`/`remote_md5sum: null` (real Ansible's own module
+  always returns a literal `null` there too - a legacy protocol field it
+  never actually populates, matched rather than "fixed") were verified
+  field-for-field and byte-for-byte against real `ansible-playbook`'s
+  actual output, including the exact `"the remote file does not exist,
+  not transferring, ignored"` message text. Not implemented: symlink
+  handling nuances, SELinux options, `unsafe_writes` - all lower-value
+  than the core transfer+layout+idempotency path. Integration tested
+  (`spec/integration/fetch_spec.cr`, 8 examples): missing `src`/`dest`,
+  the default hostname/path layout with an idempotent rerun, `flat: true`
+  with and without a trailing separator on `dest`, a missing source with
+  `fail_on_missing` true (fails) and false (doesn't), the check-mode skip,
+  and a directory `src` failing clearly. Not yet verified against real
+  `ansible-playbook` via the compat harness (no
+  `compat/playbooks/32-fetch.yml` added in this pass, same documented gap
+  every other Phase 5 module shipped with so far).
+- [x] `pause` (`0.9.31`): waits, or (in real Ansible) interactively prompts.
+  Parameters: `seconds`, `minutes`, `prompt` (accepted, but has nothing to
+  affect - see below), `echo` (default `yes`, not `no` as this entry
+  originally guessed - real Ansible only echoes to the result, it doesn't
+  gate anything crystal-ansible's non-interactive version does). Two
+  things this entry's own scoping got wrong, both caught only by actually
+  running real `ansible-playbook`, not by trusting `ansible-doc`'s prose:
+  (1) **`seconds:` and `minutes:` are mutually exclusive in real Ansible**
+  ("combined" here was wrong) - passing both, even `minutes: 0`, fails
+  with `"parameters are mutually exclusive: minutes|seconds"`, reproduced
+  verbatim; (2) with **neither** given, real Ansible blocks on stdin for
+  interactive input - since crystal-ansible has no interactive TTY/prompt
+  model at all (the documented scope cut this entry called for), that
+  case is treated as an instant no-op (`"Paused without an interactive
+  prompt (not supported) - continuing immediately"`) rather than hanging
+  the playbook run forever, which is what a literal "countdown-only"
+  reading of `seconds + minutes*60` would have done for the all-absent
+  case (`0` seconds of actual sleep, but this codebase's `sleep(0)` isn't
+  the bug - the *interactive-prompt* path this entry didn't separately
+  call out is). Unlike `uri`/`wait_for`/`fetch`'s check-mode gaps, real
+  Ansible's `pause` genuinely *does* run for real under `--check`
+  (verified, not assumed) - so this doesn't skip under `check_mode:`
+  either, matching that behavior exactly. Result fields
+  (`start`/`stop`/`delta`/`stdout`/`stderr`/`rc`/`echo`/`user_input`) and
+  the exact `stdout` wording (`"Paused for #{amount} seconds"` /
+  `"...minutes"`) were verified against real `ansible-playbook`'s actual
+  output. Never `changed`. Integration tested
+  (`spec/integration/pause_spec.cr`, 5 examples): a real 1-second sleep
+  with the exact `stdout` text, a fractional-minutes sleep, the
+  mutually-exclusive failure, the no-args instant-continue case (asserted
+  to actually take under a second, not just to not error), and
+  `changed: false`. Not yet verified against real `ansible-playbook` via
+  the compat harness (no `compat/playbooks/33-pause.yml` added in this
+  pass, same documented gap every other Phase 5 module shipped with).
+
+**Phase 5 is now feature-complete** - every module scoped at the top of this
+phase (`set_fact`, `get_url`, `blockinfile`, `uri`, `assert`, `wait_for`,
+`fetch`, `pause`) has shipped, in `0.9.24` through `0.9.31`. What's left
+across all of them: none has a compat-harness playbook yet (see each entry
+above), and Phase 3/4's own established compat-harness pattern
+(`compat/playbooks/NN-*.yml`, diffed against real `ansible-playbook`) hasn't
+been extended to any of the eight - a good next step for whoever picks this
+up, ahead of any new module scope.
 
 **Also still open (lower priority - see each shipping plugin's class doc for the
 exact "not implemented" list):** the documented per-plugin scope cuts (e.g.
@@ -1402,6 +1645,7 @@ already-shipped core engine, plugins, and compatibility harness.
 ## Total estimate
 
 Roughly 12-18 weeks of focused work across Phases 1-4, plus Phase 0 up front.
-**Phases 1-4 are now complete** (as of `0.9.23`); the remaining planned work is
-**Phase 5** (missing common modules, ~2-3 weeks) plus the lower-priority scope
-cuts and engine gaps listed at the end of Phase 5.
+**Phases 0-5 are all now complete** (Phase 5 as of `0.9.31`). What remains is
+the lower-priority scope-cut list and cross-cutting engine gaps at the end of
+the Phase 5 section, plus adding compat-harness coverage for the eight Phase 5
+modules (none have one yet - see each entry above).

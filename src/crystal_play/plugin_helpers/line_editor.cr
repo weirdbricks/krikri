@@ -74,7 +74,8 @@ module CrystalPlay
         {new_lines, true}
       end
 
-      private def self.insertion_index(lines : Array(String), insertafter : String?, insertbefore : String?) : Int32
+      # Shared with BlockEditor, so this is public rather than private.
+      def self.insertion_index(lines : Array(String), insertafter : String?, insertbefore : String?) : Int32
         if insertafter
           return lines.size if insertafter == "EOF" || insertafter == "END"
           index = lines.index { |existing| matches_regexp?(existing, insertafter) }
