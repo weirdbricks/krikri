@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.47`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.48`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -21,9 +21,10 @@ documented per-plugin scope cuts one at a time in pursuit of fuller
 `ansible-core`/`community.*` parity, most recently `postgresql_privs`
 (`0.9.44`, previously not implemented at all), `mount`'s `remounted`
 state (`0.9.45`), `wait_for`'s `state: drained` (`0.9.46`), and
-`apt_repository`'s `ppa:` shorthand (`0.9.47`) - see "Also still open"
+`apt_repository`'s `ppa:` shorthand (`0.9.47`), and `user`'s `password:`/
+`update_password:`/`password_lock:` (`0.9.48`) - see "Also still open"
 near the end of Phase 5 for what's left and the running list of what's
-already been closed past that point. 692/694 specs pass (the 2 exceptions
+already been closed past that point. 709/711 specs pass (the 2 exceptions
 need a live MySQL/PostgreSQL server at `127.0.0.1:13306`/`15432` reachable
 with real `mysql`/`psql` client binaries, neither installed on this host
 directly - see the `0.9.40` entry for how they were verified anyway),
@@ -32,11 +33,12 @@ harness (`compat/`, see `compat/README.md`) runs the same playbooks
 through real `ansible-playbook` and `crystal-ansible` side by side and
 diffs the resulting filesystem state + exit codes - ground truth instead
 of assumptions; **38/38 compat playbooks pass** (`mount`'s own
-`remounted`, `wait_for`'s own `drained:`, and `apt_repository`'s own
-`ppa:` verification all happened outside the harness instead, for
-different reasons documented in their own `0.9.45`/`0.9.46`/`0.9.47`
-entries - see each for how it was verified instead) - see each entry
-below and `compat/README.md`'s Coverage section for what each one caught.
+`remounted`, `wait_for`'s own `drained:`, `apt_repository`'s own `ppa:`,
+and `user`'s own `password:` verification all happened outside the
+harness instead, for different reasons documented in their own
+`0.9.45`/`0.9.46`/`0.9.47`/`0.9.48` entries - see each for how it was
+verified instead) - see each entry below and `compat/README.md`'s
+Coverage section for what each one caught.
 
 Two cross-cutting efforts also landed since Phases 3/4 were marked done:
 
@@ -123,9 +125,11 @@ the same way it did between January and now.
   (`item.0`) - fine for a from-scratch reimplementation, just not
   pixel-perfect Jinja2 compatibility.
 - [x] Plugins (`0.3.0`): `user`, `group` (via `getent`/`useradd`/`usermod`/
-  `userdel`/`groupadd`/`groupmod`/`groupdel` - password management is
-  explicitly out of scope, deserves its own careful design rather than a
-  quick addition); `git` (clone/checkout/update via the `git` CLI); `cron`
+  `userdel`/`groupadd`/`groupmod`/`groupdel` - `user`'s own password
+  management shipped in `0.9.48`, see that entry near the end of Phase 5;
+  `group` never had one to begin with - confirmed via real Ansible's own
+  `group.py` argument_spec, which has no `password:` parameter at all,
+  so there was never a scope cut to close there); `git` (clone/checkout/update via the `git` CLI); `cron`
   (file-based only - `cron_file:`, matching Ansible's `/etc/cron.d` style;
   deliberately does NOT manage a live user crontab via the `crontab`
   command, since mutating this process's real login crontab as a side
@@ -2215,6 +2219,70 @@ compat playbook's own task wouldn't have suggested was there).
     add/remove-for-real path, which needs real root and real internet
     access).
 
+- [x] `user` `password:`/`update_password:`/`password_lock:` (`0.9.48`):
+  `password:` expects an *already-hashed* value (this codebase never
+  hashes a cleartext value itself, matching real Ansible's own
+  requirement - `mkpasswd --method=sha-512`/`openssl passwd -6` are the
+  usual way to produce one), applied via `useradd -p`/`usermod -p` -
+  command shape verified against real Ansible's own
+  `create_user_useradd`/`modify_user_usermod` source directly, including
+  the real, easy-to-miss detail that `password_lock: true` doesn't add a
+  separate flag when combined with a real password change in the same
+  run - it folds into `-p '!hash'` instead, since `-p` and `-L`/`-U` are
+  mutually exclusive `usermod` flags. `update_password:` (`"always"`
+  default / `"on_create"`) matches real Ansible's own two allowed values
+  exactly - `"on_create"` never touches an existing account's password at
+  all, only at creation time.
+  - Idempotency reads the real password-hash field out of `/etc/shadow`
+    (a new `PluginHelpers::UserState.shadow_password`, verified against
+    real Ansible's own `parse_shadow_file` fallback logic - the only
+    shadow-reading strategy this codebase replicates, since shelling
+    `cat /etc/shadow` via the existing `remote_exec` local/remote split
+    already gets the same field a `spwd`/`getspnam` binding would, with
+    no new native binding needed) and compares it against the desired
+    hash with a leading `!` (real Ansible's own lock-marker prefix)
+    stripped from both sides first, matching real Ansible's own
+    `info[1].lstrip('!') != self.password.lstrip('!')` exactly - so
+    locking/unlocking alone never looks like a password change, and a
+    password change alone never touches the lock state unless
+    `password_lock:` was also given.
+  - Not implemented: any password-strength/format validation or warning
+    (real Ansible's own `check_password_encrypted` only ever *warns*,
+    never fails, on a value that doesn't look hashed - verified by
+    reading its source, not assumed from the name; this plugin passes
+    `password:` straight through either way, a real scope cut but a
+    narrow one since the practical effect - real Ansible never rejecting
+    an unhashed password either - is unaffected), `expires`, `local`
+    (`lgroupmod`/`lchage --local` handling for NIS/LDAP-joined systems).
+  - The password hash itself is shell-quoted at the one point it's
+    interpolated into a `remote_exec` command (not inside
+    `plugin_helpers/user_state.cr`, which stays pure logic with no
+    shell-escaping concerns) - a real crypt hash (`$6$salt$hash`) almost
+    always contains `$`, which the underlying `/bin/bash -c` would
+    otherwise try to expand as a variable, silently corrupting the
+    password being set.
+  - `group` was checked and confirmed to have no password concept at all
+    in real Ansible (`ansible.builtin.group`'s own `argument_spec` has no
+    `password:` parameter) - the roadmap's own former "`user`/`group`: no
+    password management" scope-cut line was really only ever about
+    `user`; there was nothing to close on the `group` side.
+  - Verified end-to-end against a real system, not simulated: a real
+    Debian container, creating a real account with a real SHA-512 hash
+    (`openssl passwd -6`), an idempotent rerun reporting `changed: false`,
+    changing to a second real hash (`usermod -p` actually firing, the new
+    hash confirmed via `grep <user> /etc/shadow`), then `password_lock:
+    true` correctly prefixing the *already-updated* hash with `!` while
+    leaving the hash itself intact - the exact same `/etc/shadow` entry,
+    byte-for-byte, produced independently by real `ansible-playbook`
+    performing the identical sequence in a second container.
+  - `crystal spec`/`ameba` both clean (709 examples, same 2 pre-existing
+    DB-client-dependent failures as always, unrelated to this) -
+    `password_update_flags`'s own branch count needed splitting the
+    lock-flag decision into a separate `#lock_flag` helper to stay under
+    ameba's cyclomatic-complexity budget, the same real-refactor pattern
+    (not cosmetic) several other entries above already used for the same
+    reason.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**
@@ -2232,7 +2300,6 @@ the exact "not implemented" list it's tracked against:**
 - `docker_*`: no `networks:`/`connected:`/TLS options.
 - `yum_repository`: many minor `yum.conf` tuning knobs.
 - `mount`: no `ephemeral` state (`remounted` closed in `0.9.45`).
-- `user`/`group`: no password management.
 
 Cross-cutting engine gaps this section used to track here - Jinja2
 filter-chaining and `become:`/`become_user:` privilege escalation - are
