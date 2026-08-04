@@ -1,9 +1,51 @@
 #!/usr/bin/env crystal
 
-# Facts Plugin - Fast system facts gathering  
+# Facts Plugin - Fast system facts gathering
 # Runs locally on target host and returns all facts in one JSON response
 
 require "json"
+
+# uname(2) and getgid(2) aren't bound by Crystal's stdlib (only getuid is),
+# so they're declared here directly to avoid forking `uname`/`id -g`.
+lib LibC
+  UTSNAME_LENGTH = 65
+
+  struct Utsname
+    sysname : StaticArray(UInt8, 65)
+    nodename : StaticArray(UInt8, 65)
+    release : StaticArray(UInt8, 65)
+    version : StaticArray(UInt8, 65)
+    machine : StaticArray(UInt8, 65)
+    domainname : StaticArray(UInt8, 65)
+  end
+
+  fun uname(buf : Utsname*) : Int32
+  fun getgid : GidT
+end
+
+# Runs *command* with *args* directly (no shell), capturing stdout only
+# (stderr discarded) - equivalent to `` `command 2>/dev/null` `` but without
+# forking an intermediate `/bin/sh -c`. Returns "" if the binary can't be
+# found or execution otherwise fails, matching the empty-output behavior a
+# missing command produces under the shell.
+def capture(command : String, args : Array(String) = [] of String) : String
+  output = IO::Memory.new
+  Process.run(command, args, output: output, error: Process::Redirect::Close)
+  output.to_s.strip
+rescue
+  ""
+end
+
+# Same as `capture`, but merges stderr into stdout - equivalent to
+# `` `command 2>&1` ``. Used for `python --version`, which some Python
+# builds print to stderr instead of stdout.
+def capture_merged(command : String, args : Array(String) = [] of String) : String
+  output = IO::Memory.new
+  Process.run(command, args, output: output, error: output)
+  output.to_s.strip
+rescue
+  ""
+end
 
 # Gather all system facts
 def gather_facts : Hash(String, String | Int64 | Hash(String, String) | Array(String))
@@ -27,7 +69,7 @@ def gather_hostname(facts)
   facts["ansible_hostname"] = hostname
   facts["ansible_nodename"] = hostname
   
-  fqdn = `hostname -f 2>/dev/null`.strip
+  fqdn = capture("hostname", ["-f"])
   facts["ansible_fqdn"] = fqdn unless fqdn.empty?
   
   if !fqdn.empty? && fqdn.includes?(".")
@@ -78,16 +120,25 @@ def gather_os_facts(facts)
   end
   
   facts["ansible_system"] = "Linux"
-  
-  kernel = `uname -r 2>/dev/null`.strip
+
+  utsname = uninitialized LibC::Utsname
+  uname_ok = LibC.uname(pointerof(utsname)) == 0
+
+  kernel = uname_ok ? String.new(utsname.release.to_unsafe).strip : ""
   facts["ansible_kernel"] = kernel unless kernel.empty?
   facts["ansible_kernel_version"] = kernel unless kernel.empty?
-  
-  arch = `uname -m 2>/dev/null`.strip
+
+  arch = uname_ok ? String.new(utsname.machine.to_unsafe).strip : ""
   facts["ansible_machine"] = arch unless arch.empty?
   facts["ansible_architecture"] = arch unless arch.empty?
-  
-  userspace = `dpkg --print-architecture 2>/dev/null || rpm --eval '%{_arch}' 2>/dev/null || uname -m`.strip
+
+  # dpkg/rpm give a distro-specific userspace arch name (e.g. "amd64" vs
+  # "x86_64") that can't be derived from uname alone, so this still shells
+  # out - but without the extra `/bin/sh -c` layer, and falling back to the
+  # already-computed `arch` above instead of forking `uname -m` again.
+  userspace = capture("dpkg", ["--print-architecture"])
+  userspace = capture("rpm", ["--eval", "%{_arch}"]) if userspace.empty?
+  userspace = arch if userspace.empty?
   facts["ansible_userspace_architecture"] = userspace unless userspace.empty?
 end
 
@@ -173,16 +224,12 @@ def gather_hardware_facts(facts)
 end
 
 def gather_python_facts(facts)
-  version = `python3 --version 2>&1 | awk '{print $2}'`.strip
-  if version.empty?
-    version = `python --version 2>&1 | awk '{print $2}'`.strip
-  end
+  raw = capture_merged("python3", ["--version"])
+  raw = capture_merged("python", ["--version"]) if raw.empty?
+  version = raw.split.size >= 2 ? raw.split[1] : ""
   facts["ansible_python_version"] = version unless version.empty?
-  
-  path = `which python3 2>/dev/null`.strip
-  if path.empty?
-    path = `which python 2>/dev/null`.strip
-  end
+
+  path = Process.find_executable("python3") || Process.find_executable("python") || ""
   facts["ansible_python"] = path unless path.empty?
 end
 
@@ -191,11 +238,8 @@ def gather_user_facts(facts)
     facts["ansible_user_id"] = user
   end
   
-  uid = `id -u 2>/dev/null`.strip
-  facts["ansible_user_uid"] = uid.to_i64 unless uid.empty?
-  
-  gid = `id -g 2>/dev/null`.strip
-  facts["ansible_user_gid"] = gid.to_i64 unless gid.empty?
+  facts["ansible_user_uid"] = LibC.getuid.to_i64
+  facts["ansible_user_gid"] = LibC.getgid.to_i64
   
   if home = ENV["HOME"]?
     facts["ansible_user_dir"] = home
@@ -238,7 +282,7 @@ def gather_date_time_facts(facts)
   date_time["weekday"] = local.to_s("%A")
   date_time["weekday_number"] = local.day_of_week.value.to_s
   
-  tz = `date +%Z 2>/dev/null`.strip
+  tz = local.zone.name
   date_time["tz"] = tz unless tz.empty?
   
   facts["ansible_date_time"] = date_time

@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.58`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.59`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -3000,6 +3000,64 @@ compat playbook's own task wouldn't have suggested was there).
   - `crystal spec`/`ameba` both clean (723 examples - 8 new since
     `0.9.57` - same 2 pre-existing DB-client-dependent failures as
     always, unrelated to this).
+
+- [x] Facts-gathering performance work, items 1-2 of
+  `POSSIBLE_PERFORMANCE_IMPROVEMENTS.md` (`0.9.59`):
+  - **Item 1 - collapsed `plugins/facts.cr`'s subprocess forks.** Measured
+    each of the ~13 forks in isolation first (30 runs x 3, local): every
+    fork landed in a tight 3.2-5.1ms band (~42ms total per `Gathering
+    Facts` run), dominated by fork/exec + shell startup rather than the
+    work each command does - none was "already cheap enough to skip."
+    Replaced `hostname -f`, `uname -r`/`-m`, `dpkg --print-architecture`/
+    `rpm --eval`, `python3 --version`/`python --version`, `which python3`/
+    `python`, `id -u`/`-g`, and `date +%Z`: `uname -r`/`-m` and `id -u`/
+    `-g` now use direct `uname(2)`/`getuid(2)`/`getgid(2)` syscall
+    bindings (zero forks, measured at ~0.00-0.03ms locally vs 3.2-3.7ms
+    forked); `which python3`/`python` now use `Process.find_executable`
+    (pure PATH scan, no fork); `date +%Z` now uses `Time.local.zone.name`.
+    The remaining commands (`hostname -f`, the `dpkg`/`rpm` architecture
+    fallback chain, `python3 --version`) still fork a real subprocess (no
+    native equivalent exists) but no longer fork an intermediate
+    `/bin/sh -c` on top, since Crystal's backtick operator always shells
+    out even for a single argument-free command - direct `Process.run`
+    skips that extra layer. The `dpkg`/`rpm` fallback chain's final
+    `|| uname -m` also now reuses the already-computed native `arch`
+    value instead of forking `uname -m` a third time. `ip -4 route get`/
+    `ip -4 addr show` deliberately left untouched (explicitly flagged in
+    the source doc as needing real distro-compatibility verification
+    before replacing with `/proc`/`/sys` parsing - not attempted this
+    round). Verified byte-identical `ansible_facts` JSON output (old vs
+    new binary, 3 runs each) except `ansible_memfree_mb`, which reads
+    live `/proc/meminfo` and legitimately differs run to run regardless
+    of this change. Local timing: consistent ~2x reduction in per-
+    invocation wall time across 3 paired runs. One intentional behavior
+    change: `ansible_user_uid`/`_gid` are now always present (`getuid`/
+    `getgid` can't fail) instead of being omitted if `id` were somehow
+    missing from `PATH` - strictly more correct, not a regression.
+  - **Item 2 - verified `gather_facts: false` is already fully honored.**
+    Checked all three places it needs to apply: playbook parsing
+    (`playbook_parser.cr`), plugin pre-upload (`plugin_manager.cr`'s
+    `needs_facts` gate - the `facts` plugin binary is never even added to
+    the upload set for a playbook with no `gather_facts: true` play), and
+    task execution (`task_executor.cr`'s `@gather_facts` check). All three
+    were already correct - confirmed empirically by running the real CLI
+    against paired `gather_facts: true`/`false` fixtures on a local-
+    connection host, in both normal and `--check` mode. No code change
+    needed. There was no execution-level regression test for this
+    before (only a parser-level unit test), so added one:
+    `testing/test-gather-facts-true-quick.yml` /
+    `-false-quick.yml` plus two new `spec/integration/cli_spec.cr` cases
+    asserting `TASK [Gathering Facts]` presence/absence and that fact
+    substitution actually happens.
+  - Both items verified locally only (no fresh-host SSH benchmark this
+    round - the methodology's "3x fresh hosts" bar applies to *claiming a
+    platform-level win*, and the doc's own item 1 caveat asked for
+    isolated-fork-cost measurement first, which is what was done).
+    Item 2 required no fresh-host verification since it's a "confirm
+    already-correct behavior + add a test" finding, not a performance
+    change. `crystal spec`/`ameba` both clean (61 CLI integration
+    examples - 2 new since `0.9.58` - same 2 pre-existing DB-client-
+    dependent failures as always, unrelated to this).
 
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for

@@ -1,0 +1,13 @@
+# Regression fixture for item 2 in POSSIBLE_PERFORMANCE_IMPROVEMENTS.md:
+# gather_facts: false must skip the "Gathering Facts" task entirely (no
+# facts plugin execution/upload). Paired with
+# test-gather-facts-true-quick.yml, which asserts the opposite.
+
+- name: Gather facts false test
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: run without any facts
+      ansible.builtin.debug:
+        msg: "no facts needed here"

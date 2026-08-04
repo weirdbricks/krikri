@@ -120,6 +120,22 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("greeting is updated greeting")
   end
 
+  it "runs the Gathering Facts task and exposes ansible_* facts when gather_facts: true" do
+    status, output = run_playbook("test-gather-facts-true-quick.yml", [] of String)
+
+    status.success?.should be_true
+    output.should contain("TASK [Gathering Facts]")
+    output.should_not contain("hostname is {{ ansible_hostname }}") # substitution actually happened
+  end
+
+  it "skips the Gathering Facts task entirely when gather_facts: false" do
+    status, output = run_playbook("test-gather-facts-false-quick.yml", [] of String)
+
+    status.success?.should be_true
+    output.should_not contain("TASK [Gathering Facts]")
+    output.should contain("no facts needed here")
+  end
+
   it "runs include_tasks: once per loop item with item: in scope, and skips the whole include (not per nested task) when its own when: is false" do
     status, output = run_playbook("test-include-tasks-quick.yml")
 

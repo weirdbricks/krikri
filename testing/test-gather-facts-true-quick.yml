@@ -1,0 +1,13 @@
+# Regression fixture for item 2 in POSSIBLE_PERFORMANCE_IMPROVEMENTS.md:
+# gather_facts: true (the default) must run the "Gathering Facts" task and
+# make ansible_* facts available to later tasks. Paired with
+# test-gather-facts-false-quick.yml, which asserts the opposite.
+
+- name: Gather facts true test
+  hosts: localhost
+  gather_facts: true
+
+  tasks:
+    - name: show a gathered fact
+      ansible.builtin.debug:
+        msg: "hostname is {{ ansible_hostname }}"
