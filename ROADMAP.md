@@ -1,15 +1,18 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.34`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.35`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
 `0.9.24`, `get_url` `0.9.25`/`0.9.32`, `blockinfile` `0.9.26`, `uri` `0.9.27`,
 `assert` `0.9.28`, `wait_for` `0.9.29`, `fetch` `0.9.30`, `pause` `0.9.31`).
-One of the two remaining cross-cutting engine gaps - dotted-variable access
-in bare conditionals - is also now fixed (`0.9.34`, see the note near the
-end of Phase 5). 601/603 specs pass (the 2 exceptions need a live
-MySQL/PostgreSQL server at `127.0.0.1:13306`/`15432`), `ameba` clean on all
+Two of the three remaining cross-cutting engine gaps are also now fixed:
+dotted-variable access in bare conditionals (`0.9.34`) and the recap
+`ok`/`changed` counter overlap (`0.9.35`) - only the Jinja2
+filter-chaining gap remains open (see the note near the end of Phase 5;
+it needs a real architectural change, not a quick add). 606/608 specs
+pass (the 2 exceptions need a live MySQL/PostgreSQL server at
+`127.0.0.1:13306`/`15432`), `ameba` clean on all
 new/touched code. A
 Docker-based compatibility harness (`compat/`, see `compat/README.md`) runs
 the same playbooks through real `ansible-playbook` and `crystal-ansible` side
@@ -1674,10 +1677,26 @@ doesn't work today; fixing this properly needs the filter engine to carry
 structured `JSON::Any` values through the whole chain instead of collapsing
 to a string after each step - a real architectural change, not a quick
 filter-by-filter add, and bigger in scope than it looks from this one-line
-mention), plus the recap `ok`/`changed` counters being mutually exclusive
-rather than real Ansible's overlapping ones. Cloud plugins (`ec2`,
-`s3_bucket`, `azure_rm_*`) and inventory *plugins* (`aws_ec2.yml` et al.)
-remain explicitly lowest-ROI and are not planned.
+mention). Cloud plugins (`ec2`, `s3_bucket`, `azure_rm_*`) and inventory
+*plugins* (`aws_ec2.yml` et al.) remain explicitly lowest-ROI and are not
+planned.
+
+**Fixed in `0.9.35`:** the recap `ok`/`changed` counters being mutually
+exclusive rather than real Ansible's overlapping ones. Verified against a
+real `ansible-playbook` run rather than assumed: 2 changed + 1 unchanged
+successful task produces `ok=3 changed=2` in real Ansible - every
+successful task (changed or not) counts toward `ok`, and `changed` is a
+separate tally on top of that, not an alternative bucket. This codebase's
+`ResultDisplay.update_stats` previously used `if failed ... elsif changed
+... else ok`, so a changed task was counted *only* as changed, never also
+as ok - fixed to increment `ok` unconditionally on success and `changed`
+additionally when the result says so, matching the verified real-Ansible
+shape exactly (the same fixture now produces `ok=3 changed=2` on both
+engines). Regression-tested directly against `update_stats` in a new
+`spec/unit/result_display_spec.cr` (5 examples: changed counts toward
+both, unchanged counts toward ok only, a real failure counts toward
+failed only, an ignored failure still counts toward ok/changed rather
+than failed, and counts accumulate correctly across several tasks).
 
 **Fixed in `0.9.34`:** dotted-variable access in **bare** (non-`{{ }}`)
 conditionals used by `when:`/`until:`/`changed_when:`/`failed_when:` - this
