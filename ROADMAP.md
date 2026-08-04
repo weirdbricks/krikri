@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.36`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.37`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -10,9 +10,11 @@ Two of the three cross-cutting engine gaps are now fixed: dotted-variable
 access in bare conditionals (`0.9.34`) and the recap `ok`/`changed` counter
 overlap (`0.9.35`) - only the Jinja2 filter-chaining gap remains open (see
 the note near the end of Phase 5; it needs a real architectural change, not
-a quick add). Work has also started on the per-plugin scope-cut grab-bag:
-`stat`'s `get_mime`/`get_attributes` shipped in `0.9.36`. 617/619 specs
-pass (the 2 exceptions need a live MySQL/PostgreSQL server at
+a quick add). Work is also underway on the per-plugin scope-cut grab-bag:
+`stat`'s `get_mime`/`get_attributes` (`0.9.36`) and `find`'s
+`age`/`age_stamp`/`contains`/`read_whole_file` (`0.9.37`) have both
+shipped. 625/627 specs pass (the 2 exceptions need a live MySQL/PostgreSQL
+server at
 `127.0.0.1:13306`/`15432`), `ameba` clean on all
 new/touched code. A
 Docker-based compatibility harness (`compat/`, see `compat/README.md`) runs
@@ -379,28 +381,47 @@ the same way it did between January and now.
     is distinct from `ComparisonEvaluator`'s own internal `"true"`/`"false"`
     protocol for `when:` truthiness, which already tolerated both cases
     and was left untouched.
-- [x] `find` (`0.9.0`): recursive file/directory search feeding
-  `register:`, reusing `stat_fields.cr` for each match's stat dict.
-  Parameters: `paths` (required, comma-separated), `patterns`/`excludes`
-  (comma-separated shell globs, or regexes with `use_regex: true`,
-  matched against the basename), `file_type` (`file` default/`directory`/
-  `link`/`any`), `recurse`, `depth`, `hidden` (a hidden directory is
-  skipped entirely when descending, not just direct dotfiles - matches
-  real Ansible's `os.walk`-based behavior), `size` (with `b`/`k`/`m`/`g`/
-  `t` suffix and negative-for-"at most" support), `get_checksum`/
-  `checksum_algorithm`. Not implemented: `age`/`age_stamp` (time-based
-  filtering), `contains` (content regex search), `read_whole_file`,
-  `encoding`, `mode`, `limit` - all lower-value/rarer options than the
-  core path+pattern+type search that covers the overwhelming majority of
-  real playbooks' `find:` usage. Read-only, never `changed`, like `stat`.
-  Unit tested (`spec/unit/stat_fields_spec.cr` covers the shared parsing;
-  `find`'s own glob/exclude/depth/hidden logic is integration-tested
-  directly, `spec/integration/find_spec.cr`) and verified against real
-  `ansible-playbook` via the compat harness (`compat/playbooks/19-find.yml`
-  - passed, comparing `matched` counts rather than the `files` path list
-  since crystal-ansible's filter engine doesn't yet support the Jinja2
+- [x] `find` (`0.9.0`; `age`/`age_stamp`/`contains`/`read_whole_file` added
+  in `0.9.37`): recursive file/directory search feeding `register:`,
+  reusing `stat_fields.cr` for each match's stat dict. Parameters: `paths`
+  (required, comma-separated), `patterns`/`excludes` (comma-separated
+  shell globs, or regexes with `use_regex: true`, matched against the
+  basename), `file_type` (`file` default/`directory`/`link`/`any`),
+  `recurse`, `depth`, `hidden` (a hidden directory is skipped entirely
+  when descending, not just direct dotfiles - matches real Ansible's
+  `os.walk`-based behavior), `size` (with `b`/`k`/`m`/`g`/`t` suffix and
+  negative-for-"at most" support), `age` (same negative-for-"at most"
+  sign convention as `size`, with an `s`/`m`/`h`/`d`/`w` suffix - default
+  seconds - verified against `find.py`'s own `agefilter()` source and
+  `^(-?\d+)(s|m|h|d|w)?$` regex, not guessed), `age_stamp` (`atime`/
+  `ctime`/`mtime`, default `mtime`), `contains` (a regex matched against a
+  regular file's content, only when `file_type: file` - real Ansible's
+  own restriction, verified against its source, not a scope cut here) and
+  `read_whole_file` (default `false`: line-by-line, anchored at the start
+  of each line via Python's `re.match()` semantics, replicated with a
+  `\A`-prefixed Crystal `Regex` rather than Crystal's own unanchored
+  default; `true`: search anywhere in the whole file, Python's
+  `re.search()` semantics, Crystal's own default matching behavior),
+  `get_checksum`/`checksum_algorithm`. `execute` threading a dozen
+  separate filter arguments through itself and a same-shaped `match`
+  helper pushed its own cyclomatic complexity over `ameba`'s threshold
+  once `age`/`contains` joined the existing filters, so the parsed options
+  now live in one `record Options` built once, rather than growing the
+  parameter list further. Not implemented: `encoding`, `mode`, `limit` -
+  all lower-value/rarer options than the core path+pattern+type+age+
+  contains search that covers the overwhelming majority of real
+  playbooks' `find:` usage. Read-only, never `changed`, like `stat`.
+  Integration tested (`spec/integration/find_spec.cr`, 8 new examples:
+  `age` positive/negative/`age_stamp`, `contains` line-anchored match/
+  no-match/whole-file match/no-content-match, and `contains` being a no-op
+  when `file_type` isn't `file`) and verified against real
+  `ansible-playbook` via the compat harness (`compat/playbooks/19-find.yml`,
+  extended with a `contains:` and an `age: "-1d"` task - passed, comparing
+  `matched` counts rather than the `files` path list since
+  crystal-ansible's filter engine doesn't yet support the Jinja2
   `map(attribute=...)`/`sort` filters needed to format that list for a
-  stable comparison - a real, separate, pre-existing gap).
+  stable comparison - a real, separate, still-open gap, see the note near
+  the end of Phase 5).
   - Found and fixed one real bug of its own before it shipped: an unset
     `excludes:` (the common case) was checked with the same
     `matches_patterns?` helper used for `patterns:`, which returns `true`
@@ -1693,11 +1714,11 @@ compat playbook's own task wouldn't have suggested was there).
 
 **Also still open (lower priority - see each shipping plugin's class doc for the
 exact "not implemented" list):** the documented per-plugin scope cuts (e.g.
-`find` `age`/`contains`, `archive` `exclude_path`, `ufw`
-`insert_relative_to`, `mysql_db`/`postgresql_db` `state: dump/import`,
-`postgresql_user` grants / `postgresql_privs`, `docker_*`
-`networks`/`connected:`/tls - `stat`'s own `get_mime`/`get_attributes` cut
-is now closed, see its entry above), and the remaining cross-cutting
+`archive` `exclude_path`, `ufw` `insert_relative_to`,
+`mysql_db`/`postgresql_db` `state: dump/import`, `postgresql_user` grants /
+`postgresql_privs`, `docker_*` `networks`/`connected:`/tls - `stat`'s own
+`get_mime`/`get_attributes` and `find`'s own `age`/`contains` cuts are now
+closed, see their entries above), and the remaining cross-cutting
 engine gap: missing Jinja2 filters such as `map(attribute=...)` and `sort`
 (a real, separate limitation from dotted-variable access below - the
 `{{ }}`-wrapped filter pipeline only ever splits on the *first* `|`, so even

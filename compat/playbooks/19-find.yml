@@ -27,6 +27,11 @@
         content: "hidden\n"
         dest: /work/find-sub/.find-hidden.txt
 
+    - name: seed a file containing a needle to search for
+      ansible.builtin.copy:
+        content: "needle line\nno match here\n"
+        dest: /work/find-needle.txt
+
     - name: find top-level txt files only (non-recursive)
       ansible.builtin.find:
         paths: /work
@@ -64,6 +69,20 @@
         depth: 1
       register: depth_limited
 
+    - name: find files whose content contains a needle, line-anchored
+      ansible.builtin.find:
+        paths: /work
+        patterns: "find-*.txt"
+        contains: needle
+      register: contains_match
+
+    - name: find files at most 1 day old (everything just seeded)
+      ansible.builtin.find:
+        paths: /work
+        patterns: "find-*"
+        age: "-1d"
+      register: age_match
+
     - name: write the stable match counts to a file for comparison
       ansible.builtin.copy:
         content: |
@@ -72,4 +91,6 @@
           recursive_hidden_matched={{ recursive_hidden.matched }}
           dirs_only_matched={{ dirs_only.matched }}
           depth_limited_matched={{ depth_limited.matched }}
+          contains_matched={{ contains_match.matched }}
+          age_matched={{ age_match.matched }}
         dest: /work/find-output.txt

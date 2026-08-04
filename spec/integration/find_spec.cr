@@ -92,4 +92,79 @@ describe "find plugin" do
 
     result["changed"].as_bool.should be_false
   end
+
+  describe "age" do
+    it "matches files at least the given age (positive)" do
+      old_path = File.join(TMP_DIR, "old.age")
+      File.write(old_path, "x")
+      File.utime(Time.utc - 2.days, Time.utc - 2.days, old_path)
+
+      result = PluginSpecHelper.run("find", {"paths" => TMP_DIR, "patterns" => "*.age", "age" => "1d"})
+
+      paths_of(result).should eq([old_path])
+    end
+
+    it "matches files at most the given age (negative)" do
+      new_path = File.join(TMP_DIR, "new.age")
+      File.write(new_path, "x")
+
+      result = PluginSpecHelper.run("find", {"paths" => TMP_DIR, "patterns" => "new.age", "age" => "-1d"})
+
+      paths_of(result).should eq([new_path])
+    end
+
+    it "compares against age_stamp: ctime/atime instead of the mtime default" do
+      path = File.join(TMP_DIR, "stamped.age")
+      File.write(path, "x")
+      # ctime can't be set directly, but a file this fresh should always
+      # be well under 1 day old by any of the three timestamps.
+      result = PluginSpecHelper.run("find", {"paths" => TMP_DIR, "patterns" => "stamped.age", "age" => "1d", "age_stamp" => "ctime"})
+
+      paths_of(result).should eq([] of String)
+    end
+  end
+
+  describe "contains" do
+    it "matches a file whose content matches the regex, line-anchored by default" do
+      path = File.join(TMP_DIR, "needle-start.contains")
+      File.write(path, "needle at line start\n")
+
+      result = PluginSpecHelper.run("find", {"paths" => TMP_DIR, "patterns" => "needle-start.contains", "contains" => "needle"})
+
+      paths_of(result).should eq([path])
+    end
+
+    it "does not match when the pattern is present but not at the start of any line" do
+      path = File.join(TMP_DIR, "needle-mid.contains")
+      File.write(path, "prefix needle-not-at-start\n")
+
+      result = PluginSpecHelper.run("find", {"paths" => TMP_DIR, "patterns" => "needle-mid.contains", "contains" => "needle"})
+
+      paths_of(result).should eq([] of String)
+    end
+
+    it "matches mid-line content when read_whole_file: true" do
+      path = File.join(TMP_DIR, "needle-mid2.contains")
+      File.write(path, "prefix needle-not-at-start\n")
+
+      result = PluginSpecHelper.run("find", {"paths" => TMP_DIR, "patterns" => "needle-mid2.contains", "contains" => "needle", "read_whole_file" => "true"})
+
+      paths_of(result).should eq([path])
+    end
+
+    it "excludes files whose content doesn't match" do
+      path = File.join(TMP_DIR, "no-match.contains")
+      File.write(path, "nothing relevant here\n")
+
+      result = PluginSpecHelper.run("find", {"paths" => TMP_DIR, "patterns" => "no-match.contains", "contains" => "needle"})
+
+      paths_of(result).should eq([] of String)
+    end
+
+    it "is ignored when file_type is not file (contains only applies to regular files)" do
+      result = PluginSpecHelper.run("find", {"paths" => TMP_DIR, "file_type" => "directory", "contains" => "needle"})
+
+      paths_of(result).should_not be_empty
+    end
+  end
 end

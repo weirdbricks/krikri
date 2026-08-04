@@ -24,13 +24,23 @@ module CrystalPlay
   #   Ansible's os.walk-based behavior
   # - size: minimum size in bytes (or negative for "at most"); accepts a
   #   b/k/m/g/t unit suffix
+  # - age: minimum age (or negative for "at most"), same sign convention
+  #   as size; accepts an s/m/h/d/w unit suffix (default seconds)
+  # - age_stamp: which timestamp age compares against - atime/ctime/mtime
+  #   (default mtime)
+  # - contains: a regex matched against a regular file's content -
+  #   line-by-line, anchored at the start of each line (default), or
+  #   anywhere in the whole file when read_whole_file: true. Only applies
+  #   when file_type: file (real Ansible's own restriction, not a scope
+  #   cut here - verified against its actual source)
+  # - read_whole_file: search the whole file for contains: instead of
+  #   matching line-by-line (default: false)
   # - get_checksum / checksum_algorithm: as in the stat plugin (default:
   #   get_checksum false, matching real Ansible's find default)
   #
-  # Not implemented: age/age_stamp (time-based filtering), contains
-  # (content regex search), read_whole_file, encoding, mode, limit - all
-  # lower-value/rarer options than the core path+pattern+type search that
-  # covers the overwhelming majority of real playbooks' `find:` usage.
+  # Not implemented: encoding, mode, limit - all lower-value/rarer options
+  # than the core path+pattern+type+age+contains search that covers the
+  # overwhelming majority of real playbooks' `find:` usage.
   #
   # Directory walk via Dir.each_child + native lstat()/hashlib-equivalent
   # checksums (BasePlugin#native_stat/#native_checksum) rather than
@@ -43,6 +53,28 @@ module CrystalPlay
   #
   # Read-only, never-`changed`, like stat.
   class FindPlugin < BasePlugin
+    # Bundles every filter/output option parsed from @params once, rather
+    # than threading a dozen separate arguments through execute/match -
+    # what pushed execute's own cyclomatic complexity over ameba's
+    # threshold once age/contains joined the existing pattern/size/type
+    # filters.
+    private record Options,
+      patterns : Array(String),
+      excludes : Array(String),
+      use_regex : Bool,
+      file_type : String,
+      recurse : Bool,
+      depth : Int32?,
+      hidden : Bool,
+      size_filter : String?,
+      age_filter : String?,
+      age_stamp : String,
+      contains : String?,
+      read_whole_file : Bool,
+      get_checksum : Bool,
+      algorithm : String,
+      now : Int64
+
     def execute : PluginResult
       paths_param = @params["paths"]?
       unless paths_param
@@ -50,16 +82,23 @@ module CrystalPlay
       end
 
       paths = paths_param.split(",").map(&.strip).reject(&.empty?)
-      patterns = (@params["patterns"]? || "").split(",").map(&.strip).reject(&.empty?)
-      excludes = (@params["excludes"]? || "").split(",").map(&.strip).reject(&.empty?)
-      use_regex = is_true?(@params["use_regex"]?, default: false)
-      file_type = @params["file_type"]? || "file"
-      recurse = is_true?(@params["recurse"]?, default: false)
-      depth = @params["depth"]?.try(&.to_i?)
-      hidden = is_true?(@params["hidden"]?, default: false)
-      size_filter = @params["size"]?
-      get_checksum = is_true?(@params["get_checksum"]?, default: false)
-      algorithm = @params["checksum_algorithm"]? || "sha1"
+      options = Options.new(
+        patterns: (@params["patterns"]? || "").split(",").map(&.strip).reject(&.empty?),
+        excludes: (@params["excludes"]? || "").split(",").map(&.strip).reject(&.empty?),
+        use_regex: is_true?(@params["use_regex"]?, default: false),
+        file_type: @params["file_type"]? || "file",
+        recurse: is_true?(@params["recurse"]?, default: false),
+        depth: @params["depth"]?.try(&.to_i?),
+        hidden: is_true?(@params["hidden"]?, default: false),
+        size_filter: @params["size"]?,
+        age_filter: @params["age"]?,
+        age_stamp: @params["age_stamp"]? || "mtime",
+        contains: @params["contains"]?,
+        read_whole_file: is_true?(@params["read_whole_file"]?, default: false),
+        get_checksum: is_true?(@params["get_checksum"]?, default: false),
+        algorithm: @params["checksum_algorithm"]? || "sha1",
+        now: Time.utc.to_unix,
+      )
 
       files = [] of JSON::Any
       examined = 0
@@ -71,29 +110,15 @@ module CrystalPlay
           next
         end
 
-        entries = list_entries(search_path, recurse, depth)
+        entries = list_entries(search_path, options.recurse, options.depth)
         examined += entries.size
 
         entries.each do |entry_path|
-          next if !hidden && hidden_path?(entry_path, search_path)
+          next if !options.hidden && hidden_path?(entry_path, search_path)
 
-          basename = File.basename(entry_path)
-          next unless matches_patterns?(basename, patterns, use_regex)
-          next if !excludes.empty? && matches_patterns?(basename, excludes, use_regex)
-
-          stat_hash = native_stat(entry_path, false)
-          next unless stat_hash
-
-          entry_is_link = stat_hash["islnk"].as_bool
-          entry_is_regular = stat_hash["isreg"].as_bool
-          next unless matches_file_type?(stat_hash, file_type)
-
-          next unless matches_size?(stat_hash, size_filter)
-
-          add_symlink_fields(stat_hash, entry_path) if entry_is_link
-          add_checksum(stat_hash, entry_path, algorithm) if get_checksum && entry_is_regular
-
-          files << JSON::Any.new(stat_hash)
+          if stat_hash = match(entry_path, options)
+            files << JSON::Any.new(stat_hash)
+          end
         end
       end
 
@@ -106,6 +131,26 @@ module CrystalPlay
         files: files,
         skipped_paths: skipped_paths
       )
+    end
+
+    # Returns the stat hash for entry_path if it passes every filter, nil
+    # otherwise.
+    private def match(entry_path : String, options : Options) : Hash(String, JSON::Any)?
+      basename = File.basename(entry_path)
+      return nil unless matches_patterns?(basename, options.patterns, options.use_regex)
+      return nil if !options.excludes.empty? && matches_patterns?(basename, options.excludes, options.use_regex)
+
+      stat_hash = native_stat(entry_path, false)
+      return nil unless stat_hash
+      return nil unless matches_file_type?(stat_hash, options.file_type)
+      return nil unless matches_size?(stat_hash, options.size_filter)
+      return nil unless matches_age?(stat_hash, options.age_filter, options.age_stamp, options.now)
+      return nil if options.file_type == "file" && !matches_contains?(entry_path, options.contains, options.read_whole_file)
+
+      add_symlink_fields(stat_hash, entry_path) if stat_hash["islnk"].as_bool
+      add_checksum(stat_hash, entry_path, options.algorithm) if options.get_checksum && stat_hash["isreg"].as_bool
+
+      stat_hash
     end
 
     # Lists every path under search_path (not including search_path
@@ -201,6 +246,66 @@ module CrystalPlay
                    else          1_i64
                    end
       value * multiplier
+    end
+
+    # Same sign convention as size: positive age means "at least this old"
+    # (now - timestamp >= age), negative means "at most this old"
+    # (now - timestamp <= abs(age)) - verified against real Ansible's own
+    # find.py agefilter() source, not guessed from the docs' prose.
+    private def matches_age?(stat_hash : Hash(String, JSON::Any), age_filter : String?, age_stamp : String, now : Int64) : Bool
+      return true unless age_filter
+
+      age = parse_age(age_filter)
+      return true unless age
+
+      timestamp = stat_hash[age_stamp]?.try(&.as_i64) || stat_hash["mtime"].as_i64
+      elapsed = now - timestamp
+      age >= 0 ? elapsed >= age.abs : elapsed <= age.abs
+    end
+
+    # Parses Ansible's age syntax: optional leading '-' (meaning "at most"
+    # instead of "at least"), digits, optional s/m/h/d/w unit suffix
+    # (default seconds) - verified against find.py's own
+    # `^(-?\d+)(s|m|h|d|w)?$` regex and seconds_per_unit table.
+    private def parse_age(spec : String) : Int64?
+      match = spec.downcase.match(/^(-?\d+)(s|m|h|d|w)?$/)
+      return nil unless match
+
+      value = match[1].to_i64
+      multiplier = case match[2]?
+                   when "m" then 60_i64
+                   when "h" then 3600_i64
+                   when "d" then 86400_i64
+                   when "w" then 604800_i64
+                   else          1_i64
+                   end
+      value * multiplier
+    end
+
+    # contains: only applies to regular files (real Ansible's own
+    # restriction: "Works only when file_type is file" - the caller
+    # already gates this on file_type == "file"). read_whole_file: false
+    # (the default) matches line-by-line, anchored at the start of each
+    # line - Python's re.match() semantics, which \A (not multiline ^)
+    # replicates in Crystal's PCRE-based Regex; read_whole_file: true
+    # searches anywhere in the whole file content (Python's re.search()).
+    # A read failure (permission denied, binary/invalid encoding, etc.)
+    # is treated as no match, same as real Ansible's own broad `except
+    # Exception: pass` around this.
+    private def matches_contains?(path : String, contains : String?, read_whole_file : Bool) : Bool
+      return true unless contains
+
+      pattern = Regex.new(contains)
+      content = File.read(path)
+
+      if read_whole_file
+        !!(content =~ pattern)
+      else
+        anchored = Regex.new("\\A(?:#{contains})")
+        content.each_line.any?(&.matches?(anchored))
+      end
+    rescue
+      false
     end
 
     private def add_symlink_fields(stat_hash : Hash(String, JSON::Any), path : String)
