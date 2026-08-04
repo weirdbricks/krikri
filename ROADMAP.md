@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.46`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.47`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -20,25 +20,23 @@ have all shipped - work has now moved on to closing the *remaining*
 documented per-plugin scope cuts one at a time in pursuit of fuller
 `ansible-core`/`community.*` parity, most recently `postgresql_privs`
 (`0.9.44`, previously not implemented at all), `mount`'s `remounted`
-state (`0.9.45`), and `wait_for`'s `state: drained` (`0.9.46`) - see "Also
-still open" near the end of Phase 5 for what's left and the running list
-of what's already been closed past that point. 681/683 specs pass (the 2
-exceptions need a live MySQL/PostgreSQL server at `127.0.0.1:13306`/
-`15432` reachable with real `mysql`/`psql` client binaries, neither
-installed on this host directly - see the `0.9.40` entry for how they were
-verified anyway), `ameba` clean on all new/touched code. A Docker-based
-compatibility harness (`compat/`, see `compat/README.md`) runs the same
-playbooks through real `ansible-playbook` and `crystal-ansible` side by
-side and diffs the resulting filesystem state + exit codes - ground truth
-instead of assumptions; **38/38 compat playbooks pass** (`mount`'s own
-`remounted` and `wait_for`'s own `drained:` verification both happened
-outside the harness instead, for two different reasons documented in
-their own `0.9.45`/`0.9.46` entries - its containers run unprivileged and
-can't mount anything at all, the same constraint that already keeps
-`mounted`/`unmounted` out of
-`compat/playbooks/25-mount.yml` too - see the `0.9.45` entry for how it
-was verified instead) - see each entry below and `compat/README.md`'s
-Coverage section for what each one caught.
+state (`0.9.45`), `wait_for`'s `state: drained` (`0.9.46`), and
+`apt_repository`'s `ppa:` shorthand (`0.9.47`) - see "Also still open"
+near the end of Phase 5 for what's left and the running list of what's
+already been closed past that point. 692/694 specs pass (the 2 exceptions
+need a live MySQL/PostgreSQL server at `127.0.0.1:13306`/`15432` reachable
+with real `mysql`/`psql` client binaries, neither installed on this host
+directly - see the `0.9.40` entry for how they were verified anyway),
+`ameba` clean on all new/touched code. A Docker-based compatibility
+harness (`compat/`, see `compat/README.md`) runs the same playbooks
+through real `ansible-playbook` and `crystal-ansible` side by side and
+diffs the resulting filesystem state + exit codes - ground truth instead
+of assumptions; **38/38 compat playbooks pass** (`mount`'s own
+`remounted`, `wait_for`'s own `drained:`, and `apt_repository`'s own
+`ppa:` verification all happened outside the harness instead, for
+different reasons documented in their own `0.9.45`/`0.9.46`/`0.9.47`
+entries - see each for how it was verified instead) - see each entry
+below and `compat/README.md`'s Coverage section for what each one caught.
 
 Two cross-cutting efforts also landed since Phases 3/4 were marked done:
 
@@ -721,12 +719,11 @@ the same way it did between January and now.
     `ansible-playbook` and finding crystal-ansible reported `changed:
     true` both times (real Ansible correctly reported `true` then
     `false`). Fixed by using `;` instead of `&&`.
-  - Not implemented: `ppa:` shorthand (resolves a PPA's GPG key and
-    codename via the Launchpad API - a real network dependency, out of
-    scope the same way other network-resolving features are throughout
-    this codebase), `codename`, `install_python_apt` (crystal-ansible
-    never shells out to python-apt in the first place),
-    `validate_certs`, `update_cache_retries`/`update_cache_retry_max_delay`.
+  - `ppa:` shorthand and `codename:` were added in `0.9.47` - see that
+    entry near the end of Phase 5. Not implemented:
+    `install_python_apt` (crystal-ansible never shells out to python-apt
+    in the first place), `validate_certs`,
+    `update_cache_retries`/`update_cache_retry_max_delay`.
 - [x] `yum_repository` (`0.9.3`): writes a `.repo` INI file under
   `/etc/yum.repos.d/`. Parameters: `name` (required, the INI section),
   `description` (required when `state: present` - real Ansible validates
@@ -2118,6 +2115,106 @@ compat playbook's own task wouldn't have suggested was there).
     pattern (not a cosmetic split) the `postgresql_privs` entry above
     already used for the same reason.
 
+- [x] `apt_repository` `ppa:` shorthand + `codename:` (`0.9.47`): expands
+  `ppa:owner/name` (`name` defaults to `"ppa"` when omitted, e.g.
+  `ppa:owner` alone - matches real Ansible's own `_expand_ppa`) into a
+  real `deb https://ppa.launchpadcontent.net/<owner>/<name>/ubuntu
+  <codename> main` line, resolving `<codename>` from a new `codename:`
+  param or (default) `/etc/os-release`'s `VERSION_CODENAME=` - the same
+  file real Ansible's own `distro.codename` reads, not a shell out to
+  `lsb_release`. The signing-key fingerprint comes from a real Launchpad
+  API call (`https://api.launchpad.net/1.0/~<owner>/+archive/<name>`,
+  native `HTTP::Client`, same `get_url.cr`/`uri.cr` rationale for no
+  `curl`/`wget` shellout) - all formulas (the expanded line shape, the
+  API URL, and non-obviously, the *pre-expansion* `"ppa:owner/name_codename"`
+  string real Ansible's own `_suggest_filename` is actually called with
+  for the default `.list` filename, not the expanded `deb` line) verified
+  against real Ansible's own `UbuntuSourcesList` class source directly, in
+  a new pure `src/crystal_play/plugin_helpers/apt_ppa.cr` (unit tested,
+  `spec/unit/apt_ppa_spec.cr`, 9 examples, including one confirming the
+  filename-source string produces the exact right result once run through
+  the *existing* `AptRepositoryLine.suggested_filename` - no ppa-specific
+  special-casing needed there, the generic transform already handles it).
+  Idempotency skips the whole key-fetch/network path entirely when the
+  expanded line is already present, matching real Ansible's own
+  `if source in self.repos_urls: return` short-circuit - a rerun (or a
+  `check_mode` run) never touches the network at all.
+  - **Found a real bug in real Ansible's own module while verifying this
+    against a live system, not just in this codebase's implementation**:
+    its documented `gpg`-only fallback command (used when the `apt-key`
+    binary is absent) is `gpg --no-tty --keyserver hkp://keyserver.ubuntu.com:80
+    --export <fingerprint>` - but bare `gpg --export` only ever reads a
+    key already present in the *local* keyring; passing `--keyserver`
+    alongside it does not make `--export` fetch first on modern GnuPG
+    (confirmed directly: gpg 2.4.4 exits `0` with `"WARNING: nothing
+    exported"` and empty output for a key never previously imported, the
+    same failure this plugin's own first draft hit, since it mirrored
+    real Ansible's documented command literally). Real Ansible's module
+    still works in practice because it *prefers* `apt-key adv --recv-keys`
+    (a real fetch-and-import in one step) whenever the `apt-key` binary
+    exists - and on real Ubuntu (where PPAs are actually used), it still
+    does: confirmed `apt-key` present on a real `ubuntu:24.04` container
+    even though it's deprecated there, versus this development host
+    (Debian trixie) where it's been removed entirely, which is what led
+    to first missing this. Fixed by adding the same `apt-key`-preferred,
+    `gpg`-fallback branching real Ansible's own source has (`Process.find_executable("apt-key")`),
+    matching real behavior exactly rather than "fixing" real Ansible's
+    own latent bug by deviating from what it actually runs - parity means
+    matching real behavior, including its rough edges, not a better
+    implementation of the same feature.
+  - The actual `gpg --export`/`apt-key adv --recv-keys` key-fetch command
+    is shelled out (`remote_exec`), not reimplemented natively - GPG
+    keyring/protocol handling has no native Crystal equivalent in this
+    codebase, and real Ansible's own module shells to the same binaries
+    for the identical reason. The `gpg --export` fallback path
+    specifically redirects its output straight to the keyfile via the
+    shell command itself (`> keyfile`) rather than capturing it through
+    this plugin's own `remote_exec` (which returns a Crystal `String`,
+    UTF-8) - a GPG key blob is arbitrary binary data, not a safe fit for
+    that, the identical constraint real Ansible's own Python
+    implementation solves the same way (`encoding=None` to keep raw
+    bytes, written directly to the keyfile rather than passed through
+    its own string-based command-output handling).
+  - Verified end-to-end against a real system, not simulated: a real
+    `ubuntu:24.04` container with real network access, adding
+    `ppa:nginx/stable` for real - a real HTTP 200 from the Launchpad API
+    with a real signing-key fingerprint
+    (`CE930E275FC4DE69BFC8B9FF6ABFA6073131CE23`, confirmed independently
+    via a standalone `HTTP::Client` call before ever touching the plugin
+    itself), a real `apt-key adv --recv-keys` import confirmed via
+    `apt-key list` showing the "Launchpad PPA for Nginx" key afterward,
+    the exact expected `/etc/apt/sources.list.d/ppa_nginx_stable_noble.list`
+    file with content
+    `deb https://ppa.launchpadcontent.net/nginx/stable/ubuntu noble main`,
+    and an idempotent rerun reporting `changed: false`. A direct
+    side-by-side comparison against real `ansible-playbook` in a second
+    container was attempted but abandoned after that container's own
+    (unrelated) `apt-get update` network fetch stalled indefinitely - a
+    real environment/networking flake in that specific container, not a
+    behavior this plugin's own logic could be responsible for (a
+    completely separate `ubuntu:24.04` container performed the same class
+    of operation, including its own real `apt-get update`, without
+    incident minutes earlier) - judged not worth further chasing given
+    the strength of the verification already completed above plus the
+    direct source-level parity tracing throughout this entry.
+  - Not added to the compat harness's own `compat/playbooks/22-apt-repository.yml`
+    - real network access to Launchpad/the Ubuntu keyserver plus a real
+    Ubuntu (not Debian) base image are both requirements the shared
+    harness image doesn't currently meet, and the direct real-system
+    verification above already exceeds what the harness would add.
+  - `crystal spec`/`ameba` both clean (692 examples, same 2 pre-existing
+    DB-client-dependent failures as always, unrelated to this) - one
+    pre-existing spec (`apt_repository_spec.cr`'s "fails with a clear
+    message for a line that isn't a deb/deb-src source") needed updating:
+    it asserted `ppa:someuser/someppa` was rejected as an invalid line,
+    which was correct *before* this entry shipped and is now simply
+    testing the old, no-longer-true behavior - updated to use a genuinely
+    invalid line instead, with new coverage added for `ppa:`'s own
+    check_mode and no-op-`state: absent` paths (both network-free, so
+    safe to exercise for real in the automated suite unlike the actual
+    add/remove-for-real path, which needs real root and real internet
+    access).
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**
@@ -2136,7 +2233,6 @@ the exact "not implemented" list it's tracked against:**
 - `yum_repository`: many minor `yum.conf` tuning knobs.
 - `mount`: no `ephemeral` state (`remounted` closed in `0.9.45`).
 - `user`/`group`: no password management.
-- `apt_repository`: no `ppa:` shorthand (needs live Launchpad API access).
 
 Cross-cutting engine gaps this section used to track here - Jinja2
 filter-chaining and `become:`/`become_user:` privilege escalation - are
