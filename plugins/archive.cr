@@ -34,15 +34,19 @@ module CrystalPlay
   # - exclusion_patterns: comma-separated shell-glob patterns matched
   #   against each member's path relative to the archive root, excluded
   #   from the result
+  # - exclude_path: comma-separated paths/globs removed from the *path:*
+  #   list itself before archiving - narrower than its name suggests, and
+  #   verified against a real community.general 11.2.1 install's actual
+  #   archived-members output rather than assumed from the docs: it only
+  #   drops an entry that exactly matches one of the top-level `path:`
+  #   list items, not a file living inside a directory being archived (use
+  #   exclusion_patterns: for that - it reaches into a directory's own
+  #   contents, exclude_path: never does). The `expanded_paths:` result
+  #   field stays unfiltered by this either way, matching real Ansible's
+  #   own observed output.
   # - mode / owner / group: applied to the resulting dest file
   #
-  # Not implemented: exclude_path - verified against a real
-  # community.general 11.2.1 install that this documented option is
-  # actually a no-op there (files it names still end up in the archive),
-  # so implementing it "correctly" per the docs would make crystal-ansible
-  # diverge from real Ansible's actual behavior, not match it;
-  # exclusion_patterns (which does work) is supported instead. Also not
-  # implemented: attributes/selevel/serole/setype/seuser (SELinux),
+  # Not implemented: attributes/selevel/serole/setype/seuser (SELinux),
   # unsafe_writes.
   #
   # All five formats are now built and read natively: Crystar for tar,
@@ -84,12 +88,28 @@ module CrystalPlay
 
     private def run(path_param : String, dest : String, format : String) : PluginResult
       requested_paths = path_param.split(",").map(&.strip).reject(&.empty?)
+      requested_excludes = (@params["exclude_path"]? || "").split(",").map(&.strip).reject(&.empty?)
       force_archive = is_true?(@params["force_archive"]?, default: false)
       remove = is_true?(@params["remove"]?, default: false)
       exclusion_patterns = (@params["exclusion_patterns"]? || "").split(",").map(&.strip).reject(&.empty?)
 
       expanded_paths, missing = expand_paths(requested_paths)
-      found_paths = expanded_paths.reject { |path| missing.includes?(path) }
+      expanded_excludes, _ = expand_paths(requested_excludes)
+
+      # exclude_path only removes entries that exactly match one of the
+      # top-level expanded path: entries themselves - real Ansible's own
+      # `self.paths = set(self.expanded_paths) - set(self.expanded_exclude_paths)`,
+      # verified against a real community.general 11.2.1 install's actual
+      # archived-members output, not assumed from the docs (which read as
+      # a general per-file exclusion). A file living *inside* a directory
+      # being archived is NOT excludable this way - it still ends up in
+      # the archive even when named exactly in exclude_path, since it was
+      # never itself a top-level path: entry - only exclusion_patterns:
+      # (already supported) reaches into a directory's own contents. The
+      # returned `expanded_paths:` result field stays unfiltered either
+      # way, matching real Ansible's own observed output.
+      candidate_paths = expanded_paths.reject { |path| expanded_excludes.includes?(path) }
+      found_paths = candidate_paths.reject { |path| missing.includes?(path) }
 
       if found_paths.empty?
         return PluginResult.new(
@@ -105,9 +125,9 @@ module CrystalPlay
       end
 
       single_compress = !force_archive && format != "tar" && format != "zip" &&
-                        expanded_paths.size == 1 && found_paths.size == 1 && !Dir.exists?(found_paths[0])
+                        candidate_paths.size == 1 && found_paths.size == 1 && !Dir.exists?(found_paths[0])
 
-      root = PluginHelpers::ArchivePaths.common_path(expanded_paths)
+      root = PluginHelpers::ArchivePaths.common_path(candidate_paths)
       members = single_compress ? found_paths : collect_members(found_paths, root, exclusion_patterns)
 
       build_and_finalize(dest, format, single_compress, root, members, found_paths, missing, expanded_paths, remove)

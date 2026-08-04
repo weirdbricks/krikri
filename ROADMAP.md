@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.37`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.38`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -11,9 +11,10 @@ access in bare conditionals (`0.9.34`) and the recap `ok`/`changed` counter
 overlap (`0.9.35`) - only the Jinja2 filter-chaining gap remains open (see
 the note near the end of Phase 5; it needs a real architectural change, not
 a quick add). Work is also underway on the per-plugin scope-cut grab-bag:
-`stat`'s `get_mime`/`get_attributes` (`0.9.36`) and `find`'s
-`age`/`age_stamp`/`contains`/`read_whole_file` (`0.9.37`) have both
-shipped. 625/627 specs pass (the 2 exceptions need a live MySQL/PostgreSQL
+`stat`'s `get_mime`/`get_attributes` (`0.9.36`), `find`'s
+`age`/`age_stamp`/`contains`/`read_whole_file` (`0.9.37`), and `archive`'s
+`exclude_path` (`0.9.38`) have all shipped. 628/630 specs pass (the 2
+exceptions need a live MySQL/PostgreSQL
 server at
 `127.0.0.1:13306`/`15432`), `ameba` clean on all
 new/touched code. A
@@ -481,12 +482,32 @@ the same way it did between January and now.
   `common_path()` formula bit-for-bit. Idempotency is checksum-based like
   real Ansible, but computed via shell tools (tar/zip listings + a
   content checksum) rather than replicating Python's tarfile per-member
-  header checksum exactly. Not implemented: `exclude_path` - verified
-  against a real community.general 11.2.1 install that this documented
-  option is actually a no-op there (named files still end up in the
-  archive), so implementing it "correctly" per the docs would make
-  crystal-ansible diverge from real Ansible's actual behavior, not match
-  it; `exclusion_patterns` (which does work) is supported instead. Also
+  header checksum exactly. `exclude_path` (added `0.9.38`) is narrower
+  than its name suggests - re-verified against the same real
+  community.general 11.2.1 install's actual archived-members output
+  (unchanged since the original "no-op" finding at `0.9.1`): it only
+  drops an entry that exactly matches one of the top-level `path:` list
+  items (real Ansible's own `self.paths = set(expanded_paths) -
+  set(expanded_exclude_paths)`), never a file living *inside* a directory
+  being archived - confirmed with two side-by-side real-Ansible runs, one
+  targeting a file nested in an archived directory (no effect: both files
+  still end up in the archive) and one targeting an exact top-level
+  `path:` list entry (real effect: that entry is dropped). Implemented
+  faithfully to that narrow behavior rather than left unimplemented -
+  `exclusion_patterns:` (which does reach into a directory's own
+  contents) remains the option for the common "skip this file" use case.
+  The returned `expanded_paths:` result field stays unfiltered by
+  `exclude_path:` either way, matching real Ansible's own observed
+  output; `single_compress`'s own "how many paths are left" check was
+  also switched from the raw expanded `path:` count to the
+  exclude-filtered count, matching real Ansible's own `len(self.paths) >
+  1` (which already read the *filtered* list, not the raw one - a detail
+  exposed by adding `exclude_path:` support, not something visible
+  before). Integration tested (`spec/integration/archive_spec.cr`, 3 new
+  examples: the nested-file no-op, the top-level-entry exclusion, and
+  `expanded_paths:` staying unfiltered) and verified against real
+  `ansible-playbook` via the compat harness (`compat/playbooks/20-archive.yml`,
+  extended with a two-top-level-path `exclude_path:` task - passed). Also
   not implemented: SELinux options, `unsafe_writes`.
   - Found and fixed three real bugs before shipping, all caught by
     diffing actual output against real `ansible-playbook`, not by unit
@@ -1714,11 +1735,11 @@ compat playbook's own task wouldn't have suggested was there).
 
 **Also still open (lower priority - see each shipping plugin's class doc for the
 exact "not implemented" list):** the documented per-plugin scope cuts (e.g.
-`archive` `exclude_path`, `ufw` `insert_relative_to`,
-`mysql_db`/`postgresql_db` `state: dump/import`, `postgresql_user` grants /
-`postgresql_privs`, `docker_*` `networks`/`connected:`/tls - `stat`'s own
-`get_mime`/`get_attributes` and `find`'s own `age`/`contains` cuts are now
-closed, see their entries above), and the remaining cross-cutting
+`ufw` `insert_relative_to`, `mysql_db`/`postgresql_db` `state: dump/import`,
+`postgresql_user` grants / `postgresql_privs`, `docker_*`
+`networks`/`connected:`/tls - `stat`'s own `get_mime`/`get_attributes`,
+`find`'s own `age`/`contains`, and `archive`'s own `exclude_path` cuts are
+now closed, see their entries above), and the remaining cross-cutting
 engine gap: missing Jinja2 filters such as `map(attribute=...)` and `sort`
 (a real, separate limitation from dotted-variable access below - the
 `{{ }}`-wrapped filter pipeline only ever splits on the *first* `|`, so even

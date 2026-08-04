@@ -42,6 +42,16 @@
         exclusion_patterns: "*b.txt*"
       register: exclude_result
 
+    - name: archive two top-level paths with exclude_path removing one of them
+      community.general.archive:
+        path:
+          - /work/archsrc/a.txt
+          - /work/archsrc/b.txt
+        dest: /work/exclude-path.tar.gz
+        exclude_path: /work/archsrc/b.txt
+        force_archive: true
+      register: exclude_path_result
+
     - name: archive with a missing path mixed in
       community.general.archive:
         path:
@@ -64,6 +74,11 @@
       register: zip_listing
       changed_when: false
 
+    - name: list the exclude_path archive contents, sorted
+      ansible.builtin.shell: tar tzf /work/exclude-path.tar.gz | sort
+      register: exclude_path_listing
+      changed_when: false
+
     - name: decompress the single-file gz and read its content back
       ansible.builtin.command: gzip -dc /work/single.gz
       register: single_content
@@ -79,6 +94,7 @@
           rerun_changed={{ rerun_result.changed }}
           exclude_dest_state={{ exclude_result.dest_state }}
           zip_listing={{ zip_listing.stdout }}
+          exclude_path_listing={{ exclude_path_listing.stdout }}
           partial_dest_state={{ partial_result.dest_state }}
         dest: /work/archive-output.txt
 
@@ -96,4 +112,5 @@
         - single.gz
         - dir.tar.gz
         - excluded.zip
+        - exclude-path.tar.gz
         - partial.tar.gz
