@@ -52,7 +52,7 @@ module CrystalPlay
   #   cert_path: / key_path: - connect to a remote Docker daemon over
   #   TCP(+TLS) instead of the local UNIX socket - see
   #   PluginHelpers::DockerClient's own doc comment for exact behavior
-  #   and its one documented scope cut (tls_hostname:).
+  #   (including tls_hostname:/DOCKER_TLS*/DOCKER_CERT_PATH support).
   # - check_mode
   #
   # Idempotency compares only image (leniently, see DockerRef.same?) and
@@ -79,8 +79,8 @@ module CrystalPlay
   # ever *adds* the requested networks on top); `mac_address:` on a
   # per-network endpoint (only ipv4_address:/ipv6_address:/aliases:/
   # links: per network); healthcheck:, resource limits (memory/cpu),
-  # device_requests:, container_default_behavior:, `tls_hostname:`/
-  # `api_version:` (see PluginHelpers::DockerClient).
+  # device_requests:, container_default_behavior:, `api_version:` (see
+  # PluginHelpers::DockerClient).
   class DockerContainerPlugin < BasePlugin
     record RequestedNetwork,
       name : String,

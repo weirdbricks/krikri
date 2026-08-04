@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.56`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.57`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -34,8 +34,10 @@ to how list-of-dict module params get encoded - see that entry), and
 `postgresql_privs`' `type: language`/`tablespace`/`type`,
 `ALL_IN_SCHEMA`, `session_role:`, and `fail_on_role:` (`0.9.54`), and
 `docker_*`'s TLS options for connecting to a remote Docker daemon
-(`0.9.55`), and `postgresql_privs`' `type: foreign_data_wrapper`/
-`foreign_server`/`parameter`/`group` (`0.9.56`) - see "Also still
+(`0.9.55`), `postgresql_privs`' `type: foreign_data_wrapper`/
+`foreign_server`/`parameter`/`group` (`0.9.56`), and `docker_*`'s
+`tls_hostname:` plus `DOCKER_TLS`/`DOCKER_TLS_VERIFY`/`DOCKER_CERT_PATH`
+environment variable fallbacks (`0.9.57`) - see "Also still
 open" near the end of
 Phase 5 for what's left and the running list of what's already been
 closed past that point. All 715 specs pass in an environment with
@@ -2841,6 +2843,59 @@ compat playbook's own task wouldn't have suggested was there).
   - `crystal spec`/`ameba` both clean (715 examples, same 2 pre-existing
     DB-client-dependent failures as always, unrelated to this).
 
+- [x] `docker_*`'s `tls_hostname:` plus `DOCKER_TLS`/`DOCKER_TLS_VERIFY`/
+  `DOCKER_CERT_PATH` environment variable fallbacks (`0.9.57`):
+  - `tls_hostname:` overrides which hostname the TLS handshake verifies
+    the server's certificate against, independent of `docker_host:`'s
+    own connect host - the common docker-machine-style setup of
+    reaching a daemon via a raw IP while its certificate is issued for a
+    fixed name. This is the item the `0.9.55` entry explicitly left open
+    because plain `HTTP::Client`'s own `#io` has no hook to override
+    just the verification hostname while still connecting elsewhere -
+    fixed properly in `docr` itself (a real shard change, pushed
+    upstream and pulled back via `shards update docr`, not a local
+    patch): the TCP(+TLS) `Client` constructor gained an optional
+    `tls_hostname` param, and `#io` now reimplements `HTTP::Client`'s
+    own TCP+TLS connection logic (`TCPSocket` connect +
+    `OpenSSL::SSL::Socket::Client` wrap) only when `tls_hostname` is
+    set, passing it as the handshake's `hostname:` instead of `@host` -
+    every other case (no override) still defers to `HTTP::Client`'s own
+    `#io` via `super` unchanged, exactly as before.
+  - `DOCKER_TLS`/`DOCKER_TLS_VERIFY` fall back for `tls:`/
+    `validate_certs:` when the module param itself is omitted, and
+    `DOCKER_CERT_PATH` (a directory) falls back for
+    `cacert_path:`/`cert_path:`/`key_path:` together via its own
+    `ca.pem`/`cert.pem`/`key.pem` convention - explicit params always
+    win outright, and it's all-or-nothing with `DOCKER_CERT_PATH` itself
+    (no mixing one explicit path with two env-derived ones) - matching
+    real Ansible's own documented behavior for both, verified against
+    its source, not assumed.
+  - Verified against a real, genuinely TLS-secured `docker:dind` daemon
+    again, not simulated: for `tls_hostname:`, three real connections to
+    the *same* daemon over `tcp://127.0.0.1:PORT` differing only in
+    `tls_hostname:` - none set (succeeds, `127.0.0.1` is in the cert's
+    own SAN list), set to a hostname deliberately *not* in the cert
+    (fails with a real `SSL_connect: ...certificate verify failed`, from
+    OpenSSL itself, not a canned error - proving the override is
+    genuinely reaching the TLS handshake, not silently ignored), and set
+    to `localhost` (also in the SAN - succeeds again). Real
+    `ansible-playbook`'s own `community.docker.docker_image` run against
+    the identical three-connection sequence on the same daemon produced
+    the identical `changed:`/failure pattern, including an equivalent
+    real Python `SSLError` naming the exact same mismatched hostname and
+    listing the exact same SAN entries this plugin's own OpenSSL error
+    implied. For the env var fallbacks: a real pull with `DOCKER_HOST`/
+    `DOCKER_TLS_VERIFY`/`DOCKER_CERT_PATH` set and *no* module params at
+    all against the same kind of real TLS daemon succeeded
+    (`changed: true`) - the underlying `tls:`/`validate_certs:`/cert-path
+    connection logic itself was already verified live in the `0.9.55`
+    entry, so this confirms the env-var-to-param wiring specifically,
+    not the whole mechanism over again.
+  - `crystal spec`/`ameba` both clean (715 examples, same 2 pre-existing
+    DB-client-dependent failures as always, unrelated to this) - no new
+    ameba findings in any of the three `docker_*.cr` plugins or
+    `docker_client.cr`.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**
@@ -2851,10 +2906,11 @@ the exact "not implemented" list it's tracked against:**
   `parameter`/`group` implemented), `ALL_IN_SCHEMA` for `function`/
   `procedure` (not implemented at all, per above), `target_roles:` (only
   meaningful for `default_privs`).
-- `docker_*` (`0.9.55`): `tls_hostname:` (connect-vs-verify-hostname
-  split - see that entry for why), `api_version:`, `DOCKER_TLS`/
-  `DOCKER_TLS_VERIFY`/`DOCKER_CERT_PATH` environment variable fallbacks
-  (only `DOCKER_HOST` is honored as an env var).
+- `docker_*` (`0.9.57`): `api_version:` (this codebase's `docr`-based API
+  calls have no version prefix on any endpoint URL at all, on a local
+  socket either - would mean touching every endpoint across `docr`, not
+  just connection setup, a meaningfully bigger change than anything else
+  closed in this section).
 
 Cross-cutting engine gaps this section used to track here - Jinja2
 filter-chaining and `become:`/`become_user:` privilege escalation - are

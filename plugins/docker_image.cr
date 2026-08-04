@@ -36,11 +36,10 @@ module CrystalPlay
   #   cert_path: / key_path: - connect to a remote Docker daemon over
   #   TCP(+TLS) instead of the local UNIX socket - see
   #   PluginHelpers::DockerClient's own doc comment for exact behavior
-  #   and its one documented scope cut (tls_hostname:).
+  #   (including tls_hostname:/DOCKER_TLS*/DOCKER_CERT_PATH support).
   #
-  # Not implemented: force_tag, force_source, `tls_hostname:` (see
-  # PluginHelpers::DockerClient), `api_version:`, build/archive/
-  # repository sources.
+  # Not implemented: force_tag, force_source, `api_version:` (see
+  # PluginHelpers::DockerClient), build/archive/repository sources.
   class DockerImagePlugin < BasePlugin
     def execute : PluginResult
       name = @params["name"]?

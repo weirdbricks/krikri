@@ -34,7 +34,7 @@ module CrystalPlay
   #   cert_path: / key_path: - connect to a remote Docker daemon over
   #   TCP(+TLS) instead of the local UNIX socket - see
   #   PluginHelpers::DockerClient's own doc comment for exact behavior
-  #   and its one documented scope cut (tls_hostname:).
+  #   (including tls_hostname:/DOCKER_TLS*/DOCKER_CERT_PATH support).
   # - state: present (default) / absent
   # - check_mode
   #
@@ -52,8 +52,7 @@ module CrystalPlay
   # Not implemented: `force:` (real Ansible's "disconnect everyone, delete
   # and recreate the network" override, distinct from the driver-mismatch
   # auto-recreate above), ipam_config:, enable_ipv6:, custom driver
-  # options:, `tls_hostname:`/`api_version:` (see
-  # PluginHelpers::DockerClient).
+  # options:, `api_version:` (see PluginHelpers::DockerClient).
   class DockerNetworkPlugin < BasePlugin
     def execute : PluginResult
       name = @params["name"]?
