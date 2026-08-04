@@ -1,0 +1,28 @@
+- name: set_fact
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: set facts of a few different types
+      ansible.builtin.set_fact:
+        greeting: hello
+        count: "3"
+        ratio: "1.5"
+        is_ready: true
+
+    - name: overwrite one fact with a later set_fact
+      ansible.builtin.set_fact:
+        greeting: overwritten
+
+    - name: set a second fact from the value of the first
+      ansible.builtin.set_fact:
+        greeting_upper: "{{ greeting | upper }}"
+
+    - name: write the stable results to a file for comparison
+      ansible.builtin.copy:
+        content: |
+          greeting={{ greeting }}
+          greeting_upper={{ greeting_upper }}
+          count={{ count }}
+          ratio={{ ratio }}
+          is_ready={{ is_ready }}
+        dest: /work/set-fact-output.txt

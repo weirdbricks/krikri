@@ -1,0 +1,46 @@
+- name: uri
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: create the directory to serve
+      ansible.builtin.file:
+        path: /work/serve
+        state: directory
+
+    - name: seed a static JSON file to serve
+      ansible.builtin.copy:
+        content: '{"ok":true,"n":5}'
+        dest: /work/serve/data.json
+
+    - name: start a local HTTP server in the background (no real network access in this container)
+      ansible.builtin.shell: nohup python3 -m http.server 18081 --directory /work/serve >/tmp/http-uri.log 2>&1 &
+      changed_when: false
+
+    - name: wait for the server's port to come up
+      ansible.builtin.wait_for:
+        port: 18081
+        timeout: 10
+
+    - name: GET the JSON file with return_content
+      ansible.builtin.uri:
+        url: http://127.0.0.1:18081/data.json
+        return_content: true
+      register: get_result
+
+    - name: GET a path that doesn't exist
+      ansible.builtin.uri:
+        url: http://127.0.0.1:18081/missing.json
+        status_code: [200, 404]
+      register: missing_result
+
+    - name: write the stable results to a file for comparison
+      ansible.builtin.copy:
+        content: |
+          get_status={{ get_result.status }}
+          get_changed={{ get_result.changed }}
+          get_content={{ get_result.content }}
+          get_json_ok={{ get_result.json.ok }}
+          get_json_n={{ get_result.json.n }}
+          missing_status={{ missing_result.status }}
+          missing_failed={{ missing_result.failed }}
+        dest: /work/uri-output.txt

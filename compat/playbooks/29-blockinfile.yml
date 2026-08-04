@@ -1,0 +1,70 @@
+- name: blockinfile
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: seed a starter file
+      ansible.builtin.copy:
+        content: |
+          line1
+          line2
+          line3
+        dest: /work/blockinfile.txt
+
+    - name: insert a new block at EOF (default)
+      ansible.builtin.blockinfile:
+        path: /work/blockinfile.txt
+        block: |
+          hello
+          world
+      register: insert_result
+
+    - name: idempotent rerun of the same block
+      ansible.builtin.blockinfile:
+        path: /work/blockinfile.txt
+        block: |
+          hello
+          world
+      register: rerun_result
+
+    - name: update the block's content in place
+      ansible.builtin.blockinfile:
+        path: /work/blockinfile.txt
+        block: |
+          hello
+          universe
+      register: update_result
+
+    - name: insert a second block before a regex match, with custom markers
+      ansible.builtin.blockinfile:
+        path: /work/blockinfile.txt
+        insertbefore: "^line2"
+        marker: "// {mark} CUSTOM BLOCK"
+        block: "custom content"
+      register: custom_marker_result
+
+    - name: remove the first block
+      ansible.builtin.blockinfile:
+        path: /work/blockinfile.txt
+        marker: "# {mark} ANSIBLE MANAGED BLOCK"
+        state: absent
+      register: remove_result
+
+    - name: "create a new file with create: true"
+      ansible.builtin.blockinfile:
+        path: /work/blockinfile-created.txt
+        create: true
+        block: |
+          alpha
+          beta
+      register: create_result
+
+    - name: write the stable results to a file for comparison
+      ansible.builtin.copy:
+        content: |
+          insert_changed={{ insert_result.changed }}
+          rerun_changed={{ rerun_result.changed }}
+          update_changed={{ update_result.changed }}
+          custom_marker_changed={{ custom_marker_result.changed }}
+          remove_changed={{ remove_result.changed }}
+          create_changed={{ create_result.changed }}
+        dest: /work/blockinfile-output.txt

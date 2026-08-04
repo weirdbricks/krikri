@@ -1,0 +1,47 @@
+- name: assert
+  hosts: localhost
+  gather_facts: false
+  vars:
+    my_param: 150
+  tasks:
+    - name: a passing multi-condition assertion
+      ansible.builtin.assert:
+        that:
+          - my_param > 0
+          - my_param < 1000
+
+    - name: a failing multi-condition assertion, default message
+      ansible.builtin.assert:
+        that:
+          - my_param <= 100
+          - my_param >= 0
+      ignore_errors: true
+      register: fail_result
+
+    - name: a failing assertion with a custom fail_msg
+      ansible.builtin.assert:
+        that: my_param <= 100
+        fail_msg: "param too big"
+      ignore_errors: true
+      register: custom_fail_result
+
+    - name: a passing assertion with a custom success_msg
+      ansible.builtin.assert:
+        that: "1 == 1"
+        success_msg: "all good"
+      register: success_result
+
+    - name: a {{ }}-wrapped dotted-access condition
+      ansible.builtin.assert:
+        that: "{{ my_param > 100 }}"
+      register: dotted_result
+
+    - name: write the stable results to a file for comparison
+      ansible.builtin.copy:
+        content: |
+          fail_failed={{ fail_result.failed }}
+          fail_msg={{ fail_result.msg }}
+          custom_fail_msg={{ custom_fail_result.msg }}
+          success_msg={{ success_result.msg }}
+          dotted_failed={{ dotted_result.failed }}
+        dest: /work/assert-output.txt

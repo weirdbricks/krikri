@@ -93,7 +93,7 @@ test with exact content assertions for the `lineinfile` bug).
 
 ## Coverage
 
-Twenty-six playbooks, one per concern: `debug`/`copy`, `file` states,
+Thirty-four playbooks, one per concern: `debug`/`copy`, `file` states,
 `lineinfile`, `loop`/`with_items`, real `user`/`group` creation and
 modification, `block`/`rescue`/`always`, `until`/`retries`, `cron`
 (`cron_file:`), `authorized_key`, `git` clone/checkout against a local
@@ -163,6 +163,53 @@ service, and an idempotent disable rerun - compared via `changed` plus
 `firewall-offline-cmd --query-<thing>` state checks rather than a raw
 zone-file diff, since real Ansible's own module leaves the zone XML in a
 very slightly different (but behaviorally identical) shape.
+
+`set_fact` (`27-set-fact.yml`) covers setting facts of a few different
+types, overwriting one, and deriving a second fact from the first via a
+filter (`| upper`) - a bare unquoted YAML `is_ready: true` is used
+deliberately rather than a quoted `"true"` string, since the two render
+differently (`True` vs `true`) and only the unquoted form matches real
+Ansible's own behavior once coerced through this codebase's params
+pipeline (every param is stringified before a plugin ever sees it, so a
+quoted string stays a literal string with no type coercion, exactly like
+real Ansible). `get_url` (`28-get-url.yml`) and `uri` (`30-uri.yml`) both
+start a real local `python3 -m http.server` in the background (no real
+network access in this container) and hit it - `get_url`'s idempotent
+rerun uses a `checksum:` computed ahead of time via `stat:`, not
+crystal-ansible's own get_url result (a real field-naming bug this
+playbook caught - see `ROADMAP.md`'s `get_url` entry). `blockinfile`
+(`29-blockinfile.yml`) covers insert-at-EOF, an idempotent rerun, an
+in-place content update, `insertbefore:` with custom markers, removal,
+and file creation. `assert` (`31-assert.yml`) covers a passing
+multi-condition, a failing one (default message), a custom `fail_msg:`,
+a custom `success_msg:`, and a `{{ }}`-wrapped dotted-access condition.
+`wait_for` (`32-wait-for.yml`) covers a port coming up, a closed-port
+timeout with the exact message, `state: stopped` against an
+already-closed port, and an already-existing path - the background
+server-start task here is *not* a plain `sleep N && daemon &` (see the
+next paragraph for why). `fetch` (`33-fetch.yml`) covers the default
+hostname/path layout, an idempotent rerun, `flat: true` to both a
+directory and a literal path, and a missing source with
+`fail_on_missing: false`. `pause` (`34-pause.yml`) covers a `seconds:`
+sleep, a `minutes:` sleep, and the `seconds:`/`minutes:` mutual-exclusion
+failure.
+
+Building `32-wait-for.yml` found a real, previously-unknown bug unrelated
+to `wait_for` itself: `LocalExecutor.exec` (backing `shell:`/`command:`
+on any local connection) **hangs forever** - confirmed via `timeout`, not
+just "slow" - on a command shaped like `sleep N && long-running-daemon &`.
+Crystal's `Process.run(..., output:, error:)` blocks until the child
+exits *and* its stdout/stderr pipes reach EOF; `sleep N && daemon &`
+backgrounds a *shell* that blocks in `wait()` on `daemon` (a trailing `&`
+backgrounds the whole `&&`-list, and `nohup` only suppresses `SIGHUP` - it
+doesn't exempt a child from its parent's own `wait()`), so if `daemon`
+never exits, neither does the shell holding the pipe open, and
+`Process.run` never sees EOF. Confirmed this is a real crystal-ansible
+gap and not a fixture mistake: the identical command ran fine under real
+`ansible-playbook` in the same container. `32-wait-for.yml` works around
+it with `nohup sh -c 'sleep N; daemon' &` (one process backgrounded
+directly, no separate parent shell left waiting) - full detail and a
+suggested fix direction in `ROADMAP.md`.
 
 `ufw` has no compat playbook, unusually for this repo - `ufw` itself
 refuses to run at all without root (even a bare `ufw status` fails), and

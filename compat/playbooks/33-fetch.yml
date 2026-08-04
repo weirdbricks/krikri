@@ -1,0 +1,54 @@
+- name: fetch
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: "seed a file to fetch (copy doesn't create parent dirs)"
+      ansible.builtin.file:
+        path: /work/fetch-src
+        state: directory
+
+    - name: write the file
+      ansible.builtin.copy:
+        content: "fetch me\n"
+        dest: /work/fetch-src/hello.txt
+
+    - name: fetch it back to the control node (default hostname/path layout)
+      ansible.builtin.fetch:
+        src: /work/fetch-src/hello.txt
+        dest: /work/fetch-dest/
+      register: fetch_result
+
+    - name: idempotent rerun
+      ansible.builtin.fetch:
+        src: /work/fetch-src/hello.txt
+        dest: /work/fetch-dest/
+      register: rerun_result
+
+    - name: "fetch with flat: true to a literal path"
+      ansible.builtin.fetch:
+        src: /work/fetch-src/hello.txt
+        dest: /work/fetch-flat.txt
+        flat: true
+      register: flat_result
+
+    - name: fetch a missing file with fail_on_missing false
+      ansible.builtin.fetch:
+        src: /work/fetch-src/nope.txt
+        dest: /work/fetch-dest/
+        fail_on_missing: false
+      register: missing_result
+
+    - name: read the fetched (non-flat) file content back
+      ansible.builtin.command: cat /work/fetch-dest/localhost/work/fetch-src/hello.txt
+      register: fetched_content
+      changed_when: false
+
+    - name: write the stable results to a file for comparison
+      ansible.builtin.copy:
+        content: |
+          fetch_changed={{ fetch_result.changed }}
+          rerun_changed={{ rerun_result.changed }}
+          flat_changed={{ flat_result.changed }}
+          missing_failed={{ missing_result.failed }}
+          fetched_content={{ fetched_content.stdout }}
+        dest: /work/fetch-output.txt

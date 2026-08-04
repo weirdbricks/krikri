@@ -1,0 +1,56 @@
+- name: wait_for
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: create the directory to serve
+      ansible.builtin.file:
+        path: /work/serve
+        state: directory
+
+    - name: start a local HTTP server in the background, after a short delay (no real network access in this container)
+      # A single `nohup sh -c '...' &` backgrounds one process directly. A
+      # `sleep 1 && cmd &` form instead backgrounds a *shell* that blocks in
+      # wait() for cmd (nohup or not, nohup only ignores SIGHUP - it doesn't
+      # exempt a child from its parent's wait()) - since cmd here is a
+      # permanent server that never exits, that shell never exits either,
+      # so it never releases the stdout/stderr pipe crystal-ansible's shell
+      # plugin reads until EOF, hanging the task forever (a real, if narrow,
+      # LocalExecutor gap found via this very playbook - see ROADMAP.md).
+      ansible.builtin.shell: nohup sh -c 'sleep 1; python3 -m http.server 18082 --directory /work/serve' >/tmp/http-waitfor.log 2>&1 &
+      changed_when: false
+
+    - name: wait for the port to come up
+      ansible.builtin.wait_for:
+        port: 18082
+        timeout: 10
+      register: port_result
+
+    - name: wait_for a closed port with a short timeout - expect a timeout failure
+      ansible.builtin.wait_for:
+        port: 19999
+        timeout: 1
+      ignore_errors: true
+      register: closed_result
+
+    - name: state stopped against an already-closed port succeeds immediately
+      ansible.builtin.wait_for:
+        port: 19999
+        state: stopped
+        timeout: 3
+      register: stopped_result
+
+    - name: wait_for a file that already exists
+      ansible.builtin.wait_for:
+        path: /etc/hostname
+        timeout: 3
+      register: path_result
+
+    - name: write the stable results to a file for comparison
+      ansible.builtin.copy:
+        content: |
+          port_failed={{ port_result.failed }}
+          closed_failed={{ closed_result.failed }}
+          closed_msg={{ closed_result.msg }}
+          stopped_failed={{ stopped_result.failed }}
+          path_failed={{ path_result.failed }}
+        dest: /work/wait-for-output.txt

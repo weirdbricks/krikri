@@ -1,19 +1,23 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.31`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.32`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
-`0.9.24`, `get_url` `0.9.25`, `blockinfile` `0.9.26`, `uri` `0.9.27`,
+`0.9.24`, `get_url` `0.9.25`/`0.9.32`, `blockinfile` `0.9.26`, `uri` `0.9.27`,
 `assert` `0.9.28`, `wait_for` `0.9.29`, `fetch` `0.9.30`, `pause` `0.9.31`).
 591/593 specs pass (the 2 exceptions need a live MySQL/PostgreSQL server at
 `127.0.0.1:13306`/`15432`), `ameba` clean on all new/touched code. A
 Docker-based compatibility harness (`compat/`, see `compat/README.md`) runs
 the same playbooks through real `ansible-playbook` and `crystal-ansible` side
 by side and diffs the resulting filesystem state + exit codes - ground truth
-instead of assumptions; **26/26 compat playbooks pass**, though none of the
-eight Phase 5 modules has a compat playbook yet - see the Phase 5 wrap-up
-note for details, that's the natural next step for whoever picks this up.
+instead of assumptions; **34/34 compat playbooks pass**, including a fresh
+compat playbook per Phase 5 module (`compat/playbooks/27-set-fact.yml`
+through `34-pause.yml`) added and verified in this pass - see each Phase 5
+entry below and `compat/README.md`'s Coverage section for what each one
+caught, including a real `get_url` field-naming bug and a real
+`LocalExecutor`/`shell:` hang bug (documented as still open, in the Phase 5
+wrap-up note).
 
 Two cross-cutting efforts also landed since Phases 3/4 were marked done:
 
@@ -1288,9 +1292,9 @@ first, then `blockinfile`, `uri`, `assert`, `wait_for`, `fetch`, `pause`.
   via the CLI directly (`spec/integration/cli_spec.cr`'s dedicated
   `test-set-fact-quick.yml` assertion: a later `debug:` sees a string and an
   int fact, a `when:` gates on a bool fact, and a second `set_fact:` on the
-  same key overwrites it for a task afterward) - not yet verified against
-  real `ansible-playbook` via the compat harness (no
-  `compat/playbooks/27-set-fact.yml` added in this pass).
+  same key overwrites it for a task afterward). **Update (`0.9.32`):**
+  verified against real `ansible-playbook` via the compat harness
+  (`compat/playbooks/27-set-fact.yml` - passed).
 - [x] `assert` (`0.9.28`): fails (or passes) based on a list of `that:`
   conditions, for role pre-flight validation. Parameters: `that:` (required;
   either a list of condition strings or, per real Ansible, a single bare
@@ -1331,10 +1335,9 @@ first, then `blockinfile`, `uri`, `assert`, `wait_for`, `fetch`, `pause`.
   `msg:` alias, custom `success_msg:`, a `{{ }}`-wrapped dotted condition,
   and `changed: false`. Also verified end-to-end through the real compiled
   `crystal-ansible` binary against a playbook mirroring the real-Ansible
-  comparison fixture above - task-for-task output matched. Not yet
-  verified against real `ansible-playbook` via the compat harness (no
-  `compat/playbooks/30-assert.yml` added in this pass, same documented gap
-  `set_fact`/`get_url`/`blockinfile`/`uri` shipped with).
+  comparison fixture above - task-for-task output matched. **Update
+  (`0.9.32`):** verified against real `ansible-playbook` via the compat
+  harness (`compat/playbooks/31-assert.yml` - passed).
 - [x] `get_url` (`0.9.25`): downloads a URL to a file. Parameters: `url`
   (required), `dest` (required; a directory `dest` downloads to
   `dest/<basename of the URL path>`, matching real Ansible), `mode`/`owner`/
@@ -1387,9 +1390,28 @@ first, then `blockinfile`, `uri`, `assert`, `wait_for`, `fetch`, `pause`.
   spec has no external process dependency): new download, checksum match/
   mismatch, idempotent rerun, skip-without-force, overwrite-with-force,
   check mode, a 404, a redirect, and missing-required-argument errors.
-  Not yet verified against real `ansible-playbook` via the compat harness
-  (no `compat/playbooks/27-get-url.yml` added in this pass, same
-  documented gap `set_fact` shipped with in `0.9.24`).
+  **Update (`0.9.32`):** verified against real `ansible-playbook` via the
+  compat harness (`compat/playbooks/28-get-url.yml` - passed). Doing so
+  surfaced a real result-field bug this entry's own initial testing
+  missed: the changed-download result field was named `checksum`, but
+  real Ansible's actual `get_url` module returns `checksum_src` (plus a
+  `checksum_dest` that stayed `null` in every case checked) - a made-up
+  name never cross-checked against a real result payload. Fixed by
+  renaming the field and always hashing with `sha1` (real Ansible's own
+  default algorithm) rather than the hardcoded `sha256` used before, and
+  by dropping the checksum value entirely (both fields `null`) from the
+  already-exists-and-matches fast-skip path, matching real Ansible's own
+  observed behavior there exactly. Separately (found by hand-testing
+  against a real local server, not by the compat playbook itself, which
+  doesn't exercise this path): real Ansible's own no-`checksum:` rerun
+  idempotency isn't a `File.exists?` shortcut at all - it sends a real
+  conditional GET (`If-Modified-Since`) and treats the server's `304 Not
+  Modified` as "unchanged," which this codebase's simpler
+  dest-exists-so-skip approximation doesn't replicate. Left as a
+  documented, deliberate simplification rather than implemented: the
+  compat playbook uses an explicit `checksum:` (via a `stat:` computed
+  ahead of time) for its idempotency check instead of depending on this
+  divergent path, which is a real, if narrow, remaining scope gap.
 - [x] `blockinfile` (`0.9.26`): inserts/updates/removes a marker-delimited
   block of text in a file - the natural follow-on to the already-native
   `lineinfile`. Parameters: `path` (required), `block` (alias `content`;
@@ -1420,9 +1442,9 @@ first, then `blockinfile`, `uri`, `assert`, `wait_for`, `fetch`, `pause`.
   fresh insert + idempotent rerun, content update in place,
   `state: absent` removal, empty-block-means-absent, custom markers,
   `insertbefore`, file creation, missing-file-without-create failure, and
-  check mode. Not yet verified against real `ansible-playbook` via the
-  compat harness (no `compat/playbooks/28-blockinfile.yml` added in this
-  pass, same documented gap `set_fact`/`get_url` shipped with).
+  check mode. **Update (`0.9.32`):** verified against real
+  `ansible-playbook` via the compat harness
+  (`compat/playbooks/29-blockinfile.yml` - passed).
 - [x] `uri` (`0.9.27`): makes an HTTP request (API calls, health checks,
   webhooks). Parameters: `url` (required), `method` (default GET), `body`,
   `body_format` (`raw` default/`json`/`form-urlencoded` - real Ansible's
@@ -1470,10 +1492,9 @@ first, then `blockinfile`, `uri`, `assert`, `wait_for`, `fetch`, `pause`.
   code and a custom `status_code:` list accepting it, a POST body with a
   registered status, form-urlencoded encoding, redirect-followed with
   `redirected: true`, `follow_redirects: none` leaving the 302 unfollowed,
-  `changed: false` on a mutating POST, and the check-mode skip. Not yet
-  verified against real `ansible-playbook` via the compat harness (no
-  `compat/playbooks/29-uri.yml` added in this pass, same documented gap
-  `set_fact`/`get_url`/`blockinfile` shipped with).
+  `changed: false` on a mutating POST, and the check-mode skip. **Update
+  (`0.9.32`):** verified against real `ansible-playbook` via the compat
+  harness (`compat/playbooks/30-uri.yml` - passed).
 - [x] `wait_for` (`0.9.29`): polls until a port/file/regex-in-file condition
   is met, used to gate tasks on readiness. Parameters: `host` (default
   127.0.0.1)/`port` (wait until connectable, mutually exclusive with
@@ -1519,10 +1540,15 @@ first, then `blockinfile`, `uri`, `assert`, `wait_for`, `fetch`, `pause`.
   already-existing path, a missing-path timeout with the exact message,
   `state: absent` against an already-missing path, a matching
   `search_regex`, a non-matching `search_regex` timeout with the exact
-  message, and `changed: false`. Not yet verified against real
-  `ansible-playbook` via the compat harness (no
-  `compat/playbooks/31-wait-for.yml` added in this pass, same documented
-  gap `set_fact`/`get_url`/`blockinfile`/`uri`/`assert` shipped with).
+  message, and `changed: false`. **Update (`0.9.32`):** verified against
+  real `ansible-playbook` via the compat harness
+  (`compat/playbooks/32-wait-for.yml` - passed). Building that playbook
+  found a real, unrelated bug: `LocalExecutor.exec` (backing
+  `shell:`/`command:` on any local connection) hangs *forever* on a
+  command shaped like `sleep N && long-running-daemon &` - see the Phase
+  5 wrap-up note below for the root cause and a workaround; this is a
+  genuine `shell:`/`command:` gap, not a `wait_for:` one, so it's tracked
+  separately rather than blocking this entry.
 - [x] `fetch` (`0.9.30`): pulls a file from the target to the control node -
   the inverse of `copy`. Parameters: `src` (required), `dest` (required),
   `flat` (default `no` - `dest/<inventory_hostname>/<src, leading slash
@@ -1575,10 +1601,9 @@ first, then `blockinfile`, `uri`, `assert`, `wait_for`, `fetch`, `pause`.
   the default hostname/path layout with an idempotent rerun, `flat: true`
   with and without a trailing separator on `dest`, a missing source with
   `fail_on_missing` true (fails) and false (doesn't), the check-mode skip,
-  and a directory `src` failing clearly. Not yet verified against real
-  `ansible-playbook` via the compat harness (no
-  `compat/playbooks/32-fetch.yml` added in this pass, same documented gap
-  every other Phase 5 module shipped with so far).
+  and a directory `src` failing clearly. **Update (`0.9.32`):** verified
+  against real `ansible-playbook` via the compat harness
+  (`compat/playbooks/33-fetch.yml` - passed).
 - [x] `pause` (`0.9.31`): waits, or (in real Ansible) interactively prompts.
   Parameters: `seconds`, `minutes`, `prompt` (accepted, but has nothing to
   affect - see below), `echo` (default `yes`, not `no` as this entry
@@ -1610,18 +1635,24 @@ first, then `blockinfile`, `uri`, `assert`, `wait_for`, `fetch`, `pause`.
   with the exact `stdout` text, a fractional-minutes sleep, the
   mutually-exclusive failure, the no-args instant-continue case (asserted
   to actually take under a second, not just to not error), and
-  `changed: false`. Not yet verified against real `ansible-playbook` via
-  the compat harness (no `compat/playbooks/33-pause.yml` added in this
-  pass, same documented gap every other Phase 5 module shipped with).
+  `changed: false`. **Update (`0.9.32`):** verified against real
+  `ansible-playbook` via the compat harness (`compat/playbooks/34-pause.yml`
+  - passed).
 
-**Phase 5 is now feature-complete** - every module scoped at the top of this
-phase (`set_fact`, `get_url`, `blockinfile`, `uri`, `assert`, `wait_for`,
-`fetch`, `pause`) has shipped, in `0.9.24` through `0.9.31`. What's left
-across all of them: none has a compat-harness playbook yet (see each entry
-above), and Phase 3/4's own established compat-harness pattern
-(`compat/playbooks/NN-*.yml`, diffed against real `ansible-playbook`) hasn't
-been extended to any of the eight - a good next step for whoever picks this
-up, ahead of any new module scope.
+**Phase 5 is now feature-complete and fully compat-verified** - every
+module scoped at the top of this phase (`set_fact`, `get_url`,
+`blockinfile`, `uri`, `assert`, `wait_for`, `fetch`, `pause`) has shipped
+(`0.9.24` through `0.9.31`) and, as of `0.9.32`, has its own compat-harness
+playbook (`compat/playbooks/27-set-fact.yml` through `34-pause.yml`,
+following the same `compat/playbooks/NN-*.yml` pattern Phases 3/4 already
+established) diffed against real `ansible-playbook` - **34/34 compat
+playbooks pass**. Building those eight playbooks found two more real bugs
+beyond the ones each module's own entry above already documents: a
+`get_url` result-field name (`checksum` should have been `checksum_src`,
+fixed in `0.9.32` - see that entry) and a genuine `LocalExecutor`/`shell:`
+hang on `sleep N && daemon &`-shaped commands (documented below, not yet
+fixed - a real gap in `shell:`/`command:` themselves, unrelated to any
+Phase 5 module, worth picking up before new module scope).
 
 **Also still open (lower priority - see each shipping plugin's class doc for the
 exact "not implemented" list):** the documented per-plugin scope cuts (e.g.
@@ -1635,6 +1666,30 @@ exact "not implemented" list):** the documented per-plugin scope cuts (e.g.
 mutually exclusive rather than real Ansible's overlapping ones). Cloud plugins
 (`ec2`, `s3_bucket`, `azure_rm_*`) and inventory *plugins* (`aws_ec2.yml` et
 al.) remain explicitly lowest-ROI and are not planned.
+
+**New cross-cutting bug found while building `compat/playbooks/32-wait-for.yml`:**
+`LocalExecutor.exec` (used by `shell:`/`command:` on any local connection)
+hangs **forever** - not a slow path, an actual indefinite hang - on a
+command of the shape `sleep N && long-running-daemon &`. Root cause:
+Crystal's `Process.run(..., output: IO::Memory, error: IO::Memory)` blocks
+until both the child exits *and* its stdout/stderr pipes reach EOF, which
+requires every process holding a duplicate of those pipe fds to close them.
+`sleep N && daemon &` backgrounds a *shell* that blocks in `wait()` on
+`daemon` (a plain trailing `&` backgrounds the whole `&&`-list, and `nohup`
+only suppresses `SIGHUP` - it doesn't exempt a child from its parent's own
+`wait()`) - since `daemon` here never exits, neither does the shell holding
+the pipe open, so `Process.run` never sees EOF and the task hangs
+indefinitely. A single `nohup sh -c 'sleep N; daemon' &` (backgrounding one
+process directly, no separate parent shell left waiting) does not hit this -
+that's the workaround `32-wait-for.yml` now uses. Confirmed this is a real
+crystal-ansible-specific gap, not a documentation quirk: the identical
+`sleep N && daemon &` command runs fine under real `ansible-playbook`
+(verified side by side in the same container). Affects any real playbook
+using this common "delayed background service start" idiom, not just the
+compat fixture that surfaced it - worth a proper fix (e.g. reading
+stdout/stderr with a timeout, or spawning via a fresh process group that
+can be waited on independently of any lingering pipe-fd holders) ahead of
+any new plugin work.
 
 **Result (with Phase 5 complete):** genuine parity for routine Linux server
 automation - the full set of commonly-used `ansible.builtin` modules plus the

@@ -1,0 +1,30 @@
+- name: pause
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: pause for 1 second
+      ansible.builtin.pause:
+        seconds: 1
+      register: seconds_result
+
+    - name: pause for a fraction of a minute
+      ansible.builtin.pause:
+        minutes: 0.02
+      register: minutes_result
+
+    - name: both seconds and minutes is a mutually-exclusive failure
+      ansible.builtin.pause:
+        seconds: 1
+        minutes: 1
+      ignore_errors: true
+      register: mutex_result
+
+    - name: write the stable results to a file for comparison
+      ansible.builtin.copy:
+        content: |
+          seconds_stdout={{ seconds_result.stdout }}
+          seconds_delta={{ seconds_result.delta }}
+          minutes_stdout={{ minutes_result.stdout }}
+          mutex_failed={{ mutex_result.failed }}
+          mutex_msg={{ mutex_result.msg }}
+        dest: /work/pause-output.txt

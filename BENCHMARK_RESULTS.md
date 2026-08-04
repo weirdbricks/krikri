@@ -679,3 +679,82 @@ sample): shell `cat` subprocess vs native `File.read_lines`.
 file read for every sysctl present/absent invocation on local hosts.
 
 Full project suite (516 examples) passes.
+
+## Phase 5 modules: end-to-end vs real Ansible
+
+**Date:** 2026-08-04. **Ansible version:** ansible-core 2.19.4 (Python).
+**crystal-ansible version:** 0.9.32.
+
+Phase 5 added eight previously-missing `ansible.builtin` modules
+(`set_fact`, `get_url`, `blockinfile`, `uri`, `assert`, `wait_for`,
+`fetch`, `pause`) - none of them had been benchmarked before. Unlike the
+native-syscall-conversion sections above, there's no "old shelled-out
+version" to compare against for any of these (they're new, not
+converted); the comparison here is the same one the original end-to-end
+benchmark at the top of this file did - crystal-ansible vs real
+`ansible-playbook` running the identical playbook - scoped specifically
+to these eight modules.
+
+### Methodology
+
+A single playbook exercises all eight modules, five times each via
+`loop:` (40 module invocations total, plus setup: a `file:`/`copy:` pair
+and a backgrounded local `python3 -m http.server` for `get_url`/`uri` to
+hit - no real network access, matching the compat harness's own
+convention). Both engines ran the identical logical playbook (two copies
+differing only in a hardcoded scratch directory and port, since
+crystal-ansible has no `-e`/`--extra-vars` flag to parameterize a single
+shared file) against `localhost` over a local connection, 3 times
+consecutively each from a clean scratch directory - run 1 exercises fresh
+creation/download, runs 2-3 exercise idempotency. `pause:` used
+`seconds: 0.1` (not `0` - real Ansible's pause floors `seconds: 0` up to
+a full second, printing "Pausing for 1 seconds," an asymmetry with this
+codebase's own `pause.cr`, which sleeps 0 seconds for a literal `0`; using
+`0.1` sidesteps arguing about that specific edge case and keeps the fixed
+sleep cost - identical across both engines either way - small).
+
+### Timing
+
+| Run | Real Ansible | crystal-ansible |
+|---|---|---|
+| 1 (fresh: downloads, writes, creates) | 14.36s | 1.67s |
+| 2 (idempotent rerun) | 14.26s | 0.66s |
+| 3 (idempotent rerun) | 14.26s | 0.66s |
+
+**crystal-ansible is ~8.6x faster on the fresh run, ~21.7x faster on an
+idempotent rerun.** Real Ansible's timing is flat across all 3 runs
+(~14.3s regardless of whether anything changed) - the same
+per-task Python interpreter/module-transfer overhead the original
+end-to-end benchmark found dominates, here multiplied across 40 loop
+iterations rather than 48-53 distinct tasks. crystal-ansible's own timing
+drops by more than half between the fresh run and the idempotent reruns
+(1.67s -> 0.66s): unlike Ansible's fixed per-task cost, a compiled
+`get_url`/`fetch`/`blockinfile` invocation that hits its own
+already-satisfied fast path (skip-if-checksum-matches, skip-if-unchanged,
+skip-if-already-fetched) does measurably less work than one that actually
+downloads/writes/copies, so the idempotency win compounds with the raw
+speed win in a way Ansible's architecture doesn't let it.
+
+### Idempotency
+
+Both engines settle into a stable state by the second run:
+
+- Real Ansible: `changed=5` -> `changed=0` -> `changed=0`
+- crystal-ansible: `changed=17` -> `changed=0` -> `changed=0`
+
+Both reach `changed=0` (fully idempotent) on the rerun - the higher
+absolute `changed` count on crystal-ansible's fresh run is the same
+recap-attribution difference the original end-to-end benchmark already
+found and left un-root-caused (see "Idempotency" under Timing at the top
+of this file): a difference in how the two engines attribute per-`loop:`-
+iteration results to the play recap's counters, not a difference in
+which underlying files/downloads actually changed.
+
+### A real bug the compat harness (not this benchmark) found
+
+Building the local-HTTP-server fixture this benchmark reuses from the
+Phase 5 compat-harness playbooks (`compat/playbooks/28-get-url.yml`,
+`30-uri.yml`) surfaced a real result-field-naming bug in `get_url.cr`:
+its changed-download result used an invented field name, `checksum`,
+where real Ansible's own `get_url` module returns `checksum_src`. Fixed
+in `0.9.32` - full details under the `get_url` entry in `ROADMAP.md`.

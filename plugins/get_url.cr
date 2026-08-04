@@ -58,7 +58,7 @@ module CrystalPlay
         return nil unless actual == expected
 
         apply_owner_group_mode(dest, owner, group, mode) unless check_mode
-        PluginResult.new(changed: false, failed: false, msg: "file already exists and checksum matches", dest: dest, checksum: actual)
+        PluginResult.new(changed: false, failed: false, msg: "file already exists and checksum matches", dest: dest, checksum_src: nil, checksum_dest: nil)
       else
         apply_owner_group_mode(dest, owner, group, mode) unless check_mode
         PluginResult.new(changed: false, failed: false, msg: "file already exists (use force=yes to overwrite)", dest: dest)
@@ -94,7 +94,7 @@ module CrystalPlay
 
       apply_owner_group_mode(dest, @params["owner"]?, @params["group"]?, @params["mode"]?)
 
-      PluginResult.new(changed: true, failed: false, msg: "OK", dest: dest, checksum: native_checksum(dest, "sha256"))
+      PluginResult.new(changed: true, failed: false, msg: "OK", dest: dest, checksum_src: native_checksum(dest, "sha1"), checksum_dest: nil)
     end
 
     private def parse_checksum(checksum_param : String) : {String, String}

@@ -1,0 +1,54 @@
+- name: get_url
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: create the directory to serve
+      ansible.builtin.file:
+        path: /work/serve
+        state: directory
+
+    - name: seed a file to serve
+      ansible.builtin.copy:
+        content: "hello from get_url compat test\n"
+        dest: /work/serve/hello.txt
+
+    - name: start a local HTTP server in the background (no real network access in this container)
+      ansible.builtin.shell: nohup python3 -m http.server 18080 --directory /work/serve >/tmp/http.log 2>&1 &
+      changed_when: false
+
+    - name: wait for the server's port to come up
+      ansible.builtin.wait_for:
+        port: 18080
+        timeout: 10
+
+    - name: compute the served file's checksum ahead of time
+      ansible.builtin.stat:
+        path: /work/serve/hello.txt
+        checksum_algorithm: sha256
+      register: seed_stat
+
+    - name: download the file
+      ansible.builtin.get_url:
+        url: http://127.0.0.1:18080/hello.txt
+        dest: /work/downloaded.txt
+      register: download_result
+
+    - name: idempotent rerun (checksum already matches)
+      ansible.builtin.get_url:
+        url: http://127.0.0.1:18080/hello.txt
+        dest: /work/downloaded.txt
+        checksum: "sha256:{{ seed_stat.stat.checksum }}"
+      register: rerun_result
+
+    - name: read the downloaded file content back
+      ansible.builtin.command: cat /work/downloaded.txt
+      register: final_content
+      changed_when: false
+
+    - name: write the stable results to a file for comparison
+      ansible.builtin.copy:
+        content: |
+          download_changed={{ download_result.changed }}
+          rerun_changed={{ rerun_result.changed }}
+          final_content={{ final_content.stdout }}
+        dest: /work/get-url-output.txt
