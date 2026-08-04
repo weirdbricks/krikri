@@ -122,6 +122,52 @@
         login_user: "{{ login_user }}"
         login_password: "{{ login_password }}"
 
+    - name: dump the database, zstd-compressed
+      community.mysql.mysql_db:
+        name: "{{ test_db }}"
+        state: dump
+        target: /tmp/crystal-ansible-mysql-dump.sql.zst
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: db_dump_zst
+
+    - name: create a third database to restore the zstd-compressed dump into
+      community.mysql.mysql_db:
+        name: "{{ test_db }}_zst"
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+
+    - name: import the zstd-compressed dump into the third database
+      community.mysql.mysql_db:
+        name: "{{ test_db }}_zst"
+        state: import
+        target: /tmp/crystal-ansible-mysql-dump.sql.zst
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: db_import_zst
+
+    - name: verify the zstd-restored data round-tripped correctly
+      ansible.builtin.shell: >-
+        mysql --host={{ login_host }} --port={{ login_port }} --user={{ login_user }}
+        --password={{ login_password }} -N -e "SELECT COUNT(*) FROM {{ test_db }}_zst.t"
+      register: restored_count_zst
+      changed_when: false
+
+    - name: remove the third database
+      community.mysql.mysql_db:
+        name: "{{ test_db }}_zst"
+        state: absent
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+
     - name: change the user's privileges
       community.mysql.mysql_user:
         name: "{{ test_user }}"
@@ -163,6 +209,9 @@
           db_dump={{ db_dump.changed }}
           db_import_gz={{ db_import_gz.changed }}
           restored_count={{ restored_count.stdout }}
+          db_dump_zst={{ db_dump_zst.changed }}
+          db_import_zst={{ db_import_zst.changed }}
+          restored_count_zst={{ restored_count_zst.stdout }}
           user_first={{ user_first.changed }}
           user_idempotent={{ user_idempotent.changed }}
           user_priv_changed={{ user_priv_changed.changed }}

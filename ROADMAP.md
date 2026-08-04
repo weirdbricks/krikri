@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.51`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.52`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -27,23 +27,32 @@ state (`0.9.45`), `wait_for`'s `state: drained` (`0.9.46`), and
 expansion plus a real `baseurl:`/`gpgkey:` multi-value list-join bug fix
 (`0.9.50`), and `docker_container`'s `networks:` plus `docker_network`'s
 `connected:`/`appends:` (`0.9.51`, along with a real engine-level bug fix
-to how list-of-dict module params get encoded - see that entry) - see
+to how list-of-dict module params get encoded - see that entry), and
+`mysql_db`'s `.zst` compression plus `postgresql_db`'s `.tar`/`.pgc`/
+`.dir` `pg_restore`-based formats (`0.9.52`) - see
 "Also still open" near the end of
 Phase 5 for what's left and the running list of what's already been
-closed past that point. 713/715 specs pass (the 2 exceptions need a live
-MySQL/PostgreSQL server at `127.0.0.1:13306`/`15432` reachable with real
-`mysql`/`psql` client binaries, neither installed on this host directly -
-see the `0.9.40` entry for how they were verified anyway), `ameba` clean
+closed past that point. All 715 specs pass in an environment with
+`mysql`/`mysqldump`/`psql`/`pg_dump`/`pg_restore` client binaries on
+`PATH` and a live MySQL/MariaDB + PostgreSQL server reachable at
+`127.0.0.1:13306`/`15432`; without those (neither installed on this host
+by default) the same 2 exceptions as always apply - see the `0.9.40`
+entry for how dump/restore was originally verified anyway, and the
+`0.9.52` entry below for how a real server *was* reached this time
+(client binaries extracted from the same Docker images used for the
+`0.9.52` verification itself, onto `~/.local/bin`, not a permanent host
+change), `ameba` clean
 on all new/touched code. A Docker-based compatibility harness (`compat/`,
 see `compat/README.md`) runs the same playbooks through real
 `ansible-playbook` and `crystal-ansible` side by side and diffs the
 resulting filesystem state + exit codes - ground truth instead of
 assumptions; **38/38 compat playbooks pass** (`mount`'s own `remounted`/
 `ephemeral`, `wait_for`'s own `drained:`, `apt_repository`'s own `ppa:`,
-`user`'s own `password:`, and `docker_container`/`docker_network`'s own
-`networks:`/`connected:` verification all happened outside the harness
-instead, for different reasons documented in their own `0.9.45`-`0.9.51`
-entries - see each for how it was verified instead;
+`user`'s own `password:`, `docker_container`/`docker_network`'s own
+`networks:`/`connected:`, and `mysql_db`/`postgresql_db`'s own `0.9.52`
+formats all happened outside the harness instead, for different reasons
+documented in their own `0.9.45`-`0.9.52` entries - see each for how it
+was verified instead;
 `yum_repository`'s `0.9.50` work is covered by an extended
 `23-yum-repository.yml` harness entry instead) - see each entry below and
 `compat/README.md`'s Coverage section for what each one caught.
@@ -2469,15 +2478,91 @@ compat playbook's own task wouldn't have suggested was there).
     into a shared `no_op_networks_result` helper to avoid making it
     worse.
 
+- [x] `mysql_db`'s `.zst` compression and `postgresql_db`'s `.tar`/`.pgc`/
+  `.dir` `pg_restore`-based formats (`0.9.52`):
+  - `mysql_db`'s `.zst`: unlike `.gz`/`.xz`/`.bz2` (native `Compress::*`
+    codecs, a deliberate departure from real Ansible's own
+    subprocess-based approach), `.zst` shells out to the `zstd` CLI
+    binary instead - no Crystal zstd binding is vendored in this
+    codebase, but checking real Ansible's own `mysql_db.py` source shows
+    it does the *exact same thing* for `.zst`
+    (`module.get_bin_path('zstd', True)`, piped through a subprocess),
+    so this one codec is arguably more faithful to real Ansible's own
+    implementation than the other three, not a step down from it.
+    `write_zst`/`read_zst_as_sql_file` pipe the dump content string
+    through `zstd -q -f -o target -` / `zstd -q -d -c target` via
+    `Process.run` with an `IO::Memory`/`File` for stdin/stdout - the
+    `mysqldump`/`mysql` output itself was already a captured String
+    (real SQL text, always valid UTF-8, unlike `postgresql_db`'s binary
+    formats below), so no binary-safety concern here, unlike the
+    `postgresql_db` case.
+  - `postgresql_db`'s `.tar`/`.pgc`/`.dir` (real Ansible's own
+    `pg_dump --format=t/c/d`): these are binary formats (`.dir` isn't
+    even a single file, it's a directory pg_dump creates itself) -
+    `remote_exec` captures a command's stdout as a Crystal `String`,
+    which isn't safe for binary data (the same constraint that drove
+    `apt_repository.cr`'s GPG-key-export design earlier in this
+    project), so unlike the plain-`.sql` path, `pg_dump` is told to
+    write straight to `target:` itself via a shell redirect (`.tar`/
+    `.pgc`) or its own `-f` flag (`.dir`, since directory format doesn't
+    support stdout redirection at all) - the dump bytes never pass
+    through Crystal. Restore for exactly these three extensions shells
+    out to `pg_restore` instead of `psql` (matches real Ansible's own
+    `db_restore()` doing the same), taking `target:` as a positional
+    argument rather than stdin redirection; `.dir` restore checks
+    `remote_dir_exists?` instead of `remote_file_exists?` since the
+    target is a directory, not a file.
+  - Corrected a misleading line in this plugin's own prior doc comment
+    along the way: it previously claimed "`.zst` compression is also not
+    implemented" as if that were a gap versus real Ansible, but real
+    Ansible's own `postgresql_db.py` has no `.zst` support at all to
+    begin with (only `.pgc`/`.bz2`/`.gz`/`.xz`, verified against its
+    source) - nothing to implement there, the doc comment was just wrong
+    to imply otherwise.
+  - Verified against real live MariaDB 11 (`.zst`) and PostgreSQL 17
+    (`.tar`/`.pgc`/`.dir`) servers, not simulated: `.zst` dump produced a
+    real `Zstandard compressed data` file (`file`-confirmed), imported
+    into a second database, and the row count round-tripped correctly;
+    `.pgc` dump produced a real `PostgreSQL custom database dump`
+    (`file`-confirmed), `.tar` a real `POSIX tar archive`, `.dir` a real
+    directory containing `toc.dat` + a compressed data file, and the
+    `.pgc` restore via `pg_restore` round-tripped correctly. The
+    identical sequence run through real `ansible-playbook`'s own
+    `community.mysql.mysql_db`/`community.postgresql.postgresql_db`
+    (via a throwaway venv with `PyMySQL`/`psycopg2-binary`/`ansible-core`
+    installed, since this host's system Python has neither) against the
+    same two servers produced the same `changed:`/row-count results and
+    the same file types.
+  - This host has no `mysql`/`mysqldump`/`psql`/`pg_dump`/`pg_restore`
+    client binaries installed directly (same constraint the `0.9.40`
+    entry already documents) - for this verification, the real binaries
+    were extracted directly from the same `mariadb:11`/`postgres:17`
+    Docker images already used for compat testing (`docker cp` + the
+    matching `libpq.so.5`) onto `~/.local/bin`/`~/.local/lib`, not
+    installed system-wide - a one-off staging step for verification, not
+    a permanent host or repo change.
+  - `testing/test-mysql-quick.yml`/`test-postgresql-quick.yml` (the
+    fixtures `spec/integration/cli_spec.cr`'s own MySQL/PostgreSQL specs
+    drive against a real server) extended with a `.zst`/`.pgc`
+    dump-then-restore-then-verify-row-count round trip each, and both
+    specs' assertions updated to match - both previously-skipped specs
+    (this host lacking client binaries, per above) now pass for real
+    with the extracted binaries on `PATH`.
+  - `crystal spec`/`ameba` both clean - **715/715 examples pass with no
+    exceptions** in an environment with the client binaries and live
+    servers reachable (the first time this project's full suite has been
+    fully green rather than "N/M, 2 known exceptions"); the same 2
+    exceptions return in the default environment without them, as
+    documented above.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**
 
-- `mysql_db`/`postgresql_db`: `.zst` compression (no Crystal zstd binding
-  vendored yet - `.bz2`/`.xz` closed in `0.9.43`); `postgresql_db`'s
-  `.tar`/`.pgc`/`.dir` restore formats (`pg_restore`-based, a different
-  restore mechanism, not just another compression codec); `mysql_db`'s
-  `config_file:`, `all_databases:`, various `mysqldump` tuning knobs.
+- `mysql_db` (`0.9.52`): `config_file:` (`~/.my.cnf` credential lookup),
+  `all_databases:`, `ignore_tables:`/`hex_blob:`/`master_data:`/
+  `dump_extra_args:`/`single_transaction:`/`skip_lock_tables:`
+  (`mysqldump` tuning knobs).
 - `postgresql_privs` (`0.9.44`): `type: default_privs`/
   `foreign_data_wrapper`/`foreign_server`/`function`/`group`/`language`/
   `tablespace`/`type`/`procedure`/`parameter` (only `table`/`sequence`/

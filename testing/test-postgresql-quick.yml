@@ -99,6 +99,52 @@
         login_user: "{{ login_user }}"
         login_password: "{{ login_password }}"
 
+    - name: dump the database, pg_restore custom format (.pgc)
+      community.postgresql.postgresql_db:
+        name: "{{ test_db }}"
+        state: dump
+        target: /tmp/crystal-ansible-pg-dump.pgc
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: db_dump_pgc
+
+    - name: create a third database to restore the .pgc dump into
+      community.postgresql.postgresql_db:
+        name: "{{ test_db }}_pgc"
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+
+    - name: restore the .pgc dump via pg_restore, not psql
+      community.postgresql.postgresql_db:
+        name: "{{ test_db }}_pgc"
+        state: restore
+        target: /tmp/crystal-ansible-pg-dump.pgc
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+      register: db_restore_pgc
+
+    - name: verify the .pgc-restored data round-tripped correctly
+      ansible.builtin.shell: >-
+        psql postgresql://{{ login_user }}:{{ login_password }}@{{ login_host }}:{{ login_port }}/{{ test_db }}_pgc
+        -tAc "SELECT COUNT(*) FROM t"
+      register: restored_count_pgc
+      changed_when: false
+
+    - name: remove the third database
+      community.postgresql.postgresql_db:
+        name: "{{ test_db }}_pgc"
+        state: absent
+        login_host: "{{ login_host }}"
+        login_port: "{{ login_port }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+
     - name: create the test role
       community.postgresql.postgresql_user:
         name: "{{ test_user }}"
@@ -159,6 +205,9 @@
           db_dump={{ db_dump.changed }}
           db_restore_gz={{ db_restore_gz.changed }}
           restored_count={{ restored_count.stdout }}
+          db_dump_pgc={{ db_dump_pgc.changed }}
+          db_restore_pgc={{ db_restore_pgc.changed }}
+          restored_count_pgc={{ restored_count_pgc.stdout }}
           user_first={{ user_first.changed }}
           user_idempotent={{ user_idempotent.changed }}
           user_flags_changed={{ user_flags_changed.changed }}

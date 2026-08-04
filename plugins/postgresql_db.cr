@@ -40,14 +40,22 @@ module CrystalPlay
   #   `ansible-doc`, not assumed to match its MySQL counterpart): shells
   #   out to `pg_dump`/`psql`, since dump/restore need the actual client
   #   binaries - there's no wire-protocol equivalent of "give me a full
-  #   logical SQL dump." `target:` is required for both. Only the plain
-  #   `.sql` format is supported, natively compressed via
+  #   logical SQL dump." `target:` is required for both. The plain `.sql`
+  #   format is natively compressed via
   #   `Compress::Gzip`/`Compress::XZ`/`Compress::BZ2` (`.gz`/`.xz`/`.bz2`)
   #   rather than shelling to `gzip`/`xz`/`bzip2` (matching `mysql_db.cr`'s
-  #   own reasoning) - real Ansible's `.tar`/`.pgc`/`.dir` formats (handled
-  #   by `pg_restore` instead of plain `psql`, a genuinely different
-  #   restore mechanism, not just another compression codec) remain a
-  #   documented scope cut, see below. Password passed via a `PGPASSWORD=`
+  #   own reasoning; real Ansible's postgresql_db has no `.zst` support
+  #   at all to begin with, unlike mysql_db - verified against its
+  #   source, not assumed just because mysql_db has one). `.tar`/`.pgc`/
+  #   `.dir` (real Ansible's own `pg_dump --format=t/c/d`) are supported
+  #   too: dump has `pg_dump` write straight to `target:` via a shell
+  #   redirect/`-f` flag rather than going through this plugin's own
+  #   String-based capture-then-write path (binary-unsafe for these three
+  #   - see PG_RESTORE_FORMATS' own doc comment), and restore shells out
+  #   to `pg_restore` instead of `psql` for exactly these three
+  #   extensions, a genuinely different restore mechanism, not just
+  #   another compression codec (matches real Ansible's own
+  #   `db_restore()` doing the same). Password passed via a `PGPASSWORD=`
   #   environment-variable prefix in the shell command (matches real
   #   Ansible - psql/pg_dump don't take a password CLI flag at all).
   #   Command shape (`pg_dump dbname --host=H --port=P --username=U` /
@@ -60,13 +68,12 @@ module CrystalPlay
   #   PostgreSQL 17 server, not assumed from the docs.
   # - check_mode
   #
-  # Not implemented: `.tar`/`.pgc`/`.dir` formats (`pg_restore`-based,
-  # see above; `.zst` compression is also not implemented - no Crystal
-  # zstd binding is vendored in this codebase yet), `collation:`/
-  # `lc_collate:`/`lc_ctype:`/`template:`/
+  # Not implemented: `collation:`/`lc_collate:`/`lc_ctype:`/`template:`/
   # `tablespace:`, `force:` (terminate other connections before DROP
   # DATABASE), `session_role:`, `trust_input:` (SQL-injection guard on
-  # option values - this plugin always quotes identifiers itself instead).
+  # option values - this plugin always quotes identifiers itself
+  # instead), `target_opts:`/`dump_extra_args:` (extra pg_dump/pg_restore/
+  # psql CLI args).
   class PostgresqlDbPlugin < BasePlugin
     def execute : PluginResult
       name = @params["name"]?
@@ -146,7 +153,21 @@ module CrystalPlay
       state == "dump" ? run_dump(name, target) : run_restore(name, target)
     end
 
+    # .tar/.pgc/.dir formats (see PG_RESTORE_FORMATS below) are binary
+    # (.dir isn't even a single file) - remote_exec captures a command's
+    # stdout as a Crystal String, which isn't safe for binary data
+    # (established elsewhere in this codebase, see apt_repository.cr's
+    # own GPG-key-export reasoning), so unlike the plain-.sql path below,
+    # pg_dump is told to write straight to target itself via a shell
+    # redirect/-f flag - the bytes never pass through Crystal at all.
+    PG_RESTORE_FORMATS = {".tar" => "t", ".pgc" => "c", ".dir" => "d"}
+
     private def run_dump(name : String, target : String) : PluginResult
+      ext = File.extname(target)
+      if letter = PG_RESTORE_FORMATS[ext]?
+        return run_dump_via_pg_dump_format(name, target, ext, letter)
+      end
+
       cmd = "#{pgpassword_prefix}pg_dump #{quote(name)} #{login_flags}"
       result = remote_exec(cmd)
       return PluginResult.new(changed: false, failed: true, msg: result[:stderr], rc: result[:exit_code]) unless result[:exit_code] == 0
@@ -157,7 +178,24 @@ module CrystalPlay
       PluginResult.new(changed: false, failed: true, msg: "Failed to write dump to #{target}: #{ex.message}")
     end
 
+    # .dir needs `-f target` (pg_dump creates the directory itself);
+    # .tar/.pgc are single files, written via a plain `>` shell redirect -
+    # same distinction real Ansible's own db_dump() makes.
+    private def run_dump_via_pg_dump_format(name : String, target : String, ext : String, format_letter : String) : PluginResult
+      cmd = "#{pgpassword_prefix}pg_dump #{quote(name)} #{login_flags} --format=#{format_letter}"
+      cmd += ext == ".dir" ? " -f #{quote(target)}" : " > #{quote(target)}"
+
+      result = remote_exec(cmd)
+      return PluginResult.new(changed: false, failed: true, msg: result[:stderr], rc: result[:exit_code]) unless result[:exit_code] == 0
+      PluginResult.new(changed: true, failed: false, msg: "", rc: result[:exit_code])
+    end
+
     private def run_restore(name : String, target : String) : PluginResult
+      ext = File.extname(target)
+      if PG_RESTORE_FORMATS.has_key?(ext)
+        return run_restore_via_pg_restore(name, target, ext)
+      end
+
       return PluginResult.new(changed: false, failed: true, msg: "target #{target} does not exist") unless remote_file_exists?(target)
 
       sql_path = read_target_as_sql_file(target)
@@ -169,6 +207,23 @@ module CrystalPlay
       PluginResult.new(changed: true, failed: false, msg: result[:stdout], rc: result[:exit_code])
     rescue ex
       PluginResult.new(changed: false, failed: true, msg: "Failed to restore #{target}: #{ex.message}")
+    end
+
+    # pg_restore, not psql, handles .tar/.pgc/.dir - a genuinely different
+    # restore mechanism, not just another compression codec (matches real
+    # Ansible's own db_restore(): `cmd = module.get_bin_path('pg_restore',
+    # True)` for exactly these three extensions). Takes the target
+    # path/directory as a positional argument rather than stdin
+    # redirection, unlike psql's plain-.sql path above.
+    private def run_restore_via_pg_restore(name : String, target : String, ext : String) : PluginResult
+      exists = ext == ".dir" ? remote_dir_exists?(target) : remote_file_exists?(target)
+      return PluginResult.new(changed: false, failed: true, msg: "target #{target} does not exist") unless exists
+
+      cmd = "#{pgpassword_prefix}pg_restore --dbname=#{quote(name)} #{login_flags} #{quote(target)}"
+      result = remote_exec(cmd)
+
+      return PluginResult.new(changed: false, failed: true, msg: result[:stderr], rc: result[:exit_code]) unless result[:exit_code] == 0
+      PluginResult.new(changed: true, failed: false, msg: result[:stdout], rc: result[:exit_code])
     end
 
     # psql/pg_dump take no password CLI flag at all - real Ansible passes

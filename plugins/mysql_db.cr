@@ -31,15 +31,19 @@ module CrystalPlay
   #   Ansible's own module does the same - dump/restore need the actual
   #   client binaries, there's no wire-protocol equivalent of "give me a
   #   full logical SQL dump"). `target:` is required for both. Real
-  #   Ansible pipes dump/import through `gzip`/`bzip2`/`xz` shell
+  #   Ansible pipes dump/import through `gzip`/`bzip2`/`xz`/`zstd` shell
   #   binaries for a compressed `target:`; this plugin instead reads/
-  #   writes the compressed file natively via `Compress::Gzip`
-  #   (stdlib)/`Compress::XZ`/`Compress::BZ2` (`.gz`/`.xz`/`.bz2` - `.zst`
-  #   is a documented scope cut, no Crystal zstd binding is vendored here
-  #   yet) rather than shelling to `gzip`/`xz`/`bzip2`, matching this
-  #   codebase's general preference for native codecs over shelling out
-  #   where one's already available (`archive.cr` already depends on all
-  #   three for the same reason). Command shape (`mysqldump
+  #   writes `.gz`/`.xz`/`.bz2` natively via `Compress::Gzip`
+  #   (stdlib)/`Compress::XZ`/`Compress::BZ2`, matching this codebase's
+  #   general preference for native codecs over shelling out where one's
+  #   already available (`archive.cr` already depends on all three for
+  #   the same reason) - `.zst` shells out to the `zstd` CLI binary
+  #   instead (no Crystal zstd binding vendored here), which is actually
+  #   what real Ansible's own module does for `.zst` too
+  #   (`module.get_bin_path('zstd', True)`, piped through a subprocess -
+  #   verified against its actual source), so this one codec isn't a step
+  #   down from real Ansible's own behavior the way it would be for the
+  #   other three. Command shape (`mysqldump
   #   --user=U --password='PW' --host=H --port=P dbname --quick` /
   #   `mysql --user=U --password='PW' --host=H --port=P --one-database
   #   dbname < target`, including the `--quick`/`--one-database` flags
@@ -50,8 +54,8 @@ module CrystalPlay
   #   server, not assumed from the docs.
   # - check_mode
   #
-  # Not implemented: `.zst` compression for dump/import (see above),
-  # `config_file:` (`~/.my.cnf` credential lookup), `all_databases:`,
+  # Not implemented: `config_file:` (`~/.my.cnf` credential lookup),
+  # `all_databases:`,
   # `ignore_tables:`/`hex_blob:`/
   # `master_data:`/`dump_extra_args:`/`single_transaction:`/
   # `skip_lock_tables:` (mysqldump tuning knobs), encoding:/collation:
@@ -186,10 +190,18 @@ module CrystalPlay
     # Writes dump content to target, compressing natively (no `gzip`/
     # `bzip2`/`xz` subprocess) when target ends in .gz/.bz2/.xz - same
     # codecs (and the same "native over shelling out" preference)
-    # archive.cr already depends on. .zst stays a documented scope cut:
-    # no Crystal zstd binding is vendored in this codebase yet, unlike
-    # gzip (stdlib), xz, and bz2 (both already required for archive:).
+    # archive.cr already depends on. .zst shells out to the `zstd` CLI
+    # binary instead - no Crystal zstd binding is vendored in this
+    # codebase, but real Ansible's own module does exactly the same
+    # thing for `.zst` (`module.get_bin_path('zstd', True)`, piped
+    # through a subprocess - verified against its actual source, unlike
+    # gzip/bzip2/xz, which real Ansible *also* shells out to but this
+    # codebase deliberately went native for since bindings already
+    # existed), so this is arguably more faithful to real Ansible's own
+    # implementation than the other three, not less.
     private def write_target(target : String, content : String)
+      return write_zst(target, content) if target.ends_with?(".zst")
+
       File.open(target, "w") do |file|
         case
         when target.ends_with?(".gz")
@@ -204,11 +216,18 @@ module CrystalPlay
       end
     end
 
+    private def write_zst(target : String, content : String)
+      status = Process.run("zstd", ["-q", "-f", "-o", target, "-"], input: IO::Memory.new(content))
+      raise "zstd compression failed (exit #{status.exit_code}) - is the zstd binary installed?" unless status.success?
+    end
+
     # Returns a path to plain SQL content ready for `mysql ... < path`:
     # target itself when it's already plain, or a decompressed temp copy
-    # when target ends in .gz/.bz2/.xz (native readers, no subprocess) -
-    # the caller deletes the temp copy afterward.
+    # when target ends in .gz/.bz2/.xz/.zst (native readers for the first
+    # three, `zstd -dc` subprocess for the last - see write_target above)
+    # - the caller deletes the temp copy afterward.
     private def read_target_as_sql_file(target : String) : String
+      return read_zst_as_sql_file(target) if target.ends_with?(".zst")
       return target unless target.ends_with?(".gz") || target.ends_with?(".bz2") || target.ends_with?(".xz")
 
       tmp_path = "#{target}.#{Process.pid}.sql"
@@ -222,6 +241,15 @@ module CrystalPlay
         end
       end
       File.write(tmp_path, content)
+      tmp_path
+    end
+
+    private def read_zst_as_sql_file(target : String) : String
+      tmp_path = "#{target}.#{Process.pid}.sql"
+      status = File.open(tmp_path, "w") do |outfile|
+        Process.run("zstd", ["-q", "-d", "-c", target], output: outfile)
+      end
+      raise "zstd decompression failed (exit #{status.exit_code}) - is the zstd binary installed?" unless status.success?
       tmp_path
     end
 
