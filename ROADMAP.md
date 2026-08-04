@@ -1,12 +1,12 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.32`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.33`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
 `0.9.24`, `get_url` `0.9.25`/`0.9.32`, `blockinfile` `0.9.26`, `uri` `0.9.27`,
 `assert` `0.9.28`, `wait_for` `0.9.29`, `fetch` `0.9.30`, `pause` `0.9.31`).
-591/593 specs pass (the 2 exceptions need a live MySQL/PostgreSQL server at
+595/597 specs pass (the 2 exceptions need a live MySQL/PostgreSQL server at
 `127.0.0.1:13306`/`15432`), `ameba` clean on all new/touched code. A
 Docker-based compatibility harness (`compat/`, see `compat/README.md`) runs
 the same playbooks through real `ansible-playbook` and `crystal-ansible` side
@@ -15,9 +15,11 @@ instead of assumptions; **34/34 compat playbooks pass**, including a fresh
 compat playbook per Phase 5 module (`compat/playbooks/27-set-fact.yml`
 through `34-pause.yml`) added and verified in this pass - see each Phase 5
 entry below and `compat/README.md`'s Coverage section for what each one
-caught, including a real `get_url` field-naming bug and a real
-`LocalExecutor`/`shell:` hang bug (documented as still open, in the Phase 5
-wrap-up note).
+caught, including a real `get_url` field-naming bug (fixed in `0.9.32`) and
+a real `LocalExecutor`/`shell:` hang bug (fixed in `0.9.33` - see the Phase
+5 wrap-up note below, which also caught and fixed a related `build.sh`
+staleness-check gap that let the fix silently not take effect on the first
+attempt).
 
 Two cross-cutting efforts also landed since Phases 3/4 were marked done:
 
@@ -1543,12 +1545,12 @@ first, then `blockinfile`, `uri`, `assert`, `wait_for`, `fetch`, `pause`.
   message, and `changed: false`. **Update (`0.9.32`):** verified against
   real `ansible-playbook` via the compat harness
   (`compat/playbooks/32-wait-for.yml` - passed). Building that playbook
-  found a real, unrelated bug: `LocalExecutor.exec` (backing
-  `shell:`/`command:` on any local connection) hangs *forever* on a
-  command shaped like `sleep N && long-running-daemon &` - see the Phase
-  5 wrap-up note below for the root cause and a workaround; this is a
+  found a real, unrelated bug (fixed in `0.9.33`): `LocalExecutor.exec`
+  (backing `shell:`/`command:` on any local connection) hung *forever* on
+  a command shaped like `sleep N && long-running-daemon &` - see the
+  Phase 5 wrap-up note below for the root cause and the fix; this was a
   genuine `shell:`/`command:` gap, not a `wait_for:` one, so it's tracked
-  separately rather than blocking this entry.
+  separately rather than this entry.
 - [x] `fetch` (`0.9.30`): pulls a file from the target to the control node -
   the inverse of `copy`. Parameters: `src` (required), `dest` (required),
   `flat` (default `no` - `dest/<inventory_hostname>/<src, leading slash
@@ -1647,12 +1649,13 @@ playbook (`compat/playbooks/27-set-fact.yml` through `34-pause.yml`,
 following the same `compat/playbooks/NN-*.yml` pattern Phases 3/4 already
 established) diffed against real `ansible-playbook` - **34/34 compat
 playbooks pass**. Building those eight playbooks found two more real bugs
-beyond the ones each module's own entry above already documents: a
-`get_url` result-field name (`checksum` should have been `checksum_src`,
-fixed in `0.9.32` - see that entry) and a genuine `LocalExecutor`/`shell:`
-hang on `sleep N && daemon &`-shaped commands (documented below, not yet
-fixed - a real gap in `shell:`/`command:` themselves, unrelated to any
-Phase 5 module, worth picking up before new module scope).
+beyond the ones each module's own entry above already documents, both now
+fixed: a `get_url` result-field name (`checksum` should have been
+`checksum_src`, fixed in `0.9.32` - see that entry) and a genuine
+`LocalExecutor`/`shell:` hang on `sleep N && daemon &`-shaped commands
+(fixed in `0.9.33`, detailed below - a real gap in `shell:`/`command:`
+themselves, unrelated to any Phase 5 module, that a plain reading of the
+compat playbook's own task wouldn't have suggested was there).
 
 **Also still open (lower priority - see each shipping plugin's class doc for the
 exact "not implemented" list):** the documented per-plugin scope cuts (e.g.
@@ -1667,29 +1670,65 @@ mutually exclusive rather than real Ansible's overlapping ones). Cloud plugins
 (`ec2`, `s3_bucket`, `azure_rm_*`) and inventory *plugins* (`aws_ec2.yml` et
 al.) remain explicitly lowest-ROI and are not planned.
 
-**New cross-cutting bug found while building `compat/playbooks/32-wait-for.yml`:**
-`LocalExecutor.exec` (used by `shell:`/`command:` on any local connection)
-hangs **forever** - not a slow path, an actual indefinite hang - on a
-command of the shape `sleep N && long-running-daemon &`. Root cause:
-Crystal's `Process.run(..., output: IO::Memory, error: IO::Memory)` blocks
-until both the child exits *and* its stdout/stderr pipes reach EOF, which
-requires every process holding a duplicate of those pipe fds to close them.
-`sleep N && daemon &` backgrounds a *shell* that blocks in `wait()` on
-`daemon` (a plain trailing `&` backgrounds the whole `&&`-list, and `nohup`
-only suppresses `SIGHUP` - it doesn't exempt a child from its parent's own
-`wait()`) - since `daemon` here never exits, neither does the shell holding
-the pipe open, so `Process.run` never sees EOF and the task hangs
-indefinitely. A single `nohup sh -c 'sleep N; daemon' &` (backgrounding one
-process directly, no separate parent shell left waiting) does not hit this -
-that's the workaround `32-wait-for.yml` now uses. Confirmed this is a real
-crystal-ansible-specific gap, not a documentation quirk: the identical
-`sleep N && daemon &` command runs fine under real `ansible-playbook`
-(verified side by side in the same container). Affects any real playbook
-using this common "delayed background service start" idiom, not just the
-compat fixture that surfaced it - worth a proper fix (e.g. reading
-stdout/stderr with a timeout, or spawning via a fresh process group that
-can be waited on independently of any lingering pipe-fd holders) ahead of
-any new plugin work.
+**Cross-cutting bug found while building `compat/playbooks/32-wait-for.yml`
+(fixed in `0.9.33`):** `LocalExecutor.exec` (used by `shell:`/`command:` on
+any local connection) used to hang **forever** - not a slow path, an actual
+indefinite hang - on a command of the shape `sleep N && long-running-daemon
+&`. Root cause: Crystal's `Process.run(..., output: IO::Memory, error:
+IO::Memory)` blocks until both the child exits *and* its stdout/stderr
+pipes reach EOF, which requires every process holding a duplicate of those
+pipe fds to close them. `sleep N && daemon &` backgrounds a *shell* that
+blocks in `wait()` on `daemon` (a plain trailing `&` backgrounds the whole
+`&&`-list, and `nohup` only suppresses `SIGHUP` - it doesn't exempt a child
+from its parent's own `wait()`) - since `daemon` here never exits, neither
+did the shell holding the pipe open, so `Process.run` never saw EOF and the
+task hung indefinitely. Confirmed as a real crystal-ansible-specific gap,
+not a documentation quirk: the identical `sleep N && daemon &` command runs
+fine under real `ansible-playbook` (verified side by side in the same
+container) - `compat/playbooks/32-wait-for.yml` still uses the
+`nohup sh -c 'sleep N; daemon' &` workaround it was written with (a single
+process backgrounded directly is the better idiom regardless of the
+underlying fix), but the fix itself is general and not specific to that
+one command shape.
+- **Fix:** `LocalExecutor.exec` now spawns with `Process::Redirect::Pipe`
+  instead of handing `Process.new` a plain `IO::Memory` to write into
+  directly (which is what made `Process#wait` itself block on pipe EOF, an
+  implementation detail one layer down that the original bug report didn't
+  narrow down to). Two fibers drain `process.output`/`process.error` into
+  memory buffers independently of `process.wait`, so the process's own OS
+  exit is detected without depending on when (or whether) the pipes reach
+  EOF. Once `process.wait` returns, each drain fiber gets a bounded
+  `DRAIN_GRACE_PERIOD` (200ms) to finish reading whatever the process had
+  already flushed into the pipe's kernel buffer before exiting - real
+  output is never truncated by this window in practice, since it's already
+  sitting in the buffer by the time the process exits and a fiber has been
+  draining it concurrently since the process started, not just after exit.
+  If a fiber hasn't finished after the grace period (a lingering
+  backgrounded grandchild still holding the pipe open), the pipe is
+  force-closed to unblock the fiber's pending read rather than leaking it
+  forever, and the call returns with whatever was captured up to that
+  point. Verified: the exact `sleep N && daemon &` shape that used to hang
+  now returns near-instantly (confirmed both via a direct plugin-binary
+  reproduction and inside the actual compat-harness container); normal
+  commands still capture full stdout/stderr/exit code correctly, including
+  large output (500KB, unmodified byte count) that would previously have
+  relied on the same blocking-pipe-drain path. Regression-tested in
+  `spec/unit/local_executor_spec.cr` (4 examples: normal stdout capture,
+  stderr + nonzero exit, large-output non-truncation, and the
+  `sleep && daemon &` hang itself - asserted to complete in well under the
+  worst-case bound and to have genuinely started the backgrounded daemon,
+  not just to avoid erroring).
+- **Also fixed in the same pass:** `build.sh`'s per-plugin staleness check
+  only compared each `plugins/<name>.cr`'s own mtime against its binary,
+  unlike the main executable's own check just above it in the same file
+  (which already walks `src/*.cr` too) - so a `src/` dependency change
+  like this one silently left every plugin binary stale, `./build.sh`
+  reporting "up to date" the whole time. Caught only because a fresh test
+  run showed the fix hadn't taken effect at all, not from any error output.
+  Fixed by giving the plugin loop the same `find src -name '*.cr' -newer
+  "$BINARY"` check the main executable already had - the same class of gap
+  the main executable's own mtime check was fixed for previously (see
+  Phase 3's `file` plugin entry), now closed for plugins too.
 
 **Result (with Phase 5 complete):** genuine parity for routine Linux server
 automation - the full set of commonly-used `ansible.builtin` modules plus the

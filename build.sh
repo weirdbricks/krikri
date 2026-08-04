@@ -233,6 +233,13 @@ for plugin in "${PLUGINS[@]}"; do
         elif [ "$SOURCE" -nt "$BINARY" ]; then
             # Source is newer than binary
             NEEDS_BUILD=true
+        elif find src -name '*.cr' -newer "$BINARY" -print -quit | grep -q .; then
+            # Plugin's own mtime doesn't change when only a src/ dependency
+            # (e.g. base_plugin.cr, local_executor.cr) does - same class of
+            # gap the main executable's own check already accounts for
+            # above; without this, `./build.sh` after a src/ change reports
+            # every plugin "up to date" and silently ships stale binaries.
+            NEEDS_BUILD=true
         fi
         
         if [ "$NEEDS_BUILD" = true ]; then
