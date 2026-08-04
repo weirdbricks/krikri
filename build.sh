@@ -217,17 +217,20 @@ PLUGINS=(
 )
 
 PLUGIN_COUNT=0
-REBUILT_COUNT=0
+TO_BUILD=()
 
+# First pass: figure out which plugins need a rebuild (cheap mtime checks,
+# no compilation) so the actual `crystal build` invocations below can run
+# in parallel instead of one at a time.
 for plugin in "${PLUGINS[@]}"; do
     SOURCE="plugins/$plugin.cr"
-    
+
     if [ -f "$SOURCE" ]; then
         BINARY="$PLUGINS_DIR/$plugin"
-        
+
         # Check if rebuild is needed
         NEEDS_BUILD=false
-        
+
         if [ ! -f "$BINARY" ]; then
             # Binary doesn't exist
             NEEDS_BUILD=true
@@ -242,24 +245,9 @@ for plugin in "${PLUGINS[@]}"; do
             # every plugin "up to date" and silently ships stale binaries.
             NEEDS_BUILD=true
         fi
-        
+
         if [ "$NEEDS_BUILD" = true ]; then
-            echo -n "   Building $plugin... "
-            
-            if ! OUTPUT=$(crystal build "$SOURCE" -o "$BINARY" $BUILD_FLAGS 2>&1); then
-                echo -e "${RED}✗${NC}"
-                echo ""
-                echo -e "${RED}❌ Build failed for plugin: $plugin${NC}"
-                echo ""
-                echo "$OUTPUT"
-                echo ""
-                echo -e "${YELLOW}Fix the error above and run ./build.sh again${NC}"
-                exit 1
-            fi
-            
-            chmod +x "$BINARY"
-            echo -e "${GREEN}✓${NC}"
-            ((REBUILT_COUNT++))
+            TO_BUILD+=("$plugin")
         else
             echo -e "   ${BLUE}✓${NC} $plugin (up to date)"
         fi
@@ -268,6 +256,58 @@ for plugin in "${PLUGINS[@]}"; do
         echo -e "   ${YELLOW}⚠  Skipping $plugin (not found)${NC}"
     fi
 done
+
+REBUILT_COUNT=${#TO_BUILD[@]}
+
+if [ "$REBUILT_COUNT" -gt 0 ]; then
+    JOBS=$(nproc 2>/dev/null || echo 4)
+    echo -e "   ${YELLOW}Building $REBUILT_COUNT plugin(s) (up to $JOBS in parallel)...${NC}"
+
+    STATUS_DIR=$(mktemp -d)
+    trap 'rm -rf "$STATUS_DIR"' EXIT
+
+    build_one_plugin() {
+        local plugin="$1"
+        local source="plugins/$plugin.cr"
+        local binary="$PLUGINS_DIR/$plugin"
+
+        # Each parallel job gets its own CRYSTAL_CACHE_DIR - concurrent
+        # `crystal build` invocations sharing the default `~/.cache/crystal`
+        # can race on the compiler's own temp/object files (seen as a
+        # spurious "you've found a bug in the Crystal compiler" /
+        # errno.cr "No such file or directory" mid-codegen under real
+        # parallel load - not an actual bug in any of these plugins).
+        if OUTPUT=$(CRYSTAL_CACHE_DIR="$STATUS_DIR/cache-$plugin" crystal build "$source" -o "$binary" $BUILD_FLAGS 2>&1); then
+            chmod +x "$binary"
+            echo -e "   ${GREEN}✓${NC} $plugin"
+        else
+            echo -e "   ${RED}✗${NC} $plugin"
+            printf '%s\n' "$OUTPUT" > "$STATUS_DIR/$plugin.fail"
+        fi
+    }
+    export -f build_one_plugin
+    export PLUGINS_DIR BUILD_FLAGS STATUS_DIR RED GREEN YELLOW NC
+
+    printf '%s\n' "${TO_BUILD[@]}" | xargs -P "$JOBS" -I{} bash -c 'build_one_plugin "$@"' _ {}
+
+    FAILED=()
+    for plugin in "${TO_BUILD[@]}"; do
+        [ -f "$STATUS_DIR/$plugin.fail" ] && FAILED+=("$plugin")
+    done
+
+    if [ ${#FAILED[@]} -gt 0 ]; then
+        echo ""
+        echo -e "${RED}❌ Build failed for: ${FAILED[*]}${NC}"
+        echo ""
+        for plugin in "${FAILED[@]}"; do
+            echo -e "${RED}--- $plugin ---${NC}"
+            cat "$STATUS_DIR/$plugin.fail"
+            echo ""
+        done
+        echo -e "${YELLOW}Fix the error(s) above and run ./build.sh again${NC}"
+        exit 1
+    fi
+fi
 
 echo ""
 if [ $REBUILT_COUNT -gt 0 ]; then
