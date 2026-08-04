@@ -282,6 +282,30 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("postgresql plugins smoke test complete!")
   end
 
+  it "wraps a task's plugin execution in sudo -n -u <user> when become: is set, and rejects an invalid become_user without shelling out" do
+    status, output = run_playbook(
+      "test-become-quick.yml",
+      [] of String,
+      inventory: File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-testservers-local.ini")
+    )
+
+    status.success?.should be_true
+    output.should contain("bad_user_failed=True")
+
+    # become_user: "{{ current_user.stdout }}" - sudo to the same user
+    # already running this process, which every sudo/PAM default allows
+    # without a password since it's not a real privilege change (the same
+    # "don't require real root on whatever machine runs this" convention
+    # spec/integration/user_spec.cr/group_spec.cr use). sudo always sets
+    # SUDO_USER in the child's environment when it actually wraps a
+    # command, so this only passes if become: really executed the plugin
+    # through sudo - not a no-op that happened to not error.
+    match = output.match(/current_user=(\S+) became_sudo_user=(\S+)/)
+    match.should_not be_nil
+    match.not_nil![1].should eq(match.not_nil![2])
+    output.should contain("become smoke test complete!")
+  end
+
   it "recovers a failed block: via rescue:, always runs always:, and the play continues" do
     status, output = run_playbook("test-error-handling-quick.yml", [] of String)
 

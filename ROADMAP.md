@@ -1,41 +1,47 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.40`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.41`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
 `0.9.24`, `get_url` `0.9.25`/`0.9.32`, `blockinfile` `0.9.26`, `uri` `0.9.27`,
 `assert` `0.9.28`, `wait_for` `0.9.29`, `fetch` `0.9.30`, `pause` `0.9.31`).
-Two of the three cross-cutting engine gaps are now fixed: dotted-variable
-access in bare conditionals (`0.9.34`) and the recap `ok`/`changed` counter
-overlap (`0.9.35`) - the Jinja2 filter-chaining gap and a newly-documented
-`become:`/`become_user:` no-op remain open (see the notes near the end of
-Phase 5; both need real architectural changes, not quick adds). The
-per-plugin scope-cut grab-bag is now fully closed: `stat`'s `get_mime`/
-`get_attributes` (`0.9.36`), `find`'s `age`/`age_stamp`/`contains`/
-`read_whole_file` (`0.9.37`), `archive`'s `exclude_path` (`0.9.38`), `ufw`'s
-`insert_relative_to` (`0.9.39`), and `mysql_db`/`postgresql_db`'s `state:
-dump`/`import`(`restore`) (`0.9.40`) have all shipped. 637/638 specs pass
-(the 2 exceptions need a live MySQL/PostgreSQL server at
-`127.0.0.1:13306`/`15432` reachable with real `mysql`/`psql` client
-binaries, neither installed on this host directly - see the `0.9.40` entry
-for how they were verified anyway), `ameba` clean on all new/touched code. A
-Docker-based compatibility harness (`compat/`, see `compat/README.md`) runs
-the same playbooks through real `ansible-playbook` and `crystal-ansible` side
-by side and diffs the resulting filesystem state + exit codes - ground truth
-instead of assumptions; **36/36 compat playbooks pass**, including a fresh
-compat playbook per Phase 5 module (`compat/playbooks/27-set-fact.yml`
-through `34-pause.yml`) plus one each for `mysql_db`/`postgresql_db`'s new
-dump/import support (`35-mysql-db.yml`/`36-postgresql-db.yml`) - see each
-entry below and `compat/README.md`'s Coverage section for what each one
-caught, including a real `get_url` field-naming bug (fixed in `0.9.32`), a
-real `LocalExecutor`/`shell:` hang bug (fixed in `0.9.33` - see the Phase 5
+Three of the three cross-cutting engine gaps this roadmap has ever tracked
+are now fixed: dotted-variable access in bare conditionals (`0.9.34`), the
+recap `ok`/`changed` counter overlap (`0.9.35`), and `become:`/
+`become_user:` privilege escalation (`0.9.41`, see that entry near the end
+of Phase 5) - only the Jinja2 filter-chaining gap remains open (see the
+note near the end of Phase 5; it needs a real architectural change, not a
+quick add). The per-plugin scope-cut grab-bag is fully closed: `stat`'s
+`get_mime`/`get_attributes` (`0.9.36`), `find`'s `age`/`age_stamp`/
+`contains`/`read_whole_file` (`0.9.37`), `archive`'s `exclude_path`
+(`0.9.38`), `ufw`'s `insert_relative_to` (`0.9.39`), and `mysql_db`/
+`postgresql_db`'s `state: dump`/`import`(`restore`) (`0.9.40`) have all
+shipped. 639/641 specs pass (the 2 exceptions need a live MySQL/PostgreSQL
+server at `127.0.0.1:13306`/`15432` reachable with real `mysql`/`psql`
+client binaries, neither installed on this host directly - see the
+`0.9.40` entry for how they were verified anyway), `ameba` clean on all
+new/touched code. A Docker-based compatibility harness (`compat/`, see
+`compat/README.md`) runs the same playbooks through real `ansible-playbook`
+and `crystal-ansible` side by side and diffs the resulting filesystem state
++ exit codes - ground truth instead of assumptions; **37/37 compat
+playbooks pass**, including a fresh compat playbook per Phase 5 module
+(`compat/playbooks/27-set-fact.yml` through `34-pause.yml`), one each for
+`mysql_db`/`postgresql_db`'s dump/import support
+(`35-mysql-db.yml`/`36-postgresql-db.yml`), and one for `become:`
+(`37-become.yml`, the one compat playbook that deliberately runs as root to
+exercise a real privilege drop) - see each entry below and
+`compat/README.md`'s Coverage section for what each one caught, including a
+real `get_url` field-naming bug (fixed in `0.9.32`), a real
+`LocalExecutor`/`shell:` hang bug (fixed in `0.9.33` - see the Phase 5
 wrap-up note below, which also caught and fixed a related `build.sh`
 staleness-check gap that let the fix silently not take effect on the first
 attempt), a compat-image venv isolation bug that broke every
 `postgresql_*` compat playbook regardless of crystal-ansible's own
-correctness, and a real `mysql_connection.cr` TLS-negotiation crash against
-a common MariaDB server config (both fixed in `0.9.40`, see that entry).
+correctness, a real `mysql_connection.cr` TLS-negotiation crash against a
+common MariaDB server config (both fixed in `0.9.40`, see that entry), and
+the `become:`/`become_user:` no-op itself, first noticed while writing
+`36-postgresql-db.yml` and fixed in `0.9.41` (see that entry).
 
 Two cross-cutting efforts also landed since Phases 3/4 were marked done:
 
@@ -1915,22 +1921,99 @@ doesn't work today; fixing this properly needs the filter engine to carry
 structured `JSON::Any` values through the whole chain instead of collapsing
 to a string after each step - a real architectural change, not a quick
 filter-by-filter add, and bigger in scope than it looks from this one-line
-mention); and **`become:`/`become_user:` are parsed and threaded through
-`Task`/`TaskExecutor` (including block/role inheritance) but never actually
-applied anywhere command/plugin execution happens** - no `sudo`/`su`
+mention). `become:`/`become_user:` privilege escalation is now fixed - see
+the `0.9.41` entry below. Cloud plugins (`ec2`, `s3_bucket`, `azure_rm_*`)
+and inventory *plugins* (`aws_ec2.yml` et al.) remain explicitly lowest-ROI
+and are not planned.
+
+**Fixed in `0.9.41`:** `become:`/`become_user:` were parsed and threaded
+through `Task`/`TaskExecutor` (including block/role inheritance) but never
+actually applied anywhere command/plugin execution happens - no `sudo`/`su`
 wrapping in `LocalExecutor`, `SSHManager`, or `PluginManager`, so a
-playbook that relies on `become: true` to run as a different user silently
-runs as whatever user crystal-ansible itself was invoked as instead. Found
+playbook that relied on `become: true` to run as a different user silently
+ran as whatever user crystal-ansible itself was invoked as instead. Found
 while writing `compat/playbooks/36-postgresql-db.yml` (worked around there
 with a plain `su postgres -c '...'` shell command instead of `become:`,
 since using it as written would have silently diverged between engines -
-see `compat/README.md`'s coverage section). Not yet fixed; real privilege
-escalation needs `sudo -n -u <user> -- <command>`-style wrapping added to
-each executor's actual invocation path, a nontrivial change (SSH's
-remote-side command construction and the local plugin-binary-exec path are
-both affected) rather than a quick add. Cloud plugins (`ec2`, `s3_bucket`,
-`azure_rm_*`) and inventory *plugins* (`aws_ec2.yml` et al.) remain
-explicitly lowest-ROI and are not planned.
+see `compat/README.md`'s coverage section).
+
+Fixed by wrapping the *whole plugin process* - not individual shell
+commands - in `sudo -n -u <user> --`, at the one place both the local
+spawn (`PluginManager#execute_local_plugin`) and the remote path
+(`PluginManager#execute_remote_plugin`, which uploads a plugin binary and
+runs it directly on the target over SSH) already funnel through. This
+covers every plugin uniformly with no plugin-specific code: `command:`/
+`shell:`'s own subprocess simply inherits the already-escalated identity
+of its parent (the plugin binary), and plugins that do file I/O directly
+in-process (`copy:`, `file:`, etc.) run *as* the become user rather than
+merely shelling a command as one. `become:`/`become_user:` are carried as
+plain top-level fields on the same JSON config every plugin already
+receives over stdin (embedded by `TaskExecutor#build_plugin_config`) rather
+than as new parameters threaded through every call site - which also means
+they round-trip through `async:`'s job file for free, since that's the
+same config re-read verbatim by `__async_run`. Verified locally, over SSH
+(a self-SSH loopback), and under `async:`, in all three cases confirming
+via a `printenv SUDO_USER` check that the child process genuinely ran
+through sudo rather than the task merely not erroring.
+
+- `become_user:` is validated against a strict username allow-list
+  (`/\A[a-zA-Z_][a-zA-Z0-9_.-]{0,31}\z/`) before either path uses it -
+  required on the remote/SSH path regardless, since that command is
+  interpolated into a shell string (`SSHManager` always runs the whole
+  command through `bash -c`, so there's no args-array primitive to
+  sidestep quoting with there), and enforced on the local path too for
+  consistency even though `Process.new`'s own args array doesn't need it.
+  An invalid `become_user:` fails the task cleanly with `become_user "..."
+  is not a valid username` instead of ever reaching a shell.
+- No become-password support (`ansible_become_pass`/`--ask-become-pass`) -
+  `sudo` always runs with `-n` (non-interactive), so a `become_user:` that
+  needs a password to sudo to fails clearly rather than hanging on a
+  prompt nothing could ever answer. A documented scope cut, not an
+  oversight - the same "no real interactive-prompt model" limitation
+  `pause:` already has.
+- `become_user:` defaults to `"root"` when `become: true` is set with no
+  explicit user, matching real Ansible's own default.
+- Fixing this surfaced a second, previously-invisible bug (invisible
+  because `become:`/`become_user:` never did anything before now, so
+  nothing ever exercised this path): `become_user:` was never run through
+  `{{ }}` variable substitution at all, unlike every `params:` value - a
+  playbook using the common `become_user: "{{ service_user }}"` pattern
+  would have silently sudo'd to the literal, unsubstituted string
+  `"{{ service_user }}"` (itself invalid as a username, so it would now
+  fail loudly rather than misbehave silently - but still wrong). Fixed by
+  substituting `task.become_user`/`handler.become_user` through the same
+  `VarSubstitutor` already used for `params:`, once per task-execution
+  site (`execute_task_once`, `execute_handler_internal`) - `task`/
+  `handler` themselves are never mutated, since both are shared/reused
+  across hosts and loop iterations.
+- Verified with a new integration spec
+  (`testing/test-become-quick.yml`/`spec/integration/cli_spec.cr`) -
+  targets `hosts: testservers` (same convention as
+  `test-mysql-quick.yml`/`test-docker-quick.yml`) so the generic
+  auto-discovered "runs every `testing/*.yml` fixture in `--check` mode"
+  test skips the whole play rather than failing: `command:`/`shell:`
+  refuse to act under `--check` at all (matching real Ansible), which
+  would otherwise leave a register value undefined and
+  `become_user: "{{ current_user.stdout }}"` rendering the literal text
+  `"undefined"` - a string that looks like a plausible username to the
+  validation above, but that `sudo` itself would then reject for real
+  ("unknown user undefined"), failing the task for real even under
+  `--check`. The dedicated spec exercises it for real against
+  `inventory-testservers-local.ini` instead: `become:` to the same user
+  already running the spec (safe on any dev machine without real root,
+  the same convention `user_spec.cr`/`group_spec.cr` use - sudo/PAM
+  defaults allow becoming yourself without a password since it's not a
+  real privilege change) and asserts `SUDO_USER` was actually set in the
+  child's environment, plus the invalid-`become_user` rejection path.
+- Also verified via a new compat-harness playbook
+  (`compat/playbooks/37-become.yml`) - unlike the spec above, this one
+  runs as root inside its own throwaway container (the compat image's
+  default user), so it exercises a *real* privilege drop to a newly
+  created non-root user: `whoami` with and without `become:`, file
+  ownership after a `copy:` task run under `become:`, and the invalid-user
+  rejection path - `compat/Dockerfile` needed `sudo` added to its package
+  list, which wasn't there before since nothing in this codebase ever
+  used it.
 
 **Fixed in `0.9.35`:** the recap `ok`/`changed` counters being mutually
 exclusive rather than real Ansible's overlapping ones. Verified against a
@@ -2048,7 +2131,8 @@ already-shipped core engine, plugins, and compatibility harness.
 Roughly 12-18 weeks of focused work across Phases 1-4, plus Phase 0 up front.
 **Phases 0-5 are all now complete** (Phase 5 as of `0.9.31`, with full
 compat-harness coverage for all eight of its modules added at `0.9.32`).
-What remains is the lower-priority scope-cut list and the two remaining
-cross-cutting engine gaps at the end of the Phase 5 section (Jinja2
-filter-chaining, and `become:`/`become_user:` not actually applying
-privilege escalation - see each entry above).
+What remains is the lower-priority scope-cut list and the one remaining
+cross-cutting engine gap at the end of the Phase 5 section (Jinja2
+filter-chaining - see that entry above; `become:`/`become_user:` privilege
+escalation, the other cross-cutting gap this roadmap tracked, shipped in
+`0.9.41`).

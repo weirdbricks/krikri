@@ -1,0 +1,52 @@
+# become: is only verified here via "become to yourself" (sudo -n -u
+# <the same user already running this>, which every sudo/PAM default
+# allows without a password since it's not a real privilege change) - the
+# same convention spec/integration/user_spec.cr/group_spec.cr use for
+# never requiring real root on whatever machine runs this fixture. sudo
+# always sets SUDO_USER in the child's environment when it actually wraps
+# a command, so `printenv SUDO_USER` matching the invoking user is a real
+# signal that become: actually ran the task through sudo, not just a
+# no-op check that the task didn't error.
+#
+# Targets "testservers" (same convention as test-mysql-quick.yml/
+# test-docker-quick.yml): command:/shell: skip outright under --check
+# (real Ansible behavior, matched here), which would leave
+# current_user.stdout undefined and become_user: "{{ current_user.stdout
+# }}" rendering the literal string "undefined" - a value the become_user
+# validation itself would accept (it looks like a plausible username),
+# but sudo would then reject for real ("unknown user undefined"), failing
+# the task for real even under --check. Targeting testservers means the
+# whole play is skipped outright under the generic empty inventory
+# instead, and the dedicated spec exercises it for real against
+# inventory-testservers-local.ini.
+- name: become smoke test
+  hosts: testservers
+  gather_facts: false
+
+  tasks:
+    - name: capture the current user
+      ansible.builtin.command: whoami
+      register: current_user
+      changed_when: false
+
+    - name: become_user with an invalid username is rejected safely, not shelled out
+      ansible.builtin.command: whoami
+      become: true
+      become_user: "not a valid user; touch /tmp/should-never-exist"
+      register: bad_user
+      ignore_errors: true
+
+    - name: become to the current user (a safe no-op escalation)
+      ansible.builtin.command: printenv SUDO_USER
+      become: true
+      become_user: "{{ current_user.stdout }}"
+      register: became
+      changed_when: false
+
+    - name: show results
+      ansible.builtin.debug:
+        msg: "bad_user_failed={{ bad_user.failed }} current_user={{ current_user.stdout }} became_sudo_user={{ became.stdout }}"
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "become smoke test complete!"

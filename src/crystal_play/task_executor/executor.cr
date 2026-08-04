@@ -376,6 +376,11 @@ module CrystalPlay
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       substituted_params = substitute_task_params(task.params, substitutor)
       substituted_params = resolve_role_relative_src(task, substituted_params)
+      # become_user: goes through the same {{ }} substitution as any
+      # params: value (e.g. become_user: "{{ service_user }}", a common
+      # real-playbook pattern) - task.become_user itself is never mutated
+      # here, since Task is shared/reused across hosts and loop iterations.
+      substituted_become_user = task.become_user.try { |raw_user| substitutor.substitute(raw_user) }
 
       if ActionPluginManager.has_action_plugin?(task.module_name)
         action_result = ActionPluginManager.execute_action(
@@ -399,7 +404,7 @@ module CrystalPlay
         end
       end
 
-      config = build_plugin_config(task, exec_host, substituted_params, vars_context)
+      config = build_plugin_config(task, exec_host, substituted_params, vars_context, substituted_become_user)
       config_json = JSON.parse(config)
 
       result = if task.async_seconds && !@check_mode
@@ -888,7 +893,8 @@ module CrystalPlay
       task : Task,
       host : Host,
       params : Hash(String, String),
-      vars_context : Hash(String, JSON::Any)
+      vars_context : Hash(String, JSON::Any),
+      become_user : String? = task.become_user
     ) : String
       # Add check_mode and diff_mode to params
       final_params = params.dup
@@ -902,9 +908,18 @@ module CrystalPlay
           "port" => host.port
         },
         "params" => final_params,
-        "vars" => vars_context
+        "vars" => vars_context,
+        # Read by PluginManager, not by the plugin binary itself - become:
+        # wraps the *whole* plugin process (local spawn or the remote SSH
+        # command) in `sudo -n -u <user> --`, rather than being something
+        # each plugin has to know about individually. Carried as plain
+        # top-level config fields (not nested under "params") so this
+        # round-trips through async:'s job file (written verbatim from this
+        # same config) without __async_run needing any extra plumbing.
+        "become" => task.become.to_s,
+        "become_user" => become_user
       }
-      
+
       config.to_json
     end
     
@@ -963,9 +978,10 @@ module CrystalPlay
       
       # Substitute variables in handler parameters
       substituted_params = substitute_task_params(handler.params, substitutor)
-      
+      substituted_become_user = handler.become_user.try { |raw_user| substitutor.substitute(raw_user) }
+
       # Build config for plugin
-      config = build_plugin_config(handler, host, substituted_params, vars_context)
+      config = build_plugin_config(handler, host, substituted_params, vars_context, substituted_become_user)
       
       # Execute plugin using PluginManager
       config_json = JSON.parse(config)

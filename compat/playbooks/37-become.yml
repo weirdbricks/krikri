@@ -1,0 +1,84 @@
+# Compat coverage for become:/become_user: (0.9.41): unlike every other
+# compat playbook here, this one runs as root inside its throwaway
+# container (the compat image's own default user), so it can exercise a
+# real privilege drop rather than the "become to yourself" trick
+# spec/integration/cli_spec.cr's dedicated become spec uses to stay safe
+# on an arbitrary, non-root dev machine.
+
+- name: become compat
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: create a throwaway non-root user to become
+      ansible.builtin.user:
+        name: compatbecome
+        state: present
+
+    # /work is root:root 0755 by default - a non-root become_user couldn't
+    # write into it otherwise, unrelated to become: itself. state:
+    # directory given explicitly rather than relying on state: being
+    # inferred from the existing path - a separate, unrelated gap this
+    # codebase's file: plugin has (state: defaults to "file" unconditionally
+    # rather than detecting an already-existing directory, matched here by
+    # just being explicit, the same way a real playbook normally would be).
+    - name: make /work writable by the throwaway become user
+      ansible.builtin.file:
+        path: /work
+        state: directory
+        mode: "0777"
+
+    - name: whoami without become
+      ansible.builtin.command: whoami
+      register: no_become
+      changed_when: false
+
+    - name: whoami with become, explicit user
+      ansible.builtin.command: whoami
+      become: true
+      become_user: compatbecome
+      register: with_become
+      changed_when: false
+
+    - name: whoami with become, default user (root)
+      ansible.builtin.command: whoami
+      become: true
+      register: with_become_default
+      changed_when: false
+
+    - name: write a file as the become user
+      ansible.builtin.copy:
+        content: "hello from become\n"
+        dest: /work/become-owned.txt
+      become: true
+      become_user: compatbecome
+      register: become_copy
+
+    - name: check the file's owner
+      ansible.builtin.command: stat -c %U /work/become-owned.txt
+      register: file_owner
+      changed_when: false
+
+    - name: an invalid become_user is rejected without being shelled out
+      ansible.builtin.command: whoami
+      become: true
+      become_user: "compatbecome; touch /work/should-never-exist"
+      register: bad_user
+      ignore_errors: true
+
+    - name: record results
+      ansible.builtin.copy:
+        content: |
+          no_become={{ no_become.stdout }}
+          with_become={{ with_become.stdout }}
+          with_become_default={{ with_become_default.stdout }}
+          become_copy_changed={{ become_copy.changed }}
+          file_owner={{ file_owner.stdout }}
+          bad_user_failed={{ bad_user.failed }}
+        dest: /work/results.txt
+
+    - name: remove the throwaway user
+      ansible.builtin.user:
+        name: compatbecome
+        state: absent
+        remove: true

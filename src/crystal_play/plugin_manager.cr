@@ -238,17 +238,34 @@ module CrystalPlay
     private def self.execute_local_plugin(plugin_name : String, config : JSON::Any) : JSON::Any
       plugin_path = get_local_plugin_path(plugin_name)
 
+      become, become_user, become_error = resolve_become(config)
+      return become_error if become_error
+
       # Execute plugin with config via stdin using Process
       stdout = IO::Memory.new
       stderr = IO::Memory.new
 
       begin
-        process = Process.new(
-          plugin_path,
-          input: Process::Redirect::Pipe,
-          output: stdout,
-          error: stderr
-        )
+        process = if become && (sudo_user = become_user)
+                    # No shell involved (args passed as a real argv array,
+                    # not interpolated into a command string), so
+                    # become_user doesn't need shell-escaping here - unlike
+                    # the remote/SSH path below, where it does.
+                    Process.new(
+                      "sudo",
+                      ["-n", "-u", sudo_user, "--", plugin_path],
+                      input: Process::Redirect::Pipe,
+                      output: stdout,
+                      error: stderr
+                    )
+                  else
+                    Process.new(
+                      plugin_path,
+                      input: Process::Redirect::Pipe,
+                      output: stdout,
+                      error: stderr
+                    )
+                  end
 
         # Write config to stdin
         process.input.print(config.to_json)
@@ -308,8 +325,18 @@ module CrystalPlay
       end
       modified_config = JSON::Any.new(config_hash)
 
+      become, become_user, become_error = resolve_become(config)
+      return become_error if become_error
+
+      # become_user is validated by resolve_become against a strict
+      # username allow-list before it ever reaches here, since (unlike the
+      # local path above) this string is interpolated directly into a
+      # shell command - SSHManager always runs the whole command through
+      # `bash -c`, there's no args-array primitive to sidestep quoting with.
+      target = become ? "sudo -n -u #{become_user} -- #{remote_plugin_path}" : remote_plugin_path
+
       # Execute plugin remotely with modified config via stdin
-      command = "echo '#{modified_config.to_json.gsub("'", "'\\''")}' | #{remote_plugin_path}"
+      command = "echo '#{modified_config.to_json.gsub("'", "'\\''")}' | #{target}"
       result = SSHManager.exec(
         connection_host,
         host.user || "root",
@@ -338,6 +365,44 @@ module CrystalPlay
           "stderr"  => result[:stderr],
         }.to_json)
       end
+    end
+
+    # Reads become:/become_user: back out of the config JSON (embedded by
+    # TaskExecutor#build_plugin_config) and validates become_user, since
+    # both execute_local_plugin and execute_remote_plugin need the same
+    # become/become_user/error-or-nil triple. Defaults become_user to
+    # "root" when become: is set but become_user: wasn't given, matching
+    # real Ansible's own default.
+    #
+    # No become password support (`ansible_become_pass`/
+    # `--ask-become-pass`) - sudo always runs with `-n` (non-interactive),
+    # so a become_user that needs a password to sudo to fails clearly
+    # rather than hanging on a prompt nothing can ever answer. A
+    # documented scope cut, not an oversight - matches how `pause:` also
+    # has no real interactive-prompt model in this codebase.
+    private def self.resolve_become(config : JSON::Any) : {Bool, String?, JSON::Any?}
+      become = config["become"]?.try(&.as_s?) == "true"
+      return {false, nil, nil} unless become
+
+      become_user = config["become_user"]?.try(&.as_s?)
+      become_user = "root" if become_user.nil? || become_user.empty?
+
+      # Interpolated directly into a shell command on the remote/SSH path
+      # (SSHManager always runs the whole command through `bash -c`, so
+      # there's no args-array primitive to sidestep quoting with there) -
+      # a strict allow-list is a real security boundary here, not just a
+      # sanity check, so it's enforced for both paths uniformly rather
+      # than only where it's strictly required.
+      unless become_user.match(/\A[a-zA-Z_][a-zA-Z0-9_.-]{0,31}\z/)
+        error = JSON.parse({
+          "changed" => false,
+          "failed"  => true,
+          "msg"     => "become_user #{become_user.inspect} is not a valid username",
+        }.to_json)
+        return {true, nil, error}
+      end
+
+      {true, become_user, nil}
     end
 
     # Get local plugin path (compiled binary)

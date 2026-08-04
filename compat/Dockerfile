@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     ufw \
     firewalld \
+    sudo \
     # DB servers + clients for the mysql_db/postgresql_db dump/import
     # compat playbooks (35/36): the playbooks start each server inside
     # the container via its init.d script (no systemd needed). Server and

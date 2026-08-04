@@ -93,7 +93,7 @@ test with exact content assertions for the `lineinfile` bug).
 
 ## Coverage
 
-Thirty-six playbooks, one per concern: `debug`/`copy`, `file` states,
+Thirty-seven playbooks, one per concern: `debug`/`copy`, `file` states,
 `lineinfile`, `loop`/`with_items`, real `user`/`group` creation and
 modification, `block`/`rescue`/`always`, `until`/`retries`, `cron`
 (`cron_file:`), `authorized_key`, `git` clone/checkout against a local
@@ -205,11 +205,35 @@ identical dumps are byte-different across the two engines' separate runs;
 the row-count round trips already prove the content matched.
 `postgresql_db`'s compat playbook sets the `postgres` superuser's password
 via a plain `su postgres -c '...'` shell command rather than
-`become:`/`become_user:` - crystal-ansible parses `become:` but doesn't
-actually apply privilege escalation to command execution yet (a real,
-previously-undocumented gap found while writing this playbook - see
-`ROADMAP.md`), so using it here would have silently run as root on one
-engine and as `postgres` on the other.
+`become:`/`become_user:` - at the time this playbook was written,
+crystal-ansible parsed `become:` but didn't actually apply privilege
+escalation to command execution (a real, previously-undocumented gap found
+while writing this playbook - see `ROADMAP.md`), so using it here would
+have silently run as root on one engine and as `postgres` on the other.
+Since fixed (see `37-become.yml` below) - this playbook wasn't retrofitted
+to use `become:` instead, since the plain `su` command already works fine
+and there's no reason to churn a passing playbook.
+
+`become`/`become_user` (`37-become.yml`) is the one playbook here that
+deliberately runs as root inside its own throwaway container (the compat
+image's default user) rather than working around it like every other
+playbook - the whole point is to exercise a *real* privilege drop, which
+`spec/integration/cli_spec.cr`'s own become spec can't safely do on an
+arbitrary dev machine (it only ever "becomes" the same user already
+running it). Creates a throwaway non-root user, then covers: `whoami`
+with no `become:`, with an explicit `become_user:`, and with `become:`
+defaulting to root; a `copy:` task run under `become:` actually creating
+the file with the become user as owner (not just a command running as
+that user - proving the *whole plugin process* is escalated, not just a
+shell command inside it); and an invalid `become_user:` being rejected
+(both engines fail the task, though for different reasons - real
+Ansible's own become/privilege-setup machinery rejects it one way,
+crystal-ansible's username validation rejects it before ever reaching a
+shell another way; the compat comparison only checks the `failed:` result
+matches, not the exact error text, the same way `find`'s own compat
+playbook compares `matched` counts rather than exact path lists).
+`compat/Dockerfile` needed `sudo` added to its package list for this,
+which wasn't there before since nothing in this codebase used it.
 
 Building `32-wait-for.yml` found a real, previously-unknown bug unrelated
 to `wait_for` itself: `LocalExecutor.exec` (backing `shell:`/`command:`
