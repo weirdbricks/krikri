@@ -3410,6 +3410,26 @@ compat playbook's own task wouldn't have suggested was there).
   examples, same 2 pre-existing DB-client failures) and `ameba` (177
   files, same 51 pre-existing findings) both clean.
 
+- [x] Collapsed the two adjacent `VarSubstitutor` instances in
+  `apply_changed_failed_when` (`0.9.72`) into one shared instance for
+  `changed_when:`/`failed_when:`, from `OPUS_PERFORMANCE_IMPROVEMENTS.md`
+  item 6 - the minimal fix the doc calls out explicitly ("a two-line
+  change with no signature churn, worth doing even if the [full 14-site]
+  threading is deferred"). Both conditions evaluate against the
+  identical `eval_context`, and `VarSubstitutor` is stateless with
+  respect to a given vars hash - confirmed by grepping for
+  `set_variable` (its only mutator) across `src/`: it's defined but never
+  called anywhere, so sharing one instance between the two `if` blocks is
+  safe. The full 14-call-site threading through
+  `when_passes?`/`execute_task_once`/`resolve_delegate_host`/
+  `apply_changed_failed_when` that the doc describes as the complete fix
+  was deliberately not attempted in this pass - it needs signature
+  changes across several methods and its own dedicated review, unlike
+  this one. `crystal spec` (766 examples, same 2 pre-existing DB-client
+  failures, including the `changed_when:`/`failed_when:` override smoke
+  test in `cli_spec.cr` that exercises this exact path) and `ameba` (177
+  files, same 51 pre-existing findings) both clean.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**

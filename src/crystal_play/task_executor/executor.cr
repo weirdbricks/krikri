@@ -762,14 +762,20 @@ module CrystalPlay
 
       hash = result.as_h.dup
 
-      if changed_when
+      # changed_when/failed_when share one substitutor: VarSubstitutor is
+      # stateless with respect to a given vars hash (its only mutator,
+      # set_variable, is never called from here), so building it twice
+      # for the identical eval_context was pure waste.
+      if changed_when || failed_when
         substitutor = VarSubstitutor.new(vars: eval_context, host_name: host.name)
-        hash["changed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitutor.substitute(changed_when), eval_context))
-      end
 
-      if failed_when
-        substitutor = VarSubstitutor.new(vars: eval_context, host_name: host.name)
-        hash["failed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitutor.substitute(failed_when), eval_context))
+        if changed_when
+          hash["changed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitutor.substitute(changed_when), eval_context))
+        end
+
+        if failed_when
+          hash["failed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitutor.substitute(failed_when), eval_context))
+        end
       end
 
       JSON::Any.new(hash)
