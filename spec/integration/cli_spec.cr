@@ -208,6 +208,47 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("delegate_to / run_once smoke test complete!")
   end
 
+  it "--forks 1 (the default) is byte-identical to today's one-host-at-a-time behavior" do
+    default_status, default_output = run_playbook(
+      "test-forks-quick.yml",
+      [] of String,
+      inventory: File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-multi-local.ini")
+    )
+    forks1_status, forks1_output = run_playbook(
+      "test-forks-quick.yml",
+      ["--forks", "1"],
+      inventory: File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-multi-local.ini")
+    )
+
+    default_status.success?.should be_true
+    forks1_status.success?.should be_true
+    forks1_output.should eq(default_output)
+  end
+
+  it "--forks N runs every host per task, still runs run_once: only on the first host, and keeps each host's output un-interleaved" do
+    status, output = run_playbook(
+      "test-forks-quick.yml",
+      ["--forks", "5"],
+      inventory: File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-multi-local.ini")
+    )
+
+    status.success?.should be_true
+    # Every host actually ran the plain (non-run_once) task.
+    output.should contain("changed: [web1]")
+    output.should contain("changed: [web2]")
+    # run_once: still only executes on the first host under --forks -
+    # task_forkable? excludes it from the parallel fan-out entirely.
+    output.scan("changed: [web1]").size.should eq(2) # the plain task + run_once
+    output.scan("changed: [web2]").size.should eq(1) # the plain task only
+    # ...but its registered result is still visible from both hosts.
+    output.scan("once_result changed=True").size.should eq(2)
+    output.scan("cmd_result changed=True").size.should eq(2)
+    # Each host's own lines stay together, in host order, never
+    # interleaved mid-task by the concurrent fan-out.
+    output.should contain("changed: [web1]\nchanged: [web2]")
+    output.should contain("forks smoke test complete!")
+  end
+
   it "loads group_vars/all.yml, group_vars/<group>.yml, and host_vars/<host>.yml from beside the inventory file" do
     status, output = run_playbook(
       "test-group-host-vars-quick.yml",

@@ -7,6 +7,7 @@ require "../conditional_evaluator"
 require "./variable_context"
 require "./result_display"
 require "./handler_runner"
+require "./output_routing"
 require "../action_plugin_manager"
 require "../inventory_parser"
 require "../async_jobs"
@@ -85,6 +86,12 @@ module CrystalPlay
     # calling build_vars_context again when it reaches the same task -
     # otherwise every batched task pays for that construction twice.
     @batch_cache : Hash(String, Hash(Task, {JSON::Any?, Hash(String, JSON::Any)}))
+    # Max hosts run concurrently per task via the --forks flag; 1 (the
+    # default) is today's exact one-host-at-a-time behavior. Only tasks
+    # `task_forkable?` allows actually fan out - run_once:/block:/
+    # include_tasks:/include_role: always run one host at a time
+    # regardless of this value. See `run_task_for_hosts_in_parallel`.
+    @forks : Int32
 
     def initialize(
       @hosts,
@@ -95,7 +102,8 @@ module CrystalPlay
       @play_vars = {} of String => JSON::Any,
       @gather_facts = true,
       @inventory = nil,
-      @batching_enabled = true
+      @batching_enabled = true,
+      @forks = 1
     )
       @results = Hash(String, Hash(String, Int32)).new
       @registered_vars = Hash(String, Hash(String, JSON::Any)).new
@@ -134,16 +142,86 @@ module CrystalPlay
         puts "TASK [#{task.name}]".colorize(:white).bold
         puts "*" * 70
 
-        @hosts.each do |host|
-          next if @halted_hosts.includes?(host.name)
-          execute_task(task, host)
+        active_hosts = @hosts.reject { |host| @halted_hosts.includes?(host.name) }
+
+        if @forks > 1 && task_forkable?(task) && active_hosts.size > 1
+          run_task_for_hosts_in_parallel(task, active_hosts)
+        else
+          active_hosts.each { |host| execute_task(task, host) }
         end
 
         puts ""
       end
-      
+
       # Run handlers at the end of all tasks (Ansible behavior)
       run_handlers
+    end
+
+    # Whether *task* can safely fan out across hosts via --forks. Excluded:
+    # run_once: (needs @hosts.first to have actually finished before other
+    # hosts can copy its register via copy_run_once_register - a real
+    # ordering dependency, not just a data-race concern) and the
+    # structural/dynamic task kinds (block?/include_tasks?/include_role?),
+    # which recurse into their own nested task lists and ensure_grouped
+    # calls - kept serial to sidestep any question of concurrent
+    # re-entrancy into the batching planner. Every other task kind only
+    # ever touches per-host keys of hashes pre-seeded with every host's
+    # key in #initialize, which is safe under cooperative fiber scheduling
+    # (see run_task_for_hosts_in_parallel's own docs for the full argument).
+    private def task_forkable?(task : Task) : Bool
+      return false if task.run_once
+      return false if task.block?
+      return false if task.include_tasks?
+      return false if task.include_role?
+      true
+    end
+
+    # Runs *task* against every host in *hosts* concurrently instead of
+    # one at a time, via a bounded pool of fibers (same Channel-gated
+    # shape as gather_facts_for_all_hosts's Stage A parallelism) capped at
+    # @forks. Safe with no locks: only one fiber runs Crystal code at any
+    # instant (cooperative scheduling), and every per-host mutation this
+    # touches (@results[host.name], @registered_vars[host.name],
+    # @facts[host.name], @batch_cache[host.name], @halted_hosts.add) is
+    # either a disjoint pre-seeded hash key or a Set#add with no yield
+    # point mid-operation - never actually racing.
+    #
+    # The one real hazard is stdout: each host's fiber redirects its own
+    # output to a private buffer via OutputRouting (so concurrent hosts'
+    # lines never interleave), then every buffer is flushed in *hosts*
+    # order only after every fiber has finished - output stays stable
+    # regardless of which host's SSH round trip actually finished first.
+    private def run_task_for_hosts_in_parallel(task : Task, hosts : Array(Host))
+      max_parallel = Math.min(hosts.size, @forks)
+      gate = Channel(Nil).new(max_parallel)
+      max_parallel.times { gate.send(nil) }
+      done = Channel(Nil).new
+      buffers = Hash(String, IO::Memory).new
+
+      hosts.each do |host|
+        spawn do
+          gate.receive
+          buffer = IO::Memory.new
+          OutputRouting.redirect_current_fiber_to(buffer)
+          begin
+            execute_task(task, host)
+          ensure
+            OutputRouting.clear_current_fiber_redirect
+          end
+          buffers[host.name] = buffer
+        ensure
+          gate.send(nil)
+          done.send(nil)
+        end
+      end
+
+      hosts.size.times { done.receive }
+
+      hosts.each do |host|
+        if buffer = buffers[host.name]?
+          print buffer.to_s
+        end
+      end
     end
     
     # Gather facts for all hosts using the facts plugin

@@ -3571,6 +3571,86 @@ compat playbook's own task wouldn't have suggested was there).
   pre-existing findings - the file count drop reflects the 12 deleted
   files, not a lint regression) both clean.
 
+- [x] Added `-f/--forks N`: runs each task against up to `N` hosts
+  concurrently instead of one at a time (`0.9.77`) - Stage B of
+  `OPUS_PERFORMANCE_IMPROVEMENTS.md` item 4, deliberately deferred at
+  `0.9.75` (Stage A, parallel fact gathering) pending its own design
+  review, per the doc's own explicit instruction. That review considered
+  Crystal 1.21.0's new `Fiber::ExecutionContext::Parallel` (real
+  OS-thread parallelism, this environment runs 1.20.3 but 1.21.0 was
+  pulled and checked directly) and **rejected it**: real threads would
+  require wrapping every shared mutation this fan-out touches
+  (`@results`, `@registered_vars`, `@facts`, `@batch_cache`,
+  `@halted_hosts`, all stdout writes) in explicit `Sync::Mutex` sections,
+  plus bumping the project's Crystal requirement everywhere - a much
+  bigger, riskier change for a tool whose actual bottleneck is SSH
+  round-trip network wait, not CPU work (confirmed by Stage A's own
+  1.41x result using only cooperative fibers). The default execution
+  context has parallelism 1 in both 1.20.3 and 1.21.0, so this feature
+  needs **no Crystal version bump** at all - it's plain `spawn` +
+  `Channel`, the exact same primitive Stage A already used.
+  - **Safety argument** (why no mutexes are needed): under cooperative
+    fibers, only one fiber ever executes Crystal code at any instant -
+    the scheduler only switches at explicit yield points (I/O wait,
+    `Channel#send`/`#receive`). Every structure this fan-out touches is a
+    `Hash` pre-seeded with every host's key in `#initialize`, and each
+    host's fiber only ever writes its *own* key - disjoint keys, no
+    resize, safe. `@halted_hosts` is a `Set`, and `Set#add` has no yield
+    point mid-operation, so it's cooperatively serialized rather than
+    racy even though multiple hosts can add themselves within one task.
+    `HandlerRunner#notify` already writes to a per-host `Set` with no
+    ordering dependency on notify-call order (confirmed by reading
+    `handler_runner.cr` - `run` walks handlers in *definition* order and
+    hosts in `@hosts` order) - no change needed there at all.
+  - **The one real hazard, stdout interleaving**, was solved without the
+    huge refactor threading an `io:` param through every display method
+    would have required: `puts`/`print` (44 bare calls across
+    `executor.cr`/`result_display.cr`/`handler_runner.cr`, all routing
+    through `Kernel#puts` → `STDOUT.puts`) are redefined at the top level
+    in new `src/crystal_play/task_executor/output_routing.cr` to route
+    through a `Hash(Fiber, IO)` lookup first, falling back to the real
+    `STDOUT` for any fiber with no redirect registered - legal in Crystal
+    (top-level method definitions simply shadow the stdlib's for the
+    whole program) and safe for the same reason as above (no lock needed
+    on that lookup either). Each host's fiber in
+    `run_task_for_hosts_in_parallel` redirects to a private `IO::Memory`,
+    and every buffer is flushed in `hosts` order only after every fiber
+    has joined, so output stays stable regardless of which host's SSH
+    round trip actually finished first.
+  - **Explicitly excluded from forking** (falls back to today's serial,
+    one-host-at-a-time path via new `task_forkable?`): `run_once:` tasks
+    (needs `@hosts.first` to have *actually finished* before other hosts
+    can copy its register via `copy_run_once_register` - a real ordering
+    dependency, not just a data-race concern, and the trickiest case the
+    original doc flagged) and `block?`/`include_tasks?`/`include_role?`
+    (structural/dynamic tasks that recurse into their own nested task
+    lists and `ensure_grouped` calls - kept serial to sidestep any
+    question of concurrent re-entrancy into the batching planner).
+  - **Verified against 4 real remote hosts** (throwaway podman
+    containers, same methodology as items 1/2/3/4A): a mixed 6-task
+    playbook (`file`/`copy`/`lineinfile`/`shell`+`register`/`debug`/
+    `file`) went from a median **~1580ms (`--forks 1`) to ~1235ms
+    (`--forks 4`) across 5 runs each - a consistent **~1.28x**, with
+    full stdout **byte-identical** between the two runs (host status
+    lines never interleaved) and filesystem state on every target
+    diffed identical. A separate `run_once:` playbook run under
+    `--forks 4` confirmed it still only executes on the first host
+    while every host still sees its register.
+  - New integration coverage in `spec/integration/cli_spec.cr` (against
+    `spec/fixtures/inventory-multi-local.ini`'s two `ansible_connection=
+    local` hosts, the same "exercise multi-host behavior without a real
+    second machine" trick `run_once:`'s own existing spec already used):
+    one spec confirms `--forks 1` produces byte-identical output to the
+    default, another confirms `--forks N` runs every host, still excludes
+    `run_once:` from the fan-out, keeps registers visible across tasks,
+    and never interleaves host output.
+  - `crystal spec` (**769 examples**, same 2 pre-existing DB-client
+    failures) and `ameba` (**166 files** - the one new `output_routing.cr`
+    - same 51 pre-existing findings) both clean. Full compat harness
+    (`--forks` defaults to 1, so unaffected, but the `puts`/`print`
+    redefinition is a process-wide primitive change worth re-confirming
+    against): **41/41 pass**.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**

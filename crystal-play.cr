@@ -3,6 +3,14 @@
 # Crystal Play - Fast Ansible-compatible automation tool
 # Main CLI entry point
 
+# Must be required first: redefines top-level puts/print to route
+# through CrystalPlay::OutputRouting, which --forks's per-host fan-out
+# uses to buffer output per fiber. Everything else in the program still
+# writes straight to the real STDOUT (a fiber with no redirect
+# registered falls through unchanged) - this only matters once a
+# --forks > 1 run is actually in flight.
+require "./src/crystal_play/task_executor/output_routing"
+
 require "option_parser"
 require "colorize"
 require "./src/crystal_play/version"
@@ -52,6 +60,7 @@ inventory_file = "inventory.ini"
 check_mode = false
 diff_mode = false
 batching_enabled = true
+forks = 1
 verbose = false
 limit_hosts = ""
 tags = [] of String
@@ -76,6 +85,10 @@ begin
 
     parser.on("--no-batching", "Disable batching consecutive independent tasks into fewer SSH round trips (on by default since 0.9.63)") do
       batching_enabled = false
+    end
+
+    parser.on("-f FORKS", "--forks=FORKS", "Run each task against up to FORKS hosts concurrently (default: 1, today's one-host-at-a-time behavior)") do |f|
+      forks = f.to_i? || 1
     end
 
     parser.on("-v", "--verbose", "Verbose output") do
@@ -110,6 +123,7 @@ begin
       puts "  crystal-ansible playbook.yml"
       puts "  crystal-ansible --check --diff playbook.yml"
       puts "  crystal-ansible --no-batching playbook.yml"
+      puts "  crystal-ansible --forks 10 playbook.yml"
       puts "  crystal-ansible -i inventory.ini playbook.yml"
       puts "  crystal-ansible --tags deploy playbook.yml"
       puts "  crystal-ansible --vault-password-file pass.txt playbook.yml"
@@ -336,7 +350,8 @@ playbook.plays.each_with_index do |play, play_index|
     play_vars: play.vars,
     gather_facts: play.gather_facts,
     inventory: inventory,
-    batching_enabled: batching_enabled
+    batching_enabled: batching_enabled,
+    forks: forks
   )
 
   # Run tasks

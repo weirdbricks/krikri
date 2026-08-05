@@ -1,0 +1,33 @@
+# --forks smoke test. Targets the "multilocal" group (see
+# spec/fixtures/inventory-multi-local.ini) - two hosts, both
+# ansible_connection=local, so multi-host fan-out can be exercised for
+# real without needing a second machine to SSH into. Under the generic
+# empty inventory used by every other testing/*.yml fixture, "multilocal"
+# resolves to zero hosts and this play is skipped, same convention as the
+# "testservers" fixtures.
+
+- name: --forks test
+  hosts: multilocal
+  gather_facts: false
+
+  tasks:
+    - name: every host runs this task
+      ansible.builtin.command: /bin/true
+      register: cmd_result
+
+    - name: register from an earlier task is still visible per host
+      ansible.builtin.debug:
+        msg: "cmd_result changed={{ cmd_result.changed }}"
+
+    - name: run_once still only executes on the first host under --forks
+      ansible.builtin.command: /bin/true
+      register: once_result
+      run_once: true
+
+    - name: every host still sees the run_once register
+      ansible.builtin.debug:
+        msg: "once_result changed={{ once_result.changed }}"
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "forks smoke test complete!"

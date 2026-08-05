@@ -188,6 +188,9 @@ Supports standard Ansible playbook syntax. See the
 # Disable task batching (on by default - see Performance below)
 ./bin/crystal-ansible --no-batching -i inventory.ini playbook.yml
 
+# Run each task against up to 10 hosts concurrently (default: 1)
+./bin/crystal-ansible --forks 10 -i inventory.ini playbook.yml
+
 # Multiple options
 ./bin/crystal-ansible --check --diff -i production.ini playbook.yml
 ```
@@ -210,6 +213,8 @@ behind each one.
 | Task batching, best case (30 fully-independent tasks, fresh+idempotency) | **2.82x faster**, 64.5% less wall time |
 | Task batching, realistic mixed playbook - fresh run | ~1.0x (no measurable win) |
 | Task batching, realistic mixed playbook - idempotency rerun | **1.31x faster** |
+| Parallel fact gathering across hosts (`0.9.75`, 5 real hosts) | **1.41x faster** |
+| `--forks N` (`0.9.77`, 4 real hosts, mixed 6-task playbook, default is `--forks 1`) | **~1.28x faster** |
 
 The last three are recent, ongoing engine-level work (task batching is
 on by default since `0.9.63`; `--no-batching` disables it) - see
