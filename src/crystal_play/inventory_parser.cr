@@ -41,8 +41,10 @@ module CrystalPlay
           [host]
         # Pattern matching (simple wildcards)
         elsif pattern.includes?("*")
-          regex = pattern.gsub("*", ".*")
-          @hosts.select { |name, _| name =~ /^#{regex}$/ }.values
+          # Crystal only caches non-interpolated regex literals - compile
+          # once here rather than once per host inside the select block.
+          regex = /^#{pattern.gsub("*", ".*")}$/
+          @hosts.select { |name, _| name =~ regex }.values
         else
           # No match
           [] of Host

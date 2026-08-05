@@ -69,9 +69,25 @@ module CrystalPlay
     end
 
     # Split condition by operator, respecting parentheses and quotes
+    # *condition[i..-1].starts_with?(operator)* allocated a full
+    # substring of the remaining condition on every character, and
+    # *current += char* reallocated the accumulator on every character -
+    # together an O(n^2) scan. Bounded per-char operator comparison (no
+    # allocation) plus a String::Builder accumulator, matching the shape
+    # FilterEngine.split_chain already uses for the same kind of
+    # depth/quote-aware scan.
+    private def self.operator_at?(condition : String, index : Int32, operator : String) : Bool
+      return false if index + operator.size > condition.size
+
+      operator.each_char.with_index do |operator_char, offset|
+        return false unless condition[index + offset] == operator_char
+      end
+      true
+    end
+
     private def self.split_by_operator(condition : String, operator : String) : Array(String)
       parts = [] of String
-      current = ""
+      current = String::Builder.new
       paren_depth = 0
       in_quotes = false
       quote_char = ' '
@@ -101,19 +117,20 @@ module CrystalPlay
 
         # Check for operator
         if !in_quotes && paren_depth == 0
-          if condition[i..-1].starts_with?(operator)
-            parts << current.strip
-            current = ""
+          if operator_at?(condition, i, operator)
+            parts << current.to_s.strip
+            current = String::Builder.new
             i += operator.size
             next
           end
         end
 
-        current += char
+        current << char
         i += 1
       end
 
-      parts << current.strip unless current.empty?
+      final = current.to_s.strip
+      parts << final unless final.empty?
       parts
     end
 

@@ -58,20 +58,15 @@ module CrystalPlay
         return @renderer.render(text)
       end
       
-      result = text.dup
       pattern = /\{\{([^}]+)\}\}/
-      
-      loop do
-        match = result.match(pattern)
-        break unless match
-        
-        full_match = match[0]
-        expression = match[1].strip
-        value = @evaluator.evaluate(expression)
-        result = result.sub(full_match, value.strip)
-      end
-      
-      result
+
+      # A single gsub pass instead of a loop of match+sub (which rescans
+      # the *substituted* result from index 0 on every iteration - O(k*n)
+      # for k placeholders, and would loop forever if a variable's own
+      # value happened to contain "{{"). No existing behavior depends on
+      # that recursive re-scan (grepped specs/compat playbooks for
+      # nested {{ {{ - none), so this is a straight one-pass replacement.
+      text.gsub(pattern) { |_, match| @evaluator.evaluate(match[1].strip).strip }
     end
     
     def substitute_hash(hash : Hash(String, String)) : Hash(String, String)

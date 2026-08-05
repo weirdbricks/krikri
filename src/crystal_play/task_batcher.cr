@@ -25,12 +25,16 @@ module CrystalPlay
     def self.plan(tasks : Array(Task)) : Array(Array(Task))
       groups = [] of Array(Task)
       current = [] of Task
-      seen_registers = Set(String).new
+      # Compiled once per register name, when it's added below - not
+      # once per (task, name) pair inside references_register?, which
+      # used to recompile the same pattern for every later task in the
+      # run that needed checking against it.
+      seen_registers = Hash(String, Regex).new
 
       flush = -> {
         groups << current unless current.empty?
         current = [] of Task
-        seen_registers = Set(String).new
+        seen_registers = Hash(String, Regex).new
       }
 
       tasks.each do |task|
@@ -44,7 +48,7 @@ module CrystalPlay
 
         current << task
         if (reg = task.register) && !reg.empty?
-          seen_registers << reg
+          seen_registers[reg] = /\b#{Regex.escape(reg)}\b/
         end
       end
 
@@ -116,15 +120,14 @@ module CrystalPlay
     # when_condition and every params: value (changed_when:/failed_when:
     # don't need scanning here since tasks that have either already end
     # the run via breaks_run? above).
-    private def self.references_register?(task : Task, seen : Set(String)) : Bool
+    private def self.references_register?(task : Task, seen : Hash(String, Regex)) : Bool
       return false if seen.empty?
 
       haystacks = [] of String
       haystacks << task.when_condition.to_s if task.when_condition
       task.params.each_value { |v| haystacks << v }
 
-      seen.any? do |name|
-        pattern = /\b#{Regex.escape(name)}\b/
+      seen.each_value.any? do |pattern|
         haystacks.any?(&.matches?(pattern))
       end
     end

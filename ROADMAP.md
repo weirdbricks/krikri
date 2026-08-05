@@ -3430,6 +3430,44 @@ compat playbook's own task wouldn't have suggested was there).
   test in `cli_spec.cr` that exercises this exact path) and `ameba` (177
   files, same 51 pre-existing findings) both clean.
 
+- [x] Four smaller allocation/complexity fixes from
+  `OPUS_PERFORMANCE_IMPROVEMENTS.md` items 10-12 (`0.9.73`):
+  - **`TaskBatcher.references_register?`** (item 10) recompiled
+    `/\b#{Regex.escape(name)}\b/` inside a nested `seen.any? { …
+    haystacks.any? … }` - O(tasks x registers) regex compilations while
+    planning. `seen_registers` is now a `Hash(String, Regex)` compiled
+    once when a name is added, not once per later task that has to check
+    against it. **Measured** (release build, a synthetic 300-task run
+    that never flushes, so the accumulated register set actually grows
+    to stress the quadratic): **304.71ms before, 3.94ms after - 77x
+    faster**, 15.1MB/op down to 166kB/op.
+  - **`InventoryParser#get_hosts`** (item 10) recompiled `/^#{regex}$/`
+    inside a `select` block, once per host in the inventory - Crystal
+    only caches non-interpolated regex literals. Hoisted the compile
+    above the `select`.
+  - **`VarSubstitutor#substitute`** (item 11): replaced the loop of
+    `result.match(pattern)` + `result.sub(...)` - which rescans the
+    *substituted* result from index 0 every iteration, and would loop
+    forever if a variable's own value happened to contain `{{` - with a
+    single `gsub` pass. Grepped specs and compat playbooks for a nested
+    `{{ {{` case first (per this item's own caveat): none exists, so
+    nothing relies on the old recursive re-scan. **Measured**: a string
+    with 80 `{{ }}` placeholders went from 217.77µs to 33.86µs (**6.4x**),
+    180kB/op down to 23.2kB/op.
+  - **`ConditionalEvaluator#split_by_operator`** (item 12):
+    `condition[i..-1].starts_with?(operator)` allocated a substring of
+    the *entire remaining condition* on every character, and `current +=
+    char` reallocated the accumulator on every character - copied
+    `FilterEngine.split_chain`'s shape (bounded per-char operator
+    comparison with no allocation, `String::Builder` accumulator).
+    **Measured**: a 60-clause `and` chain went from 32.11µs to 18.01µs
+    (**1.78x**), 195kB/op down to 40.1kB/op.
+
+  `crystal spec` (766 examples, same 2 pre-existing DB-client failures)
+  and `ameba` (177 files, same 51 pre-existing findings) both clean. Full
+  compat harness (exercises `when:`/`{{ }}`/inventory patterns
+  extensively): **41/41 pass**.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**
