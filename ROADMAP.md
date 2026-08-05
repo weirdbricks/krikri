@@ -3520,6 +3520,39 @@ compat playbook's own task wouldn't have suggested was there).
     both clean. Full compat harness (including `39-batching.yml`'s
     real-SSH controller/target diff): **41/41 pass**.
 
+- [x] Parallelized fact gathering across hosts (`0.9.75`) - Stage A of
+  `OPUS_PERFORMANCE_IMPROVEMENTS.md` item 4 (no `--forks` anywhere in
+  the codebase, verified by grep; wall-clock time was strictly linear in
+  host count). `gather_facts_for_all_hosts` is fully independent per
+  host - it only ever writes to `@facts[host.name]` and
+  `@results[host.name]`, both pre-seeded per host in `#initialize`, so
+  no concurrent hash resizing - so it now runs through a bounded pool of
+  fibers (capped at `min(@hosts.size, 10)` via a `Channel(Nil)`-backed
+  gate, to avoid opening an unbounded number of simultaneous SSH
+  connections against a large inventory) instead of one host after
+  another. Extracted the per-host work into `gather_facts_for_host`,
+  returning `{success?, error_message}` rather than printing/updating
+  stats itself, so the caller can join every fiber first and then print
+  in deterministic `@hosts` order - interleaved completions never
+  scramble the display. **Per this doc's own explicit staging
+  instruction, only Stage A landed in this pass** - parallelizing the
+  per-task host loop itself (Stage B, a `-f/--forks` flag) touches
+  `@results`/`@registered_vars`/`@facts`/`@batch_cache`/`@halted_hosts`/
+  output-ordering/`@handler_runner`/`@task_group` and is explicitly
+  scoped as its own follow-up design review below, not attempted here.
+  **Verified against a real remote host** (5 throwaway podman containers
+  on an isolated network, one controller + 5 targets, same setup as
+  every other real-SSH verification in this pass): median wall-clock
+  for `gather_facts` against all 5 hosts went from **~360ms (serial,
+  5 runs: 358/362/361/361/360ms) to ~256ms (parallel, 5 runs:
+  257/255/255/255/256ms) - a consistent 1.41x**, with facts confirmed
+  correct per host (each host's `ansible_hostname` fact resolved to its
+  own hostname, no cross-host contamination from the parallel gather).
+  `crystal spec` (766 examples, same 2 pre-existing DB-client failures)
+  and `ameba` (177 files, same 51 pre-existing findings) both clean.
+  Full compat harness (local-connection only, so parallelism isn't
+  exercised there, but nothing regressed): **41/41 pass**.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**

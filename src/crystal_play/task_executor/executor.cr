@@ -147,70 +147,94 @@ module CrystalPlay
     end
     
     # Gather facts for all hosts using the facts plugin
+    # Each host's fact gathering is fully independent - writes only to
+    # @facts[host.name] and @results[host.name], both pre-seeded per host
+    # in #initialize, so no concurrent hash resizing - so it's gathered
+    # in parallel via a bounded pool of fibers, one round trip's worth of
+    # wall-clock time overlapping instead of summing across every host.
+    # Bounded (not one fiber per host unconditionally) to avoid opening
+    # an unbounded number of simultaneous SSH connections against a large
+    # inventory. Output is collected per host and printed in deterministic
+    # @hosts order only after every fiber has finished, so interleaved
+    # completions never scramble the display - this is Stage A of
+    # OPUS_PERFORMANCE_IMPROVEMENTS.md item 4; parallelizing the per-task
+    # host loop itself (Stage B, `--forks`) is deliberately out of scope
+    # here, see ROADMAP.md.
     private def gather_facts_for_all_hosts
       puts "TASK [Gathering Facts]".colorize(:white).bold
       puts "*" * 70
-      
+
+      outcomes = Hash(String, {Bool, String?}).new
+      max_parallel = Math.min(@hosts.size, 10)
+      max_parallel = 1 if max_parallel < 1
+      gate = Channel(Nil).new(max_parallel)
+      max_parallel.times { gate.send(nil) }
+      done = Channel(Nil).new
+
       @hosts.each do |host|
-        begin
-          # Build minimal config for facts plugin
-          vars_context = Hash(String, JSON::Any).new
-          
-          # Add host vars to context
-          host.vars.each do |key, value|
-            vars_context[key] = value
-          end
-          
-          config = {
-            "host" => {
-              "name" => host.name,
-              "user" => host.user,
-              "port" => host.port
-            },
-            "params" => {} of String => String,
-            "vars" => vars_context
-          }
-          
-          config_json = JSON.parse(config.to_json)
-          
-          # Execute facts plugin (will be uploaded and run like other plugins)
-          result = PluginManager.execute_plugin(
-            "facts",
-            config_json,
-            host,
-            vars_context
-          )
-          
-          # Check for errors
-          if result["failed"]?.try(&.as_bool)
-            error_msg = result["msg"]?.try(&.as_s) || "Unknown error"
-            raise "Facts gathering failed: #{error_msg}"
-          end
-          
-          # Extract facts from result
-          if ansible_facts = result["ansible_facts"]?
-            facts = Hash(String, JSON::Any).new
-            ansible_facts.as_h.each do |key, value|
-              facts[key] = value
-            end
-            @facts[host.name] = facts
-          end
-          
-          # Show success
-          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+        spawn do
+          gate.receive
+          outcomes[host.name] = gather_facts_for_host(host)
+        ensure
+          gate.send(nil)
+          done.send(nil)
+        end
+      end
+
+      @hosts.size.times { done.receive }
+
+      @hosts.each do |host|
+        connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+        success, error_message = outcomes[host.name]
+
+        if success
           puts "ok: [#{connection_host}]".colorize(:green)
-          
-          # Update stats
           @results[host.name]["ok"] += 1
-        rescue ex
-          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+        else
           puts "failed: [#{connection_host}]".colorize(:red)
-          puts "  Error gathering facts: #{ex.message}".colorize(:red)
+          puts "  Error gathering facts: #{error_message}".colorize(:red)
           @results[host.name]["failed"] += 1
         end
       end
-      
+
       puts ""
+    end
+
+    # Runs the facts plugin against one host and stores whatever it
+    # returns in @facts[host.name]. Returns {true, nil} on success or
+    # {false, message} on failure - stats/display are handled by the
+    # caller afterward, in deterministic host order, not here.
+    private def gather_facts_for_host(host : Host) : {Bool, String?}
+      vars_context = Hash(String, JSON::Any).new
+      host.vars.each { |key, value| vars_context[key] = value }
+
+      config = {
+        "host" => {
+          "name" => host.name,
+          "user" => host.user,
+          "port" => host.port,
+        },
+        "params" => {} of String => String,
+        "vars"   => vars_context,
+      }
+
+      config_json = JSON.parse(config.to_json)
+
+      result = PluginManager.execute_plugin("facts", config_json, host, vars_context)
+
+      if result["failed"]?.try(&.as_bool)
+        return {false, result["msg"]?.try(&.as_s) || "Unknown error"}
+      end
+
+      if ansible_facts = result["ansible_facts"]?
+        facts = Hash(String, JSON::Any).new
+        ansible_facts.as_h.each { |key, value| facts[key] = value }
+        @facts[host.name] = facts
+      end
+
+      {true, nil}
+    rescue ex
+      {false, ex.message}
     end
     
     # Show execution recap
