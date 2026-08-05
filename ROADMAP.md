@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.61`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.62`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -3106,6 +3106,37 @@ compat playbook's own task wouldn't have suggested was there).
     region, and two unrelated Racknerd hosts all showed the same
     45-150ms jitter) never made a genuinely low-latency number possible
     to obtain here.
+
+- [x] Real bug fix, found while hardening `--experimental-batching` for
+  a default-on flip (`0.9.62`): `PluginManager
+  #batch_upload_plugins_for_playbook` added every task's raw
+  `module_name` to the required-plugins-to-upload set unconditionally,
+  including `block:`'s own pseudo module name (`"_block"`) - crashing
+  outright (`get_local_plugin_path` raising "Plugin binary not found:
+  _block") for **any** playbook with a `block:` task run against a real
+  remote host, batching flag or not. Never caught before because every
+  existing `block:` fixture in this repo (`compat/playbooks/
+  06-block-rescue-always.yml`, `spec/`) happens to run against a local
+  connection, which never reaches `batch_upload_plugins_for_playbook`'s
+  upload path at all - only found via the SSH-based harness
+  `compat/playbooks/39-batching.yml` uses, driving a `block:` task
+  against a genuinely separate remote container for the first time.
+  Fixed by a new `collect_required_plugins` helper that recurses into
+  `block_tasks`/`rescue_tasks`/`always_tasks` (so real plugins used only
+  *inside* a block now get pre-uploaded too - previously never
+  collected at all, a second bug that would have surfaced as "command
+  not found" on the remote once the crash above was fixed but the
+  recursion wasn't) and skips `block?`/`include_tasks?`/`include_role?`
+  pseudo-modules entirely. `include_tasks:`/`include_role:` remain
+  un-recursed-into on purpose - their contents are only known at
+  runtime (the file/role may be templated), a narrower, pre-existing,
+  documented limitation, not a regression from this fix. Regression
+  coverage added to `39-batching.yml` (a `block:` containing its own
+  batchable run) plus manual verification of `--tags` filtering
+  interacting correctly with batch-group construction and a `loop:`
+  immediately following a batchable run (both correct by construction -
+  tag filtering happens upstream of `TaskBatcher`, entirely unaware of
+  the concept). Full compat harness re-run: 39/39 pass.
 
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for

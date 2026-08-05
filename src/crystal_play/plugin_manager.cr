@@ -38,11 +38,7 @@ module CrystalPlay
         # Check if this play gathers facts
         needs_facts = true if play.gather_facts
 
-        play.tasks.each do |task|
-          # Strip FQCN to get simple plugin name
-          simple_name = task.module_name.sub(/^(ansible\.(builtin|legacy|posix)|community\.(general|docker|mysql|postgresql))\./, "")
-          required_plugins.add(simple_name)
-        end
+        collect_required_plugins(play.tasks, required_plugins)
 
         play.handlers.each do |handler|
           simple_name = handler.module_name.sub(/^(ansible\.(builtin|legacy|posix)|community\.(general|docker|mysql|postgresql))\./, "")
@@ -87,6 +83,37 @@ module CrystalPlay
       end
 
       puts "" if @@verbose
+    end
+
+    # Walks *tasks*, adding every real plugin module name to *required*,
+    # recursing into block:/rescue:/always: nested lists so plugins used
+    # only inside a block still get pre-uploaded. block?/include_tasks?/
+    # include_role? tasks are pseudo-modules ("_block"/"_include_tasks"/
+    # "_include_role") with no corresponding plugin binary - previously
+    # added to the required set unconditionally, which crashed
+    # get_local_plugin_path outright for any playbook with a block: task
+    # targeting a real remote host (never caught before: every existing
+    # block: fixture in this repo happens to run against a local
+    # connection, which never reaches this code path at all).
+    # include_tasks:/include_role: are deliberately not recursed into -
+    # their contents are only known at runtime (the file/role may be
+    # templated), so plugins used exclusively inside one aren't
+    # pre-uploaded; a known, narrower limitation, not a regression from
+    # this fix.
+    private def self.collect_required_plugins(tasks : Array(Task), required : Set(String))
+      tasks.each do |task|
+        if task.block?
+          collect_required_plugins(task.block_tasks || [] of Task, required)
+          collect_required_plugins(task.rescue_tasks || [] of Task, required) if task.rescue_tasks
+          collect_required_plugins(task.always_tasks || [] of Task, required) if task.always_tasks
+          next
+        end
+
+        next if task.include_tasks? || task.include_role?
+
+        simple_name = task.module_name.sub(/^(ansible\.(builtin|legacy|posix)|community\.(general|docker|mysql|postgresql))\./, "")
+        required.add(simple_name)
+      end
     end
 
     # Upload a set of plugins to a specific host

@@ -128,6 +128,67 @@
         content: "handler ran\n"
         dest: /work/handler_marker.txt
 
+- name: block containing its own batchable run, and a loop right after a batchable run
+  hosts: bench
+  gather_facts: false
+  tasks:
+    - name: solo before block
+      ansible.builtin.command: echo before-block
+      changed_when: false
+
+    # Regression coverage for a real bug found while hardening this
+    # feature: PluginManager#batch_upload_plugins_for_playbook used to
+    # add every task's raw module_name to the required-plugins set
+    # unconditionally, including block:'s own pseudo module name
+    # ("_block") - crashing outright (get_local_plugin_path("_block")
+    # not found) for ANY playbook with a block: task against a real
+    # remote host. Never caught before because every other block:
+    # fixture in this repo happens to run against a local connection
+    # (compat/inventory.ini's `localhost ansible_connection=local`),
+    # which never reaches that code path at all - this file's SSH-based
+    # harness (see the top-of-file comment) is the only one that could
+    # have caught it. Also exercises the companion fix: real plugins
+    # used only *inside* a block now get pre-uploaded too (previously
+    # never collected at all, which would have failed a different way -
+    # "command not found" on the remote - once the crash above was
+    # fixed but the recursion into block_tasks wasn't).
+    - name: wrapper block
+      block:
+        - name: block indep 1
+          ansible.builtin.command: echo b1
+          changed_when: false
+        - name: block indep 2
+          ansible.builtin.command: echo b2
+          changed_when: false
+        - name: block indep 3
+          ansible.builtin.command: echo b3
+          changed_when: false
+
+    - name: solo after block
+      ansible.builtin.command: echo after-block
+      changed_when: false
+
+    - name: indep 1
+      ansible.builtin.command: echo i1
+      changed_when: false
+
+    - name: indep 2
+      ansible.builtin.command: echo i2
+      changed_when: false
+
+    # A loop: immediately follows a batchable run - its own group must
+    # end cleanly right before this task (loop_items always breaks a
+    # run - see TaskBatcher) without corrupting the two indep tasks
+    # above or the one below.
+    - name: looped task right after a batchable run
+      ansible.builtin.command: "echo {{ item }}"
+      loop: [x, y, z]
+      changed_when: false
+
+    - name: indep 3 after the loop
+      ansible.builtin.command: echo i3
+      changed_when: false
+
 - name: a hard failure without ignore_errors halts everything after it for that host
   hosts: bench
   gather_facts: false
