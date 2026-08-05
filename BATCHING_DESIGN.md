@@ -378,11 +378,47 @@ behavior is unaffected either way):
   a sanity check alongside the correctness verification): batched run
   ~18% faster on this same noisy high-latency path used for the
   original SSH-overhead measurement.
-- Not yet done: the low-latency-target verification the rollout section
-  specifically asks for (this was, again, the same high-RTT vantage
-  point as the original measurement - still don't have a real number for
-  what the win looks like on a fast link, only the theoretical argument
-  that it should be smaller).
+
+## Low-latency-target timing - not obtainable from this environment
+
+The rollout section above asks for a timing number on a genuinely
+low-latency link, since the whole point of item 3 is that its payoff is
+RTT-dependent. That turned out not to be obtainable from wherever this
+work was actually done: **every** external destination tested shows
+high, jittery latency, regardless of provider or region - anycast
+DNS resolvers (8.8.8.8/1.1.1.1, which route to the nearest edge PoP for
+almost anyone) measured 45-90ms with 20-35ms jitter; a second fresh
+Atlantic.net instance (different region attempt) measured 149ms average
+with 40% packet loss; two long-lived Racknerd hosts on a completely
+different provider measured 130-140ms. Same high-latency, high-jitter
+signature everywhere - this is a property of this environment's own
+network egress, not of any particular target, so no choice of cloud
+provider or region was ever going to produce a "fast link" number here.
+
+What *was* still worth doing properly: a rigorous 3x-each measurement
+(not the single-pass sanity check above) on the one throwaway host this
+environment could actually reach, using the same 30-independent-task
+fixture the original SSH-overhead measurement used (fully one large
+batchable run - closer to the theoretical best case than the mixed-
+scenario verification playbook above, which is mostly short batches
+broken up by register-chains/become-changes/etc.):
+
+| | unbatched | `--experimental-batching` |
+|---|---|---|
+| 3 runs (s) | 11.51, 11.25, 11.34 | 4.24, 3.98, 3.88 |
+| mean | 11.37s | 4.03s |
+
+**2.82x speedup / 64.5% wall-time reduction** for 30 tasks, all `ok:`,
+all 6 runs (`ping` during: 82-151ms, avg 122ms). Per-task marginal cost
+drops from ~379ms (one SSH round trip each) to ~134ms (one round trip
+amortized across all 30) - consistent with, and a cleaner demonstration
+of, the same RTT-bound mechanism the original prerequisite measurement
+found. This is still a high-latency number, not the low-latency one the
+rollout section asked for - the *qualitative* claim ("smaller win on a
+fast link") remains unverified, only argued from first principles
+(fewer round trips saved when each one was already cheap). Whoever picks
+this up next from an environment with a normal network path should get
+that number; it isn't available from here.
 
 ## `compat/` harness coverage (closed)
 

@@ -3077,10 +3077,30 @@ compat playbook's own task wouldn't have suggested was there).
   path used for the item's own prerequisite measurement. `crystal spec`
   (751 examples, same 2 pre-existing DB-client-dependent failures,
   unrelated) and `ameba` (177 files, same 51 pre-existing findings, zero
-  new ones) both confirmed unaffected with the flag off. Not yet done:
-  `compat/` harness coverage for the batching-specific scenarios (only
-  verified by hand so far) and a low-latency-target timing number (only
-  ever measured on one high-RTT path).
+  new ones) both confirmed unaffected with the flag off.
+  - Follow-up, same session: `compat/playbooks/39-batching.yml` +
+    `compat/run.cr`'s new `compare_batching` give this permanent,
+    repeatable, real-`ansible-playbook`-diffed coverage (39/39 compat
+    playbooks pass). Required a genuinely different harness mechanism
+    (two containers from the same image, one running real `sshd`, one
+    reaching it over a real SSH connection) since the normal `docker
+    exec`/`ansible_connection=local` path can't exercise batching at
+    all. Found and worked around (tracked separately below as its own
+    cross-cutting engine gap, not fixed here) a real, pre-existing,
+    unrelated-to-batching divergence: real Ansible drops a failed host
+    from every *remaining play*, not just the rest of the play it
+    failed in - this codebase's `@halted_hosts` is scoped per-play.
+  - Also attempted a genuinely low-latency timing number - not
+    obtainable from this environment (every external destination tested
+    showed high, jittery latency regardless of provider/region: anycast
+    DNS resolvers, a second Atlantic.net region, and two long-lived
+    Racknerd hosts all measured 45-150ms with real jitter - a property
+    of this environment's own network path, not any target). Did the
+    rigorous 3x-each measurement anyway on the one path available (30
+    fully-batchable independent tasks): **2.82x speedup, 64.5%
+    wall-time reduction** (11.37s mean unbatched vs. 4.03s mean batched,
+    3 clean runs each, all `ok:`). Full detail and the honest caveat in
+    `BATCHING_DESIGN.md`.
 
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
