@@ -3274,6 +3274,25 @@ compat playbook's own task wouldn't have suggested was there).
     spec` (765 examples, same 2 pre-existing unrelated failures) and
     `ameba` (same pre-existing findings, zero new) both clean.
 
+- [x] Replaced `JSON.parse(result.to_json).as_h` (used purely to get a
+  mutable shallow copy of a `JSON::Any` hash) with `result.as_h.dup` at
+  the four sites in `task_executor/executor.cr`
+  (`apply_changed_failed_when`, the per-loop-item path, `register_result`)
+  and `plugin_manager.cr` (`execute_remote_plugin`, which also dropped a
+  redundant re-wrap into `JSON::Any.new` right after mutating the
+  existing hash in place) (`0.9.66`), from an Opus performance-review
+  pass (`OPUS_PERFORMANCE_IMPROVEMENTS.md`, item 5). All four sites only
+  ever add top-level keys, so a shallow `.as_h.dup` is behaviorally
+  identical to the round-trip through JSON serialization - confirmed safe
+  by grepping for any nested mutation at each site (none). **Measured**
+  (release build, `Benchmark.ips`, same harness the doc's methodology
+  documents): `JSON.parse(r.to_json).as_h` vs. `r.as_h.dup` on an 8 KB
+  `stdout` result - 29.5µs vs. 42ns (**711x**); on a small result -
+  563ns vs. 41ns (**13.6x**). `crystal spec` (766 examples, same 2
+  pre-existing DB-client failures) and `ameba` (177 files, same 51
+  pre-existing findings, zero new) both clean. Full compat harness:
+  **41/41 pass**.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**

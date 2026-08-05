@@ -337,11 +337,9 @@ module CrystalPlay
       connection_host = get_connection_host(host, vars)
 
       # Modify config to tell plugin it's running locally on the remote
-      config_hash = JSON.parse(config.to_json).as_h
+      config_hash = config.as_h.dup
       if config_hash["vars"]?
-        vars_hash = config_hash["vars"].as_h
-        vars_hash["ansible_connection"] = JSON::Any.new("local")
-        config_hash["vars"] = JSON::Any.new(vars_hash)
+        config_hash["vars"].as_h["ansible_connection"] = JSON::Any.new("local")
       else
         config_hash["vars"] = JSON::Any.new({"ansible_connection" => JSON::Any.new("local")})
       end

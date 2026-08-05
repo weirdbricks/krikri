@@ -738,7 +738,7 @@ module CrystalPlay
         eval_context[register_name] = result
       end
 
-      hash = JSON.parse(result.to_json).as_h
+      hash = result.as_h.dup
 
       if changed_when
         substitutor = VarSubstitutor.new(vars: eval_context, host_name: host.name)
@@ -809,7 +809,7 @@ module CrystalPlay
         ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item))
         ResultDisplay.update_stats(@results[host.name], result, task.ignore_errors)
 
-        result_hash = JSON.parse(result.to_json).as_h
+        result_hash = result.as_h.dup
         result_hash["item"] = item
         results << JSON::Any.new(result_hash)
       end
@@ -1165,7 +1165,7 @@ module CrystalPlay
     # Register task result as a variable
     private def register_result(host : Host, register_name : String, result : JSON::Any)
       # Create a mutable copy of the result to add stdout_lines/stderr_lines
-      result_hash = JSON.parse(result.to_json).as_h
+      result_hash = result.as_h.dup
       
       # Add stdout_lines by splitting stdout on newlines (Ansible behavior)
       if stdout = result_hash["stdout"]?.try(&.as_s)
