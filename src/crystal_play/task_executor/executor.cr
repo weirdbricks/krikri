@@ -542,11 +542,7 @@ module CrystalPlay
       return if steps.empty?
 
       connection_host = PluginManager.get_connection_host(host, step_vars.first)
-      batch_id = Random::Secure.hex(8)
-      script = BatchScript.build(batch_id, steps)
-
-      raw = SSHManager.exec_script(connection_host, host.user || "root", script, host.port)
-      step_results = BatchScript.parse(raw[:stdout])
+      step_results = run_batch_script(host, connection_host, steps)
 
       steps.each_index do |idx|
         next unless r = step_results[idx]?
@@ -556,6 +552,17 @@ module CrystalPlay
         interpreted = PluginManager.interpret_remote_result(r.exit_code, r.stdout, r.stderr)
         cache[task] = {apply_changed_failed_when(task, interpreted, vars_context, host), vars_context}
       end
+    end
+
+    # Shared "run this batch script in one SSH round trip and parse the
+    # results back" middle, used by both execute_batch_group (mixed
+    # tasks) and execute_looped_task's batched path (iterations of one
+    # task) - the two callers differ only in how they produce *steps*.
+    private def run_batch_script(host : Host, connection_host : String, steps : Array(BatchScript::Step)) : Hash(Int32, BatchScript::StepResult)
+      batch_id = Random::Secure.hex(8)
+      script = BatchScript.build(batch_id, steps)
+      raw = SSHManager.exec_script(connection_host, host.user || "root", script, host.port)
+      BatchScript.parse(raw[:stdout])
     end
 
     # Prepares one batch-group member up to (but not including) the
@@ -816,15 +823,107 @@ module CrystalPlay
       loop_items : Array(JSON::Any),
       exec_host : Host = host
     )
+      item_results = if loop_batch_eligible?(task, host, exec_host, base_vars_context)
+                       execute_looped_task_batched(task, host, base_vars_context, loop_items)
+                     else
+                       loop_items.map do |item|
+                         vars_context = base_vars_context.dup
+                         vars_context["item"] = item
+                         execute_task_once(task, host, vars_context, item_label: item_display(item), exec_host: exec_host)
+                       end
+                     end
+
+      finish_looped_task(task, host, loop_items, item_results)
+    end
+
+    # Whether execute_looped_task can send every surviving item through
+    # one shared SSH round trip instead of one per item. Loop iterations
+    # of a single task can never reference each other's results (Ansible
+    # has no such semantic), unlike mixed-task batching's
+    # references_register? check - so the only conditions here are the
+    # ones that make a single remote round trip unsafe or meaningless at
+    # all: not remote, delegated elsewhere, or a controller-side verdict
+    # override the script's own fail-fast can't see (same reasoning as
+    # TaskBatcher#retroactive_verdict?).
+    private def loop_batch_eligible?(task : Task, host : Host, exec_host : Host, vars_context : Hash(String, JSON::Any)) : Bool
+      return false unless @batching_enabled
+      return false unless exec_host == host
+      return false if task.delegate_to
+      return false if PluginManager.is_local_connection?(exec_host, vars_context)
+      return false if task.changed_when || task.failed_when
+      true
+    end
+
+    # Runs *loop_items* through one shared SSH round trip. When: is
+    # evaluated per item up front (safe: an item's when: depends only on
+    # `item` + the base context, both known before any remote call) and
+    # skips are recorded exactly as the one-at-a-time path does via
+    # when_passes? itself. Returns one result per item (nil = skipped or
+    # never reached), consumed afterward by finish_looped_task exactly
+    # like the one-at-a-time path's own results.
+    private def execute_looped_task_batched(
+      task : Task,
+      host : Host,
+      base_vars_context : Hash(String, JSON::Any),
+      loop_items : Array(JSON::Any),
+    ) : Array(JSON::Any?)
+      item_results = Array(JSON::Any?).new(loop_items.size, nil)
+      item_contexts = Hash(Int32, Hash(String, JSON::Any)).new
+      steps = [] of BatchScript::Step
+      step_indices = [] of Int32
+
+      loop_items.each_with_index do |item, idx|
+        vars_context = base_vars_context.dup
+        vars_context["item"] = item
+        item_contexts[idx] = vars_context
+
+        next unless when_passes?(task, vars_context, host, item_label: item_display(item))
+
+        case outcome = prepare_batch_step(task, host, vars_context)
+        when JSON::Any
+          item_results[idx] = outcome
+        when BatchScript::Step
+          # ignore_errors: is per-*task*, but forced true here regardless
+          # of the task's own value: today's loop always attempts every
+          # item even after an earlier one fails, and the script's fail-
+          # fast (built for the mixed-task batch case, where a failure
+          # really should stop the remaining tasks) would otherwise halt
+          # the script on the first failing item without ignore_errors:,
+          # silently changing that continue-after-failure behavior as a
+          # side effect of batching it.
+          steps << BatchScript::Step.new(outcome.plugin_target, outcome.config_json, true)
+          step_indices << idx
+        end
+      end
+
+      return item_results if steps.empty?
+
+      connection_host = PluginManager.get_connection_host(host, item_contexts[step_indices.first])
+      step_results = run_batch_script(host, connection_host, steps)
+
+      steps.each_index do |i|
+        next unless r = step_results[i]?
+
+        idx = step_indices[i]
+        vars_context = item_contexts[idx]
+        interpreted = PluginManager.interpret_remote_result(r.exit_code, r.stdout, r.stderr)
+        item_results[idx] = apply_changed_failed_when(task, interpreted, vars_context, host)
+      end
+
+      item_results
+    end
+
+    # Shared aggregation for a completed loop's per-item results (used by
+    # both the batched and one-at-a-time paths) so register:/notify:/
+    # stats/halt bookkeeping stays byte-identical regardless of which
+    # transport produced the results.
+    private def finish_looped_task(task : Task, host : Host, loop_items : Array(JSON::Any), item_results : Array(JSON::Any?))
       results = [] of JSON::Any
       any_changed = false
       any_failed = false
 
-      loop_items.each do |item|
-        vars_context = base_vars_context.dup
-        vars_context["item"] = item
-
-        result = execute_task_once(task, host, vars_context, item_label: item_display(item), exec_host: exec_host)
+      loop_items.each_with_index do |item, idx|
+        result = item_results[idx]
         next unless result
 
         merge_ansible_facts(host, result)

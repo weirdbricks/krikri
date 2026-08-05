@@ -3468,6 +3468,58 @@ compat playbook's own task wouldn't have suggested was there).
   compat harness (exercises `when:`/`{{ }}`/inventory patterns
   extensively): **41/41 pass**.
 
+- [x] Batched loop iterations into one shared SSH round trip (`0.9.74`),
+  from `OPUS_PERFORMANCE_IMPROVEMENTS.md` item 1 - the doc's own
+  "highest remote" item and the largest single change in this pass.
+  `execute_looped_task` used to call `execute_task_once` once per item
+  (a `loop:` over 20 items meant 20 sequential SSH round trips); it now
+  evaluates each item's `when:` up front (safe - an item's `when:`
+  depends only on `item` + the base context, both known before any
+  remote call - unlike mixed-task batching, which needs the whole
+  `references_register?` data-dependency analysis because task B may
+  consume task A's `register:`; iterations of one task can't reference
+  each other's results at all, so that analysis doesn't apply here),
+  then feeds every surviving item through `prepare_batch_step` and runs
+  them as a single `BatchScript` via the same `run_batch_script` helper
+  `execute_batch_group` uses (factored out of it in this change, per the
+  doc's own suggestion, since the two callers only differ in how they
+  produce their step list). Bails out to the existing one-at-a-time path
+  untouched when `@batching_enabled` is false, `exec_host != host`,
+  `task.delegate_to` is set, the connection is local, or
+  `task.changed_when`/`failed_when` is set (the script's fail-fast can't
+  see a controller-side verdict override - same reasoning as
+  `TaskBatcher#retroactive_verdict?`).
+  - **Preserved the one genuinely tricky behavior difference on purpose**:
+    today's one-at-a-time loop always runs every item even after an
+    earlier one fails (no early stop), but `BatchScript`'s own fail-fast
+    (built for the mixed-task case, where a failure really should halt
+    the remaining tasks) would otherwise stop the *script* on the first
+    failing item without `ignore_errors:`. Rather than let that leak
+    through as a silent behavior change, every loop-batch `Step` is built
+    with `ignore_errors: true` regardless of the task's own value,
+    purely to suppress the script's internal halt - the real per-item
+    `failed:` status still flows through untouched and drives
+    `any_failed`/stats/halt exactly as before.
+  - Refactored `execute_looped_task` into three pieces sharing one
+    aggregation path: `loop_batch_eligible?` (the bail-out checks),
+    `execute_looped_task_batched` (builds the shared script and runs it),
+    and `finish_looped_task` (the register:/notify:/stats/halt
+    bookkeeping, now identical for both the batched and one-at-a-time
+    paths since both just produce an `Array(JSON::Any?)` of per-item
+    results for it to consume).
+  - **Verified against a real remote host** (two throwaway podman
+    containers, same setup as items 2/3/7's own verification): a 10-item
+    `loop:` dropped from **12 SSH commands to 3** (both directions
+    against a freshly-cleared target), with byte-identical filesystem
+    state either way. Separately verified the continue-after-failure
+    behavior directly: a 5-item loop with one failing item (`item=c`,
+    no `ignore_errors:`) ran **all 5 items batched, identical output to
+    `--no-batching`** - `failed=1` recap, items a/b/d/e all still ran.
+  - `crystal spec` (766 examples, same 2 pre-existing DB-client
+    failures) and `ameba` (177 files, same 51 pre-existing findings)
+    both clean. Full compat harness (including `39-batching.yml`'s
+    real-SSH controller/target diff): **41/41 pass**.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**
