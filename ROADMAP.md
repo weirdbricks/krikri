@@ -3293,6 +3293,26 @@ compat playbook's own task wouldn't have suggested was there).
   pre-existing findings, zero new) both clean. Full compat harness:
   **41/41 pass**.
 
+- [x] Deleted unconditional debug `STDERR.puts` scaffolding that shipped
+  live in `bin/crystal-ansible`, not gated behind any verbose flag
+  (`0.9.67`), from `OPUS_PERFORMANCE_IMPROVEMENTS.md` item 8:
+  `expression_evaluator.cr` (8 sites), `crinja_renderer.cr` (20 sites,
+  including `prepare_crinja_vars` dumping every variable's value twice
+  per `{% %}` render - the worst offender, and a vault-decrypted-value
+  leak risk beyond the speed cost), `array_slicer.cr` (27 sites), and
+  `template_action_plugin.cr` (2 sites, a swallowed-error backtrace with
+  no caller depending on it - `base_plugin.cr:105`'s equivalent backtrace
+  print was kept as-is; that one's genuinely diagnostic, this one wasn't
+  read by anything). One redundant `begin`/`rescue` block left over once
+  its only other content (the debug prints) was gone was also collapsed
+  (`ameba`'s `Style/RedundantBegin` caught it immediately - back to the
+  177/51 baseline once fixed). **Measured** (release build,
+  `Benchmark.ips`, stderr redirected to `/dev/null` per the doc's own
+  methodology - a real terminal/file is slower): `substitute()` on a
+  120-var context went from 8.04µs to 4.34µs, **1.85x faster**.
+  `crystal spec` (766 examples, same 2 pre-existing DB-client failures)
+  and `ameba` (177 files, same 51 pre-existing findings) both clean.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**

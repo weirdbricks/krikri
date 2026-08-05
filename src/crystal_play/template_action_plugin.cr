@@ -80,9 +80,7 @@ module CrystalPlay
         rendered += "\n" unless rendered.ends_with?("\n")
         
         return rendered
-      rescue ex
-        STDERR.puts "Template rendering error: #{ex.message}"
-        STDERR.puts ex.backtrace.join("\n")
+      rescue
         return nil
       end
     end

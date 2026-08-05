@@ -19,42 +19,33 @@ module CrystalPlay
       
       # Evaluate any expression and return string result
       def evaluate(expr : String) : String
-        STDERR.puts "\n=== ExpressionEvaluator.evaluate ==="
-        STDERR.puts "Expression: '#{expr}'"
-        
         # Check for comparison operators FIRST (before filters)
         if has_comparison?(expr)
-          STDERR.puts "Path: comparison"
           return @comparison.evaluate(expr)
         end
-        
+
         # Check for filters (|)
         if expr.includes?("|")
-          STDERR.puts "Path: filter"
           return evaluate_with_filter(expr)
         end
-        
+
         # FIXED: Check for array slicing [: or :] pattern specifically
         # This must come BEFORE the general [ check
         if expr.includes?("[:") || expr.includes?(":]")
-          STDERR.puts "Path: array slicing (matched [: or :])"
           return @slicer.slice(expr)
         end
-        
+
         # Check for dictionary/list access
         if expr.includes?("[")
-          STDERR.puts "Path: indexed access"
           return @lookup.indexed(expr)
         end
-        
+
         # Check for nested access (.)
         if expr.includes?(".")
-          STDERR.puts "Path: nested lookup"
           return @lookup.nested(expr)
         end
-        
+
         # Simple variable lookup
-        STDERR.puts "Path: simple lookup"
         @lookup.simple(expr)
       end
       
