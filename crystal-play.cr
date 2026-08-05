@@ -51,7 +51,7 @@ playbook_file = ""
 inventory_file = "inventory.ini"
 check_mode = false
 diff_mode = false
-experimental_batching = false
+batching_enabled = true
 verbose = false
 limit_hosts = ""
 tags = [] of String
@@ -74,8 +74,8 @@ begin
       diff_mode = true
     end
 
-    parser.on("--experimental-batching", "Batch consecutive independent tasks into fewer SSH round trips (opt-in)") do
-      experimental_batching = true
+    parser.on("--no-batching", "Disable batching consecutive independent tasks into fewer SSH round trips (on by default since 0.9.63)") do
+      batching_enabled = false
     end
 
     parser.on("-v", "--verbose", "Verbose output") do
@@ -109,7 +109,7 @@ begin
       puts "Examples:"
       puts "  crystal-ansible playbook.yml"
       puts "  crystal-ansible --check --diff playbook.yml"
-      puts "  crystal-ansible --experimental-batching playbook.yml"
+      puts "  crystal-ansible --no-batching playbook.yml"
       puts "  crystal-ansible -i inventory.ini playbook.yml"
       puts "  crystal-ansible --tags deploy playbook.yml"
       puts "  crystal-ansible --vault-password-file pass.txt playbook.yml"
@@ -169,8 +169,8 @@ end
 if diff_mode
   puts "Diff: ENABLED".colorize(:green)
 end
-if experimental_batching
-  puts "Batching: EXPERIMENTAL".colorize(:yellow)
+unless batching_enabled
+  puts "Batching: DISABLED".colorize(:yellow)
 end
 if tags.any?
   puts "Tags: #{tags.join(", ")}".colorize(:cyan)
@@ -322,7 +322,7 @@ playbook.plays.each_with_index do |play, play_index|
     play_vars: play.vars,
     gather_facts: play.gather_facts,
     inventory: inventory,
-    batching_enabled: experimental_batching
+    batching_enabled: batching_enabled
   )
 
   # Run tasks

@@ -289,18 +289,19 @@ this harness to those is straightforward - add a playbook, rebuild, rerun
 
 Every playbook above runs both engines via `docker exec <container> ...`
 with `ansible_connection=local` (`compat/inventory.ini`) - no real
-network involved at all. `--experimental-batching` (`0.9.61`) is an
-SSH-specific optimization;
+network involved at all. Task batching (on by default since `0.9.63`;
+`--no-batching` disables it) is an SSH-specific optimization;
 `PluginManager.is_local_connection?` short-circuits before ever
 consulting a batch group, so that mechanism can never exercise it,
-batching flag or not.
+batching on or off.
 
 `compat/run.cr`'s `compare_batching` (used only for this one playbook,
 via `BATCHING_PLAYBOOK_NAME`) instead spins up *two* fresh containers
 from the same image - a "target" (runs its own real `sshd`) and a
-"controller" (runs `ansible-playbook`/`crystal-ansible
---experimental-batching` against the target over a real SSH connection)
-- on a dedicated `docker network` so they can reach each other by IP.
+"controller" (runs `ansible-playbook`/`crystal-ansible` against the
+target over a real SSH connection, batching live by default on the
+latter) - on a dedicated `docker network` so they can reach each other
+by IP.
 Both directions use one keypair `compat/Dockerfile` bakes into every
 image built from it (`compat/batching_test_key`/`.pub`, committed
 on purpose - it grants access to nothing outside an ephemeral container

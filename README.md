@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.61-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.63-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -56,10 +56,10 @@ what's implemented, what's a documented scope cut, and why.
   `--vault-password-file`
 - ✅ `--check` (dry-run) and `--diff` (show file changes) modes
 - ✅ `--tags` and `--limit` host/task filtering
-- 🧪 `--experimental-batching` - batches consecutive independent tasks
-  bound for the same remote host into a single SSH round trip instead
-  of one round trip per task (opt-in, defaults off; see
-  the Performance section below, and `ROADMAP.md`'s `0.9.61` entry)
+- ✅ Task batching - consecutive independent tasks bound for the same
+  remote host run in a single SSH round trip instead of one round trip
+  per task, on by default (`--no-batching` to disable; see the
+  Performance section below and `ROADMAP.md`'s `0.9.61`-`0.9.63` entries)
 
 ### Plugins (44 total)
 
@@ -185,9 +185,8 @@ Supports standard Ansible playbook syntax. See the
 ./bin/crystal-ansible --ask-vault-pass playbook.yml
 ./bin/crystal-ansible --vault-password-file pass.txt playbook.yml
 
-# Experimental: fewer SSH round trips on playbooks with long runs of
-# independent tasks (opt-in, defaults off)
-./bin/crystal-ansible --experimental-batching -i inventory.ini playbook.yml
+# Disable task batching (on by default - see Performance below)
+./bin/crystal-ansible --no-batching -i inventory.ini playbook.yml
 
 # Multiple options
 ./bin/crystal-ansible --check --diff -i production.ini playbook.yml
@@ -208,14 +207,30 @@ behind each one.
 | `stat` (native `stat()`/hashlib vs. 5 subprocess spawns per call) | **~28x faster** |
 | `file` (state changes, native vs. shelled-out checks) | **2.5x-4.9x faster** |
 | Facts gathering (`0.9.61`, subprocess forks collapsed to syscalls) | **~2x faster** per run |
-| `--experimental-batching` (30-task playbook, opt-in, fewer SSH round trips) | **2.82x faster**, 64.5% less wall time |
+| Task batching, best case (30 fully-independent tasks, fresh+idempotency) | **2.82x faster**, 64.5% less wall time |
+| Task batching, realistic mixed playbook - fresh run | ~1.0x (no measurable win) |
+| Task batching, realistic mixed playbook - idempotency rerun | **1.31x faster** |
 
-The last two are recent, ongoing engine-level work - see `ROADMAP.md`'s
-`0.9.59`-`0.9.61` entries for the isolated per-fork measurements, the
-real-SSH correctness verification, and the honest caveats (the batching
-number above was measured on a high-latency test path; the win scales
-with round-trip cost to your actual targets, so it'll be smaller on a
-fast, low-latency link and larger on a slow one).
+The last three are recent, ongoing engine-level work (task batching is
+on by default since `0.9.63`; `--no-batching` disables it) - see
+`ROADMAP.md`'s `0.9.59`-`0.9.63` entries for the isolated per-fork
+measurements, the real-SSH correctness verification (12 runs, 3 fresh-
+state cycles x 2 directions x fresh-run/idempotency-rerun, every one
+producing byte-identical per-task output between batched and
+`--no-batching`), and the honest caveats:
+
+- Batching only saves SSH round trips, not the real work a task does.
+  A fresh-provisioning run spends much of its time on actual file/user
+  work, which dilutes the relative win; an idempotency rerun is mostly
+  fast no-ops, where round-trip overhead dominates and the saving shows
+  through cleanly - idempotency reruns are also the more common
+  real-world case for a config-management tool.
+- All of the above was measured on one unusually high-latency,
+  high-jitter network path (the only one available in the environment
+  this work was done in - confirmed not fixable by provider/region
+  choice, see `ROADMAP.md`). The win scales with round-trip cost to your
+  actual targets, so expect less on a fast, low-latency link and more on
+  a slow one; a genuinely low-latency measurement is still an open item.
 
 ---
 

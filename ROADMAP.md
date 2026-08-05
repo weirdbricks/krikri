@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.62`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.63`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -3132,11 +3132,62 @@ compat playbook's own task wouldn't have suggested was there).
   runtime (the file/role may be templated), a narrower, pre-existing,
   documented limitation, not a regression from this fix. Regression
   coverage added to `39-batching.yml` (a `block:` containing its own
-  batchable run) plus manual verification of `--tags` filtering
-  interacting correctly with batch-group construction and a `loop:`
-  immediately following a batchable run (both correct by construction -
-  tag filtering happens upstream of `TaskBatcher`, entirely unaware of
-  the concept). Full compat harness re-run: 39/39 pass.
+  batchable run, and a `loop:` immediately following a batchable run -
+  both now permanent, real-`ansible-playbook`-diffed coverage, not just
+  a one-off check). Also manually verified `--tags` filtering interacts
+  correctly with batch-group construction (correct by construction - tag
+  filtering happens upstream of `TaskBatcher`, entirely unaware of the
+  concept) and `--check` mode combined with batching (identical output
+  to `--check` without it). Full compat harness re-run: 39/39 pass.
+
+- [x] Batching on by default (`0.9.63`): `--experimental-batching`
+  retired, batching now defaults on; `--no-batching` opts out (the
+  inverse of the old flag). Per the reasoning in this project's own
+  session history - the whole point of this feature is performance, an
+  opt-in default meant most users would never see the benefit, and the
+  right response to stability concerns is more testing, not permanently
+  hiding the feature behind a flag - this was done once the hardening
+  pass above (edge cases + the real `block:` bug it found) gave enough
+  confidence to flip it, not on a whim.
+  - Full local regression pass with the new default: `crystal spec`
+    (751 examples, same 2 pre-existing DB-client-dependent failures,
+    unrelated), `ameba` (177 files, same 51 pre-existing findings, zero
+    new), and the full `compat/` harness (39/39 pass) - the first time
+    every other compat playbook and this project's whole spec suite ran
+    with batching live by default rather than only reachable behind a
+    flag (though in practice none of them exercise it: they're all
+    local-connection, and batching only ever applies to remote hosts).
+  - Real-SSH verification redone properly this time (the project's own
+    stated methodology - 3 runs each, fresh-run + idempotency-rerun,
+    compare distributions - rather than the earlier one-off checks): one
+    throwaway Atlantic.net instance, a realistic 5-play mixed scenario
+    playbook (register-chains, `become:` varying, `ignore_errors:`,
+    `notify:`, a hard failure), 3 fresh-state cycles per direction
+    (batched/`--no-batching`), each cycle a fresh run + an idempotency
+    rerun - 12 runs total, state reset between cycles rather than 12
+    fresh VMs (a real, disclosed deviation from a literal "fresh host
+    per run" ideal, traded for practicality). Every one of the 12 runs
+    produced an identical recap shape (`ok=25 changed=15 failed=1` on
+    every fresh run, `ok=24 changed=8 failed=1` on every idempotency
+    rerun, batched or not), and a direct diff of every per-task status
+    line between a batched and unbatched run at each point came back
+    byte-identical.
+  - Timing on this mixed, realistic playbook told a more nuanced story
+    than the earlier 30-trivial-independent-tasks benchmark: **fresh
+    runs showed no real win** (17.42s mean batched vs. 17.82s mean
+    unbatched, 1.02x - within this environment's own run-to-run noise),
+    while **idempotency reruns showed a real, consistent one** (7.23s
+    mean batched vs. 9.47s mean unbatched, 1.31x). Read together with
+    the earlier finding: batching only saves round trips, not the real
+    work a task does - a fresh run here spends much of its time on
+    actual `useradd`/file-write work, which dilutes batching's relative
+    contribution, while idempotency reruns are mostly fast no-ops where
+    round-trip overhead dominates the total time and batching's savings
+    show through cleanly. Idempotency reruns are also the more common
+    real-world case for a config-management tool (most runs in practice
+    are convergence checks, not first-time provisioning), which is a
+    genuine point in favor of the default-on decision beyond the raw
+    numbers.
 
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for

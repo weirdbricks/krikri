@@ -1,7 +1,8 @@
 require "./playbook_parser"
 
 module CrystalPlay
-  # Pure planning logic for --experimental-batching - groups a flat
+  # Pure planning logic for task batching (on by default; --no-batching
+  # disables it) - groups a flat
   # task list into consecutive "batchable runs" with no I/O, no
   # host/vars dependency, and no knowledge of connection type.
   # TaskExecutor decides separately

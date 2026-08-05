@@ -98,7 +98,8 @@ module CrystalPlay
 
     # Runs *script* on the remote host via `ssh ... bash -s`, piped over
     # that single invocation's own stdin - used by TaskExecutor's batch
-    # path (--experimental-batching) to run several plugin invocations
+    # path (batching, on by default; --no-batching disables it) to run
+    # several plugin invocations
     # in one SSH round trip. Deliberately separate from `exec`: `exec`
     # wraps a command through `bash -c <string>`, which has no stdin of
     # its own to carry a whole script through; this uses `bash -s`

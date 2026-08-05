@@ -46,8 +46,12 @@ module CrystalPlay
     # Host constructed from the target name, same as Inventory#get_hosts's
     # own implicit-localhost behavior.
     @inventory : Inventory?
-    # --experimental-batching - opt-in, defaults off so default
-    # behavior is provably unchanged.
+    # Batches consecutive independent tasks bound for the same remote
+    # host into a single SSH round trip instead of one round trip per
+    # task - default on since 0.9.63; --no-batching opts out. See
+    # TaskBatcher for the batchability predicate and ROADMAP.md's
+    # `0.9.61`/`0.9.62`/`0.9.63` entries for the design, hardening pass,
+    # and the correctness/timing verification behind the default flip.
     @batching_enabled : Bool
     # Maps a task to the full group (including itself) TaskBatcher.plan
     # assigned it to - only populated for groups of size >= 2 (a size-1
@@ -81,7 +85,7 @@ module CrystalPlay
       @play_vars = {} of String => JSON::Any,
       @gather_facts = true,
       @inventory = nil,
-      @batching_enabled = false
+      @batching_enabled = true
     )
       @results = Hash(String, Hash(String, Int32)).new
       @registered_vars = Hash(String, Hash(String, JSON::Any)).new
@@ -246,7 +250,7 @@ module CrystalPlay
         return
       end
 
-      # --experimental-batching: if this task is part of a batch
+      # Batching: if this task is part of a batch
       # group and batching applies to this host, its result comes from
       # (triggering, if not already done, then reading from) the group's
       # single shared SSH round trip instead of its own solo one -
