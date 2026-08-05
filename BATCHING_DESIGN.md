@@ -41,6 +41,39 @@ and should be done first - if most real playbooks batch into runs of 2-3
 before hitting a boundary, the win is much smaller than the "K=30 trivial
 independent tasks" measurement above suggests.
 
+**Done** (local-only, `PlaybookParser` driven directly against every real
+fixture, no infra/SSH involved): walked all 71 parseable fixtures across
+`testing/*.yml` + `compat/playbooks/*.yml` (2 skipped - vault-encrypted,
+need a password), applying the exact predicate below recursively into
+`block:`/`rescue:`/`always:`. Results:
+
+- 592 tasks total (top-level + nested block tasks), 185 batchable runs.
+- **87.0% of tasks fall inside a run of length >= 2** (i.e. actually
+  benefit from batching); only 77 of 592 tasks are stuck at length 1.
+- Mean run length **3.2**, max **34** (a single run in
+  `38-postgresql-privs.yml` covering 34 consecutive independent grant/
+  revoke tasks - correctly cut right before a `copy:` task that
+  interpolates 16 different earlier `register:` names into its
+  `content:`, confirming the register-dependency check actually fires
+  and isn't just theoretical).
+- Histogram is a real spread, not one outlier carrying the average:
+  length 1: 77 runs, length 2: 38, length 3: 28, length 4: 10, length
+  5-10: 19 runs, length 13-34: 6 runs (mostly the DB/docker-plugin
+  fixtures, which chain many independent flag-variation tasks in a row -
+  exactly the shape that benefits most).
+
+This is a meaningfully better number than the "K=30 independent debug
+tasks" synthetic benchmark implied - real fixtures batch well *without*
+needing every task to be data-independent from every other task in the
+whole file, because the predicate only needs a run's *own* window clear,
+and most real task sequences don't chain through their own immediately-
+preceding sibling's `register:` result. Combined with the RTT-dependent
+per-task cost above, this makes item 3 look like a genuinely worthwhile
+follow-up once someone picks up the implementation - the risk is in the
+correctness surface (see predicate/protocol below), not in whether
+there's enough batchable structure in real playbooks to make it worth
+doing.
+
 ## Current per-task flow (what batching has to preserve exactly)
 
 Today, `TaskExecutor#execute_task_once` (`task_executor/executor.cr`) does,
