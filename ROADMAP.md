@@ -3343,6 +3343,26 @@ compat playbook's own task wouldn't have suggested was there).
   connection only, so this path isn't exercised there, but nothing
   regressed): **41/41 pass**.
 
+- [x] `rsync_upload_batch` now spawns one `rsync` process for a whole
+  batch instead of one per file (`0.9.69`), from
+  `OPUS_PERFORMANCE_IMPROVEMENTS.md` item 3: rsync accepts multiple
+  sources for a single destination directory natively, so
+  `local_files + ["user@host:remote_dir/"]` replaces the per-file loop
+  that used to spawn a full `rsync` (and therefore a separate SSH
+  session) per file. Also cached the `which rsync` availability check
+  in a `@@rsync_available : Bool?` class variable, resolved once per
+  process instead of once per call to either `rsync_upload` or
+  `rsync_upload_batch`. **Verified against a real remote host** (same
+  throwaway-podman-container setup as item 2's verification): a 4-file
+  plugin batch upload dropped from **4 rsync process spawns to 1**
+  (counted directly, both directions, against the same freshly-cleared
+  target); all 4 files landed with the correct MD5 and mode `0755`
+  either way. Re-verified the scp fallback separately by hiding `rsync`
+  from `PATH` inside the test controller - all 4 files still landed
+  correctly. `crystal spec` (766 examples, same 2 pre-existing DB-client
+  failures) and `ameba` (177 files, same 51 pre-existing findings) both
+  clean.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**

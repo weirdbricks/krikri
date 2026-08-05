@@ -247,6 +247,22 @@ module CrystalPlay
       end
     end
     
+    # Whether the `rsync` binary is available locally. Resolved once per
+    # process (a `which rsync` spawn per call was pure overhead - rsync
+    # availability doesn't change mid-run).
+    @@rsync_available : Bool? = nil
+
+    private def self.rsync_available? : Bool
+      cached = @@rsync_available
+      return cached unless cached.nil?
+
+      result = Process.run("which", ["rsync"],
+        output: Process::Redirect::Close,
+        error: Process::Redirect::Close
+      )
+      @@rsync_available = result.exit_code == 0
+    end
+
     # Upload file using rsync (more efficient for incremental updates)
     # Returns true if successful, false if rsync not available or failed
     def self.rsync_upload(
@@ -258,15 +274,9 @@ module CrystalPlay
       mode : Int32 = 0o644
     ) : Bool
       init
-      
-      # Check if rsync is available locally
-      rsync_check = Process.run("which", ["rsync"], 
-        output: Process::Redirect::Close, 
-        error: Process::Redirect::Close
-      )
-      
-      return false unless rsync_check.exit_code == 0
-      
+
+      return false unless rsync_available?
+
       control_path = get_control_path(host, user, port)
       
       # Use rsync with SSH control master
@@ -305,50 +315,30 @@ module CrystalPlay
       mode : Int32 = 0o755
     ) : Bool
       init
-      
+
       return false if local_files.empty?
-      
-      # Check if rsync is available locally
-      rsync_check = Process.run("which", ["rsync"], 
-        output: Process::Redirect::Close, 
+      return false unless rsync_available?
+
+      control_path = get_control_path(host, user, port)
+
+      # rsync accepts multiple sources for one destination directory
+      # natively - one process spawn (and one SSH session) for the whole
+      # batch instead of one per file.
+      rsync_cmd = [
+        "rsync",
+        "-az",
+        "--chmod=#{mode.to_s(8)}",
+        "-e", "ssh -o ControlMaster=auto -o ControlPath=#{control_path} -o ControlPersist=600 -o StrictHostKeyChecking=accept-new -p #{port}",
+      ] + local_files + ["#{user}@#{host}:#{remote_dir}/"]
+
+      result = Process.run(
+        rsync_cmd[0],
+        rsync_cmd[1..],
+        output: Process::Redirect::Close,
         error: Process::Redirect::Close
       )
-      
-      return false unless rsync_check.exit_code == 0
-      
-      control_path = get_control_path(host, user, port)
-      
-      # Instead of using --files-from with complex paths, upload files individually
-      # This is still much faster than scp due to rsync's delta-transfer and single SSH connection
-      success_count = 0
-      
-      local_files.each do |local_file|
-        # Get just the filename
-        filename = File.basename(local_file)
-        remote_path = "#{remote_dir}/#{filename}"
-        
-        rsync_cmd = [
-          "rsync",
-          "-az",
-          "--chmod=#{mode.to_s(8)}",
-          "-e", "ssh -o ControlMaster=auto -o ControlPath=#{control_path} -o ControlPersist=600 -o StrictHostKeyChecking=accept-new -p #{port}",
-          local_file,
-          "#{user}@#{host}:#{remote_path}"
-        ]
-        
-        result = Process.run(
-          rsync_cmd[0],
-          rsync_cmd[1..],
-          output: Process::Redirect::Close,
-          error: Process::Redirect::Close
-        )
-        
-        if result.exit_code == 0
-          success_count += 1
-        end
-      end
-      
-      if success_count == local_files.size
+
+      if result.exit_code == 0
         @@stats["files_uploaded"] += local_files.size
         true
       else
