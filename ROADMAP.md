@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.60`):** **all of Phase 0 through
+**Status as of 2026-08-04 (currently at `0.9.61`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -3058,6 +3058,29 @@ compat playbook's own task wouldn't have suggested was there).
     change. `crystal spec`/`ameba` both clean (61 CLI integration
     examples - 2 new since `0.9.58` - same 2 pre-existing DB-client-
     dependent failures as always, unrelated to this).
+
+- [x] Item 3 of `POSSIBLE_PERFORMANCE_IMPROVEMENTS.md` - batch
+  consecutive independent tasks into one SSH round trip (`0.9.61`,
+  behind `--experimental-batching`, default off): full design writeup
+  in `BATCHING_DESIGN.md` (batchability predicate, base64-framed wire
+  protocol, why `run_once:`/`changed_when:`/`failed_when:` had to be
+  added to the predicate beyond what the design first assumed), plus a
+  real-fixture measurement (87.0% of tasks in `testing/`/
+  `compat/playbooks/` fall inside a batchable run, mean length 3.2, max
+  34). Verified via `spec/unit/task_batcher_spec.cr`/
+  `batch_script_spec.cr` (24 examples, protocol run for real via `bash`,
+  not mocked) and a real-SSH correctness check on one throwaway
+  Atlantic.net instance: identical playbook run twice (batching on/off)
+  against a freshly-reset host, per-task status lines matched byte-for-
+  byte, remote file state (existence/ownership/content) verified
+  identical via direct SSH, ~18% faster on the same high-latency test
+  path used for the item's own prerequisite measurement. `crystal spec`
+  (751 examples, same 2 pre-existing DB-client-dependent failures,
+  unrelated) and `ameba` (177 files, same 51 pre-existing findings, zero
+  new ones) both confirmed unaffected with the flag off. Not yet done:
+  `compat/` harness coverage for the batching-specific scenarios (only
+  verified by hand so far) and a low-latency-target timing number (only
+  ever measured on one high-RTT path).
 
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for

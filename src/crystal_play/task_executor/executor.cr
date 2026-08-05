@@ -10,6 +10,10 @@ require "./handler_runner"
 require "../action_plugin_manager"
 require "../inventory_parser"
 require "../async_jobs"
+require "../task_batcher"
+require "../batch_script"
+require "../ssh_manager"
+require "random/secure"
 
 module CrystalPlay
   # TaskExecutor - Executes tasks on hosts
@@ -42,6 +46,31 @@ module CrystalPlay
     # Host constructed from the target name, same as Inventory#get_hosts's
     # own implicit-localhost behavior.
     @inventory : Inventory?
+    # item 3 (BATCHING_DESIGN.md) - opt-in (--experimental-batching),
+    # defaults off so default behavior is provably unchanged.
+    @batching_enabled : Bool
+    # Maps a task to the full group (including itself) TaskBatcher.plan
+    # assigned it to - only populated for groups of size >= 2 (a size-1
+    # "group" behaves identically to no entry at all: the normal
+    # one-task-at-a-time path). Computed lazily per flat task list
+    # (a play's top-level tasks, or one block's nested list) the first
+    # time that list is iterated - see `ensure_grouped`.
+    @task_group : Hash(Task, Array(Task))
+    # Which flat task lists (by Array#object_id) have already been
+    # planned, so `ensure_grouped` doesn't replan a block's own list on
+    # every visit (loops, multiple hosts, etc.) - purely a memoization
+    # concern, not a correctness one; replanning would just recompute the
+    # exact same groups.
+    @grouped_lists : Set(UInt64)
+    # Per host, per task: the result already fetched via a batch's single
+    # SSH round trip (nil = that task's when: was false, already handled
+    # - see `execute_batch_group`), consumed lazily as the task-major
+    # loop naturally reaches each task, exactly where it would have
+    # called execute_task_once for it otherwise. This is what lets
+    # register:/notify:/changed_when:/stats/halt bookkeeping stay
+    # completely unmodified by batching - only the transport that fills
+    # this cache changes.
+    @batch_cache : Hash(String, Hash(Task, JSON::Any?))
 
     def initialize(
       @hosts,
@@ -51,13 +80,17 @@ module CrystalPlay
       @diff_mode = false,
       @play_vars = {} of String => JSON::Any,
       @gather_facts = true,
-      @inventory = nil
+      @inventory = nil,
+      @batching_enabled = false
     )
       @results = Hash(String, Hash(String, Int32)).new
       @registered_vars = Hash(String, Hash(String, JSON::Any)).new
       @facts = Hash(String, Hash(String, JSON::Any)).new
       @halted_hosts = Set(String).new
-      
+      @task_group = Hash(Task, Array(Task)).new
+      @grouped_lists = Set(UInt64).new
+      @batch_cache = Hash(String, Hash(Task, JSON::Any?)).new
+
       @hosts.each do |host|
         @results[host.name] = {
           "ok"      => 0,
@@ -80,7 +113,9 @@ module CrystalPlay
       if @gather_facts
         gather_facts_for_all_hosts
       end
-      
+
+      ensure_grouped(@tasks)
+
       @tasks.each do |task|
         puts "TASK [#{task.name}]".colorize(:white).bold
         puts "*" * 70
@@ -208,6 +243,19 @@ module CrystalPlay
 
       if (until_condition = task.until_condition) && !@check_mode
         execute_task_with_retries(task, host, vars_context, until_condition, exec_host)
+        return
+      end
+
+      # item 3 (BATCHING_DESIGN.md): if this task is part of a batch
+      # group and batching applies to this host, its result comes from
+      # (triggering, if not already done, then reading from) the group's
+      # single shared SSH round trip instead of its own solo one -
+      # everything downstream of getting a result is identical either
+      # way.
+      applies, batched_result = try_batched_result(task, host, vars_context, exec_host)
+      if applies
+        return unless batched_result
+        finish_single_task(task, host, batched_result)
         return
       end
 
@@ -350,6 +398,198 @@ module CrystalPlay
       current
     end
 
+    # Evaluates task.when_condition (if any) against vars_context, printing
+    # "skipping: [...]" and bumping the skipped counter when it's false -
+    # shared by execute_task_once and the batch-group trigger path
+    # (execute_batch_group) so both interpret when: identically.
+    private def when_passes?(task : Task, vars_context : Hash(String, JSON::Any), host : Host, item_label : String? = nil) : Bool
+      return true unless when_condition = task.when_condition
+
+      substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+      substituted_condition = substitutor.substitute(when_condition)
+
+      return true if ConditionalEvaluator.evaluate(substituted_condition, vars_context)
+
+      connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+      suffix = item_label ? " => (item=#{item_label})" : ""
+      puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
+      @results[host.name]["skipped"] += 1
+      false
+    end
+
+    # Populates @task_group for *tasks* (a flat task list - a play's own
+    # top-level tasks, or one block's/rescue's/always's nested list) the
+    # first time it's seen, via TaskBatcher.plan (item 3,
+    # BATCHING_DESIGN.md). No-op if batching is disabled or this exact
+    # list has already been planned.
+    private def ensure_grouped(tasks : Array(Task))
+      return unless @batching_enabled
+
+      key = tasks.object_id
+      return if @grouped_lists.includes?(key)
+      @grouped_lists << key
+
+      TaskBatcher.plan(tasks).each do |group|
+        next if group.size < 2
+        group.each { |member| @task_group[member] = group }
+      end
+    end
+
+    # Entry point called from execute_task for the plain (non-looped,
+    # non-until:, non-async:) execution path. Returns {false, nil} if
+    # batching doesn't apply to this task/host at all (not part of a
+    # group, a delegate_to: divergence, or a local connection) - the
+    # caller falls through to the normal execute_task_once path in that
+    # case, completely unaffected. Returns {true, result} if it does -
+    # result is nil only when this specific task's own when: was false
+    # (already fully handled: printed, counted, cached), exactly matching
+    # what execute_task_once returns for a skipped task.
+    private def try_batched_result(task : Task, host : Host, vars_context : Hash(String, JSON::Any), exec_host : Host) : {Bool, JSON::Any?}
+      return {false, nil} unless @batching_enabled
+      return {false, nil} unless exec_host == host
+      return {false, nil} if PluginManager.is_local_connection?(exec_host, vars_context)
+
+      group = @task_group[task]?
+      return {false, nil} unless group
+
+      cache = (@batch_cache[host.name] ||= Hash(Task, JSON::Any?).new)
+
+      unless cache.has_key?(group.first)
+        execute_batch_group(group, host)
+      end
+
+      {true, cache[task]?}
+    end
+
+    # Builds and runs the single SSH round trip for *group* against
+    # *host*, populating @batch_cache[host.name] for every member that
+    # either got a real result or was when:-skipped. A member that never
+    # ran at all (the script halted at an earlier member, or an earlier
+    # member's own action-plugin - e.g. template: - failed before any
+    # remote call was even needed) gets NO cache entry; that's fine
+    # because the failing member's own result (which DOES get a real
+    # entry) sets @halted_hosts once the task-major loop processes it via
+    # finish_single_task, and the loop's existing `next if
+    # @halted_hosts.includes?(...)` guard then naturally skips ever
+    # looking the later members up at all.
+    #
+    # Deliberately does none of the "did this task succeed/fail" side
+    # effects itself (no register:/notify:/stats/display/halt) - those
+    # all still happen exactly once, lazily, when the task-major loop
+    # reaches each member and consumes it from the cache via
+    # finish_single_task, in the same order it always has. This method's
+    # only job is to fill the cache.
+    private def execute_batch_group(group : Array(Task), host : Host)
+      cache = (@batch_cache[host.name] ||= Hash(Task, JSON::Any?).new)
+
+      steps = [] of BatchScript::Step
+      step_tasks = [] of Task
+      step_vars = [] of Hash(String, JSON::Any)
+      halted = false
+
+      group.each do |task|
+        break if halted
+
+        vars_context = build_vars_context(task, host)
+
+        unless when_passes?(task, vars_context, host)
+          cache[task] = nil
+          next
+        end
+
+        case outcome = prepare_batch_step(task, host, vars_context)
+        when JSON::Any
+          cache[task] = outcome
+          failed = outcome["failed"]?.try(&.as_bool) || false
+          halted = true if failed && !task.ignore_errors
+        when BatchScript::Step
+          steps << outcome
+          step_tasks << task
+          step_vars << vars_context
+        end
+      end
+
+      return if steps.empty?
+
+      connection_host = PluginManager.get_connection_host(host, step_vars.first)
+      batch_id = Random::Secure.hex(8)
+      script = BatchScript.build(batch_id, steps)
+
+      raw = SSHManager.exec_script(connection_host, host.user || "root", script, host.port)
+      step_results = BatchScript.parse(raw[:stdout])
+
+      steps.each_index do |idx|
+        next unless r = step_results[idx]?
+
+        task = step_tasks[idx]
+        vars_context = step_vars[idx]
+        interpreted = PluginManager.interpret_remote_result(r.exit_code, r.stdout, r.stderr)
+        cache[task] = apply_changed_failed_when(task, interpreted, vars_context, host)
+      end
+    end
+
+    # Prepares one batch-group member up to (but not including) the
+    # actual remote call - when: has already been checked by the caller.
+    # Mirrors execute_task_once's own param-substitution/action-plugin/
+    # config-building steps exactly, so a batched task's config is
+    # byte-for-byte what a solo execution would have sent.
+    #
+    # Returns a JSON::Any if the task already has a final result without
+    # ever needing a remote call (only possible today via an action
+    # plugin - e.g. template: - failing to render, or an invalid
+    # become_user:), or a BatchScript::Step ready to send otherwise.
+    private def prepare_batch_step(task : Task, host : Host, vars_context : Hash(String, JSON::Any)) : JSON::Any | BatchScript::Step
+      substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+      substituted_params = substitute_task_params(task.params, substitutor)
+      substituted_params = resolve_role_relative_src(task, substituted_params)
+      substituted_become_user = task.become_user.try { |raw_user| substitutor.substitute(raw_user) }
+
+      if ActionPluginManager.has_action_plugin?(task.module_name)
+        action_result = ActionPluginManager.execute_action(task.module_name, substituted_params, vars_context, host)
+
+        unless action_result.success
+          failed = JSON.parse({
+            "changed" => false,
+            "failed"  => true,
+            "msg"     => action_result.error_message || "Action plugin failed",
+          }.to_json)
+          return apply_changed_failed_when(task, failed, vars_context, host)
+        end
+
+        substituted_params = action_result.modified_params || substituted_params
+      end
+
+      become = task.become
+      become_user = nil
+
+      if become
+        candidate = substituted_become_user
+        become_user = (candidate.nil? || candidate.empty?) ? "root" : candidate
+
+        unless PluginManager.valid_become_user?(become_user)
+          failed = JSON.parse({
+            "changed" => false,
+            "failed"  => true,
+            "msg"     => "become_user #{become_user.inspect} is not a valid username",
+          }.to_json)
+          return apply_changed_failed_when(task, failed, vars_context, host)
+        end
+      end
+
+      # Same override execute_remote_plugin applies to the wire payload
+      # only (never to vars_context itself, which stays the controller's
+      # own view for when:/changed_when:/failed_when: evaluation) - once
+      # a plugin is actually running on the remote, its own internal
+      # local-vs-remote logic needs to see itself as local.
+      remote_vars_context = vars_context.dup
+      remote_vars_context["ansible_connection"] = JSON::Any.new("local")
+
+      config_json = build_plugin_config(task, host, substituted_params, remote_vars_context, substituted_become_user)
+      plugin_target = PluginManager.remote_plugin_target(task.module_name, become, become_user)
+
+      BatchScript::Step.new(plugin_target, config_json, task.ignore_errors)
+    end
+
     # Run one attempt of a task (when: check + param substitution + action
     # plugin + module execution). Returns nil if the when: condition skipped
     # it (the skipped counter is already updated in that case).
@@ -360,18 +600,7 @@ module CrystalPlay
       item_label : String? = nil,
       exec_host : Host = host
     ) : JSON::Any?
-      if when_condition = task.when_condition
-        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
-        substituted_condition = substitutor.substitute(when_condition)
-
-        unless ConditionalEvaluator.evaluate(substituted_condition, vars_context)
-          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-          suffix = item_label ? " => (item=#{item_label})" : ""
-          puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
-          @results[host.name]["skipped"] += 1
-          return nil
-        end
-      end
+      return nil unless when_passes?(task, vars_context, host, item_label)
 
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       substituted_params = substitute_task_params(task.params, substitutor)
@@ -701,6 +930,8 @@ module CrystalPlay
     # play's top-level task list, so `run` never prints one for them. Stops
     # early once the host halts (a task failed without ignore_errors).
     private def run_task_list(tasks : Array(Task), host : Host)
+      ensure_grouped(tasks)
+
       tasks.each do |nested_task|
         break if @halted_hosts.includes?(host.name)
         puts "TASK [#{nested_task.name}]".colorize(:white).bold

@@ -1,11 +1,10 @@
 # Design: batching multiple tasks into one SSH round trip
 
-Status: **design only, nothing implemented**. This is item 3 from
-[POSSIBLE_PERFORMANCE_IMPROVEMENTS.md](POSSIBLE_PERFORMANCE_IMPROVEMENTS.md),
-written up separately as that file's own methodology section requires
-("should get its own design pass ... before implementation starts, not
-just a benchmark comparison after the fact"). Re-read that file's
-methodology section before implementing any of this.
+Status: **implemented in `0.9.61`, behind `--experimental-batching`
+(opt-in, defaults off)**. This is item 3 from
+[POSSIBLE_PERFORMANCE_IMPROVEMENTS.md](POSSIBLE_PERFORMANCE_IMPROVEMENTS.md).
+See "Implementation notes" near the end of this file for what shipped,
+how it was verified, and what's still open.
 
 ## Why (measured, not assumed)
 
@@ -297,3 +296,93 @@ from being a full rewrite of `TaskExecutor`.
   that actually predicts real-world value for most users, not another
   high-latency outlier like the instance this design's own prerequisite
   measurement happened to land on.
+
+## Implementation notes (`0.9.61`)
+
+Shipped behind `--experimental-batching` (default off - `crystal spec`/
+`ameba` both confirmed clean with the flag never touched, so default
+behavior is unaffected either way):
+
+- `src/crystal_play/task_batcher.cr` - `TaskBatcher.plan`, the pure
+  predicate above, productionized from the measurement script almost
+  unchanged. **Two conditions were added that the original design/
+  measurement missed**, both found by reasoning through the actual
+  TaskExecutor integration rather than the predicate in isolation:
+  - `run_once:` now ends a run. Without this, a non-first host reaching
+    a batch group containing a `run_once:` member would still trigger
+    the whole group's remote script - including the `run_once:` step it
+    should never run for that host (`execute_task`'s existing
+    `copy_run_once_register` early-return only guards the *solo* path).
+  - `changed_when:`/`failed_when:` now end a run. These can retroactively
+    flip a task's `failed:` verdict using data only available after a
+    controller-side Jinja evaluation - the batch script's own script-side
+    fail-fast can only see a step's raw exit code and its own JSON
+    `"failed":true`/`false`, so it has no way to know changed_when:/
+    failed_when: would change that verdict. Left in a batch, a task that
+    should have halted the host could let later steps run anyway,
+    executing real remote side effects that should never have happened.
+  - Re-running the fixture measurement with both fixes applied still
+    shows the same overall shape (spot-checked, not re-published as a
+    new headline number here - the fixtures barely use `run_once:`/
+    `changed_when:`/`failed_when:` on tasks adjacent to long batchable
+    runs, so the 87%/3.2-mean figures above are materially unchanged).
+- `src/crystal_play/batch_script.cr` - the wire protocol. Diverged from
+  this doc's original sketch in one way: input framing also moved to
+  base64 (not just output). The original sketch piped each step's config
+  over the same SSH invocation's stdin via a length-prefix; base64-
+  embedding each step directly in the script text avoids ever needing a
+  second data channel sharing that stdin at all, sidestepping a known
+  footgun (`bash -s`'s own script-reading can read ahead in blocks, not
+  strictly line-by-line, which can corrupt the boundary between "script"
+  and "data" if they share one stream). Fail-fast is exit-code-nonzero OR
+  a literal `"failed":true` substring grep against the step's own
+  captured stdout (verified this matches Crystal's `to_json` compact
+  serialization exactly - no space after the colon).
+- `TaskExecutor` changes preserve the design's core promise exactly as
+  planned: `execute_batch_group` only ever fills a per-host result cache;
+  every register:/notify:/changed_when:/failed_when:/display/stats/halt
+  decision still happens exactly once, lazily, at the same place in the
+  task-major loop it always has (`finish_single_task`, unmodified). This
+  is what let the real-host verification below diff clean.
+- New `SSHManager.exec_script` (runs a script via `ssh ... bash -s`,
+  piped over that single invocation's stdin) alongside the existing
+  `exec` (single command via `bash -c`) - kept separate rather than
+  overloading `exec`, since the two have genuinely different framing
+  concerns.
+
+**Verification done:**
+- Unit: `spec/unit/task_batcher_spec.cr` (16 examples - every
+  run-ending condition, register-chain splitting including the
+  whole-word-not-substring case, ordering) and
+  `spec/unit/batch_script_spec.cr` (8 examples - build/parse round trip
+  run for real via `bash`, not mocked: halt-on-`failed:true`,
+  `ignore_errors: true` continuing, halt-on-nonzero-exit with no JSON at
+  all, embedded-newline safety, and confirming the script's own `rm -rf`
+  cleanup actually ran).
+- Real SSH, one throwaway Atlantic.net instance (destroyed after): a
+  5-play verification playbook covering every scenario this doc's own
+  rollout section called out - a long independent batch, a
+  register-chained pair that must split (`{{ r1.stdout }}` referenced by
+  a later task), `become:` varying within a batch (root vs. a real
+  unprivileged user, verified via file ownership), `ignore_errors: true`
+  continuing a batch past a failure, a `notify:` fired from inside a
+  batch (handler ran exactly once), and a hard failure without
+  `ignore_errors:` halting everything after it (verified a
+  should-never-run file genuinely never got created). Ran the identical
+  playbook twice against a freshly-reset host - once with
+  `--experimental-batching`, once without - and diffed: **every per-task
+  status line matched byte-for-byte**, remote file state (existence,
+  ownership, content) was identical between the two runs, confirmed via
+  direct SSH `stat`/`ls`, not just the playbook's own self-reported
+  output. Also timed both (not a rigorous 3x/fresh-host benchmark, just
+  a sanity check alongside the correctness verification): batched run
+  ~18% faster on this same noisy high-latency path used for the
+  original SSH-overhead measurement.
+- Not yet done: the `compat/` harness extension this doc's rollout
+  section calls for (the scenarios above were verified by hand against
+  one real host, not added as permanent regression coverage), and the
+  low-latency-target verification the rollout section specifically asks
+  for (this was, again, the same high-RTT vantage point as the original
+  measurement - still don't have a real number for what the win looks
+  like on a fast link, only the theoretical argument that it should be
+  smaller).

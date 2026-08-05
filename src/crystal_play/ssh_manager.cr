@@ -95,6 +95,72 @@ module CrystalPlay
         }
       end
     end
+
+    # Runs *script* on the remote host via `ssh ... bash -s`, piped over
+    # that single invocation's own stdin - used by TaskExecutor's batch
+    # path (item 3, BATCHING_DESIGN.md) to run several plugin invocations
+    # in one SSH round trip. Deliberately separate from `exec`: `exec`
+    # wraps a command through `bash -c <string>`, which has no stdin of
+    # its own to carry a whole script through; this uses `bash -s`
+    # (reads its script from stdin) specifically so the caller can hand
+    # over a multi-step script without needing to escape it into a
+    # single command-line string.
+    def self.exec_script(
+      host : String,
+      user : String,
+      script : String,
+      port : Int32 = 22,
+      timeout : Int32 = 300
+    ) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
+      init
+      @@stats["commands_executed"] += 1
+
+      control_path = get_control_path(host, user, port)
+
+      ssh_cmd = [
+        "ssh",
+        "-o", "ControlMaster=auto",
+        "-o", "ControlPath=#{control_path}",
+        "-o", "ControlPersist=600",
+        "-o", "ConnectTimeout=10",
+        "-o", "ServerAliveInterval=60",
+        "-o", "ServerAliveCountMax=3",
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-p", port.to_s,
+        "#{user}@#{host}",
+        "bash", "-s",
+      ]
+
+      stdout = IO::Memory.new
+      stderr = IO::Memory.new
+
+      begin
+        process = Process.new(
+          ssh_cmd[0],
+          ssh_cmd[1..],
+          input: Process::Redirect::Pipe,
+          output: stdout,
+          error: stderr
+        )
+
+        process.input.print(script)
+        process.input.close
+
+        status = process.wait
+
+        {
+          exit_code: status.exit_code,
+          stdout: stdout.to_s,
+          stderr: stderr.to_s,
+        }
+      rescue ex
+        {
+          exit_code: 255,
+          stdout: "",
+          stderr: "SSH script execution failed: #{ex.message}",
+        }
+      end
+    end
     
     # Upload file to remote host via SCP
     def self.upload(

@@ -309,11 +309,6 @@ module CrystalPlay
       # Get the actual connection host (checks ansible_host)
       connection_host = get_connection_host(host, vars)
 
-      # Get remote plugin path
-      simple_name = plugin_name.sub(/^(ansible\.(builtin|legacy|posix)|community\.(general|docker|mysql|postgresql))\./, "")
-      remote_plugin_dir = "/tmp/.crystal-play/plugins"
-      remote_plugin_path = "#{remote_plugin_dir}/#{simple_name}"
-
       # Modify config to tell plugin it's running locally on the remote
       config_hash = JSON.parse(config.to_json).as_h
       if config_hash["vars"]?
@@ -328,12 +323,7 @@ module CrystalPlay
       become, become_user, become_error = resolve_become(config)
       return become_error if become_error
 
-      # become_user is validated by resolve_become against a strict
-      # username allow-list before it ever reaches here, since (unlike the
-      # local path above) this string is interpolated directly into a
-      # shell command - SSHManager always runs the whole command through
-      # `bash -c`, there's no args-array primitive to sidestep quoting with.
-      target = become ? "sudo -n -u #{become_user} -- #{remote_plugin_path}" : remote_plugin_path
+      target = remote_plugin_target(plugin_name, become, become_user)
 
       # Execute plugin remotely with modified config via stdin
       command = "echo '#{modified_config.to_json.gsub("'", "'\\''")}' | #{target}"
@@ -344,25 +334,64 @@ module CrystalPlay
         host.port
       )
 
-      if result[:exit_code] != 0
+      interpret_remote_result(result[:exit_code], result[:stdout], result[:stderr])
+    end
+
+    # Resolves a plugin's remote path (`/tmp/.crystal-play/plugins/<simple
+    # name>`) and, if `become`, wraps it in `sudo -n -u <become_user> --`.
+    # Shared by the normal one-task-at-a-time remote path above and by
+    # TaskExecutor's batch script generation (item 3,
+    # BATCHING_DESIGN.md), so both ways of reaching a remote plugin
+    # resolve the exact same target string. `become_user` is expected to
+    # already have passed `valid_become_user?` - this only formats, it
+    # doesn't validate (the SSH path interpolates the result directly
+    # into a shell command, unlike the local/args-array path, so
+    # validation happens once, at the call site, before this is ever
+    # invoked with untrusted input).
+    def self.remote_plugin_target(plugin_name : String, become : Bool, become_user : String?) : String
+      simple_name = plugin_name.sub(/^(ansible\.(builtin|legacy|posix)|community\.(general|docker|mysql|postgresql))\./, "")
+      remote_plugin_path = "/tmp/.crystal-play/plugins/#{simple_name}"
+      become ? "sudo -n -u #{become_user} -- #{remote_plugin_path}" : remote_plugin_path
+    end
+
+    # Same become_user allow-list `resolve_become` already enforces,
+    # exposed for TaskExecutor's batch path (item 3), which resolves
+    # become/become_user per task itself (from Task#become/#become_user,
+    # already substituted the same way the non-batched path does) rather
+    # than going through the config-JSON-embedded fields resolve_become
+    # reads. One shared regex, two call sites, no risk of the two
+    # diverging.
+    def self.valid_become_user?(user : String) : Bool
+      !!user.match(/\A[a-zA-Z_][a-zA-Z0-9_.-]{0,31}\z/)
+    end
+
+    # Same interpretation `execute_remote_plugin` already applies to a
+    # single task's raw SSH result - exit code wins first (a nonzero exit
+    # means the plugin crashed or couldn't run at all, so its stdout, if
+    # any, isn't trustworthy JSON), otherwise the plugin's own stdout is
+    # parsed as its authoritative result. Exposed so TaskExecutor's batch
+    # path (item 3) interprets each step's captured result exactly the
+    # same way, instead of re-deriving this logic.
+    def self.interpret_remote_result(exit_code : Int32, stdout : String, stderr : String) : JSON::Any
+      if exit_code != 0
         return JSON.parse({
           "changed" => false,
           "failed"  => true,
           "msg"     => "Plugin execution failed on remote",
-          "stdout"  => result[:stdout],
-          "stderr"  => result[:stderr],
+          "stdout"  => stdout,
+          "stderr"  => stderr,
         }.to_json)
       end
 
       begin
-        JSON.parse(result[:stdout])
+        JSON.parse(stdout)
       rescue
         JSON.parse({
           "changed" => false,
           "failed"  => true,
           "msg"     => "Failed to parse plugin output from remote",
-          "stdout"  => result[:stdout],
-          "stderr"  => result[:stderr],
+          "stdout"  => stdout,
+          "stderr"  => stderr,
         }.to_json)
       end
     end
@@ -393,7 +422,7 @@ module CrystalPlay
       # a strict allow-list is a real security boundary here, not just a
       # sanity check, so it's enforced for both paths uniformly rather
       # than only where it's strictly required.
-      unless become_user.match(/\A[a-zA-Z_][a-zA-Z0-9_.-]{0,31}\z/)
+      unless valid_become_user?(become_user)
         error = JSON.parse({
           "changed" => false,
           "failed"  => true,
@@ -428,8 +457,11 @@ module CrystalPlay
       raise "Plugin binary not found: #{plugin_name} (looked for #{compiled})"
     end
 
-    # Check if connection is local
-    private def self.is_local_connection?(host : Host, vars : Hash(String, JSON::Any)) : Bool
+    # Check if connection is local. Public - TaskExecutor's batch path
+    # (item 3) needs the same local/remote decision execute_plugin
+    # already makes internally, before deciding whether batching even
+    # applies to a given host.
+    def self.is_local_connection?(host : Host, vars : Hash(String, JSON::Any)) : Bool
       # Check if ansible_connection is set to local
       if conn = vars["ansible_connection"]?
         return conn.as_s? == "local"
@@ -439,8 +471,11 @@ module CrystalPlay
       host.name == "localhost"
     end
 
-    # Get the actual hostname to connect to (checks ansible_host variable)
-    private def self.get_connection_host(host : Host, vars : Hash(String, JSON::Any)) : String
+    # Get the actual hostname to connect to (checks ansible_host
+    # variable). Public - TaskExecutor's batch path needs this to know
+    # which host to run the batch script against, same as the
+    # non-batched remote path above.
+    def self.get_connection_host(host : Host, vars : Hash(String, JSON::Any)) : String
       # Check for ansible_host variable (overrides inventory hostname)
       if ansible_host = vars["ansible_host"]?
         return ansible_host.as_s
