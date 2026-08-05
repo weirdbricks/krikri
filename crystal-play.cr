@@ -60,7 +60,7 @@ inventory_file = "inventory.ini"
 check_mode = false
 diff_mode = false
 batching_enabled = true
-forks = 1
+forks = 5
 verbose = false
 limit_hosts = ""
 tags = [] of String
@@ -87,8 +87,8 @@ begin
       batching_enabled = false
     end
 
-    parser.on("-f FORKS", "--forks=FORKS", "Run each task against up to FORKS hosts concurrently (default: 1, today's one-host-at-a-time behavior)") do |f|
-      forks = f.to_i? || 1
+    parser.on("-f FORKS", "--forks=FORKS", "Run each task against up to FORKS hosts concurrently (default: 5, matching ansible-playbook's own default; --forks 1 restores one-host-at-a-time)") do |f|
+      forks = f.to_i? || 5
     end
 
     parser.on("-v", "--verbose", "Verbose output") do

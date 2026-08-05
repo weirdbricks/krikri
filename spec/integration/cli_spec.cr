@@ -208,7 +208,7 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("delegate_to / run_once smoke test complete!")
   end
 
-  it "--forks 1 (the default) is byte-identical to today's one-host-at-a-time behavior" do
+  it "--forks 1 (one-host-at-a-time) is byte-identical to the --forks 5 default's parallel fan-out" do
     default_status, default_output = run_playbook(
       "test-forks-quick.yml",
       [] of String,

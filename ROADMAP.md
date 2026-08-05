@@ -3651,6 +3651,23 @@ compat playbook's own task wouldn't have suggested was there).
     redefinition is a process-wide primitive change worth re-confirming
     against): **41/41 pass**.
 
+- [x] Flipped `--forks`'s default from `1` to `5` (`0.9.78`), matching
+  real `ansible-playbook`'s own default. A deliberate policy call, not
+  a technical finding: `0.9.77`'s own entry above argued for shipping
+  dark first (same discipline batching followed via
+  `--experimental-batching` before its `0.9.63` default flip), but this
+  is a much smaller user base at this stage than the batching decision
+  weighed against, so the calculus is different - flip now, keep
+  testing. `--forks 1` still restores the original one-host-at-a-time
+  behavior for anyone who wants it. Verified against a real 2-host
+  local-connection fixture (`--forks` with no flag now genuinely fans
+  out, `run_once:` still correctly excluded from it) and the full
+  `crystal spec` (769 examples, same 2 pre-existing DB-client failures
+  plus one now-flaky Docker-daemon-connectivity spec in this specific
+  sandbox environment, confirmed via `git stash` to already fail before
+  this change too - unrelated) / `ameba` (166 files, same 51
+  pre-existing findings) / compat harness (41/41) suite.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**

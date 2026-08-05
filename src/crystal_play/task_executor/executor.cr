@@ -86,8 +86,9 @@ module CrystalPlay
     # calling build_vars_context again when it reaches the same task -
     # otherwise every batched task pays for that construction twice.
     @batch_cache : Hash(String, Hash(Task, {JSON::Any?, Hash(String, JSON::Any)}))
-    # Max hosts run concurrently per task via the --forks flag; 1 (the
-    # default) is today's exact one-host-at-a-time behavior. Only tasks
+    # Max hosts run concurrently per task via the --forks flag; defaults
+    # to 5, matching real ansible-playbook's own default (--forks 1
+    # restores the original one-host-at-a-time behavior). Only tasks
     # `task_forkable?` allows actually fan out - run_once:/block:/
     # include_tasks:/include_role: always run one host at a time
     # regardless of this value. See `run_task_for_hosts_in_parallel`.
@@ -103,7 +104,7 @@ module CrystalPlay
       @gather_facts = true,
       @inventory = nil,
       @batching_enabled = true,
-      @forks = 1
+      @forks = 5
     )
       @results = Hash(String, Hash(String, Int32)).new
       @registered_vars = Hash(String, Hash(String, JSON::Any)).new

@@ -214,7 +214,7 @@ behind each one.
 | Task batching, realistic mixed playbook - fresh run | ~1.0x (no measurable win) |
 | Task batching, realistic mixed playbook - idempotency rerun | **1.31x faster** |
 | Parallel fact gathering across hosts (`0.9.75`, 5 real hosts) | **1.41x faster** |
-| `--forks N` (`0.9.77`, 4 real hosts, mixed 6-task playbook, default is `--forks 1`) | **~1.28x faster** |
+| `--forks N` (`0.9.77`, 4 real hosts, mixed 6-task playbook; `0.9.78` made `--forks 5` the default) | **~1.28x faster** |
 
 The last three are recent, ongoing engine-level work (task batching is
 on by default since `0.9.63`; `--no-batching` disables it) - see
@@ -249,7 +249,7 @@ run), the same 12-task mixed playbook (`file`, `copy`+loop x10,
 | | Fresh run | Idempotent re-run (median of 3) |
 |---|---|---|
 | Python `ansible-core` 2.19.4 (`forks=5` default) | 33.5s | 30.3s |
-| `crystal-ansible` (`--forks 1`, the default) | 26.6s (1.26x) | 5.4s (5.6x) |
+| `crystal-ansible` `--forks 1` (one-host-at-a-time) | 26.6s (1.26x) | 5.4s (5.6x) |
 | `crystal-ansible` `--forks 3` | 27.5s (1.22x) | **2.9s (10.4x)** |
 
 Fresh-run time stays close across all three rows - that time is
@@ -261,11 +261,10 @@ per task per host even when nothing needs to change, while
 `crystal-ansible` finishes in under 3 seconds. Idempotent reruns are
 also the more common real-world case for a config-management tool.
 
-`--forks` defaults to `1`, matching `--no-batching`'s own rollout
-discipline: it shipped this way deliberately, to accumulate real-world
-mileage before flipping the default, the same path batching itself took
-from `--experimental-batching` to on-by-default at `0.9.63`. Pass
-`--forks N` explicitly to get the parallel-hosts number.
+`--forks` defaults to `5` since `0.9.78`, matching real
+`ansible-playbook`'s own default - the two rows above measured `--forks 1`
+and `--forks 3` explicitly, before that default flip. Pass `--forks 1` to
+restore the original one-host-at-a-time behavior.
 
 ---
 
