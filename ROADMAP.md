@@ -3363,6 +3363,27 @@ compat playbook's own task wouldn't have suggested was there).
   failures) and `ameba` (177 files, same 51 pre-existing findings) both
   clean.
 
+- [x] `LocalExecutor.exec` now spawns two processes per local command
+  instead of three (`0.9.70`), from `OPUS_PERFORMANCE_IMPROVEMENTS.md`
+  item 9: it used to build `"/bin/bash -c '#{command.gsub(...)}'"` and
+  pass it to `Process.new` with `shell: true`, which spawns `sh` to
+  parse that string, which then spawns `bash` to run the actual command
+  - `sh` never does anything but re-invoke `bash`. Switched to
+  `Process.new("/bin/bash", ["-c", command])`: no `shell: true`, so no
+  intermediate `sh`, and the command travels as a single argv element
+  instead of a string a shell has to re-parse, which also deletes the
+  hand-rolled single-quote escaping entirely rather than just making it
+  faster. **Measured** directly via `strace -f -e trace=execve`: 3
+  `execve` calls before (`sh` -> `bash` -> command) vs. 2 after (`bash`
+  -> command) for the same trivial command. Added a regression spec
+  (`spec/unit/local_executor_spec.cr`) exercising embedded single
+  quotes, a literal `$`, and a backslash together in one command,
+  specifically because passing argv directly changes how those
+  characters need to survive - confirmed they come through byte-exact
+  with no shell re-interpretation. `crystal spec` (766 examples, same 2
+  pre-existing DB-client failures) and `ameba` (177 files, same 51
+  pre-existing findings) both clean.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**

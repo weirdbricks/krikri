@@ -22,6 +22,17 @@ describe CrystalPlay::LocalExecutor do
       result[:stdout].bytesize.should eq(500000)
     end
 
+    # Regression test for passing argv directly (Process.new("/bin/bash",
+    # ["-c", command]), no shell: true) instead of a hand-escaped
+    # "/bin/bash -c '...'" string: the command now travels as a single
+    # argv element, so it must survive embedded single quotes,
+    # backslashes, and "$" untouched, with no shell re-parsing it.
+    it "handles embedded single quotes, backslashes, and $ correctly" do
+      result = CrystalPlay::LocalExecutor.exec(%(echo 'it'"'"'s a $HOME\\test'))
+      result[:exit_code].should eq(0)
+      result[:stdout].should eq("it's a $HOME\\test\n")
+    end
+
     # Regression test for a real, previously-shipped bug: `sleep N && daemon &`
     # backgrounds a *shell* that blocks in its own wait() on `daemon` (nohup
     # only suppresses SIGHUP, it doesn't exempt a child from its parent's own

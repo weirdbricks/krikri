@@ -32,14 +32,13 @@ module CrystalPlay
 
     # Execute command locally
     def self.exec(command : String) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
-      # Build the bash command
-      # We need to properly escape the command for shell execution
-      # Using shell: true to let the shell handle the parsing
-      bash_cmd = "/bin/bash -c '#{command.gsub("'", "'\\''")}'"
-
+      # Passing argv directly (no shell: true) skips the extra sh -> bash
+      # hop a shell-escaped string would need, and needs no quote-escaping
+      # since the command travels as a single argv element, not a string
+      # a shell has to re-parse.
       process = Process.new(
-        bash_cmd,
-        shell: true,
+        "/bin/bash",
+        ["-c", command],
         output: Process::Redirect::Pipe,
         error: Process::Redirect::Pipe
       )
