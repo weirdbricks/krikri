@@ -3384,6 +3384,32 @@ compat playbook's own task wouldn't have suggested was there).
   pre-existing DB-client failures) and `ameba` (177 files, same 51
   pre-existing findings) both clean.
 
+- [x] Stopped building `vars_context` twice for every batched task
+  (`0.9.71`), from `OPUS_PERFORMANCE_IMPROVEMENTS.md` item 7:
+  `execute_batch_group` builds a `vars_context` for every group member to
+  prepare its batch step; later, as the task-major loop in `execute_task`
+  reaches each member, it built an identical context again before
+  calling `try_batched_result`. Widened `@batch_cache`'s value type from
+  `Hash(Task, JSON::Any?)` to `Hash(Task, {JSON::Any?, Hash(String,
+  JSON::Any)})` so each cached result carries its vars_context alongside
+  it - `execute_task` now checks the cache first and reuses that context
+  instead of rebuilding, and the group's *triggering* task (the one
+  whose `execute_task` call actually invokes `execute_batch_group`) has
+  its already-built context threaded straight into
+  `execute_batch_group` via new `trigger_task`/`trigger_vars_context`
+  params, so that one specific member's context is now built exactly
+  once instead of twice too. **Measured** (release build,
+  `Benchmark.ips`, 120 facts + 20 host vars + 10 play vars, matching the
+  doc's own harness): `VariableContext.build` + facts merge costs 3.86µs
+  per call; building it twice (the pre-fix cost for a batched task) -
+  7.72µs, so this is a clean **2.00x** reduction per batched task. This
+  touches the batch path directly, so verified with the full `--no-
+  batching` A/B protocol from `0.9.63`: full compat harness including
+  `39-batching.yml`'s real-SSH controller/target diff - **41/41 pass**,
+  batched and unbatched output byte-identical. `crystal spec` (766
+  examples, same 2 pre-existing DB-client failures) and `ameba` (177
+  files, same 51 pre-existing findings) both clean.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**

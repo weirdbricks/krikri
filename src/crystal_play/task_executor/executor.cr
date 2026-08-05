@@ -79,7 +79,12 @@ module CrystalPlay
     # register:/notify:/changed_when:/stats/halt bookkeeping stay
     # completely unmodified by batching - only the transport that fills
     # this cache changes.
-    @batch_cache : Hash(String, Hash(Task, JSON::Any?))
+    #
+    # Each entry also carries the vars_context that was built to prepare
+    # that task's batch step, so `execute_task` can reuse it instead of
+    # calling build_vars_context again when it reaches the same task -
+    # otherwise every batched task pays for that construction twice.
+    @batch_cache : Hash(String, Hash(Task, {JSON::Any?, Hash(String, JSON::Any)}))
 
     def initialize(
       @hosts,
@@ -98,7 +103,7 @@ module CrystalPlay
       @halted_hosts = Set(String).new
       @task_group = Hash(Task, Array(Task)).new
       @grouped_lists = Set(UInt64).new
-      @batch_cache = Hash(String, Hash(Task, JSON::Any?)).new
+      @batch_cache = Hash(String, Hash(Task, {JSON::Any?, Hash(String, JSON::Any)})).new
 
       @hosts.each do |host|
         @results[host.name] = {
@@ -229,7 +234,12 @@ module CrystalPlay
         return
       end
 
-      vars_context = build_vars_context(task, host)
+      # An earlier group member's trigger may have already built this
+      # exact context while preparing this task's own batch step
+      # (execute_batch_group prepares every member up front) - reuse it
+      # instead of paying for VariableContext.build + facts merge again.
+      vars_context = @batch_cache[host.name]?.try(&.[task]?).try(&.[1]) ||
+        build_vars_context(task, host)
 
       # delegate_to: run the module against a different host's connection
       # while vars/facts/register/stats stay attributed to `host` - resolved
@@ -460,13 +470,16 @@ module CrystalPlay
       group = @task_group[task]?
       return {false, nil} unless group
 
-      cache = (@batch_cache[host.name] ||= Hash(Task, JSON::Any?).new)
+      cache = (@batch_cache[host.name] ||= Hash(Task, {JSON::Any?, Hash(String, JSON::Any)}).new)
 
       unless cache.has_key?(group.first)
-        execute_batch_group(group, host)
+        # `task` is the group's trigger - its vars_context was already
+        # built by the caller (execute_task), so hand it over instead of
+        # having execute_batch_group build an identical one again.
+        execute_batch_group(group, host, task, vars_context)
       end
 
-      {true, cache[task]?}
+      {true, cache[task]?.try(&.[0])}
     end
 
     # Builds and runs the single SSH round trip for *group* against
@@ -487,8 +500,13 @@ module CrystalPlay
     # reaches each member and consumes it from the cache via
     # finish_single_task, in the same order it always has. This method's
     # only job is to fill the cache.
-    private def execute_batch_group(group : Array(Task), host : Host)
-      cache = (@batch_cache[host.name] ||= Hash(Task, JSON::Any?).new)
+    private def execute_batch_group(
+      group : Array(Task),
+      host : Host,
+      trigger_task : Task? = nil,
+      trigger_vars_context : Hash(String, JSON::Any)? = nil,
+    )
+      cache = (@batch_cache[host.name] ||= Hash(Task, {JSON::Any?, Hash(String, JSON::Any)}).new)
 
       steps = [] of BatchScript::Step
       step_tasks = [] of Task
@@ -498,16 +516,20 @@ module CrystalPlay
       group.each do |task|
         break if halted
 
-        vars_context = build_vars_context(task, host)
+        vars_context = if task == trigger_task && (reused = trigger_vars_context)
+                         reused
+                       else
+                         build_vars_context(task, host)
+                       end
 
         unless when_passes?(task, vars_context, host)
-          cache[task] = nil
+          cache[task] = {nil, vars_context}
           next
         end
 
         case outcome = prepare_batch_step(task, host, vars_context)
         when JSON::Any
-          cache[task] = outcome
+          cache[task] = {outcome, vars_context}
           failed = outcome["failed"]?.try(&.as_bool) || false
           halted = true if failed && !task.ignore_errors
         when BatchScript::Step
@@ -532,7 +554,7 @@ module CrystalPlay
         task = step_tasks[idx]
         vars_context = step_vars[idx]
         interpreted = PluginManager.interpret_remote_result(r.exit_code, r.stdout, r.stderr)
-        cache[task] = apply_changed_failed_when(task, interpreted, vars_context, host)
+        cache[task] = {apply_changed_failed_when(task, interpreted, vars_context, host), vars_context}
       end
     end
 
