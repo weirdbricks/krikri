@@ -159,6 +159,17 @@ commands) - is a materially bigger and riskier change than items 1-2:
 measured, and only pick it up with a real design writeup first (separate
 from this file) given the correctness surface it touches.
 
+**Status:** items 1-2 done (see their entries above / `ROADMAP.md`
+`0.9.59`). The prerequisite measurement this item's own text asked for
+("the SSH-invocation overhead ... hasn't been isolated and measured yet")
+is now done: it's dominated by per-task SSH channel-open round trips, not
+fork/exec, and scales with network RTT to the target (~330ms/task at
+~120ms RTT on the one throwaway host this was measured against; expect
+much less on a typical low-latency deployment). The design writeup this
+item asked for is [BATCHING_DESIGN.md](BATCHING_DESIGN.md) - not
+implemented, still needs the "measure K on real playbooks" step that doc
+calls out before writing any code.
+
 ### 4. Plugin binary startup time itself - deprioritized
 
 Measured at roughly 6-8ms per plugin invocation locally (uncompressed,
