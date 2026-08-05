@@ -48,8 +48,7 @@ module CrystalPlay
   # once per matched entry - matches real Ansible's own find module,
   # which walks via Python's os.walk() and hashes via hashlib rather than
   # shelling out too. Measured ~150x faster over a 320-file tree with
-  # checksums enabled than the previous shell-per-entry implementation -
-  # see BENCHMARK_RESULTS.md.
+  # checksums enabled than the previous shell-per-entry implementation.
   #
   # Read-only, never-`changed`, like stat.
   class FindPlugin < BasePlugin

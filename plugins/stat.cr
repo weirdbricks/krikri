@@ -38,7 +38,7 @@ module CrystalPlay
   # real Ansible's own stat module, which uses Python's os.stat() and
   # hashlib natively rather than shelling out too. Measured ~28x faster
   # per invocation than the previous shell-based implementation (5
-  # subprocess spawns per call) - see BENCHMARK_RESULTS.md.
+  # subprocess spawns per call).
   #
   # This is always a read-only, never-`changed` module - like real
   # Ansible's stat, it exists to feed `register:` + `when:`, not to make

@@ -76,7 +76,7 @@ Two cross-cutting efforts also landed since Phases 3/4 were marked done:
   no reliance on command exit codes): `stat`/`find` (0.9.15), `archive`
   tar/gz/zip/xz/bz2 (0.9.16-0.9.18), `file` (0.9.19), `apt_repository`/
   `yum_repository` (0.9.20), `authorized_key` (0.9.21), `mount` (0.9.22),
-  `sysctl` (0.9.23). Timings per plugin are in `BENCHMARK_RESULTS.md`. The
+  `sysctl` (0.9.23). The
   deliberate exceptions - genuine system/network operations with no faithful
   native Crystal equivalent - are documented per-plugin and stay shelled out
   (`apt`/`dnf`/`package` package-manager calls, `mount`/`umount`,
@@ -494,8 +494,7 @@ the same way it did between January and now.
     subprocesses per scan - one `stat` + one checksum per matched file).
     Output verified byte-identical against real `ansible-playbook`
     before and after the conversion (mode, size, checksum, permission
-    bits, symlink resolution, `find`'s `matched` count). Full details
-    and methodology in `BENCHMARK_RESULTS.md`. Existing test suites
+    bits, symlink resolution, `find`'s `matched` count). Existing test suites
     (`spec/unit/stat_fields_spec.cr`, `spec/integration/stat_spec.cr`,
     `spec/integration/find_spec.cr`) pass unmodified in behavior; the
     unit spec was rewritten to exercise the new typed API instead of
@@ -603,8 +602,7 @@ the same way it did between January and now.
     2000-file tree) rather than the `tar`/`gzip` CLIs it doesn't use:
     crystal-ansible's native tar is **1.3x faster** than real Ansible
     (259ms vs. 347.7ms) and native gz is **2.7x faster** (176ms vs.
-    475.4ms). Full methodology and both comparisons in
-    `BENCHMARK_RESULTS.md`. Existing `archive`/`unarchive` test suites
+    475.4ms). Existing `archive`/`unarchive` test suites
     (29 examples) pass unmodified in behavior.
   - **Update (`0.9.17`):** `xz` also converted to native, after a closer
     shard search than the one that produced the `0.9.16` note above
@@ -622,8 +620,7 @@ the same way it did between January and now.
     baseline reframing needed. Correctness verified against the real
     `tar`/`xz` CLIs in both directions (native output readable by real
     `tar`/`xz`; a real-CLI-built `tar.xz` readable as a pre-existing
-    `dest`) plus idempotent-rerun behavior. Full details in
-    `BENCHMARK_RESULTS.md`. Full project suite (495 examples) passes.
+    `dest`) plus idempotent-rerun behavior. Full project suite (495 examples) passes.
   - **Update (`0.9.18`):** `bz2` converted too - the shard search that
     came up empty for it in `0.9.16` was checked again more thoroughly
     and confirmed genuinely empty (`jhbadger/Bzip` really is just a
@@ -641,8 +638,7 @@ the same way it did between January and now.
     **1.15x**). Correctness verified the same way as `xz` (round-trip
     against real `bzip2`/`tar` CLIs in both directions, idempotent rerun,
     reading a pre-existing real-CLI-built archive). `bz2.cr` has its own
-    8-example spec suite. Full details in `BENCHMARK_RESULTS.md`. Full
-    project suite (495 examples) passes.
+    8-example spec suite. Full project suite (495 examples) passes.
 - [x] `unarchive` (`0.9.2`): extracts an archive into an existing
   directory - the counterpart to `archive`, but registered as
   `ansible.builtin.unarchive` (verified via `ansible-doc unarchive`),
@@ -720,8 +716,7 @@ the same way it did between January and now.
     each, comparing the compiled plugin binary before/after): 2.5x-4.9x
     faster across every state (`state: link`'s create path, with three
     shelled-out checks per call in the old version, shows the largest
-    win at **4.85x**). Full details in `BENCHMARK_RESULTS.md`. Full
-    project suite (516 examples) passes.
+    win at **4.85x**). Full project suite (516 examples) passes.
 - [x] `apt_repository` (`0.9.3`): adds/removes a Debian/Ubuntu APT source
   line under `/etc/apt/sources.list.d/`. Parameters: `repo` (a plain
   `deb`/`deb-src` line, required), `state`, `filename`, `update_cache`

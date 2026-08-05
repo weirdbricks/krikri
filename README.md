@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.57-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.61-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -56,6 +56,10 @@ what's implemented, what's a documented scope cut, and why.
   `--vault-password-file`
 - ✅ `--check` (dry-run) and `--diff` (show file changes) modes
 - ✅ `--tags` and `--limit` host/task filtering
+- 🧪 `--experimental-batching` - batches consecutive independent tasks
+  bound for the same remote host into a single SSH round trip instead
+  of one round trip per task (opt-in, defaults off; see
+  the Performance section below, and `ROADMAP.md`'s `0.9.61` entry)
 
 ### Plugins (44 total)
 
@@ -181,9 +185,37 @@ Supports standard Ansible playbook syntax. See the
 ./bin/crystal-ansible --ask-vault-pass playbook.yml
 ./bin/crystal-ansible --vault-password-file pass.txt playbook.yml
 
+# Experimental: fewer SSH round trips on playbooks with long runs of
+# independent tasks (opt-in, defaults off)
+./bin/crystal-ansible --experimental-batching -i inventory.ini playbook.yml
+
 # Multiple options
 ./bin/crystal-ansible --check --diff -i production.ini playbook.yml
 ```
+
+---
+
+## ⚡ Performance
+
+Every number below was measured against the previous shell/subprocess
+implementation or against real `ansible-playbook`, not assumed - see
+`ROADMAP.md` for the full, continuously-updated methodology and results
+behind each one.
+
+| What | Result |
+|---|---|
+| `find` (checksums enabled, native vs. shelling to `find`/`md5sum`/etc.) | **~150x faster** |
+| `stat` (native `stat()`/hashlib vs. 5 subprocess spawns per call) | **~28x faster** |
+| `file` (state changes, native vs. shelled-out checks) | **2.5x-4.9x faster** |
+| Facts gathering (`0.9.61`, subprocess forks collapsed to syscalls) | **~2x faster** per run |
+| `--experimental-batching` (30-task playbook, opt-in, fewer SSH round trips) | **2.82x faster**, 64.5% less wall time |
+
+The last two are recent, ongoing engine-level work - see `ROADMAP.md`'s
+`0.9.59`-`0.9.61` entries for the isolated per-fork measurements, the
+real-SSH correctness verification, and the honest caveats (the batching
+number above was measured on a high-latency test path; the win scales
+with round-trip cost to your actual targets, so it'll be smaller on a
+fast, low-latency link and larger on a slow one).
 
 ---
 
@@ -207,10 +239,15 @@ harness covers and how it works.
 
 See [ROADMAP.md](ROADMAP.md) for the live, detailed tracking of what is
 implemented, what is not, and what is planned next. As of this writing,
-the remaining open items are narrow, documented scope cuts (a handful of
-`postgresql_privs` privilege types that need a different underlying
-mechanism, and Docker API version negotiation) - everything else tracked
-in the roadmap has shipped.
+the remaining open items are narrow, documented scope cuts and two known
+cross-cutting engine gaps: a handful of `postgresql_privs` privilege
+types that need a different underlying mechanism; Docker API version
+negotiation; `when:`/`assert: that:` bare conditionals not supporting
+Jinja2 filters (works fine inside `{{ }}` substitution, e.g. `debug:
+msg:`); and a failed host (without `ignore_errors:`) being skipped only
+for the rest of its current play here, rather than every remaining play
+in the run like real Ansible - everything else tracked in the roadmap
+has shipped.
 
 ---
 
