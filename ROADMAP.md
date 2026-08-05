@@ -57,7 +57,7 @@ on all new/touched code. A Docker-based compatibility harness (`compat/`,
 see `compat/README.md`) runs the same playbooks through real
 `ansible-playbook` and `crystal-ansible` side by side and diffs the
 resulting filesystem state + exit codes - ground truth instead of
-assumptions; **38/38 compat playbooks pass** (`mount`'s own `remounted`/
+assumptions; **39/39 compat playbooks pass** (`mount`'s own `remounted`/
 `ephemeral`, `wait_for`'s own `drained:`, `apt_repository`'s own `ppa:`,
 `user`'s own `password:`, `docker_container`/`docker_network`'s own
 `networks:`/`connected:`, and `mysql_db`/`postgresql_db`'s own `0.9.52`
@@ -3109,6 +3109,22 @@ the exact "not implemented" list it's tracked against:**
   attempted yet, worked around in the `0.9.58` benchmark playbook
   instead (precompute the filtered value via `set_fact:` first, assert
   on the plain result).
+- **Cross-cutting engine gap, found in `0.9.61`** (building
+  `compat/playbooks/39-batching.yml`, unrelated to what that playbook
+  was actually testing): real Ansible removes a host that fails without
+  `ignore_errors:` from *every remaining play in the whole run*, not
+  just the rest of the play it failed in. This codebase's
+  `@halted_hosts` (`TaskExecutor`) is scoped per-`TaskExecutor` instance
+  - i.e. per-play, since `crystal-play.cr` constructs a fresh
+  `TaskExecutor` for each play - so a host that hard-failed in play 2
+  runs completely normally again in play 3 here, which real Ansible
+  would have silently skipped. Fixing this means threading a
+  cross-play "which hosts have failed" set through whatever constructs
+  each play's `TaskExecutor` (today entirely local to `run`'s per-play
+  loop), filtering it out of that play's host list up front rather than
+  relying on `@halted_hosts` alone. Not attempted yet - worked around in
+  `39-batching.yml` by keeping its one hard-failure scenario as the
+  file's last play.
 
 Cross-cutting engine gaps this section used to track here - Jinja2
 filter-chaining (inside `{{ }}` substitution) and `become:`/

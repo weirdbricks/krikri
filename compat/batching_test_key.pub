@@ -1,0 +1,1 @@
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGNkXJzzAOeSTpIURuFLKQXOREk+6ZbYCew6rEUIeNnt crystal-ansible compat harness - Docker-internal test loopback only, never exposed to any real network

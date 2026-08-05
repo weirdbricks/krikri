@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     cron \
     openssh-client \
+    openssh-server \
     ca-certificates \
     bzip2 \
     xz-utils \
@@ -75,6 +76,32 @@ COPY . /repo
 # the time - important because any source change invalidates this layer.
 # Release vs. debug produces identical plugin output for compat purposes.
 RUN shards install && ./build.sh
+
+# item 3 compat coverage (--experimental-batching, 0.9.61): the normal
+# harness runs both engines via `docker exec <container> ...` with
+# ansible_connection=local (compat/inventory.ini), which never touches
+# batching at all - it's an SSH-specific optimization. compat/run.cr's
+# compare_batching instead spins up two containers *from this same
+# image* and has one reach the other over a real SSH connection, so
+# every container built from this image is set up to both host sshd
+# (the "target" role) and SSH into a sibling container (the
+# "controller" role) using one baked-in keypair.
+#
+# batching_test_key(.pub) is intentionally committed to this repo, not
+# a secret needing rotation - it grants access to nothing except an
+# ephemeral, throwaway container built from this exact image, on
+# whichever machine builds it; it is never used against any real host
+# and this image is never exposed to a real network. Same accepted
+# pattern as e.g. Vagrant's well-known default box keypair.
+RUN ssh-keygen -A \
+    && mkdir -p /run/sshd /root/.ssh \
+    && chmod 700 /root/.ssh \
+    && cp compat/batching_test_key.pub /root/.ssh/authorized_keys \
+    && cp compat/batching_test_key /root/.ssh/id_batching_test \
+    && chmod 600 /root/.ssh/authorized_keys /root/.ssh/id_batching_test \
+    && echo "PermitRootLogin prohibit-password" >> /etc/ssh/sshd_config \
+    && printf 'Host *\n  StrictHostKeyChecking accept-new\n  IdentityFile /root/.ssh/id_batching_test\n' > /root/.ssh/config \
+    && chmod 600 /root/.ssh/config
 
 # Playbooks run here; each `docker run --rm` gets a fresh, empty /work from
 # the image layer, discarded when the container exits.

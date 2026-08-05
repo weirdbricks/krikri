@@ -378,11 +378,38 @@ behavior is unaffected either way):
   a sanity check alongside the correctness verification): batched run
   ~18% faster on this same noisy high-latency path used for the
   original SSH-overhead measurement.
-- Not yet done: the `compat/` harness extension this doc's rollout
-  section calls for (the scenarios above were verified by hand against
-  one real host, not added as permanent regression coverage), and the
-  low-latency-target verification the rollout section specifically asks
-  for (this was, again, the same high-RTT vantage point as the original
-  measurement - still don't have a real number for what the win looks
-  like on a fast link, only the theoretical argument that it should be
-  smaller).
+- Not yet done: the low-latency-target verification the rollout section
+  specifically asks for (this was, again, the same high-RTT vantage
+  point as the original measurement - still don't have a real number for
+  what the win looks like on a fast link, only the theoretical argument
+  that it should be smaller).
+
+## `compat/` harness coverage (closed)
+
+`compat/playbooks/39-batching.yml` + `compat/run.cr`'s
+`compare_batching` now give this permanent, repeatable, real-`ansible-
+playbook`-diffed regression coverage - not just the one-off hand
+verification above. Discovered along the way: `compat/`'s normal
+mechanism (`docker exec <container> ...` with `ansible_connection=local`)
+**cannot exercise batching at all** - `PluginManager.is_local_connection?`
+short-circuits before ever consulting a batch group, flag or not - so
+this needed a genuinely different harness path: two containers from the
+same image (a "target" running its own real `sshd`, a "controller"
+reaching it over a real SSH connection, one keypair baked into the image
+for both), on a dedicated Docker network. Full detail in
+`compat/README.md`'s own section on this.
+
+Also surfaced a real, **pre-existing, unrelated-to-batching** divergence
+while building the scenario playbook: real Ansible removes a host that
+fails without `ignore_errors:` from *every remaining play in the whole
+run*, not just the rest of the play it failed in; this codebase's
+`@halted_hosts` is scoped per-`TaskExecutor` (i.e. per-play), so a host
+that failed in play 2 still runs fine in play 3 here. Worked around in
+`39-batching.yml` by keeping the hard-failure scenario as the file's
+last play rather than chasing this gap as part of item 3 - it's a real
+find worth its own fix at some point, just not this one.
+
+Verified via a full harness run: **39/39 compat playbooks pass**,
+including `39-batching.yml` itself - real `ansible-playbook` vs.
+`crystal-ansible --experimental-batching`, file-checksum-identical final
+`/work` state on the target container.

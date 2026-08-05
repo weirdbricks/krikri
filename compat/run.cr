@@ -87,6 +87,76 @@ module Compat
   VAULT_EXTRA_ARGS = ["--vault-password-file", "/repo/compat/vault_pass.txt"]
   VAULT_PLAYBOOKS  = {"16-vault.yml", "17-vault-inline.yml"}
 
+  # Podman's default (network-less) `docker run` gives a container no
+  # inspectable IP at all (empty .NetworkSettings.Networks) under this
+  # harness's rootless setup - a real user-defined bridge network (via
+  # netavark) is what actually gives containers routable IPs reachable
+  # from a sibling container. Created once, left in place (containers
+  # using it are `--rm`; the network itself is negligible and fine to
+  # reuse across runs) - `docker network create` on an existing name
+  # errors, so this checks first.
+  BATCHING_NETWORK = "crystal-ansible-compat-batching"
+
+  def self.ensure_batching_network
+    code, _ = run(["docker", "network", "inspect", BATCHING_NETWORK])
+    return if code == 0
+
+    create_code, create_out = run(["docker", "network", "create", BATCHING_NETWORK])
+    raise "failed to create #{BATCHING_NETWORK} network: #{create_out}" unless create_code == 0
+  end
+
+  # item 3 (BATCHING_DESIGN.md, --experimental-batching, 0.9.61) needs a
+  # real, separate SSH connection to exercise at all - run_playbook above
+  # always uses `docker exec` + ansible_connection=local, which
+  # PluginManager.is_local_connection? short-circuits before ever
+  # consulting a batch group. Spins up two fresh containers *from this
+  # same image* - a "target" (runs its own real sshd) and a "controller"
+  # (runs *engine_args* against the target over a real SSH connection,
+  # using the keypair compat/Dockerfile bakes into every image built
+  # from it) - then snapshots the target's /work, since that's where the
+  # playbook actually ran. Only used for BATCHING_PLAYBOOK_NAME below.
+  def self.run_playbook_via_ssh(engine_args : Array(String), playbook_path : String) : Snapshot
+    ensure_batching_network
+
+    target = "compat-target-#{Random::Secure.hex(6)}"
+    controller = "compat-ctrl-#{Random::Secure.hex(6)}"
+
+    t_code, t_out = run(["docker", "run", "-d", "--rm", "--name", target, "--network", BATCHING_NETWORK, IMAGE, "sleep", "300"])
+    raise "failed to start compat target container: #{t_out}" unless t_code == 0
+
+    begin
+      c_code, c_out = run(["docker", "run", "-d", "--rm", "--name", controller, "--network", BATCHING_NETWORK, IMAGE, "sleep", "300"])
+      raise "failed to start compat controller container: #{c_out}" unless c_code == 0
+
+      begin
+        sshd_code, sshd_out = run(["docker", "exec", target, "/usr/sbin/sshd"])
+        raise "failed to start sshd on compat target: #{sshd_out}" unless sshd_code == 0
+
+        ip_code, ip_out = run(["docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", target])
+        raise "failed to inspect compat target IP: #{ip_out}" unless ip_code == 0
+        target_ip = ip_out.strip
+        raise "compat target container has no IP address" if target_ip.empty?
+
+        inventory = "[bench]\n#{target_ip} ansible_user=root\n"
+        inv_code, inv_out = run(["docker", "exec", controller, "sh", "-c", "printf '%s' #{shell_quote(inventory)} > /tmp/batching_inventory.ini"])
+        raise "failed to write batching inventory on controller: #{inv_out}" unless inv_code == 0
+
+        exec_code, exec_output = run(["docker", "exec", controller] + engine_args + ["-i", "/tmp/batching_inventory.ini", playbook_path])
+        _, files_output = run(["docker", "exec", target, "sh", "-c", SNAPSHOT_SCRIPT])
+
+        Snapshot.new(exec_code, exec_output, files_output)
+      ensure
+        run(["docker", "kill", controller])
+      end
+    ensure
+      run(["docker", "kill", target])
+    end
+  end
+
+  private def self.shell_quote(str : String) : String
+    "'" + str.gsub("'", "'\\''") + "'"
+  end
+
   def self.compare(playbook_path : String) : Result
     name = File.basename(playbook_path)
     container_path = "/repo/compat/playbooks/#{name}"
@@ -95,6 +165,24 @@ module Compat
     ansible = run_playbook(["ansible-playbook"] + extra_args, container_path)
     crystal = run_playbook(["/repo/bin/crystal-ansible"] + extra_args, container_path)
 
+    diff_snapshots(name, ansible, crystal)
+  end
+
+  # item 3 (BATCHING_DESIGN.md, --experimental-batching, 0.9.61) -
+  # BATCHING_PLAYBOOK_NAME only, driven over a real SSH connection via
+  # run_playbook_via_ssh instead of the normal docker-exec/local path -
+  # see that method's own comment for why.
+  def self.compare_batching(playbook_path : String) : Result
+    name = File.basename(playbook_path)
+    container_path = "/repo/compat/playbooks/#{name}"
+
+    ansible = run_playbook_via_ssh(["ansible-playbook"], container_path)
+    crystal = run_playbook_via_ssh(["/repo/bin/crystal-ansible", "--experimental-batching"], container_path)
+
+    diff_snapshots(name, ansible, crystal)
+  end
+
+  private def self.diff_snapshots(name : String, ansible : Snapshot, crystal : Snapshot) : Result
     ansible_ok = ansible.exit_code == 0
     crystal_ok = crystal.exit_code == 0
 
@@ -135,13 +223,27 @@ module Compat
       end
     end
   end
+
+  # Excluded from the normal glob loop below - it uses hosts: bench,
+  # which only resolves under run_playbook_via_ssh's dynamically
+  # generated inventory, not compat/inventory.ini's static
+  # `localhost ansible_connection=local`. Run through compare() like
+  # everything else, hosts: bench would just match zero hosts and the
+  # play would silently no-op for both engines - a false PASS that
+  # tests nothing, not a real comparison.
+  BATCHING_PLAYBOOK_NAME = "39-batching.yml"
 end
 
-playbooks = Dir.glob(File.join(Compat::PLAYBOOKS_DIR, "*.yml")).sort
+all_playbooks = Dir.glob(File.join(Compat::PLAYBOOKS_DIR, "*.yml")).sort
+playbooks = all_playbooks.reject { |path| File.basename(path) == Compat::BATCHING_PLAYBOOK_NAME }
+batching_playbook = all_playbooks.find { |path| File.basename(path) == Compat::BATCHING_PLAYBOOK_NAME }
 
 abort("Failed to build compat image") unless Compat.build_image
 
 results = playbooks.map { |path| Compat.compare(path) }
+if path = batching_playbook
+  results << Compat.compare_batching(path)
+end
 
 puts ""
 puts "=" * 70

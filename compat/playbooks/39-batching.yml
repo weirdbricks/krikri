@@ -1,0 +1,145 @@
+# Compat coverage for item 3 (BATCHING_DESIGN.md, --experimental-batching,
+# 0.9.61). Unlike every other compat playbook here, this one is driven by
+# compat/run.cr's dedicated compare_batching (not compare): the normal
+# harness runs both engines via `docker exec <container> ... -i
+# .../inventory.ini` with ansible_connection=local (no real network
+# involved at all), which would never exercise batching - it's an
+# SSH-specific optimization, and PluginManager.is_local_connection? short-
+# circuits before ever consulting a batch group. compare_batching instead
+# spins up a genuinely separate "controller" container that reaches this
+# playbook's real target over real SSH (its own sshd, its own throwaway
+# keypair - see compat/Dockerfile), the same shape as the real-host
+# verification this feature was first checked against (a throwaway
+# Atlantic.net instance), just reproduced locally and repeatably.
+#
+# hosts: bench matches the [bench] group compare_batching generates at
+# runtime (the target container's own IP), not compat/inventory.ini's
+# static `localhost ansible_connection=local` - this playbook is never
+# run through the normal compare() path.
+#
+# The hard-failure play is deliberately LAST: real Ansible removes a host
+# that fails without ignore_errors: from every *remaining* play in the
+# whole run, not just the rest of the play it failed in (a real,
+# pre-existing divergence from this codebase's own per-play
+# @halted_hosts scoping - unrelated to batching, out of scope for this
+# file to chase). Keeping the hard failure last sidesteps that gap
+# entirely rather than tripping over it here.
+
+- name: independent batch + register-chain split + become varying within a batch
+  hosts: bench
+  gather_facts: false
+
+  tasks:
+    - name: make /work writable by the throwaway become user below
+      ansible.builtin.file:
+        path: /work
+        state: directory
+        mode: "0777"
+
+    - name: independent task 1
+      ansible.builtin.command: echo indep1
+      register: r1
+
+    - name: independent task 2
+      ansible.builtin.command: echo indep2
+
+    - name: independent task 3
+      ansible.builtin.command: echo indep3
+
+    - name: chained task referencing r1 (must split the batch here)
+      ansible.builtin.debug:
+        msg: "r1 was {{ r1.stdout }}"
+
+    - name: write file as root (default become)
+      ansible.builtin.copy:
+        content: "root wrote this\n"
+        dest: /work/root_file.txt
+
+    - name: create unprivileged test user
+      ansible.builtin.user:
+        name: batchtestuser
+        state: present
+
+    - name: write file as become_user (become varies within this batch vs. the task above)
+      ansible.builtin.copy:
+        content: "batchtestuser wrote this\n"
+        dest: /work/user_file.txt
+        owner: batchtestuser
+      become: true
+      become_user: batchtestuser
+
+    - name: check root_file.txt owner
+      ansible.builtin.command: stat -c %U /work/root_file.txt
+      register: root_owner
+      changed_when: false
+
+    - name: check user_file.txt owner
+      ansible.builtin.command: stat -c %U /work/user_file.txt
+      register: user_owner
+      changed_when: false
+
+    - name: "record ownership results (proves become: was honored per-step, not just per-batch)"
+      ansible.builtin.copy:
+        content: |
+          root_owner={{ root_owner.stdout }}
+          user_owner={{ user_owner.stdout }}
+        dest: /work/results.txt
+
+    - name: remove the throwaway user
+      ansible.builtin.user:
+        name: batchtestuser
+        state: absent
+        remove: true
+
+- name: "ignore_errors: true lets a batch continue past a mid-batch failure"
+  hosts: bench
+  gather_facts: false
+  tasks:
+    - name: independent task A
+      ansible.builtin.command: echo a
+
+    - name: fails but ignore_errors is true
+      ansible.builtin.command: /bin/false
+      ignore_errors: true
+
+    - name: still runs after the ignored failure
+      ansible.builtin.copy:
+        content: "reached after ignored failure\n"
+        dest: /work/after_ignored_failure.txt
+
+- name: "a notify: fired from inside a batch still runs the handler exactly once"
+  hosts: bench
+  gather_facts: false
+  tasks:
+    - name: independent task before the notifying one
+      ansible.builtin.command: echo before
+
+    - name: task that notifies a handler
+      ansible.builtin.copy:
+        content: "trigger\n"
+        dest: /work/trigger.txt
+      notify: write handler marker
+
+    - name: independent task after the notifying one
+      ansible.builtin.command: echo after
+  handlers:
+    - name: write handler marker
+      ansible.builtin.copy:
+        content: "handler ran\n"
+        dest: /work/handler_marker.txt
+
+- name: a hard failure without ignore_errors halts everything after it for that host
+  hosts: bench
+  gather_facts: false
+  tasks:
+    - name: independent task before the hard failure
+      ansible.builtin.command: echo before-hard-fail
+
+    - name: hard failure (no ignore_errors)
+      ansible.builtin.command: /bin/false
+
+    # Deliberately no task after this one, and deliberately the LAST play
+    # in this file - see the file-level comment above. Absence of a
+    # should-never-exist file (checked implicitly: it's simply never
+    # listed in either engine's /work snapshot) is the signal, same
+    # convention as every other compat playbook here.

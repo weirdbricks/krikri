@@ -285,6 +285,30 @@ running inside the container, which the base image doesn't have), and
 this harness to those is straightforward - add a playbook, rebuild, rerun
 - if/when they become worth the added image complexity and runtime.
 
+## `39-batching.yml` runs differently from every other playbook here
+
+Every playbook above runs both engines via `docker exec <container> ...`
+with `ansible_connection=local` (`compat/inventory.ini`) - no real
+network involved at all. `--experimental-batching` (item 3,
+`BATCHING_DESIGN.md`, `0.9.61`) is an SSH-specific optimization;
+`PluginManager.is_local_connection?` short-circuits before ever
+consulting a batch group, so that mechanism can never exercise it,
+batching flag or not.
+
+`compat/run.cr`'s `compare_batching` (used only for this one playbook,
+via `BATCHING_PLAYBOOK_NAME`) instead spins up *two* fresh containers
+from the same image - a "target" (runs its own real `sshd`) and a
+"controller" (runs `ansible-playbook`/`crystal-ansible
+--experimental-batching` against the target over a real SSH connection)
+- on a dedicated `docker network` so they can reach each other by IP.
+Both directions use one keypair `compat/Dockerfile` bakes into every
+image built from it (`compat/batching_test_key`/`.pub`, committed
+on purpose - it grants access to nothing outside an ephemeral container
+built from this exact image, never a real host; same accepted pattern as
+e.g. Vagrant's well-known default box keypair). Snapshot diffing is
+otherwise identical to every other playbook here, just captured from the
+target container instead of the one the engine ran inside of.
+
 ## Why this isn't wired into GitHub Actions
 
 `.github/workflows/ci.yml` runs `crystal spec` + `ameba` on every push and
