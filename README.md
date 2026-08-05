@@ -237,6 +237,36 @@ producing byte-identical per-task output between batched and
   actual targets, so expect less on a fast, low-latency link and more on
   a slow one; a genuinely low-latency measurement is still an open item.
 
+### vs. real Ansible, end to end
+
+The isolated wins above compound into a real difference against actual
+`ansible-core` on actual cloud hosts - measured with 3 fresh Atlantic.net
+instances per row (Ubuntu 22.04, all destroyed immediately after each
+run), the same 12-task mixed playbook (`file`, `copy`+loop x10,
+`lineinfile`+loop x10, `shell`+`register`, `changed_when`/`failed_when`,
+`stat`, `assert`, `find`, `debug`) run against both tools:
+
+| | Fresh run | Idempotent re-run (median of 3) |
+|---|---|---|
+| Python `ansible-core` 2.19.4 (`forks=5` default) | 33.5s | 30.3s |
+| `crystal-ansible` (`--forks 1`, the default) | 26.6s (1.26x) | 5.4s (5.6x) |
+| `crystal-ansible` `--forks 3` | 27.5s (1.22x) | **2.9s (10.4x)** |
+
+Fresh-run time stays close across all three rows - that time is
+dominated by the actual work (writing files, running commands), which
+is identical regardless of orchestrator or fork count. The idempotent
+case is where native compiled modules plus batched, forked SSH round
+trips show through cleanly: Python ships and starts a fresh interpreter
+per task per host even when nothing needs to change, while
+`crystal-ansible` finishes in under 3 seconds. Idempotent reruns are
+also the more common real-world case for a config-management tool.
+
+`--forks` defaults to `1`, matching `--no-batching`'s own rollout
+discipline: it shipped this way deliberately, to accumulate real-world
+mileage before flipping the default, the same path batching itself took
+from `--experimental-batching` to on-by-default at `0.9.63`. Pass
+`--forks N` explicitly to get the parallel-hosts number.
+
 ---
 
 ## ✅ Testing
