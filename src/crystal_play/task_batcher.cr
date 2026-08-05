@@ -1,19 +1,19 @@
 require "./playbook_parser"
 
 module CrystalPlay
-  # Pure planning logic for item 3 (BATCHING_DESIGN.md) - groups a flat
-  # task list into consecutive "batchable runs" with no I/O, no host/vars
-  # dependency, and no knowledge of connection type. TaskExecutor decides
-  # separately (per host, at run time) whether a given run of size >= 1
-  # is actually worth/eligible for a real batched SSH round trip; a
-  # size-1 run here just means "this task can't extend a run on either
-  # side" and behaves exactly like today's one-task-at-a-time path.
+  # Pure planning logic for --experimental-batching - groups a flat
+  # task list into consecutive "batchable runs" with no I/O, no
+  # host/vars dependency, and no knowledge of connection type.
+  # TaskExecutor decides separately
+  # (per host, at run time) whether a given run of size >= 1 is actually
+  # worth/eligible for a real batched SSH round trip; a size-1 run here
+  # just means "this task can't extend a run on either side" and behaves
+  # exactly like today's one-task-at-a-time path.
   #
   # A task can only safely share a batch with its neighbors if nothing
   # about executing it needs data that only exists once an earlier task
-  # in the SAME run has actually executed remotely - see
-  # BATCHING_DESIGN.md's "batchability predicate" section for the full
-  # reasoning behind each condition below.
+  # in the SAME run has actually executed remotely - see the reasoning
+  # behind each condition below.
   module TaskBatcher
     # Groups *tasks* (one flat list - a play's top-level tasks, or one
     # block:/rescue:/always:'s own nested list; this does not recurse
@@ -60,8 +60,8 @@ module CrystalPlay
     # - looped (loop_items/loop_fileglob/loop_template_kind): each
     #   iteration already goes through its own execute_task_once call;
     #   batching N *iterations* of one task is a distinct, separate
-    #   opportunity from batching N *different* tasks (out of scope here,
-    #   see BATCHING_DESIGN.md's "explicitly out of scope for v1").
+    #   opportunity from batching N *different* tasks (out of scope for
+    #   this v1).
     # - until_condition/async_seconds: fundamentally sequential/local
     #   (retry-until-condition and detached-background-process both need
     #   controller-side control flow between attempts/polls).

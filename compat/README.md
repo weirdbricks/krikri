@@ -289,8 +289,8 @@ this harness to those is straightforward - add a playbook, rebuild, rerun
 
 Every playbook above runs both engines via `docker exec <container> ...`
 with `ansible_connection=local` (`compat/inventory.ini`) - no real
-network involved at all. `--experimental-batching` (item 3,
-`BATCHING_DESIGN.md`, `0.9.61`) is an SSH-specific optimization;
+network involved at all. `--experimental-batching` (`0.9.61`) is an
+SSH-specific optimization;
 `PluginManager.is_local_connection?` short-circuits before ever
 consulting a batch group, so that mechanism can never exercise it,
 batching flag or not.

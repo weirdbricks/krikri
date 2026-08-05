@@ -46,8 +46,8 @@ module CrystalPlay
     # Host constructed from the target name, same as Inventory#get_hosts's
     # own implicit-localhost behavior.
     @inventory : Inventory?
-    # item 3 (BATCHING_DESIGN.md) - opt-in (--experimental-batching),
-    # defaults off so default behavior is provably unchanged.
+    # --experimental-batching - opt-in, defaults off so default
+    # behavior is provably unchanged.
     @batching_enabled : Bool
     # Maps a task to the full group (including itself) TaskBatcher.plan
     # assigned it to - only populated for groups of size >= 2 (a size-1
@@ -246,7 +246,7 @@ module CrystalPlay
         return
       end
 
-      # item 3 (BATCHING_DESIGN.md): if this task is part of a batch
+      # --experimental-batching: if this task is part of a batch
       # group and batching applies to this host, its result comes from
       # (triggering, if not already done, then reading from) the group's
       # single shared SSH round trip instead of its own solo one -
@@ -419,9 +419,8 @@ module CrystalPlay
 
     # Populates @task_group for *tasks* (a flat task list - a play's own
     # top-level tasks, or one block's/rescue's/always's nested list) the
-    # first time it's seen, via TaskBatcher.plan (item 3,
-    # BATCHING_DESIGN.md). No-op if batching is disabled or this exact
-    # list has already been planned.
+    # first time it's seen, via TaskBatcher.plan. No-op if batching is
+    # disabled or this exact list has already been planned.
     private def ensure_grouped(tasks : Array(Task))
       return unless @batching_enabled
 

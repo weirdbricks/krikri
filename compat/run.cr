@@ -105,8 +105,8 @@ module Compat
     raise "failed to create #{BATCHING_NETWORK} network: #{create_out}" unless create_code == 0
   end
 
-  # item 3 (BATCHING_DESIGN.md, --experimental-batching, 0.9.61) needs a
-  # real, separate SSH connection to exercise at all - run_playbook above
+  # --experimental-batching (0.9.61) needs a real, separate SSH
+  # connection to exercise at all - run_playbook above
   # always uses `docker exec` + ansible_connection=local, which
   # PluginManager.is_local_connection? short-circuits before ever
   # consulting a batch group. Spins up two fresh containers *from this
@@ -168,8 +168,8 @@ module Compat
     diff_snapshots(name, ansible, crystal)
   end
 
-  # item 3 (BATCHING_DESIGN.md, --experimental-batching, 0.9.61) -
-  # BATCHING_PLAYBOOK_NAME only, driven over a real SSH connection via
+  # --experimental-batching (0.9.61) - BATCHING_PLAYBOOK_NAME only,
+  # driven over a real SSH connection via
   # run_playbook_via_ssh instead of the normal docker-exec/local path -
   # see that method's own comment for why.
   def self.compare_batching(playbook_path : String) : Result

@@ -74,7 +74,7 @@ begin
       diff_mode = true
     end
 
-    parser.on("--experimental-batching", "Batch consecutive independent tasks into fewer SSH round trips (opt-in, see BATCHING_DESIGN.md)") do
+    parser.on("--experimental-batching", "Batch consecutive independent tasks into fewer SSH round trips (opt-in)") do
       experimental_batching = true
     end
 
@@ -170,7 +170,7 @@ if diff_mode
   puts "Diff: ENABLED".colorize(:green)
 end
 if experimental_batching
-  puts "Batching: EXPERIMENTAL (see BATCHING_DESIGN.md)".colorize(:yellow)
+  puts "Batching: EXPERIMENTAL".colorize(:yellow)
 end
 if tags.any?
   puts "Tags: #{tags.join(", ")}".colorize(:cyan)

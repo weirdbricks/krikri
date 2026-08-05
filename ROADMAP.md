@@ -3001,8 +3001,15 @@ compat playbook's own task wouldn't have suggested was there).
     `0.9.57` - same 2 pre-existing DB-client-dependent failures as
     always, unrelated to this).
 
-- [x] Facts-gathering performance work, items 1-2 of
-  `POSSIBLE_PERFORMANCE_IMPROVEMENTS.md` (`0.9.59`):
+- [x] Facts-gathering performance work (`0.9.59`), items 1-2 of a
+  four-item internal performance-investigation pass (item 3 below is
+  item 3 of that same pass; item 4 - plugin binary startup time itself,
+  ~6-8ms per invocation - was investigated and rejected: UPX-compressing
+  release binaries shrank them significantly but made every invocation
+  2.3x-4.3x *slower* due to decompression overhead, a net loss for any
+  playbook invoking a plugin more than once, which is nearly all of
+  them; not worth reconsidering unless the plugin-caching mechanism
+  itself changes):
   - **Item 1 - collapsed `plugins/facts.cr`'s subprocess forks.** Measured
     each of the ~13 forks in isolation first (30 runs x 3, local): every
     fork landed in a tight 3.2-5.1ms band (~42ms total per `Gathering
@@ -3059,12 +3066,12 @@ compat playbook's own task wouldn't have suggested was there).
     examples - 2 new since `0.9.58` - same 2 pre-existing DB-client-
     dependent failures as always, unrelated to this).
 
-- [x] Item 3 of `POSSIBLE_PERFORMANCE_IMPROVEMENTS.md` - batch
+- [x] Item 3 of the same performance-investigation pass above - batch
   consecutive independent tasks into one SSH round trip (`0.9.61`,
-  behind `--experimental-batching`, default off): full design writeup
-  in `BATCHING_DESIGN.md` (batchability predicate, base64-framed wire
-  protocol, why `run_once:`/`changed_when:`/`failed_when:` had to be
-  added to the predicate beyond what the design first assumed), plus a
+  behind `--experimental-batching`, default off): batchability predicate
+  (`TaskBatcher`), base64-framed wire protocol (`BatchScript`), why
+  `run_once:`/`changed_when:`/`failed_when:` had to be added to the
+  predicate beyond the original design, plus a
   real-fixture measurement (87.0% of tasks in `testing/`/
   `compat/playbooks/` fall inside a batchable run, mean length 3.2, max
   34). Verified via `spec/unit/task_batcher_spec.cr`/
@@ -3099,8 +3106,11 @@ compat playbook's own task wouldn't have suggested was there).
     rigorous 3x-each measurement anyway on the one path available (30
     fully-batchable independent tasks): **2.82x speedup, 64.5%
     wall-time reduction** (11.37s mean unbatched vs. 4.03s mean batched,
-    3 clean runs each, all `ok:`). Full detail and the honest caveat in
-    `BATCHING_DESIGN.md`.
+    3 clean runs each, all `ok:`), with the honest caveat that this
+    environment's own network path (anycast DNS, a second Atlantic.net
+    region, and two unrelated Racknerd hosts all showed the same
+    45-150ms jitter) never made a genuinely low-latency number possible
+    to obtain here.
 
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for

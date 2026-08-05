@@ -340,9 +340,9 @@ module CrystalPlay
     # Resolves a plugin's remote path (`/tmp/.crystal-play/plugins/<simple
     # name>`) and, if `become`, wraps it in `sudo -n -u <become_user> --`.
     # Shared by the normal one-task-at-a-time remote path above and by
-    # TaskExecutor's batch script generation (item 3,
-    # BATCHING_DESIGN.md), so both ways of reaching a remote plugin
-    # resolve the exact same target string. `become_user` is expected to
+    # TaskExecutor's batch script generation (--experimental-batching),
+    # so both ways of reaching a remote plugin resolve the exact same
+    # target string. `become_user` is expected to
     # already have passed `valid_become_user?` - this only formats, it
     # doesn't validate (the SSH path interpolates the result directly
     # into a shell command, unlike the local/args-array path, so

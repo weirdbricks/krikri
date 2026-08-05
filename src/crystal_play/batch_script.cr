@@ -1,7 +1,7 @@
 require "base64"
 
 module CrystalPlay
-  # Wire protocol for item 3 (BATCHING_DESIGN.md): builds the bash script
+  # Wire protocol for --experimental-batching: builds the bash script
   # that runs several plugin invocations in one SSH round trip, and parses
   # the results back out.
   #
