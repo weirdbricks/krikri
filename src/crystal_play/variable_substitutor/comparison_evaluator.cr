@@ -1,4 +1,5 @@
 require "json"
+require "./filter_engine"
 
 module CrystalPlay
   module VariableSubstitutor
@@ -6,8 +7,10 @@ module CrystalPlay
     # Supports: ==, !=, <, >, <=, >=
     class ComparisonEvaluator
       @vars : Hash(String, JSON::Any)
-      
+      @filter : FilterEngine
+
       def initialize(@vars : Hash(String, JSON::Any))
+        @filter = FilterEngine.new
       end
       
       # Evaluate a comparison expression
@@ -69,7 +72,25 @@ module CrystalPlay
         if int_val = expr.to_i64?
           return int_val
         end
-        
+
+        # Handle a filter chain used as a comparison operand
+        # (`mylist | length > 0`, `result.stdout | trim == "ok"`) - a
+        # real, previously-broken case, not just when:'s own bare
+        # conditionals: `evaluate` checks for a comparison operator
+        # before ever checking for `|`, so an expression combining both
+        # always routed here with the filter chain still attached as
+        # part of the operand text, which then failed as an ordinary
+        # (and undefined) variable lookup. FilterEngine.split_chain
+        # splits `|`-respecting quotes/parens, so a filter argument
+        # containing its own `|` (`replace('a|b', 'c')`) isn't
+        # mis-split.
+        if expr.includes?("|")
+          segments = FilterEngine.split_chain(expr)
+          head = resolve_json(segments[0]) || JSON::Any.new(nil)
+          result = segments[1..].reduce(head) { |acc, filter_expr| @filter.apply(acc, filter_expr) }
+          return json_any_to_value(result)
+        end
+
         # Handle nested variable access (e.g., result.rc)
         if expr.includes?(".")
           value_str = lookup_nested_variable(expr)
@@ -153,6 +174,47 @@ module CrystalPlay
         end
         
         current.to_s
+      end
+
+      # Resolves a simple or dotted expression to its raw JSON::Any value
+      # (nil if undefined) - the filter-chain head resolution above needs
+      # real structure to hand FilterEngine (an array for `length`/`sort`,
+      # not an already-stringified value), unlike lookup_simple_variable/
+      # lookup_nested_variable above, which both collapse to a String.
+      private def resolve_json(expr : String) : JSON::Any?
+        expr = expr.strip
+        parts = expr.split(".")
+        current = @vars[parts[0]]?
+        return nil unless current
+
+        parts[1..].each do |part|
+          return nil unless current.raw.is_a?(Hash)
+          next_value = current[part]?
+          return nil unless next_value
+          current = next_value
+        end
+
+        current
+      end
+
+      # Converts a resolved JSON::Any (a filter chain's result) into this
+      # evaluator's own value union, mirroring how lookup_simple_variable/
+      # lookup_nested_variable already convert a plain lookup.
+      private def json_any_to_value(value : JSON::Any) : String | Int64 | Bool | Nil
+        case value.raw
+        when String
+          value.as_s
+        when Int64, Int32
+          value.as_i64
+        when Float64
+          value.as_f.to_s
+        when Bool
+          value.as_bool
+        when Nil
+          nil
+        else
+          value.to_s
+        end
       end
     end
   end

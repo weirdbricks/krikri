@@ -3,6 +3,7 @@
   gather_facts: false
   vars:
     my_param: 150
+    my_list: [a, b, c]
   tasks:
     - name: a passing multi-condition assertion
       ansible.builtin.assert:
@@ -36,6 +37,27 @@
         that: "{{ my_param > 100 }}"
       register: dotted_result
 
+    # Regression coverage for a real, previously-shipped cross-cutting
+    # engine bug (fixed alongside the compat coverage below): a bare
+    # when:/assert: that: condition combining a filter with a comparison
+    # (or used bare) always evaluated the filter-chain text itself as an
+    # undefined variable - `mylist | length > 0` always evaluated false,
+    # regardless of the actual list. The same underlying bug also broke
+    # {{ }}-wrapped combinations (a comparison operator was detected
+    # before the `|` filter check, in the same expression), not just
+    # when:'s own bare-conditional path.
+    - name: a bare filter chain combined with a comparison
+      ansible.builtin.assert:
+        that:
+          - my_list | length > 0
+          - my_list | length == 3
+      register: filter_bare_result
+
+    - name: a {{ }}-wrapped filter chain combined with a comparison
+      ansible.builtin.assert:
+        that: "{{ my_list | length > 0 }}"
+      register: filter_wrapped_result
+
     - name: write the stable results to a file for comparison
       ansible.builtin.copy:
         content: |
@@ -44,4 +66,6 @@
           custom_fail_msg={{ custom_fail_result.msg }}
           success_msg={{ success_result.msg }}
           dotted_failed={{ dotted_result.failed }}
+          filter_bare_failed={{ filter_bare_result.failed }}
+          filter_wrapped_failed={{ filter_wrapped_result.failed }}
         dest: /work/assert-output.txt

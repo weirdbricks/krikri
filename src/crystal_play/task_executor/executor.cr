@@ -37,8 +37,13 @@ module CrystalPlay
     @facts : Hash(String, Hash(String, JSON::Any))
     # Hosts that hit a failed task without ignore_errors: further tasks in
     # the play are skipped for them (Ansible's default "a failure aborts
-    # the rest of the play for that host" behavior).
-    @halted_hosts : Set(String)
+    # the rest of the play for that host" behavior). Public - crystal-
+    # play.cr reads this after #run to carry a failed host forward and
+    # exclude it from every *remaining* play in the whole run too, not
+    # just the rest of this one (real Ansible's actual behavior; see
+    # ROADMAP.md's `0.9.61`-found, `0.9.64`-fixed cross-cutting engine
+    # gap entry).
+    getter halted_hosts : Set(String)
     # Full inventory, used to resolve delegate_to: targets that aren't
     # necessarily in this play's own host list (e.g. "localhost" when the
     # play targets a remote group). Optional - a caller that doesn't pass

@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.63-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.64-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -254,15 +254,16 @@ harness covers and how it works.
 
 See [ROADMAP.md](ROADMAP.md) for the live, detailed tracking of what is
 implemented, what is not, and what is planned next. As of this writing,
-the remaining open items are narrow, documented scope cuts and two known
-cross-cutting engine gaps: a handful of `postgresql_privs` privilege
-types that need a different underlying mechanism; Docker API version
-negotiation; `when:`/`assert: that:` bare conditionals not supporting
-Jinja2 filters (works fine inside `{{ }}` substitution, e.g. `debug:
-msg:`); and a failed host (without `ignore_errors:`) being skipped only
-for the rest of its current play here, rather than every remaining play
-in the run like real Ansible - everything else tracked in the roadmap
-has shipped.
+the remaining open items are narrow, documented scope cuts (a handful of
+`postgresql_privs` privilege types that need a different underlying
+mechanism, and Docker API version negotiation) plus one known
+cross-cutting engine gap: bare `when:`/`assert: that:`/`until:`/
+`changed_when:`/`failed_when:` conditions don't see task-level `vars:`
+or magic variables like `inventory_hostname` (play-level `vars:` and
+registered results work fine) - everything else tracked in the roadmap
+has shipped, including two other engine gaps fixed in `0.9.64`: filters
+in bare conditionals, and a failed host now being excluded from every
+remaining play in the run, not just the rest of the one it failed in.
 
 ---
 

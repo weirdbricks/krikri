@@ -1,0 +1,43 @@
+# Regression coverage for a real, previously-shipped cross-cutting
+# engine bug (found while building 39-batching.yml, unrelated to
+# batching itself; fixed alongside this coverage): real Ansible removes
+# a host that fails without ignore_errors: from *every remaining play in
+# the whole run*, not just the rest of the play it failed in.
+# TaskExecutor's own halted_hosts was scoped per-play (crystal-play.cr
+# constructs a fresh TaskExecutor per play), so a host that hard-failed
+# in an earlier play ran completely normally again in a later one here -
+# fixed by carrying a cross-play "already failed" host set through
+# crystal-play.cr's own per-play loop instead.
+#
+# This harness only has one host per container (compat/inventory.ini
+# defines a single `localhost`), so the multi-host case (one host fails,
+# a different host in the same later play keeps running normally) isn't
+# exercised here - that was verified separately, by hand, against a
+# local two-fake-host inventory. This still covers the core regression:
+# a single host must not run *any* task in a later play once it's
+# hard-failed in an earlier one.
+
+- name: play 1 - a hard failure with no ignore_errors
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: fails
+      ansible.builtin.command: /bin/false
+
+- name: play 2 - must be entirely skipped for the host that just failed
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: must never run
+      ansible.builtin.file:
+        path: /work/should-not-exist.txt
+        state: touch
+
+- name: play 3 - also must be entirely skipped
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: must also never run
+      ansible.builtin.file:
+        path: /work/should-also-not-exist.txt
+        state: touch

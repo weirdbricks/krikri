@@ -265,17 +265,31 @@ end
 # Execute playbook
 all_hosts = [] of CrystalPlay::Host
 combined_results = Hash(String, Hash(String, Int32)).new
+# Hosts that hard-failed (a task failed without ignore_errors:) in an
+# earlier play this run - excluded from every *remaining* play's host
+# list too, matching real Ansible's own behavior (a failure removes a
+# host from the rest of the whole run, not just the play it happened
+# in). TaskExecutor's own halted_hosts is scoped to one play/one
+# instance (crystal-play.cr constructs a fresh one per play); this set
+# carries that forward across the per-play loop below.
+permanently_failed_hosts = Set(String).new
+
 playbook.plays.each_with_index do |play, play_index|
   puts ""
   puts "PLAY [#{play.name}]".colorize(:magenta).bold
   puts "=" * 70
   puts ""
 
-  # Get hosts for this play from inventory
-  hosts = inventory.get_hosts(play.hosts.to_s)
+  # Get hosts for this play from inventory, excluding any host that
+  # already hard-failed in an earlier play this run.
+  matched_hosts = inventory.get_hosts(play.hosts.to_s)
+  hosts = matched_hosts.reject { |host| permanently_failed_hosts.includes?(host.name) }
 
-  if hosts.empty?
+  if matched_hosts.empty?
     puts "Skipping play - no hosts match pattern: #{play.hosts}".colorize(:yellow)
+    next
+  elsif hosts.empty?
+    puts "Skipping play - all matching hosts already failed in an earlier play".colorize(:yellow)
     next
   end
 
@@ -327,6 +341,10 @@ playbook.plays.each_with_index do |play, play_index|
 
   # Run tasks
   executor.run
+
+  # Carry any host that hard-failed in this play forward - excluded from
+  # every remaining play too, not just the rest of this one.
+  permanently_failed_hosts.concat(executor.halted_hosts)
 
   # Merge this play's per-host stats into the running total (a host can
   # appear in more than one play).

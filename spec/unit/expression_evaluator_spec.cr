@@ -35,4 +35,22 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate(%(missing | default('fallback'))).should eq("fallback")
   end
+
+  it "evaluates a filter combined with a comparison in the same expression" do
+    # Real, previously-shipped bug: has_comparison? matched before the `|`
+    # check, so `mylist | length > 0` routed entirely to
+    # ComparisonEvaluator with the filter chain still attached to the
+    # operand text, which it had no way to evaluate - this always
+    # returned "false" regardless of the actual list, in *any* {{ }}
+    # substitution context (debug: msg:, when:, etc.), not just when:'s
+    # own bare-conditional path.
+    v = Hash(String, JSON::Any).new
+    v["mylist"] = JSON::Any.new([JSON::Any.new("a"), JSON::Any.new("b"), JSON::Any.new("c")])
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("mylist | length > 0").should eq("true")
+
+    v["mylist"] = JSON::Any.new([] of JSON::Any)
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("mylist | length > 0").should eq("false")
+  end
 end

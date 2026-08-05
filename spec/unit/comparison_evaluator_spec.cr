@@ -32,4 +32,33 @@ describe CrystalPlay::VariableSubstitutor::ComparisonEvaluator do
     evaluator = CrystalPlay::VariableSubstitutor::ComparisonEvaluator.new(v)
     evaluator.evaluate("no operator here").should eq("false")
   end
+
+  describe "filter chains as comparison operands" do
+    # Real, previously-shipped bug: a comparison operator was detected
+    # before any `|` filter check, so `{{ mylist | length > 0 }}` (used
+    # directly in a template, not just when:) always evaluated "false" -
+    # the filter-chain text on the left was treated as a literal
+    # (undefined) variable name instead of being resolved and filtered.
+
+    it "evaluates a filter chain on the left side of a comparison" do
+      v = Hash(String, JSON::Any).new
+      v["mylist"] = JSON::Any.new([JSON::Any.new("a"), JSON::Any.new("b"), JSON::Any.new("c")])
+      evaluator = CrystalPlay::VariableSubstitutor::ComparisonEvaluator.new(v)
+      evaluator.evaluate("mylist | length > 0").should eq("true")
+    end
+
+    it "evaluates false when the filtered value doesn't satisfy the comparison" do
+      v = Hash(String, JSON::Any).new
+      v["mylist"] = JSON::Any.new([] of JSON::Any)
+      evaluator = CrystalPlay::VariableSubstitutor::ComparisonEvaluator.new(v)
+      evaluator.evaluate("mylist | length > 0").should eq("false")
+    end
+
+    it "evaluates a filter chain on a dotted (nested) operand" do
+      v = Hash(String, JSON::Any).new
+      v["result"] = JSON.parse(%({"stdout": "  hello  "}))
+      evaluator = CrystalPlay::VariableSubstitutor::ComparisonEvaluator.new(v)
+      evaluator.evaluate(%(result.stdout | trim == "hello")).should eq("true")
+    end
+  end
 end

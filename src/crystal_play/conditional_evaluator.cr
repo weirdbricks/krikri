@@ -1,4 +1,5 @@
 require "json"
+require "./variable_substitutor/filter_engine"
 
 module CrystalPlay
   # ConditionalEvaluator - Evaluates Ansible when: conditions
@@ -200,6 +201,24 @@ module CrystalPlay
         return int_val
       end
 
+      # Handle a filter chain (`mylist | length > 0`, or a bare
+      # `when: mylist | length` truthiness check) - previously this
+      # module had no concept of `|` at all, so any when:/assert: that:/
+      # until:/changed_when:/failed_when: condition combining a filter
+      # with a comparison (or used bare) always evaluated the filter
+      # chain text itself as an undefined variable name. Reuses
+      # FilterEngine.split_chain (respects `|` inside a quoted filter
+      # argument or a parenthesized arg list) and the same filter
+      # implementations {{ }} substitution already uses, rather than a
+      # third reimplementation.
+      if expr.includes?("|")
+        segments = VariableSubstitutor::FilterEngine.split_chain(expr)
+        head = resolve_json(segments[0], vars) || JSON::Any.new(nil)
+        filter = VariableSubstitutor::FilterEngine.new
+        result = segments[1..].reduce(head) { |acc, filter_expr| filter.apply(acc, filter_expr) }
+        return json_any_to_value(result)
+      end
+
       # Handle arrays (simple list syntax)
       if expr.starts_with?('[') && expr.ends_with?(']')
         items = expr[1..-2].split(',').map(&.strip)
@@ -232,6 +251,18 @@ module CrystalPlay
         # Undefined variable - return nil
         nil
       end
+    end
+
+    # Resolves a simple or dotted expression (the head of a filter chain,
+    # e.g. "mylist" or "result.stdout" in "result.stdout | trim") to its
+    # raw JSON::Any value, reusing resolve_dotted below - an empty
+    # remainder (a non-dotted expr) just returns the looked-up value
+    # unchanged.
+    private def self.resolve_json(expr : String, vars : Hash(String, JSON::Any)) : JSON::Any?
+      expr = expr.strip
+      parts = expr.split(".")
+      return nil unless vars.has_key?(parts[0])
+      resolve_dotted(vars[parts[0]], parts[1..])
     end
 
     # Navigates a dotted path through a JSON::Any Hash structure (e.g.

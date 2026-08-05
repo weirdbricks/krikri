@@ -157,4 +157,51 @@ describe CrystalPlay::ConditionalEvaluator do
       CrystalPlay::ConditionalEvaluator.evaluate(%(foo == "bar"), v).should be_true
     end
   end
+
+  describe "filter chains" do
+    # Real, previously-shipped bug: this module had no concept of `|` at
+    # all, so any condition combining a filter with a comparison (or used
+    # bare) evaluated the filter-chain text itself as an undefined
+    # variable name - `mylist | length > 0` always evaluated false,
+    # regardless of the actual list (see ROADMAP.md's 0.9.58 entry).
+
+    it "evaluates a filter chain combined with a comparison (the originally-reported case)" do
+      v = Hash(String, JSON::Any).new
+      v["mylist"] = JSON::Any.new([JSON::Any.new("a"), JSON::Any.new("b"), JSON::Any.new("c")])
+      CrystalPlay::ConditionalEvaluator.evaluate("mylist | length > 0", v).should be_true
+    end
+
+    it "evaluates false when the filtered value doesn't satisfy the comparison" do
+      v = Hash(String, JSON::Any).new
+      v["mylist"] = JSON::Any.new([] of JSON::Any)
+      CrystalPlay::ConditionalEvaluator.evaluate("mylist | length > 0", v).should be_false
+    end
+
+    it "evaluates a bare filter chain for truthiness (no comparison at all)" do
+      v = Hash(String, JSON::Any).new
+      v["mylist"] = JSON::Any.new([JSON::Any.new("a"), JSON::Any.new("b")])
+      CrystalPlay::ConditionalEvaluator.evaluate("mylist | length", v).should be_true
+
+      v["mylist"] = JSON::Any.new([] of JSON::Any)
+      CrystalPlay::ConditionalEvaluator.evaluate("mylist | length", v).should be_false
+    end
+
+    it "evaluates a filter chain on a dotted (nested) operand" do
+      v = Hash(String, JSON::Any).new
+      v["result"] = JSON.parse(%({"stdout": "  hello  "}))
+      CrystalPlay::ConditionalEvaluator.evaluate(%(result.stdout | trim == "hello"), v).should be_true
+    end
+
+    it "evaluates a chained (multi-filter) pipeline as a comparison operand" do
+      v = Hash(String, JSON::Any).new
+      v["mylist"] = JSON::Any.new([JSON::Any.new("b"), JSON::Any.new("a")])
+      CrystalPlay::ConditionalEvaluator.evaluate(%(mylist | sort | join(',') == "a,b"), v).should be_true
+    end
+
+    it "combines a filter-chain comparison with and/or without regressing existing operators" do
+      v = Hash(String, JSON::Any).new
+      v["mylist"] = JSON::Any.new([JSON::Any.new("a"), JSON::Any.new("b"), JSON::Any.new("c")])
+      CrystalPlay::ConditionalEvaluator.evaluate("mylist | length > 0 and mylist | length == 3", v).should be_true
+    end
+  end
 end

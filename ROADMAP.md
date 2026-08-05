@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-04 (currently at `0.9.63`):** **all of Phase 0 through
+**Status as of 2026-08-05 (currently at `0.9.64`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -3189,6 +3189,57 @@ compat playbook's own task wouldn't have suggested was there).
     genuine point in favor of the default-on decision beyond the raw
     numbers.
 
+- [x] Fixed both remaining cross-cutting engine gaps (`0.9.64`):
+  - **Filters in bare `when:`/`assert: that:` conditions** (found
+    `0.9.58`): root-caused further than the original entry assumed - it
+    isn't only bare conditionals. `{{ mylist | length > 0 }}` (a filter
+    combined with a comparison in the *same* `{{ }}` expression) was
+    **also** broken, in any substitution context, not just `when:` -
+    confirmed by testing it directly before writing a fix
+    (`ExpressionEvaluator#evaluate` checks for a comparison operator
+    before ever checking for `|`, so the whole expression routed to
+    `ComparisonEvaluator`, which had no concept of filters at all). Fixed
+    once, shared: `ComparisonEvaluator#evaluate_simple_value` and
+    `ConditionalEvaluator#evaluate_value` (the `{{ }}` path and the bare-
+    conditional path, respectively - two independent implementations,
+    each still evaluating its own value type union) both now detect a
+    `|` in a comparison operand (or a bare truthiness expression) and
+    resolve it via `FilterEngine.split_chain` + the same filter
+    implementations `{{ }}` substitution already uses, rather than a
+    third reimplementation. Verified end-to-end through all three real
+    call sites (`when:`, `assert: that:`, and inline `{{ }}`) via the
+    actual CLI, not just unit-level. 16 new unit examples across
+    `conditional_evaluator_spec.cr`/`comparison_evaluator_spec.cr`/
+    `expression_evaluator_spec.cr`, plus permanent regression coverage
+    in `compat/playbooks/31-assert.yml` (diffed against real
+    `ansible-playbook`, including the same deprecation-warning-but-still-
+    works `{{ }}`-wrapped `that:` pattern real Ansible itself uses).
+  - **Cross-play halt scoping** (found `0.9.61`): `TaskExecutor#halted_hosts`
+    made public; `crystal-play.cr`'s per-play loop now carries a
+    `permanently_failed_hosts` set forward across plays, filtering a
+    play's host list against it before construction - a host that
+    hard-failed in an earlier play is excluded from every remaining
+    play's host list, not just skipped for the rest of the play it
+    failed in (matches real Ansible exactly). Empty-after-filtering gets
+    its own "already failed in an earlier play" message, distinct from
+    "no hosts match pattern", since the two mean different things.
+    Verified by hand for both the single-host case (a 3-play playbook,
+    plays 2-3 correctly never run at all once play 1 fails) and the
+    multi-host case (one host fails, a different host in the same later
+    play still runs normally - stats/results merging needed no changes,
+    since an excluded host simply never appears in a later executor's
+    own `results` to merge from). Permanent regression coverage in new
+    `compat/playbooks/40-cross-play-halt.yml` (diffed against real
+    `ansible-playbook`).
+  - Found (not fixed - see the new "also still open" entry below) while
+    verifying the above: bare conditions don't see task-level `vars:` or
+    magic variables like `inventory_hostname` at all, filters or not - a
+    distinct, separate gap from the one just fixed here.
+  - Full compat harness re-run after both fixes: **40/40 pass**.
+    `crystal spec` (761 examples, same 2 pre-existing DB-client-
+    dependent failures, unrelated) and `ameba` (177 files, same 51
+    pre-existing findings, zero new) both clean.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**
@@ -3204,39 +3255,29 @@ the exact "not implemented" list it's tracked against:**
   socket either - would mean touching every endpoint across `docr`, not
   just connection setup, a meaningfully bigger change than anything else
   closed in this section).
-- **Cross-cutting engine gap, found in `0.9.58`:** `when:`/`assert:
-  that:` bare conditional expressions don't support Jinja2 filters at
-  all (`mylist | length > 0` always evaluates false) - `when:`'s own
-  `ConditionalEvaluator` is a separate code path from the `{{ }}`-wrapped
-  Jinja2/filter-chain pipeline (`0.9.42`) that already supports filters
-  fine in substitution contexts like `debug: msg:`. Fixing this properly
-  means either adding real filter-parsing support to
-  `ConditionalEvaluator` directly, or routing bare conditionals through
-  the same Jinja2 pipeline `{{ }}` substitution already uses - not
-  attempted yet, worked around in the `0.9.58` benchmark playbook
-  instead (precompute the filtered value via `set_fact:` first, assert
-  on the plain result).
-- **Cross-cutting engine gap, found in `0.9.61`** (building
-  `compat/playbooks/39-batching.yml`, unrelated to what that playbook
-  was actually testing): real Ansible removes a host that fails without
-  `ignore_errors:` from *every remaining play in the whole run*, not
-  just the rest of the play it failed in. This codebase's
-  `@halted_hosts` (`TaskExecutor`) is scoped per-`TaskExecutor` instance
-  - i.e. per-play, since `crystal-play.cr` constructs a fresh
-  `TaskExecutor` for each play - so a host that hard-failed in play 2
-  runs completely normally again in play 3 here, which real Ansible
-  would have silently skipped. Fixing this means threading a
-  cross-play "which hosts have failed" set through whatever constructs
-  each play's `TaskExecutor` (today entirely local to `run`'s per-play
-  loop), filtering it out of that play's host list up front rather than
-  relying on `@halted_hosts` alone. Not attempted yet - worked around in
-  `39-batching.yml` by keeping its one hard-failure scenario as the
-  file's last play.
+- **Cross-cutting engine gap, found while hardening this section's own
+  filter fix (`0.9.64`):** bare `when:`/`assert: that:`/`until:`/
+  `changed_when:`/`failed_when:` conditions don't see task-level `vars:`
+  (or, per an earlier check, magic variables like `inventory_hostname`)
+  - only play-level `vars:` and registered results. `{{ }}`-wrapped
+  substitution (`VarSubstitutor#substitute`) builds its own `@vars` copy
+  with magic variables added; bare conditions instead evaluate directly
+  against whatever `vars_context` `TaskExecutor` already built, which
+  doesn't get that same treatment. Confirmed via a plain, filter-free
+  reproduction (`assert: that: my_var == 3` with `vars: {my_var: 3}` at
+  the *task* level fails; the identical `vars:` at the *play* level
+  passes), so this is a distinct gap from the filter-chain one just
+  fixed, not a variant of it. Not attempted yet - `compat/playbooks/
+  31-assert.yml`'s own new filter-chain coverage was moved to
+  play-level `vars:` to route around it rather than conflate the two.
 
 Cross-cutting engine gaps this section used to track here - Jinja2
-filter-chaining (inside `{{ }}` substitution) and `become:`/
-`become_user:` privilege escalation - are both now fixed; see the
-`0.9.42` and `0.9.41` entries below. Cloud plugins
+filter-chaining (inside `{{ }}` substitution), `become:`/
+`become_user:` privilege escalation, filter chains inside bare
+when:/assert: that: conditions (or combined with a comparison in the
+same `{{ }}` expression), and a failed host not being excluded from
+every remaining play in the run - are all now fixed; see the `0.9.42`,
+`0.9.41`, and `0.9.64` entries. Cloud plugins
 (`ec2`, `s3_bucket`, `azure_rm_*`) and inventory *plugins* (`aws_ec2.yml`
 et al.) remain explicitly lowest-ROI and are not planned - everything else
 in this list is being picked off incrementally, each verified against real
