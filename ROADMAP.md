@@ -3553,6 +3553,24 @@ compat playbook's own task wouldn't have suggested was there).
   Full compat harness (local-connection only, so parallelism isn't
   exercised there, but nothing regressed): **41/41 pass**.
 
+- [x] Deleted three dead code trees identified in
+  `OPUS_PERFORMANCE_IMPROVEMENTS.md` as unreachable from
+  `crystal-play.cr` (verified by walking `require` edges from the entry
+  point, and by grepping `spec/` for any reference before deleting)
+  (`0.9.76`): `src/crystal_play.cr` (289 lines, a stale pre-batching/
+  pre-vault CLI duplicate with no `--forks`/exit-code handling and a
+  leftover `STDERR.puts "DEBUG: ..."` in its host loop),
+  `src/crystal_play/facts_gatherer/` (11 files, ~600 lines, superseded
+  by `plugins/facts.cr` - worth deleting specifically because it still
+  contained the 34-shell-out implementation `0.9.61` replaced with
+  syscalls, which invited editing the wrong file), and
+  `src/crystal_play/ssh_config.cr` (174 lines). A compile-time/
+  maintenance concern, not a runtime one, and landed in its own commit
+  separate from any behavioral change. `crystal spec` (766 examples,
+  same 2 pre-existing DB-client failures) and `ameba` (**165 files**, 51
+  pre-existing findings - the file count drop reflects the 12 deleted
+  files, not a lint regression) both clean.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**
