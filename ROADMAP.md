@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-05 (currently at `0.9.64`):** **all of Phase 0 through
+**Status as of 2026-08-05 (currently at `0.9.65`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -3240,6 +3240,40 @@ compat playbook's own task wouldn't have suggested was there).
     dependent failures, unrelated) and `ameba` (177 files, same 51
     pre-existing findings, zero new) both clean.
 
+- [x] Fixed the task-level `vars:` gap found while verifying the above
+  (`0.9.65`): the original `0.9.64` diagnosis was wrong about the
+  mechanism - this isn't an evaluation-context gap specific to bare
+  conditions, it's a parser bug that broke task-level `vars:`
+  *everywhere*, `{{ }}` substitution included. Confirmed directly before
+  fixing: `{{ my_var }}` with a task-level `vars: {my_var: 3}` rendered
+  "undefined", not just the bare-conditional case originally reported.
+  Root cause: `PlaybookParser#parse_task` never read a plain task's own
+  `vars:` key into `task.vars` at all - only `import_tasks:`'s own,
+  separate `vars:` mechanism was ever wired up (`VariableContext#build`
+  already folds `task.vars` in at highest priority; it was simply always
+  empty for an ordinary task). Fixed by adding the same `vars:`-to-
+  `task.vars` parsing `import_tasks:` already had. Also fixed a related
+  latent bug caught in the process: `"vars"` wasn't in `parse_task`'s own
+  `special_keys` list (the keywords excluded when hunting for "the
+  module name" - the first key that isn't one), so a task listing
+  `vars:` *before* its real module key would have had `"vars"` itself
+  mis-parsed as the module name, failing with "Plugin not available:
+  vars".
+  - Re-tested the magic-variable case (`inventory_hostname`) after this
+    fix to make sure it was genuinely a separate gap and not somehow
+    resolved as a side effect - confirmed still broken in bare
+    conditions, still fine in `{{ }}` (see the "also still open" entry
+    below, now scoped to just this).
+  - 4 new unit examples in `playbook_parser_spec.cr` (task.vars parses
+    correctly, the vars-before-module-key ordering case, no leakage to a
+    later task, defaults to empty). Permanent compat coverage in new
+    `compat/playbooks/41-task-vars.yml`, covering `{{ }}`, bare
+    when:/assert:, the ordering edge case, a filter chain on a
+    task-level var, and non-leakage - diffed against real
+    `ansible-playbook`. Full compat harness: **41/41 pass**. `crystal
+    spec` (765 examples, same 2 pre-existing unrelated failures) and
+    `ameba` (same pre-existing findings, zero new) both clean.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**
@@ -3255,21 +3289,19 @@ the exact "not implemented" list it's tracked against:**
   socket either - would mean touching every endpoint across `docr`, not
   just connection setup, a meaningfully bigger change than anything else
   closed in this section).
-- **Cross-cutting engine gap, found while hardening this section's own
-  filter fix (`0.9.64`):** bare `when:`/`assert: that:`/`until:`/
-  `changed_when:`/`failed_when:` conditions don't see task-level `vars:`
-  (or, per an earlier check, magic variables like `inventory_hostname`)
-  - only play-level `vars:` and registered results. `{{ }}`-wrapped
-  substitution (`VarSubstitutor#substitute`) builds its own `@vars` copy
-  with magic variables added; bare conditions instead evaluate directly
-  against whatever `vars_context` `TaskExecutor` already built, which
-  doesn't get that same treatment. Confirmed via a plain, filter-free
-  reproduction (`assert: that: my_var == 3` with `vars: {my_var: 3}` at
-  the *task* level fails; the identical `vars:` at the *play* level
-  passes), so this is a distinct gap from the filter-chain one just
-  fixed, not a variant of it. Not attempted yet - `compat/playbooks/
-  31-assert.yml`'s own new filter-chain coverage was moved to
-  play-level `vars:` to route around it rather than conflate the two.
+- **Cross-cutting engine gap, found while hardening the filter fix above
+  (`0.9.64`):** magic variables like `inventory_hostname` aren't visible
+  to bare `when:`/`assert: that:`/`until:`/`changed_when:`/`failed_when:`
+  conditions - only `{{ }}`-wrapped substitution sees them.
+  `VarSubstitutor#substitute` builds its own `@vars` copy with magic
+  variables added (`add_magic_variables`); bare conditions instead
+  evaluate directly against whatever `vars_context` `TaskExecutor`
+  already built, which never gets that same treatment. (The `0.9.64`
+  entry's original diagnosis lumped this together with task-level
+  `vars:` not working at all - that turned out to be a separate,
+  simpler parser bug, fixed in `0.9.65`; re-tested after that fix and
+  confirmed the magic-variable gap is real and distinct on its own.)
+  Not attempted yet.
 
 Cross-cutting engine gaps this section used to track here - Jinja2
 filter-chaining (inside `{{ }}` substitution), `become:`/

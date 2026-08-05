@@ -506,7 +506,7 @@ module CrystalPlay
                       "with_dict", "with_fileglob", "with_nested", "with_sequence",
                       "with_indexed_items", "until", "retries", "delay",
                       "notify", "changed_when", "failed_when", "delegate_to", "run_once",
-                      "async", "poll",
+                      "async", "poll", "vars",
                       "block", "rescue", "always", "import_tasks", "include_tasks", "include_role"]
 
       module_name = nil
@@ -543,6 +543,18 @@ module CrystalPlay
       task.diff_mode = task_hash["diff"]?.try(&.as_bool)
       task.become = task_hash["become"]?.try(&.as_bool) || play.become
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
+
+      # Parse task-level vars: - a real, previously-shipped gap: nothing
+      # here ever read this key into task.vars for a plain task (only
+      # import_tasks:'s own vars: - a separate mechanism, see
+      # parse_import_tasks above - was ever wired up), so a task-level
+      # var was silently invisible everywhere that reads task.vars
+      # (VariableContext#build folds it in at highest priority), not
+      # just in when:/assert: that: - {{ }} substitution was equally
+      # broken, since it draws from the exact same vars_context.
+      if vars_yaml = task_hash["vars"]?.try(&.as_h?)
+        vars_yaml.each { |key, value| task.vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
+      end
 
       # Parse notify (can be string or array)
       if notify_yaml = task_hash["notify"]?

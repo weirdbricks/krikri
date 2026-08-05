@@ -392,6 +392,76 @@ describe CrystalPlay::PlaybookParser do
     end
   end
 
+  describe "task-level vars: parsing" do
+    # Real, previously-shipped bug: nothing in parse_task ever read a
+    # plain task's own vars: key into task.vars - only import_tasks:'s
+    # separate vars: mechanism was ever wired up. Silently dropped, not
+    # an error, so it went unnoticed: VariableContext#build already
+    # folds task.vars in at highest priority, so the value was simply
+    # invisible everywhere (both {{ }} substitution and bare when:/
+    # assert: that:), not just in one code path.
+
+    it "parses a task's own vars: into task.vars" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hello
+          vars:
+            my_var: 3
+        YAML
+
+      task.vars["my_var"]?.try(&.as_i).should eq(3)
+    end
+
+    it "parses vars: listed before the module key without it being mistaken for the module name" do
+      # special_keys (used to find "the first key that isn't a keyword,
+      # that's the module") didn't include "vars" - a task listing vars:
+      # before its real module key would have had "vars" itself parsed
+      # as the module name instead, failing with "Plugin not available:
+      # vars" the moment key order didn't happen to put the module
+      # first.
+      task = single_task(<<-YAML)
+        - name: t
+          vars:
+            my_var: 3
+          ansible.builtin.debug:
+            msg: hello
+        YAML
+
+      task.module_name.should eq("ansible.builtin.debug")
+      task.vars["my_var"]?.try(&.as_i).should eq(3)
+    end
+
+    it "keeps task-level vars: scoped to that task only, not shared across tasks" do
+      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML)
+        - name: p
+          hosts: all
+          tasks:
+            - name: t1
+              ansible.builtin.debug:
+                msg: hello
+              vars:
+                my_var: 3
+            - name: t2
+              ansible.builtin.debug:
+                msg: hello
+        YAML
+
+      playbook.plays[0].tasks[0].vars["my_var"]?.try(&.as_i).should eq(3)
+      playbook.plays[0].tasks[1].vars.has_key?("my_var").should be_false
+    end
+
+    it "defaults task.vars to empty when no vars: key is given" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hello
+        YAML
+
+      task.vars.should be_empty
+    end
+  end
+
   describe "async / poll parsing" do
     it "parses async and poll as integers" do
       task = single_task(<<-YAML)

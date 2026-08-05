@@ -1,0 +1,50 @@
+# Regression coverage for a real, previously-shipped bug: nothing in
+# PlaybookParser#parse_task ever read a plain task's own vars: key into
+# task.vars - only import_tasks:/include_tasks:/include_role:'s own,
+# separate vars: mechanism was ever wired up. Silently dropped, not an
+# error, so it went unnoticed until now: VariableContext#build already
+# folds task.vars in at highest priority, so the value was simply
+# invisible everywhere that reads it - both {{ }} substitution and bare
+# when:/assert: that: alike, not just one code path. Also fixes a
+# related latent bug: "vars" wasn't in parse_task's own special_keys
+# list, so a task listing vars: *before* its real module key would have
+# had "vars" itself mis-parsed as the module name.
+
+- name: task-level vars
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: a task-level var referenced via {{ }}
+      ansible.builtin.debug:
+        msg: "value is {{ my_var }}"
+      vars:
+        my_var: 3
+      register: templated_result
+
+    - name: a task-level var referenced in a bare when:/assert
+      ansible.builtin.assert:
+        that: my_var == 3
+      vars:
+        my_var: 3
+
+    - name: vars listed before the module key doesn't break module detection
+      vars:
+        my_var2: 5
+      ansible.builtin.assert:
+        that: my_var2 == 5
+
+    - name: a task-level var combined with a filter chain
+      ansible.builtin.assert:
+        that: my_list | length == 3
+      vars:
+        my_list: [a, b, c]
+
+    - name: a task-level var does not leak into a later task
+      ansible.builtin.assert:
+        that: my_var is not defined
+
+    - name: write the stable result to a file for comparison
+      ansible.builtin.copy:
+        content: |
+          templated_msg={{ templated_result.msg }}
+        dest: /work/task-vars-output.txt

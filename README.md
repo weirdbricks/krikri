@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.64-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.65-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -258,12 +258,14 @@ the remaining open items are narrow, documented scope cuts (a handful of
 `postgresql_privs` privilege types that need a different underlying
 mechanism, and Docker API version negotiation) plus one known
 cross-cutting engine gap: bare `when:`/`assert: that:`/`until:`/
-`changed_when:`/`failed_when:` conditions don't see task-level `vars:`
-or magic variables like `inventory_hostname` (play-level `vars:` and
-registered results work fine) - everything else tracked in the roadmap
-has shipped, including two other engine gaps fixed in `0.9.64`: filters
-in bare conditionals, and a failed host now being excluded from every
-remaining play in the run, not just the rest of the one it failed in.
+`changed_when:`/`failed_when:` conditions don't see magic variables like
+`inventory_hostname` (task-level and play-level `vars:`, and registered
+results, all work fine) - everything else tracked in the roadmap has
+shipped, including three other engine gaps fixed in `0.9.64`-`0.9.65`:
+filters in bare conditionals, a failed host now being excluded from
+every remaining play in the run (not just the rest of the one it failed
+in), and task-level `vars:` itself, which previously did nothing at all
+for a plain task.
 
 ---
 
