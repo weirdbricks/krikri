@@ -116,119 +116,98 @@ module CrystalPlay
       end
     end
 
-    # Upload a set of plugins to a specific host
+    # Upload a set of plugins to a specific host.
+    #
+    # Collapsed to 3 SSH round trips total (was 2N+1): one to mkdir +
+    # dump every existing remote .md5 in one pass, one rsync/scp transfer
+    # for whatever needs uploading, one to write all the new .md5 files.
     private def self.upload_plugins_to_host(host : Host, plugin_names : Array(String))
       connection_host = get_connection_host(host, host.vars)
       host_key = "#{host.user}@#{connection_host}:#{host.port}"
+      user = host.user || "root"
 
       # Initialize plugin cache for this host
       @@uploaded_plugins[host_key] ||= Set(String).new
 
       remote_plugin_dir = "/tmp/.crystal-play/plugins"
 
-      # Create remote plugin directory
-      SSHManager.exec(
-        connection_host,
-        host.user || "root",
-        "mkdir -p #{remote_plugin_dir}",
-        host.port
-      )
+      candidates = plugin_names.reject { |name| @@uploaded_plugins[host_key].includes?(name) }
+      return if candidates.empty?
 
-      # Check which plugins need uploading (check MD5)
-      plugins_to_upload = [] of String
-      local_plugin_paths = [] of String
-
-      plugin_names.each do |plugin_name|
-        # Skip if already verified in this session
-        next if @@uploaded_plugins[host_key].includes?(plugin_name)
-
-        # Get local plugin MD5
-        local_plugin_path = get_local_plugin_path(plugin_name)
-        local_md5 = Digest::MD5.hexdigest(File.read(local_plugin_path))
-
-        # Check if remote plugin exists and matches our MD5
-        md5_check = SSHManager.exec(
-          connection_host,
-          host.user || "root",
-          "[ -f #{remote_plugin_dir}/#{plugin_name}.md5 ] && cat #{remote_plugin_dir}/#{plugin_name}.md5",
-          host.port
-        )
-
-        if md5_check[:exit_code] == 0 && md5_check[:stdout].strip == local_md5
-          # Plugin exists with matching MD5 - skip upload
-          @@uploaded_plugins[host_key].add(plugin_name)
-          next
+      # Round trip 1: create the dir and dump every existing remote .md5
+      # in one pass, so we don't need one `cat` per plugin to check it.
+      list_script = <<-SCRIPT
+        mkdir -p #{remote_plugin_dir}
+        for f in #{remote_plugin_dir}/*.md5; do
+          [ -f "$f" ] && echo "$(basename "$f" .md5) $(cat "$f")"
+        done
+        true
+        SCRIPT
+      remote_md5s = Hash(String, String).new
+      SSHManager.exec_script(connection_host, user, list_script, host.port)[:stdout]
+        .each_line do |line|
+          name, _, md5 = line.strip.partition(' ')
+          remote_md5s[name] = md5 unless name.empty?
         end
 
-        # Plugin needs uploading
-        plugins_to_upload << plugin_name
-        local_plugin_paths << local_plugin_path
+      # Local digest computed exactly once per plugin (streamed, not
+      # loaded fully into memory), reused for both the compare and the
+      # eventual .md5 write.
+      local_paths = Hash(String, String).new
+      local_md5s = Hash(String, String).new
+      candidates.each do |plugin_name|
+        path = get_local_plugin_path(plugin_name)
+        local_paths[plugin_name] = path
+        local_md5s[plugin_name] = Digest::MD5.new.file(path).hexfinal
       end
 
-      # Nothing to upload
+      plugins_to_upload = candidates.select do |plugin_name|
+        remote_md5s[plugin_name]? != local_md5s[plugin_name]
+      end
+      (candidates - plugins_to_upload).each { |name| @@uploaded_plugins[host_key].add(name) }
+
       return if plugins_to_upload.empty?
 
-      # Upload plugins in batch
+      # Round trip 2: transfer whatever needs uploading.
       puts "   → Uploading #{plugins_to_upload.size} plugins to #{connection_host} via rsync".colorize(:cyan) if @@verbose
 
-      # Try rsync batch upload first
-      if SSHManager.rsync_upload_batch(
-           connection_host,
-           host.user || "root",
-           local_plugin_paths,
-           remote_plugin_dir,
-           host.port,
-           mode: 0o755
-         )
-        # Rsync succeeded - store MD5s for all plugins
-        plugins_to_upload.each do |plugin_name|
-          local_plugin_path = get_local_plugin_path(plugin_name)
-          local_md5 = Digest::MD5.hexdigest(File.read(local_plugin_path))
+      local_plugin_paths = plugins_to_upload.map { |name| local_paths[name] }
+      rsync_ok = SSHManager.rsync_upload_batch(
+        connection_host,
+        user,
+        local_plugin_paths,
+        remote_plugin_dir,
+        host.port,
+        mode: 0o755
+      )
 
-          # Store MD5 on remote
-          SSHManager.exec(
-            connection_host,
-            host.user || "root",
-            "echo '#{local_md5}' > #{remote_plugin_dir}/#{plugin_name}.md5",
-            host.port
-          )
-
-          @@uploaded_plugins[host_key].add(plugin_name)
-        end
-
-        puts "   ✓ Successfully uploaded #{plugins_to_upload.size} plugins".colorize(:green) if @@verbose
-      else
-        # Rsync failed - fall back to individual scp uploads
+      unless rsync_ok
         puts "   → Rsync unavailable, using scp for #{plugins_to_upload.size} plugins".colorize(:yellow) if @@verbose
-
-        plugins_to_upload.each_with_index do |plugin_name, index|
-          local_plugin_path = get_local_plugin_path(plugin_name)
-          remote_plugin_path = "#{remote_plugin_dir}/#{plugin_name}"
-
-          # Upload plugin
+        plugins_to_upload.each do |plugin_name|
           SSHManager.upload(
             connection_host,
-            host.user || "root",
-            local_plugin_path,
-            remote_plugin_path,
+            user,
+            local_paths[plugin_name],
+            "#{remote_plugin_dir}/#{plugin_name}",
             host.port,
             mode: 0o755
           )
-
-          # Store MD5
-          local_md5 = Digest::MD5.hexdigest(File.read(local_plugin_path))
-          SSHManager.exec(
-            connection_host,
-            host.user || "root",
-            "echo '#{local_md5}' > #{remote_plugin_path}.md5",
-            host.port
-          )
-
-          @@uploaded_plugins[host_key].add(plugin_name)
         end
-
-        puts "   ✓ Uploaded #{plugins_to_upload.size} plugins via scp".colorize(:green) if @@verbose
       end
+
+      # Round trip 3: write all the new .md5 files in one script.
+      write_script = String.build do |str|
+        plugins_to_upload.each do |plugin_name|
+          str << "echo '#{local_md5s[plugin_name]}' > #{remote_plugin_dir}/#{plugin_name}.md5\n"
+        end
+      end
+      SSHManager.exec_script(connection_host, user, write_script, host.port)
+
+      plugins_to_upload.each { |name| @@uploaded_plugins[host_key].add(name) }
+
+      verb = rsync_ok ? "Successfully uploaded" : "Uploaded"
+      via = rsync_ok ? "" : " via scp"
+      puts "   ✓ #{verb} #{plugins_to_upload.size} plugins#{via}".colorize(:green) if @@verbose
     end
 
     # fetch: pulls a file FROM the target TO the controller - the reverse

@@ -3313,6 +3313,36 @@ compat playbook's own task wouldn't have suggested was there).
   `crystal spec` (766 examples, same 2 pre-existing DB-client failures)
   and `ameba` (177 files, same 51 pre-existing findings) both clean.
 
+- [x] Collapsed plugin pre-upload from `2N+1` SSH round trips per host to
+  3 (`0.9.68`), from `OPUS_PERFORMANCE_IMPROVEMENTS.md` item 2:
+  `PluginManager.upload_plugins_to_host` used to run one `ssh mkdir`,
+  then one `ssh cat` per plugin to read its remote `.md5`, then one
+  `ssh echo >` per uploaded plugin to write the new `.md5` back - all
+  serial `ssh` process spawns. Rewritten to one `exec_script` that
+  `mkdir -p`s the dir and dumps every existing remote `.md5` in a single
+  pass (parsed locally into a `Hash(String, String)`), one rsync/scp
+  transfer for whatever needs uploading, one `exec_script` that writes
+  all the new `.md5` files. Also fixed in the same pass: local MD5 was
+  computed twice per uploaded plugin (`Digest::MD5.hexdigest(File.read(...))`,
+  loading the whole ~2.3 MB binary into memory each time) - now computed
+  once per plugin via the streaming `Digest::MD5.new.file(path).hexfinal`,
+  cached in a local hash reused for both the compare and the eventual
+  write. **Verified against a real remote host** (two throwaway podman
+  containers on an isolated network, one running its own `sshd`, matching
+  this repo's existing batching-verification pattern in
+  `compat/run.cr#run_playbook_via_ssh`): a 4-distinct-plugin cold upload
+  (`file`/`copy`/`shell`/`lineinfile`) dropped from **10 SSH commands to
+  3** (`SSHManager.stats["commands_executed"]`, same fresh-target state
+  both directions), and a warm incremental re-run correctly uploaded 0
+  files while still checking freshness in a single round trip. scp
+  fallback re-verified by temporarily hiding `rsync` from `PATH` inside
+  the test controller container - all 4 plugins still landed with the
+  correct MD5 and mode `0755`. `crystal spec` (766 examples, same 2
+  pre-existing DB-client failures) and `ameba` (177 files, same 51
+  pre-existing findings) both clean. Full compat harness (local-
+  connection only, so this path isn't exercised there, but nothing
+  regressed): **41/41 pass**.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**
