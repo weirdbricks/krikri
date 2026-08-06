@@ -1,0 +1,39 @@
+# Magic variables in *bare* conditions (no {{ }}), and the precedence of
+# the three of them. Verified byte-identical against ansible-core 2.19.4.
+# Targets "magicvars" so the generic empty inventory used by every other
+# testing/*.yml fixture resolves it to zero hosts, per repo convention.
+- name: magic variables
+  hosts: magicvars
+  gather_facts: true
+  tasks:
+    - name: bare when sees inventory_hostname
+      ansible.builtin.debug:
+        msg: "BARE-WHEN-RAN"
+      when: inventory_hostname == "web1"
+
+    - name: bare assert that sees inventory_hostname
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname == "web1"
+
+    - name: bare changed_when sees inventory_hostname
+      ansible.builtin.command: echo hi
+      register: cw
+      changed_when: inventory_hostname == "nonexistent"
+
+    - name: report changed_when
+      ansible.builtin.debug:
+        msg: "CHANGED-WHEN={{ cw.changed }}"
+
+    - name: bare failed_when sees inventory_hostname
+      ansible.builtin.command: echo hi
+      register: fw
+      failed_when: inventory_hostname == "nonexistent"
+
+    - name: report failed_when survived
+      ansible.builtin.debug:
+        msg: "FAILED-WHEN-SURVIVED"
+
+    - name: precedence of the three magic variables
+      ansible.builtin.debug:
+        msg: "inv={{ inventory_hostname }} ahost={{ ansible_host }}"

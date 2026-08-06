@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-05 (currently at `0.9.65`):** **all of Phase 0 through
+**Status as of 2026-08-05 (currently at `0.9.82`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -43,7 +43,13 @@ container - comparing crystal-ansible against real `ansible-playbook`
 end to end (`0.9.58`, see that entry) - see "Also still
 open" near the end of
 Phase 5 for what's left and the running list of what's already been
-closed past that point. All 715 specs pass in an environment with
+closed past that point. **All four cross-cutting engine gaps are closed, and as of `0.9.82` no
+cross-cutting engine gap remains open at all** - the last one (magic
+variables invisible to bare `when:`/`assert: that:`/`until:`/
+`changed_when:`/`failed_when:` conditions) is fixed; see that entry.
+Engine performance work `0.9.66`-`0.9.81` closed two full review
+documents; see those entries for the measured before/after against real
+hosts. All 793 specs pass in an environment with
 `mysql`/`mysqldump`/`psql`/`pg_dump`/`pg_restore` client binaries on
 `PATH` and a live MySQL/MariaDB + PostgreSQL server reachable at
 `127.0.0.1:13306`/`15432`; without those (neither installed on this host
@@ -3668,6 +3674,129 @@ compat playbook's own task wouldn't have suggested was there).
   this change too - unrelated) / `ameba` (166 files, same 51
   pre-existing findings) / compat harness (41/41) suite.
 
+- [x] Landed 12 of 14 items from a fresh performance review, plus
+  `--gathering` (`0.9.79`). Measured on 3 fresh Atlantic.net instances
+  (Ubuntu 22.04, G3.1GB, `USEAST2`, destroyed after), `0.9.78` vs
+  `0.9.79` run **interleaved** to cancel network jitter, median of 5,
+  `--forks 3`: cold run (plugins re-uploaded) **16.39s -> 10.13s
+  (1.62x)**, warm run **3.09s -> 2.45s (1.26x)**.
+  - Tier 1, the pre-execution phase `0.9.75`/`0.9.77` never touched:
+    plugin pre-upload now runs concurrently across hosts through the
+    same bounded-fiber `Channel` gate the other two use (it ran *before*
+    both of them and was still serial, one SSH round trip per host even
+    on a fully warm run), and each plugin binary is MD5'd once per run
+    instead of once per host - digesting the 44 binaries costs ~127ms, so
+    20 hosts burned ~2.5s of pure duplication before the first task.
+  - Fact gathering now honors `--forks`; the hardcoded `10` predated the
+    flag. **This made `--forks 1` slower** (8.29s -> 9.92s on 3 hosts) -
+    it now means one host at a time end to end, which is the flag working
+    correctly but is a real regression for anyone who used `--forks 1`
+    for throughput rather than for debugging.
+  - Tier 2: the solo remote path serialized the config, parsed it back,
+    then duped and re-serialized it purely to inject one key
+    (32.26us/45.7kB -> 7.90us/15.8kB per task per host); one process-wide
+    Crinja environment instead of one per `{% %}` render, its config
+    being two invariant literals (21.08us/61.9kB -> 9.28us/32.2kB); and
+    `@batch_cache` entries are now evicted as consumed, having previously
+    retained a full variable-context copy per task per host for the whole
+    play.
+  - Batch-cache eviction needed a separate `@batch_groups_run` marker:
+    the old trigger check read the cache's own contents, so evicting
+    `group.first` would have made a later group member re-run the entire
+    remote script and re-execute real side effects.
+  - `--gathering implicit|explicit|smart` + `meta: clear_facts`, matching
+    `ansible-playbook` rather than inventing semantics - verified against
+    `ansible-core` 2.19.4 running the same playbooks side by side, with
+    gather counts and recap `ok=` totals matching in all seven scenarios
+    tested (including that `smart` deliberately skips a play's *explicit*
+    `gather_facts: true`, which this codebase already did). Default stays
+    `implicit`. `smart` alone: **2.10s -> 1.54s (1.36x)** on a 4-play
+    playbook, 2.75s -> 1.56s (1.76x) on eight, since it removes
+    `(N_plays - 1) x N_hosts` round trips. `meta: clear_facts` is the
+    escape hatch that makes `smart` safe; without it a reboot or package
+    install in an early play would silently feed stale facts to every
+    later play with no way to refresh. Unsupported `meta:` actions fail
+    at parse time rather than silently doing nothing.
+  - Also fixed `version.cr`, which had drifted 13 releases behind
+    `shard.yml` (`0.9.65` vs `0.9.78`) and was printing the wrong version
+    in `--version` and the startup banner.
+
+- [x] Shared one `VarSubstitutor` per `(task, host)` and removed the last
+  `JSON.parse(x.to_json)` round trip (`0.9.80`). Measured by counting
+  constructions at runtime rather than guessing: a `when:`-heavy playbook
+  against 3 real hosts went **93 -> 48 (-48.3%)**, batched and
+  `--no-batching` alike. **Wall clock did not move** (1.79s -> 1.78s,
+  inside noise) and was not expected to - at ~1.1us per construction this
+  is allocation pressure, not latency.
+  - Two findings worth keeping: the win only exists where two
+    substitutors were built over the *same* context (a task with `when:`,
+    a `delegate_to:`, or the batch path) - a plain task without `when:`
+    always built exactly one, because `when_passes?` returns before
+    constructing when there is no condition. And building the shared
+    instance *eagerly* at the top of `execute_task` is a **regression**,
+    not an optimization: the loop and `until:` paths return before
+    reaching `execute_task_once` and build their own per item, so an
+    eager instance is pure waste - measured at -34.8% (23 -> 31
+    constructions) before being corrected to build it only where used.
+  - `apply_changed_failed_when` still builds its own and must: it
+    evaluates against a different context, with the task's own result
+    injected under its `register:` name.
+
+- [x] Shared the `JSON::Any -> Crinja::Value` converter (`0.9.81`).
+  `TemplateActionPlugin` carried a byte-identical copy of
+  `CrinjaRenderer`'s. Deliberately *not* shared: the Crinja environment
+  itself - that plugin's `trim_blocks`/`lstrip_blocks` come from the
+  task's own `template:` params, so its config genuinely varies per task,
+  precisely the invariance the process-wide environment relies on. A
+  duplication fix, not a performance one; no measurement is quoted.
+  Verified with coverage the repo did not previously have: **no
+  `compat/` or `testing/` playbook exercises `trim_blocks`/
+  `lstrip_blocks` at all**, so a fixture was written rendering the same
+  template under all four combinations of the two flags plus every branch
+  of the converter - byte-identical before and after, with 3 of the 4
+  combinations producing genuinely distinct output, confirming the params
+  really do reach the environment.
+
+- [x] **Fixed the last cross-cutting engine gap this roadmap tracked**
+  (`0.9.82`): magic variables were invisible to *bare* conditions. This
+  turned out to be three bugs, not one - checked against `ansible-core`
+  2.19.4 with an inventory where all three values differ
+  (`web1 ansible_host=192.0.2.55`, real hostname `floridian-goat`):
+
+  | | ansible | crystal (before) |
+  |---|---|---|
+  | `inventory_hostname` | `web1` | `web1` |
+  | `ansible_host` | `192.0.2.55` | `web1` (clobbered) |
+  | `ansible_hostname` | `floridian-goat` | `web1` (clobbered) |
+  | bare `when: inventory_hostname == "web1"` | runs | **skipped** |
+
+  - The reported gap: bare `when:`/`assert: that:`/`until:`/
+    `changed_when:`/`failed_when:` are evaluated directly against the
+    `vars_context` `TaskExecutor` builds, which never had the magic
+    variables added - only the `{{ }}` path, via `VarSubstitutor`'s own
+    copy, did. `when:` therefore *skipped silently*, the worst shape for
+    this bug. Fixed by adding them in `build_vars_context`, which also
+    fixes `assert:`'s `that:` (evaluated inside the plugin, against the
+    `vars` this context is serialized into).
+  - Fixing it exposed the other two: `VarSubstitutor` overwrote
+    `ansible_host` and `ansible_hostname` with the inventory name. Both
+    are now fallbacks applied only when absent, so an inventory's
+    `ansible_host` and a gathered `ansible_hostname` fact win - matching
+    ansible-core. Only `inventory_hostname` stays unconditional. Had the
+    clobbering been left in place, bare conditions would simply have
+    inherited the wrong values.
+  - `ansible_host` also feeds `PluginManager#get_connection_host`, so
+    this was verified against 3 real hosts with an inventory whose names
+    differ from their addresses (`alpha ansible_host=69.87.217.114`):
+    routing is **unchanged** before vs after (each name still reached its
+    own machine, confirmed via `hostname -I` on the target), and the
+    reported values now match `ansible-playbook` byte for byte on the
+    same inventory.
+  - Note for anyone re-testing: `when: inventory_hostname != "x"` does
+    *not* reproduce the original bug - with the magic variable missing
+    the comparison was against an empty value, so `!=` passed by
+    accident. The `== "web1"` form is the discriminating one.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**
@@ -3683,27 +3812,14 @@ the exact "not implemented" list it's tracked against:**
   socket either - would mean touching every endpoint across `docr`, not
   just connection setup, a meaningfully bigger change than anything else
   closed in this section).
-- **Cross-cutting engine gap, found while hardening the filter fix above
-  (`0.9.64`):** magic variables like `inventory_hostname` aren't visible
-  to bare `when:`/`assert: that:`/`until:`/`changed_when:`/`failed_when:`
-  conditions - only `{{ }}`-wrapped substitution sees them.
-  `VarSubstitutor#substitute` builds its own `@vars` copy with magic
-  variables added (`add_magic_variables`); bare conditions instead
-  evaluate directly against whatever `vars_context` `TaskExecutor`
-  already built, which never gets that same treatment. (The `0.9.64`
-  entry's original diagnosis lumped this together with task-level
-  `vars:` not working at all - that turned out to be a separate,
-  simpler parser bug, fixed in `0.9.65`; re-tested after that fix and
-  confirmed the magic-variable gap is real and distinct on its own.)
-  Not attempted yet.
-
 Cross-cutting engine gaps this section used to track here - Jinja2
 filter-chaining (inside `{{ }}` substitution), `become:`/
 `become_user:` privilege escalation, filter chains inside bare
 when:/assert: that: conditions (or combined with a comparison in the
-same `{{ }}` expression), and a failed host not being excluded from
-every remaining play in the run - are all now fixed; see the `0.9.42`,
-`0.9.41`, and `0.9.64` entries. Cloud plugins
+same `{{ }}` expression), a failed host not being excluded from
+every remaining play in the run, and magic variables not reaching bare
+conditions - are **all now fixed**; see the `0.9.42`, `0.9.41`, `0.9.64`
+and `0.9.82` entries. No cross-cutting engine gap remains open. Cloud plugins
 (`ec2`, `s3_bucket`, `azure_rm_*`) and inventory *plugins* (`aws_ec2.yml`
 et al.) remain explicitly lowest-ROI and are not planned - everything else
 in this list is being picked off incrementally, each verified against real

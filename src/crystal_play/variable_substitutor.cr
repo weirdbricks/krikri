@@ -58,11 +58,26 @@ module CrystalPlay
       @renderer ||= VariableSubstitutor::CrinjaRenderer.new(@vars)
     end
     
+    # Magic variables, using the same precedence TaskExecutor#
+    # build_vars_context applies, so a bare `when:` and a `{{ }}`
+    # expression can never disagree about what they mean.
+    #
+    # Only `inventory_hostname` is unconditional - it *is* the inventory
+    # name and nothing else defines it. The other two are fallbacks:
+    #
+    # - `ansible_host` is the connection address. An inventory line like
+    #   `web1 ansible_host=192.0.2.55` must win; overwriting it with the
+    #   inventory name was wrong (verified against ansible-core 2.19.4:
+    #   it reports 192.0.2.55) and, in vars_context, would also redirect
+    #   PluginManager#get_connection_host to the wrong machine.
+    # - `ansible_hostname` is a *fact* - the target's own hostname, which
+    #   is frequently not the inventory name at all (ansible-core reports
+    #   the real hostname). A gathered fact must win over this fallback.
     private def add_magic_variables(facts : Hash(String, JSON::Any))
       @vars["inventory_hostname"] = JSON::Any.new(@host_name)
-      @vars["ansible_hostname"] = JSON::Any.new(@host_name)
-      @vars["ansible_host"] = JSON::Any.new(@host_name)
-      
+      @vars["ansible_hostname"] ||= JSON::Any.new(@host_name)
+      @vars["ansible_host"] ||= JSON::Any.new(@host_name)
+
       facts.each do |key, value|
         @vars["ansible_#{key}"] = value
       end

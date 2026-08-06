@@ -508,6 +508,22 @@ module CrystalPlay
         vars_context[key] = value
       end
 
+      # Magic variables belong in vars_context itself, not only in the
+      # copy VarSubstitutor makes. Bare conditions - `when:`,
+      # `until:`, `changed_when:`, `failed_when:`, and `assert:`'s
+      # `that:` (which is evaluated inside the plugin, against the "vars"
+      # this context is serialized into) - are evaluated directly against
+      # vars_context and never saw them, so `when: inventory_hostname ==
+      # "web1"` silently skipped every task while
+      # `when: "{{ inventory_hostname }} == web1"` worked.
+      #
+      # Applied after facts, with the same precedence rules
+      # VarSubstitutor#add_magic_variables uses - see there for why only
+      # inventory_hostname is unconditional.
+      vars_context["inventory_hostname"] = JSON::Any.new(host.name)
+      vars_context["ansible_hostname"] ||= JSON::Any.new(host.name)
+      vars_context["ansible_host"] ||= JSON::Any.new(host.name)
+
       vars_context
     end
 

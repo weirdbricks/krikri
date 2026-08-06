@@ -208,6 +208,54 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("delegate_to / run_once smoke test complete!")
   end
 
+  describe "magic variables" do
+    magicvars = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-ansible-host.ini")
+
+    it "are visible to bare when:/assert:/changed_when:/failed_when: conditions" do
+      status, output = run_playbook(
+        "test-magic-vars-quick.yml", [] of String, inventory: magicvars
+      )
+
+      status.success?.should be_true
+      # Each of these used to fail: a bare condition was evaluated
+      # against vars_context, which never had the magic variables added -
+      # only the {{ }} substitution path did. `when:` therefore skipped
+      # silently, which is the worst shape for this bug.
+      output.should contain("BARE-WHEN-RAN")
+      output.should contain("CHANGED-WHEN=False")
+      output.should contain("FAILED-WHEN-SURVIVED")
+      output.should_not contain("failed=1")
+    end
+
+    it "does not overwrite an inventory ansible_host with the inventory name" do
+      status, output = run_playbook(
+        "test-magic-vars-quick.yml", [] of String, inventory: magicvars
+      )
+
+      status.success?.should be_true
+      # ansible_host is the connection address, not the inventory name.
+      # Overwriting it also mislead PluginManager#get_connection_host.
+      # ansible-core 2.19.4 reports the inventory's value here.
+      output.should contain("inv=web1 ahost=127.0.0.1")
+    end
+
+    it "prefers the gathered ansible_hostname fact over the inventory name" do
+      status, output = run_playbook(
+        "test-magic-vars-quick.yml", [] of String, inventory: magicvars
+      )
+
+      status.success?.should be_true
+      # ansible_hostname is a fact - the target's own hostname, which is
+      # usually not the inventory name. Only used as a fallback when no
+      # facts were gathered.
+      real_hostname = System.hostname
+      output.should_not contain("ahostname=web1")
+      # sanity: the fixture's inventory name and the real hostname differ,
+      # otherwise this assertion proves nothing.
+      real_hostname.should_not eq("web1")
+    end
+  end
+
   describe "--gathering" do
     testservers = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-testservers-local.ini")
 
