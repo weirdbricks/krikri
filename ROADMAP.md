@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-05 (currently at `0.9.83`):** **all of Phase 0 through
+**Status as of 2026-08-05 (currently at `0.9.84`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -3843,19 +3843,59 @@ compat playbook's own task wouldn't have suggested was there).
     are obtainable in a couple of minutes from the official container
     images, after which `crystal spec` is **793 examples, 0 failures**.
 
+- [x] `postgresql_privs`: `type: default_privs` and `target_roles:`
+  (`0.9.84`) - **the last `postgresql_privs` gap; every `type:` real
+  Ansible supports is now implemented.** Verified against a live
+  PostgreSQL 16 server and side by side with real `ansible-playbook`
+  (`community.postgresql` 4.2.0): identical `changed` flags across seven
+  cases (grant, idempotent repeat, widening privileges over two classes,
+  `target_roles:`, `ALL_DEFAULT`, revoke, revoke again) *and* identical
+  resulting `pg_default_acl`.
+  - `default_privs` is a genuinely different mechanism, not another
+    object type: it controls what privileges objects will receive *when
+    created in future*, stored in `pg_default_acl` rather than on any
+    existing object, so none of the `fetch_acl`/`qualified_object`/
+    `apply_grants` machinery applies. `objs:` also changes meaning - an
+    object *class* (`TABLES`/`SEQUENCES`/`FUNCTIONS`/`TYPES`/`SCHEMAS`),
+    not object names.
+  - **Idempotency deliberately differs in mechanism while matching in
+    result.** Real Ansible executes its statements unconditionally and
+    reports `changed` by diffing `pg_default_acl` before and after -
+    which cannot support check mode, since it would have to make the
+    change to find out. Here the current `defaclacl` is read and compared
+    against the desired state first, so `--check` works and nothing runs
+    when nothing needs changing. `state: present` stays declarative
+    either way: it emits the same REVOKE ALL + GRANT pair, so afterwards
+    the grantee holds exactly `privs:`, not the union with what was there
+    before.
+  - Quirks matched rather than "fixed", because parity is the point:
+    `ALL_DEFAULT` expands to TABLES/SEQUENCES/FUNCTIONS/TYPES but
+    deliberately *not* SCHEMAS (real Ansible pops it from that set), and
+    `state: absent` revokes across TABLES/FUNCTIONS/SEQUENCES/TYPES
+    regardless of what `objs:` said (its `build_absent` ignores `objs`
+    entirely for this type).
+  - `objs: SCHEMAS` is effectively unusable, on both engines: PostgreSQL
+    rejects `IN SCHEMA ... ON SCHEMAS` ("cannot use IN SCHEMA clause when
+    using GRANT/REVOKE ON SCHEMAS") and `schema:` defaults to `public`.
+    Confirmed real Ansible fails with the identical server error, so this
+    is upstream behavior being matched, not a gap - and it is why the
+    compat playbook does not cover that class.
+  - With no `target_roles:`, ALTER DEFAULT PRIVILEGES applies to the role
+    executing it, which is what `pg_default_acl.defaclrole` records - so
+    that is what the idempotency check resolves and compares against,
+    rather than assuming the login user.
+  - `compat/playbooks/38-postgresql-privs.yml` covers all of the above,
+    and creates a table *after* the grant so the ACL it inherits proves
+    the default privileges actually took effect rather than merely being
+    recorded in the catalog.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**
 
-- `postgresql_privs` (`0.9.83`): `type: default_privs` (every other
-  `type:` real Ansible supports is now implemented), and `target_roles:`,
-  which is only meaningful for `default_privs`. `default_privs` operates
-  on `pg_default_acl` - privileges for objects created *in future*, not
-  existing ones - so it is a genuinely different mechanism rather than
-  another object type, and reuses almost none of the ACL-diffing
-  machinery the rest of this plugin is built on. Its `objs:` also means
-  an object *class* (`tables`/`sequences`/`functions`), not object
-  names.
+- `postgresql_privs`: **nothing open** as of `0.9.84` - every `type:`
+  real Ansible's module supports is implemented, including
+  `default_privs` and `target_roles:`.
 - `docker_*` (`0.9.57`): `api_version:` (this codebase's `docr`-based API
   calls have no version prefix on any endpoint URL at all, on a local
   socket either - would mean touching every endpoint across `docr`, not

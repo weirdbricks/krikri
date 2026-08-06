@@ -14,10 +14,15 @@
 # colon separator real Ansible uses, a procedure, a revoke, and
 # ALL_IN_SCHEMA over routines - with the resulting pg_proc ACLs read
 # back and diffed, so this proves the actual privilege state matches,
-# not just the changed flags. default_privs is still a real Ansible
-# `type:` choice this codebase doesn't implement (documented scope cut,
-# see plugins/postgresql_privs.cr), so isn't covered here - this
-# playbook is deliberately scoped to prove
+# not just the changed flags. default_privs was added in 0.9.84 and is
+# covered too: a grant for future tables, an idempotent repeat, widening
+# across two classes, ALL_DEFAULT, and a revoke - with pg_default_acl
+# read back, plus a table created afterwards so the ACL it inherits
+# proves the default privileges actually took effect rather than merely
+# being recorded. objs: SCHEMAS is deliberately not covered: PostgreSQL
+# rejects "IN SCHEMA ... ON SCHEMAS", and since schema: defaults to
+# public that combination fails on both engines identically (verified) -
+# there is nothing to compare. This playbook is deliberately scoped to prove
 # the implemented surface works, not to be a full postgresql_privs
 # feature matrix. session_role: isn't covered here either - verified
 # manually instead against a real server (see the 0.9.54 ROADMAP entry),
@@ -325,6 +330,98 @@
       register: routine_acls
       changed_when: false
 
+    - name: default privileges for future tables
+      community.postgresql.postgresql_privs:
+        type: default_privs
+        schema: public
+        objs: TABLES
+        privs: SELECT
+        roles: compatprivsrole
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: default_privs_tables
+
+    - name: default privileges for future tables again (idempotent)
+      community.postgresql.postgresql_privs:
+        type: default_privs
+        schema: public
+        objs: TABLES
+        privs: SELECT
+        roles: compatprivsrole
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: default_privs_idempotent
+
+    - name: widen default privileges across two classes
+      community.postgresql.postgresql_privs:
+        type: default_privs
+        schema: public
+        objs: "TABLES,SEQUENCES"
+        privs: "SELECT,UPDATE"
+        roles: compatprivsrole
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: default_privs_widen
+
+    - name: default privileges via ALL_DEFAULT
+      community.postgresql.postgresql_privs:
+        type: default_privs
+        schema: public
+        objs: ALL_DEFAULT
+        privs: ALL
+        roles: compatprivsrole
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: default_privs_all
+
+    - name: create a table so the default privileges actually apply to something
+      ansible.builtin.shell: |
+        PGPASSWORD=compatpass psql --host=127.0.0.1 --username=postgres --dbname={{ login_db }} \
+          -c "CREATE TABLE future_tab (id int);"
+      changed_when: false
+
+    - name: read back the new table's ACL (proves default privs took effect)
+      ansible.builtin.shell: |
+        PGPASSWORD=compatpass psql --host=127.0.0.1 --username=postgres --dbname={{ login_db }} -At \
+          -c "SELECT (coalesce(relacl::text, '') LIKE '%compatprivsrole=%')::text
+              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname = 'public' AND relname = 'future_tab'"
+      register: future_tab_acl
+      changed_when: false
+
+    - name: revoke the default privileges again
+      community.postgresql.postgresql_privs:
+        type: default_privs
+        schema: public
+        objs: TABLES
+        privs: SELECT
+        roles: compatprivsrole
+        state: absent
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: default_privs_revoked
+
+    - name: read back pg_default_acl
+      ansible.builtin.shell: |
+        PGPASSWORD=compatpass psql --host=127.0.0.1 --username=postgres --dbname={{ login_db }} -At \
+          -c "SELECT r.rolname || '/' || n.nspname || '/' || a.defaclobjtype::text || '=' || a.defaclacl::text
+              FROM pg_default_acl a
+              JOIN pg_roles r ON r.oid = a.defaclrole
+              JOIN pg_namespace n ON n.oid = a.defaclnamespace
+              ORDER BY 1"
+      register: default_acls
+      changed_when: false
+
     - name: attempt a grant for a nonexistent role with fail_on_role false
       community.postgresql.postgresql_privs:
         type: table
@@ -507,6 +604,13 @@
           revoke_function={{ revoke_function.changed }}
           grant_functions_all_in_schema={{ grant_functions_all_in_schema.changed }}
           routine_acls={{ routine_acls.stdout }}
+          default_privs_tables={{ default_privs_tables.changed }}
+          default_privs_idempotent={{ default_privs_idempotent.changed }}
+          default_privs_widen={{ default_privs_widen.changed }}
+          default_privs_all={{ default_privs_all.changed }}
+          future_tab_acl={{ future_tab_acl.stdout }}
+          default_privs_revoked={{ default_privs_revoked.changed }}
+          default_acls={{ default_acls.stdout }}
         dest: /work/results.txt
 
     - name: clean up

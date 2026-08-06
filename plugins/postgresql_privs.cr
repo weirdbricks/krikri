@@ -34,11 +34,10 @@ module CrystalPlay
   #   group membership isn't stored as one) / `function` / `procedure`
   #   (privs: `EXECUTE`; PostgreSQL 11+ for procedures, which is when
   #   `pg_proc.prokind` distinguishing them was added - see the `objs:`
-  #   notes below for how signatures are written). Real Ansible's own
-  #   module also supports `default_privs`; that remains a documented
-  #   scope cut (see below) - it operates on `pg_default_acl` (future
-  #   objects, not existing ones - a different mechanism entirely, not
-  #   just another object type).
+  #   notes below for how signatures are written) / `default_privs`
+  #   (ALTER DEFAULT PRIVILEGES - the privileges objects will receive
+  #   *when created in future*, stored in `pg_default_acl` rather than on
+  #   any existing object; see its own notes below).
   # - objs: comma-separated list of object names `type` applies to
   #   (required for `table`/`sequence`/`schema`/`language`/`tablespace`/
   #   `type`; for `database`, defaults to the connected database itself
@@ -61,9 +60,34 @@ module CrystalPlay
   #   the comma split, not before). Type names are resolved by
   #   PostgreSQL, so aliases work exactly as they do in psql - `int` and
   #   `integer` name the same function.
+  #   For `default_privs`, `objs:` means something different again: an
+  #   object *class*, not an object name - `TABLES`, `SEQUENCES`,
+  #   `FUNCTIONS`, `TYPES` or `SCHEMAS`. `ALL_DEFAULT` expands to the
+  #   first four (deliberately not `SCHEMAS`, matching real Ansible,
+  #   which pops it from that set). `state: absent` revokes across
+  #   TABLES/FUNCTIONS/SEQUENCES/TYPES regardless of what `objs:` said,
+  #   again matching real Ansible's own build_absent, which ignores objs
+  #   entirely for this type.
+  #
+  #   Note `objs: SCHEMAS` cannot be combined with `schema:`: PostgreSQL
+  #   rejects "IN SCHEMA ... ON SCHEMAS" outright ("cannot use IN SCHEMA
+  #   clause when using GRANT/REVOKE ON SCHEMAS"). Since `schema:`
+  #   defaults to "public", SCHEMAS is effectively unusable here - real
+  #   Ansible has exactly the same limitation and fails with the same
+  #   server error, verified side by side.
+  # - target_roles: comma-separated roles whose future objects the
+  #   default privileges apply to (the `FOR ROLE` clause). Only valid
+  #   with `type: default_privs`, and rejected with a clear message
+  #   otherwise. When omitted, ALTER DEFAULT PRIVILEGES applies to the
+  #   role executing it, which is what `pg_default_acl.defaclrole`
+  #   records and therefore what idempotency is checked against.
   # - privs: comma-separated list of privilege names, or `ALL`/
   #   `ALL PRIVILEGES` (expands per `type` - see
-  #   `PluginHelpers::PostgresqlAcl.all_privs`)
+  #   `PluginHelpers::PostgresqlAcl.all_privs`). For `default_privs` the
+  #   list is passed to PostgreSQL verbatim (so `ALL` stays `ALL` in the
+  #   emitted SQL, as real Ansible does); it is expanded to letters only
+  #   for the idempotency check, per object class, since `ALL` means
+  #   different privileges for TABLES than for SEQUENCES.
   # - roles: comma-separated list of role names to grant/revoke for, or
   #   `PUBLIC`
   # - state: `present` (default, GRANT) / `absent` (REVOKE)
@@ -112,8 +136,18 @@ module CrystalPlay
   # (`postgresql_user.cr` already doesn't compare inherited role
   # membership either).
   #
-  # Not implemented: `type: default_privs`, `target_roles:` (only
-  # meaningful for `default_privs`), `trust_input:` (this plugin always
+  # `default_privs` idempotency deliberately differs in *mechanism* from
+  # real Ansible while matching it in result: real Ansible executes its
+  # statements unconditionally and reports `changed` by diffing
+  # `pg_default_acl` before and after, which cannot support check_mode
+  # (it would have to make the change to find out). Here the current
+  # `defaclacl` is read and compared against the desired state first, so
+  # `--check` works and no statement runs when nothing needs changing.
+  # `state: present` remains declarative either way - it emits the same
+  # REVOKE ALL + GRANT pair real Ansible does, so afterwards the grantee
+  # holds exactly `privs:`, not the union with whatever was there before.
+  #
+  # Not implemented: `trust_input:` (this plugin always
   # quotes identifiers itself instead - and for routines defers to
   # PostgreSQL's own `regprocedure` parsing, see #resolve_routine), the
   # granular `ssl_*` params (not supported by any plugin in this
@@ -130,6 +164,28 @@ module CrystalPlay
     # a bare name - see #resolve_routine.
     ROUTINE_TYPES = {"function", "procedure"}
 
+    # type: default_privs - the object *classes* ALTER DEFAULT PRIVILEGES
+    # accepts, mapped to {pg_default_acl.defaclobjtype, the object type
+    # whose privilege letters they share}. Reusing the existing letter
+    # tables is exact, not an approximation: a default privilege for
+    # TABLES is recorded with the same letters an actual table ACL uses.
+    DEFAULT_OBJ_CLASSES = {
+      "TABLES"    => {'r', "table"},
+      "SEQUENCES" => {'S', "sequence"},
+      "FUNCTIONS" => {'f', "function"},
+      "TYPES"     => {'T', "type"},
+      "SCHEMAS"   => {'n', "schema"},
+    }
+
+    # objs: ALL_DEFAULT expands to these four - deliberately *not*
+    # SCHEMAS, matching real Ansible, which pops it from the set.
+    ALL_DEFAULT_CLASSES = ["TABLES", "SEQUENCES", "FUNCTIONS", "TYPES"]
+
+    # state: absent for default_privs revokes on this fixed list
+    # regardless of what objs: said - real Ansible's own build_absent
+    # ignores objs entirely for this type. SCHEMAS is absent here too.
+    ABSENT_DEFAULT_CLASSES = ["TABLES", "FUNCTIONS", "SEQUENCES", "TYPES"]
+
     # Every parameter #execute needs, once parsed and validated -
     # bundling them lets #resolve_params! raise on the first problem it
     # finds and #execute stay a single begin/rescue instead of a chain of
@@ -141,7 +197,8 @@ module CrystalPlay
     record ResolvedParams,
       type : String, state : String, privs : Array(String), roles_raw : Array(String),
       objs : Array(String), all_in_schema : Bool, schema : String, login_db : String,
-      check_mode : Bool, grant_option : Bool?, session_role : String?, fail_on_role : Bool
+      check_mode : Bool, grant_option : Bool?, session_role : String?, fail_on_role : Bool,
+      target_roles : Array(String)
 
     def execute : PluginResult
       begin
@@ -192,7 +249,9 @@ module CrystalPlay
       end
       return PluginResult.new(changed: false, failed: false, msg: "No valid roles provided, nothing to do") if roles.empty?
 
-      changed = if p.type == "group"
+      changed = if p.type == "default_privs"
+                  apply_all_default_privs(database, p, roles)
+                elsif p.type == "group"
                   apply_all_group_grants(database, objs, roles, p.state, p.grant_option, p.check_mode)
                 else
                   apply_all_grants(database, p.type, objs, p.schema, roles, p.privs, p.state, p.grant_option, p.check_mode)
@@ -214,10 +273,64 @@ module CrystalPlay
 
     # Parses and validates every parameter, raising with a clear message
     # on the first problem found (caught by #execute).
+    # privs: for default_privs is deliberately NOT expanded the way every
+    # other type's is: ALTER DEFAULT PRIVILEGES takes the privilege list
+    # verbatim, so `ALL` stays `ALL` in the emitted SQL (real Ansible
+    # does the same - "we don't want privs to be quoted here").
+    # Expansion to letters happens per object class at apply time, since
+    # ALL means different privileges for TABLES than for SEQUENCES.
+    private def default_privs_list(privs_param : String?) : Array(String)
+      raise "privs is required for type 'default_privs'" unless privs_param
+      privs_param.split(',').map(&.strip.upcase).reject(&.empty?)
+    end
+
+    # objs: for default_privs are object *classes*, not object names.
+    private def default_privs_classes(objs_param : String?) : Array(String)
+      raise "objs is required for type 'default_privs'" unless objs_param
+
+      classes = if objs_param.strip.upcase == "ALL_DEFAULT"
+                  ALL_DEFAULT_CLASSES.dup
+                else
+                  objs_param.split(',').map(&.strip.upcase).reject(&.empty?)
+                end
+
+      classes.each do |cls|
+        unless DEFAULT_OBJ_CLASSES.has_key?(cls)
+          raise "objs for type 'default_privs' must be one of #{DEFAULT_OBJ_CLASSES.keys.join(", ")} or ALL_DEFAULT, got '#{cls}'"
+        end
+      end
+      raise "objs is required for type 'default_privs'" if classes.empty?
+
+      classes
+    end
+
+    # Each type spells "which privileges" differently: group takes none
+    # at all, default_privs passes them through verbatim, everything else
+    # expands ALL against that type's own privilege set.
+    private def resolve_privs_for(type : String, privs_param : String?) : Array(String)
+      case type
+      when "group"
+        raise "privs is not allowed for type 'group'" if privs_param
+        [] of String
+      when "default_privs"
+        default_privs_list(privs_param)
+      else
+        raise "privs is required for type '#{type}'" unless privs_param
+        PluginHelpers::PostgresqlAcl.resolve_privs(type, privs_param)
+      end
+    end
+
+    private def resolve_target_roles!(type : String) : Array(String)
+      roles = (@params["target_roles"]? || "").split(',').map(&.strip).reject(&.empty?)
+      raise "target_roles is only supported for type: default_privs" if !roles.empty? && type != "default_privs"
+
+      roles
+    end
+
     private def resolve_params! : ResolvedParams
       type = @params["type"]? || "table"
       state = @params["state"]? || "present"
-      valid_types = PluginHelpers::PostgresqlAcl::PRIV_LETTERS.keys + ["group"]
+      valid_types = PluginHelpers::PostgresqlAcl::PRIV_LETTERS.keys + ["group", "default_privs"]
       raise "type must be one of #{valid_types.join(", ")}, got '#{type}'" unless valid_types.includes?(type)
       raise "state must be 'present' or 'absent', got '#{state}'" unless state == "present" || state == "absent"
 
@@ -225,23 +338,20 @@ module CrystalPlay
       roles_param = @params["roles"]?
       raise "roles is required" unless roles_param
 
-      privs = if type == "group"
-                raise "privs is not allowed for type 'group'" if privs_param
-                [] of String
-              elsif privs_param
-                PluginHelpers::PostgresqlAcl.resolve_privs(type, privs_param)
-              else
-                raise "privs is required for type '#{type}'"
-              end
+      privs = resolve_privs_for(type, privs_param)
 
       login_db = @params["login_db"]? || "postgres"
       schema = @params["schema"]? || "public"
       roles_raw = roles_param.split(',').map(&.strip).reject(&.empty?)
+      target_roles = resolve_target_roles!(type)
+
       objs, all_in_schema = resolve_objs!(type, login_db)
-      validate_identifiers!(schema, ROUTINE_TYPES.includes?(type) ? [] of String : objs, roles_raw)
+      skip_obj_check = ROUTINE_TYPES.includes?(type) || type == "default_privs"
+      validate_identifiers!(schema, skip_obj_check ? [] of String : objs, roles_raw)
 
       ResolvedParams.new(
         type: type, state: state, privs: privs, roles_raw: roles_raw, objs: objs, all_in_schema: all_in_schema,
+        target_roles: target_roles,
         schema: schema, login_db: login_db, check_mode: is_true?(@params["check_mode"]?),
         grant_option: @params["grant_option"]?.try { |v| is_true?(v) },
         session_role: @params["session_role"]?, fail_on_role: is_true?(@params["fail_on_role"]?, default: true),
@@ -259,6 +369,9 @@ module CrystalPlay
     # instead of Array(String)?.
     private def resolve_objs!(type : String, login_db : String) : {Array(String), Bool}
       objs_param = @params["objs"]?
+
+      return {default_privs_classes(objs_param), false} if type == "default_privs"
+
       if objs_param == "ALL_IN_SCHEMA"
         raise "objs: ALL_IN_SCHEMA can only be used for type: table, sequence, function or procedure, got '#{type}'" unless ALL_IN_SCHEMA_TYPES.includes?(type)
         return {[] of String, true}
@@ -461,6 +574,113 @@ module CrystalPlay
     # underscore.
     private def sql_priv_list(privs : Array(String)) : String
       privs.map(&.gsub('_', ' ')).join(", ")
+    end
+
+    # type: default_privs - ALTER DEFAULT PRIVILEGES, which controls the
+    # privileges objects will get *when they are created in future*, not
+    # the privileges of anything that exists now. It is stored in
+    # `pg_default_acl` rather than on any object, so none of the
+    # fetch_acl/qualified_object machinery above applies; this is a
+    # parallel path, not another object type.
+    #
+    # Real Ansible executes its statements unconditionally and reports
+    # `changed` by diffing `pg_default_acl` before and after. That cannot
+    # support check_mode (it would have to actually make the change to
+    # find out), so idempotency here is computed *predictively* from the
+    # current defaclacl instead - the same approach the rest of this
+    # plugin already takes for ordinary ACLs, and it produces the same
+    # changed/unchanged answer.
+    #
+    # `state: present` is declarative, matching real Ansible's own
+    # REVOKE-ALL-then-GRANT pair: afterwards the grantee holds exactly
+    # `privs` for that class, no more. So "already correct" means the
+    # current letter set equals the desired one, not merely contains it.
+    private def apply_all_default_privs(db : DB::Database, p : ResolvedParams, roles : Array(String)) : Bool
+      # With no target_roles:, ALTER DEFAULT PRIVILEGES applies to the
+      # role running the statement, which is what pg_default_acl records
+      # in defaclrole - so that is what idempotency must be checked
+      # against.
+      owners = p.target_roles.empty? ? [current_role(db)] : p.target_roles
+
+      # state: absent revokes across a fixed class list regardless of
+      # objs:, exactly as real Ansible's own build_absent does.
+      classes = p.state == "absent" ? ABSENT_DEFAULT_CLASSES : p.objs
+
+      changed = false
+      owners.each do |owner|
+        classes.each do |cls|
+          roles.each do |role|
+            changed = true if apply_default_priv(db, p, owner, cls, role)
+          end
+        end
+      end
+      changed
+    end
+
+    # One {owner, class, grantee} triple. Returns whether anything needed
+    # changing (and, unless check_mode, changed it).
+    private def apply_default_priv(db : DB::Database, p : ResolvedParams, owner : String, cls : String, role : String) : Bool
+      objtype, letter_type = DEFAULT_OBJ_CLASSES[cls]
+
+      desired = if p.state == "absent"
+                  [] of String
+                elsif p.privs.includes?("ALL") || p.privs.includes?("ALL PRIVILEGES")
+                  PluginHelpers::PostgresqlAcl.all_privs(letter_type)
+                else
+                  p.privs
+                end
+
+      # Validate against the class, not the type: FUNCTIONS only accepts
+      # EXECUTE, TYPES only USAGE, and so on.
+      desired.each do |priv|
+        PluginHelpers::PostgresqlAcl.letter_for(letter_type, priv)
+      end
+
+      parsed = PluginHelpers::PostgresqlAcl.parse(fetch_default_acl(db, owner, p.schema, objtype))
+      grantee = role == "PUBLIC" ? "" : role
+      current = PluginHelpers::PostgresqlAcl.all_privs(letter_type).select do |priv|
+        PluginHelpers::PostgresqlAcl.has_privilege?(parsed, grantee, PluginHelpers::PostgresqlAcl.letter_for(letter_type, priv))
+      end
+
+      return false if current.to_set == desired.to_set
+      return true if p.check_mode
+
+      execute_default_priv_statements(db, p, owner, cls, role, desired)
+      true
+    end
+
+    private def execute_default_priv_statements(
+      db : DB::Database, p : ResolvedParams, owner : String, cls : String, role : String, desired : Array(String),
+    )
+      grantee = role == "PUBLIC" ? "PUBLIC" : quote_ident(role)
+      # target_roles: is only emitted when it was actually given - with no
+      # FOR ROLE clause the statement implicitly applies to the current
+      # role, which is what owner already resolved to.
+      for_role = p.target_roles.empty? ? "" : " FOR ROLE #{quote_ident(owner)}"
+      in_schema = " IN SCHEMA #{quote_ident(p.schema)}"
+
+      # REVOKE ALL first, so the end state is exactly `desired` rather
+      # than the union of desired and whatever was there before - real
+      # Ansible pairs the same two statements for state: present.
+      db.exec "ALTER DEFAULT PRIVILEGES#{for_role}#{in_schema} REVOKE ALL ON #{cls} FROM #{grantee}"
+      return if desired.empty?
+
+      option = p.grant_option == true ? " WITH GRANT OPTION" : ""
+      db.exec "ALTER DEFAULT PRIVILEGES#{for_role}#{in_schema} GRANT #{sql_priv_list(desired)} ON #{cls} TO #{grantee}#{option}"
+    end
+
+    private def fetch_default_acl(db : DB::Database, owner : String, schema : String, objtype : Char) : String?
+      db.query_one? <<-SQL, owner, schema, objtype.to_s, as: String?
+        SELECT a.defaclacl::text
+        FROM pg_default_acl a
+        JOIN pg_roles r ON r.oid = a.defaclrole
+        JOIN pg_namespace n ON n.oid = a.defaclnamespace
+        WHERE r.rolname = $1 AND n.nspname = $2 AND a.defaclobjtype = $3::"char"
+      SQL
+    end
+
+    private def current_role(db : DB::Database) : String
+      db.query_one "SELECT current_user", as: String
     end
 
     # type: group is a fundamentally different SQL construct from every
