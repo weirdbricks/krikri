@@ -42,7 +42,8 @@ what's implemented, what's a documented scope cut, and why.
   (chained filters, e.g. `{{ x | sort | join(',') }}`)
 - ✅ Conditionals `when:` (`==`, `!=`, `<`, `>`, `and`, `or`, `not`, `in`,
   dotted attribute access)
-- ✅ Facts gathering (90+ `ansible_*` variables)
+- ✅ Facts gathering (90+ `ansible_*` variables), with
+  `--gathering implicit|explicit|smart` and `meta: clear_facts`
 - ✅ Roles (`roles/<name>/{tasks,handlers,vars,files,templates,defaults}`)
 - ✅ `import_playbook` / `import_tasks` / `include_tasks` / `include_role`
 - ✅ `block:` / `rescue:` / `always:` error handling
@@ -188,8 +189,17 @@ Supports standard Ansible playbook syntax. See the
 # Disable task batching (on by default - see Performance below)
 ./bin/crystal-ansible --no-batching -i inventory.ini playbook.yml
 
-# Run each task against up to 10 hosts concurrently (default: 1)
+# Run each task against up to 10 hosts concurrently (default: 5, matching
+# ansible-playbook; --forks 1 restores one-host-at-a-time)
 ./bin/crystal-ansible --forks 10 -i inventory.ini playbook.yml
+
+# Fact gathering policy (default: implicit, matching ansible-playbook):
+#   implicit - every play re-gathers
+#   explicit - only plays that set gather_facts: true
+#   smart    - each host gathered at most once per run
+# Under smart, add `meta: clear_facts` to a play (e.g. after a reboot or a
+# package install) to force the next play to gather again.
+./bin/crystal-ansible --gathering smart -i inventory.ini playbook.yml
 
 # Multiple options
 ./bin/crystal-ansible --check --diff -i production.ini playbook.yml
@@ -215,8 +225,12 @@ behind each one.
 | Task batching, realistic mixed playbook - idempotency rerun | **1.31x faster** |
 | Parallel fact gathering across hosts (`0.9.75`, 5 real hosts) | **1.41x faster** |
 | `--forks N` (`0.9.77`, 4 real hosts, mixed 6-task playbook; `0.9.78` made `--forks 5` the default) | **~1.28x faster** |
+| Parallel plugin pre-upload + per-run MD5 memoization (`0.9.79`, 3 real hosts, cold run) | **1.62x faster** |
+| The same, warm run (plugins already on the target) | **1.26x faster** |
+| `--gathering smart` (`0.9.79`, 3 real hosts, 4-play playbook) | **1.36x faster** |
 
-The last three are recent, ongoing engine-level work (task batching is
+The batching, multi-host and startup rows are recent, ongoing
+engine-level work (task batching is
 on by default since `0.9.63`; `--no-batching` disables it) - see
 `ROADMAP.md`'s `0.9.59`-`0.9.63` entries for the isolated per-fork
 measurements, the real-SSH correctness verification (12 runs, 3 fresh-
@@ -237,6 +251,45 @@ producing byte-identical per-task output between batched and
   actual targets, so expect less on a fast, low-latency link and more on
   a slow one; a genuinely low-latency measurement is still an open item.
 
+### Startup and fact gathering (`0.9.79`)
+
+Measured on 3 fresh Atlantic.net instances (Ubuntu 22.04, G3.1GB,
+`USEAST2`, destroyed immediately after), running `0.9.78` and `0.9.79`
+interleaved to cancel out network jitter, median of 5, `--forks 3`:
+
+| Scenario | `0.9.78` | `0.9.79` | |
+|---|---|---|---|
+| Cold run (plugins re-uploaded to every host) | 16.39s | **10.13s** | 1.62x |
+| Warm run (plugins already present) | 3.09s | **2.45s** | 1.26x |
+| 4-play playbook, `--gathering smart` vs `implicit` | 2.10s | **1.54s** | 1.36x |
+
+The cold/warm wins are entirely in the *pre-execution* phase, which the
+`0.9.75`/`0.9.77` parallelism work never touched: plugin pre-upload was
+still serial across hosts, and each plugin binary was MD5'd once per
+host rather than once per run (digesting the 44 binaries costs ~127ms,
+so 20 hosts burned ~2.5s of pure duplication before the first task ran).
+
+`--gathering smart` removes `(N_plays - 1) x N_hosts` fact round trips,
+so it scales with play count - the same 3 hosts on an 8-play playbook go
+2.75s -> 1.56s (**1.76x**).
+
+Two honest caveats:
+
+- **`--forks 1` got slower**, 8.29s -> 9.92s on 3 hosts. Fact gathering
+  used to ignore `--forks` entirely and run 10-way concurrent no matter
+  what; it now respects the flag, so `--forks 1` finally means one host
+  at a time end to end. That is the flag working correctly, but it is a
+  real wall-clock regression if you were using `--forks 1` for anything
+  other than debugging.
+- The per-task CPU work also landed (single-serialization of the remote
+  config, a shared Crinja environment, lazily-built substitutors - see
+  `ROADMAP.md`), but it is invisible end to end on these runs: a local
+  playbook spends ~40ms per task spawning the plugin process, which
+  dwarfs the microseconds saved. It shows up in microbenchmarks
+  (config build 32.26us -> 7.90us and 45.7kB -> 15.8kB per task per
+  host; `{% %}` rendering 21.08us -> 9.28us) and matters most for
+  very large inventories, not for a 12-task playbook.
+
 ### vs. real Ansible, end to end
 
 The isolated wins above compound into a real difference against actual
@@ -251,6 +304,13 @@ run), the same 12-task mixed playbook (`file`, `copy`+loop x10,
 | Python `ansible-core` 2.19.4 (`forks=5` default) | 33.5s | 30.3s |
 | `crystal-ansible` `--forks 1` (one-host-at-a-time) | 26.6s (1.26x) | 5.4s (5.6x) |
 | `crystal-ansible` `--forks 3` | 27.5s (1.22x) | **2.9s (10.4x)** |
+
+> These two rows were measured at `0.9.77`/`0.9.78` and have **not** been
+> re-run since. The `0.9.79` startup work above would improve them
+> further (its cold-run saving lands squarely in the fresh-run column),
+> and `--forks 1` would lose a little - but rather than scale the old
+> numbers by the new ratios, they are left exactly as measured until the
+> whole comparison is re-run against both tools on the same hosts.
 
 Fresh-run time stays close across all three rows - that time is
 dominated by the actual work (writing files, running commands), which
@@ -290,7 +350,10 @@ See [ROADMAP.md](ROADMAP.md) for the live, detailed tracking of what is
 implemented, what is not, and what is planned next. As of this writing,
 the remaining open items are narrow, documented scope cuts (a handful of
 `postgresql_privs` privilege types that need a different underlying
-mechanism, and Docker API version negotiation) plus one known
+mechanism, Docker API version negotiation, and `meta:`, which supports
+only `clear_facts` - `end_play`/`flush_handlers`/`refresh_inventory` and
+friends act on execution-flow machinery this engine models differently
+and are rejected at parse time rather than silently ignored) plus one known
 cross-cutting engine gap: bare `when:`/`assert: that:`/`until:`/
 `changed_when:`/`failed_when:` conditions don't see magic variables like
 `inventory_hostname` (task-level and play-level `vars:`, and registered
