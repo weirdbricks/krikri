@@ -1,0 +1,32 @@
+# Multi-play fixture for --gathering smart. Targets "testservers" (same
+# convention as test-copy.yml/test-async-quick.yml/etc.) so that under the
+# generic empty inventory used by every other testing/*.yml fixture the
+# plays resolve to zero hosts and are skipped, while a dedicated spec can
+# drive it for real against inventory-testservers-local.ini.
+#
+# Every play sets gather_facts: true, so under the default `implicit`
+# mode this gathers three times; under `--gathering smart` it gathers
+# once and plays 2 and 3 still see the same ansible_* facts.
+- name: gathering play one
+  hosts: testservers
+  gather_facts: true
+  tasks:
+    - name: play one sees facts
+      ansible.builtin.debug:
+        msg: "play1 kernel={{ ansible_kernel | default('MISSING') }}"
+
+- name: gathering play two
+  hosts: testservers
+  gather_facts: true
+  tasks:
+    - name: play two sees facts
+      ansible.builtin.debug:
+        msg: "play2 kernel={{ ansible_kernel | default('MISSING') }}"
+
+- name: gathering play three
+  hosts: testservers
+  gather_facts: true
+  tasks:
+    - name: play three sees facts
+      ansible.builtin.debug:
+        msg: "play3 kernel={{ ansible_kernel | default('MISSING') }}"

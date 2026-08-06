@@ -7,23 +7,54 @@ module CrystalPlay
     # This includes {% if %}, {% for %}, {% set %}, etc.
     class CrinjaRenderer
       @vars : Hash(String, JSON::Any)
-      
+      @template_vars : Hash(String, Crinja::Value)?
+
       def initialize(@vars : Hash(String, JSON::Any))
       end
-      
-      # Render a template containing Jinja2 control structures
-      def render(text : String) : String
-        env = Crinja.new
 
-        # Configure Crinja
+      # One Crinja environment for the whole process, built on first use.
+      # The configuration applied to it is two hardcoded literals that
+      # never vary, yet `Crinja.new` was previously paid on *every*
+      # `{% %}` render - roughly half the cost of the most expensive
+      # thing the substitutor does.
+      #
+      # Reusing one environment across renders is safe because
+      # `Template#render` calls `env.with_scope(bindings)`, which pushes a
+      # *child* Context, merges only that render's bindings into it, and
+      # restores the former context in an `ensure` - so no variable, and
+      # no top-level `{% set %}`, leaks from one render into the next.
+      #
+      # The invariant this does rely on: rendering never yields the
+      # fiber. Crinja's parse/render path is pure CPU with no I/O, and
+      # under Crystal's cooperative scheduling only one fiber runs at any
+      # instant, so concurrent hosts (--forks) can never interleave two
+      # renders and swap each other's context out mid-flight. If a filter
+      # or function that performs I/O is ever added, this must become
+      # per-fiber (see OutputRouting for that pattern) rather than global.
+      @@env : Crinja?
+
+      private def shared_env : Crinja
+        if existing = @@env
+          return existing
+        end
+
+        env = Crinja.new
         env.config.trim_blocks = true
         env.config.lstrip_blocks = false
+        @@env = env
+      end
 
-        # Prepare template variables for Crinja
-        template_vars = prepare_crinja_vars
+      # Render a template containing Jinja2 control structures
+      def render(text : String) : String
+        # @vars is fixed for the lifetime of a renderer (VarSubstitutor
+        # #set_variable constructs a new renderer rather than mutating),
+        # so the recursive JSON::Any -> Crinja::Value conversion of the
+        # entire variable context is done once per renderer instead of
+        # once per render - a task with several templated params renders
+        # more than once.
+        template_vars = (@template_vars ||= prepare_crinja_vars)
 
-        # Render with Crinja
-        template = env.from_string(text)
+        template = shared_env.from_string(text)
         template.render(template_vars)
       rescue
         # Return original text on failure

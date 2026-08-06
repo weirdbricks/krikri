@@ -91,6 +91,9 @@ module CrystalPlay
     # Task for the executor to use at run time.
     property include_file : String?
     property include_file_dir : String?
+    # meta: - only set when module_name == "_meta". Holds the meta action
+    # ("clear_facts"); see TaskExecutor#execute_meta.
+    property meta_action : String?
     # vars: on an include_tasks: statement - visible to every task in the
     # included file (unlike import_tasks:'s vars:, which is merged
     # directly into each imported task at parse time, this has to be
@@ -158,6 +161,10 @@ module CrystalPlay
       @module_name == "_include_role"
     end
 
+    def meta? : Bool
+      @module_name == "_meta"
+    end
+
     def to_s(io : IO)
       io << "Task(#{@name}, #{@module_name})"
     end
@@ -172,6 +179,11 @@ module CrystalPlay
     property become : Bool
     property become_user : String?
     property gather_facts : Bool
+    # Whether the play actually wrote a `gather_facts:` key, as opposed to
+    # defaulting to true. Only --gathering explicit needs the distinction:
+    # under it, facts are gathered solely for plays that asked in so many
+    # words, so "unset" and "explicitly true" cannot be conflated.
+    property gather_facts_set : Bool = false
     property tags : Array(String)
     property handlers : Array(Task)
 
@@ -212,7 +224,11 @@ module CrystalPlay
     # assumed): authorized_key lives in the separate ansible.posix
     # collection, and archive/unarchive live in community.general - neither
     # ships with ansible-core itself.
-    AVAILABLE_PLUGINS = [
+    # A Set, not an Array: this is membership-tested once per task in
+    # parse_task and again per task in validate, and a linear scan of 44
+    # entries is the wrong shape for a lookup table even where the cost
+    # is unmeasurable.
+    AVAILABLE_PLUGINS = Set{
       "ansible.builtin.copy",
       "ansible.builtin.template",
       "ansible.builtin.file",
@@ -256,7 +272,7 @@ module CrystalPlay
       "ansible.builtin.wait_for",
       "ansible.builtin.fetch",
       "ansible.builtin.pause",
-    ]
+    }
 
     # Parse playbook from file
     def self.parse(path : String) : Playbook
@@ -346,6 +362,7 @@ module CrystalPlay
       play.become_user = yaml["become_user"]?.try(&.as_s)
       gather_facts_yaml = yaml["gather_facts"]?
       play.gather_facts = gather_facts_yaml ? gather_facts_yaml.as_bool : true
+      play.gather_facts_set = !gather_facts_yaml.nil?
 
       # Parse play-level vars
       if vars_yaml = yaml["vars"]?.try(&.as_h?)
@@ -500,6 +517,10 @@ module CrystalPlay
         return parse_include_role(name, task_hash, include_role_yaml, play, file_dir)
       end
 
+      if meta_yaml = (task_hash["meta"]? || task_hash["ansible.builtin.meta"]?)
+        return parse_meta_task(name, meta_yaml)
+      end
+
       # Find the module (first key that's not a special keyword)
       special_keys = ["name", "when", "register", "ignore_errors", "check_mode",
                       "diff", "become", "become_user", "tags", "with_items", "loop",
@@ -507,7 +528,8 @@ module CrystalPlay
                       "with_indexed_items", "until", "retries", "delay",
                       "notify", "changed_when", "failed_when", "delegate_to", "run_once",
                       "async", "poll", "vars",
-                      "block", "rescue", "always", "import_tasks", "include_tasks", "include_role"]
+                      "block", "rescue", "always", "import_tasks", "include_tasks", "include_role",
+                      "meta", "ansible.builtin.meta"]
 
       module_name = nil
       module_params = nil
@@ -637,6 +659,34 @@ module CrystalPlay
 
     # Parse a block: task - block:/rescue:/always: are each an array of
     # nested tasks (which may themselves be blocks, so this recurses
+    # meta: - a pseudo-module ("_meta"), like block:/include_tasks:, that
+    # acts on the executor's own state rather than running a plugin on a
+    # target.
+    #
+    # Only `clear_facts` is supported. Real Ansible's meta: also has
+    # flush_handlers/end_play/end_host/refresh_inventory/clear_host_errors
+    # /noop; those act on execution-flow machinery this engine models
+    # differently, so they're rejected outright rather than silently
+    # accepted and ignored - a playbook whose `meta: end_play` quietly did
+    # nothing would be far worse than one that fails to parse. A
+    # documented scope cut: `meta:` was previously not supported at all,
+    # so this is strictly additive.
+    private def self.parse_meta_task(name : String, meta_yaml : YAML::Any) : Task
+      action = meta_yaml.as_s?.try(&.strip)
+
+      if action.nil? || action.empty?
+        raise "meta: requires a string action (only 'clear_facts' is supported)"
+      end
+
+      unless action == "clear_facts"
+        raise "meta: #{action} is not supported (only 'clear_facts' is)"
+      end
+
+      task = Task.new(name, "_meta")
+      task.meta_action = action
+      task
+    end
+
     # naturally through parse_tasks -> parse_task -> parse_block_task).
     private def self.parse_block_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), block_yaml : Array(YAML::Any), play : Play, file_dir : String) : Task
       task = Task.new(name, "_block")

@@ -208,6 +208,133 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("delegate_to / run_once smoke test complete!")
   end
 
+  describe "--gathering" do
+    testservers = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-testservers-local.ini")
+
+    it "defaults to implicit: every play re-gathers facts" do
+      status, output = run_playbook(
+        "test-gathering-smart-quick.yml", [] of String, inventory: testservers
+      )
+
+      status.success?.should be_true
+      output.scan("TASK [Gathering Facts]").size.should eq(3)
+    end
+
+    it "smart: gathers each host at most once per run" do
+      status, output = run_playbook(
+        "test-gathering-smart-quick.yml", ["--gathering", "smart"], inventory: testservers
+      )
+
+      status.success?.should be_true
+      output.scan("TASK [Gathering Facts]").size.should eq(1)
+    end
+
+    it "smart: later plays still see the facts gathered by the first" do
+      status, output = run_playbook(
+        "test-gathering-smart-quick.yml", ["--gathering", "smart"], inventory: testservers
+      )
+
+      status.success?.should be_true
+      # The whole point: skipping the round trip must not mean skipping
+      # the facts. All three plays resolve ansible_kernel, none falls
+      # back to the default('MISSING').
+      output.should_not contain("MISSING")
+      output.scan(/play\d kernel=/).size.should eq(3)
+    end
+
+    it "smart and implicit produce the same task results, differing only in gathering" do
+      _, implicit_output = run_playbook(
+        "test-gathering-smart-quick.yml", [] of String, inventory: testservers
+      )
+      _, smart_output = run_playbook(
+        "test-gathering-smart-quick.yml", ["--gathering", "smart"], inventory: testservers
+      )
+
+      %w[play1 play2 play3].each do |play|
+        implicit_line = implicit_output.lines.find(&.includes?("#{play} kernel="))
+        smart_line = smart_output.lines.find(&.includes?("#{play} kernel="))
+        smart_line.should eq(implicit_line)
+      end
+    end
+
+    it "explicit: gathers only for plays that actually wrote gather_facts: true" do
+      status, output = run_playbook(
+        "test-gathering-smart-quick.yml", ["--gathering", "explicit"], inventory: testservers
+      )
+
+      status.success?.should be_true
+      # Every play in that fixture writes `gather_facts: true`, so
+      # explicit gathers for all three - the mode differs from implicit
+      # only for plays that leave gather_facts unset.
+      output.scan("TASK [Gathering Facts]").size.should eq(3)
+    end
+
+    it "explicit: does not gather for a play that leaves gather_facts unset" do
+      status, output = run_playbook(
+        "test-meta-clear-facts-quick.yml", ["--gathering", "explicit"], inventory: testservers
+      )
+
+      status.success?.should be_true
+      # Plays 1 and 3 leave gather_facts unset; play 2 sets it to false.
+      output.should_not contain("TASK [Gathering Facts]")
+    end
+
+    it "meta: clear_facts forces a re-gather in the next play under smart" do
+      status, output = run_playbook(
+        "test-meta-clear-facts-quick.yml", ["--gathering", "smart"], inventory: testservers
+      )
+
+      status.success?.should be_true
+      # Without the clear_facts this would be 1; the clear in play 2 makes
+      # play 3 gather again. Matches ansible-core 2.19.4 exactly.
+      output.scan("TASK [Gathering Facts]").size.should eq(2)
+      output.should_not contain("MISSING")
+    end
+
+    it "meta: produces no per-host output line and no recap credit" do
+      status, output = run_playbook(
+        "test-meta-clear-facts-quick.yml", ["--gathering", "smart"], inventory: testservers
+      )
+
+      status.success?.should be_true
+      # ansible-core prints the TASK banner for a meta task but no `ok:`
+      # beneath it, and excludes it from the recap total - 2 gathers plus
+      # 2 debug tasks is 4, not 5.
+      output.should contain("TASK [clear the gathered facts]")
+      output.should match(/ok=4\b/)
+    end
+
+    it "rejects an unsupported meta action rather than silently ignoring it" do
+      # A meta action this engine does not model must fail loudly.
+      tmp = File.tempname("meta-unsupported", ".yml")
+      File.write(tmp, <<-YAML)
+        - name: unsupported meta
+          hosts: testservers
+          gather_facts: false
+          tasks:
+            - name: end the play early
+              ansible.builtin.meta: end_play
+        YAML
+      begin
+        captured = IO::Memory.new
+        st = Process.run(BINARY, ["-i", testservers, tmp], output: captured, error: captured)
+        st.success?.should be_false
+        captured.to_s.should contain("meta: end_play is not supported")
+      ensure
+        File.delete(tmp) rescue nil
+      end
+    end
+
+    it "rejects an unknown gathering mode" do
+      status, output = run_playbook(
+        "test-gathering-smart-quick.yml", ["--gathering", "bogus"], inventory: testservers
+      )
+
+      status.success?.should be_false
+      output.should contain("--gathering must be 'implicit', 'explicit' or 'smart'")
+    end
+  end
+
   it "--forks 1 (one-host-at-a-time) is byte-identical to the --forks 5 default's parallel fan-out" do
     default_status, default_output = run_playbook(
       "test-forks-quick.yml",

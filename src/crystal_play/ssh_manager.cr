@@ -17,9 +17,17 @@ module CrystalPlay
       "files_downloaded" => 0
     }
     
-    # Initialize - ensure control directory exists
+    # Initialize - ensure control directory exists.
+    # Called from exec/exec_script/upload/download/rsync_upload/
+    # rsync_upload_batch, i.e. once per SSH operation, for a directory
+    # that only ever needs creating once - so the Dir.exists? stat is
+    # guarded by a flag rather than re-run every time.
+    @@control_dir_ready = false
+
     def self.init
+      return if @@control_dir_ready
       Dir.mkdir_p(@@control_path_dir) unless Dir.exists?(@@control_path_dir)
+      @@control_dir_ready = true
     end
     
     # Get connection pool statistics
@@ -170,7 +178,7 @@ module CrystalPlay
       local_path : String,
       remote_path : String,
       port : Int32 = 22,
-      mode : Int32 = 0o644
+      mode : Int32? = 0o644
     )
       init
       @@stats["files_uploaded"] += 1
@@ -204,8 +212,11 @@ module CrystalPlay
         raise "Failed to upload #{local_path} to #{host}:#{remote_path}"
       end
       
-      # Set permissions if different from default
-      if mode != 0o644
+      # Set permissions if different from default. Pass `mode: nil` to
+      # suppress this entirely when the caller is uploading a batch of
+      # files and can fold one chmod into a round trip it already makes -
+      # otherwise this costs an extra round trip *per file*.
+      if mode && mode != 0o644
         exec(host, user, "chmod #{mode.to_s(8)} #{remote_path}", port)
       end
     end

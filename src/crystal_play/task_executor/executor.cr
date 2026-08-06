@@ -72,6 +72,11 @@ module CrystalPlay
     # concern, not a correctness one; replanning would just recompute the
     # exact same groups.
     @grouped_lists : Set(UInt64)
+    # {host name, group object_id} for every batch group already executed
+    # on that host. Separate from @batch_cache so cache entries can be
+    # evicted as they are consumed without a later group member mistaking
+    # the empty cache for "not yet run" - see try_batched_result.
+    @batch_groups_run : Set({String, UInt64})
     # Per host, per task: the result already fetched via a batch's single
     # SSH round trip (nil = that task's when: was false, already handled
     # - see `execute_batch_group`), consumed lazily as the task-major
@@ -104,15 +109,22 @@ module CrystalPlay
       @gather_facts = true,
       @inventory = nil,
       @batching_enabled = true,
-      @forks = 5
+      @forks = 5,
+      @smart_gathering = false,
+      fact_store : Hash(String, Hash(String, JSON::Any))? = nil
     )
       @results = Hash(String, Hash(String, Int32)).new
       @registered_vars = Hash(String, Hash(String, JSON::Any)).new
-      @facts = Hash(String, Hash(String, JSON::Any)).new
+      # Under --gathering smart the caller owns a single run-scoped store
+      # and hands the same one to every play's executor, so facts gathered
+      # in play 1 are still there in play 4. With no store passed (the
+      # default), this is per-play exactly as before.
+      @facts = fact_store || Hash(String, Hash(String, JSON::Any)).new
       @halted_hosts = Set(String).new
       @task_group = Hash(Task, Array(Task)).new
       @grouped_lists = Set(UInt64).new
       @batch_cache = Hash(String, Hash(Task, {JSON::Any?, Hash(String, JSON::Any)})).new
+      @batch_groups_run = Set({String, UInt64}).new
 
       @hosts.each do |host|
         @results[host.name] = {
@@ -123,7 +135,10 @@ module CrystalPlay
           "rescued" => 0,
         }
         @registered_vars[host.name] = {} of String => JSON::Any
-        @facts[host.name] = {} of String => JSON::Any
+        # ||=, not =: a shared run-scoped store may already hold this
+        # host's facts from an earlier play, and pre-seeding must not
+        # wipe them. Registered vars deliberately stay per-play.
+        @facts[host.name] ||= {} of String => JSON::Any
       end
       
       # Initialize handler runner
@@ -240,17 +255,39 @@ module CrystalPlay
     # host loop itself (Stage B, `--forks`) is deliberately out of scope
     # here, see ROADMAP.md.
     private def gather_facts_for_all_hosts
+      # --gathering smart: a host whose facts this run already collected
+      # (in an earlier play, via the shared run-scoped store) is not
+      # queried again. Under the default `implicit` mode every play
+      # re-gathers, matching real ansible-playbook's own default - a
+      # playbook that deliberately re-gathers after a reboot or a package
+      # install must keep seeing fresh facts, which is exactly why this
+      # is opt-in rather than a silent default flip.
+      targets = if @smart_gathering
+                  @hosts.reject { |host| !@facts[host.name].empty? }
+                else
+                  @hosts
+                end
+
+      # Nothing to do: every host was gathered by an earlier play. Skip
+      # the task banner entirely rather than printing an empty one.
+      return if targets.empty?
+
       puts "TASK [Gathering Facts]".colorize(:white).bold
       puts "*" * 70
 
       outcomes = Hash(String, {Bool, String?}).new
-      max_parallel = Math.min(@hosts.size, 10)
+      # Bounded by @forks, same as the per-task fan-out below: the `10`
+      # this used to hardcode predates --forks, so `--forks 50` still
+      # gathered 10 at a time and `--forks 1` (asked for precisely to get
+      # strictly one-host-at-a-time behavior, e.g. to debug a flaky host)
+      # still got 10-way concurrency here.
+      max_parallel = Math.min(targets.size, @forks)
       max_parallel = 1 if max_parallel < 1
       gate = Channel(Nil).new(max_parallel)
       max_parallel.times { gate.send(nil) }
       done = Channel(Nil).new
 
-      @hosts.each do |host|
+      targets.each do |host|
         spawn do
           gate.receive
           outcomes[host.name] = gather_facts_for_host(host)
@@ -260,9 +297,9 @@ module CrystalPlay
         end
       end
 
-      @hosts.size.times { done.receive }
+      targets.size.times { done.receive }
 
-      @hosts.each do |host|
+      targets.each do |host|
         connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
         success, error_message = outcomes[host.name]
 
@@ -287,6 +324,16 @@ module CrystalPlay
       vars_context = Hash(String, JSON::Any).new
       host.vars.each { |key, value| vars_context[key] = value }
 
+      # If this gathers over SSH the wire payload needs
+      # ansible_connection=local, so decide that up front and serialize
+      # once, instead of serializing, parsing and re-serializing just to
+      # inject one key afterwards.
+      wire_vars = vars_context
+      if PluginManager.remote_execution?("facts", host, vars_context)
+        wire_vars = vars_context.dup
+        wire_vars["ansible_connection"] = JSON::Any.new("local")
+      end
+
       config = {
         "host" => {
           "name" => host.name,
@@ -294,12 +341,13 @@ module CrystalPlay
           "port" => host.port,
         },
         "params" => {} of String => String,
-        "vars"   => vars_context,
+        "vars"   => wire_vars,
       }
 
-      config_json = JSON.parse(config.to_json)
-
-      result = PluginManager.execute_plugin("facts", config_json, host, vars_context)
+      # Fact gathering never runs under become: - this config carries no
+      # become:/become_user: fields at all, which is exactly what
+      # resolve_become used to read back out of it as {false, nil}.
+      result = PluginManager.execute_plugin("facts", config.to_json, host, vars_context, false, nil)
 
       if result["failed"]?.try(&.as_bool)
         return {false, result["msg"]?.try(&.as_s) || "Unknown error"}
@@ -327,6 +375,7 @@ module CrystalPlay
       return execute_block(task, host) if task.block?
       return execute_include_tasks(task, host) if task.include_tasks?
       return execute_include_role(task, host) if task.include_role?
+      return execute_meta(task, host) if task.meta?
 
       # run_once: only the first host in the play actually executes it;
       # later hosts get no output/stats at all, matching real Ansible - but
@@ -575,14 +624,34 @@ module CrystalPlay
 
       cache = (@batch_cache[host.name] ||= Hash(Task, {JSON::Any?, Hash(String, JSON::Any)}).new)
 
-      unless cache.has_key?(group.first)
+      # "Has this group already run on this host?" is tracked separately
+      # from the cache's *contents*, precisely so consumed entries can be
+      # evicted below. Keying the trigger check off `cache.has_key?
+      # (group.first)` (as it used to) would make evicting group.first
+      # cause the next member of the same group to re-run the entire
+      # remote script - re-executing real side effects.
+      group_key = {host.name, group.object_id}
+      unless @batch_groups_run.includes?(group_key)
+        @batch_groups_run << group_key
         # `task` is the group's trigger - its vars_context was already
         # built by the caller (execute_task), so hand it over instead of
         # having execute_batch_group build an identical one again.
         execute_batch_group(group, host, task, vars_context)
       end
 
-      {true, cache[task]?.try(&.[0])}
+      # Consumed exactly once per (task, host), so the entry is removed as
+      # it is read. Each entry retains a full copy of that task's variable
+      # context (~3.9 kB in a realistic run); nothing used to remove them,
+      # so a play held N_tasks x N_hosts contexts alive until the whole
+      # TaskExecutor was dropped - tens of MB for a large play under the
+      # very --forks fan-out that makes big inventories attractive.
+      #
+      # Safe against the other reader: execute_task reads this same
+      # entry's vars_context (index 1) *before* it calls into here, so by
+      # the time the result (index 0) is read the context is no longer
+      # needed. A member with no entry at all (the script halted before
+      # reaching it) still yields nil, exactly as `cache[task]?` did.
+      {true, cache.delete(task).try(&.[0])}
     end
 
     # Builds and runs the single SSH round trip for *group* against
@@ -773,19 +842,61 @@ module CrystalPlay
         end
       end
 
-      config = build_plugin_config(task, exec_host, substituted_params, vars_context, substituted_become_user)
-      config_json = JSON.parse(config)
-
-      result = if task.async_seconds && !@check_mode
-        execute_async(task, exec_host, config_json)
-      else
-        PluginManager.execute_plugin(
-          task.module_name,
-          config_json,
-          exec_host,
-          vars_context
-        )
+      # Same override execute_remote_plugin used to apply to the wire
+      # payload only (never to vars_context itself, which stays the
+      # controller's own view for when:/changed_when:/failed_when:
+      # evaluation) - once a plugin is actually running on the remote,
+      # its own internal local-vs-remote logic needs to see itself as
+      # local. Deciding it *before* serializing is what lets the config
+      # be built exactly once here, the way prepare_batch_step already
+      # builds it once for the batch path; this used to serialize, parse,
+      # then dup and re-serialize the entire variable context.
+      wire_vars = vars_context
+      if PluginManager.remote_execution?(task.module_name, exec_host, vars_context)
+        wire_vars = vars_context.dup
+        wire_vars["ansible_connection"] = JSON::Any.new("local")
       end
+
+      config = build_plugin_config(task, exec_host, substituted_params, wire_vars, substituted_become_user)
+
+      if task.async_seconds && !@check_mode
+        # async: writes this config verbatim to a job file; the detached
+        # __async_run process resolves become:/become_user: back out of
+        # it via the JSON::Any entry point, exactly as before.
+        return apply_changed_failed_when(task, execute_async(task, exec_host, config), vars_context, host)
+      end
+
+      # The same become resolution and validation resolve_become used to
+      # perform from inside PluginManager, hoisted to the call site so
+      # the config String can be handed straight through without being
+      # parsed again. Identical defaults (become_user "root" when become:
+      # is set but become_user: isn't) and identical error message -
+      # and identical to what prepare_batch_step does for the batch path.
+      become = task.become
+      become_user = nil
+
+      if become
+        candidate = substituted_become_user
+        become_user = (candidate.nil? || candidate.empty?) ? "root" : candidate
+
+        unless PluginManager.valid_become_user?(become_user)
+          failed = JSON.parse({
+            "changed" => false,
+            "failed"  => true,
+            "msg"     => "become_user #{become_user.inspect} is not a valid username",
+          }.to_json)
+          return apply_changed_failed_when(task, failed, vars_context, host)
+        end
+      end
+
+      result = PluginManager.execute_plugin(
+        task.module_name,
+        config,
+        exec_host,
+        vars_context,
+        become,
+        become_user
+      )
 
       apply_changed_failed_when(task, result, vars_context, host)
     end
@@ -798,7 +909,7 @@ module CrystalPlay
     # only: genuine remote async needs a process that survives the SSH
     # session ending, which this codebase's plain exec-over-SSH connection
     # model doesn't support - a documented scope cut, not an oversight.
-    private def execute_async(task : Task, exec_host : Host, config_json : JSON::Any) : JSON::Any
+    private def execute_async(task : Task, exec_host : Host, config_json : String) : JSON::Any
       is_local = exec_host.vars["ansible_connection"]?.try(&.as_s?) == "local" || exec_host.name == "localhost"
       unless is_local
         return JSON.parse({
@@ -814,7 +925,7 @@ module CrystalPlay
         "finished"       => 0,
         "ansible_job_id" => jid,
       }.to_json))
-      File.write(AsyncJobs.config_path(jid), config_json.to_json)
+      File.write(AsyncJobs.config_path(jid), config_json)
 
       executable = Process.executable_path || File.join(Dir.current, "crystal-ansible")
       Process.new(
@@ -1264,6 +1375,26 @@ module CrystalPlay
     # Runs an include_role: task - the dynamic counterpart to a roles:
     # list entry. Task-level keywords (when:/tags:/loop:) apply to the
     # include_role statement itself, same as include_tasks.
+    # meta: clear_facts - drops this host's gathered facts. Under
+    # --gathering smart that's the escape hatch: @facts is the shared
+    # run-scoped store, so emptying this host's entry makes the *next*
+    # play's gather_facts_for_all_hosts see it as ungathered and query it
+    # again. Under the default implicit mode every play re-gathers
+    # anyway, so this just clears facts for the remainder of this play.
+    #
+    # Matches real ansible-playbook, verified against ansible-core 2.19.4:
+    # under gathering=smart, a `meta: clear_facts` in play 2 causes play 3
+    # to re-run Gathering Facts.
+    # Produces no per-host output line and does not count toward the
+    # recap, matching ansible-core 2.19.4: its `TASK [clear]` banner
+    # prints with no `ok:` beneath it, and the meta task is absent from
+    # the play recap's ok= total.
+    private def execute_meta(task : Task, host : Host)
+      # Only clear_facts parses (see PlaybookParser.parse_meta_task), so
+      # there is no other action to dispatch on here.
+      @facts[host.name].clear
+    end
+
     private def execute_include_role(task : Task, host : Host)
       base_vars_context = build_vars_context(task, host)
       loop_items = task.loop_items
@@ -1449,17 +1580,40 @@ module CrystalPlay
       substituted_params = substitute_task_params(handler.params, substitutor)
       substituted_become_user = handler.become_user.try { |raw_user| substitutor.substitute(raw_user) }
 
-      # Build config for plugin
-      config = build_plugin_config(handler, host, substituted_params, vars_context, substituted_become_user)
-      
-      # Execute plugin using PluginManager
-      config_json = JSON.parse(config)
-      
+      # Build config for plugin - serialized once, with
+      # ansible_connection=local already in the wire payload when this
+      # handler runs over SSH (same treatment as execute_task_once).
+      wire_vars = vars_context
+      if PluginManager.remote_execution?(handler.module_name, host, vars_context)
+        wire_vars = vars_context.dup
+        wire_vars["ansible_connection"] = JSON::Any.new("local")
+      end
+
+      config = build_plugin_config(handler, host, substituted_params, wire_vars, substituted_become_user)
+
+      become = handler.become
+      become_user = nil
+
+      if become
+        candidate = substituted_become_user
+        become_user = (candidate.nil? || candidate.empty?) ? "root" : candidate
+
+        unless PluginManager.valid_become_user?(become_user)
+          return JSON.parse({
+            "changed" => false,
+            "failed"  => true,
+            "msg"     => "become_user #{become_user.inspect} is not a valid username",
+          }.to_json)
+        end
+      end
+
       PluginManager.execute_plugin(
         handler.module_name,
-        config_json,
+        config,
         host,
-        vars_context
+        vars_context,
+        become,
+        become_user
       )
     end
   end

@@ -61,6 +61,10 @@ check_mode = false
 diff_mode = false
 batching_enabled = true
 forks = 5
+# "implicit" (default, matching ansible-playbook): every play re-gathers
+# facts. "smart": each host is gathered at most once per run, so a
+# multi-play playbook stops paying N_plays x N_hosts fact round trips.
+gathering = "implicit"
 verbose = false
 limit_hosts = ""
 tags = [] of String
@@ -89,6 +93,15 @@ begin
 
     parser.on("-f FORKS", "--forks=FORKS", "Run each task against up to FORKS hosts concurrently (default: 5, matching ansible-playbook's own default; --forks 1 restores one-host-at-a-time)") do |f|
       forks = f.to_i? || 5
+    end
+
+    parser.on("--gathering=MODE", "Fact gathering policy, matching ansible-playbook: implicit (default, every play re-gathers), explicit (only plays with gather_facts: true), or smart (each host gathered at most once per run; use meta: clear_facts to force a re-gather)") do |mode|
+      normalized = mode.strip.downcase
+      unless {"implicit", "explicit", "smart"}.includes?(normalized)
+        STDERR.puts "Error: --gathering must be 'implicit', 'explicit' or 'smart', got #{mode.inspect}".colorize(:red)
+        exit 1
+      end
+      gathering = normalized
     end
 
     parser.on("-v", "--verbose", "Verbose output") do
@@ -124,6 +137,7 @@ begin
       puts "  crystal-ansible --check --diff playbook.yml"
       puts "  crystal-ansible --no-batching playbook.yml"
       puts "  crystal-ansible --forks 10 playbook.yml"
+      puts "  crystal-ansible --gathering smart playbook.yml"
       puts "  crystal-ansible -i inventory.ini playbook.yml"
       puts "  crystal-ansible --tags deploy playbook.yml"
       puts "  crystal-ansible --vault-password-file pass.txt playbook.yml"
@@ -273,12 +287,17 @@ CrystalPlay::PluginManager.verbose = verbose
 # Batch upload plugins to all remote hosts before execution
 # This is much more efficient than uploading during task execution
 if playbook && inventory
-  CrystalPlay::PluginManager.batch_upload_plugins_for_playbook(playbook, inventory)
+  CrystalPlay::PluginManager.batch_upload_plugins_for_playbook(playbook, inventory, forks)
 end
 
 # Execute playbook
 all_hosts = [] of CrystalPlay::Host
 combined_results = Hash(String, Hash(String, Int32)).new
+# Run-scoped fact store, shared by every play's TaskExecutor under
+# --gathering smart so a host gathered in one play isn't re-queried in
+# the next. nil under the default implicit mode, where each executor
+# builds its own per-play store exactly as before.
+run_fact_store = gathering == "smart" ? Hash(String, Hash(String, JSON::Any)).new : nil
 # Hosts that hard-failed (a task failed without ignore_errors:) in an
 # earlier play this run - excluded from every *remaining* play's host
 # list too, matching real Ansible's own behavior (a failure removes a
@@ -348,10 +367,15 @@ playbook.plays.each_with_index do |play, play_index|
     check_mode: check_mode,
     diff_mode: diff_mode,
     play_vars: play.vars,
-    gather_facts: play.gather_facts,
+    # --gathering explicit gathers only for plays that actually wrote
+    # `gather_facts: true`; an unset gather_facts (which defaults to true
+    # under implicit/smart) means "don't" here.
+    gather_facts: gathering == "explicit" ? (play.gather_facts_set && play.gather_facts) : play.gather_facts,
     inventory: inventory,
     batching_enabled: batching_enabled,
-    forks: forks
+    forks: forks,
+    smart_gathering: gathering == "smart",
+    fact_store: run_fact_store
   )
 
   # Run tasks

@@ -87,7 +87,7 @@ module CrystalPlay
           parts = as_string(value).split(delimiter).map { |part| JSON::Any.new(part) }
           JSON::Any.new(parts)
         when "sort"
-          JSON::Any.new(as_array(value).sort { |left, right| compare_json(left, right) })
+          JSON::Any.new(sort_json(as_array(value)))
         when "unique"
           seen = Set(String).new
           JSON::Any.new(as_array(value).select { |item| seen.add?(item.to_json) })
@@ -249,15 +249,30 @@ module CrystalPlay
         end
       end
 
-      private def compare_json(a : JSON::Any, b : JSON::Any) : Int32
-        a_str = as_string(a)
-        b_str = as_string(b)
+      # Decorate-sort-undecorate. This replaced a `sort { compare_json(l,
+      # r) }` whose comparator stringified *and* attempted a Float64 parse
+      # of both operands on every comparison, so an n-element list did
+      # O(n log n) of both over the same values; computing each element's
+      # key once makes that O(n).
+      #
+      # The numeric-vs-lexicographic decision is now made once for the
+      # whole list rather than per pair. For a homogeneous list - every
+      # element numeric, or none - that is exactly the old ordering. It
+      # differs only for a *mixed* list, where the old per-pair rule
+      # compared some pairs numerically and others lexicographically:
+      # an intransitive comparator whose result was already arbitrary.
+      private def sort_json(items : Array(JSON::Any)) : Array(JSON::Any)
+        keys = items.map { |item| as_string(item) }
 
-        if (a_num = a_str.to_f64?) && (b_num = b_str.to_f64?)
-          a_num <=> b_num
+        if keys.all?(&.to_f64?)
+          items.map_with_index { |item, index| {keys[index].to_f64, item} }
+            .sort! { |left, right| left[0] <=> right[0] }
+            .map { |pair| pair[1] }
         else
-          a_str <=> b_str
-        end || 0
+          items.map_with_index { |item, index| {keys[index], item} }
+            .sort! { |left, right| left[0] <=> right[0] }
+            .map { |pair| pair[1] }
+        end
       end
 
       # Parses `name='value'`/`name="value"` out of a filter's argument
@@ -285,7 +300,12 @@ module CrystalPlay
       private def parse_filter_args(args : String) : Array(String)
         # Simple parser - split by comma, handle quotes
         result = [] of String
-        current = ""
+        # String::Builder rather than `current += char`, which allocates a
+        # whole new String per character (O(n^2) in the argument length) -
+        # the same accumulator fix already applied to
+        # ConditionalEvaluator.split_by_operator, and the same shape
+        # #split_chain above already uses.
+        current = String::Builder.new
         in_quotes = false
         quote_char = ' '
 
@@ -298,21 +318,25 @@ module CrystalPlay
               in_quotes = true
               quote_char = char
             else
-              current += char
+              current << char
             end
           when ','
             if in_quotes
-              current += char
+              current << char
             else
-              result << current.strip
-              current = ""
+              result << current.to_s.strip
+              current = String::Builder.new
             end
           else
-            current += char
+            current << char
           end
         end
 
-        result << current.strip unless current.empty?
+        # Emptiness is tested on the *unstripped* accumulator, as before:
+        # a trailing whitespace-only segment still contributes an empty
+        # argument rather than being dropped.
+        last = current.to_s
+        result << last.strip unless last.empty?
         result.map { |arg| parse_filter_arg(arg) }
       end
     end

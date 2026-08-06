@@ -1,0 +1,27 @@
+# meta: clear_facts - the escape hatch that makes --gathering smart safe.
+# Under smart, play 3 would normally reuse play 1's facts; the clear_facts
+# in play 2 forces it to gather again. Verified to match ansible-core
+# 2.19.4's behavior exactly (same gather count, same recap ok= total).
+#
+# Targets "testservers" so the generic empty inventory used by every other
+# testing/*.yml fixture resolves it to zero hosts, per repo convention.
+- name: meta play one
+  hosts: testservers
+  tasks:
+    - name: play one sees facts
+      ansible.builtin.debug:
+        msg: "meta1 kernel={{ ansible_kernel | default('MISSING') }}"
+
+- name: meta play two clears facts
+  hosts: testservers
+  gather_facts: false
+  tasks:
+    - name: clear the gathered facts
+      ansible.builtin.meta: clear_facts
+
+- name: meta play three
+  hosts: testservers
+  tasks:
+    - name: play three sees facts again
+      ansible.builtin.debug:
+        msg: "meta3 kernel={{ ansible_kernel | default('MISSING') }}"
