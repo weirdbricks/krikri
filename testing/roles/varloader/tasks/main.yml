@@ -1,0 +1,42 @@
+- name: load OS dependent vars into a named dict
+  ansible.builtin.include_vars:
+    file: "{{ item }}"
+    name: os_vars
+  with_first_found:
+    # Literal candidates on purpose: a fact-derived filename would make
+    # this fixture resolve differently on different controllers (and the
+    # two engines classify some distributions differently), which would
+    # make it useless for comparing them. The first entry never exists,
+    # so this also proves first_found really does fall through.
+    - files:
+        - NoSuchCandidate.yml
+        - Linux.yml
+      skip: true
+
+- name: show the named dict
+  ansible.builtin.debug:
+    msg: "named={{ os_vars.varloader_marker | default('MISSING') }}"
+
+- name: merge the same file into the context directly
+  ansible.builtin.include_vars:
+    file: Linux.yml
+
+- name: show the merged var
+  ansible.builtin.debug:
+    msg: "merged={{ varloader_marker | default('MISSING') }}"
+
+- name: set_fact still wins over include_vars
+  ansible.builtin.set_fact:
+    varloader_marker: from-set-fact
+
+- name: show precedence
+  ansible.builtin.debug:
+    msg: "precedence={{ varloader_marker }}"
+
+- name: nothing matches and skip is true
+  ansible.builtin.include_vars:
+    file: "{{ item }}"
+    name: unused
+  with_first_found:
+    - files: ["NoSuchVarsFile.yml"]
+      skip: true

@@ -77,6 +77,12 @@ module CrystalPlay
     # evicted as they are consumed without a later group member mistaking
     # the empty cache for "not yet run" - see try_batched_result.
     @batch_groups_run : Set({String, UInt64})
+    # Variables loaded by include_vars:, per host. Kept separate from
+    # @facts so they don't leak into the `ansible_facts` dict, and applied
+    # after VariableContext.build but before facts, so a set_fact: still
+    # wins - matching include_vars sitting below set_fact in real
+    # Ansible's precedence ladder.
+    @included_vars : Hash(String, Hash(String, JSON::Any))
     # Per host, per task: the result already fetched via a batch's single
     # SSH round trip (nil = that task's when: was false, already handled
     # - see `execute_batch_group`), consumed lazily as the task-major
@@ -125,6 +131,7 @@ module CrystalPlay
       @grouped_lists = Set(UInt64).new
       @batch_cache = Hash(String, Hash(Task, {JSON::Any?, Hash(String, JSON::Any)})).new
       @batch_groups_run = Set({String, UInt64}).new
+      @included_vars = Hash(String, Hash(String, JSON::Any)).new
 
       @hosts.each do |host|
         @results[host.name] = {
@@ -376,6 +383,7 @@ module CrystalPlay
       return execute_include_tasks(task, host) if task.include_tasks?
       return execute_include_role(task, host) if task.include_role?
       return execute_meta(task, host) if task.meta?
+      return execute_include_vars(task, host) if task.include_vars?
 
       # run_once: only the first host in the play actually executes it;
       # later hosts get no output/stats at all, matching real Ansible - but
@@ -425,7 +433,8 @@ module CrystalPlay
       # loop_template is a loop:/with_*: keyword given as "{{ some_var }}"
       # instead of a literal list/dict - also only resolvable once the
       # variable context exists.
-      loop_items = task.loop_items || resolve_fileglob(task, host, vars_context, shared: shared_sub) ||
+      loop_items = task.loop_items || resolve_first_found(task, host, vars_context) ||
+        resolve_fileglob(task, host, vars_context, shared: shared_sub) ||
         resolve_loop_template(task, vars_context)
 
       if loop_items
@@ -504,6 +513,8 @@ module CrystalPlay
         @registered_vars[host.name]
       )
 
+      @included_vars[host.name]?.try(&.each { |key, value| vars_context[key] = value })
+
       @facts[host.name].each do |key, value|
         vars_context[key] = value
       end
@@ -559,6 +570,137 @@ module CrystalPlay
       facts_hash.each do |key, value|
         @facts[host.name][key] = value
       end
+    end
+
+    # with_first_found: yields exactly one item - the first candidate path
+    # that exists on the *controller* - or none at all when nothing
+    # matched. Candidates are templated, so they can only be resolved
+    # here, not at parse time.
+    private def resolve_first_found(task : Task, host : Host, vars_context : Hash(String, JSON::Any)) : Array(JSON::Any)?
+      candidates = task.loop_first_found
+      return nil unless candidates
+
+      substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+
+      candidates.each do |raw|
+        candidate = substitutor.substitute(raw).strip
+        next if candidate.empty?
+        # A leftover {{ }} means the fact it depends on is missing;
+        # treating that as a filename would only produce a confusing
+        # "no such file", so skip the candidate instead.
+        next if candidate.includes?("{{")
+
+        if found = resolve_first_found_path(task, candidate)
+          return [JSON::Any.new(found)]
+        end
+      end
+
+      # No candidate matched. `skip: true` makes that a skipped task;
+      # without it real Ansible errors, which this engine approximates by
+      # skipping too rather than inventing a second failure path.
+      [] of JSON::Any
+    end
+
+    # with_first_found: and include_vars: resolve relative paths against
+    # *different* directories, verified against ansible-core 2.19.4 rather
+    # than assumed - conflating them would silently load files real
+    # Ansible would not:
+    #
+    # - the first_found lookup searches the role's `files/` (a probe role
+    #   with the same filename in both vars/ and files/ resolved to the
+    #   files/ copy, and a name present only in vars/ was skipped);
+    # - include_vars: itself searches the role's `vars/`, which is the
+    #   whole point of that directory.
+    private def resolve_first_found_path(task : Task, candidate : String) : String?
+      return File.exists?(candidate) ? candidate : nil if candidate.starts_with?("/")
+
+      roots = [] of String
+      task.role_files_dir.try { |dir| roots << dir }
+      task.role_templates_dir.try { |dir| roots << dir }
+      task.include_file_dir.try { |dir| roots << dir }
+      roots << Dir.current
+
+      first_existing(roots, candidate)
+    end
+
+    private def resolve_include_vars_path(task : Task, candidate : String) : String?
+      return File.exists?(candidate) ? candidate : nil if candidate.starts_with?("/")
+
+      roots = [] of String
+      if vars_dir = task.role_vars_dir
+        roots << vars_dir
+        roots << File.join(File.dirname(vars_dir), "defaults")
+      end
+      task.include_file_dir.try { |dir| roots << dir }
+      roots << Dir.current
+
+      first_existing(roots, candidate)
+    end
+
+    private def first_existing(roots : Array(String), candidate : String) : String?
+      roots.each do |root|
+        path = File.join(root, candidate)
+        return path if File.exists?(path)
+      end
+      nil
+    end
+
+    # include_vars: reads a YAML file from the CONTROLLER and merges it
+    # into this host's variable context - nothing runs on the target, so
+    # it is a pseudo-module here rather than a plugin binary (same shape
+    # as meta:).
+    #
+    # With `name:`, the whole file is loaded as a single dict under that
+    # name (`os_vars`), which is how roles stage OS-specific values before
+    # applying them selectively; without it the file's keys are merged
+    # individually.
+    private def execute_include_vars(task : Task, host : Host)
+      vars_context = build_vars_context(task, host)
+      return unless when_passes?(task, vars_context, host)
+
+      # The file may be chosen by with_first_found (exposed as `item`) or
+      # given directly; either way it is templated.
+      if items = resolve_first_found(task, host, vars_context)
+        if items.empty?
+          puts "skipping: [#{host.name}]".colorize(:cyan)
+          @results[host.name]["skipped"] += 1
+          return
+        end
+        vars_context["item"] = items.first
+      end
+
+      substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+      candidate = substitutor.substitute(task.include_vars_file || "").strip
+      path = resolve_include_vars_path(task, candidate)
+
+      unless path
+        finish_include_vars_failure(task, host, "include_vars: file not found: #{candidate}")
+        return
+      end
+
+      loaded = begin
+        RoleLoader.load_vars_file(path)
+      rescue ex
+        finish_include_vars_failure(task, host, "include_vars: could not parse #{path}: #{ex.message}")
+        return
+      end
+
+      store = (@included_vars[host.name] ||= Hash(String, JSON::Any).new)
+      if name = task.include_vars_name
+        store[name] = JSON::Any.new(loaded)
+      else
+        loaded.each { |key, value| store[key] = value }
+      end
+
+      puts "ok: [#{host.name}]".colorize(:green)
+      @results[host.name]["ok"] += 1
+    end
+
+    private def finish_include_vars_failure(task : Task, host : Host, message : String)
+      puts "failed: [#{host.name}]".colorize(:red)
+      puts "  Message: #{message}".colorize(:red)
+      @results[host.name]["failed"] += 1
+      @halted_hosts.add(host.name) unless task.ignore_errors
     end
 
     # Resolve with_fileglob patterns (if any) against the control host's

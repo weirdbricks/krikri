@@ -106,6 +106,7 @@ module CrystalPlay
 
       files_dir = existing_dir(File.join(role_dir, "files"))
       templates_dir = existing_dir(File.join(role_dir, "templates"))
+      vars_dir = existing_dir(File.join(role_dir, "vars"))
 
       role_tasks = load_tasks_file(File.join(role_dir, "tasks", "main.yml"), play)
       role_handlers = load_tasks_file(File.join(role_dir, "handlers", "main.yml"), play)
@@ -115,6 +116,7 @@ module CrystalPlay
         task.role_vars = role_vars
         task.role_files_dir = files_dir
         task.role_templates_dir = templates_dir
+        task.role_vars_dir = vars_dir
         task.tags = (task.tags + invocation_tags).uniq
       end
 
@@ -144,7 +146,10 @@ module CrystalPlay
       Dir.exists?(path) ? path : nil
     end
 
-    private def self.load_vars_file(path : String) : Hash(String, JSON::Any)
+    # Public: TaskExecutor#execute_include_vars loads the same shape of
+    # YAML vars file that roles do, and must parse it identically
+    # (including Vault decryption of individual values).
+    def self.load_vars_file(path : String) : Hash(String, JSON::Any)
       result = Hash(String, JSON::Any).new
       return result unless File.exists?(path)
 

@@ -1,0 +1,4 @@
+# Selected by with_first_found via ansible_facts.os_family on any Linux
+# controller, so this fixture works regardless of distribution.
+varloader_marker: from-os-family-file
+varloader_package: demo-package

@@ -27,6 +27,13 @@ module CrystalPlay
     # with_fileglob patterns, resolved at execution time (needs {{ vars }}
     # substitution and filesystem access, neither available at parse time).
     property loop_fileglob : Array(String)?
+    # with_first_found candidate paths, resolved at execution time for the
+    # same reasons as loop_fileglob. Unlike a glob this yields at most one
+    # item - the first candidate that exists. loop_first_found_skip is the
+    # `skip: true` form, which makes "none of them exist" a skipped task
+    # rather than an error.
+    property loop_first_found : Array(String)?
+    property loop_first_found_skip : Bool
     # loop:/with_items:/with_dict:/with_nested:/with_indexed_items: given as
     # a Jinja variable reference ("{{ some_var }}") rather than a literal
     # inline list/dict. Unresolvable at parse time since the YAML value is
@@ -83,6 +90,10 @@ module CrystalPlay
     property role_vars : Hash(String, JSON::Any)?
     property role_files_dir : String?
     property role_templates_dir : String?
+    # The role's vars/ directory - where include_vars: and
+    # with_first_found: resolve a relative filename from, the same way
+    # role_files_dir serves copy:'s src:.
+    property role_vars_dir : String?
     # include_tasks: - only set when module_name == "_include_tasks".
     # Unlike import_tasks (resolved at parse time), the file path may be
     # templated ({{ vars }}) and isn't resolved until this task actually
@@ -94,6 +105,13 @@ module CrystalPlay
     # meta: - only set when module_name == "_meta". Holds the meta action
     # ("clear_facts"); see TaskExecutor#execute_meta.
     property meta_action : String?
+    # include_vars: - only set when module_name == "_include_vars".
+    # include_vars_file is the file to load (may be templated, so it is
+    # resolved at run time); include_vars_name is the optional `name:`
+    # parameter, which loads the file into a single dict variable of that
+    # name instead of merging its keys into the context.
+    property include_vars_file : String?
+    property include_vars_name : String?
     # vars: on an include_tasks: statement - visible to every task in the
     # included file (unlike import_tasks:'s vars:, which is merged
     # directly into each imported task at parse time, this has to be
@@ -123,6 +141,8 @@ module CrystalPlay
       @loop = nil
       @loop_items = nil
       @loop_fileglob = nil
+      @loop_first_found = nil
+      @loop_first_found_skip = false
       @loop_template_kind = nil
       @loop_template = nil
       @until_condition = nil
@@ -141,9 +161,12 @@ module CrystalPlay
       @role_vars = nil
       @role_files_dir = nil
       @role_templates_dir = nil
+      @role_vars_dir = nil
       @include_file = nil
       @include_file_dir = nil
       @include_vars = nil
+      @include_vars_file = nil
+      @include_vars_name = nil
       @include_role_name = nil
       @include_role_vars = nil
       @include_role_dir = nil
@@ -163,6 +186,10 @@ module CrystalPlay
 
     def meta? : Bool
       @module_name == "_meta"
+    end
+
+    def include_vars? : Bool
+      @module_name == "_include_vars"
     end
 
     def to_s(io : IO)
@@ -521,10 +548,14 @@ module CrystalPlay
         return parse_meta_task(name, meta_yaml)
       end
 
+      if include_vars_yaml = directive(task_hash, "include_vars")
+        return parse_include_vars_task(name, task_hash, include_vars_yaml)
+      end
+
       # Find the module (first key that's not a special keyword)
       special_keys = ["name", "when", "register", "ignore_errors", "check_mode",
                       "diff", "become", "become_user", "tags", "with_items", "loop",
-                      "with_dict", "with_fileglob", "with_nested", "with_sequence",
+                      "with_dict", "with_fileglob", "with_first_found", "with_nested", "with_sequence",
                       "with_indexed_items", "until", "retries", "delay",
                       "notify", "changed_when", "failed_when", "delegate_to", "run_once",
                       "async", "poll", "vars",
@@ -628,6 +659,9 @@ module CrystalPlay
       elsif with_indexed_items = task_hash["with_indexed_items"]?.try(&.as_a?)
         items = with_indexed_items.map { |item| JSON.parse(item.to_json) }
         task.loop_items = LoopResolver.with_indexed_items(items)
+      elsif with_first_found = task_hash["with_first_found"]?
+        task.loop_first_found = parse_first_found(with_first_found)
+        task.loop_first_found_skip = first_found_skip?(with_first_found)
       elsif with_fileglob = task_hash["with_fileglob"]?
         task.loop_fileglob = if with_fileglob.as_a?
                                with_fileglob.as_a.map(&.as_s)
@@ -677,6 +711,74 @@ module CrystalPlay
     # `ansible.builtin.` prefix on them either.
     private def self.directive(task_hash : Hash(YAML::Any, YAML::Any), name : String) : YAML::Any?
       task_hash[name]? || task_hash["ansible.builtin.#{name}"]? || task_hash["ansible.legacy.#{name}"]?
+    end
+
+    # with_first_found: accepts either a bare list of candidate paths, or
+    # real Ansible's dict form - `- files: [...]` with an optional
+    # `skip: true` (and `paths:`, which this engine does not model: it
+    # searches the role's own vars//files/ directories and the playbook
+    # directory, which covers the cases relative paths are actually used
+    # for). Only the first entry is read, matching how the dict form is
+    # written in practice.
+    private def self.parse_first_found(yaml : YAML::Any) : Array(String)
+      if list = yaml.as_a?
+        first = list.first?
+        if first && (hash = first.as_h?)
+          files = hash["files"]?
+          return [] of String unless files
+          return files.as_a?.try(&.map(&.as_s)) || [files.as_s]
+        end
+        return list.map(&.as_s)
+      end
+
+      [yaml.as_s]
+    end
+
+    private def self.first_found_skip?(yaml : YAML::Any) : Bool
+      list = yaml.as_a?
+      return false unless list
+      first = list.first?
+      return false unless first
+      hash = first.as_h?
+      return false unless hash
+
+      hash["skip"]?.try(&.as_bool?) || false
+    end
+
+    # include_vars: - a controller-side pseudo-module ("_include_vars").
+    # It reads a YAML file from the *controller* and merges it into the
+    # variable context, so there is no plugin binary and nothing runs on
+    # the target. Accepts the bare-string form (`include_vars: x.yml`) and
+    # the dict form with `file:`/`name:`.
+    private def self.parse_include_vars_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), value : YAML::Any) : Task
+      task = Task.new(name, "_include_vars")
+
+      if hash = value.as_h?
+        file = hash["file"]? || hash["path"]?
+        raise "include_vars: requires a file (or a bare filename)" unless file
+        task.include_vars_file = file.as_s
+        task.include_vars_name = hash["name"]?.try(&.as_s?)
+      else
+        task.include_vars_file = value.as_s
+      end
+
+      task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
+      task.ignore_errors = task_hash["ignore_errors"]?.try(&.as_bool) || false
+
+      if tags_yaml = task_hash["tags"]?
+        task.tags = tags_yaml.as_a?.try(&.map(&.as_s)) || [tags_yaml.as_s]
+      end
+
+      # with_first_found: is the loop form this module is almost always
+      # paired with - "load whichever of these files exists".
+      if with_first_found = task_hash["with_first_found"]?
+        task.loop_first_found = parse_first_found(with_first_found)
+        task.loop_first_found_skip = first_found_skip?(with_first_found)
+      elsif loop_yaml = task_hash["loop"]?.try(&.as_a?)
+        task.loop_items = loop_yaml.map { |item| JSON.parse(item.to_json) }
+      end
+
+      task
     end
 
     # meta: - a pseudo-module ("_meta"), like block:/include_tasks:, that

@@ -208,6 +208,43 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("delegate_to / run_once smoke test complete!")
   end
 
+  describe "include_vars: / with_first_found:" do
+    testservers = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-testservers-local.ini")
+
+    it "loads a file chosen by with_first_found into a named dict, and merges without name:" do
+      status, output = run_playbook(
+        "test-include-vars-quick.yml", [] of String, inventory: testservers
+      )
+
+      status.success?.should be_true
+      # `name:` stages the whole file under one variable...
+      output.should contain("named=from-os-family-file")
+      # ...while the bare form merges its keys into the context.
+      output.should contain("merged=from-os-family-file")
+    end
+
+    it "keeps set_fact: winning over include_vars:" do
+      status, output = run_playbook(
+        "test-include-vars-quick.yml", [] of String, inventory: testservers
+      )
+
+      status.success?.should be_true
+      # include_vars sits below set_fact in real Ansible's precedence
+      # ladder, and @included_vars is applied before facts for that reason.
+      output.should contain("precedence=from-set-fact")
+    end
+
+    it "skips rather than fails when no with_first_found candidate exists and skip: true" do
+      status, output = run_playbook(
+        "test-include-vars-quick.yml", [] of String, inventory: testservers
+      )
+
+      status.success?.should be_true
+      output.should contain("skipping:")
+      output.should_not contain("file not found")
+    end
+  end
+
   describe "magic variables" do
     magicvars = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-ansible-host.ini")
 

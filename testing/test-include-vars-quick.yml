@@ -1,0 +1,8 @@
+# include_vars: + with_first_found: - loading OS-dependent variables, the
+# pattern dev-sec's os_hardening (and most distribution-aware roles) use.
+# Targets "testservers" per repo convention.
+- name: include_vars
+  hosts: testservers
+  gather_facts: true
+  roles:
+    - varloader
