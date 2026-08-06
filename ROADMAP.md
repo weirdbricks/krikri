@@ -3889,18 +3889,25 @@ compat playbook's own task wouldn't have suggested was there).
     the default privileges actually took effect rather than merely being
     recorded in the catalog.
 
-**Also still open - now being worked through one at a time toward fuller
-`ansible-core`/`community.*` parity, see each plugin's own class doc for
-the exact "not implemented" list it's tracked against:**
+**Per-plugin scope cuts - the incremental parity list this section has
+been working through is now empty:**
 
 - `postgresql_privs`: **nothing open** as of `0.9.84` - every `type:`
   real Ansible's module supports is implemented, including
   `default_privs` and `target_roles:`.
-- `docker_*` (`0.9.57`): `api_version:` (this codebase's `docr`-based API
-  calls have no version prefix on any endpoint URL at all, on a local
-  socket either - would mean touching every endpoint across `docr`, not
-  just connection setup, a meaningfully bigger change than anything else
-  closed in this section).
+- `docker_*`: `api_version:` - **deliberately not planned.** This
+  codebase's `docr`-based API calls carry no version prefix on any
+  endpoint URL at all, on a local socket either, so supporting it means
+  touching every endpoint across the separate `docr` shard rather than
+  just connection setup. That is a meaningfully bigger change than
+  anything else closed in this section, for a parameter that only
+  matters when pinning against an old daemon - the unversioned URLs
+  already negotiate fine against current Docker and Podman. Revisit only
+  if a real playbook actually needs the pin.
+- `meta:`: only `clear_facts` is implemented (`0.9.79`).
+  `end_play`/`flush_handlers`/`refresh_inventory`/`clear_host_errors`
+  act on execution-flow machinery this engine models differently, and
+  are rejected at parse time rather than silently ignored.
 Cross-cutting engine gaps this section used to track here - Jinja2
 filter-chaining (inside `{{ }}` substitution), `become:`/
 `become_user:` privilege escalation, filter chains inside bare

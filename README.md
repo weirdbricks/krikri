@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.65-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.84-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -41,7 +41,8 @@ what's implemented, what's a documented scope cut, and why.
 - ✅ Variable substitution `{{ vars }}` with a Jinja2 filter pipeline
   (chained filters, e.g. `{{ x | sort | join(',') }}`)
 - ✅ Conditionals `when:` (`==`, `!=`, `<`, `>`, `and`, `or`, `not`, `in`,
-  dotted attribute access)
+  dotted attribute access), including magic variables such as
+  `inventory_hostname` in *bare* (non-`{{ }}`) conditions
 - ✅ Facts gathering (90+ `ansible_*` variables), with
   `--gathering implicit|explicit|smart` and `meta: clear_facts`
 - ✅ Roles (`roles/<name>/{tasks,handlers,vars,files,templates,defaults}`)
@@ -84,7 +85,9 @@ what's implemented, what's a documented scope cut, and why.
 daemon support)
 
 **Databases:** `mysql_db`, `mysql_user`, `postgresql_db`,
-`postgresql_user`, `postgresql_privs`
+`postgresql_user`, `postgresql_privs` (every `type:` real Ansible
+supports, including `function`/`procedure` signatures and
+`default_privs`)
 
 ---
 
@@ -347,22 +350,38 @@ harness covers and how it works.
 ## 🚧 Limitations
 
 See [ROADMAP.md](ROADMAP.md) for the live, detailed tracking of what is
-implemented, what is not, and what is planned next. As of this writing,
-the remaining open items are narrow, documented scope cuts (a handful of
-`postgresql_privs` privilege types that need a different underlying
-mechanism, Docker API version negotiation, and `meta:`, which supports
-only `clear_facts` - `end_play`/`flush_handlers`/`refresh_inventory` and
-friends act on execution-flow machinery this engine models differently
-and are rejected at parse time rather than silently ignored) plus one known
-cross-cutting engine gap: bare `when:`/`assert: that:`/`until:`/
-`changed_when:`/`failed_when:` conditions don't see magic variables like
-`inventory_hostname` (task-level and play-level `vars:`, and registered
-results, all work fine) - everything else tracked in the roadmap has
-shipped, including three other engine gaps fixed in `0.9.64`-`0.9.65`:
-filters in bare conditionals, a failed host now being excluded from
-every remaining play in the run (not just the rest of the one it failed
-in), and task-level `vars:` itself, which previously did nothing at all
-for a plain task.
+implemented, what is not, and what is planned next.
+
+**No cross-cutting engine gap remains open.** The last one - bare
+`when:`/`assert: that:`/`until:`/`changed_when:`/`failed_when:`
+conditions not seeing magic variables like `inventory_hostname` - was
+fixed in `0.9.82`, along with two related bugs it exposed:
+`ansible_host` and `ansible_hostname` were being overwritten with the
+inventory name, so an inventory's `ansible_host=192.0.2.55` and a
+gathered `ansible_hostname` fact are now both preserved, matching
+`ansible-core`. The four earlier gaps (Jinja2 filter-chaining,
+`become:`/`become_user:`, filters in bare conditionals, and a failed
+host not being excluded from every remaining play) closed in
+`0.9.41`-`0.9.64`.
+
+The remaining open items are narrow, documented scope cuts:
+
+- **`meta:`** supports only `clear_facts`.
+  `end_play`/`flush_handlers`/`refresh_inventory` and friends act on
+  execution-flow machinery this engine models differently, and are
+  rejected at parse time rather than silently ignored.
+- **`docker_*` `api_version:`** is deliberately not planned - the
+  underlying `docr` client uses unversioned endpoint URLs throughout, so
+  pinning a version means touching every endpoint in a separate shard.
+  The unversioned URLs negotiate fine against current Docker and Podman.
+- **Cloud plugins** (`ec2`, `s3_bucket`, `azure_rm_*`) and inventory
+  *plugins* (`aws_ec2.yml` et al.) remain explicitly lowest-ROI and are
+  not planned.
+
+`postgresql_privs`, which this roadmap tracked scope cuts against for a
+long time, is complete as of `0.9.84` - every `type:` real Ansible's
+module supports is implemented, including `function`/`procedure` and
+`default_privs`.
 
 ---
 
