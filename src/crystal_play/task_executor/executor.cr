@@ -250,10 +250,10 @@ module CrystalPlay
     # an unbounded number of simultaneous SSH connections against a large
     # inventory. Output is collected per host and printed in deterministic
     # @hosts order only after every fiber has finished, so interleaved
-    # completions never scramble the display - this is Stage A of
-    # OPUS_PERFORMANCE_IMPROVEMENTS.md item 4; parallelizing the per-task
-    # host loop itself (Stage B, `--forks`) is deliberately out of scope
-    # here, see ROADMAP.md.
+    # completions never scramble the display - this was Stage A of the
+    # cross-host parallelism work (`0.9.75`); Stage B, parallelizing the
+    # per-task host loop itself via `--forks`, landed separately in
+    # `0.9.77`. See ROADMAP.md for both.
     private def gather_facts_for_all_hosts
       # --gathering smart: a host whose facts this run already collected
       # (in an earlier play, via the shared run-scoped store) is not
