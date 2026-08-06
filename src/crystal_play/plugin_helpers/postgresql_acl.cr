@@ -38,6 +38,11 @@ module CrystalPlay
         "type"                 => {"USAGE" => 'U'},
         "foreign_data_wrapper" => {"USAGE" => 'U'},
         "foreign_server"       => {"USAGE" => 'U'},
+        # function/procedure share one ACL column (`pg_proc.proacl`) and
+        # one privilege; they differ only in `prokind` and in the SQL
+        # keyword used to name them.
+        "function"  => {"EXECUTE" => 'X'},
+        "procedure" => {"EXECUTE" => 'X'},
         # PostgreSQL 15+ only (`pg_parameter_acl` doesn't exist before
         # that) - verified against a real PostgreSQL 17 server, not
         # assumed. `ALTER_SYSTEM` (the name real Ansible's own
@@ -72,6 +77,8 @@ module CrystalPlay
 
         "foreign_data_wrapper" => %w[USAGE],
         "foreign_server"       => %w[USAGE],
+        "function"             => %w[EXECUTE],
+        "procedure"            => %w[EXECUTE],
         "parameter"            => %w[SET ALTER_SYSTEM],
       }
 

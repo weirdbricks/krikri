@@ -7,10 +7,17 @@
 # foreign_data_wrapper, foreign_server, parameter, and group (role
 # membership, a fundamentally different SQL construct - see
 # plugins/postgresql_privs.cr) - are exercised here, plus ALL_IN_SCHEMA
-# (table) and fail_on_role: false. default_privs/function/procedure are
-# real Ansible `type:` choices this codebase doesn't implement
-# (documented scope cut, see plugins/postgresql_privs.cr), so aren't
-# covered here either - this playbook is deliberately scoped to prove
+# (table) and fail_on_role: false. function/procedure were added in
+# 0.9.83 and are covered here too: one overload of an overloaded
+# function granted while the other is left alone (the case a bare name
+# could never express), a multi-argument signature written with the
+# colon separator real Ansible uses, a procedure, a revoke, and
+# ALL_IN_SCHEMA over routines - with the resulting pg_proc ACLs read
+# back and diffed, so this proves the actual privilege state matches,
+# not just the changed flags. default_privs is still a real Ansible
+# `type:` choice this codebase doesn't implement (documented scope cut,
+# see plugins/postgresql_privs.cr), so isn't covered here - this
+# playbook is deliberately scoped to prove
 # the implemented surface works, not to be a full postgresql_privs
 # feature matrix. session_role: isn't covered here either - verified
 # manually instead against a real server (see the 0.9.54 ROADMAP entry),
@@ -219,6 +226,105 @@
         login_db: "{{ login_db }}"
       register: grant_all_in_schema
 
+    - name: create overloaded functions and a procedure
+      ansible.builtin.shell: |
+        PGPASSWORD=compatpass psql --host=127.0.0.1 --username=postgres --dbname={{ login_db }} \
+          -c "CREATE FUNCTION fn1(a int) RETURNS int AS \$\$ SELECT a \$\$ LANGUAGE sql;
+              CREATE FUNCTION fn1(a text) RETURNS text AS \$\$ SELECT a \$\$ LANGUAGE sql;
+              CREATE FUNCTION fn2(a int, b text) RETURNS int AS \$\$ SELECT a \$\$ LANGUAGE sql;
+              CREATE PROCEDURE pr1(a int) LANGUAGE sql AS \$\$ SELECT 1 \$\$;"
+      changed_when: false
+
+    - name: grant EXECUTE on one overload only
+      community.postgresql.postgresql_privs:
+        type: function
+        objs: "fn1(int)"
+        schema: public
+        privs: EXECUTE
+        roles: compatprivsrole
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: grant_function
+
+    - name: grant EXECUTE on that overload again (idempotent)
+      community.postgresql.postgresql_privs:
+        type: function
+        objs: "fn1(int)"
+        schema: public
+        privs: EXECUTE
+        roles: compatprivsrole
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: grant_function_idempotent
+
+    - name: grant EXECUTE on a multi-argument signature (colon-separated)
+      community.postgresql.postgresql_privs:
+        type: function
+        objs: "fn2(int:text)"
+        schema: public
+        privs: EXECUTE
+        roles: compatprivsrole
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: grant_function_multiarg
+
+    - name: grant EXECUTE on a procedure
+      community.postgresql.postgresql_privs:
+        type: procedure
+        objs: "pr1(int)"
+        schema: public
+        privs: EXECUTE
+        roles: compatprivsrole
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: grant_procedure
+
+    - name: revoke EXECUTE from the one overload again
+      community.postgresql.postgresql_privs:
+        type: function
+        objs: "fn1(int)"
+        schema: public
+        privs: EXECUTE
+        roles: compatprivsrole
+        state: absent
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: revoke_function
+
+    - name: grant EXECUTE on every function in the schema
+      community.postgresql.postgresql_privs:
+        type: function
+        objs: ALL_IN_SCHEMA
+        schema: public
+        privs: EXECUTE
+        roles: compatprivsrole
+        login_host: "{{ login_host }}"
+        login_user: "{{ login_user }}"
+        login_password: "{{ login_password }}"
+        login_db: "{{ login_db }}"
+      register: grant_functions_all_in_schema
+
+    - name: read back the routine ACLs
+      ansible.builtin.shell: |
+        PGPASSWORD=compatpass psql --host=127.0.0.1 --username=postgres --dbname={{ login_db }} -At \
+          -c "SELECT p.proname || '(' || coalesce((SELECT string_agg(format_type(t, NULL), ',' ORDER BY o)
+                       FROM unnest(p.proargtypes) WITH ORDINALITY a(t, o)), '') || ')=' ||
+                     (coalesce(p.proacl::text, '') LIKE '%compatprivsrole=X%')::text
+              FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+              WHERE n.nspname = 'public' ORDER BY 1"
+      register: routine_acls
+      changed_when: false
+
     - name: attempt a grant for a nonexistent role with fail_on_role false
       community.postgresql.postgresql_privs:
         type: table
@@ -394,6 +500,13 @@
           mood_acl={{ mood_acl.stdout }}
           t3_acl={{ t3_acl.stdout }}
           final_table_acls={{ final_table_acls.stdout }}
+          grant_function={{ grant_function.changed }}
+          grant_function_idempotent={{ grant_function_idempotent.changed }}
+          grant_function_multiarg={{ grant_function_multiarg.changed }}
+          grant_procedure={{ grant_procedure.changed }}
+          revoke_function={{ revoke_function.changed }}
+          grant_functions_all_in_schema={{ grant_functions_all_in_schema.changed }}
+          routine_acls={{ routine_acls.stdout }}
         dest: /work/results.txt
 
     - name: clean up

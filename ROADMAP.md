@@ -1,6 +1,6 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Status as of 2026-08-05 (currently at `0.9.82`):** **all of Phase 0 through
+**Status as of 2026-08-05 (currently at `0.9.83`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
 advanced-execution feature, and all eight Phase 5 modules: `set_fact`
@@ -3797,16 +3797,65 @@ compat playbook's own task wouldn't have suggested was there).
     the comparison was against an empty value, so `!=` passed by
     accident. The `== "web1"` form is the discriminating one.
 
+- [x] `postgresql_privs`: `type: function` / `type: procedure`, including
+  `ALL_IN_SCHEMA` for both (`0.9.83`). Verified against a live PostgreSQL
+  16 server and, for the same playbook, against real `ansible-playbook`
+  with `community.postgresql` 4.2.0 - identical `changed` flags *and*
+  identical resulting `pg_proc` ACLs.
+  - Routines are identified by *signature*, not name, because PostgreSQL
+    allows overloading. Rather than hand-parsing `name(arg_types)` in
+    Crystal - which would have to cope with `character varying`, `int[]`
+    and `public.mytype` - the reference is **bound as a parameter and
+    cast to `regprocedure`**, so PostgreSQL's own parser resolves it and
+    `format_type(proargtypes)` renders the canonical form back. That
+    removes the injection surface entirely (nothing user-supplied is
+    interpolated) and makes overload resolution and type aliasing exactly
+    PostgreSQL's: `f(int)` and `f(integer)` name the same function, as in
+    psql.
+  - Two details found by reading real Ansible's module rather than
+    assuming, both of which would have shipped wrong otherwise:
+    **argument types are separated with colons, not commas**
+    (`objs: "f(int:text)"`), because `objs:` is itself comma-separated -
+    without that convention `f(int, text)` splits into the two nonsense
+    objects `f(int` and `text)`; and a **bare name is an error**, not
+    something to resolve heuristically ("Illegal function / procedure
+    signature", the same message real Ansible raises).
+  - `pg_get_function_identity_arguments` is deliberately *not* used to
+    build the signature even though it looks like the obvious choice: it
+    includes argument names and modes (`f1(a integer)`, `p1(IN a
+    integer)`), which `GRANT` accepts but `regprocedure` input rejects
+    with "syntax error at or near \"integer\"" when the same string is
+    later used to look the ACL back up. `proargtypes` + `format_type`
+    yields `f1(integer)`, valid for both.
+  - A procedure addressed as a function (or vice versa) is rejected with
+    a clear message rather than PostgreSQL's confusing syntax error -
+    `prokind` is checked after resolution.
+  - `compat/playbooks/38-postgresql-privs.yml` gained routine coverage:
+    one overload of an overloaded function granted while the other is
+    left untouched (the case a bare name could never express), a
+    multi-argument colon-separated signature, a procedure, a revoke, and
+    `ALL_IN_SCHEMA` over routines - with the resulting `pg_proc` ACLs
+    read back and diffed, so the harness compares real privilege state
+    rather than just `changed` flags.
+  - Also of note for anyone running the suite: **the MySQL and PostgreSQL
+    integration specs are not actually broken** - they need a live server
+    and client binaries, neither of which is installed by default. Both
+    are obtainable in a couple of minutes from the official container
+    images, after which `crystal spec` is **793 examples, 0 failures**.
+
 **Also still open - now being worked through one at a time toward fuller
 `ansible-core`/`community.*` parity, see each plugin's own class doc for
 the exact "not implemented" list it's tracked against:**
 
-- `postgresql_privs` (`0.9.56`): `type: default_privs`/`function`/
-  `procedure` (only `table`/`sequence`/`schema`/`database`/`language`/
-  `tablespace`/`type`/`foreign_data_wrapper`/`foreign_server`/
-  `parameter`/`group` implemented), `ALL_IN_SCHEMA` for `function`/
-  `procedure` (not implemented at all, per above), `target_roles:` (only
-  meaningful for `default_privs`).
+- `postgresql_privs` (`0.9.83`): `type: default_privs` (every other
+  `type:` real Ansible supports is now implemented), and `target_roles:`,
+  which is only meaningful for `default_privs`. `default_privs` operates
+  on `pg_default_acl` - privileges for objects created *in future*, not
+  existing ones - so it is a genuinely different mechanism rather than
+  another object type, and reuses almost none of the ACL-diffing
+  machinery the rest of this plugin is built on. Its `objs:` also means
+  an object *class* (`tables`/`sequences`/`functions`), not object
+  names.
 - `docker_*` (`0.9.57`): `api_version:` (this codebase's `docr`-based API
   calls have no version prefix on any endpoint URL at all, on a local
   socket either - would mean touching every endpoint across `docr`, not
