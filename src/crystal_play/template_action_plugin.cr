@@ -2,6 +2,9 @@ require "json"
 require "digest/md5"
 require "crinja"
 require "./base_action_plugin"
+# For the shared JSON::Any -> Crinja::Value converter (this plugin keeps
+# its own Crinja environment - see that method's comment for why).
+require "./variable_substitutor/crinja_renderer"
 
 module CrystalPlay
   # Template Action Plugin
@@ -91,7 +94,7 @@ module CrystalPlay
       
       # Add all vars
       @vars.each do |key, value|
-        vars[key] = json_any_to_crinja_value(value)
+        vars[key] = VariableSubstitutor::CrinjaRenderer.json_any_to_crinja_value(value)
       end
       
       # Add host information
@@ -102,32 +105,6 @@ module CrystalPlay
       vars
     end
     
-    # Convert JSON::Any to Crinja::Value
-    private def json_any_to_crinja_value(json : JSON::Any) : Crinja::Value
-      case json.raw
-      when String
-        Crinja::Value.new(json.as_s)
-      when Int64
-        Crinja::Value.new(json.as_i)
-      when Float64
-        Crinja::Value.new(json.as_f)
-      when Bool
-        Crinja::Value.new(json.as_bool)
-      when Nil
-        Crinja::Value.new(nil)
-      when Hash
-        hash = Hash(String, Crinja::Value).new
-        json.as_h.each do |key, value|
-          hash[key] = json_any_to_crinja_value(value)
-        end
-        Crinja::Value.new(hash)
-      when Array
-        array = json.as_a.map { |item| json_any_to_crinja_value(item) }
-        Crinja::Value.new(array)
-      else
-        Crinja::Value.new(json.to_s)
-      end
-    end
     
     # Helper: Check if parameter is truthy
     private def is_true?(value : String?, default : Bool = false) : Bool

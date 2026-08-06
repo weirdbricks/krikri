@@ -72,8 +72,20 @@ module CrystalPlay
         vars
       end
       
-      # Convert JSON::Any to Crinja::Value
       private def json_any_to_crinja_value(json : JSON::Any) : Crinja::Value
+        CrinjaRenderer.json_any_to_crinja_value(json)
+      end
+
+      # Convert JSON::Any to Crinja::Value.
+      #
+      # Exposed as a class method because TemplateActionPlugin needs the
+      # exact same coercion and used to carry a verbatim copy of it.
+      # (Only the *converter* is shared: that plugin's Crinja environment
+      # genuinely must stay separate, since its trim_blocks/lstrip_blocks
+      # come from the task's own template: params and therefore vary per
+      # task - unlike this class's, whose config is invariant and so can
+      # be one process-wide instance.)
+      def self.json_any_to_crinja_value(json : JSON::Any) : Crinja::Value
         case json.raw
         when String
           Crinja::Value.new(json.as_s)
