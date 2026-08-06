@@ -442,7 +442,7 @@ module CrystalPlay
       hash = yaml.as_h?
       return nil unless hash
 
-      import_value = hash["import_tasks"]?
+      import_value = directive(hash, "import_tasks")
       return nil unless import_value
 
       file_rel = import_value.as_h?.try(&.["file"]?).try(&.as_s?) || import_value.as_s?
@@ -509,15 +509,15 @@ module CrystalPlay
         return parse_block_task(name, task_hash, block_yaml, play, file_dir)
       end
 
-      if include_yaml = task_hash["include_tasks"]?
+      if include_yaml = directive(task_hash, "include_tasks")
         return parse_include_tasks(name, task_hash, include_yaml, play, file_dir)
       end
 
-      if include_role_yaml = task_hash["include_role"]?.try(&.as_h?)
+      if include_role_yaml = directive(task_hash, "include_role").try(&.as_h?)
         return parse_include_role(name, task_hash, include_role_yaml, play, file_dir)
       end
 
-      if meta_yaml = (task_hash["meta"]? || task_hash["ansible.builtin.meta"]?)
+      if meta_yaml = directive(task_hash, "meta")
         return parse_meta_task(name, meta_yaml)
       end
 
@@ -529,7 +529,13 @@ module CrystalPlay
                       "notify", "changed_when", "failed_when", "delegate_to", "run_once",
                       "async", "poll", "vars",
                       "block", "rescue", "always", "import_tasks", "include_tasks", "include_role",
-                      "meta", "ansible.builtin.meta"]
+                      "meta", "include_vars"]
+      # ... and the same names fully qualified, since directive() accepts
+      # either spelling and neither form is a module to dispatch on.
+      special_keys += special_keys.map { |k| "ansible.builtin.#{k}" }
+      special_keys += ["ansible.legacy.import_tasks", "ansible.legacy.include_tasks",
+                       "ansible.legacy.include_role", "ansible.legacy.include_vars",
+                       "ansible.legacy.meta"]
 
       module_name = nil
       module_params = nil
@@ -558,7 +564,7 @@ module CrystalPlay
       task.params = parse_module_params(module_params.not_nil!, module_name)
 
       # Parse task-level settings - FIXED to handle boolean values safely
-      task.when_condition = task_hash["when"]?.try { |v| safe_yaml_to_string(v) }
+      task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.register = task_hash["register"]?.try { |v| safe_yaml_to_string(v) }
       task.ignore_errors = task_hash["ignore_errors"]?.try(&.as_bool) || false
       task.check_mode = task_hash["check_mode"]?.try(&.as_bool)
@@ -643,8 +649,8 @@ module CrystalPlay
       task.delay = task_hash["delay"]?.try { |v| safe_yaml_to_string(v).to_i? } || 5
 
       # Parse changed_when / failed_when
-      task.changed_when = task_hash["changed_when"]?.try { |v| safe_yaml_to_string(v) }
-      task.failed_when = task_hash["failed_when"]?.try { |v| safe_yaml_to_string(v) }
+      task.changed_when = task_hash["changed_when"]?.try { |v| condition_to_string(v) }
+      task.failed_when = task_hash["failed_when"]?.try { |v| condition_to_string(v) }
 
       # Parse delegate_to / run_once
       task.delegate_to = task_hash["delegate_to"]?.try { |v| safe_yaml_to_string(v) }
@@ -659,6 +665,20 @@ module CrystalPlay
 
     # Parse a block: task - block:/rescue:/always: are each an array of
     # nested tasks (which may themselves be blocks, so this recurses
+    # import_tasks:/include_tasks:/include_role:/include_vars:/meta: are
+    # real Ansible *modules*, so a playbook may spell them either bare or
+    # fully qualified (`ansible.builtin.import_tasks:`). Collection-style
+    # FQCN is the modern convention and some widely-used roles - notably
+    # dev-sec's os_hardening - use it exclusively, so matching only the
+    # bare key silently skipped every one of their imports.
+    #
+    # block:/rescue:/always: are deliberately absent: those are playbook
+    # *keywords*, not modules, and real Ansible does not accept an
+    # `ansible.builtin.` prefix on them either.
+    private def self.directive(task_hash : Hash(YAML::Any, YAML::Any), name : String) : YAML::Any?
+      task_hash[name]? || task_hash["ansible.builtin.#{name}"]? || task_hash["ansible.legacy.#{name}"]?
+    end
+
     # meta: - a pseudo-module ("_meta"), like block:/include_tasks:, that
     # acts on the executor's own state rather than running a plugin on a
     # target.
@@ -702,7 +722,7 @@ module CrystalPlay
 
       # Block-level settings gate/apply to the block as a whole; each
       # nested task still evaluates its own when:/tags:/etc in addition.
-      task.when_condition = task_hash["when"]?.try { |v| safe_yaml_to_string(v) }
+      task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.ignore_errors = task_hash["ignore_errors"]?.try(&.as_bool) || false
       task.become = task_hash["become"]?.try(&.as_bool) || play.become
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
@@ -728,7 +748,7 @@ module CrystalPlay
       task.include_file = file_rel
       task.include_file_dir = file_dir
 
-      task.when_condition = task_hash["when"]?.try { |v| safe_yaml_to_string(v) }
+      task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.ignore_errors = task_hash["ignore_errors"]?.try(&.as_bool) || false
       task.become = task_hash["become"]?.try(&.as_bool) || play.become
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
@@ -781,7 +801,7 @@ module CrystalPlay
         task.include_role_vars = vars
       end
 
-      task.when_condition = task_hash["when"]?.try { |v| safe_yaml_to_string(v) }
+      task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.ignore_errors = task_hash["ignore_errors"]?.try(&.as_bool) || false
       task.become = task_hash["become"]?.try(&.as_bool) || play.become
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
@@ -838,6 +858,34 @@ module CrystalPlay
 
     # Helper: Safely convert any YAML value to string
     # This handles cases where YAML values might be booleans, integers, etc.
+    # when:/changed_when:/failed_when: may each be given as a *list*, which
+    # real Ansible ANDs together - it is the idiomatic way to write a
+    # multi-clause condition and is used throughout widely-deployed roles
+    # (dev-sec's os_hardening alone has 79 of them).
+    #
+    # This used to fall through safe_yaml_to_string's `else` branch to
+    # `YAML::Any#to_s`, producing a Crystal array literal -
+    # `["a_var", "'x' in pkgs"]` - as the condition string. That was
+    # never evaluable: at best it was truthy by accident (a non-empty
+    # string), and at worst it hung the run outright, because an element
+    # containing " and " inside its quotes made ConditionalEvaluator
+    # split on nothing and recurse on the identical string forever.
+    #
+    # Each element is parenthesized before joining so an element that is
+    # itself a compound condition (`a or b`) cannot bind loosely against
+    # its neighbours - `(a or b) and (c)`, not `a or b and c`.
+    private def self.condition_to_string(yaml : YAML::Any) : String
+      if list = yaml.as_a?
+        clauses = list.map { |item| safe_yaml_to_string(item).strip }.reject(&.empty?)
+        return "" if clauses.empty?
+        return clauses[0] if clauses.size == 1
+
+        return clauses.map { |clause| "(#{clause})" }.join(" and ")
+      end
+
+      safe_yaml_to_string(yaml)
+    end
+
     private def self.safe_yaml_to_string(yaml : YAML::Any) : String
       case yaml.raw
       when String

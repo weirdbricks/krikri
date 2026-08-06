@@ -524,6 +524,25 @@ module CrystalPlay
       vars_context["ansible_hostname"] ||= JSON::Any.new(host.name)
       vars_context["ansible_host"] ||= JSON::Any.new(host.name)
 
+      # `ansible_facts` - the same facts again, under their unprefixed
+      # names, as one dict. Real Ansible exposes every fact both ways
+      # (`ansible_os_family` *and* `ansible_facts.os_family`), and the
+      # dict form is what modern roles use: dev-sec's os_hardening
+      # references `ansible_facts.os_family` 16 times and never uses the
+      # flat spelling, so without this every one of its conditions
+      # silently evaluated false and the role skipped almost entirely.
+      #
+      # Derived from the same store rather than gathered separately, so
+      # the two spellings can never disagree, and rebuilt per task so a
+      # fact added mid-play (set_fact:, a re-gather) appears in both.
+      unless @facts[host.name].empty?
+        facts_dict = Hash(String, JSON::Any).new
+        @facts[host.name].each do |key, value|
+          facts_dict[key.lchop("ansible_")] = value
+        end
+        vars_context["ansible_facts"] = JSON::Any.new(facts_dict)
+      end
+
       vars_context
     end
 
@@ -840,6 +859,11 @@ module CrystalPlay
       remote_vars_context["ansible_connection"] = JSON::Any.new("local")
 
       config_json = build_plugin_config(task, host, substituted_params, remote_vars_context, substituted_become_user)
+
+      # The batch script runs the plugin binary directly, so it must be on
+      # the target before the script is built - pre-upload cannot see
+      # modules that only appear inside a runtime include_tasks:.
+      PluginManager.ensure_uploaded(host, task.module_name, vars_context)
       plugin_target = PluginManager.remote_plugin_target(task.module_name, become, become_user)
 
       BatchScript::Step.new(plugin_target, config_json, task.ignore_errors)

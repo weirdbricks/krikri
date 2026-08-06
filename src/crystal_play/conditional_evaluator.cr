@@ -23,16 +23,26 @@ module CrystalPlay
         return !evaluate(condition[4..-1].strip, vars)
       end
 
-      # Handle 'and' operator (split and evaluate all parts)
+      # Handle 'and' operator (split and evaluate all parts).
+      #
+      # The `split_progressed?` guard is load-bearing, not defensive
+      # tidiness: `includes?` sees an operator anywhere in the string,
+      # but split_by_operator only splits on one at paren depth 0 outside
+      # quotes. A condition whose only " and " sits inside quotes -
+      # `["a", "b and c"]` - therefore came back as a single part
+      # identical to the input, and this line recursed on that same
+      # string until the stack blew (observed at ~104k frames deep, on a
+      # real playbook). Falling through instead lets the rest of
+      # evaluate/evaluate_truthiness deal with it, which terminates.
       if condition.includes?(" and ")
         parts = split_by_operator(condition, " and ")
-        return parts.all? { |part| evaluate(part.strip, vars) }
+        return parts.all? { |part| evaluate(part.strip, vars) } if split_progressed?(parts, condition)
       end
 
       # Handle 'or' operator (split and evaluate any part)
       if condition.includes?(" or ")
         parts = split_by_operator(condition, " or ")
-        return parts.any? { |part| evaluate(part.strip, vars) }
+        return parts.any? { |part| evaluate(part.strip, vars) } if split_progressed?(parts, condition)
       end
 
       # Handle comparison operators
@@ -66,6 +76,13 @@ module CrystalPlay
 
       # Handle bare variable (truthiness check)
       return evaluate_truthiness(condition, vars)
+    end
+
+    # Whether splitting actually broke the condition down. A single part
+    # equal to the original means no real split happened, so recursing on
+    # it would not terminate.
+    private def self.split_progressed?(parts : Array(String), condition : String) : Bool
+      parts.size > 1 || (parts.size == 1 && parts[0].strip != condition.strip)
     end
 
     # Split condition by operator, respecting parentheses and quotes

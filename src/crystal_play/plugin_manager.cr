@@ -466,6 +466,7 @@ module CrystalPlay
       # Get the actual connection host (checks ansible_host)
       connection_host = get_connection_host(host, vars)
 
+      ensure_uploaded(host, plugin_name, vars)
       target = remote_plugin_target(plugin_name, become, become_user)
 
       # Execute plugin remotely with config via stdin
@@ -491,6 +492,32 @@ module CrystalPlay
     # into a shell command, unlike the local/args-array path, so
     # validation happens once, at the call site, before this is ever
     # invoked with untrusted input).
+    # Uploads *plugin_name* to *host* if this run hasn't already put it
+    # there. Pre-upload (batch_upload_plugins_for_playbook) covers
+    # everything statically reachable from the playbook, but it cannot
+    # see inside a runtime `include_tasks:`/`include_role:` - those name
+    # a file that may itself be templated, so their contents are unknown
+    # until they actually run. A module used *only* inside one therefore
+    # reached the target with no binary present and failed with a bare
+    # "/tmp/.crystal-play/plugins/set_fact: No such file or directory",
+    # which is both confusing and, for a role like dev-sec's
+    # os_hardening, fatal on the first included task.
+    #
+    # Calling this before every remote execution makes pre-upload a pure
+    # optimization rather than a correctness requirement: it is a hash
+    # lookup when the plugin is already there (the overwhelmingly common
+    # case, since pre-upload got it), and costs the upload round trips
+    # only the first time an unforeseen module is actually needed.
+    def self.ensure_uploaded(host : Host, plugin_name : String, vars : Hash(String, JSON::Any))
+      simple_name = plugin_name.sub(/^(ansible\.(builtin|legacy|posix)|community\.(general|docker|mysql|postgresql))\./, "")
+      connection_host = get_connection_host(host, vars)
+      host_key = "#{host.user}@#{connection_host}:#{host.port}"
+
+      return if @@uploaded_plugins[host_key]?.try(&.includes?(simple_name))
+
+      upload_plugins_to_host(host, [simple_name])
+    end
+
     def self.remote_plugin_target(plugin_name : String, become : Bool, become_user : String?) : String
       simple_name = plugin_name.sub(/^(ansible\.(builtin|legacy|posix)|community\.(general|docker|mysql|postgresql))\./, "")
       remote_plugin_path = "/tmp/.crystal-play/plugins/#{simple_name}"

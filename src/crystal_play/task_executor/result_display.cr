@@ -191,7 +191,15 @@ module CrystalPlay
     # Show recap of all host results
     def self.show_recap(hosts : Array(Host), results : Hash(String, Hash(String, Int32)))
       hosts.each do |host|
-        stats = results[host.name]
+        # A host can reach the recap with no results at all: crystal-play.cr
+        # adds every play's hosts to the recap list *before* deciding
+        # whether the play has any tasks to run, so a playbook whose plays
+        # are all skipped (no tasks, or none matching --tags) used to crash
+        # here with `Missing hash key`. Zeroes are the honest recap for a
+        # host nothing ran on, and match what real ansible-playbook prints.
+        stats = results[host.name]? || {
+          "ok" => 0, "changed" => 0, "failed" => 0, "skipped" => 0, "rescued" => 0,
+        }
 
         status_parts = [] of String
 

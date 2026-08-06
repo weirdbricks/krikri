@@ -352,8 +352,19 @@ describe "crystal-ansible CLI (--check mode)" do
       output.should match(/ok=4\b/)
     end
 
-    it "rejects an unsupported meta action rather than silently ignoring it" do
-      # A meta action this engine does not model must fail loudly.
+    it "reports an unsupported meta action instead of treating it as a no-op" do
+      # A meta action this engine does not model is rejected at parse time
+      # with a named error, rather than being accepted and silently doing
+      # nothing - a `meta: end_play` that quietly did nothing would change
+      # what the playbook means.
+      #
+      # It surfaces as a warning and the task is dropped, which is how the
+      # parser handles *every* parse error (see PlaybookParser.parse_tasks'
+      # rescue) - not as a non-zero exit. An earlier version of this spec
+      # asserted a failing exit code and passed for the wrong reason: the
+      # resulting task-less play then hit a crash in show_recap, which is
+      # what actually produced the non-zero status. That crash is fixed,
+      # so this now asserts the behavior that is really there.
       tmp = File.tempname("meta-unsupported", ".yml")
       File.write(tmp, <<-YAML)
         - name: unsupported meta
@@ -365,9 +376,10 @@ describe "crystal-ansible CLI (--check mode)" do
         YAML
       begin
         captured = IO::Memory.new
-        st = Process.run(BINARY, ["-i", testservers, tmp], output: captured, error: captured)
-        st.success?.should be_false
+        Process.run(BINARY, ["-i", testservers, tmp], output: captured, error: captured)
         captured.to_s.should contain("meta: end_play is not supported")
+        # and the task genuinely did not run
+        captured.to_s.should_not contain("end the play early")
       ensure
         File.delete(tmp) rescue nil
       end
