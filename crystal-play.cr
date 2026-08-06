@@ -44,7 +44,10 @@ if ARGV[0]? == "__async_run"
   local_host = CrystalPlay::Host.new("localhost")
   result = CrystalPlay::PluginManager.execute_plugin(module_name, config_json, local_host, {} of String => JSON::Any)
 
-  result_hash = JSON.parse(result.to_json).as_h
+  # as_h.dup, not JSON.parse(result.to_json).as_h: only a top-level key is
+  # added below, so a shallow copy is equivalent to the round trip, and
+  # the round trip's cost scales with the module's whole output.
+  result_hash = result.as_h.dup
   result_hash["finished"] = JSON::Any.new(1_i64)
 
   tmp_path = "#{status_path}.tmp"

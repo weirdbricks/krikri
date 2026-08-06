@@ -397,14 +397,35 @@ module CrystalPlay
       # while vars/facts/register/stats stay attributed to `host` - resolved
       # here (not at parse time) since it may be templated and needs the
       # variable context to substitute against.
-      exec_host = resolve_delegate_host(task, host, vars_context)
+      # One substitutor for this (task, host), built only where it will
+      # actually be used. The constructor copies the whole vars hash and
+      # adds the magic variables, and nothing between here and
+      # execute_task_once mutates vars_context (verified for
+      # resolve_delegate_host / resolve_fileglob / resolve_loop_template),
+      # so the instances this path used to build were copies of an
+      # identical thing.
+      #
+      # Deliberately *not* built unconditionally up front: the loop and
+      # until: paths below return before ever reaching execute_task_once
+      # and build their own per item / per attempt, so an eager instance
+      # here would be pure waste for every looped task - which measured
+      # as a real regression when tried that way.
+      #
+      # apply_changed_failed_when still builds its own, and must: it
+      # evaluates against a different context (see there).
+      shared_sub = nil.as(VarSubstitutor?)
+      if task.delegate_to || task.loop_fileglob
+        shared_sub = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+      end
+
+      exec_host = resolve_delegate_host(task, host, vars_context, shared: shared_sub)
 
       # with_fileglob needs a substitutor (for {{ vars }} in the pattern) and
       # the filesystem, so it can only be resolved here, not at parse time.
       # loop_template is a loop:/with_*: keyword given as "{{ some_var }}"
       # instead of a literal list/dict - also only resolvable once the
       # variable context exists.
-      loop_items = task.loop_items || resolve_fileglob(task, host, vars_context) ||
+      loop_items = task.loop_items || resolve_fileglob(task, host, vars_context, shared: shared_sub) ||
         resolve_loop_template(task, vars_context)
 
       if loop_items
@@ -430,7 +451,12 @@ module CrystalPlay
         return
       end
 
-      result = execute_task_once(task, host, vars_context, exec_host: exec_host)
+      # Reached the plain single-execution path, so it will definitely be
+      # used now: when_passes? and the param substitution inside
+      # execute_task_once share this one instance.
+      shared_sub ||= VarSubstitutor.new(vars: vars_context, host_name: host.name)
+
+      result = execute_task_once(task, host, vars_context, exec_host: exec_host, shared: shared_sub)
       return unless result
 
       finish_single_task(task, host, result)
@@ -440,11 +466,11 @@ module CrystalPlay
     # actually run against. Variables used to substitute a templated
     # delegate_to: value are still `host`'s own (real Ansible doesn't
     # delegate variables, only the connection).
-    private def resolve_delegate_host(task : Task, host : Host, vars_context : Hash(String, JSON::Any)) : Host
+    private def resolve_delegate_host(task : Task, host : Host, vars_context : Hash(String, JSON::Any), shared : VarSubstitutor? = nil) : Host
       delegate_to = task.delegate_to
       return host unless delegate_to
 
-      substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+      substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
       target_name = substitutor.substitute(delegate_to)
 
       if (inventory = @inventory) && (resolved = inventory.get_hosts(target_name)).any?
@@ -502,11 +528,11 @@ module CrystalPlay
 
     # Resolve with_fileglob patterns (if any) against the control host's
     # filesystem, after substituting any {{ vars }} in the pattern.
-    private def resolve_fileglob(task : Task, host : Host, vars_context : Hash(String, JSON::Any)) : Array(JSON::Any)?
+    private def resolve_fileglob(task : Task, host : Host, vars_context : Hash(String, JSON::Any), shared : VarSubstitutor? = nil) : Array(JSON::Any)?
       patterns = task.loop_fileglob
       return nil unless patterns
 
-      substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+      substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
       matches = [] of String
 
       patterns.each do |pattern|
@@ -573,10 +599,10 @@ module CrystalPlay
     # "skipping: [...]" and bumping the skipped counter when it's false -
     # shared by execute_task_once and the batch-group trigger path
     # (execute_batch_group) so both interpret when: identically.
-    private def when_passes?(task : Task, vars_context : Hash(String, JSON::Any), host : Host, item_label : String? = nil) : Bool
+    private def when_passes?(task : Task, vars_context : Hash(String, JSON::Any), host : Host, item_label : String? = nil, shared : VarSubstitutor? = nil) : Bool
       return true unless when_condition = task.when_condition
 
-      substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+      substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
       substituted_condition = substitutor.substitute(when_condition)
 
       return true if ConditionalEvaluator.evaluate(substituted_condition, vars_context)
@@ -694,12 +720,16 @@ module CrystalPlay
                          build_vars_context(task, host)
                        end
 
-        unless when_passes?(task, vars_context, host)
+        # Same sharing as the solo path: when: and the step preparation
+        # both read this member's identical vars_context.
+        member_substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+
+        unless when_passes?(task, vars_context, host, shared: member_substitutor)
           cache[task] = {nil, vars_context}
           next
         end
 
-        case outcome = prepare_batch_step(task, host, vars_context)
+        case outcome = prepare_batch_step(task, host, vars_context, shared: member_substitutor)
         when JSON::Any
           cache[task] = {outcome, vars_context}
           failed = outcome["failed"]?.try(&.as_bool) || false
@@ -747,8 +777,8 @@ module CrystalPlay
     # ever needing a remote call (only possible today via an action
     # plugin - e.g. template: - failing to render, or an invalid
     # become_user:), or a BatchScript::Step ready to send otherwise.
-    private def prepare_batch_step(task : Task, host : Host, vars_context : Hash(String, JSON::Any)) : JSON::Any | BatchScript::Step
-      substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+    private def prepare_batch_step(task : Task, host : Host, vars_context : Hash(String, JSON::Any), shared : VarSubstitutor? = nil) : JSON::Any | BatchScript::Step
+      substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
       substituted_params = substitute_task_params(task.params, substitutor)
       substituted_params = resolve_role_relative_src(task, substituted_params)
       substituted_become_user = task.become_user.try { |raw_user| substitutor.substitute(raw_user) }
@@ -807,11 +837,12 @@ module CrystalPlay
       host : Host,
       vars_context : Hash(String, JSON::Any),
       item_label : String? = nil,
-      exec_host : Host = host
+      exec_host : Host = host,
+      shared : VarSubstitutor? = nil
     ) : JSON::Any?
-      return nil unless when_passes?(task, vars_context, host, item_label)
+      substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
-      substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+      return nil unless when_passes?(task, vars_context, host, item_label, shared: substitutor)
       substituted_params = substitute_task_params(task.params, substitutor)
       substituted_params = resolve_role_relative_src(task, substituted_params)
       # become_user: goes through the same {{ }} substitution as any
@@ -1091,9 +1122,14 @@ module CrystalPlay
         vars_context["item"] = item
         item_contexts[idx] = vars_context
 
-        next unless when_passes?(task, vars_context, host, item_label: item_display(item))
+        # Per item, not per call: each iteration builds its own context
+        # (base.dup + "item"), but when: and the step preparation both
+        # read that same one.
+        item_substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
-        case outcome = prepare_batch_step(task, host, vars_context)
+        next unless when_passes?(task, vars_context, host, item_label: item_display(item), shared: item_substitutor)
+
+        case outcome = prepare_batch_step(task, host, vars_context, shared: item_substitutor)
         when JSON::Any
           item_results[idx] = outcome
         when BatchScript::Step
