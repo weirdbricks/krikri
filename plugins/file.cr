@@ -597,9 +597,13 @@ module CrystalPlay
       # Check mode
       if mode = @params["mode"]?
         current_mode = PluginHelpers::StatFields.perm_octal(info.st_mode.to_i32)
-        # Normalize mode for comparison
+        # Normalize mode for comparison - perm_octal returns a 3-digit octal
+        # for a 0 special digit ("750") but 4 digits otherwise; the task's
+        # mode may be written "0750", "750", "0644", etc. Strip a leading
+        # zero from BOTH sides so target "0750" vs current "750" compare
+        # equal, while setuid/sticky perms (a 4th digit) still match.
         target_mode = normalize_mode(mode)
-        changed = true if current_mode != target_mode
+        changed = true if current_mode.lstrip('0') != target_mode.lstrip('0')
       end
 
       changed

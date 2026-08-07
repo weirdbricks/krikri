@@ -1703,9 +1703,18 @@ module CrystalPlay
       loop_items = task.loop_items
 
       if loop_items
+        # The item is exposed as `item` (Ansible's default) and, when
+        # loop_control.loop_var is set, under that custom name too (e.g.
+        # `mount` in dev-sec os_hardening's per-mountpoint include loop).
+        loop_var = task.loop_var
         loop_items.each do |item|
           vars_context = base_vars_context.dup
           vars_context["item"] = item
+          vars_context[loop_var] = item if loop_var
+          # Each include_tasks loop iteration counts as one `ok` in the
+          # recap, matching real Ansible (which tallies the include plus
+          # every included task per iteration).
+          @results[host.name]["ok"] += 1
           run_include_tasks_once(task, host, vars_context, item_display(item))
         end
       else
@@ -1758,8 +1767,23 @@ module CrystalPlay
         end
       end
 
+      # Thread this iteration's item into each included task's own scope as
+      # `item` and, when loop_control.loop_var is set, under that custom name
+      # too (so `mount.path` in a name/param/when: resolves). Also render the
+      # task NAME against the loop vars, matching how python names each
+      # iteration's banner (`render for mount /boot` instead of a literal
+      # `{{ mount.path }}`) - needs the item in scope first.
       if item = vars_context["item"]?
-        included_tasks.each { |included_task| included_task.vars["item"] = item }
+        included_tasks.each do |included_task|
+          included_task.vars["item"] = item
+          if loop_var = task.loop_var
+            included_task.vars[loop_var] = item
+          end
+        end
+      end
+      name_substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+      included_tasks.each do |included_task|
+        included_task.name = name_substitutor.substitute(included_task.name)
       end
 
       # Propagate the *role* context (defaults/vars/dirs) into each included

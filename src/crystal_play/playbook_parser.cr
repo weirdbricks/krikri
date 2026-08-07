@@ -54,6 +54,12 @@ module CrystalPlay
     # exist.
     property loop_subelements_list : String?
     property loop_subelements_key : String?
+    # loop_control.loop_var - the variable name the loop item is exposed
+    # under (Ansible default "item"). Roles like dev-sec os_hardening set
+    # `loop_control: { loop_var: mount }` so an include_tasks/loop can refer
+    # to `mount.path`, `mount.owner`, etc. rather than always `item`. Kept
+    # verbatim and resolved at execution time; nil means the default "item".
+    property loop_var : String?
     # until: / retries: / delay: - retry a task until a condition passes.
     property until_condition : String?
     property retries : Int32
@@ -160,6 +166,7 @@ module CrystalPlay
       @loop_flattened = nil
       @loop_subelements_list = nil
       @loop_subelements_key = nil
+      @loop_var = nil
       @until_condition = nil
       @retries = 3
       @delay = 5
@@ -592,7 +599,7 @@ module CrystalPlay
                       "diff", "become", "become_user", "tags", "with_items", "loop",
                       "with_dict", "with_fileglob", "with_first_found", "with_nested", "with_sequence",
                       "with_community.general.flattened", "with_subelements", "with_indexed_items", "until", "retries", "delay",
-                      "notify", "changed_when", "failed_when", "delegate_to", "run_once",
+                      "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "run_once",
                       "async", "poll", "vars",
                       "block", "rescue", "always", "import_tasks", "include_tasks", "include_role",
                       "meta", "include_vars"]
@@ -728,6 +735,14 @@ module CrystalPlay
         # to resolve once the variable context exists.
         task.loop_template_kind = template_source[0]
         task.loop_template = template_source[1]
+      end
+
+      # loop_control.loop_var - exposes the loop item under a custom name
+      # (Ansible default "item"). dev-sec os_hardening uses
+      # `loop_control: { loop_var: mount }` so an include_tasks/loop drives
+      # tasks that read `mount.path`, `mount.owner`, etc.
+      if loop_control = task_hash["loop_control"]?.try(&.as_h?)
+        task.loop_var = loop_control["loop_var"]?.try(&.as_s?)
       end
 
       # Parse until / retries / delay
@@ -927,6 +942,13 @@ module CrystalPlay
         task.loop_items = loop_yaml.map { |item| JSON.parse(item.to_json) }
       elsif with_items = task_hash["with_items"]?.try(&.as_a?)
         task.loop_items = with_items.map { |item| JSON.parse(item.to_json) }
+      end
+
+      # loop_control.loop_var - expose each item under the custom name
+      # (e.g. `mount` instead of `item`), as dev-sec os_hardening does for
+      # its per-mountpoint include_tasks loop.
+      if loop_control = task_hash["loop_control"]?.try(&.as_h?)
+        task.loop_var = loop_control["loop_var"]?.try(&.as_s?)
       end
 
       task

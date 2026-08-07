@@ -189,6 +189,30 @@ describe CrystalPlay::PlaybookParser do
       task.loop_template.should eq("{{ my_list | default([]) | map(attribute='path') | list }}")
     end
 
+    it "parses loop_control.loop_var onto the task" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.include_tasks: inner.yml
+          loop_control:
+            loop_var: mount
+          loop:
+            - { path: /boot }
+        YAML
+
+      task.loop_var.should eq("mount")
+    end
+
+    it "leaves loop_var nil when no loop_control is given (defaults to item)" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "hi"
+          loop: [a, b]
+        YAML
+
+      task.loop_var.should be_nil
+    end
+
     it "parses with_dict: into key/value loop_items" do
       task = single_task(<<-YAML)
         - name: t
