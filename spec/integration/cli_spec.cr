@@ -1,4 +1,5 @@
 require "../spec_helper"
+require "file_utils"
 
 # These specs drive the compiled `bin/crystal-ansible` binary against the
 # example playbooks in testing/*.yml, in --check mode, using an inventory
@@ -89,6 +90,17 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("var loop item: blue")
     output.should contain("var dict: one=1")
     output.should contain("var dict: two=2")
+  end
+
+  it "counts a looped task once in the recap (not once per item), matching Ansible" do
+    # Real ansible-playbook aggregates a looped task into a single recap
+    # line: a 3-item create loop reports ok=1 changed=1, never ok=3.
+    # This guards the loop-aggregation parity fix in finish_looped_task.
+    FileUtils.rm_rf("/tmp/crystal-play-loop-count")
+    status, output = run_playbook("test-loop-counting.yml", [] of String)
+
+    status.success?.should be_true
+    output.should contain(%(localhost            : ok=1  changed=1  failed=0))
   end
 
   it "runs a role: meta dependency first, applies defaults/vars/invocation-var precedence, resolves src: relative to the role's files/ dir, fires role handlers, then runs the play's own tasks" do

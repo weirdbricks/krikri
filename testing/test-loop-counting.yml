@@ -1,0 +1,12 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: no
+  tasks:
+    # A 3-item loop that creates directories: counts as ok=1, changed=1
+    # in the recap (Ansible aggregates a looped task once, not per item).
+    - name: create three dirs in a loop
+      ansible.builtin.file:
+        path: "/tmp/crystal-play-loop-count/{{ item }}"
+        state: directory
+      loop: [one, two, three]

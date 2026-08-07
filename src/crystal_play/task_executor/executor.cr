@@ -868,7 +868,14 @@ module CrystalPlay
     # "skipping: [...]" and bumping the skipped counter when it's false -
     # shared by execute_task_once and the batch-group trigger path
     # (execute_batch_group) so both interpret when: identically.
-    private def when_passes?(task : Task, vars_context : Hash(String, JSON::Any), host : Host, item_label : String? = nil, shared : VarSubstitutor? = nil) : Bool
+    #
+    # `defer_stats`: when true (a loop item), the skipped counter is NOT
+    # bumped here. Real Ansible counts a looped task once in the recap, not
+    # once per skipped item - loop-aggregation happens once in
+    # finish_looped_task, so a loop that ends up with zero executed items is
+    # recorded as a single "skipped". Deferring avoids per-item skipped
+    # inflation (a 5-item all-skipped loop must be skipped=1, not skipped=5).
+    private def when_passes?(task : Task, vars_context : Hash(String, JSON::Any), host : Host, item_label : String? = nil, shared : VarSubstitutor? = nil, defer_stats : Bool = false) : Bool
       return true unless when_condition = task.when_condition
 
       substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
@@ -879,7 +886,7 @@ module CrystalPlay
       connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
       suffix = item_label ? " => (item=#{item_label})" : ""
       puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
-      @results[host.name]["skipped"] += 1
+      @results[host.name]["skipped"] += 1 unless defer_stats
       false
     end
 
@@ -1112,11 +1119,12 @@ module CrystalPlay
       vars_context : Hash(String, JSON::Any),
       item_label : String? = nil,
       exec_host : Host = host,
-      shared : VarSubstitutor? = nil
+      shared : VarSubstitutor? = nil,
+      defer_loop_stats : Bool = false
     ) : JSON::Any?
       substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
-      return nil unless when_passes?(task, vars_context, host, item_label, shared: substitutor)
+      return nil unless when_passes?(task, vars_context, host, item_label, shared: substitutor, defer_stats: defer_loop_stats)
       substituted_params = substitute_task_params(task.params, substitutor)
       substituted_params = resolve_role_relative_src(task, substituted_params)
       # become_user: goes through the same {{ }} substitution as any
@@ -1348,7 +1356,7 @@ module CrystalPlay
                        loop_items.map do |item|
                          vars_context = base_vars_context.dup
                          vars_context["item"] = item
-                         execute_task_once(task, host, vars_context, item_label: item_display(item), exec_host: exec_host)
+                         execute_task_once(task, host, vars_context, item_label: item_display(item), exec_host: exec_host, defer_loop_stats: true)
                        end
                      end
 
@@ -1401,7 +1409,7 @@ module CrystalPlay
         # read that same one.
         item_substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
-        next unless when_passes?(task, vars_context, host, item_label: item_display(item), shared: item_substitutor)
+        next unless when_passes?(task, vars_context, host, item_label: item_display(item), shared: item_substitutor, defer_stats: true)
 
         case outcome = prepare_batch_step(task, host, vars_context, shared: item_substitutor)
         when JSON::Any
@@ -1446,10 +1454,12 @@ module CrystalPlay
       any_changed = false
       any_failed = false
 
+      executed_count = 0
       loop_items.each_with_index do |item, idx|
         result = item_results[idx]
         next unless result
 
+        executed_count += 1
         merge_ansible_facts(host, result)
 
         changed = result["changed"]?.try(&.as_bool) || false
@@ -1458,11 +1468,27 @@ module CrystalPlay
         any_failed ||= failed
 
         ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item))
-        ResultDisplay.update_stats(@results[host.name], result, task.ignore_errors)
 
         result_hash = result.as_h.dup
         result_hash["item"] = item
         results << JSON::Any.new(result_hash)
+      end
+
+      # Aggregate the whole loop into ONE recap entry, matching real
+      # Ansible: a looped task counts once, not once per item.
+      #   - 0 items executed (all skipped, or an empty loop) -> skipped=1
+      #   - >=1 item executed -> ok=1 (plus changed=1 if any item changed),
+      #     or failed=1 if any item failed (honoring ignore_errors).
+      # The per-item `skipping:`/`changed:`/`ok:` lines above are display
+      # only; Ansible prints those but sums the task once in the recap.
+      if executed_count == 0
+        @results[host.name]["skipped"] += 1
+      else
+        aggregate_result = JSON.parse({
+          "changed" => JSON::Any.new(any_changed),
+          "failed"  => JSON::Any.new(any_failed),
+        }.to_json)
+        ResultDisplay.update_stats(@results[host.name], aggregate_result, task.ignore_errors)
       end
 
       if any_changed && (notify_list = task.notify)
