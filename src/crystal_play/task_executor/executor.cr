@@ -457,7 +457,15 @@ module CrystalPlay
       # way.
       applies, batched_result = try_batched_result(task, host, vars_context, exec_host)
       if applies
-        return unless batched_result
+        # A when:-skipped batch member returns {true, nil}: execute_batch_group
+        # deferred its print and counter (defer_display/defer_stats) so the
+        # group's skips aren't all emitted at once during batch-build; report
+        # this member's skip here, in proper task order, exactly as the solo
+        # path does via when_passes?.
+        if batched_result.nil?
+          print_batched_skip(task, host, vars_context)
+          return
+        end
         finish_single_task(task, host, batched_result)
         return
       end
@@ -875,7 +883,7 @@ module CrystalPlay
     # finish_looped_task, so a loop that ends up with zero executed items is
     # recorded as a single "skipped". Deferring avoids per-item skipped
     # inflation (a 5-item all-skipped loop must be skipped=1, not skipped=5).
-    private def when_passes?(task : Task, vars_context : Hash(String, JSON::Any), host : Host, item_label : String? = nil, shared : VarSubstitutor? = nil, defer_stats : Bool = false) : Bool
+    private def when_passes?(task : Task, vars_context : Hash(String, JSON::Any), host : Host, item_label : String? = nil, shared : VarSubstitutor? = nil, defer_stats : Bool = false, defer_display : Bool = false) : Bool
       return true unless when_condition = task.when_condition
 
       substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
@@ -883,11 +891,38 @@ module CrystalPlay
 
       return true if ConditionalEvaluator.evaluate(substituted_condition, vars_context)
 
-      connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-      suffix = item_label ? " => (item=#{item_label})" : ""
-      puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
-      @results[host.name]["skipped"] += 1 unless defer_stats
+      # defer_stats: loop items and batch members pass this to only skip
+      # the *counter* bump (aggregation happens once at the task level).
+      # It does NOT suppress the print: loop items must still print their
+      # per-item `skipping: [host] => (item=x)` line.
+      unless defer_stats
+        @results[host.name]["skipped"] += 1
+      end
+
+      # defer_display: additionally suppress the print, used by batch
+      # members. execute_batch_group evaluates every member's when: while
+      # building the group's single SSH round trip - printing each "skipping:"
+      # there would emit all the group's skips at once, under the first
+      # member's banner, instead of each under its own. The member's skip
+      # print is deferred and emitted by execute_task when it consumes the
+      # nil (skipped) result from the batch cache, in proper task order.
+      unless defer_display
+        connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+        suffix = item_label ? " => (item=#{item_label})" : ""
+        puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
+      end
       false
+    end
+
+    # Reports a when:-skipped batch member: the print and skipped counter
+    # were deferred by execute_batch_group (defer_display/defer_stats) so
+    # the group's skips don't all appear during batch-build; this emits
+    # them here, as execute_task consumes each member in task order. Mirrors
+    # what when_passes? does for the solo path.
+    private def print_batched_skip(task : Task, host : Host, vars_context : Hash(String, JSON::Any)) : Nil
+      connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+      puts "skipping: [#{connection_host}]".colorize(:cyan)
+      @results[host.name]["skipped"] += 1
     end
 
     # Populates @task_group for *tasks* (a flat task list - a play's own
@@ -1000,7 +1035,13 @@ module CrystalPlay
         # both read this member's identical vars_context.
         member_substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
-        unless when_passes?(task, vars_context, host, shared: member_substitutor)
+        # defer_stats + defer_display: a when:-skipped batch member has its
+        # skipped counter AND its "skipping:" print both deferred - the
+        # counter aggregates at the task level, and the print is emitted by
+        # execute_task when it consumes this nil from the cache, so each
+        # group member's skip prints under its own banner rather than all
+        # at once here during batch-build.
+        unless when_passes?(task, vars_context, host, shared: member_substitutor, defer_stats: true, defer_display: true)
           cache[task] = {nil, vars_context}
           next
         end
