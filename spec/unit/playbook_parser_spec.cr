@@ -169,6 +169,26 @@ describe CrystalPlay::PlaybookParser do
       task.loop_items.try(&.map(&.as_s)).should eq(["a", "b", "c"])
     end
 
+    it "parses a single-element-array with_items holding a template as a loop template" do
+      # `with_items: ["{{ some_list | map(...) | ... }}"]` is the shape roles
+      # (dev-sec os_hardening's yum gpg-check) use; Ansible flattens one
+      # level so the template (expanding to a list) becomes the items. It
+      # must be captured as a runtime-resolved loop template, not treated as
+      # one literal item equal to the "{{ ... }}" string.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          with_items:
+            - "{{ my_list | default([]) | map(attribute='path') | list }}"
+        YAML
+
+      task.loop_items.should be_nil
+      task.loop_template_kind.should eq("with_items")
+      task.loop_template.should eq("{{ my_list | default([]) | map(attribute='path') | list }}")
+    end
+
     it "parses with_dict: into key/value loop_items" do
       task = single_task(<<-YAML)
         - name: t

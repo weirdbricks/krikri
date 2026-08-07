@@ -97,7 +97,15 @@ module CrystalPlay
     end
 
     private def self.structural_or_dynamic?(task : Task) : Bool
-      task.block? || task.include_tasks? || task.include_role?
+      # include_vars: and meta: are controller-side pseudo-modules (they
+      # read YAML / act on execution flow - no plugin binary, nothing runs on
+      # the target), so like include_tasks/include_role they must never be
+      # folded into a batched SSH script. Previously an include_vars: task
+      # was treated as batchable, the batch script tried to execute
+      # `_include_vars` as a plugin binary on the target, and the whole
+      # batch (and run) failed with "Plugin binary not found: _include_vars".
+      task.block? || task.include_tasks? || task.include_role? ||
+        task.include_vars? || task.meta?
     end
 
     private def self.needs_controller_control_flow?(task : Task) : Bool

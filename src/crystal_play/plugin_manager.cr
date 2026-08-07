@@ -188,7 +188,7 @@ module CrystalPlay
           next
         end
 
-        next if task.include_tasks? || task.include_role?
+        next if task.include_tasks? || task.include_role? || task.include_vars?
 
         simple_name = task.module_name.sub(/^(ansible\.(builtin|legacy|posix)|community\.(general|docker|mysql|postgresql))\./, "")
         required.add(simple_name)

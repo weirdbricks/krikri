@@ -18,6 +18,11 @@ Layout/TrailingWhitespace:
   - plugins/file.cr
   - plugins/service.cr
   - plugins/systemd.cr
+  - plugins/pam_limits.cr
+  - plugins/selinux.cr
+  - plugins/package_facts.cr
+  - plugins/replace.cr
+  - plugins/getent.cr
   - plugins/package.cr
   - plugins/dnf.cr
   - plugins/command.cr
@@ -77,6 +82,11 @@ Lint/Formatting:
   - plugins/file.cr
   - plugins/service.cr
   - plugins/systemd.cr
+  - plugins/pam_limits.cr
+  - plugins/selinux.cr
+  - plugins/package_facts.cr
+  - plugins/replace.cr
+  - plugins/getent.cr
   - plugins/package.cr
   - plugins/dnf.cr
   - plugins/command.cr
@@ -135,6 +145,11 @@ Metrics/CyclomaticComplexity:
   - plugins/shell.cr
   - plugins/service.cr
   - plugins/systemd.cr
+  - plugins/pam_limits.cr
+  - plugins/selinux.cr
+  - plugins/package_facts.cr
+  - plugins/replace.cr
+  - plugins/getent.cr
   - plugins/package.cr
   - plugins/dnf.cr
   - plugins/command.cr
@@ -182,6 +197,11 @@ Naming/PredicateName:
   - plugins/file.cr
   - plugins/service.cr
   - plugins/systemd.cr
+  - plugins/pam_limits.cr
+  - plugins/selinux.cr
+  - plugins/package_facts.cr
+  - plugins/replace.cr
+  - plugins/getent.cr
   - plugins/package.cr
   - plugins/dnf.cr
   - plugins/command.cr
@@ -203,6 +223,11 @@ Naming/QueryBoolMethods:
   - plugins/file.cr
   - plugins/service.cr
   - plugins/systemd.cr
+  - plugins/pam_limits.cr
+  - plugins/selinux.cr
+  - plugins/package_facts.cr
+  - plugins/replace.cr
+  - plugins/getent.cr
   - plugins/package.cr
   - plugins/command.cr
   - src/crystal_play/base_action_plugin.cr
@@ -232,6 +257,11 @@ Lint/NotNil:
   Excluded:
   - plugins/lineinfile.cr
   - plugins/systemd.cr
+  - plugins/pam_limits.cr
+  - plugins/selinux.cr
+  - plugins/package_facts.cr
+  - plugins/replace.cr
+  - plugins/getent.cr
   - crystal-play.cr
   - src/crystal_play/playbook_parser.cr
   - src/crystal_play.cr

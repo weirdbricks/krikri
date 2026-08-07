@@ -739,7 +739,27 @@ module CrystalPlay
       return nil unless kind && template
 
       value = resolve_template_value(template, vars_context)
-      return nil unless value
+
+      # A complex template - `with_items: "{{ some_list | default([]) |
+      # map(attribute='path') | difference(another | list) }}"` (used by
+      # dev-sec os_hardening's yum gpg-check tasks) - isn't a plain variable
+      # reference, so resolve_template_value returns nil. Evaluate it as a
+      # filter chain via ExpressionEvaluator instead, then parse the
+      # resulting (possibly empty) list into loop items. Without this the
+      # loop resolved to nil, the task ran once, and `item` was the literal
+      # `{{ ... }}` template string.
+      unless value
+        # Strip any {{ }} wrapper around the template expression, then
+        # hand the bare expression to the filter-chain evaluator.
+        bare = template.strip
+        if bare.starts_with?("{{") && bare.ends_with?("}}")
+          bare = bare[2..-3].strip
+        end
+        result = expression_evaluator_for(vars_context).evaluate(bare)
+        parsed = parse_list_result(result, vars_context)
+        return parsed unless parsed.nil?
+        return nil
+      end
 
       case kind
       when "loop", "with_items"
@@ -758,6 +778,24 @@ module CrystalPlay
         return nil unless list
         LoopResolver.with_indexed_items(list)
       end
+    end
+
+    # A shared ExpressionEvaluator for a given vars context (used to resolve
+    # a loop template that carries a filter chain).
+    private def expression_evaluator_for(vars_context : Hash(String, JSON::Any))
+      VariableSubstitutor::ExpressionEvaluator.new(vars_context)
+    end
+
+    # Parse *result* (the string output of evaluating a loop template) into a
+    # list of JSON items. The evaluator stringifies, so an already-JSON
+    # encoded list comes back as JSON text and is parsed back here; any other
+    # emissions are treated as unresolvable (nil), matching a nil lookup.
+    private def parse_list_result(result : String, vars_context : Hash(String, JSON::Any)) : Array(JSON::Any)?
+      return nil if result.empty?
+      text = result.strip
+      parsed = JSON.parse(text) rescue nil
+      return nil unless parsed
+      parsed.as_a?
     end
 
     # with_subelements(list, key): resolve the *list* template (usually a

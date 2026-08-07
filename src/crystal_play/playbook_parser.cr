@@ -275,6 +275,7 @@ module CrystalPlay
       "ansible.builtin.template",
       "ansible.builtin.file",
       "ansible.builtin.lineinfile",
+      "ansible.builtin.replace",
       "ansible.builtin.service",
       "ansible.builtin.systemd",
       "ansible.builtin.shell",
@@ -283,6 +284,10 @@ module CrystalPlay
       "ansible.builtin.package",
       "ansible.builtin.debug",
       "ansible.builtin.command",
+      "ansible.builtin.setup",
+      "ansible.builtin.package_facts",
+      "ansible.posix.selinux",
+      "community.general.pam_limits",
       "ansible.builtin.user",
       "ansible.builtin.group",
       "ansible.builtin.git",
@@ -290,6 +295,7 @@ module CrystalPlay
       "ansible.posix.authorized_key",
       "ansible.builtin.stat",
       "ansible.builtin.find",
+      "ansible.builtin.getent",
       "community.general.archive",
       "ansible.builtin.unarchive",
       "ansible.builtin.yum_repository",
@@ -530,9 +536,22 @@ module CrystalPlay
       LOOP_TEMPLATE_KEYS.each do |key|
         value = task_hash[key]?
         next unless value
-        str = value.as_s?
-        next unless str && str.includes?("{{")
-        return {key, str}
+        # Direct scalar form: `with_items: "{{ some_list | ... }}"`
+        if str = value.as_s?
+          return {key, str} if str.includes?("{{")
+          next
+        end
+        # Single-element array form: `with_items: ["{{ some_list | ... }}"]`.
+        # Real Ansible flattens with_items one level, so a one-element list
+        # holding a template that expands to a list becomes that list.
+        # dev-sec os_hardening's yum gpg-check writes it this way, with a
+        # `map(attribute='path')` / `difference(...)` filter chain inside.
+        if arr = value.as_a?
+          if arr.size == 1
+            inner = arr.first?.try(&.as_s?)
+            return {key, inner} if inner && inner.includes?("{{")
+          end
+        end
       end
       nil
     end
@@ -650,7 +669,17 @@ module CrystalPlay
 
       # Parse loop / with_* (checked in this priority order; first match wins,
       # matching how Ansible only honors one loop source per task)
-      if loop_yaml = task_hash["loop"]?.try(&.as_a?)
+      #
+      # Single-element-array template form first: `with_items: ["{{ list | ... }}"]`
+      # (or loop:) is how roles write a one-item literal array holding a
+      # template that expands to a list - Ansible flattens with_items one
+      # level, so it becomes that list. Must be checked before the literal
+      # array branch below, which would otherwise treat the array as one
+      # literal item equal to the "{{ ... }}" string.
+      if template_loop = find_loop_template(task_hash)
+        task.loop_template_kind = template_loop[0]
+        task.loop_template = template_loop[1]
+      elsif loop_yaml = task_hash["loop"]?.try(&.as_a?)
         task.loop = loop_yaml.map { |item| JSON.parse(item.to_json) }
         task.loop_items = task.loop
       elsif with_items = task_hash["with_items"]?.try(&.as_a?)
