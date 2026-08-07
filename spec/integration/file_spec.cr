@@ -71,12 +71,20 @@ describe "file plugin" do
       result["failed"].as_bool.should be_true
     end
 
-    it "fails when the path is a directory, not a regular file" do
+    it "updates a directory's attributes under its default state: file" do
+      # Real Ansible's file module applies owner/group/mode to whatever type
+      # the path already is - a directory at a state: file task (no explicit
+      # state: directory) is updated, not an error. dev-sec os_hardening
+      # loops such a task over /etc/crontab plus the /etc/cron.* directories.
       path = tmp_path("adir")
       Dir.mkdir_p(path)
-      result = PluginSpecHelper.run("file", {"path" => path, "state" => "file"})
+      File.chmod(path, 0o755)
 
-      result["failed"].as_bool.should be_true
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "file", "mode" => "0700"})
+
+      result["failed"].as_bool.should be_false
+      result["changed"].as_bool.should be_true
+      (File.info(path, follow_symlinks: false).permissions.value & 0o777).should eq(0o700)
     end
 
     it "updates mode on an existing file and is idempotent afterward" do

@@ -42,6 +42,18 @@ module CrystalPlay
     # resolve at execution time (mirrors loop_fileglob).
     property loop_template_kind : String?
     property loop_template : String?
+    # with_community.general.flattened sources, kept as their raw task
+    # strings. Each is ordinarily a `{{ some_list_var }}` reference to a
+    # list; like loop_fileglob/loop_first_found they can only be resolved at
+    # execution time once the variable context exists, so the parser stores
+    # them verbatim and TaskExecutor flattens the resolved lists.
+    property loop_flattened : Array(String)?
+    # with_subelements: the raw list template (usually a `{{ registered_var
+    # .results }}` reference) and the subelement key. Both kept verbatim and
+    # resolved at execution time once the variable context + registered vars
+    # exist.
+    property loop_subelements_list : String?
+    property loop_subelements_key : String?
     # until: / retries: / delay: - retry a task until a condition passes.
     property until_condition : String?
     property retries : Int32
@@ -145,6 +157,9 @@ module CrystalPlay
       @loop_first_found_skip = false
       @loop_template_kind = nil
       @loop_template = nil
+      @loop_flattened = nil
+      @loop_subelements_list = nil
+      @loop_subelements_key = nil
       @until_condition = nil
       @retries = 3
       @delay = 5
@@ -261,6 +276,7 @@ module CrystalPlay
       "ansible.builtin.file",
       "ansible.builtin.lineinfile",
       "ansible.builtin.service",
+      "ansible.builtin.systemd",
       "ansible.builtin.shell",
       "ansible.builtin.apt",
       "ansible.builtin.dnf",
@@ -556,7 +572,7 @@ module CrystalPlay
       special_keys = ["name", "when", "register", "ignore_errors", "check_mode",
                       "diff", "become", "become_user", "tags", "with_items", "loop",
                       "with_dict", "with_fileglob", "with_first_found", "with_nested", "with_sequence",
-                      "with_indexed_items", "until", "retries", "delay",
+                      "with_community.general.flattened", "with_subelements", "with_indexed_items", "until", "retries", "delay",
                       "notify", "changed_when", "failed_when", "delegate_to", "run_once",
                       "async", "poll", "vars",
                       "block", "rescue", "always", "import_tasks", "include_tasks", "include_role",
@@ -668,6 +684,14 @@ module CrystalPlay
                              else
                                [with_fileglob.as_s]
                              end
+      elsif with_flattened = task_hash["with_community.general.flattened"]?.try(&.as_a?)
+        # Each source is normally a `{{ var }}` reference to a list, so store
+        # them verbatim and let TaskExecutor resolve + flatten at execution
+        # time once the variable context exists (see resolve_loop_flattened).
+        task.loop_flattened = with_flattened.map { |item| safe_yaml_to_string(item) }
+      elsif with_subelements = task_hash["with_subelements"]?.try(&.as_a?)
+        task.loop_subelements_list = with_subelements[0]?.try { |v| safe_yaml_to_string(v) }
+        task.loop_subelements_key = with_subelements[1]?.try { |v| safe_yaml_to_string(v) }
       elsif template_source = find_loop_template(task_hash)
         # loop:/with_items:/with_dict:/with_nested:/with_indexed_items: given
         # as a "{{ variable }}" reference: not a literal array/hash at parse

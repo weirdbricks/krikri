@@ -77,8 +77,10 @@ module CrystalPlay
     end
 
     def execute : PluginResult
-      # Get path (required)
-      path = @params["path"]?
+      # Get path (required). Real Ansible's file module accepts `path`,
+      # `dest`, and `name` interchangeably; dest is what many roles write
+      # (dev-sec os_hardening's rhosts/netrc cleanup uses `dest:`).
+      path = @params["path"]? || @params["dest"]? || @params["name"]?
       unless path
         return PluginResult.new(
           changed: false,
@@ -199,12 +201,42 @@ module CrystalPlay
         )
       end
 
-      # Check if it's actually a regular file (not directory or link)
+      # Check if it's actually a regular file (not directory or link). A
+      # directory at a path where the task did not set state: directory is
+      # still valid - real Ansible's file module updates a directory's
+      # attributes under its default state: file (dev-sec os_hardening
+      # loops a mode:/owner:/group: task over a list that mixes /etc/crontab
+      # and /etc/cron.* directories), so treat that as a directory
+      # attribute update rather than an error. A symlink, on the other
+      # hand, is genuinely not something the default file state manages.
+      if Dir.exists?(path)
+        changed = update_attributes_if_needed(path, is_directory: true)
+
+        if @check_mode
+          return PluginResult.new(
+            changed: changed,
+            failed: false,
+            msg: changed ? "Would update directory attributes (check mode)" : "Directory already correct (check mode)"
+          )
+        end
+
+        if changed
+          apply_file_attributes(path, recursive: is_true?(@params["recurse"]?))
+        end
+
+        return PluginResult.new(
+          changed: changed,
+          failed: false,
+          msg: "Directory attributes updated",
+          path: path
+        )
+      end
+
       unless File.file?(path)
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Path exists but is not a regular file: #{path}"
+          msg: "Path exists but is neither a regular file nor a directory: #{path}"
         )
       end
 

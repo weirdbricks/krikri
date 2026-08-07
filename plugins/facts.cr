@@ -48,18 +48,19 @@ rescue
 end
 
 # Gather all system facts
-def gather_facts : Hash(String, String | Int64 | Hash(String, String) | Array(String))
-  facts = {} of String => (String | Int64 | Hash(String, String) | Array(String))
-  
+def gather_facts : Hash(String, String | Int64 | Hash(String, String) | Array(String) | Array(Hash(String, String)))
+  facts = {} of String => (String | Int64 | Hash(String, String) | Array(String) | Array(Hash(String, String)))
+
   gather_hostname(facts)
   gather_os_facts(facts)
   gather_network_facts(facts)
   gather_hardware_facts(facts)
+  gather_mount_facts(facts)
   gather_python_facts(facts)
   gather_user_facts(facts)
   gather_environment_facts(facts)
   gather_date_time_facts(facts)
-  
+
   facts
 end
 
@@ -121,6 +122,27 @@ def gather_os_facts(facts)
   
   facts["ansible_system"] = "Linux"
 
+  # service_mgr - which init system is PID 1. Real Ansible reports this
+  # separately from os_family, and modern roles gate systemd-only tasks on
+  # it (dev-sec os_hardening's ctrl-alt-del + coredump tasks all do).
+  # systemd is detectable by its /run/systemd/system marker (present when
+  # systemd is PID 1, absent under sysvinit/upstart/openrc even if the
+  # systemctl binary exists).
+  if Dir.exists?("/run/systemd/system")
+    facts["ansible_service_mgr"] = "systemd"
+  elsif Dir.exists?("/etc/openrc")
+    facts["ansible_service_mgr"] = "openrc"
+  elsif File.exists?("/sbin/upstart") || Dir.exists?("/etc/init")
+    facts["ansible_service_mgr"] = "upstart"
+  else
+    facts["ansible_service_mgr"] = "sysvinit"
+  end
+
+  # virtualization_type - whether we're inside a container/VM, which roles
+  # use to skip kernel-module and sysctl work that can't apply there
+  # (os_hardening's modprobe/sysctl tasks do exactly this).
+  facts["ansible_virtualization_type"] = detect_virtualization
+
   utsname = uninitialized LibC::Utsname
   uname_ok = LibC.uname(pointerof(utsname)) == 0
 
@@ -140,6 +162,54 @@ def gather_os_facts(facts)
   userspace = capture("rpm", ["--eval", "%{_arch}"]) if userspace.empty?
   userspace = arch if userspace.empty?
   facts["ansible_userspace_architecture"] = userspace unless userspace.empty?
+end
+
+# Detect whether we're running inside a container/VM, following the same
+# heuristics real Ansible's fact gathering uses. Returns the virtualization
+# type name (e.g. "docker", "lxc", "kvm", "xen"), or "None" (the exact
+# string real Ansible uses) when running on bare metal / a plain host.
+def detect_virtualization : String
+  # Container markers first - the cheapest, most unambiguous signals.
+  return "docker" if File.exists?("/.dockerenv") || File.exists?("/.dockerinit")
+  return "lxc" if File.exists?("/var/lib/lxc")
+
+  begin
+    if File.exists?("/proc/1/cgroup")
+      # systemd containers expose the container type in the cgroup list;
+      # cgroup v1 names each container subsystem after the type (docker,
+      # lxc), cgroup v2 keeps the last component name too. Look for the
+      # well-known ones.
+      cgroup = File.read("/proc/1/cgroup")
+      return "docker" if cgroup.includes?("docker")
+      return "lxc" if cgroup.includes?("lxc")
+      return "openvz" if cgroup.includes?("openvz")
+    end
+  rescue
+    # Ignore read failures; fall through to the sysfs/command probes.
+  end
+
+  # systemd-detect-virt is authoritative for systemd hosts; the alternatives
+  # below cover the non-systemd cases.
+  sv = capture("systemd-detect-virt")
+  case sv
+  when "kvm", "qemu", "xen", "vmware", "oracle", "microsoft", "amazon", "zvm", "powervm", "parallels", "bhyve", "uml", "docker", "lxc", "openvz", "podman", "wsl"
+    return sv
+  when "none"
+    return "None"
+  end
+
+  # Non-systemd fallbacks: the DMI chassis type for VMs, and /proc/self for
+  # a few container runtimes that don't leave the markers above.
+  dmi = capture("cat", ["/sys/class/dmi/id/product_name"])
+  if dmi.includes?("KVM") || dmi.includes?("QEMU")
+    return "kvm"
+  elsif dmi.includes?("VMware")
+    return "vmware"
+  elsif dmi.includes?("VirtualBox")
+    return "virtualbox"
+  end
+
+  "None"
 end
 
 def parse_os_release : Hash(String, String)?
@@ -221,6 +291,62 @@ def gather_hardware_facts(facts)
       facts["ansible_processor"] = [match[1].strip]
     end
   end
+end
+
+# Mount facts - a list of dicts, one per mounted filesystem, matching real
+# Ansible's ansible_mounts shape (mount/device/fstype/opts are the fields
+# roles like os_hardening read). Parsed from /proc/self/mountinfo rather
+# than forking `mount`, and bounded to real bind/devtmpfs noise that roles
+# filter on themselves.
+def gather_mount_facts(facts)
+  mounts = [] of Hash(String, String)
+
+  begin
+    File.read_lines("/proc/self/mountinfo").each do |line|
+      # Format: mountID parentID major:minor root mountpoint options ...
+
+      fields = line.split(" ")
+      next if fields.size < 5
+
+      # fields[4] is the mountpoint; the fstype and source sit after the
+      # " - " separator (mountinfo: `... - fstype source superopts ...`).
+      sep = fields.index("-")
+      next unless sep
+
+      fstype = fields[sep + 1]?
+      source = fields[sep + 2]?
+      next if fstype.nil? || source.nil?
+
+      # mountinfo options are comma-joined with escaping; keep them raw -
+      # roles only compare/map on mount/fstype, not individual options here.
+      opts = fields[5]?
+
+      mounts << {
+        "mount"  => fields[4],
+        "device" => source,
+        "fstype" => fstype,
+        "opts"   => opts || "",
+      }
+    end
+  rescue
+    # If mountinfo is unreadable (unusual), fall back to /etc/mtab.
+    begin
+      File.read_lines("/etc/mtab").each do |line|
+        parts = line.split(/\s+/)
+        next unless parts.size >= 3
+        mounts << {
+          "mount"  => parts[1],
+          "device" => parts[0],
+          "fstype" => parts[2],
+          "opts"   => parts[3]? || "",
+        }
+      end
+    rescue
+      # Nothing - leave mounts empty rather than fail the whole gather.
+    end
+  end
+
+  facts["ansible_mounts"] = mounts unless mounts.empty?
 end
 
 def gather_python_facts(facts)

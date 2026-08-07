@@ -160,13 +160,59 @@ module CrystalPlay
       )
     end
 
-    # Parse command string into command and arguments
-    # Simple implementation - just splits on spaces
-    # TODO: Handle quoted arguments properly
+    # Parse command string into command and arguments, honoring quoted
+    # arguments. A naive space-split mangles a quoted arg like
+    # `awk -F: '{print $1}' /etc/passwd` (used by dev-sec os_hardening)
+    # into three broken pieces - awk then gets `'{print` as its program and
+    # fails. Real Ansible's command module delivers the quoted text as one
+    # argv element, so a quoted argument here is kept whole and the quotes
+    # (single or double) stripped, matching how Process.new would have
+    # received it under a shell-less invocation.
     private def parse_command(cmd : String) : Array(String)
-      # Simple split - works for most cases
-      # For complex commands with quotes, users should use shell module
-      cmd.split(/\s+/).reject(&.empty?)
+      parts = [] of String
+      current = String::Builder.new
+      in_single = false
+      in_double = false
+      started = false
+
+      cmd.each_char do |char|
+        if in_single
+          if char == '\''
+            in_single = false
+            started = true
+          else
+            current << char
+          end
+        elsif in_double
+          if char == '"'
+            in_double = false
+            started = true
+          else
+            current << char
+          end
+        else
+          case char
+          when '\''
+            in_single = true
+            started = true
+          when '"'
+            in_double = true
+            started = true
+          when ' ', '\t', '\n'
+            if started
+              parts << current.to_s
+              current = String::Builder.new
+              started = false
+            end
+          else
+            current << char
+            started = true
+          end
+        end
+      end
+
+      parts << current.to_s if started
+      parts
     end
 
     # Helper: Check if parameter is truthy

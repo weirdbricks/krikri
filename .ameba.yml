@@ -17,6 +17,7 @@ Layout/TrailingWhitespace:
   - plugins/shell.cr
   - plugins/file.cr
   - plugins/service.cr
+  - plugins/systemd.cr
   - plugins/package.cr
   - plugins/dnf.cr
   - plugins/command.cr
@@ -75,6 +76,7 @@ Lint/Formatting:
   - plugins/shell.cr
   - plugins/file.cr
   - plugins/service.cr
+  - plugins/systemd.cr
   - plugins/package.cr
   - plugins/dnf.cr
   - plugins/command.cr
@@ -125,12 +127,14 @@ Metrics/CyclomaticComplexity:
   MaxComplexity: 10
   Excluded:
   - plugins/debug.cr
+  - src/crystal_play/template_action_plugin.cr
   - plugins/apt.cr
   - plugins/copy.cr
   - plugins/facts.cr
   - plugins/template.cr
   - plugins/shell.cr
   - plugins/service.cr
+  - plugins/systemd.cr
   - plugins/package.cr
   - plugins/dnf.cr
   - plugins/command.cr
@@ -177,6 +181,7 @@ Naming/PredicateName:
   - plugins/shell.cr
   - plugins/file.cr
   - plugins/service.cr
+  - plugins/systemd.cr
   - plugins/package.cr
   - plugins/dnf.cr
   - plugins/command.cr
@@ -197,6 +202,7 @@ Naming/QueryBoolMethods:
   - plugins/shell.cr
   - plugins/file.cr
   - plugins/service.cr
+  - plugins/systemd.cr
   - plugins/package.cr
   - plugins/command.cr
   - src/crystal_play/base_action_plugin.cr
@@ -225,6 +231,7 @@ Lint/NotNil:
   Description: Identifies usage of `not_nil!` calls
   Excluded:
   - plugins/lineinfile.cr
+  - plugins/systemd.cr
   - crystal-play.cr
   - src/crystal_play/playbook_parser.cr
   - src/crystal_play.cr

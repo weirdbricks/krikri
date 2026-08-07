@@ -435,7 +435,9 @@ module CrystalPlay
       # variable context exists.
       loop_items = task.loop_items || resolve_first_found(task, host, vars_context) ||
         resolve_fileglob(task, host, vars_context, shared: shared_sub) ||
-        resolve_loop_template(task, vars_context)
+        resolve_loop_template(task, vars_context) ||
+        resolve_loop_flattened(task, vars_context) ||
+        resolve_loop_subelements(task, vars_context)
 
       if loop_items
         execute_looped_task(task, host, vars_context, loop_items, exec_host)
@@ -617,6 +619,12 @@ module CrystalPlay
       roots = [] of String
       task.role_files_dir.try { |dir| roots << dir }
       task.role_templates_dir.try { |dir| roots << dir }
+      # with_first_found is commonly used with include_vars: to pick an
+      # OS-specific vars file - dev-sec os_hardening's "Fetch OS dependent
+      # variables" does exactly this against Ubuntu.yml/Debian.yml in the
+      # role's vars/ dir. Include vars/ in the search roots so those resolve
+      # the same way resolve_include_vars_path already looks there.
+      task.role_vars_dir.try { |dir| roots << dir }
       task.include_file_dir.try { |dir| roots << dir }
       roots << Dir.current
 
@@ -750,6 +758,52 @@ module CrystalPlay
         return nil unless list
         LoopResolver.with_indexed_items(list)
       end
+    end
+
+    # with_subelements(list, key): resolve the *list* template (usually a
+    # registered `{{ var.results }}`) to a list of dicts, then yield
+    # [parent_dict, subelement] pairs for each element of each dict's `key`
+    # sub-list. Returns nil when the task has no with_subelements source.
+    private def resolve_loop_subelements(task : Task, vars_context : Hash(String, JSON::Any)) : Array(JSON::Any)?
+      key = task.loop_subelements_key
+      list_template = task.loop_subelements_list
+      return nil unless key && list_template
+
+      value = resolve_template_value(list_template, vars_context)
+      return nil unless value
+      list = value.as_a? || [] of JSON::Any
+
+      LoopResolver.with_subelements(list, key)
+    end
+
+    # with_community.general.flattened: resolve each raw source string
+    # (normally `{{ some_list_var }}`) against the variable context, collect
+    # the resulting lists, and flatten them into one loop-item list in
+    # source order. A source that resolves to a non-list (e.g. an undefined
+    # var) yields no items, matching the collection's tolerance for optional
+    # source lists. Returns the flattened items, or nil when the task has no
+    # flattened source at all.
+    private def resolve_loop_flattened(task : Task, vars_context : Hash(String, JSON::Any)) : Array(JSON::Any)?
+      sources = task.loop_flattened
+      return nil unless sources
+
+      result = [] of JSON::Any
+      sources.each do |raw|
+        value = resolve_template_value(raw, vars_context)
+        next unless value
+        if value.raw.is_a?(Array)
+          value.as_a.each do |item|
+            # Flatten one level of board nesting, matching the
+            # collection's flattened semantics for a list-of-lists source.
+            if item.raw.is_a?(Array)
+              item.as_a.each { |leaf| result << leaf }
+            else
+              result << item
+            end
+          end
+        end
+      end
+      result
     end
 
     # Resolve a bare "{{ expr }}" template (optionally with leading/trailing
@@ -1577,6 +1631,29 @@ module CrystalPlay
         included_tasks.each { |included_task| included_task.vars["item"] = item }
       end
 
+      # Propagate the *role* context (defaults/vars/dirs) into each included
+      # task. Included files - especially a role's task files like
+      # dev-sec os_hardening's hardening.yml - gate their own imports on
+      # role-default variables (e.g. `when: os_auditd_enabled | bool`).
+      # Without this, an include_tasks: inside a role produced tasks with no
+      # role_defaults, so every one of those gates resolved as undefined
+      # (false) and the whole role silently skipped. Mirror the way `vars:`
+      # and `item` are threaded through above. role_defaults/role_vars here
+      # carry the *role's* own scope (not the include statement's inline
+      # vars:, which is handled above), matching real Ansible where an
+      # included file shares the enclosing role's defaults/vars.
+      included_tasks.each do |included_task|
+        if (defaults = task.role_defaults) && !defaults.empty?
+          included_task.role_defaults = defaults
+        end
+        if (role_vars = task.role_vars) && !role_vars.empty?
+          included_task.role_vars = role_vars
+        end
+        included_task.role_files_dir = task.role_files_dir
+        included_task.role_templates_dir = task.role_templates_dir
+        included_task.role_vars_dir = task.role_vars_dir
+      end
+
       run_task_list(included_tasks, host)
     rescue ex
       fail_include(task, host, "Failed to load included tasks: #{ex.message}")
@@ -1677,11 +1754,19 @@ module CrystalPlay
       substitutor : VarSubstitutor
     ) : Hash(String, String)
       result = Hash(String, String).new
-      
+
       params.each do |key, value|
-        result[key] = substitutor.substitute(value)
+        # Dynamic variable names - `set_fact: "{{ item.key }}": "{{ item.value }}"`
+        # - carry a template in the *key*, not just the value. Real Ansible
+        # (and dev-sec os_hardening's "Set OS dependent variables", which
+        # builds os_* vars exactly this way) substitutes the key too, so a
+        # role can name facts from a loop item's fields. Substituting only
+        # the value used to register the fact under the literal key
+        # `{{ item.key }}`, making `{{ auditd_package }}` resolve undefined
+        # in the next task.
+        result[substitutor.substitute(key)] = substitutor.substitute(value)
       end
-      
+
       result
     end
 
@@ -1782,12 +1867,36 @@ module CrystalPlay
         handler,
         @registered_vars[host.name]
       )
-      
+
       # Add facts to context
       @facts[host.name].each do |key, value|
         vars_context[key] = value
       end
-      
+
+      # Evaluate the handler's own when: - real Ansible skips a notified
+      # handler whose condition is false (e.g. os_hardening's "Restart
+      # auditd via service" handler is gated on os_family == 'RedHat', so
+      # it never runs on Debian/Ubuntu). Previously a notified handler ran
+      # unconditionally, which both did the wrong work and, when that work
+      # failed (service not present on the family), could halt the play.
+      # A skipped handler is not shown as changed/failed and isn't counted
+      # in the recap, matching real Ansible, which prints `skipping:` and
+      # moves on.
+      if when_condition = handler.when_condition
+        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+        substituted_condition = substitutor.substitute(when_condition)
+
+        unless ConditionalEvaluator.evaluate(substituted_condition, vars_context)
+          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+          puts "skipping: [#{connection_host}]".colorize(:cyan)
+          return JSON.parse({
+            "changed" => false,
+            "failed"  => false,
+            "skipped" => true,
+          }.to_json)
+        end
+      end
+
       # FIXED: Use VarSubstitutor instead of VariableSubstitutor
       substitutor = VarSubstitutor.new(
         vars: vars_context,

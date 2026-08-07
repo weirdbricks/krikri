@@ -27,6 +27,80 @@ module CrystalPlay
       combos.map { |combo| JSON::Any.new(combo) }
     end
 
+    # with_community.general.flattened: flattens a set of per-source lists
+    # into one flat list of items, in order. The module's real semantics
+    # flatten one level of nesting per source (a source that is itself a
+    # list of lists is flattened one level) and drop the sources' own
+    # boundaries - the role pattern is `with_collection.flattened: [list_a,
+    # list_b, {{ some_var }}]` where each element is a list of strings.
+    # dev-sec os_hardening uses it to gather paths from several
+    # individually-defined lists into one find loop.
+    def self.with_flattened(sources : Array(JSON::Any)) : Array(JSON::Any)
+      result = [] of JSON::Any
+      sources.each do |source|
+        if source.raw.is_a?(Array)
+          source.as_a.each do |item|
+            if item.raw.is_a?(Array)
+              # Flatten one level of board nesting (a list-of-lists source).
+              item.as_a.each { |leaf| result << leaf }
+            else
+              result << item
+            end
+          end
+        else
+          result << source
+        end
+      end
+      result
+    end
+
+    # with_subelements(list, subelement_key) - for each dict in *list*,
+    # yield [parent_dict, subelement] pairs for every element of that
+    # dict's subelement_key list. Access in a task via item[0] (the parent
+    # dict) and item[1] (the subelement). dev-sec os_hardening uses it to
+    # iterate the stdout_lines each of several shell/find results.
+    def self.with_subelements(list : Array(JSON::Any), subelement : String) : Array(JSON::Any)
+      result = [] of JSON::Any
+      list.each do |entry|
+        unless entry.raw.is_a?(Hash)
+          result << entry
+          next
+        end
+        sub_list = entry.as_h[subelement]?.try(&.as_a?) || [] of JSON::Any
+        sub_list.each do |sub|
+          result << JSON::Any.new([entry, sub])
+        end
+      end
+      result
+    end
+
+    # with_community.general.flattened: flattens a set of per-source lists
+    # into one flat list of items, in order. The module's real semantics
+    # flatten one level of nesting per source (a source that is itself a
+    # list of lists is flattened one level) and drop the sources' own
+    # boundaries - the role pattern is `with_collection.flattened: [list_a,
+    # list_b, {{ some_var }}]` where each element is a list of strings.
+    # dev-sec os_hardening uses it to gather paths from several
+    # individually-defined lists into one find loop.
+    def self.with_flattened(sources : Array(JSON::Any)) : Array(JSON::Any)
+      result = [] of JSON::Any
+      sources.each do |source|
+        if source.raw.is_a?(Array)
+          source.as_a.each do |item|
+            if item.raw.is_a?(Array)
+              # Flatten one level of board nesting (a list-of-lists source).
+              item.as_a.each { |leaf| result << leaf }
+            else
+              result << item
+            end
+          end
+        else
+          result << source
+        end
+      end
+      result
+    end
+
     # with_indexed_items: [x, y] -> [["0", x], ["1", y]]
     # Access in a task via item[0] (index) and item[1] (value).
     def self.with_indexed_items(items : Array(JSON::Any)) : Array(JSON::Any)

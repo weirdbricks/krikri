@@ -175,6 +175,7 @@ PLUGINS=(
     "file"
     "lineinfile"
     "service"
+    "systemd"
     "shell"
     "command"
     "apt"
