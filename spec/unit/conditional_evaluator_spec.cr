@@ -70,6 +70,32 @@ describe CrystalPlay::ConditionalEvaluator do
     it "checks substring membership" do
       CrystalPlay::ConditionalEvaluator.evaluate(%("ba" in "bar"), EMPTY_VARS).should be_true
     end
+
+    it "checks 'not in' membership (os_hardening's su-binary gate)" do
+      v = Hash(String, JSON::Any).new
+      v["os_security_users_allow"] = JSON::Any.new(Array(JSON::Any).new)
+      CrystalPlay::ConditionalEvaluator.evaluate(%('change_user' not in os_security_users_allow), v).should be_true
+    end
+
+    it "'not in' is false when the list does contain the item" do
+      v = Hash(String, JSON::Any).new
+      v["os_security_users_allow"] = JSON::Any.new([JSON::Any.new("change_user")])
+      CrystalPlay::ConditionalEvaluator.evaluate(%('change_user' not in os_security_users_allow), v).should be_false
+    end
+  end
+
+  describe "out-of-line parentheses from list-when ANDing" do
+    it "unwraps a fully parenthesized clause (each clause of a list-when)" do
+      v = Hash(String, JSON::Any).new
+      v["ansible_facts"] = JSON::Any.new({"os_family" => JSON::Any.new("Debian")})
+      combined = %((ansible_facts.os_family != 'Suse') and (ansible_facts.os_family != 'Archlinux'))
+      CrystalPlay::ConditionalEvaluator.evaluate(combined, v).should be_true
+    end
+
+    it "does not unwrap a paren that is not a full wrap (trailing content)" do
+      v = vars({"a" => "x"} of String => JSON::Any::Type)
+      CrystalPlay::ConditionalEvaluator.evaluate(%((a == "x") and true), v).should be_true
+    end
   end
 
   describe "definedness" do

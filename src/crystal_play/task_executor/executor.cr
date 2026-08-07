@@ -1621,11 +1621,13 @@ module CrystalPlay
       end
 
       failed_before = @results[host.name]["failed"]
+      propagate_role_context(task, task.block_tasks || [] of Task)
       run_task_list(task.block_tasks || [] of Task, host)
       block_failed = @halted_hosts.includes?(host.name)
 
       if block_failed && (rescue_tasks = task.rescue_tasks)
         @halted_hosts.delete(host.name)
+        propagate_role_context(task, rescue_tasks)
         run_task_list(rescue_tasks, host)
         block_failed = @halted_hosts.includes?(host.name)
 
@@ -1643,12 +1645,36 @@ module CrystalPlay
 
       if always_tasks = task.always_tasks
         @halted_hosts.delete(host.name)
+        propagate_role_context(task, always_tasks)
         run_task_list(always_tasks, host)
         block_failed ||= @halted_hosts.includes?(host.name)
       end
 
       @halted_hosts.delete(host.name)
       halt_if_failed(task, host, block_failed)
+    end
+
+    # Copy the *enclosing* task's role context (defaults/vars/dirs) into each
+    # nested task. Used for block:/rescue:/always: nested lists and, via the
+    # include_tasks path, for the tasks of an included file - in both cases
+    # `nested_task` is a Task parsed independently of the enclosing one, so it
+    # wouldn't otherwise know it belongs to a role. Without this, a
+    # `template:`/`copy:` with a role-relative `src:` (e.g. os_hardening's
+    # `src: etc/systemd/coredump.conf.d/coredumps.conf.j2`) fails to resolve
+    # against the role's templates/, and role-default `when:` gates evaluate
+    # undefined. Only fills gaps: defaults/vars already on the nested task win.
+    private def propagate_role_context(enclosing : Task, nested_tasks : Array(Task)) : Nil
+      nested_tasks.each do |nested_task|
+        if (defaults = enclosing.role_defaults) && !defaults.empty?
+          nested_task.role_defaults = defaults
+        end
+        if (role_vars = enclosing.role_vars) && !role_vars.empty?
+          nested_task.role_vars = role_vars
+        end
+        nested_task.role_files_dir = enclosing.role_files_dir
+        nested_task.role_templates_dir = enclosing.role_templates_dir
+        nested_task.role_vars_dir = enclosing.role_vars_dir
+      end
     end
 
     # Runs a nested task list (block:/rescue:/always:), printing its own
@@ -1747,17 +1773,7 @@ module CrystalPlay
       # carry the *role's* own scope (not the include statement's inline
       # vars:, which is handled above), matching real Ansible where an
       # included file shares the enclosing role's defaults/vars.
-      included_tasks.each do |included_task|
-        if (defaults = task.role_defaults) && !defaults.empty?
-          included_task.role_defaults = defaults
-        end
-        if (role_vars = task.role_vars) && !role_vars.empty?
-          included_task.role_vars = role_vars
-        end
-        included_task.role_files_dir = task.role_files_dir
-        included_task.role_templates_dir = task.role_templates_dir
-        included_task.role_vars_dir = task.role_vars_dir
-      end
+      propagate_role_context(task, included_tasks)
 
       run_task_list(included_tasks, host)
     rescue ex

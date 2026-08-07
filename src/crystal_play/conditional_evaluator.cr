@@ -15,8 +15,15 @@ module CrystalPlay
     # Evaluate a when: condition against a variable context
     # Returns true if condition passes, false otherwise
     def self.evaluate(condition : String, vars : Hash(String, JSON::Any)) : Bool
-      # Strip whitespace
+      # Strip whitespace, then unwrap a fully-parenthesized expression.
+      # condition_to_string wraps each list-`when:` clause in parens
+      # (`(a != 'x') and (b != 'y')`), and the recursion here hands each
+      # `(...)` clause back to evaluate - so a bare `where os_family !=
+      # 'Suse'` must be evaluated with its outer parens removed, or the
+      # `(` breaks lookup/split (left operand becomes "(os_family "). Only
+      # strip when the parens enclose the *entire* remaining expression.
       condition = condition.strip
+      condition = unwrap_outer_parens(condition)
 
       # Handle 'not' at the beginning
       if condition.starts_with?("not ")
@@ -60,6 +67,16 @@ module CrystalPlay
         return evaluate_comparison(condition, ">", vars)
       end
 
+      # Handle 'in' / 'not in' operator. `'x' not in list` must be checked
+      # as its own token (a leading `not ` followed by ` in `), since the
+      # generic `in` splitter would otherwise leave the `not` glued to the
+      # left operand (`'x' not` / ` in list`) and never match. dev-sec
+      # os_hardening gates tasks on `'"change_user" not in
+      # os_security_users_allow'`.
+      if condition.includes?(" not in ")
+        return !evaluate_in(condition.gsub(" not in ", " in "), vars)
+      end
+
       # Handle 'in' operator
       if condition.includes?(" in ")
         return evaluate_in(condition, vars)
@@ -76,6 +93,45 @@ module CrystalPlay
 
       # Handle bare variable (truthiness check)
       return evaluate_truthiness(condition, vars)
+    end
+
+    # If *expr* is entirely wrapped in one matching pair of outer parens
+    # (`(a and b)` or `(x == 1)`), return the inner expression with the
+    # parens removed; otherwise return it unchanged. Quotes and inner
+    # parens (e.g. `is version('1.4.0', '<')`) are balanced correctly, so
+    # only a paren at the very start matched by one at the very end (with
+    # depth returning to 0 only at the end) is stripped.
+    private def self.unwrap_outer_parens(expr : String) : String
+      return expr unless expr.starts_with?("(")
+
+      depth = 0
+      in_quotes = false
+      quote_char = ' '
+      expr.each_char_with_index do |char, idx|
+        if (char == '"' || char == '\'') && (idx == 0 || expr[idx - 1] != '\\')
+          if in_quotes && char == quote_char
+            in_quotes = false
+          elsif !in_quotes
+            in_quotes = true
+            quote_char = char
+          end
+        end
+
+        next if in_quotes
+
+        if char == '('
+          depth += 1
+        elsif char == ')'
+          depth -= 1
+          # If depth returns to 0 before the final char, the paren at the
+          # start is not a full-wrap (the expression has trailing content),
+          # so don't unwrap.
+          return expr if depth == 0 && idx < expr.size - 1
+        end
+      end
+
+      # Depth 1 after the loop means the whole expr was `(...)` - unwrap.
+      expr[1..-2].strip
     end
 
     # Whether splitting actually broke the condition down. A single part
