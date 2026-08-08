@@ -16,14 +16,29 @@ require "crinja"
 
 module CrystalPlay
   module JinjaFilters
-    # `comment` - wraps a value in a Jinja2 comment. Mirrors the plain
-    # Jinja2 `comment` filter: a scalar becomes a `{# ... #}` block, a
-    # multi-line value gets each line `#`-prefixed. The common role usage -
-    # `{{ ansible_managed | comment }}` to emit an "Ansible managed" banner
-    # - only needs the whole value wrapped as one comment.
+    # `comment` - real Ansible's own filter (ansible.plugins.filter.core),
+    # NOT a Jinja2 template comment - it produces a *shell/config-file*
+    # comment block meant to appear in the *rendered output* (dev-sec
+    # os_hardening's own `{{ ansible_managed | comment }}` header, used at
+    # the top of 14 different templates including several PAM config
+    # files, is meant to warn a human reader not to hand-edit the file).
+    # Previously wrapped the value in literal `{# ... #}` Jinja-comment
+    # syntax instead - meaningless (and never stripped) in a *rendered*
+    # file, so every one of those 14 templates got the literal text
+    # "{# Ansible managed #}" as their first line. For PAM config files
+    # specifically, that single corrupted line broke the whole PAM stack
+    # ("configuration error - unknown item '{#'") for any command that
+    # consults it, cascading into using every account-management
+    # operation the role performs failing.
+    #
+    # Matches real Ansible's default ("plain") style exactly: a bare "#"
+    # line, each line of the value prefixed "# ", another bare "#" line.
+    # The style=/prefix=/postfix=/decoration= keyword variants (c/cpp/
+    # xml styles) aren't implemented - no template here uses them.
     Crinja.filter(:comment) do
-      value = target.to_s
-      Crinja::Value.new("{# #{value.gsub("\n", " ")} #}")
+      lines = target.to_s.split('\n')
+      commented = (["#"] + lines.map { |line| "# #{line}" } + ["#"]).join('\n')
+      Crinja::Value.new(commented)
     end
 
     # `bool` - coerce a value to a boolean the way Jinja2's bool filter does:
