@@ -21,7 +21,21 @@ module CrystalPlay
                 URI.new(scheme: "mysql", host: host || "localhost", port: (port || "3306").to_i)
               end
 
-        uri.user = user if user
+        # Real MySQL client libraries (what real Ansible's own mysql_*
+        # modules run on, via PyMySQL/mysqlclient), when no login_user:
+        # is given at all, default the connection username to the
+        # current OS user rather than leaving it empty - relevant here
+        # specifically for login_unix_socket: connections (unix_socket
+        # auth matches the connecting OS user against a MySQL account of
+        # the same name; dev-sec mysql_hardening's own tasks all use
+        # `login_unix_socket: ... | default(omit)` with no login_user:,
+        # relying on exactly this to connect as the OS root user
+        # crystal-ansible's own plugin process runs as). Previously left
+        # uri.user completely unset when login_user: was omitted, which
+        # authenticates as an empty-string username instead ("Access
+        # denied for user ''@'localhost'") - not "no username", a
+        # *different*, wrong username.
+        uri.user = user || ENV["USER"]? || "root"
         uri.password = password if password
 
         # The underlying mysql shard's own default (ssl-mode=preferred)
