@@ -221,6 +221,7 @@ PLUGINS=(
     "mysql_user"
     "mysql_info"
     "mysql_query"
+    "openssl_dhparam"
     "postgresql_db"
     "postgresql_user"
     "postgresql_privs"

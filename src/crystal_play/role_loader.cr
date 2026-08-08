@@ -121,6 +121,7 @@ module CrystalPlay
         task.role_files_dir = files_dir
         task.role_templates_dir = templates_dir
         task.role_vars_dir = vars_dir
+        task.role_name = name
         task.tags = (task.tags + invocation_tags).uniq
       end
 

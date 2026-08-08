@@ -545,6 +545,9 @@ module CrystalPlay
       vars_context["inventory_hostname"] = JSON::Any.new(host.name)
       vars_context["ansible_hostname"] ||= JSON::Any.new(host.name)
       vars_context["ansible_host"] ||= JSON::Any.new(host.name)
+      if role_name = task.role_name
+        vars_context["ansible_role_name"] = JSON::Any.new(role_name)
+      end
 
       # `ansible_facts` - the same facts again, under their unprefixed
       # names, as one dict. Real Ansible exposes every fact both ways

@@ -53,7 +53,7 @@ module CrystalPlay
         collect_required_plugins(play.tasks, required_plugins)
 
         play.handlers.each do |handler|
-          simple_name = handler.module_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community\.(general|docker|mysql|postgresql))\./, "")
+          simple_name = handler.module_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community\.(general|docker|mysql|postgresql|crypto))\./, "")
           required_plugins.add(simple_name)
         end
       end
@@ -190,7 +190,7 @@ module CrystalPlay
 
         next if task.include_tasks? || task.include_role? || task.include_vars? || task.validate_argument_spec?
 
-        simple_name = task.module_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community\.(general|docker|mysql|postgresql))\./, "")
+        simple_name = task.module_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community\.(general|docker|mysql|postgresql|crypto))\./, "")
         required.add(simple_name)
       end
     end
@@ -513,7 +513,7 @@ module CrystalPlay
     # case, since pre-upload got it), and costs the upload round trips
     # only the first time an unforeseen module is actually needed.
     def self.ensure_uploaded(host : Host, plugin_name : String, vars : Hash(String, JSON::Any))
-      simple_name = plugin_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community\.(general|docker|mysql|postgresql))\./, "")
+      simple_name = plugin_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community\.(general|docker|mysql|postgresql|crypto))\./, "")
       connection_host = get_connection_host(host, vars)
       host_key = "#{host.user}@#{connection_host}:#{host.port}"
 
@@ -523,7 +523,7 @@ module CrystalPlay
     end
 
     def self.remote_plugin_target(plugin_name : String, become : Bool, become_user : String?) : String
-      simple_name = plugin_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community\.(general|docker|mysql|postgresql))\./, "")
+      simple_name = plugin_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community\.(general|docker|mysql|postgresql|crypto))\./, "")
       remote_plugin_path = "/tmp/.crystal-play/plugins/#{simple_name}"
       become ? "sudo -n -u #{become_user} -- #{remote_plugin_path}" : remote_plugin_path
     end
@@ -611,7 +611,7 @@ module CrystalPlay
     # Get local plugin path (compiled binary)
     private def self.get_local_plugin_path(plugin_name : String) : String
       # Strip FQCN to get simple plugin filename
-      simple_name = plugin_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community\.(general|docker|mysql|postgresql))\./, "")
+      simple_name = plugin_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community\.(general|docker|mysql|postgresql|crypto))\./, "")
 
       # Resolve plugins/ next to the running binary itself, not relative to
       # the current working directory - otherwise crystal-ansible could
