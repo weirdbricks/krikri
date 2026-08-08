@@ -9,7 +9,8 @@ module CrystalPlay
   # text in a file. Compatible with Ansible's ansible.builtin.blockinfile.
   #
   # Parameters:
-  #   path (required): File to edit
+  #   path (required, aliases: dest, name - matches real Ansible's own
+  #     argument_spec): File to edit
   #   block (alias content): Text to insert between the markers - a missing
   #     or empty block is treated as state: absent, matching real Ansible
   #   state: present (default) or absent
@@ -23,7 +24,7 @@ module CrystalPlay
     DEFAULT_MARKER = "# {mark} ANSIBLE MANAGED BLOCK"
 
     def execute : PluginResult
-      path = @params["path"]?
+      path = @params["path"]? || @params["dest"]? || @params["name"]?
       return missing_param("path") unless path
 
       check_mode = is_true?(@params["check_mode"]?)

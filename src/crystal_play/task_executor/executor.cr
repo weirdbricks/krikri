@@ -1542,8 +1542,23 @@ module CrystalPlay
       loop_items : Array(JSON::Any),
       exec_host : Host = host
     )
+      # Render each item *before* it's ever bound to "item" or checked
+      # against when: - a literal loop: entry can itself be a template
+      # string (dev-sec mysql_hardening's own "Ensure permissions on
+      # mysql-datadir are correct": `loop: ["{{ mysql_settings.settings.
+      # datadir }}", '{{ mysql_datadir | default("") }}']`, gated by
+      # `when: item != ""`). Previously bound the raw unrendered text
+      # (e.g. the literal string '{{ mysql_datadir | default("") }}') as
+      # "item" - a later re-templating pass happening to fix up the
+      # *param* substitution masked this for a task's own params, but
+      # when:'s own item comparison saw the raw text directly: a
+      # non-empty string regardless of what it would have rendered to,
+      # so `item != ""` was always true and a should-have-been-skipped
+      # item ran for real, on a bogus literal path.
+      rendered_items = loop_items.map { |item| deep_render_item(item, base_vars_context, host.name) }
+
       item_results = if loop_batch_eligible?(task, host, exec_host, base_vars_context)
-                       execute_looped_task_batched(task, host, base_vars_context, loop_items)
+                       execute_looped_task_batched(task, host, base_vars_context, rendered_items)
                      else
                        # A running (not re-dup'd-from-base) vars_context
                        # carries each iteration's ansible_facts forward
@@ -1556,7 +1571,7 @@ module CrystalPlay
                        # starting value every time.
                        running_vars_context = base_vars_context.dup
                        loop_var = task.loop_var
-                       loop_items.map do |item|
+                       rendered_items.map do |item|
                          vars_context = running_vars_context.dup
                          vars_context["item"] = item
                          vars_context[loop_var] = item if loop_var
@@ -1568,7 +1583,7 @@ module CrystalPlay
                        end
                      end
 
-      finish_looped_task(task, host, loop_items, item_results)
+      finish_looped_task(task, host, rendered_items, item_results)
     end
 
     # Whether execute_looped_task can send every surviving item through

@@ -10,7 +10,9 @@ module CrystalPlay
   # Compatible with Ansible's ansible.builtin.lineinfile module
   #
   # Parameters:
-  #   path (required): File to edit
+  #   path (required, aliases: dest, name - matches real Ansible's own
+  #     argument_spec, where `dest:` is the long-standing legacy alias
+  #     most existing playbooks/roles still write): File to edit
   #   line: Line content (required for state: present, unless backrefs/regexp-only removal)
   #   regexp: Pattern used to find the line to replace/remove
   #   state: present (default) or absent
@@ -20,7 +22,7 @@ module CrystalPlay
   #   backrefs: Substitute regexp match groups into `line` instead of replacing it wholesale
   class LineInFilePlugin < BasePlugin
     def execute : PluginResult
-      path = @params["path"]?
+      path = @params["path"]? || @params["dest"]? || @params["name"]?
       return missing_param("path") unless path
 
       line = @params["line"]?
