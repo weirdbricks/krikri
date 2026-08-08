@@ -166,6 +166,15 @@ module CrystalPlay
           # dotted access on the result works via the ordinary Hash-key
           # path.
           parse_to_datetime(value, filter_args.strip.empty? ? "%Y-%m-%d %H:%M:%S" : parse_filter_arg(filter_args))
+        when "combine"
+          # combine(other1, other2, ...) - shallow dict merge, later
+          # arguments win on key collisions. dev-sec os_hardening chains
+          # several of these (`sysctl_config | combine(sysctl_custom_config
+          # | default({})) | combine(...)`) to layer per-OS overrides on
+          # top of role defaults; was previously entirely unimplemented
+          # (fell through to the `else` passthrough below), silently
+          # discarding every merge-in argument.
+          split_top_level_args(filter_args).reduce(value) { |acc, arg_expr| combine_hash(acc, resolve_expression(arg_expr)) }
         else
           # Unknown filter - return value as-is (matches prior behavior)
           value
@@ -207,7 +216,7 @@ module CrystalPlay
       # reference it is.
       private def resolve_default_arg(args : String) : JSON::Any
         first_arg = split_top_level_args(args).first? || ""
-        resolve_default_expression(first_arg)
+        resolve_expression(first_arg)
       end
 
       private def apply_selectattr(value : JSON::Any, args : String) : JSON::Any
@@ -279,6 +288,78 @@ module CrystalPlay
         else
           JSON::Any.new(expr)
         end
+      end
+
+      # Shallow dict merge for the `combine` filter: keys from *other* win
+      # over *base* on collision, keys present in only one side pass
+      # through unchanged. Non-Hash operands (a `combine` argument that
+      # didn't resolve to a dict) are ignored rather than raising, since a
+      # stray `default({})` fallback already guarantees an empty Hash in
+      # the common case.
+      private def combine_hash(base : JSON::Any, other : JSON::Any) : JSON::Any
+        base_h = base.raw.is_a?(Hash) ? base.as_h : nil
+        other_h = other.raw.is_a?(Hash) ? other.as_h : nil
+        return base unless base_h
+        return base unless other_h
+        merged = base_h.dup
+        other_h.each { |key, val| merged[key] = val }
+        JSON::Any.new(merged)
+      end
+
+      # General single-expression resolver: unlike #resolve_default_expression
+      # (which only ever sees a bare variable reference, quoted literal, or
+      # ternary - `default`'s own argument grammar), this also understands
+      # a `|`-chained filter pipeline and a `{...}` dict literal, both of
+      # which show up as `combine`'s own arguments (`combine(sysctl_overwrite
+      # | default({}))`).
+      private def resolve_expression(expr : String) : JSON::Any
+        parts = self.class.split_chain(expr.strip)
+        return JSON::Any.new(nil) if parts.empty?
+        parts[1..].reduce(resolve_base_expression(parts[0])) { |acc, filter_expr| apply(acc, filter_expr) }
+      end
+
+      private def resolve_base_expression(expr : String) : JSON::Any
+        expr = expr.strip
+
+        if ternary = split_ternary(expr)
+          true_expr, condition, false_expr = ternary
+          condition_true = ConditionalEvaluator.evaluate(condition, @vars || Hash(String, JSON::Any).new)
+          return resolve_expression(condition_true ? true_expr : false_expr)
+        end
+
+        return JSON::Any.new(expr[1..-2]) if quoted_literal?(expr)
+        return JSON::Any.new(nil) if expr == "None"
+        return parse_dict_literal(expr) if expr.starts_with?('{') && expr.ends_with?('}')
+
+        if int_val = expr.to_i64?
+          return JSON::Any.new(int_val)
+        elsif float_val = expr.to_f64?
+          return JSON::Any.new(float_val)
+        end
+
+        if (vars = @vars) && !expr.empty?
+          VariableLookup.new(vars).resolve(expr) || JSON::Any.new(nil)
+        else
+          JSON::Any.new(nil)
+        end
+      end
+
+      # Parses a `{...}` dict literal (as seen in `default({})`/`combine({a:
+      # 1})` arguments, not a real value already carried as JSON::Any) -
+      # unquoted keys and single-quoted string values are both real Jinja2
+      # dict-literal syntax that plain `JSON.parse` would reject.
+      private def parse_dict_literal(expr : String) : JSON::Any
+        inner = expr[1..-2].strip
+        return JSON::Any.new({} of String => JSON::Any) if inner.empty?
+
+        h = {} of String => JSON::Any
+        split_top_level_args(inner).each do |pair|
+          key_part, sep, val_part = pair.partition(':')
+          next if sep.empty?
+          key = key_part.strip.strip("'\"")
+          h[key] = resolve_expression(val_part.strip)
+        end
+        JSON::Any.new(h)
       end
 
       private def quoted_literal?(expr : String) : Bool

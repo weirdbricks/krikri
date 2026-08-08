@@ -85,14 +85,12 @@ module CrystalPlay
     
     def substitute(text : String) : String
       return text unless text.includes?("{{")
-      
+
       if text.includes?("{%") || text.includes?("{#")
         return renderer.render(text)
       end
-      
-      pattern = /\{\{([^}]+)\}\}/
 
-      result = text.gsub(pattern) { |_, match| evaluator.evaluate(match[1].strip).strip }
+      result = expand_mustache_spans(text) { |inner| evaluator.evaluate(inner.strip).strip }
 
       # Ansible re-templates a rendered result that still contains "{{" -
       # this happens whenever a variable's own value is itself a template
@@ -105,7 +103,7 @@ module CrystalPlay
       # literal "{{", doesn't loop forever.
       depth = 0
       while result.includes?("{{") && depth < 5
-        next_result = result.gsub(pattern) { |_, match| evaluator.evaluate(match[1].strip).strip }
+        next_result = expand_mustache_spans(result) { |inner| evaluator.evaluate(inner.strip).strip }
         break if next_result == result
         result = next_result
         depth += 1
@@ -113,7 +111,90 @@ module CrystalPlay
 
       result
     end
-    
+
+    # Finds each `{{ ... }}` span in *text* and replaces it with the
+    # block's return value, tracking brace depth (and quotes) inside the
+    # expression so a literal `{}`/`{a: 1}` dict argument - e.g.
+    # `default({})`, `combine({})` - doesn't get mistaken for the span's
+    # own closing `}}`. The previous implementation used
+    # `/\{\{([^}]+)\}\}/`, whose `[^}]+` cannot match *any* `}` character
+    # at all, so an expression containing an inner `}` (from a dict
+    # literal) could never find a valid close and was left completely
+    # unrendered.
+    private def expand_mustache_spans(text : String, & : String -> String) : String
+      result = String::Builder.new
+      i = 0
+      n = text.size
+      while i < n
+        if i + 1 < n && text[i] == '{' && text[i + 1] == '{'
+          close_at = find_mustache_close(text, i + 2)
+          if close_at
+            result << yield text[(i + 2)...close_at]
+            i = close_at + 2
+            next
+          end
+        end
+        result << text[i]
+        i += 1
+      end
+      result.to_s
+    end
+
+    # Scans from *start* (just past the opening `{{`) for the `}}` that
+    # closes this expression, treating any `{`/`}` that appears inside a
+    # quoted string or inside a balanced `{...}` sub-expression as part of
+    # the expression body rather than the terminator. Returns the index of
+    # the first `}` of the closing `}}`, or nil if none is found.
+    private def find_mustache_close(text : String, start : Int32) : Int32?
+      state = MustacheScanState.new
+      j = start
+      n = text.size
+      while j < n
+        return j if state.closes_at?(text, j)
+        j += 1
+      end
+      nil
+    end
+
+    # Per-character scan state for #find_mustache_close - split out so the
+    # scanning loop itself stays a single branch, and the "is this `}` the
+    # real close, an inner literal `}`, or the start of a nested `{...}`"
+    # decision lives in one place.
+    private class MustacheScanState
+      property depth = 0
+      property quote : Char? = nil
+
+      def closes_at?(text : String, j : Int32) : Bool
+        char = text[j]
+        if q = quote
+          self.quote = nil if char == q
+          return false
+        end
+
+        case char
+        when '\'', '"'
+          self.quote = char
+          false
+        when '{'
+          self.depth += 1
+          false
+        when '}'
+          brace_closes?(text, j)
+        else
+          false
+        end
+      end
+
+      private def brace_closes?(text : String, j : Int32) : Bool
+        if depth > 0
+          self.depth -= 1
+          false
+        else
+          j + 1 < text.size && text[j + 1] == '}'
+        end
+      end
+    end
+
     def substitute_hash(hash : Hash(String, String)) : Hash(String, String)
       result = Hash(String, String).new
       hash.each { |k, v| result[substitute(k)] = substitute(v) }

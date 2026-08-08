@@ -311,8 +311,42 @@ module CrystalPlay
         return rendered if suffix.empty?
 
         parsed = JSON.parse(rendered) rescue JSON::Any.new(rendered)
-        result = @lookup.walk(parsed, suffix)
-        result ? @lookup.format_value(result) : "undefined"
+        walk_part, filter_part = split_suffix_walk_and_filters(suffix)
+
+        value = if walk_part.strip.empty?
+                  parsed
+                else
+                  walked = @lookup.walk(parsed, walk_part)
+                  return "undefined" unless walked
+                  walked
+                end
+
+        return @lookup.format_value(value) if filter_part.strip.empty?
+
+        segments = FilterEngine.split_chain(filter_part.strip)
+        result = segments.reduce(value) { |acc, filter_expr| @filter.apply(acc, filter_expr) }
+        @lookup.format_value(result)
+      end
+
+      # A leading-paren suffix (`(expr).foo[0] | bar(...)`) can carry a
+      # dotted/indexed access portion, a `|`-chained filter pipeline, or
+      # both - `@lookup.walk` only understands the former, so a suffix
+      # that's a pure filter chain (dev-sec os_hardening's own
+      # `((sysctl_config | combine(...)) | combine(...)) | combine(...)`,
+      # where the leading-paren's own suffix is another `| combine(...)`)
+      # previously went straight into `walk`, which had no `.attr`/`[idx]`
+      # to find and returned nil, collapsing the whole expression to
+      # "undefined". Splits at the first top-level `|` (respecting quotes/
+      # bracket depth, same approach as FilterEngine.split_chain) so the
+      # walk-able prefix and the filter-chain remainder are handled
+      # separately.
+      private def split_suffix_walk_and_filters(suffix : String) : {String, String}
+        tracker = QuoteDepthTracker.new
+        suffix.each_char.with_index do |char, i|
+          tracker.advance(char)
+          return {suffix[0...i], suffix[(i + 1)..]} if char == '|' && tracker.top_level?
+        end
+        {suffix, ""}
       end
 
       private def evaluate_minus(left_expr : String, right_expr : String) : String
