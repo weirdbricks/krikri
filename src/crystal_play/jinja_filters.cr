@@ -84,5 +84,57 @@ module CrystalPlay
       arg_set = a.to_a if a && a.sequence?
       Crinja::Value.new(target_vals.reject { |item| arg_set.includes?(item) })
     end
+
+    # `version(comparison_version, operator='==')` - Ansible's own test
+    # (ansible.builtin.version), not part of standard Jinja2 and not
+    # provided by Crinja at all: `{% if sshd_version is version('5.8',
+    # '>=') %}`, used throughout ssh_hardening's opensshd.conf.j2 to
+    # gate config lines by the target's actual OpenSSH version. Crinja
+    # raised "no test named 'version'" on any `{% if %}`/`{% elif %}`
+    # using it, failing the *entire* template render (all-or-nothing -
+    # Crinja doesn't partially render), not just that one line.
+    #
+    # Compares dotted-numeric version strings component-by-component
+    # (splitting on non-digit runs, same tolerance real `sshd -V`
+    # output needs: "8.9p1" compares as [8, 9, 1]), matching Python's
+    # LooseVersion behavior real Ansible's own `version` test delegates
+    # to closely enough for every operator real playbooks use.
+    Crinja.test(:version) do
+      compare_to = arguments.varargs[0]?.try(&.to_s) || ""
+      operator = arguments.varargs[1]?.try(&.to_s) || "=="
+      cmp = JinjaFilters.compare_versions(target.to_s, compare_to)
+      case operator
+      when "==", "="
+        cmp == 0
+      when "!="
+        cmp != 0
+      when "<", "lt"
+        cmp < 0
+      when "<=", "le"
+        cmp <= 0
+      when ">", "gt"
+        cmp > 0
+      when ">=", "ge"
+        cmp >= 0
+      else
+        false
+      end
+    end
+
+    # Splits a version string into its numeric components (`"8.9p1"` ->
+    # `[8, 9, 1]`, ignoring the non-digit "p" separator), then compares
+    # two such component lists lexicographically, treating a missing
+    # trailing component as 0 (`"5.8" <=> "5.8.0"` is equal).
+    def self.compare_versions(a : String, b : String) : Int32
+      a_parts = a.scan(/\d+/).map(&.[0].to_i)
+      b_parts = b.scan(/\d+/).map(&.[0].to_i)
+      [a_parts.size, b_parts.size].max.times do |i|
+        a_val = a_parts[i]? || 0
+        b_val = b_parts[i]? || 0
+        cmp = a_val <=> b_val
+        return cmp unless cmp == 0
+      end
+      0
+    end
   end
 end
