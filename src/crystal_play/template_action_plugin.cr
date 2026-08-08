@@ -184,7 +184,16 @@ module CrystalPlay
     end
 
     private def rewrite_inline_ternaries(template : String) : String
-      loop do
+      # Bounded defense-in-depth against a non-converging rewrite pass -
+      # every individual rewrite below is believed idempotent once
+      # applied, but this loop already hung the whole process for real
+      # (100% CPU, no return) from one whitespace-handling bug in
+      # #rewrite_ternary_expr; a hard cap turns any *future* such bug
+      # into a merely-imperfect render instead of a permanent hang.
+      # Matches the same bounded-retemplating pattern VarSubstitutor#
+      # substitute already uses for its own "re-render until stable"
+      # loop.
+      20.times do
         once = template
         # Rewrite inline ternaries first. INLINE_TERNARY's match includes
         # the surrounding `{{`/`}}` (needed so the regex only fires
@@ -308,6 +317,31 @@ module CrystalPlay
     end
 
     private def rewrite_ternary_expr(expr : String) : String
+      # #strip - INLINE_TERNARY's capture includes the raw whitespace
+      # padding around the `{{`/`}}` delimiters (e.g. captures " EXPR "
+      # from "{{ EXPR }}"). Without stripping it here, a call that falls
+      # through to the plain `return expr` below (nothing to rewrite)
+      # hands back that same padding, which the caller then re-wraps as
+      # "{{ #{expr} }}" - adding *another* space on each side on top of
+      # what's already there. Every later pass through the outer
+      # rewrite_inline_ternaries loop re-captures and re-pads the same
+      # way, growing the string by two characters forever and never
+      # reaching the loop's `once == template` convergence check - a
+      # genuine unbounded infinite loop (confirmed: 100% CPU, no I/O,
+      # never returns), not just a cosmetic double-space.
+      expr = expr.strip
+
+      # A whole ternary can itself be wrapped in a redundant outer paren
+      # pair (ssh_hardening's own ForwardAgent line: `((ssh_forward_agent)
+      # if ssh_forward_agent is defined else 'no')`) - without stripping
+      # it first, that outer `(` never closes until the very end, so
+      # every character of the real ` if `/` else ` tokens sits at paren
+      # depth 1, not 0, and #index_of_token (a depth-0-only scan) never
+      # finds them at all - the whole ternary is left completely
+      # unrewritten and handed to Crinja as literal (unsupported) inline-
+      # if syntax.
+      expr = strip_wrapping_parens(expr)
+
       # Split on the top-level ` if ` and ` else ` (guarding quotes/parens
       # via a small scan). Uses a manual scan rather than the regex above
       # because a ternary may be nested and we want the *last* ` else `.

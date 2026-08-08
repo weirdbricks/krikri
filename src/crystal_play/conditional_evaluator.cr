@@ -84,8 +84,27 @@ module CrystalPlay
         return evaluate_in(condition, vars)
       end
 
-      # Handle 'is defined' / 'is not defined'
-      if condition.includes?(" is defined")
+      # Handle 'is defined' / 'is not defined' / 'is undefined' / 'is not
+      # undefined' - real Jinja2 provides both spellings (`undefined` is
+      # simply `defined`'s own negation, not a distinct concept), and
+      # real playbooks use both (ssh_hardening's own crypto_ciphers.yml/
+      # crypto_macs.yml/crypto_kex.yml default-setting tasks are all
+      # gated on `when: ssh_ciphers is undefined`, never `is not
+      # defined`). Previously only "is defined"/"is not defined" were
+      # recognized - an unrecognized "is undefined" fell through to the
+      # generic #evaluate_truthiness path below, which doesn't
+      # understand `is` tests at all and evaluated it as always falsy -
+      # the task setting the real default value was silently skipped on
+      # every run, leaving the variable genuinely undefined by the time
+      # a template referenced it (a crash three tasks later, nowhere
+      # near this one).
+      if condition.includes?(" is not undefined")
+        var_name = condition.gsub(" is not undefined", "").strip
+        return vars.has_key?(var_name)
+      elsif condition.includes?(" is undefined")
+        var_name = condition.gsub(" is undefined", "").strip
+        return !vars.has_key?(var_name)
+      elsif condition.includes?(" is defined")
         var_name = condition.gsub(" is defined", "").strip
         return vars.has_key?(var_name)
       elsif condition.includes?(" is not defined")
