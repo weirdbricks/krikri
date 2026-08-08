@@ -40,11 +40,16 @@ module CrystalPlay
   #   avoid this if password drift-detection isn't needed.
   # - login_host/login_port/login_user/login_password/login_unix_socket
   # - check_mode
+  # - host_all: operate on every existing host row for name: instead of
+  #   a single host: - see #ensure_present_all_hosts/#ensure_absent_
+  #   all_hosts. priv: is not applied in this mode (dev-sec mysql_
+  #   hardening's own two host_all: callers - root's password and
+  #   removing anonymous users - never combine it with priv: either).
   #
   # Not implemented: update_password: on_new_username, plugin:/
   # plugin_hash_string:/plugin_auth_string: (non-password auth methods),
   # append_privs:/subtract_privs: (this always does a full
-  # revoke-then-regrant instead), host_all:, resource_limits:, locked:,
+  # revoke-then-regrant instead), resource_limits:, locked:,
   # config_file:.
   class MysqlUserPlugin < BasePlugin
     def execute : PluginResult
@@ -59,6 +64,7 @@ module CrystalPlay
       priv = @params["priv"]?
       update_password = @params["update_password"]? || "always"
       check_mode = is_true?(@params["check_mode"]?)
+      host_all = is_true?(@params["host_all"]?)
 
       unless ["always", "on_create"].includes?(update_password)
         return PluginResult.new(changed: false, failed: true, msg: "update_password must be 'always' or 'on_create', got '#{update_password}'")
@@ -72,13 +78,22 @@ module CrystalPlay
         unix_socket: @params["login_unix_socket"]?,
       )
 
-      DB.open(uri) do |db|
-        exists = user_exists?(db, name, host)
-
-        if state == "absent"
-          ensure_absent(db, name, host, exists, check_mode)
+      DB.open(uri) do |connection|
+        if host_all
+          existing_hosts = user_hosts(connection, name)
+          if state == "absent"
+            ensure_absent_all_hosts(connection, name, existing_hosts, check_mode)
+          else
+            ensure_present_all_hosts(connection, name, existing_hosts, host, password, update_password, check_mode)
+          end
         else
-          ensure_present(db, name, host, exists, password, update_password, priv, check_mode)
+          exists = user_exists?(connection, name, host)
+
+          if state == "absent"
+            ensure_absent(connection, name, host, exists, check_mode)
+          else
+            ensure_present(connection, name, host, exists, password, update_password, priv, check_mode)
+          end
         end
       end
     rescue ex : DB::ConnectionRefused
@@ -91,36 +106,55 @@ module CrystalPlay
       db : DB::Database, name : String, host : String, exists : Bool,
       password : String?, update_password : String, priv : String?, check_mode : Bool,
     ) : PluginResult
-      changed = false
+      early, changed = create_or_update_account(db, name, host, exists, password, update_password, check_mode)
+      return early if early
 
+      early, changed = apply_priv_if_needed(db, name, host, exists, changed, priv, check_mode)
+      return early if early
+
+      PluginResult.new(changed: changed, failed: false, msg: changed ? "Updated user #{name}@#{host}" : "User #{name}@#{host} already up to date")
+    end
+
+    # Creates the account if it doesn't exist yet, or updates its
+    # password if it does (and update_password: is "always"). Returns
+    # {early_result, changed} - early_result is non-nil only for a
+    # check-mode short-circuit, which the caller returns immediately.
+    private def create_or_update_account(
+      db : DB::Database, name : String, host : String, exists : Bool,
+      password : String?, update_password : String, check_mode : Bool,
+    ) : {PluginResult?, Bool}
       unless exists
-        return PluginResult.new(changed: true, failed: false, msg: "User #{name}@#{host} would be created") if check_mode
+        return {PluginResult.new(changed: true, failed: false, msg: "User #{name}@#{host} would be created"), false} if check_mode
 
         clause = password ? " IDENTIFIED BY #{quote_str(password)}" : ""
         db.exec "CREATE USER #{quote_str(name)}@#{quote_str(host)}#{clause}"
-        changed = true
-      else
-        if update_password == "always" && password
-          return PluginResult.new(changed: true, failed: false, msg: "User #{name}@#{host}'s password would be updated") if check_mode
-
-          db.exec "ALTER USER #{quote_str(name)}@#{quote_str(host)} IDENTIFIED BY #{quote_str(password)}"
-          changed = true
-        end
+        return {nil, true}
       end
 
-      if priv
-        desired = PluginHelpers::MysqlPrivileges.desired_grants(priv)
-        current = exists && !changed ? current_grants(db, name, host) : Hash(String, Set(String)).new
+      return {nil, false} unless update_password == "always" && password
+      return {PluginResult.new(changed: true, failed: false, msg: "User #{name}@#{host}'s password would be updated"), false} if check_mode
 
-        if current != desired
-          return PluginResult.new(changed: true, failed: false, msg: "User #{name}@#{host}'s privileges would be updated") if check_mode
+      db.exec "ALTER USER #{quote_str(name)}@#{quote_str(host)} IDENTIFIED BY #{quote_str(password)}"
+      {nil, true}
+    end
 
-          apply_grants(db, name, host, desired)
-          changed = true
-        end
-      end
+    # Applies priv: (if given) when it differs from the account's
+    # current grants. Returns {early_result, changed} the same way
+    # #create_or_update_account does - changed carries forward the
+    # value the caller already had if nothing here needed to change.
+    private def apply_priv_if_needed(
+      db : DB::Database, name : String, host : String, exists : Bool, changed : Bool, priv : String?, check_mode : Bool,
+    ) : {PluginResult?, Bool}
+      return {nil, changed} unless priv
 
-      PluginResult.new(changed: changed, failed: false, msg: changed ? "Updated user #{name}@#{host}" : "User #{name}@#{host} already up to date")
+      desired = PluginHelpers::MysqlPrivileges.desired_grants(priv)
+      current = exists && !changed ? current_grants(db, name, host) : Hash(String, Set(String)).new
+      return {nil, changed} if current == desired
+
+      return {PluginResult.new(changed: true, failed: false, msg: "User #{name}@#{host}'s privileges would be updated"), changed} if check_mode
+
+      apply_grants(db, name, host, desired)
+      {nil, true}
     end
 
     private def ensure_absent(db : DB::Database, name : String, host : String, exists : Bool, check_mode : Bool) : PluginResult
@@ -135,6 +169,44 @@ module CrystalPlay
       db.query_all("SELECT User FROM mysql.user WHERE User = ? AND Host = ?", name, host, as: String).size > 0
     end
 
+    private def user_hosts(db : DB::Database, name : String) : Array(String)
+      db.query_all("SELECT Host FROM mysql.user WHERE User = ?", name, as: String)
+    end
+
+    # `host_all: true` (dev-sec mysql_hardening's own "Ensure that the
+    # root password is present" / "Ensure that anonymous users are
+    # absent" tasks) operates on every existing host row for *name*
+    # instead of a single `host:`. Real Ansible's own module: for
+    # `present`, updates every existing account's password if any exist;
+    # if none exist yet, falls back to creating exactly one account at
+    # `host:` (default "localhost") - `host_all` alone never invents
+    # more than one new account out of nothing.
+    private def ensure_present_all_hosts(
+      db : DB::Database, name : String, existing_hosts : Array(String), fallback_host : String,
+      password : String?, update_password : String, check_mode : Bool,
+    ) : PluginResult
+      return ensure_present(db, name, fallback_host, false, password, update_password, nil, check_mode) if existing_hosts.empty?
+
+      changed = false
+      existing_hosts.each do |host|
+        next unless update_password == "always" && password
+        return PluginResult.new(changed: true, failed: false, msg: "User #{name}'s password would be updated on all hosts") if check_mode
+
+        db.exec "ALTER USER #{quote_str(name)}@#{quote_str(host)} IDENTIFIED BY #{quote_str(password)}"
+        changed = true
+      end
+
+      PluginResult.new(changed: changed, failed: false, msg: changed ? "Updated user #{name} on all hosts" : "User #{name} already up to date on all hosts")
+    end
+
+    private def ensure_absent_all_hosts(db : DB::Database, name : String, existing_hosts : Array(String), check_mode : Bool) : PluginResult
+      return PluginResult.new(changed: false, failed: false, msg: "User already absent") if existing_hosts.empty?
+      return PluginResult.new(changed: true, failed: false, msg: "User #{name} would be removed from all hosts") if check_mode
+
+      existing_hosts.each { |host| db.exec "DROP USER #{quote_str(name)}@#{quote_str(host)}" }
+      PluginResult.new(changed: true, failed: false, msg: "Removed user #{name} from #{existing_hosts.size} host(s)")
+    end
+
     private def current_grants(db : DB::Database, name : String, host : String) : Hash(String, Set(String))
       rows = db.query_all("SHOW GRANTS FOR #{quote_str(name)}@#{quote_str(host)}", as: String)
       PluginHelpers::MysqlPrivileges.current_grants(rows)
@@ -147,7 +219,7 @@ module CrystalPlay
 
       desired.each do |target, privileges|
         grant_option = privileges.includes?("GRANT")
-        list = privileges.reject { |p| p == "GRANT" }
+        list = privileges.reject { |priv_name| priv_name == "GRANT" }
         list = ["USAGE"] if list.empty?
 
         clause = grant_option ? " WITH GRANT OPTION" : ""

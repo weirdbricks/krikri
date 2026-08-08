@@ -330,6 +330,18 @@ module CrystalPlay
       "community.docker.docker_container",
       "community.mysql.mysql_db",
       "community.mysql.mysql_user",
+      "community.mysql.mysql_info",
+      "community.mysql.mysql_query",
+      # dev-sec's own mysql_hardening role writes every mysql module
+      # under this FQCN instead of community.mysql.* - a real, distinct
+      # collection namespace (not a typo in this repo), so both need
+      # their own AVAILABLE_PLUGINS entries; get_local_plugin_path's own
+      # FQCN-stripping regex strips both prefixes down to the same
+      # plugin binary names.
+      "ansible.mysql.mysql_db",
+      "ansible.mysql.mysql_user",
+      "ansible.mysql.mysql_info",
+      "ansible.mysql.mysql_query",
       "community.postgresql.postgresql_db",
       "community.postgresql.postgresql_user",
       "community.postgresql.postgresql_privs",
@@ -1077,6 +1089,17 @@ module CrystalPlay
             # JSON-encoding here (like "that:") gives coerce's existing
             # leading-bracket check something real to detect.
             params[key.to_s] = value.to_json
+          elsif (module_name == "ansible.mysql.mysql_query" || module_name == "community.mysql.mysql_query") && key.to_s == "query" && value.as_a?
+            # `query:` as a list of independent SQL statements (dev-sec
+            # mysql_hardening's own "Ensure that there are no users
+            # without password" task) has the identical comma-joining
+            # hazard "assert.that" already works around - a statement
+            # legitimately containing a comma (very common in SQL) would
+            # be indistinguishable from a statement boundary. JSON-
+            # encoded here; MysqlQueryPlugin#parse_statements decodes it
+            # back into an Array(String) on the plugin side.
+            statements = value.as_a.map { |item| stringify_value(item) }
+            params[key.to_s] = statements.to_json
           else
             params[key.to_s] = Vault.maybe_decrypt(stringify_value(value))
           end

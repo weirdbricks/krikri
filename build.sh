@@ -218,6 +218,8 @@ PLUGINS=(
     "docker_container"
     "mysql_db"
     "mysql_user"
+    "mysql_info"
+    "mysql_query"
     "postgresql_db"
     "postgresql_user"
     "postgresql_privs"
