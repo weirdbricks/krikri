@@ -60,15 +60,61 @@ module CrystalPlay
     # selection: returns the first argument when the target is truthy, the
     # second when falsy. os_hardening writes per-boolean configs this way:
     # `{{ os_auditd_write_logs | bool | ternary('yes', 'no') }}`.
+    #
+    # Uses #real_truthy?, NOT Crinja::Value#truthy?: Crinja's own
+    # implementation (lib/crinja/src/runtime/value.cr) only treats
+    # `false`/`0`/`nil`/undefined as falsy - critically missing an empty
+    # string, which real Python/Jinja2 (what Ansible actually runs on)
+    # treats as falsy too. ssh_hardening's own `ssh_deny_users: ""`
+    # default (and several others: allow_users, deny_groups, ...) relies
+    # on exactly this - `{% if ssh_deny_users %}` must skip when it's
+    # still the empty-string default. Can't fix Crinja::Value#truthy?
+    # itself (lib/ is gitignored - a vendored-shard patch would silently
+    # vanish on the next `shards install`), so every call site in *this*
+    # file that needs real truthiness uses this helper instead.
     Crinja.filter(:ternary) do
       true_arg = arguments.varargs[0]?
       false_arg = arguments.varargs[1]?
-      picked = if target.truthy?
+      picked = if JinjaFilters.real_truthy?(target)
                  true_arg || Crinja::Value.new("")
                else
                  false_arg || Crinja::Value.new("")
                end
       Crinja::Value.new(picked)
+    end
+
+    # `pytruthy` - real Python/Jinja2 truthiness, exposed as its own
+    # filter so `{% if EXPR %}`/`{% elif EXPR %}` tags can be rewritten
+    # to `{% if (EXPR) | pytruthy %}` (see TemplateActionPlugin::
+    # TAG_IF_ELIF) - Crinja's own native `{% if %}` evaluation calls
+    # Crinja::Value#truthy? directly and can't be intercepted any other
+    # way from outside the vendored shard.
+    Crinja.filter(:pytruthy) do
+      Crinja::Value.new(JinjaFilters.real_truthy?(target))
+    end
+
+    # Real Python/Jinja2 truthiness: falsy values are `false`, `0`
+    # (any numeric type), `nil`/`None`, undefined, and - the specific
+    # gap Crinja::Value#truthy? has - an empty string, empty sequence,
+    # or empty mapping. Everything else is truthy.
+    def self.real_truthy?(value : Crinja::Value) : Bool
+      return false if value.undefined? || value.raw.nil?
+      case raw = value.raw
+      when Bool
+        raw
+      when String
+        !raw.empty?
+      when Int32, Int64
+        raw != 0
+      when Float64
+        raw != 0.0
+      when Array(Crinja::Value)
+        !raw.empty?
+      when Crinja::Dictionary
+        !raw.empty?
+      else
+        true
+      end
     end
 
     # `difference(iterable)` - set difference: the elements of the target
