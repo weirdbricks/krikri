@@ -102,26 +102,28 @@ module CrystalPlay
         )
       end
 
-      # Dispatch based on state
+      result = dispatch_state(state, path)
+
+      # Real Ansible's file module always echoes the resolved state:
+      # back in its result (dev-sec os_hardening's own molecule test
+      # verifies a `register:`'d file: task's `.state` directly:
+      # `result_test_netrc.state == 'file'`) - added centrally here
+      # rather than in every handle_* branch above, since none of them
+      # need to know their own state value to do their actual job.
+      result.extra["state"] = JSON::Any.new(state) unless result.failed || result.extra.has_key?("state")
+      result
+    end
+
+    private def dispatch_state(state : String, path : String) : PluginResult
       case state
-      when "directory"
-        handle_directory(path)
-      when "file"
-        handle_file(path)
-      when "link"
-        handle_link(path)
-      when "hard"
-        handle_hard_link(path)
-      when "touch"
-        handle_touch(path)
-      when "absent"
-        handle_absent(path)
+      when "directory" then handle_directory(path)
+      when "file"      then handle_file(path)
+      when "link"      then handle_link(path)
+      when "hard"      then handle_hard_link(path)
+      when "touch"     then handle_touch(path)
+      when "absent"    then handle_absent(path)
       else
-        PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Unhandled state: #{state}"
-        )
+        PluginResult.new(changed: false, failed: true, msg: "Unhandled state: #{state}")
       end
     end
 
