@@ -93,7 +93,24 @@ module CrystalPlay
     #   from batches entirely avoids the whole class of bug.
     private def self.breaks_run?(task : Task) : Bool
       structural_or_dynamic?(task) || needs_controller_control_flow?(task) ||
-        !!task.delegate_to || task.run_once || retroactive_verdict?(task)
+        !!task.delegate_to || task.run_once || retroactive_verdict?(task) ||
+        produces_ansible_facts?(task)
+    end
+
+    # getent:/package_facts:/set_fact: (unlike a plain register:, which
+    # references_register? below already guards) write new ansible_facts/
+    # variables as a normal part of *every* run, with no register: name
+    # for a later group member's params to be caught referencing. A batch
+    # group's member params are all rendered up front, before the single
+    # SSH round trip that actually runs any of them - a later member
+    # referencing one of these facts (dev-sec os_hardening's own molecule
+    # test: `getent: {database: passwd}` immediately followed by tasks
+    # reading `ansible_facts.getent_passwd`) would render against
+    # whatever that fact was *before* this task ran, not after. Always
+    # its own group avoids the whole class of bug, the same way
+    # structural_or_dynamic?'s pseudo-modules are.
+    private def self.produces_ansible_facts?(task : Task) : Bool
+      %w[getent package_facts set_fact].any? { |name| task.module_name.ends_with?(name) }
     end
 
     private def self.structural_or_dynamic?(task : Task) : Bool
