@@ -155,6 +155,20 @@ module CrystalPlay
     # is valid Crinja syntax on its own and must never be touched.
     TAG_IF_ELIF = /\{%(-?)\s*(if|elif)\s+(.*?)\s*(-?)%\}/
 
+    # `{% for (key, value) in dict.items() %}` - the idiomatic real-
+    # Jinja2 way to iterate a dict's key/value pairs (mysql_hardening's
+    # own hardening.cnf.j2 writes it exactly this way) - two things
+    # Crinja can't parse: parens around the loop variables, and dicts
+    # having no `.items()` method at all. Neither needs real rewriting
+    # logic, since Crinja's own bare `{% for k, v in dict %}` (no
+    # parens, no `.items()`) already yields (key, value) pairs directly
+    # - a real deviation from Python/Jinja2 (where a bare dict for-loop
+    # iterates keys only, not pairs), but exactly the behavior needed
+    # here, so both problem pieces are simply stripped rather than
+    # implemented from scratch.
+    FOR_TUPLE_PARENS = /(\{%-?\s*for\s+)\(([^)]+)\)(\s+in\s+)/
+    FOR_ITEMS_METHOD  = /(\{%-?\s*for\s+.+?\s+in\s+[A-Za-z_][\w.]*)\.items\(\)/
+
     # Parses a leading `#jinja2: key:value, key2:value2` directive line
     # (only recognized on the template's literal first line, matching
     # real Ansible) into a {key => bool} overrides hash, and returns the
@@ -244,6 +258,10 @@ module CrystalPlay
             "{%#{$1} #{$2} (#{rewrite_in_expr(condition)}) | pytruthy #{$4}%}"
           end
         end
+        # `{% for (k, v) in dict.items() %}` -> `{% for k, v in dict %}`
+        # (see FOR_TUPLE_PARENS/FOR_ITEMS_METHOD above).
+        once = once.gsub(FOR_TUPLE_PARENS) { "#{$1}#{$2}#{$3}" }
+        once = once.gsub(FOR_ITEMS_METHOD) { $1 }
         break if once == template
         template = once
       end
