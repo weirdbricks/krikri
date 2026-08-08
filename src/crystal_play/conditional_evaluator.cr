@@ -1,5 +1,6 @@
 require "json"
 require "./variable_substitutor/filter_engine"
+require "./variable_substitutor/variable_lookup"
 
 module CrystalPlay
   # ConditionalEvaluator - Evaluates Ansible when: conditions
@@ -318,18 +319,23 @@ module CrystalPlay
         }
       end
 
-      # Dotted variable access (e.g. result.rc, stat_result.stat.exists) -
+      # Dotted and/or indexed variable access (e.g. result.rc,
+      # stat_result.stat.exists, ansible_facts.getent_passwd[item][1] -
+      # dev-sec os_hardening's own way of pulling a getent entry's UID
+      # field, gating every account-management task in that role) -
       # previously only the {{ }}-wrapped ComparisonEvaluator path
-      # supported this; a bare when:/until:/changed_when:/failed_when:
-      # condition referencing a dotted result field silently evaluated to
-      # undefined (nil) instead of the real value. Guarded against float
-      # literals ("1.5") also containing a "." - those aren't variable
-      # paths, and the first segment of a real one ("result") won't itself
-      # parse as a float.
-      if expr.includes?(".") && !expr.to_f64?
-        parts = expr.split(".")
-        if vars.has_key?(parts[0])
-          resolved = resolve_dotted(vars[parts[0]], parts[1..])
+      # supported this at all, and even the dotted-only case here never
+      # understood a trailing `[...]` (treating "getent_passwd[item][1]"
+      # as one literal, nonexistent hash key). Delegates to
+      # VariableLookup#resolve, the same chained dotted+indexed resolver
+      # {{ }} substitution uses. Guarded against float literals ("1.5")
+      # also containing a "." - those aren't variable paths, and the
+      # first segment of a real one ("result") won't itself parse as a
+      # float.
+      if (expr.includes?(".") || expr.includes?("[")) && !expr.to_f64?
+        parts = expr.split(/[.\[]/)
+        if !parts.empty? && vars.has_key?(parts[0])
+          resolved = VariableSubstitutor::VariableLookup.new(vars).resolve(expr)
           return resolved ? json_any_to_value(resolved) : nil
         end
       end
@@ -343,32 +349,13 @@ module CrystalPlay
       end
     end
 
-    # Resolves a simple or dotted expression (the head of a filter chain,
-    # e.g. "mylist" or "result.stdout" in "result.stdout | trim") to its
-    # raw JSON::Any value, reusing resolve_dotted below - an empty
-    # remainder (a non-dotted expr) just returns the looked-up value
-    # unchanged.
+    # Resolves a simple, dotted, and/or indexed expression (the head of a
+    # filter chain, e.g. "mylist", "result.stdout" in "result.stdout |
+    # trim", or "ansible_facts.getent_passwd[item][1]" in "...|int") to
+    # its raw JSON::Any value - delegates to VariableLookup#resolve, the
+    # same chained dotted+indexed resolver {{ }} substitution uses.
     private def self.resolve_json(expr : String, vars : Hash(String, JSON::Any)) : JSON::Any?
-      expr = expr.strip
-      parts = expr.split(".")
-      return nil unless vars.has_key?(parts[0])
-      resolve_dotted(vars[parts[0]], parts[1..])
-    end
-
-    # Navigates a dotted path through a JSON::Any Hash structure (e.g.
-    # ["stat", "exists"] against {"stat" => {"exists" => true}}). Returns
-    # nil if any segment is missing or the value at that point isn't a
-    # Hash (arrays aren't indexed by name, so a dotted path into one is
-    # always undefined here - array indexing uses [n], a separate,
-    # already-supported path).
-    private def self.resolve_dotted(current : JSON::Any, parts : Array(String)) : JSON::Any?
-      parts.each do |part|
-        return nil unless current.raw.is_a?(Hash)
-        next_value = current[part]?
-        return nil unless next_value
-        current = next_value
-      end
-      current
+      VariableSubstitutor::VariableLookup.new(vars).resolve(expr.strip)
     end
 
     # Converts a resolved JSON::Any into the same union evaluate_value

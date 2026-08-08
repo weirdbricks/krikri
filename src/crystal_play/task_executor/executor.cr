@@ -1426,10 +1426,24 @@ module CrystalPlay
       item_results = if loop_batch_eligible?(task, host, exec_host, base_vars_context)
                        execute_looped_task_batched(task, host, base_vars_context, loop_items)
                      else
+                       # A running (not re-dup'd-from-base) vars_context
+                       # carries each iteration's ansible_facts forward
+                       # into the next - real Ansible does the same for
+                       # set_fact:, and dev-sec os_hardening's own account-
+                       # list building depends on it: `set_fact:
+                       # system_users: "{{ system_users | default([]) +
+                       # [item] }}"` inside a loop needs iteration N to see
+                       # iteration N-1's accumulated list, not the loop's
+                       # starting value every time.
+                       running_vars_context = base_vars_context.dup
                        loop_items.map do |item|
-                         vars_context = base_vars_context.dup
+                         vars_context = running_vars_context.dup
                          vars_context["item"] = item
-                         execute_task_once(task, host, vars_context, item_label: item_display(item), exec_host: exec_host, defer_loop_stats: true)
+                         result = execute_task_once(task, host, vars_context, item_label: item_display(item), exec_host: exec_host, defer_loop_stats: true)
+                         if result && (facts = result["ansible_facts"]?) && (facts_hash = facts.as_h?)
+                           facts_hash.each { |key, value| running_vars_context[key] = value }
+                         end
+                         result
                        end
                      end
 
@@ -1438,16 +1452,18 @@ module CrystalPlay
 
     # Whether execute_looped_task can send every surviving item through
     # one shared SSH round trip instead of one per item. Loop iterations
-    # of a single task can never reference each other's results (Ansible
-    # has no such semantic), unlike mixed-task batching's
-    # references_register? check - so the only conditions here are the
-    # ones that make a single remote round trip unsafe or meaningless at
-    # all: not remote, delegated elsewhere, or a controller-side verdict
-    # override the script's own fail-fast can't see (same reasoning as
-    # TaskBatcher#retroactive_verdict?).
+    # of a single task can never reference each other's *remote* results
+    # (Ansible has no such semantic for a command's stdout/rc), unlike
+    # mixed-task batching's references_register? check - but set_fact:
+    # is purely controller-side and each iteration's result (its
+    # ansible_facts) genuinely does need to carry into the next (see the
+    # running_vars_context comment above) - a single upfront batch script
+    # can't do that, so it's excluded here rather than silently losing
+    # the accumulation.
     private def loop_batch_eligible?(task : Task, host : Host, exec_host : Host, vars_context : Hash(String, JSON::Any)) : Bool
       return false unless @batching_enabled
       return false unless exec_host == host
+      return false if task.module_name.ends_with?("set_fact")
       return false if task.delegate_to
       return false if PluginManager.is_local_connection?(exec_host, vars_context)
       return false if task.changed_when || task.failed_when
