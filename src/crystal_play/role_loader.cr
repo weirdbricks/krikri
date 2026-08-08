@@ -139,6 +139,16 @@ module CrystalPlay
     end
 
     private def self.resolve_role_dir(name : String, playbook_dir : String) : String?
+      # A role name containing a path separator (absolute, or relative like
+      # "../common_roles/foo") is used directly, matching real Ansible -
+      # only a bare name ("common") is looked up under roles:/ search paths.
+      if name.includes?('/')
+        return name if Dir.exists?(name)
+        joined = File.join(playbook_dir, name)
+        return joined if Dir.exists?(joined)
+        return nil
+      end
+
       [File.join(playbook_dir, "roles", name), File.join("roles", name)].find { |dir| Dir.exists?(dir) }
     end
 

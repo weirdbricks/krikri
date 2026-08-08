@@ -204,6 +204,7 @@ module CrystalPlay
       connection_host = get_connection_host(host, host.vars)
       host_key = "#{host.user}@#{connection_host}:#{host.port}"
       user = host.user || "root"
+      identity_file = host.vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
 
       # Initialize plugin cache for this host
       @@uploaded_plugins[host_key] ||= Set(String).new
@@ -223,7 +224,7 @@ module CrystalPlay
         true
         SCRIPT
       remote_md5s = Hash(String, String).new
-      SSHManager.exec_script(connection_host, user, list_script, host.port)[:stdout]
+      SSHManager.exec_script(connection_host, user, list_script, host.port, identity_file: identity_file)[:stdout]
         .each_line do |line|
           name, _, md5 = line.strip.partition(' ')
           remote_md5s[name] = md5 unless name.empty?
@@ -258,7 +259,8 @@ module CrystalPlay
         local_plugin_paths,
         remote_plugin_dir,
         host.port,
-        mode: 0o755
+        mode: 0o755,
+        identity_file: identity_file
       )
 
       unless rsync_ok
@@ -274,7 +276,8 @@ module CrystalPlay
             local_paths[plugin_name],
             "#{remote_plugin_dir}/#{plugin_name}",
             host.port,
-            mode: nil
+            mode: nil,
+            identity_file: identity_file
           )
         end
       end
@@ -292,7 +295,7 @@ module CrystalPlay
           str << "echo '#{local_md5s[plugin_name]}' > #{remote_plugin_dir}/#{plugin_name}.md5\n"
         end
       end
-      SSHManager.exec_script(connection_host, user, write_script, host.port)
+      SSHManager.exec_script(connection_host, user, write_script, host.port, identity_file: identity_file)
 
       plugins_to_upload.each { |name| @@uploaded_plugins[host_key].add(name) }
 
@@ -475,7 +478,8 @@ module CrystalPlay
         connection_host,
         host.user || "root",
         command,
-        host.port
+        host.port,
+        identity_file: vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
       )
 
       interpret_remote_result(result[:exit_code], result[:stdout], result[:stderr])

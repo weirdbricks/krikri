@@ -54,10 +54,25 @@ module CrystalPlay
           JSON::Any.new(int_value)
         elsif float_value = value.to_f64?
           JSON::Any.new(float_value)
+        elsif (value.starts_with?('{') || value.starts_with?('[')) && (parsed = try_parse_json(value))
+          # A dict/list-valued fact (e.g. dynamic `set_fact: "{{
+          # item.key }}": "{{ item.value }}"` over a dict item, as
+          # dev-sec os_hardening's os_shadow_perms/os_passwd_perms are
+          # built) arrives here as the JSON text VariableLookup#format_value
+          # serialized it to - parse it back to a real Hash/Array so
+          # later dotted access (`os_shadow_perms.owner`) works, instead
+          # of leaving it a flat string that renders "undefined".
+          parsed
         else
           JSON::Any.new(value)
         end
       end
+    end
+
+    private def try_parse_json(value : String) : JSON::Any?
+      JSON.parse(value)
+    rescue JSON::ParseException
+      nil
     end
   end
 end

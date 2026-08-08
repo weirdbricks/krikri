@@ -911,7 +911,26 @@ module CrystalPlay
         suffix = item_label ? " => (item=#{item_label})" : ""
         puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
       end
+      register_skip_result(task, host)
       false
+    end
+
+    # A skipped task's own register: still gets set (to a `changed:
+    # false, skipped: true` result, matching real Ansible) rather than
+    # left holding whatever a previous task/loop iteration happened to
+    # register under the same name. Without this, dev-sec os_hardening's
+    # `register: mountpoint` / `when: mountpoint.changed` pair (each
+    # include_tasks loop iteration reusing the same register name) leaks
+    # a *prior* iteration's real "changed" result into a later iteration
+    # whose own task was skipped, wrongly running the dependent task.
+    private def register_skip_result(task : Task, host : Host)
+      return unless (register_name = task.register) && !register_name.empty?
+
+      register_result(host, register_name, JSON.parse({
+        "changed"     => false,
+        "skipped"     => true,
+        "skip_reason" => "Conditional result was False",
+      }.to_json))
     end
 
     # Reports a when:-skipped batch member: the print and skipped counter
@@ -1080,7 +1099,7 @@ module CrystalPlay
     private def run_batch_script(host : Host, connection_host : String, steps : Array(BatchScript::Step)) : Hash(Int32, BatchScript::StepResult)
       batch_id = Random::Secure.hex(8)
       script = BatchScript.build(batch_id, steps)
-      raw = SSHManager.exec_script(connection_host, host.user || "root", script, host.port)
+      raw = SSHManager.exec_script(connection_host, host.user || "root", script, host.port, identity_file: host.vars["ansible_ssh_private_key_file"]?.try(&.as_s?))
       BatchScript.parse(raw[:stdout])
     end
 
@@ -1709,8 +1728,16 @@ module CrystalPlay
         loop_var = task.loop_var
         loop_items.each do |item|
           vars_context = base_vars_context.dup
-          vars_context["item"] = item
-          vars_context[loop_var] = item if loop_var
+          # Render any string field of the item that is itself a template
+          # (e.g. dev-sec os_hardening's mount-list entries: `enabled:
+          # "{{ os_mnt_tmp_enabled }}"`) before binding it into scope -
+          # otherwise a bare `when: mount.enabled | bool` (no outer
+          # `{{ }}` for ConditionalEvaluator to render through) sees the
+          # literal unrendered "{{ os_mnt_tmp_enabled }}" text, which the
+          # `bool` filter treats as truthy regardless of the real value.
+          rendered_item = deep_render_item(item, vars_context, host.name)
+          vars_context["item"] = rendered_item
+          vars_context[loop_var] = rendered_item if loop_var
           # Each include_tasks loop iteration counts as one `ok` in the
           # recap, matching real Ansible (which tallies the include plus
           # every included task per iteration).
@@ -1891,6 +1918,29 @@ module CrystalPlay
       @handler_runner.handlers.concat(included_handlers) unless included_handlers.empty?
 
       run_task_list(included_tasks, host)
+    end
+
+    # Recursively renders every string field of a loop item that is
+    # itself a template (Hash/Array values are walked; a String
+    # containing "{{" is substituted through *vars_context*, everything
+    # else is returned unchanged) - see execute_include_tasks for why
+    # this matters for bare (non-`{{ }}`) when: conditions.
+    private def deep_render_item(item : JSON::Any, vars_context : Hash(String, JSON::Any), host_name : String) : JSON::Any
+      case raw = item.raw
+      when Hash
+        rendered = raw.each_with_object({} of String => JSON::Any) do |(key, value), acc|
+          acc[key] = deep_render_item(value, vars_context, host_name)
+        end
+        JSON::Any.new(rendered)
+      when Array
+        JSON::Any.new(raw.map { |value| deep_render_item(value, vars_context, host_name) })
+      when String
+        return item unless raw.includes?("{{")
+        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host_name)
+        JSON::Any.new(substitutor.substitute(raw))
+      else
+        item
+      end
     end
 
     # Substitute variables in task parameters

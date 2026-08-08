@@ -48,21 +48,22 @@ module CrystalPlay
       user : String,
       command : String,
       port : Int32 = 22,
-      timeout : Int32 = 300
+      timeout : Int32 = 300,
+      identity_file : String? = nil
     ) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
-      
+
       init
       @@stats["commands_executed"] += 1
-      
+
       # Build SSH command with ControlMaster for connection pooling
       control_path = get_control_path(host, user, port)
-      
+
       # Important: We pass the command through bash -c to ensure proper shell
       # interpretation on the remote side. This prevents the local shell from
       # interpreting operators like ||, &&, |, >, etc.
       # We use /bin/bash instead of /bin/sh for better compatibility
       wrapped_command = "/bin/bash -c #{shell_quote(command)}"
-      
+
       ssh_cmd = [
         "ssh",
         "-o", "ControlMaster=auto",
@@ -72,6 +73,7 @@ module CrystalPlay
         "-o", "ServerAliveInterval=60",
         "-o", "ServerAliveCountMax=3",
         "-o", "StrictHostKeyChecking=accept-new",  # Auto-accept new host keys
+      ] + identity_args(identity_file) + [
         "-p", port.to_s,
         "#{user}@#{host}",
         wrapped_command
@@ -119,7 +121,8 @@ module CrystalPlay
       user : String,
       script : String,
       port : Int32 = 22,
-      timeout : Int32 = 300
+      timeout : Int32 = 300,
+      identity_file : String? = nil
     ) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       init
       @@stats["commands_executed"] += 1
@@ -135,6 +138,7 @@ module CrystalPlay
         "-o", "ServerAliveInterval=60",
         "-o", "ServerAliveCountMax=3",
         "-o", "StrictHostKeyChecking=accept-new",
+      ] + identity_args(identity_file) + [
         "-p", port.to_s,
         "#{user}@#{host}",
         "bash", "-s",
@@ -178,17 +182,18 @@ module CrystalPlay
       local_path : String,
       remote_path : String,
       port : Int32 = 22,
-      mode : Int32? = 0o644
+      mode : Int32? = 0o644,
+      identity_file : String? = nil
     )
       init
       @@stats["files_uploaded"] += 1
-      
+
       unless File.exists?(local_path)
         raise "Local file not found: #{local_path}"
       end
-      
+
       control_path = get_control_path(host, user, port)
-      
+
       # Use scp with ControlMaster to reuse SSH connection
       scp_cmd = [
         "scp",
@@ -196,44 +201,46 @@ module CrystalPlay
         "-o", "ControlPath=#{control_path}",
         "-o", "ControlPersist=600",
         "-o", "StrictHostKeyChecking=accept-new",
+      ] + identity_args(identity_file) + [
         "-P", port.to_s,
         local_path,
         "#{user}@#{host}:#{remote_path}"
       ]
-      
+
       result = Process.run(
         scp_cmd[0],
         scp_cmd[1..],
         output: Process::Redirect::Pipe,
         error: Process::Redirect::Pipe
       )
-      
+
       unless result.exit_code == 0
         raise "Failed to upload #{local_path} to #{host}:#{remote_path}"
       end
-      
+
       # Set permissions if different from default. Pass `mode: nil` to
       # suppress this entirely when the caller is uploading a batch of
       # files and can fold one chmod into a round trip it already makes -
       # otherwise this costs an extra round trip *per file*.
       if mode && mode != 0o644
-        exec(host, user, "chmod #{mode.to_s(8)} #{remote_path}", port)
+        exec(host, user, "chmod #{mode.to_s(8)} #{remote_path}", port, identity_file: identity_file)
       end
     end
-    
+
     # Download file from remote host via SCP
     def self.download(
       host : String,
       user : String,
       remote_path : String,
       local_path : String,
-      port : Int32 = 22
+      port : Int32 = 22,
+      identity_file : String? = nil
     )
       init
       @@stats["files_downloaded"] += 1
-      
+
       control_path = get_control_path(host, user, port)
-      
+
       # Use scp with ControlMaster to reuse SSH connection
       scp_cmd = [
         "scp",
@@ -241,18 +248,19 @@ module CrystalPlay
         "-o", "ControlPath=#{control_path}",
         "-o", "ControlPersist=600",
         "-o", "StrictHostKeyChecking=accept-new",
+      ] + identity_args(identity_file) + [
         "-P", port.to_s,
         "#{user}@#{host}:#{remote_path}",
         local_path
       ]
-      
+
       result = Process.run(
         scp_cmd[0],
         scp_cmd[1..],
         output: Process::Redirect::Pipe,
         error: Process::Redirect::Pipe
       )
-      
+
       unless result.exit_code == 0
         raise "Failed to download #{host}:#{remote_path} to #{local_path}"
       end
@@ -282,20 +290,21 @@ module CrystalPlay
       local_path : String,
       remote_path : String,
       port : Int32 = 22,
-      mode : Int32 = 0o644
+      mode : Int32 = 0o644,
+      identity_file : String? = nil
     ) : Bool
       init
 
       return false unless rsync_available?
 
       control_path = get_control_path(host, user, port)
-      
+
       # Use rsync with SSH control master
       rsync_cmd = [
         "rsync",
         "-az",  # archive mode, compress
         "--chmod=#{mode.to_s(8)}",  # set permissions
-        "-e", "ssh -o ControlMaster=auto -o ControlPath=#{control_path} -o ControlPersist=600 -o StrictHostKeyChecking=accept-new -p #{port}",
+        "-e", "ssh -o ControlMaster=auto -o ControlPath=#{control_path} -o ControlPersist=600 -o StrictHostKeyChecking=accept-new#{identity_ssh_opt(identity_file)} -p #{port}",
         local_path,
         "#{user}@#{host}:#{remote_path}"
       ]
@@ -323,7 +332,8 @@ module CrystalPlay
       local_files : Array(String),
       remote_dir : String,
       port : Int32 = 22,
-      mode : Int32 = 0o755
+      mode : Int32 = 0o755,
+      identity_file : String? = nil
     ) : Bool
       init
 
@@ -339,7 +349,7 @@ module CrystalPlay
         "rsync",
         "-az",
         "--chmod=#{mode.to_s(8)}",
-        "-e", "ssh -o ControlMaster=auto -o ControlPath=#{control_path} -o ControlPersist=600 -o StrictHostKeyChecking=accept-new -p #{port}",
+        "-e", "ssh -o ControlMaster=auto -o ControlPath=#{control_path} -o ControlPersist=600 -o StrictHostKeyChecking=accept-new#{identity_ssh_opt(identity_file)} -p #{port}",
       ] + local_files + ["#{user}@#{host}:#{remote_dir}/"]
 
       result = Process.run(
@@ -393,6 +403,21 @@ module CrystalPlay
       "#{@@control_path_dir}/#{socket_name}"
     end
     
+    # `-i <path>` args for ssh/scp when the inventory specifies
+    # ansible_ssh_private_key_file - omitted entirely so ssh falls back to
+    # its own default identities/agent, matching real Ansible/OpenSSH
+    # behavior when no key is given.
+    private def self.identity_args(identity_file : String?) : Array(String)
+      identity_file ? ["-i", identity_file] : [] of String
+    end
+
+    # Same as identity_args, but as a string fragment for rsync's `-e`
+    # ssh command line (which is a single shell-quoted string, not an
+    # argv array).
+    private def self.identity_ssh_opt(identity_file : String?) : String
+      identity_file ? " -i #{shell_quote(identity_file)}" : ""
+    end
+
     # Properly quote a string for shell execution
     # Uses single quotes and escapes any single quotes in the string
     private def self.shell_quote(str : String) : String

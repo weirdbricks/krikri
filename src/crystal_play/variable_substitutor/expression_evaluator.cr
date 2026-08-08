@@ -29,6 +29,18 @@ module CrystalPlay
           return evaluate_with_filter(expr)
         end
 
+        # Check for top-level `+` concatenation (list/string/number), e.g.
+        # `mountpoints_list + ['/dev', '/dev/shm', '/run', '/tmp']` - a
+        # common Jinja2 idiom for a self-referential set_fact appending
+        # literal entries onto a list (dev-sec os_hardening's own
+        # "Append special devices list to valid mountpoint list" task is
+        # built exactly this way). Must come before the generic "[" check
+        # below, which would otherwise misparse the whole expression as
+        # `var[key]` off the literal array's own brackets.
+        if segments = split_top_level_plus(expr)
+          return evaluate_plus(segments)
+        end
+
         # FIXED: Check for array slicing [: or :] pattern specifically
         # This must come BEFORE the general [ check
         if expr.includes?("[:") || expr.includes?(":]")
@@ -56,7 +68,116 @@ module CrystalPlay
         (expr.includes?(">") && !expr.includes?(">=")) ||
         (expr.includes?("<") && !expr.includes?("<="))
       end
-      
+
+      # Splits *expr* on every top-level `+` (outside quotes/brackets),
+      # returning nil (not a two-part array) when there's no top-level `+`
+      # at all so the caller's normal routing is untouched.
+      private def split_top_level_plus(expr : String) : Array(String)?
+        state = PlusSplitState.new
+        expr.each_char { |char| split_top_level_plus_step(state, char) }
+        state.parts << state.current.to_s.strip
+        state.found? ? state.parts : nil
+      end
+
+      private class PlusSplitState
+        property parts = [] of String
+        property current = String::Builder.new
+        property depth = 0
+        property quote : Char? = nil
+        property? found = false
+      end
+
+      private def split_top_level_plus_step(state : PlusSplitState, char : Char)
+        if quote = state.quote
+          state.current << char
+          state.quote = nil if char == quote
+          return
+        end
+
+        return split_top_level_plus_delimiter(state, char) if "'\"[](){}".includes?(char)
+
+        if char == '+' && state.depth == 0
+          state.parts << state.current.to_s.strip
+          state.current = String::Builder.new
+          state.found = true
+        else
+          state.current << char
+        end
+      end
+
+      private def split_top_level_plus_delimiter(state : PlusSplitState, char : Char)
+        case char
+        when '\'', '"'
+          state.quote = char
+        when '[', '(', '{'
+          state.depth += 1
+        when ']', ')', '}'
+          state.depth -= 1
+        end
+        state.current << char
+      end
+
+      # Resolves and concatenates/adds every operand of a top-level `+`
+      # expression, left to right - array+array concatenates, string+string
+      # concatenates, number+number adds; anything else falls back to
+      # string concatenation of both sides' rendered form rather than
+      # erroring.
+      private def evaluate_plus(segments : Array(String)) : String
+        values = segments.map { |seg| resolve_plus_operand(seg) }
+        result = values.reduce { |acc, val| combine_plus(acc, val) }
+        @lookup.format_value(result)
+      end
+
+      private def resolve_plus_operand(expr : String) : JSON::Any
+        expr = expr.strip
+        literal = quoted_string_literal(expr) || numeric_literal(expr)
+        return literal if literal
+
+        return parse_literal_array(expr) if expr.starts_with?('[') && expr.ends_with?(']')
+
+        @lookup.resolve(expr) || JSON::Any.new(nil)
+      end
+
+      private def quoted_string_literal(expr : String) : JSON::Any?
+        return nil if expr.size < 2
+        return nil unless expr[0] == expr[-1] && (expr[0] == '\'' || expr[0] == '"')
+        JSON::Any.new(expr[1..-2])
+      end
+
+      private def numeric_literal(expr : String) : JSON::Any?
+        if int_val = expr.to_i64?
+          JSON::Any.new(int_val)
+        elsif float_val = expr.to_f64?
+          JSON::Any.new(float_val)
+        end
+      end
+
+      # A literal Jinja list (`['/dev', '/dev/shm']`) is valid Python/Jinja
+      # syntax but not valid JSON on account of the single quotes - swapped
+      # for double quotes before parsing, which is good enough for the
+      # common case of a literal list of unquoted or simply-quoted string
+      # items (this codebase's only real use of `+ [...]`).
+      private def parse_literal_array(expr : String) : JSON::Any
+        JSON.parse(expr.gsub('\'', '"'))
+      rescue JSON::ParseException
+        JSON::Any.new(expr)
+      end
+
+      private def combine_plus(a : JSON::Any, b : JSON::Any) : JSON::Any
+        case {a.raw, b.raw}
+        when {Array, Array}
+          JSON::Any.new(a.as_a + b.as_a)
+        when {String, String}
+          JSON::Any.new(a.as_s + b.as_s)
+        when {Int64, Int64}
+          JSON::Any.new(a.as_i64 + b.as_i64)
+        when {Float64, Float64}
+          JSON::Any.new(a.as_f + b.as_f)
+        else
+          JSON::Any.new(@lookup.format_value(a) + @lookup.format_value(b))
+        end
+      end
+
       # Evaluate expression with a (possibly chained) filter pipeline.
       # Example: myvar | default('value'), or items | sort | join(',')
       #

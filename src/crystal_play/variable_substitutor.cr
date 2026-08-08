@@ -92,13 +92,26 @@ module CrystalPlay
       
       pattern = /\{\{([^}]+)\}\}/
 
-      # A single gsub pass instead of a loop of match+sub (which rescans
-      # the *substituted* result from index 0 on every iteration - O(k*n)
-      # for k placeholders, and would loop forever if a variable's own
-      # value happened to contain "{{"). No existing behavior depends on
-      # that recursive re-scan (grepped specs/compat playbooks for
-      # nested {{ {{ - none), so this is a straight one-pass replacement.
-      text.gsub(pattern) { |_, match| evaluator.evaluate(match[1].strip).strip }
+      result = text.gsub(pattern) { |_, match| evaluator.evaluate(match[1].strip).strip }
+
+      # Ansible re-templates a rendered result that still contains "{{" -
+      # this happens whenever a variable's own value is itself a template
+      # string, e.g. dev-sec os_hardening's include_tasks loop items whose
+      # fields are defaults like `mode: "{{ os_mnt_dev_dir_mode }}"`:
+      # `{{ mount.mode }}` renders to that literal string on the first
+      # pass, and needs a second pass to become the real "0755". Bounded
+      # (and stops as soon as a pass makes no further progress) so a value
+      # that can never fully resolve, or one that legitimately contains a
+      # literal "{{", doesn't loop forever.
+      depth = 0
+      while result.includes?("{{") && depth < 5
+        next_result = result.gsub(pattern) { |_, match| evaluator.evaluate(match[1].strip).strip }
+        break if next_result == result
+        result = next_result
+        depth += 1
+      end
+
+      result
     end
     
     def substitute_hash(hash : Hash(String, String)) : Hash(String, String)

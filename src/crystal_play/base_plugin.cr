@@ -130,7 +130,13 @@ module CrystalPlay
       # Fall back to inventory hostname
       @host.name
     end
-    
+
+    # ansible_ssh_private_key_file, if the inventory specifies one -
+    # nil (ssh's own default identity/agent resolution) otherwise.
+    protected def get_identity_file : String?
+      @vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
+    end
+
     protected def remote_exec(command : String) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       if is_local_connection?
         # Execute locally
@@ -141,11 +147,12 @@ module CrystalPlay
           get_connection_host,
           @host.user || "root",
           command,
-          @host.port
+          @host.port,
+          identity_file: get_identity_file
         )
       end
     end
-    
+
     protected def remote_upload(local_path : String, remote_path : String)
       if is_local_connection?
         # Just copy locally
@@ -156,11 +163,12 @@ module CrystalPlay
           @host.user || "root",
           local_path,
           remote_path,
-          @host.port
+          @host.port,
+          identity_file: get_identity_file
         )
       end
     end
-    
+
     protected def remote_download(remote_path : String, local_path : String)
       if is_local_connection?
         # Just copy locally
@@ -171,7 +179,8 @@ module CrystalPlay
           @host.user || "root",
           remote_path,
           local_path,
-          @host.port
+          @host.port,
+          identity_file: get_identity_file
         )
       end
     end
