@@ -54,6 +54,26 @@ module CrystalPlay
         return parts.any? { |part| evaluate(part.strip, vars) } if split_progressed?(parts, condition)
       end
 
+      # Handle 'is version(comparison_version, operator)' - Ansible's own
+      # test (ansible.builtin.version), not standard Jinja2. Must be
+      # checked before the comparison-operator checks just below: the
+      # operator argument itself is very often a quoted `'>='`/`'<='`
+      # literal (ssh_hardening's own crypto_hostkeys.yml gates 3
+      # different set_fact: tasks on `when: sshd_version is version(
+      # '5.3', '>=')`-shaped conditions), and `condition.includes?(">=")`
+      # would otherwise fire first, splitting the *entire* "X is
+      # version('5.3', '>=')" string on that substring as if it were a
+      # top-level comparison - a nonsensical parse. Previously entirely
+      # unimplemented here (only Crinja, the separate evaluator backing
+      # real template files, had a `version` test) - every one of those
+      # three when: conditions evaluated false via the generic fallback,
+      # so the version-appropriate host key list was never set, leaving
+      # a `loop:` over a genuinely undefined variable three tasks later
+      # (surfacing as `item` = the literal string "undefined").
+      if version_test = condition.match(/\A(.+?)\s+is\s+version\(\s*(.+?)\s*,\s*(.+?)\s*\)\z/)
+        return evaluate_version_test(version_test[1], version_test[2], version_test[3], vars)
+      end
+
       # Handle comparison operators
       if condition.includes?("==")
         return evaluate_comparison(condition, "==", vars)
@@ -255,6 +275,65 @@ module CrystalPlay
     end
 
     # Evaluate 'in' operator
+    # Resolves *left_expr* (a variable/dotted/filter-chain expression, the
+    # same grammar #evaluate_value already handles) and compares it
+    # against the quoted-literal *compare_to_expr* using *operator_expr*
+    # (also a quoted literal, e.g. `'>='`) - see the call site above for
+    # why this needs to run before the generic comparison-operator
+    # checks.
+    private def self.evaluate_version_test(left_expr : String, compare_to_expr : String, operator_expr : String, vars : Hash(String, JSON::Any)) : Bool
+      left = evaluate_value(left_expr.strip, vars).to_s
+      compare_to = unquote_literal(compare_to_expr.strip)
+      operator = unquote_literal(operator_expr.strip)
+      cmp = compare_versions(left, compare_to)
+
+      case operator
+      when "==", "="
+        cmp == 0
+      when "!="
+        cmp != 0
+      when "<", "lt"
+        cmp < 0
+      when "<=", "le"
+        cmp <= 0
+      when ">", "gt"
+        cmp > 0
+      when ">=", "ge"
+        cmp >= 0
+      else
+        false
+      end
+    end
+
+    private def self.unquote_literal(expr : String) : String
+      if (expr.starts_with?('\'') && expr.ends_with?('\'')) || (expr.starts_with?('"') && expr.ends_with?('"'))
+        expr[1..-2]
+      else
+        expr
+      end
+    end
+
+    # Splits a version string into its numeric components (`"8.9p1"` ->
+    # `[8, 9, 1]`, ignoring the non-digit "p" separator) and compares two
+    # such lists lexicographically, treating a missing trailing
+    # component as 0. Duplicated (not shared) from JinjaFilters.
+    # compare_versions in jinja_filters.cr - that file requires "crinja"
+    # for its own Value/filter registration machinery, too heavy a
+    # dependency to pull into this evaluator (used by every `when:`
+    # regardless of whether any template rendering is even involved) for
+    # ten lines of arithmetic.
+    private def self.compare_versions(a : String, b : String) : Int32
+      a_parts = a.scan(/\d+/).map(&.[0].to_i)
+      b_parts = b.scan(/\d+/).map(&.[0].to_i)
+      [a_parts.size, b_parts.size].max.times do |i|
+        a_val = a_parts[i]? || 0
+        b_val = b_parts[i]? || 0
+        cmp = a_val <=> b_val
+        return cmp unless cmp == 0
+      end
+      0
+    end
+
     private def self.evaluate_in(condition : String, vars : Hash(String, JSON::Any)) : Bool
       parts = condition.split(" in ", 2)
       return false if parts.size != 2
