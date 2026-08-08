@@ -105,7 +105,7 @@ module CrystalPlay
       # `_include_vars` as a plugin binary on the target, and the whole
       # batch (and run) failed with "Plugin binary not found: _include_vars".
       task.block? || task.include_tasks? || task.include_role? ||
-        task.include_vars? || task.meta?
+        task.include_vars? || task.meta? || task.validate_argument_spec?
     end
 
     private def self.needs_controller_control_flow?(task : Task) : Bool

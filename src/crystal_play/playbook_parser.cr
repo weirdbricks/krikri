@@ -142,6 +142,14 @@ module CrystalPlay
     property include_role_name : String?
     property include_role_vars : Hash(String, JSON::Any)?
     property include_role_dir : String?
+    # Synthesized by RoleLoader when a role has meta/argument_specs.yml -
+    # only set when module_name == "_validate_argument_spec". Real Ansible
+    # auto-inserts this as the role's first task ("Validating arguments
+    # against arg spec 'main' - <short_description>"); holds the entry
+    # point's `options:` map (name -> {type, required, ...}) for
+    # TaskExecutor#execute_validate_argument_spec to check the effective
+    # vars against.
+    property validate_argument_spec_options : Hash(String, JSON::Any)?
 
     def initialize(@name : String, @module_name : String)
       @params = Hash(String, String).new
@@ -192,6 +200,7 @@ module CrystalPlay
       @include_role_name = nil
       @include_role_vars = nil
       @include_role_dir = nil
+      @validate_argument_spec_options = nil
     end
 
     def block? : Bool
@@ -212,6 +221,10 @@ module CrystalPlay
 
     def include_vars? : Bool
       @module_name == "_include_vars"
+    end
+
+    def validate_argument_spec? : Bool
+      @module_name == "_validate_argument_spec"
     end
 
     def to_s(io : IO)
@@ -1181,6 +1194,16 @@ module CrystalPlay
           # name, which may be templated) isn't known until this task
           # actually runs, so there's nothing to flatten into and nothing
           # to warn about as an "unimplemented plugin" here.
+          [] of Task
+        elsif task.include_vars? || task.meta? || task.validate_argument_spec?
+          # Controller-side pseudo-modules (see their own Task field
+          # comments) - never a real plugin binary, so never checked
+          # against AVAILABLE_PLUGINS. Previously only reachable in
+          # practice through a role's own include_tasks: (already
+          # excluded above, hiding it), so this gap was never hit until
+          # RoleLoader started emitting a "_validate_argument_spec" task
+          # directly into play.tasks (unlike include_vars:/meta:, which
+          # this codebase's roles only ever reach dynamically).
           [] of Task
         else
           [task]

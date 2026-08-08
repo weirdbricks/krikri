@@ -111,6 +111,10 @@ module CrystalPlay
       role_tasks = load_tasks_file(File.join(role_dir, "tasks", "main.yml"), play)
       role_handlers = load_tasks_file(File.join(role_dir, "handlers", "main.yml"), play)
 
+      if validation_task = load_argument_spec_validation_task(role_dir)
+        role_tasks.unshift(validation_task)
+      end
+
       (role_tasks + role_handlers).each do |task|
         task.role_defaults = defaults
         task.role_vars = role_vars
@@ -169,6 +173,37 @@ module CrystalPlay
       end
 
       result
+    end
+
+    # Real Ansible auto-inserts a "Validating arguments against arg spec"
+    # task as the first task of any role that ships meta/argument_specs.yml
+    # (verified against real ansible-playbook: exact banner text
+    # "Validating arguments against arg spec 'main' - <short_description>"),
+    # checking the role's effective vars against the "main" entry point's
+    # declared options before any of the role's own tasks run. Only "main"
+    # is synthesized here (the implicit entry point for a roles:/
+    # include_role: without tasks_from: - the only form this codebase
+    # supports for role invocation in the first place).
+    private def self.load_argument_spec_validation_task(role_dir : String) : Task?
+      spec_path = File.join(role_dir, "meta", "argument_specs.yml")
+      return nil unless File.exists?(spec_path)
+
+      yaml = YAML.parse(Vault.maybe_decrypt(File.read(spec_path)))
+      main_spec = yaml["argument_specs"]?.try(&.["main"]?)
+      return nil unless main_spec
+
+      options_yaml = main_spec["options"]?.try(&.as_h?)
+      return nil unless options_yaml
+
+      options = Hash(String, JSON::Any).new
+      options_yaml.each { |key, value| options[key.to_s] = JSON.parse(value.to_json) }
+
+      short_description = main_spec["short_description"]?.try(&.as_s?)
+      name = short_description ? "Validating arguments against arg spec 'main' - #{short_description}" : "Validating arguments against arg spec 'main'"
+
+      task = Task.new(name, "_validate_argument_spec")
+      task.validate_argument_spec_options = options
+      task
     end
 
     private def self.load_tasks_file(path : String, play : Play) : Array(Task)

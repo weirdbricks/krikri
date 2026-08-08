@@ -384,6 +384,7 @@ module CrystalPlay
       return execute_include_role(task, host) if task.include_role?
       return execute_meta(task, host) if task.meta?
       return execute_include_vars(task, host) if task.include_vars?
+      return execute_validate_argument_spec(task, host) if task.validate_argument_spec?
 
       # run_once: only the first host in the play actually executes it;
       # later hosts get no output/stats at all, matching real Ansible - but
@@ -717,6 +718,81 @@ module CrystalPlay
       puts "  Message: #{message}".colorize(:red)
       @results[host.name]["failed"] += 1
       @halted_hosts.add(host.name) unless task.ignore_errors
+    end
+
+    # RoleLoader's auto-synthesized "Validating arguments against arg
+    # spec" task (see there) - checks the role's effective vars (already
+    # in vars_context via role_defaults/role_vars, same as any other role
+    # task) against each declared option's `required:`/`type:`, matching
+    # real ansible-core's own role argument validation.
+    private def execute_validate_argument_spec(task : Task, host : Host)
+      vars_context = build_vars_context(task, host)
+      options = task.validate_argument_spec_options || Hash(String, JSON::Any).new
+
+      errors = [] of String
+      options.each do |option_name, spec|
+        value = vars_context[option_name]?
+
+        if value.nil?
+          errors << "missing required argument: #{option_name}" if spec["required"]?.try(&.as_bool?) == true
+          next
+        end
+
+        if declared_type = spec["type"]?.try(&.as_s?)
+          unless argument_type_matches?(value, declared_type)
+            errors << "argument '#{option_name}' is of type #{json_type_name(value)} and we were unable to convert to #{declared_type}"
+          end
+        end
+      end
+
+      if errors.empty?
+        puts "ok: [#{host.name}]".colorize(:green)
+        @results[host.name]["ok"] += 1
+      else
+        puts "failed: [#{host.name}]".colorize(:red)
+        puts "  Message: Validation of arguments failed:\n    #{errors.join("\n    ")}".colorize(:red)
+        @results[host.name]["failed"] += 1
+        @halted_hosts.add(host.name) unless task.ignore_errors
+      end
+    end
+
+    # Whether *value* is compatible with a declared argument_specs.yml
+    # `type:`. Lenient by design (matching ansible-core's own AnsibleModule
+    # type coercion, which accepts a numeric string for `int`, a single
+    # scalar promoted to a one-element list for `list`, etc.) - this only
+    # flags a value that's unambiguously the wrong shape (a Hash/Array
+    # where a scalar was declared, or vice versa), not every case real
+    # Ansible's coercion would technically also accept.
+    private def argument_type_matches?(value : JSON::Any, declared_type : String) : Bool
+      case declared_type
+      when "list"
+        true # a bare scalar is promoted to a one-element list; always compatible
+      when "dict"
+        value.raw.is_a?(Hash)
+      when "bool"
+        !value.raw.is_a?(Hash) && !value.raw.is_a?(Array)
+      when "int", "float"
+        case value.raw
+        when Int64, Int32, Float64 then true
+        when String                then value.as_s.to_f64? != nil
+        else                             false
+        end
+      when "path", "str", "raw"
+        true # ansible-core stringifies almost anything for these
+      else
+        true # an unrecognized declared type (jsonarg, etc.) - don't guess
+      end
+    end
+
+    private def json_type_name(value : JSON::Any) : String
+      case value.raw
+      when Hash    then "dict"
+      when Array   then "list"
+      when Bool    then "bool"
+      when Int64, Int32 then "int"
+      when Float64 then "float"
+      else              "str"
+      end
     end
 
     # Resolve with_fileglob patterns (if any) against the control host's
