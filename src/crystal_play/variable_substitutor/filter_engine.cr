@@ -312,13 +312,20 @@ module CrystalPlay
       # a `|`-chained filter pipeline and a `{...}` dict literal, both of
       # which show up as `combine`'s own arguments (`combine(sysctl_overwrite
       # | default({}))`).
+      #
+      # The ternary check MUST run before chain-splitting on the whole
+      # expression: dev-sec os_hardening's own `dump:`/`passno:` computation
+      # nests a filter chain inside the ternary's own condition (`'1' if
+      # mount.fstype | default(mountinfo.fstype, true) in [...] else '0'`),
+      # so that top-level `|` belongs to the condition, not to a pipeline
+      # applied to the whole ternary. #split_chain has no notion of ternary
+      # syntax and would otherwise cut the expression in half right at that
+      # pipe, turning "'1' if mount.fstype" into a nonsense base expression
+      # and silently discarding the "in [...] else '0'" tail - which is
+      # exactly what happened when this used to split_chain first and only
+      # checked for ternary inside #resolve_base_expression (too late to
+      # matter, since the mis-split had already happened).
       private def resolve_expression(expr : String) : JSON::Any
-        parts = self.class.split_chain(expr.strip)
-        return JSON::Any.new(nil) if parts.empty?
-        parts[1..].reduce(resolve_base_expression(parts[0])) { |acc, filter_expr| apply(acc, filter_expr) }
-      end
-
-      private def resolve_base_expression(expr : String) : JSON::Any
         expr = expr.strip
 
         if ternary = split_ternary(expr)
@@ -326,6 +333,14 @@ module CrystalPlay
           condition_true = ConditionalEvaluator.evaluate(condition, @vars || Hash(String, JSON::Any).new)
           return resolve_expression(condition_true ? true_expr : false_expr)
         end
+
+        parts = self.class.split_chain(expr)
+        return JSON::Any.new(nil) if parts.empty?
+        parts[1..].reduce(resolve_base_expression(parts[0])) { |acc, filter_expr| apply(acc, filter_expr) }
+      end
+
+      private def resolve_base_expression(expr : String) : JSON::Any
+        expr = expr.strip
 
         return JSON::Any.new(expr[1..-2]) if quoted_literal?(expr)
         return JSON::Any.new(nil) if expr == "None"

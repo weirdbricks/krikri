@@ -287,7 +287,7 @@ module CrystalPlay
       if current_target
         if current_target == src
           # Link exists and points to correct target
-          changed = update_attributes_if_needed(path, is_directory: false)
+          changed = update_attributes_if_needed(path, is_directory: false, skip_mode: true)
 
           if @check_mode
             return PluginResult.new(
@@ -582,7 +582,7 @@ module CrystalPlay
     # sticky bits) so a requested numeric mode's special bits compare
     # correctly - matches what `stat -c '%U'`/`'%G'`/`'%a'` (no `-L`,
     # i.e. not following symlinks) did before.
-    private def update_attributes_if_needed(path : String, is_directory : Bool) : Bool
+    private def update_attributes_if_needed(path : String, is_directory : Bool, skip_mode : Bool = false) : Bool
       changed = false
       info = lstat(path)
       return false unless info
@@ -599,8 +599,19 @@ module CrystalPlay
         changed = true if current_group != group
       end
 
-      # Check mode
+      # Check mode - skipped for a symlink (handle_link's skip_mode: true).
+      # Linux has no real lchmod: a symlink's own permission bits are
+      # meaningless (`lrwxrwxrwx` always) and can't actually be changed,
+      # so real Ansible's file module doesn't attempt to compare/apply
+      # `mode:` against the link itself for `state: link`. Previously
+      # compared the target mode against the symlink's always-0777 lstat
+      # bits, which never matched, so `state: link` + `mode:` reported
+      # changed: true on every single run even when the link already
+      # pointed at the right target - dev-sec os_hardening's own PAM
+      # `system-auth`/`password-auth` symlinks are set up exactly this
+      # way and never converged.
       if mode = @params["mode"]?
+        return changed if skip_mode
         if mode =~ /^0?\d+$/
           current_mode = PluginHelpers::StatFields.perm_octal(info.st_mode.to_i32)
           # Normalize mode for comparison - perm_octal returns a 3-digit octal
