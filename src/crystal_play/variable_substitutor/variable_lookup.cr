@@ -55,6 +55,12 @@ module CrystalPlay
         return nil unless current
 
         parts[1..-1].each do |part|
+          dict_method = hash_method_call(current, part)
+          if dict_method
+            current = dict_method
+            next
+          end
+
           case current.raw
           when Hash
             current = current[part]?
@@ -65,6 +71,28 @@ module CrystalPlay
         end
 
         current
+      end
+
+      # Jinja2/Python dict method-call syntax (`.keys()`, `.values()`,
+      # `.items()`) on a Hash - dev-sec os_hardening's own
+      # `ansible_facts.getent_passwd.keys() | list` (building the
+      # system/regular/root account lists every user-management task in
+      # that role loops over) is written exactly this way. Previously
+      # unrecognized as anything other than a literal (nonexistent) hash
+      # key "keys()", silently resolving to undefined and turning that
+      # loop into a single bogus iteration.
+      private def hash_method_call(current : JSON::Any, part : String) : JSON::Any?
+        return nil unless current.raw.is_a?(Hash)
+        hash = current.as_h
+
+        case part
+        when "keys()"
+          JSON::Any.new(hash.keys.map { |key| JSON::Any.new(key) })
+        when "values()"
+          JSON::Any.new(hash.values)
+        when "items()"
+          JSON::Any.new(hash.map { |key, value| JSON::Any.new([JSON::Any.new(key), value]) })
+        end
       end
 
       # Handles a base expression (a bare name or a dotted path) followed
