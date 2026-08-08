@@ -191,7 +191,18 @@ module CrystalPlay
         segments = FilterEngine.split_chain(expr)
         var_expr = segments[0]
 
-        value = if var_expr.includes?("[")
+        value = if var_expr.starts_with?('(') && var_expr.ends_with?(')')
+                  # A parenthesized sub-expression as the chain's head -
+                  # dev-sec os_hardening's sysctl merge nests filter chains
+                  # this way: `((sysctl_config | combine(...)) |
+                  # combine(...)) | combine(...)`. Recursing (stripping the
+                  # outer pair) resolves each layer instead of treating the
+                  # whole parenthesized text as a literal variable name -
+                  # which always failed the lookup and silently collapsed
+                  # the entire with_dict: source to nothing.
+                  rendered = evaluate(var_expr[1..-2].strip)
+                  JSON.parse(rendered) rescue JSON::Any.new(rendered)
+                elsif var_expr.includes?("[")
                   # Array slicing (`list[0:2]`) and plain indexing
                   # (`list[0]`) aren't resolved to JSON::Any directly here
                   # (ArraySlicer/VariableLookup#indexed both still only

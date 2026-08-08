@@ -67,27 +67,59 @@ module CrystalPlay
         current
       end
 
+      # Handles a base expression (a bare name or a dotted path) followed
+      # by one or more `[...]` index accessors, chained left to right -
+      # `mylist[0]`, `mydict['key']`, and also `ansible_facts.getent_passwd
+      # [item][4]` (a dotted base, indexed by a *variable's* value, itself
+      # further indexed into the resulting list) - a shape dev-sec
+      # os_hardening's own user-account tasks use to pull a getent_passwd
+      # entry's home-dir field. Previously only a single bracket directly
+      # on a bare name was supported, and even then the index itself was
+      # never resolved as a variable reference (`list[item]` looked up the
+      # literal key "item", not item's value).
       private def resolve_indexed(expr : String) : JSON::Any?
-        match = expr.match(/^([^\[]+)\[([^\]]+)\]/)
-        return nil unless match
+        base_end = expr.index('[')
+        return nil unless base_end
 
-        var_name = match[1].strip
-        index_expr = match[2].strip
+        base_expr = expr[0...base_end].strip
+        return nil if base_expr.empty?
 
-        var_value = @vars[var_name]?
-        return nil unless var_value
+        current = base_expr.includes?('.') ? resolve_nested(base_expr) : resolve_simple(base_expr)
 
-        index = if index_expr.starts_with?("'") || index_expr.starts_with?('"')
-                  index_expr[1..-2]
-                else
-                  index_expr.to_i? || index_expr
-                end
+        expr[base_end..].scan(/\[([^\]]+)\]/) do |match|
+          return nil unless current
+          current = index_into(current, resolve_index_key(match[1].strip))
+        end
 
-        case var_value.raw
+        current
+      end
+
+      # A `[...]` index's inner text: a quoted string literal, an integer
+      # literal, or a bare identifier - the last resolved as a variable
+      # reference (`list[item]`) rather than used as a literal key, since
+      # that's how every real playbook writes a variable-indexed lookup.
+      private def resolve_index_key(index_expr : String) : String | Int32
+        if (index_expr.starts_with?('\'') && index_expr.ends_with?('\'')) ||
+           (index_expr.starts_with?('"') && index_expr.ends_with?('"'))
+          return index_expr[1..-2]
+        end
+        return index_expr.to_i if index_expr.to_i?
+
+        resolved = resolve_simple(index_expr) || resolve_nested(index_expr)
+        case raw = resolved.try(&.raw)
+        when String      then raw
+        when Int64, Int32 then raw.to_i
+        else                   index_expr
+        end
+      end
+
+      private def index_into(current : JSON::Any, key : String | Int32) : JSON::Any?
+        case current.raw
         when Array
-          index.is_a?(Int32) ? var_value[index]? : nil
+          idx = key.is_a?(Int32) ? key : key.to_i?
+          idx ? current[idx]? : nil
         when Hash
-          var_value[index.to_s]?
+          current[key.to_s]?
         else
           nil
         end

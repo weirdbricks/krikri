@@ -764,6 +764,18 @@ module CrystalPlay
           bare = bare[2..-3].strip
         end
         result = expression_evaluator_for(vars_context).evaluate(bare)
+
+        if kind == "with_dict"
+          # A with_dict: filter chain (dev-sec os_hardening's sysctl
+          # tasks: `sysctl_config | combine(...) | combine(...)`) renders
+          # to JSON object text via VariableLookup#format_value, not an
+          # array - parse_list_result's as_a? would reject it outright
+          # (a plain filter-chain gap here used to make the whole loop
+          # resolve to nil, running the task once with `item` undefined).
+          hash_result = (JSON.parse(result).as_h? rescue nil)
+          return hash_result ? LoopResolver.with_dict(hash_result.transform_keys(&.to_s)) : nil
+        end
+
         parsed = parse_list_result(result, vars_context)
         return parsed unless parsed.nil?
         return nil
@@ -924,7 +936,8 @@ module CrystalPlay
     # a *prior* iteration's real "changed" result into a later iteration
     # whose own task was skipped, wrongly running the dependent task.
     private def register_skip_result(task : Task, host : Host)
-      return unless (register_name = task.register) && !register_name.empty?
+      register_name = task.register
+      return if register_name.nil? || register_name.empty?
 
       register_result(host, register_name, JSON.parse({
         "changed"     => false,

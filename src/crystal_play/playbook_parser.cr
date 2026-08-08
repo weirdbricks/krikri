@@ -512,7 +512,7 @@ module CrystalPlay
 
       imported_tasks = parse_tasks(imported_yaml.as_a, play, "task in imported #{resolved_path}", File.dirname(resolved_path))
 
-      import_when = hash["when"]?.try { |v| safe_yaml_to_string(v) }
+      import_when = hash["when"]?.try { |v| condition_to_string(v) }
       import_tags = hash["tags"]?.try(&.as_a?).try(&.map(&.as_s)) || [] of String
       import_vars = Hash(String, JSON::Any).new
       if vars_yaml = hash["vars"]?.try(&.as_h?)

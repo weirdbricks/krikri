@@ -596,17 +596,78 @@ module CrystalPlay
 
       # Check mode
       if mode = @params["mode"]?
-        current_mode = PluginHelpers::StatFields.perm_octal(info.st_mode.to_i32)
-        # Normalize mode for comparison - perm_octal returns a 3-digit octal
-        # for a 0 special digit ("750") but 4 digits otherwise; the task's
-        # mode may be written "0750", "750", "0644", etc. Strip a leading
-        # zero from BOTH sides so target "0750" vs current "750" compare
-        # equal, while setuid/sticky perms (a 4th digit) still match.
-        target_mode = normalize_mode(mode)
-        changed = true if current_mode.lstrip('0') != target_mode.lstrip('0')
+        if mode =~ /^0?\d+$/
+          current_mode = PluginHelpers::StatFields.perm_octal(info.st_mode.to_i32)
+          # Normalize mode for comparison - perm_octal returns a 3-digit octal
+          # for a 0 special digit ("750") but 4 digits otherwise; the task's
+          # mode may be written "0750", "750", "0644", etc. Strip a leading
+          # zero from BOTH sides so target "0750" vs current "750" compare
+          # equal, while setuid/sticky perms (a 4th digit) still match.
+          target_mode = normalize_mode(mode)
+          changed = true if current_mode.lstrip('0') != target_mode.lstrip('0')
+        else
+          # Symbolic mode (`a-s`, `go-w`, ...) - resolve what it would
+          # produce against the file's current bits and compare that,
+          # instead of always reporting changed the way comparing a raw
+          # symbolic string against an octal current_mode always would
+          # (dev-sec os_hardening's suid/sgid-blacklist task uses `mode:
+          # a-s` on files that are frequently already clean, and a
+          # permanently-false "changed" defeats changed_when: logic
+          # downstream that keys off it).
+          changed = true if resolve_symbolic_mode(info.st_mode.to_i32, mode) != info.st_mode.to_i32
+        end
       end
 
       changed
+    end
+
+    # See update_attributes_if_needed above for why this exists. Supports
+    # the common u/g/o/a scopes, +/-/= ops, and r/w/x/X/s/t perm chars,
+    # comma-separated clauses applied left to right - not every POSIX
+    # corner case, but every shape real playbooks (and this project's own
+    # fixtures) actually write.
+    private def resolve_symbolic_mode(current : Int32, symbolic : String) : Int32
+      symbolic.split(',').reduce(current) do |mode, raw_clause|
+        clause = raw_clause.strip
+        clause.empty? ? mode : apply_symbolic_clause(mode, clause)
+      end
+    end
+
+    private def apply_symbolic_clause(mode : Int32, clause : String) : Int32
+      match = clause.match(/\A([ugoa]*)([+\-=])([rwxXst]*)\z/)
+      return mode unless match
+
+      scopes = match[1].empty? ? "ugo" : match[1].gsub("a", "ugo")
+      op = match[2][0]
+      perms = match[3]
+      rwx = symbolic_rwx_bits(mode, perms)
+
+      scopes.each_char do |scope|
+        shift = scope == 'u' ? 6 : scope == 'g' ? 3 : 0
+        mode = apply_symbolic_bits(mode, 0o7 << shift, rwx << shift, op)
+      end
+
+      mode = apply_symbolic_bits(mode, 0o4000, 0o4000, op) if perms.includes?('s') && scopes.includes?('u')
+      mode = apply_symbolic_bits(mode, 0o2000, 0o2000, op) if perms.includes?('s') && scopes.includes?('g')
+      mode = apply_symbolic_bits(mode, 0o1000, 0o1000, op) if perms.includes?('t')
+      mode
+    end
+
+    private def symbolic_rwx_bits(mode : Int32, perms : String) : Int32
+      rwx = 0
+      rwx |= 4 if perms.includes?('r')
+      rwx |= 2 if perms.includes?('w')
+      executable_somewhere = (mode & 0o111) != 0 || (mode & LibC::S_IFMT) == LibC::S_IFDIR
+      rwx |= 1 if perms.includes?('x') || (perms.includes?('X') && executable_somewhere)
+      rwx
+    end
+
+    private def apply_symbolic_bits(mode : Int32, mask : Int32, bits : Int32, op : Char) : Int32
+      case op
+      when '+' then mode | bits
+      when '-' then mode & ~bits
+      else          (mode & ~mask) | bits
+      end
     end
 
     # Normalize mode to octal string
