@@ -73,11 +73,20 @@ module CrystalPlay
               # Execute handler using the callback
               result = execute_callback.call(handler, host)
 
-              # Display result
-              ResultDisplay.display_result(host, result, diff_mode)
-
-              # Update stats
-              ResultDisplay.update_stats(results[host.name], result)
+              # A handler whose own `when:` evaluated false already
+              # printed its own "skipping: [host]" line inside
+              # execute_handler_internal (mirroring a regular task's
+              # when:-skip). ResultDisplay#display_result has no notion
+              # of "skipped" at all - it would otherwise print a second,
+              # contradictory "ok:" line right underneath, and
+              # #update_stats would count it toward "ok" instead of
+              # "skipped" in the recap.
+              if result["skipped"]?.try(&.as_bool)
+                results[host.name]["skipped"] = (results[host.name]["skipped"]? || 0) + 1
+              else
+                ResultDisplay.display_result(host, result, diff_mode)
+                ResultDisplay.update_stats(results[host.name], result)
+              end
             end
           end
 

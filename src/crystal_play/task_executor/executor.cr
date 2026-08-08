@@ -2242,9 +2242,24 @@ module CrystalPlay
         @registered_vars[host.name]
       )
 
-      # Add facts to context
-      @facts[host.name].each do |key, value|
-        vars_context[key] = value
+      # Add facts to context, both under their flat `ansible_xxx` spelling
+      # and as one `ansible_facts` dict (mirroring #build_vars_context,
+      # used for regular tasks) - dev-sec os_hardening's own handlers gate
+      # on `ansible_facts.os_family == 'RedHat'` exclusively, never the
+      # flat spelling. Without the dict form, every dotted `ansible_facts.
+      # *` reference in a handler's `when:` resolved to undefined and the
+      # handler silently skipped regardless of the real fact value - e.g.
+      # "Restart auditd via service" skipped on every host, including
+      # RedHat-family ones it's meant to run on, even though a plain task
+      # in the same play correctly saw `ansible_facts.os_family` as
+      # "RedHat".
+      unless @facts[host.name].empty?
+        facts_dict = Hash(String, JSON::Any).new
+        @facts[host.name].each do |key, value|
+          vars_context[key] = value
+          facts_dict[key.lchop("ansible_")] = value
+        end
+        vars_context["ansible_facts"] = JSON::Any.new(facts_dict)
       end
 
       # Evaluate the handler's own when: - real Ansible skips a notified

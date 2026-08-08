@@ -687,7 +687,7 @@ module CrystalPlay
       # Parse task-level settings - FIXED to handle boolean values safely
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.register = task_hash["register"]?.try { |v| safe_yaml_to_string(v) }
-      task.ignore_errors = task_hash["ignore_errors"]?.try(&.as_bool) || false
+      task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.check_mode = task_hash["check_mode"]?.try(&.as_bool)
       task.diff_mode = task_hash["diff"]?.try(&.as_bool)
       task.become = task_hash["become"]?.try(&.as_bool) || play.become
@@ -879,7 +879,7 @@ module CrystalPlay
       end
 
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
-      task.ignore_errors = task_hash["ignore_errors"]?.try(&.as_bool) || false
+      task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
 
       if tags_yaml = task_hash["tags"]?
         task.tags = tags_yaml.as_a?.try(&.map(&.as_s)) || [tags_yaml.as_s]
@@ -941,7 +941,7 @@ module CrystalPlay
       # Block-level settings gate/apply to the block as a whole; each
       # nested task still evaluates its own when:/tags:/etc in addition.
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
-      task.ignore_errors = task_hash["ignore_errors"]?.try(&.as_bool) || false
+      task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.become = task_hash["become"]?.try(&.as_bool) || play.become
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
 
@@ -967,7 +967,7 @@ module CrystalPlay
       task.include_file_dir = file_dir
 
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
-      task.ignore_errors = task_hash["ignore_errors"]?.try(&.as_bool) || false
+      task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.become = task_hash["become"]?.try(&.as_bool) || play.become
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
 
@@ -1027,7 +1027,7 @@ module CrystalPlay
       end
 
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
-      task.ignore_errors = task_hash["ignore_errors"]?.try(&.as_bool) || false
+      task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.become = task_hash["become"]?.try(&.as_bool) || play.become
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
 
@@ -1109,6 +1109,40 @@ module CrystalPlay
       end
 
       safe_yaml_to_string(yaml)
+    end
+
+    # `ignore_errors:` accepts real Ansible's usual boolean-or-template
+    # shorthand (e.g. dev-sec os_hardening's own `ignore_errors: "{{
+    # ansible_check_mode }}"`, on a handler whose action doesn't work
+    # inside a container) - but Task#ignore_errors is a plain Bool, parsed
+    # eagerly here rather than deferred to runtime like `when:`/
+    # `changed_when:` are. A bare `.as_bool` on a String value raises
+    # ("Cast from String to Bool failed"), and that exception previously
+    # propagated all the way up through the handler-parsing loop and
+    # silently dropped the *entire* handler (name, action, when: - not
+    # just this one field) with only a generic warning, matching neither
+    # "true" nor "false" for that field but "the handler doesn't exist at
+    # all". A plain "true"/"false"/"yes"/"no" literal still parses
+    # normally; anything else (a template) falls back to `false` - which
+    # is also the semantically correct value for this exact idiom outside
+    # check mode, since `ansible_check_mode` is false on a real run.
+    private def self.parse_ignore_errors(yaml : YAML::Any?) : Bool
+      return false unless yaml
+      case yaml.raw
+      when Bool
+        yaml.as_bool
+      when String
+        case yaml.as_s.strip.downcase
+        when "true", "yes", "on"
+          true
+        when "false", "no", "off"
+          false
+        else
+          false
+        end
+      else
+        false
+      end
     end
 
     private def self.safe_yaml_to_string(yaml : YAML::Any) : String
