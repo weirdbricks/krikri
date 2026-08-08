@@ -67,6 +67,17 @@ module CrystalPlay
           end
         end
 
+        # backrefs: line contains backreferences that only make sense
+        # against an actual regexp match - real Ansible's own documented
+        # behavior for backrefs is "if the regexp does not match anywhere
+        # in the file, the file will be left unchanged" (dev-sec
+        # os_hardening's own `(?!.*no_pass_expiry)` negative-lookahead
+        # regexp is written specifically to stop matching once already
+        # applied, relying on this - without it, a second run inserted a
+        # new line with the literal, unsubstituted text "\1 ..." instead
+        # of leaving the file alone).
+        return {new_lines, false} if backrefs
+
         return {new_lines, false} if !regexp && new_lines.any? { |existing| lines_equal?(existing, line) }
 
         insert_index = insertion_index(new_lines, insertafter, insertbefore)

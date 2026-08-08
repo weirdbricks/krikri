@@ -183,12 +183,12 @@ module CrystalPlay
       # value instead of resolving `mountinfo.device` as the variable
       # reference it is.
       private def resolve_default_arg(args : String) : JSON::Any
-        first_arg = parse_filter_args(args).first? || ""
+        first_arg = split_top_level_args(args).first? || ""
         resolve_default_expression(first_arg)
       end
 
       private def apply_selectattr(value : JSON::Any, args : String) : JSON::Any
-        parts = parse_filter_args(args)
+        parts = split_top_level_args(args)
         attr = parts[0]?.try { |part| resolve_default_expression(part) }.try(&.as_s?)
         return value unless attr
 
@@ -226,6 +226,22 @@ module CrystalPlay
       # evaluated with no variable scope) or the reference doesn't resolve.
       private def resolve_default_expression(expr : String) : JSON::Any
         expr = expr.strip
+
+        # Jinja2's inline conditional expression (`'1' if COND else '0'`) -
+        # dev-sec os_hardening's own dump:/passno: computation
+        # (`default('1' if mount.fstype | default(mountinfo.fstype, true)
+        # in ['ext3', 'ext4'] else '0', true)`) is written exactly this
+        # way. Checked before the quoted-literal check below, which would
+        # otherwise misparse the whole ternary as one big quoted string
+        # (it starts with `'1'` and the false-branch ends with `'0'`, so
+        # naive starts/ends-with-quote matching sees one string spanning
+        # both).
+        if ternary = split_ternary(expr)
+          true_expr, condition, false_expr = ternary
+          condition_true = ConditionalEvaluator.evaluate(condition, @vars || Hash(String, JSON::Any).new)
+          return resolve_default_expression(condition_true ? true_expr : false_expr)
+        end
+
         return JSON::Any.new(expr[1..-2]) if quoted_literal?(expr)
         return JSON::Any.new(nil) if expr == "None"
 
@@ -245,6 +261,84 @@ module CrystalPlay
       private def quoted_literal?(expr : String) : Bool
         (expr.starts_with?("'") && expr.ends_with?("'")) ||
           (expr.starts_with?('"') && expr.ends_with?('"'))
+      end
+
+      # Finds a top-level (outside quotes/brackets) " if " ... " else "
+      # pair and splits *expr* into {true_branch, condition, false_branch}
+      # - nil if this isn't a ternary at all.
+      private def split_ternary(expr : String) : {String, String, String}?
+        depth = 0
+        quote : Char? = nil
+        if_pos = nil
+        else_pos = nil
+
+        i = 0
+        while i < expr.size
+          char = expr[i]
+          if q = quote
+            quote = nil if char == q
+          elsif char == '\'' || char == '"'
+            quote = char
+          elsif char == '(' || char == '[' || char == '{'
+            depth += 1
+          elsif char == ')' || char == ']' || char == '}'
+            depth -= 1
+          elsif depth == 0
+            if if_pos.nil? && expr[i..].starts_with?(" if ")
+              if_pos = i
+            elsif if_pos && else_pos.nil? && expr[i..].starts_with?(" else ")
+              else_pos = i
+            end
+          end
+          i += 1
+        end
+
+        return nil unless (start = if_pos) && (finish = else_pos)
+
+        {expr[0...start].strip, expr[(start + 4)...finish].strip, expr[(finish + 6)..].strip}
+      end
+
+      # Splits a filter/test's parenthesized argument list on its
+      # top-level commas (outside quotes and outside any nested
+      # parens/brackets) WITHOUT stripping quotes from each segment - the
+      # quoting itself is significant to callers like
+      # resolve_default_expression (`'literal'` vs `variable_reference`),
+      # unlike parse_filter_args' consumers, which want the quotes already
+      # gone. Needed wherever a filter's own argument can itself contain a
+      # nested filter call with its own comma
+      # (`default('1' if x | default(y, true) in [...] else '0', true)` -
+      # dev-sec os_hardening's dump:/passno: computation - the inner
+      # `default(y, true)`'s comma must not split the outer call's args).
+      private def split_top_level_args(args : String) : Array(String)
+        parts = [] of String
+        current = String::Builder.new
+        depth = 0
+        quote : Char? = nil
+
+        args.each_char do |char|
+          if q = quote
+            current << char
+            quote = nil if char == q
+          elsif char == '\'' || char == '"'
+            quote = char
+            current << char
+          elsif char == '(' || char == '[' || char == '{'
+            depth += 1
+            current << char
+          elsif char == ')' || char == ']' || char == '}'
+            depth -= 1
+            current << char
+          elsif char == ',' && depth == 0
+            parts << current.to_s.strip
+            current = String::Builder.new
+          else
+            current << char
+          end
+        end
+
+        last = current.to_s
+        parts << last.strip unless last.empty?
+        parts
       end
 
       private def transform_string(value : JSON::Any, & : String -> String) : JSON::Any
