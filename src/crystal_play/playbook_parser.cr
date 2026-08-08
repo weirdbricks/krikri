@@ -382,6 +382,17 @@ module CrystalPlay
       "community.general", "community.docker", "community.mysql", "community.postgresql",
     ]
 
+    # Modules whose bare-string task arg is a raw command line, not
+    # free-form key=value params - see the yaml.as_s? branch of
+    # #parse_module_params. Bare "command"/"shell" is included
+    # defensively alongside the resolved FQCN forms, in case this is
+    # ever reached before module_name resolution.
+    RAW_COMMAND_MODULES = {
+      "command", "shell",
+      "ansible.builtin.command", "ansible.builtin.shell",
+      "ansible.legacy.command", "ansible.legacy.shell",
+    }
+
     # Resolves a task's module key (as written) to the AVAILABLE_PLUGINS
     # entry it refers to - itself unchanged if already fully qualified (or
     # a pseudo-module like "_block"), otherwise the first
@@ -1117,11 +1128,27 @@ module CrystalPlay
           end
         end
       elsif yaml.as_s?
-        # String format: single argument (e.g., command: "echo hello")
-        case module_name
-        when "command", "shell"
+        # String format: single argument. Two real shapes: a raw command
+        # line (`command: echo hello` / `shell: "{{ x }} -v"`, kept
+        # verbatim - splitting THIS as key=value would corrupt any
+        # command containing "=" at all, e.g. `VAR=1 somecommand`), or -
+        # every other module - real Ansible's own free-form `key=value
+        # key2=value2` inline syntax (`file: path="{{ p }}" mode=0640
+        # owner=root`), the pre-YAML-dict-args way of writing task
+        # params still used by real-world roles not written in this
+        # codebase's own house style (dev-sec's own apache_hardening -
+        # a much older, separately-maintained submodule with entirely
+        # different task-writing conventions than the other 4 roles
+        # benchmarked so far). Previously any non-command/shell module
+        # given this way got dumped whole into `_raw_params`, a key only
+        # command.cr/shell.cr/dnf.cr's own *free-form-name* fallback
+        # ever reads - every param (`path=`, `mode=`, `owner=`, ...)
+        # was silently discarded, and the task ran as if none of them
+        # had been given at all.
+        if RAW_COMMAND_MODULES.includes?(module_name)
           params["cmd"] = yaml.as_s
         else
+          parse_inline_kv_params(yaml.as_s).each { |key, value| params[key] = value }
           params["_raw_params"] = yaml.as_s
         end
       else
@@ -1130,6 +1157,63 @@ module CrystalPlay
       end
 
       params
+    end
+
+    # Parses real Ansible's free-form inline `key=value key2="quoted
+    # value" key3='{{ a_template }}'` task-arg syntax into individual
+    # params. Tokenizes on whitespace *outside* single/double quotes
+    # (so a quoted value may itself contain spaces - `msg="hello
+    # world"`, or a `{{ }}` expression with its own internal spaces),
+    # splits each token on its first `=` (a value may legitimately
+    # contain further `=` characters, e.g. base64 padding - only the
+    # first one is the key/value separator), and strips one layer of
+    # matching quotes from the value. A token with no `=` at all (a
+    # malformed fragment, or the whole string is actually a bare
+    # free-form value with no key=value pairs anywhere) is skipped, not
+    # raised on - callers already fall back to `_raw_params` for that
+    # case.
+    private def self.parse_inline_kv_params(s : String) : Hash(String, String)
+      params = Hash(String, String).new
+      split_shell_like(s).each do |token|
+        key, sep, value = token.partition('=')
+        next if sep.empty? || key.empty?
+        params[key] = unquote_inline_value(value)
+      end
+      params
+    end
+
+    private def self.split_shell_like(s : String) : Array(String)
+      tokens = [] of String
+      current = String::Builder.new
+      quote : Char? = nil
+
+      s.each_char do |char|
+        if q = quote
+          current << char
+          quote = nil if char == q
+        elsif char == '\'' || char == '"'
+          quote = char
+          current << char
+        elsif char.whitespace?
+          if current.bytesize > 0
+            tokens << current.to_s
+            current = String::Builder.new
+          end
+        else
+          current << char
+        end
+      end
+      tokens << current.to_s if current.bytesize > 0
+      tokens
+    end
+
+    private def self.unquote_inline_value(s : String) : String
+      if (s.starts_with?('"') && s.ends_with?('"') && s.size >= 2) ||
+         (s.starts_with?('\'') && s.ends_with?('\'') && s.size >= 2)
+        s[1..-2]
+      else
+        s
+      end
     end
 
     # Helper: Safely convert any YAML value to string
