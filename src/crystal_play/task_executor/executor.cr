@@ -1571,6 +1571,18 @@ module CrystalPlay
       # The per-item `skipping:`/`changed:`/`ok:` lines above are display
       # only; Ansible prints those but sums the task once in the recap.
       if executed_count == 0
+        # A genuinely empty loop source (0 items total, not "every item's
+        # own when: was false" - those already printed their own
+        # per-item `skipping: [host] => (item=x)` lines above) never
+        # printed anything at all otherwise - real Ansible still emits
+        # one bare `skipping: [host]` line for it (dev-sec os_hardening's
+        # with_subelements:/with_community.general.flattened: tasks hit
+        # this whenever nothing matched, e.g. no world-writable files
+        # found to fix).
+        if loop_items.empty?
+          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+          puts "skipping: [#{connection_host}]".colorize(:cyan)
+        end
         @results[host.name]["skipped"] += 1
       else
         aggregate_result = JSON.parse({
@@ -1649,6 +1661,31 @@ module CrystalPlay
       halt_if_failed(task, host, failed)
     end
 
+    # Prints and counts each of *tasks* as individually skipped - used
+    # when a block:'s own when: is false, since real Ansible expands a
+    # block into its member tasks rather than reporting one aggregate
+    # skip for the block itself. Recurses into a nested block so its own
+    # members are reported individually too, matching how a nested
+    # block's when: (false or not) would otherwise be evaluated.
+    private def print_skipped_tasks(tasks : Array(Task), host : Host)
+      tasks.each do |nested_task|
+        # A nested block is transparent - like real Ansible, it gets no
+        # "TASK [...]" banner of its own, only its members do.
+        if nested_task.block?
+          print_skipped_tasks(nested_task.block_tasks || [] of Task, host)
+          print_skipped_tasks(nested_task.always_tasks || [] of Task, host)
+          next
+        end
+
+        puts "TASK [#{nested_task.name}]".colorize(:white).bold
+        puts "*" * 70
+        connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+        puts "skipping: [#{connection_host}]".colorize(:cyan)
+        @results[host.name]["skipped"] += 1
+        puts ""
+      end
+    end
+
     # Runs a block: task - the nested block_tasks, then rescue_tasks if the
     # block failed (recovering it if rescue succeeds), then always_tasks
     # unconditionally, re-applying the halt afterward if the block ultimately
@@ -1661,9 +1698,14 @@ module CrystalPlay
         substituted_condition = substitutor.substitute(when_condition)
 
         unless ConditionalEvaluator.evaluate(substituted_condition, vars_context)
-          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-          puts "skipping: [#{connection_host}] (block)".colorize(:cyan)
-          @results[host.name]["skipped"] += 1
+          # A block's when: is inherited by every task inside block: and
+          # always: (verified against real ansible-playbook: each gets
+          # its own "skipping: [host]" line and recap count, not one
+          # aggregate line for the block) - rescue: is left alone since
+          # it only ever runs if the block itself actually failed, which
+          # can't happen when it never ran at all.
+          print_skipped_tasks(task.block_tasks || [] of Task, host)
+          print_skipped_tasks(task.always_tasks || [] of Task, host)
           return
         end
       end
