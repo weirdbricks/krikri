@@ -144,6 +144,26 @@ module CrystalPlay
     # $1 = the sep string literal, $2 = the list expression being joined.
     JOIN_METHOD = /("(?:[^"\\]|\\.)*")\s*\.join\(\s*([^)]*?)\s*\)/
 
+    # Method-call `.split(...)` - real Python's own str.split() method
+    # (not a Jinja2 filter - Jinja2 exposes native object methods
+    # directly), rejected by Crinja's parser the same way `.items()`
+    # was. dev-sec apache_hardening's own httpd.conf.j2 uses it to pick
+    # the minor version out of an already-parsed `apache_version`
+    # string: `{% if apache_version.split('.')[1] == '4' %}`. Rewritten
+    # to `VAR | split(ARGS)` (see jinja_filters.cr's own :split filter).
+    # $1 = the dotted/bracketed variable expression being split
+    # (`apache_version`, `_apache_version.stdout`, ...), $2 = the raw
+    # argument text (possibly empty, for Python's own no-arg whitespace-
+    # split form), $3 = an optional trailing literal numeric index
+    # (`apache_version.split('.')[1]` - split()'s result is almost
+    # always indexed immediately). Crinja can parse `(EXPR).1` (dot-
+    # numeric indexing on a parenthesized expression) but NOT `(EXPR)[1]`
+    # (bracket indexing on one) - confirmed by direct testing, not
+    # assumed - so a captured trailing `[N]` is rewritten to `.N` rather
+    # than carried through as-is; #rewrite_inline_ternaries's own gsub
+    # call is responsible for making that substitution (see below).
+    SPLIT_METHOD = /([A-Za-z_][\w.]*(?:\[[^\]]*\])*)\.split\(([^)]*)\)(?:\[(\d+)\])?/
+
     # A `{% if EXPR %}`/`{% elif EXPR %}` statement tag - $1/$4 are the
     # optional whitespace-trim `-` markers (preserved as-is on rewrite),
     # $2 the keyword, $3 the condition. Used to find the same real-Jinja2
@@ -228,6 +248,15 @@ module CrystalPlay
         # Then rewrite `.join(` method calls to the join filter.
         once = once.gsub(JOIN_METHOD) do
           "#{$2} | join(#{$1})"
+        end
+        # Then rewrite `.split(...)` method calls to the split filter.
+        once = once.gsub(SPLIT_METHOD) do
+          if index = $3?
+            sep_arg = $2.strip.empty? ? "''" : $2
+            "(#{$1} | split(#{sep_arg}, #{index}))"
+          else
+            "(#{$1} | split(#{$2}))"
+          end
         end
         # Then rewrite a real-Jinja2 infix `in`/`not in` test used
         # directly in a `{% if %}`/`{% elif %}` condition (the ternary

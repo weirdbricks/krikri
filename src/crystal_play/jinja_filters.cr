@@ -137,6 +137,50 @@ module CrystalPlay
     # modprobe task uses it to subtract mounted fs types from a candidate
     # list: `os_unused_filesystems | difference(ansible_facts.mounts |
     # map(attribute='fstype') | list)`.
+    # `split(sep='', index=None)` - Python's own str.split() method (not
+    # a real Jinja2 filter at all - real Jinja2 exposes native Python
+    # object methods directly, e.g. `{{ "a.b".split(".") }}`, something
+    # Crinja has no equivalent mechanism for). Registered as a filter
+    # and wired up via TemplateActionPlugin::SPLIT_METHOD, which
+    # rewrites the `.split(...)` method-call syntax into `| split(...)`
+    # before Crinja ever sees it - dev-sec apache_hardening's own
+    # templates use this to parse `apache -v`'s version string
+    # (`apache_version.split('.')[1]`, and a `set_fact:` building
+    # apache_version itself in the first place: `_apache_version.stdout.
+    # split()[2].split("/")[1]`, chained twice).
+    #
+    # `index`, the second (optional) argument, exists purely as a
+    # workaround: SPLIT_METHOD folds a trailing `.split(...)[N]`'s own
+    # `[N]` into this filter's own second argument, rather than leaving
+    # it as post-filter indexing on the rewritten `{{ ... }}` expression
+    # - confirmed by direct testing (not assumed) that Crinja can parse
+    # neither `(EXPR)[N]` nor `(EXPR).N`, i.e. it cannot index *any*
+    # parenthesized/filtered expression at all, only a bare variable
+    # reference. Folding the index into the filter call sidesteps the
+    # need to index the filter's own return value entirely.
+    #
+    # Empty sep: (Python's own no-arg default) splits on any run of
+    # whitespace and drops empty results - not the same as splitting on
+    # the literal string " ", which would keep an empty element between
+    # two consecutive spaces. A given non-empty argument splits on that
+    # literal substring, keeping empty elements (matching Python's own
+    # str.split(sep) exactly - "a..b".split(".") is ["a", "", "b"]).
+    Crinja.filter(:split) do
+      sep = arguments.varargs[0]?.try(&.to_s)
+      parts = if sep && !sep.empty?
+                target.to_s.split(sep)
+              else
+                target.to_s.split
+              end
+
+      if index_arg = arguments.varargs[1]?
+        idx = index_arg.to_s.to_i
+        Crinja::Value.new(parts[idx]? || "")
+      else
+        Crinja::Value.new(parts.map { |part| Crinja::Value.new(part) })
+      end
+    end
+
     Crinja.filter(:difference) do
       arg = arguments.varargs[0]?
       target_vals = target.sequence? ? target.to_a : [] of Crinja::Value
