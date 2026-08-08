@@ -12,7 +12,7 @@ module CrystalPlay
       
       def initialize(@vars : Hash(String, JSON::Any))
         @comparison = ComparisonEvaluator.new(@vars)
-        @filter = FilterEngine.new
+        @filter = FilterEngine.new(@vars)
         @slicer = ArraySlicer.new(@vars)
         @lookup = VariableLookup.new(@vars)
       end

@@ -1,4 +1,5 @@
 require "json"
+require "./variable_lookup"
 
 module CrystalPlay
   module VariableSubstitutor
@@ -14,6 +15,14 @@ module CrystalPlay
     # string, not a real array) fed straight into `join`, which had no
     # array to actually join - chained filters were silently broken.
     class FilterEngine
+      # Optional variable context, needed only to resolve a `default(...)`
+      # filter's argument when it's itself a variable reference rather
+      # than a literal (see the "default" case in #apply below) - every
+      # other filter here is a pure JSON::Any -> JSON::Any transform with
+      # no variable lookups of its own.
+      def initialize(@vars : Hash(String, JSON::Any)? = nil)
+      end
+
       # Splits a `|`-joined filter chain into its individual filter
       # expressions, ignoring any `|` inside a quoted string or a
       # parenthesized argument list - `replace('a|b', 'c')` is one filter,
@@ -66,7 +75,7 @@ module CrystalPlay
 
         case filter_name
         when "default"
-          undefined?(value) ? parse_default_arg(filter_args) : value
+          undefined?(value) ? resolve_default_arg(filter_args) : value
         when "upper"
           transform_string(value, &.upcase)
         when "lower"
@@ -134,6 +143,15 @@ module CrystalPlay
           else
             value
           end
+        when "selectattr"
+          # selectattr('mount', 'equalto', mount.path) - dev-sec
+          # os_hardening's own way of picking a single ansible_facts.mounts
+          # entry out by its `mount` field, then chained into `| list |
+          # first`. Only equalto/eq/ne/defined/undefined are implemented -
+          # every test this codebase's roles/specs actually use - an
+          # unrecognized test name falls back to a `defined` check rather
+          # than silently passing every item through unfiltered.
+          apply_selectattr(value, filter_args)
         else
           # Unknown filter - return value as-is (matches prior behavior)
           value
@@ -151,22 +169,82 @@ module CrystalPlay
         end
       end
 
-      # `default('fallback')`'s argument: a quoted string stays a string;
-      # an unquoted, purely-numeric argument is parsed as a number so
-      # `x | default(0)` doesn't stringify to `"0"` for what should stay
-      # numeric downstream (e.g. a following `+`-style comparison).
-      private def parse_default_arg(args : String) : JSON::Any
-        raw = parse_filter_arg(args)
-        was_quoted = args.strip.starts_with?("'") || args.strip.starts_with?('"')
-        return JSON::Any.new(raw) if was_quoted
+      # `default(fallback)` or `default(fallback, boolean)` - real Jinja2's
+      # second (boolean) form, used by dev-sec os_hardening's own
+      # `mount.src | default(mountinfo.device, true)` to also treat an
+      # empty string as needing the default (undefined? below already does
+      # that unconditionally, so the boolean itself doesn't need reading -
+      # its only job here is making sure it isn't swallowed into the first
+      # argument's own text). Splits on the top-level comma first, THEN
+      # resolves just the first argument - previously the whole
+      # "mountinfo.device, true" string (comma and all) was handed
+      # straight to parse_filter_arg, which had no notion of a second
+      # argument and returned that entire literal text as the "default"
+      # value instead of resolving `mountinfo.device` as the variable
+      # reference it is.
+      private def resolve_default_arg(args : String) : JSON::Any
+        first_arg = parse_filter_args(args).first? || ""
+        resolve_default_expression(first_arg)
+      end
 
-        if int_val = raw.to_i64?
-          JSON::Any.new(int_val)
-        elsif float_val = raw.to_f64?
-          JSON::Any.new(float_val)
+      private def apply_selectattr(value : JSON::Any, args : String) : JSON::Any
+        parts = parse_filter_args(args)
+        attr = parts[0]?.try { |part| resolve_default_expression(part) }.try(&.as_s?)
+        return value unless attr
+
+        test = parts[1]?.try { |part| resolve_default_expression(part) }.try(&.as_s?) || "defined"
+        compare_value = parts[2]?.try { |part| resolve_default_expression(part) }
+
+        filtered = as_array(value).select { |item| selectattr_matches?(item, attr, test, compare_value) }
+        JSON::Any.new(filtered)
+      end
+
+      private def selectattr_matches?(item : JSON::Any, attr : String, test : String, compare_value : JSON::Any?) : Bool
+        attr_value = item.raw.is_a?(Hash) ? item[attr]? : nil
+
+        case test
+        when "equalto", "eq", "=="
+          attr_value == compare_value
+        when "ne", "!="
+          attr_value != compare_value
+        when "undefined"
+          attr_value.nil?
         else
-          JSON::Any.new(raw)
+          !attr_value.nil?
         end
+      end
+
+      # A quoted string stays a string; `None` (Jinja/Python's null
+      # literal, e.g. the "mountinfo" vars: default in the same task)
+      # becomes JSON null; a purely-numeric argument is parsed as a number
+      # so `x | default(0)` doesn't stringify to `"0"` for what should
+      # stay numeric downstream (e.g. a following `+`-style comparison);
+      # anything else is a variable reference (possibly dotted/indexed),
+      # resolved against @vars the same way {{ }} substitution would -
+      # falling back to the literal text only when no @vars context was
+      # given at all (a caller that never needs this, e.g. a filter chain
+      # evaluated with no variable scope) or the reference doesn't resolve.
+      private def resolve_default_expression(expr : String) : JSON::Any
+        expr = expr.strip
+        return JSON::Any.new(expr[1..-2]) if quoted_literal?(expr)
+        return JSON::Any.new(nil) if expr == "None"
+
+        if int_val = expr.to_i64?
+          return JSON::Any.new(int_val)
+        elsif float_val = expr.to_f64?
+          return JSON::Any.new(float_val)
+        end
+
+        if (vars = @vars) && !expr.empty?
+          VariableLookup.new(vars).resolve(expr) || JSON::Any.new(expr)
+        else
+          JSON::Any.new(expr)
+        end
+      end
+
+      private def quoted_literal?(expr : String) : Bool
+        (expr.starts_with?("'") && expr.ends_with?("'")) ||
+          (expr.starts_with?('"') && expr.ends_with?('"'))
       end
 
       private def transform_string(value : JSON::Any, & : String -> String) : JSON::Any

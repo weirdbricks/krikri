@@ -450,7 +450,15 @@ module CrystalPlay
       exists = File.exists?(path)
 
       if exists
-        # File exists, update timestamps and attributes
+        # File exists - real Ansible's own idempotency here: touching
+        # only actually changes mtime/atime to "now" when
+        # modification_time:/access_time: isn't `preserve` (its default,
+        # with no param at all, IS "now" - always changed then), so
+        # `modification_time: preserve` + `access_time: preserve` (dev-sec
+        # os_hardening's own way of using state=touch as a pure
+        # create-if-missing-else-fix-attributes op) must be genuinely
+        # idempotent on a second run, not unconditionally bump the
+        # timestamps to now and report changed regardless.
         if @check_mode
           return PluginResult.new(
             changed: true,
@@ -459,22 +467,17 @@ module CrystalPlay
           )
         end
 
-        # Touch the file
-        touched = touch_now(path)
-        unless touched
-          return PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "Failed to touch file"
-          )
+        attrs_changed = update_attributes_if_needed(path, is_directory: false)
+        times_changed = touch_times_would_change?(path)
+        changed = attrs_changed || times_changed
+
+        if changed
+          apply_file_attributes(path) if attrs_changed
+          touch_apply_times(path) if times_changed
         end
 
-        # Update attributes and times
-        apply_file_attributes(path)
-        update_times(path)
-
         return PluginResult.new(
-          changed: true,
+          changed: changed,
           failed: false,
           msg: "File touched",
           path: path
@@ -776,6 +779,57 @@ module CrystalPlay
       true
     rescue
       false
+    end
+
+    # Whether touch_apply_times would actually change anything, without
+    # applying it - mirrors its own now(default)/preserve/specific-
+    # timestamp handling for modification_time:/access_time:. Unlike
+    # update_times (used by state=file/link, where no modification_time:/
+    # access_time: means "leave timestamps alone entirely"), state=touch's
+    # own default with neither given is "now" - matching real Ansible's
+    # file module docs ("The default when the mtime and/or atime are not
+    # explicitly set is to change these to the current time").
+    private def touch_times_would_change?(path : String) : Bool
+      current = lstat(path)
+      return true unless current
+
+      time_param_would_change?(@params["modification_time"]?, Time.unix(current.st_mtim.tv_sec.to_i64)) ||
+        time_param_would_change?(@params["access_time"]?, Time.unix(current.st_atim.tv_sec.to_i64))
+    end
+
+    private def time_param_would_change?(param : String?, current_time : Time) : Bool
+      case param
+      when nil, "now"
+        true
+      when "preserve"
+        false
+      else
+        parse_touch_timestamp(param) != current_time
+      end
+    end
+
+    # Applies state=touch's own modification_time:/access_time: semantics
+    # (see touch_times_would_change? above for why this differs from
+    # update_times) - "preserve" passes nil through to set_time, which
+    # reads and rewrites that axis' *current* value rather than skipping
+    # it entirely, a true no-op rather than merely "don't pass a new
+    # value" (set_time's normal contract for state=file/link callers,
+    # where the other axis is genuinely never touched at all).
+    private def touch_apply_times(path : String)
+      new_mtime = touch_target_time(@params["modification_time"]?)
+      new_atime = touch_target_time(@params["access_time"]?)
+      set_time(path, atime: new_atime, mtime: new_mtime)
+    end
+
+    private def touch_target_time(param : String?) : Time?
+      case param
+      when nil, "now"
+        Time.utc
+      when "preserve"
+        nil
+      else
+        parse_touch_timestamp(param)
+      end
     end
 
     # `File.utime` always takes both atime and mtime, so setting just one

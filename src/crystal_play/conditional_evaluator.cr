@@ -305,7 +305,7 @@ module CrystalPlay
       if expr.includes?("|")
         segments = VariableSubstitutor::FilterEngine.split_chain(expr)
         head = resolve_json(segments[0], vars) || JSON::Any.new(nil)
-        filter = VariableSubstitutor::FilterEngine.new
+        filter = VariableSubstitutor::FilterEngine.new(vars)
         result = segments[1..].reduce(head) { |acc, filter_expr| filter.apply(acc, filter_expr) }
         return json_any_to_value(result)
       end

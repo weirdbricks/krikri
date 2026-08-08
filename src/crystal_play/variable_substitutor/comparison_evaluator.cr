@@ -10,7 +10,7 @@ module CrystalPlay
       @filter : FilterEngine
 
       def initialize(@vars : Hash(String, JSON::Any))
-        @filter = FilterEngine.new
+        @filter = FilterEngine.new(@vars)
       end
       
       # Evaluate a comparison expression

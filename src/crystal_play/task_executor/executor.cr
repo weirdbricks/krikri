@@ -565,7 +565,39 @@ module CrystalPlay
         vars_context["ansible_facts"] = JSON::Any.new(facts_dict)
       end
 
+      render_task_vars(task, vars_context, host.name)
+
       vars_context
+    end
+
+    # A task-level vars: value can itself be a template referencing other
+    # vars (dev-sec os_hardening's own `vars: {mountinfo: "{{
+    # ansible_facts.mounts | selectattr(...) | list | first | default(None)
+    # }}"}`, computing a per-task helper from ansible_facts) -
+    # VariableContext.build merges task.vars into the context as plain
+    # unrendered strings (it runs before ansible_facts/magic vars even
+    # exist), so without this a template-valued task var stayed literal
+    # `"{{ ... }}"` text forever, and any {{ }}/when: referencing it
+    # (`mountinfo.device`) resolved undefined. Rendered here, once the
+    # context is fully assembled, so a task var can reference
+    # ansible_facts/registered vars/other role vars - anything already in
+    # scope by this point.
+    private def render_task_vars(task : Task, vars_context : Hash(String, JSON::Any), host_name : String)
+      task.vars.each_key do |key|
+        raw = vars_context[key]?
+        next unless raw && (raw_string = raw.raw.as?(String)) && raw_string.includes?("{{")
+
+        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host_name)
+        rendered = substitutor.substitute(raw_string)
+
+        # A dict/list-valued task var (mountinfo above) renders to JSON
+        # object/array text via VariableLookup#format_value - parsed back
+        # to real structure so dotted/indexed access into it
+        # (`mountinfo.device`) works, the same reasoning as set_fact's own
+        # dict/array coercion.
+        parsed = (rendered.starts_with?('{') || rendered.starts_with?('[')) ? (JSON.parse(rendered) rescue nil) : nil
+        vars_context[key] = parsed || JSON::Any.new(rendered)
+      end
     end
 
     # Merge a task result's `ansible_facts` (if any) into the host's fact
