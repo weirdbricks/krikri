@@ -23,10 +23,14 @@ describe "systemd plugin" do
     result["msg"].to_s.should contain("Invalid state")
   end
 
-  it "predicts a daemon-reload in check mode without touching the system" do
+  it "predicts a daemon-reload in check mode without touching the system, reporting unchanged" do
+    # Verified against a real ansible-playbook --check run of a bare
+    # `systemd: {daemon_reload: true}` task: real Ansible's own module
+    # has no notion of daemon-reload "changedness" and always reports
+    # `ok:`, in check mode and for real.
     result = PluginSpecHelper.run("systemd", {"daemon_reload" => "true", "check_mode" => "true"})
     result["failed"].as_bool.should be_false
-    result["changed"].as_bool.should be_true
+    result["changed"].as_bool.should be_false
   end
 
   it "predicts a start for a stopped unit in check mode" do

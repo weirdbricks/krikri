@@ -66,18 +66,24 @@ module CrystalPlay
       changed = false
       messages = [] of String
 
-      # daemon_reload: no unit needed; reload is reported changed unless
-      # in check mode (matching real Ansible, which always reloads and
-      # reports changed when requested).
+      # daemon_reload: no unit needed. Always actually runs the reload
+      # (systemctl daemon-reload has no reliable "was anything stale"
+      # signal to check first), but does NOT set changed - verified
+      # against a real ansible-playbook run of dev-sec os_hardening's own
+      # "Reload systemd" handler (`ansible.builtin.systemd: {daemon_reload:
+      # true}`, no name:/state:), which reported `ok:` every time, never
+      # `changed:`. Previously set changed: true unconditionally here,
+      # so a handler notified only for its side effect (systemd picking
+      # up a changed unit file) showed as "changed" on every run even
+      # when nothing else in the task changed - real Ansible's own
+      # module has no notion of daemon-reload "changedness" at all.
       if daemon_reload
         if @check_mode
           messages << "Would reload systemd daemon"
-          changed = true
         else
           reload_result = remote_exec("systemctl daemon-reload")
           if reload_result[:exit_code] == 0
             messages << "Systemd daemon reloaded"
-            changed = true
           else
             return PluginResult.new(
               changed: false,
