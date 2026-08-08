@@ -2282,6 +2282,20 @@ module CrystalPlay
         @registered_vars[host.name]
       )
 
+      # Vars loaded at runtime via include_vars: (mirroring
+      # #build_vars_context, used for regular tasks) - dev-sec apache_
+      # hardening's own role loads its whole vars/Debian.yml (apache_
+      # daemon, apache_conf_file, ...) this way (`include_vars: "{{
+      # ansible_os_family }}.yml"`, not a static role vars/ file loaded
+      # at parse time), and its "restart apache" handler references
+      # apache_daemon exclusively. Without this, that var - along with
+      # every other dynamically include_vars:'d one - was invisible to
+      # every handler, resolving to the evaluator's undefined fallback
+      # text (literally the word "undefined") rather than "apache2":
+      # the handler tried to restart a service unit literally named
+      # "undefined.service".
+      @included_vars[host.name]?.try(&.each { |key, value| vars_context[key] = value })
+
       # Add facts to context, both under their flat `ansible_xxx` spelling
       # and as one `ansible_facts` dict (mirroring #build_vars_context,
       # used for regular tasks) - dev-sec os_hardening's own handlers gate
