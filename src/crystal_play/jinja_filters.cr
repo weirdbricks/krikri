@@ -41,6 +41,21 @@ module CrystalPlay
       Crinja::Value.new(commented)
     end
 
+    # `mandatory` - real Ansible's own filter: passes the value through
+    # unchanged if it's defined, raises otherwise (an optional first
+    # argument is the custom error message) - used to fail a template
+    # render loudly rather than silently write an empty/wrong value when
+    # a var the role genuinely requires wasn't set. mysql_hardening's
+    # own my.cnf.j2 writes `password='{{ mysql_root_password |
+    # mandatory }}'`.
+    Crinja.filter(:mandatory) do
+      if target.undefined?
+        msg = arguments.varargs[0]?.try(&.to_s) || "Mandatory variable not defined."
+        raise Crinja::UndefinedError.new(msg)
+      end
+      target
+    end
+
     # `bool` - coerce a value to a boolean the way Jinja2's bool filter does:
     # "true"/"yes"/"1"/"on" (case-insensitive) are true, everything else
     # (including nil and "false") is false. Used throughout os_hardening
