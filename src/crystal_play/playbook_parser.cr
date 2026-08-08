@@ -1061,6 +1061,22 @@ module CrystalPlay
             # decoded back into an Array(String) on the plugin side.
             conditions = value.as_a?.try(&.map { |item| stringify_value(item) }) || [stringify_value(value)]
             params[key.to_s] = conditions.to_json
+          elsif module_name == "ansible.builtin.set_fact" && (value.as_a? || value.as_h?)
+            # A literal list/dict-valued fact (`set_fact: my_list: ["a",
+            # "b"]`, not a `{{ }}`-templated one) hits the exact same
+            # comma-joining problem "assert.that" above already works
+            # around - stringify_value's Array case comma-joins a list of
+            # scalars ("a,b"), which is indistinguishable from a single
+            # string containing a comma and has no leading `[`/`{` for
+            # SetFactPlugin#coerce's own JSON-detection to catch. The
+            # fact silently became a flat comma-joined String instead of
+            # a real array - invisible until something reads it back as
+            # a list, e.g. a later `loop: "{{ my_list }}"`, which then
+            # saw a String (not an Array), failed to resolve any loop
+            # items at all, and ran the task once with `item` undefined.
+            # JSON-encoding here (like "that:") gives coerce's existing
+            # leading-bracket check something real to detect.
+            params[key.to_s] = value.to_json
           else
             params[key.to_s] = Vault.maybe_decrypt(stringify_value(value))
           end
