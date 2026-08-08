@@ -1,4 +1,5 @@
 require "json"
+require "time"
 require "./variable_lookup"
 
 module CrystalPlay
@@ -152,10 +153,32 @@ module CrystalPlay
           # unrecognized test name falls back to a `defined` check rather
           # than silently passing every item through unfiltered.
           apply_selectattr(value, filter_args)
+        when "to_datetime"
+          # to_datetime('%b %d, %Y') - dev-sec os_hardening's own
+          # password-ageing verification parses `chage -l`'s date output
+          # this way, then subtracts two of them for a day-count assert.
+          # Real Ansible's default format (no argument) is
+          # '%Y-%m-%d %H:%M:%S'. Represented as a tagged JSON object
+          # (epoch seconds) rather than a native type FilterEngine has no
+          # concept of - ExpressionEvaluator's `-` operator (ARC:
+          # combine_minus) knows to recognize and subtract two of these
+          # into a timedelta, itself tagged the same way so `.days`
+          # dotted access on the result works via the ordinary Hash-key
+          # path.
+          parse_to_datetime(value, filter_args.strip.empty? ? "%Y-%m-%d %H:%M:%S" : parse_filter_arg(filter_args))
         else
           # Unknown filter - return value as-is (matches prior behavior)
           value
         end
+      end
+
+      DATETIME_TAG    = "__crystal_datetime__"
+      TIMEDELTA_TAG   = "__crystal_timedelta__"
+
+      private def parse_to_datetime(value : JSON::Any, format : String) : JSON::Any
+        time = Time.parse(as_string(value), format, Time::Location::UTC) rescue nil
+        return JSON::Any.new(nil) unless time
+        JSON::Any.new({DATETIME_TAG => JSON::Any.new(time.to_unix.to_i64)})
       end
 
       private def undefined?(value : JSON::Any) : Bool

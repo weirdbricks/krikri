@@ -45,6 +45,43 @@ module CrystalPlay
         end
       end
 
+      # Walks a dotted/indexed suffix (`.stat.exists`, "[0].name",
+      # ".days") against an already-resolved value, for a caller that
+      # computed the base value itself (ExpressionEvaluator's
+      # parenthesized-sub-expression handling: `( a - b ).days` needs to
+      # look `.days` up on the *result* of `a - b`, not on some variable
+      # named "( a - b )") rather than looking it up from @vars the way
+      # resolve/resolve_indexed/resolve_nested always do. An empty suffix
+      # returns *start* unchanged.
+      def walk(start : JSON::Any, suffix : String) : JSON::Any?
+        current = start
+        pos = 0
+
+        while pos < suffix.size
+          return nil unless current
+
+          case suffix[pos]
+          when '.'
+            pos += 1
+            dot_start = pos
+            while pos < suffix.size && suffix[pos] != '.' && suffix[pos] != '['
+              pos += 1
+            end
+            part = suffix[dot_start...pos]
+            current = hash_method_call(current, part) || (current.raw.is_a?(Hash) ? current[part]? : nil)
+          when '['
+            close = suffix.index(']', pos)
+            return nil unless close
+            current = index_into(current, resolve_index_key(suffix[(pos + 1)...close]))
+            pos = close + 1
+          else
+            return nil
+          end
+        end
+
+        current
+      end
+
       private def resolve_simple(name : String) : JSON::Any?
         @vars[name.strip]?
       end

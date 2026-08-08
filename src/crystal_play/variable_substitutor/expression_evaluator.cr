@@ -24,6 +24,38 @@ module CrystalPlay
           return @comparison.evaluate(expr)
         end
 
+        # A leading parenthesized sub-expression, optionally followed by
+        # dotted/indexed access on its result (`( a | to_datetime(...) -
+        # b | to_datetime(...) ).days` - dev-sec os_hardening's own
+        # password-ageing day-count assert). Recurses into the inner
+        # expression (which may itself contain `-`/`+`/filters/anything
+        # else `evaluate` understands) and, once resolved, walks any
+        # trailing `.attr`/`[index]` suffix against the *result* rather
+        # than against @vars - VariableLookup#walk exists for exactly
+        # this (a base value that didn't come from a plain variable
+        # lookup). Checked before `+`/`-` below: those are correctly
+        # depth-aware and would already skip content inside the leading
+        # paren, but a bare `(x)` or `(x).attr` with no top-level
+        # operator at all still needs unwrapping here or it falls through
+        # to a lookup on the literal text "(x)".
+        if paren = split_leading_paren(expr)
+          return evaluate_leading_paren(paren)
+        end
+
+        # Check for top-level `-` subtraction - specifically datetime
+        # subtraction (dev-sec os_hardening's own `to_datetime(...) -
+        # to_datetime(...)`, producing a timedelta `.days` can then read)
+        # and plain numeric subtraction. Requires spaces around the `-`
+        # (unlike `+`, a bare hyphen is common inside ordinary
+        # identifiers/text, so only the unambiguous "a - b" spacing is
+        # treated as the operator) and, like `+`, must come before the
+        # filter check: `|` binds tighter than `-`, so each side may
+        # still carry its own filter chain evaluated independently.
+        if minus = split_top_level_minus(expr)
+          left_expr, right_expr = minus
+          return evaluate_minus(left_expr, right_expr)
+        end
+
         # Check for top-level `+` concatenation (list/string/number), e.g.
         # `mountpoints_list + ['/dev', '/dev/shm', '/run', '/tmp']`, or
         # `acc | default([]) + [item]` (dev-sec os_hardening's own
@@ -222,6 +254,134 @@ module CrystalPlay
         else
           JSON::Any.new(@lookup.format_value(a) + @lookup.format_value(b))
         end
+      end
+
+      # Finds the first top-level " - " (spaces required - see the
+      # `evaluate` call site for why), outside quotes/brackets/parens,
+      # and splits *expr* around it. nil if there's no such split point at
+      # all (not a subtraction expression).
+      private class QuoteDepthTracker
+        property depth = 0
+        property quote : Char? = nil
+
+        def advance(char : Char)
+          if q = quote
+            self.quote = nil if char == q
+            return
+          end
+          advance_unquoted(char)
+        end
+
+        private def advance_unquoted(char : Char)
+          case char
+          when '\'', '"'           then self.quote = char
+          when '(', '[', '{'       then self.depth += 1
+          when ')', ']', '}'       then self.depth -= 1
+          end
+        end
+
+        def top_level? : Bool
+          quote.nil? && depth == 0
+        end
+      end
+
+      private def split_top_level_minus(expr : String) : {String, String}?
+        tracker = QuoteDepthTracker.new
+        expr.each_char.with_index do |char, i|
+          tracker.advance(char)
+          return {expr[0...i].strip, expr[(i + 1)..].strip} if tracker.top_level? && spaced_minus_at?(expr, i)
+        end
+        nil
+      end
+
+      private def spaced_minus_at?(expr : String, i : Int32) : Bool
+        return false unless expr[i] == '-'
+        i > 0 && expr[i - 1] == ' ' && i + 1 < expr.size && expr[i + 1] == ' '
+      end
+
+      # Resolves each side (same operand resolution `+` uses - a literal,
+      # a variable, or a whole sub-expression with its own filter chain)
+      # and subtracts them: two `to_datetime(...)`-tagged values produce a
+      # timedelta, two numbers subtract normally, anything else is
+      # undefined (unlike `+`, there's no sensible generic fallback for
+      # `-`).
+      private def evaluate_leading_paren(paren : {String, String}) : String
+        inner, suffix = paren
+        rendered = evaluate(inner.strip)
+        return rendered if suffix.empty?
+
+        parsed = JSON.parse(rendered) rescue JSON::Any.new(rendered)
+        result = @lookup.walk(parsed, suffix)
+        result ? @lookup.format_value(result) : "undefined"
+      end
+
+      private def evaluate_minus(left_expr : String, right_expr : String) : String
+        left = resolve_plus_operand(left_expr)
+        right = resolve_plus_operand(right_expr)
+        @lookup.format_value(combine_minus(left, right))
+      end
+
+      private def combine_minus(a : JSON::Any, b : JSON::Any) : JSON::Any
+        if (a_epoch = datetime_epoch(a)) && (b_epoch = datetime_epoch(b))
+          return timedelta(a_epoch - b_epoch)
+        end
+
+        case {a.raw, b.raw}
+        when {Int64, Int64}
+          JSON::Any.new(a.as_i64 - b.as_i64)
+        when {Float64, Float64}
+          JSON::Any.new(a.as_f - b.as_f)
+        when {Int64, Float64}
+          JSON::Any.new(a.as_i64.to_f64 - b.as_f)
+        when {Float64, Int64}
+          JSON::Any.new(a.as_f - b.as_i64.to_f64)
+        else
+          JSON::Any.new(nil)
+        end
+      end
+
+      private def datetime_epoch(value : JSON::Any) : Int64?
+        return nil unless value.raw.is_a?(Hash)
+        value[FilterEngine::DATETIME_TAG]?.try(&.as_i64?)
+      end
+
+      # Python's real timedelta normalizes days/seconds/microseconds from
+      # a raw second count; only `days` and `seconds` are modeled here (no
+      # caller needs microseconds), and only for a non-negative delta -
+      # every real use of this codebase's own `-` support subtracts an
+      # earlier date from a later one.
+      private def timedelta(diff_seconds : Int64) : JSON::Any
+        JSON::Any.new({
+          FilterEngine::TIMEDELTA_TAG => JSON::Any.new(true),
+          "days"                      => JSON::Any.new(diff_seconds // 86400),
+          "seconds"                   => JSON::Any.new(diff_seconds % 86400),
+        })
+      end
+
+      # Finds the matching close paren for a leading "(" and splits
+      # *expr* into {inner_without_parens, trailing_suffix} - nil if
+      # *expr* doesn't start with "(" at all, or the leading "(" never
+      # closes (malformed).
+      private def split_leading_paren(expr : String) : {String, String}?
+        return nil unless expr.starts_with?('(')
+
+        depth = 0
+        quote : Char? = nil
+
+        expr.each_char.with_index do |char, i|
+          if q = quote
+            quote = nil if char == q
+          elsif char == '\'' || char == '"'
+            quote = char
+          elsif char == '('
+            depth += 1
+          elsif char == ')'
+            depth -= 1
+            return {expr[1...i], expr[(i + 1)..]} if depth == 0
+          end
+        end
+
+        nil
       end
 
       # Evaluate expression with a (possibly chained) filter pipeline.

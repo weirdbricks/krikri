@@ -1,6 +1,7 @@
 require "json"
 require "./variable_substitutor/filter_engine"
 require "./variable_substitutor/variable_lookup"
+require "./variable_substitutor/expression_evaluator"
 
 module CrystalPlay
   # ConditionalEvaluator - Evaluates Ansible when: conditions
@@ -292,22 +293,26 @@ module CrystalPlay
         return int_val
       end
 
-      # Handle a filter chain (`mylist | length > 0`, or a bare
-      # `when: mylist | length` truthiness check) - previously this
-      # module had no concept of `|` at all, so any when:/assert: that:/
-      # until:/changed_when:/failed_when: condition combining a filter
-      # with a comparison (or used bare) always evaluated the filter
-      # chain text itself as an undefined variable name. Reuses
-      # FilterEngine.split_chain (respects `|` inside a quoted filter
-      # argument or a parenthesized arg list) and the same filter
-      # implementations {{ }} substitution already uses, rather than a
-      # third reimplementation.
-      if expr.includes?("|")
-        segments = VariableSubstitutor::FilterEngine.split_chain(expr)
-        head = resolve_json(segments[0], vars) || JSON::Any.new(nil)
-        filter = VariableSubstitutor::FilterEngine.new(vars)
-        result = segments[1..].reduce(head) { |acc, filter_expr| filter.apply(acc, filter_expr) }
-        return json_any_to_value(result)
+      # A filter chain (`mylist | length > 0`, or a bare `when: mylist |
+      # length` truthiness check), a parenthesized sub-expression
+      # (possibly with trailing dotted/indexed access - dev-sec
+      # os_hardening's own password-ageing assert: `( expiry_date.stdout |
+      # trim | to_datetime(...) - ansible_facts.date_time.date |
+      # to_datetime(...) ).days == 60`), or a top-level `-` subtraction -
+      # delegates to ExpressionEvaluator, the same evaluator {{ }}
+      # substitution uses and the only one of the two that understands
+      # nested filter calls inside a parenthesized operand, datetime
+      # subtraction, and dotted access on a sub-expression's *result*
+      # (not just on a plain variable). Previously this module had its
+      # own separate, far less capable filter-chain-only handling here,
+      # which - among other gaps - had no concept of `|` nested inside an
+      # unclosed paren at all, so a condition shaped like the one above
+      # always evaluated to undefined.
+      if expr.includes?("|") || expr.starts_with?('(') || expr.includes?(" - ")
+        evaluator = VariableSubstitutor::ExpressionEvaluator.new(vars)
+        rendered = evaluator.evaluate(expr)
+        parsed = (JSON.parse(rendered) rescue nil)
+        return json_any_to_value(parsed || JSON::Any.new(rendered))
       end
 
       # Handle arrays (simple list syntax)
