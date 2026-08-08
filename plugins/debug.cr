@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/crystal_play/base_plugin"
+require "../src/crystal_play/variable_substitutor/variable_lookup"
 
 module CrystalPlay
   # Debug plugin - prints messages and variable values
@@ -81,30 +82,16 @@ module CrystalPlay
     end
     
     # Look up a variable (supports nested paths like "result.stdout")
+    # `var:` takes a bare expression, not a {{ }}-wrapped one, so it never
+    # went through VarSubstitutor#substitute (which only processes text
+    # containing "{{") - this used to be its own hand-rolled dotted-only
+    # resolver, unable to handle indexing at all
+    # (`ansible_facts.getent_passwd['user']` - dev-sec os_hardening's own
+    # molecule test verifies exactly this shape). Delegates to
+    # VariableLookup#resolve, the same chained dotted+indexed resolver
+    # {{ }} substitution and when: conditions already use.
     private def lookup_variable(var_name : String) : JSON::Any?
-      # Handle nested variable access (e.g., "result.stdout")
-      if var_name.includes?(".")
-        parts = var_name.split(".")
-        current = @vars[parts[0]]?
-        
-        return nil unless current
-        
-        # Navigate through the nested structure
-        parts[1..-1].each do |part|
-          case current.raw
-          when Hash
-            current = current[part]?
-            return nil unless current
-          else
-            return nil
-          end
-        end
-        
-        return current
-      else
-        # Simple variable lookup
-        return @vars[var_name]?
-      end
+      VariableSubstitutor::VariableLookup.new(@vars).resolve(var_name)
     end
     
     # Format a JSON::Any value for display

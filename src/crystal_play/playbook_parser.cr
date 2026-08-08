@@ -343,6 +343,37 @@ module CrystalPlay
       "ansible.builtin.pause",
     }
 
+    # The collections a bare (non-FQCN) module name resolves against, in
+    # real Ansible's own default search order - `getent:` (no `ansible.
+    # builtin.` prefix) is extremely common in real-world playbooks/roles
+    # (dev-sec's own molecule test fixtures use it, unlike the role's own
+    # tasks, which are always fully qualified) and previously only ever
+    # matched AVAILABLE_PLUGINS verbatim, so any bare name failed outright
+    # ("Plugin not available: getent") even though the qualified form
+    # works fine. None of AVAILABLE_PLUGINS' short names collide across
+    # collections, so the search order only matters for documentation
+    # purposes here, not correctness.
+    MODULE_SEARCH_COLLECTIONS = [
+      "ansible.builtin", "ansible.legacy", "ansible.posix",
+      "community.general", "community.docker", "community.mysql", "community.postgresql",
+    ]
+
+    # Resolves a task's module key (as written) to the AVAILABLE_PLUGINS
+    # entry it refers to - itself unchanged if already fully qualified (or
+    # a pseudo-module like "_block"), otherwise the first
+    # MODULE_SEARCH_COLLECTIONS prefix that matches. nil if nothing
+    # matches at all (a genuinely unimplemented/unknown module).
+    def self.resolve_module_name(raw : String) : String?
+      return raw if AVAILABLE_PLUGINS.includes?(raw) || raw.starts_with?('_')
+
+      MODULE_SEARCH_COLLECTIONS.each do |collection|
+        qualified = "#{collection}.#{raw}"
+        return qualified if AVAILABLE_PLUGINS.includes?(qualified)
+      end
+
+      nil
+    end
+
     # Parse playbook from file
     def self.parse(path : String) : Playbook
       unless File.exists?(path)
@@ -639,10 +670,14 @@ module CrystalPlay
         raise "No module found in task '#{name}'"
       end
 
-      # Check if plugin is available
-      unless AVAILABLE_PLUGINS.includes?(module_name)
+      # Check if plugin is available - resolving a bare (non-FQCN) name
+      # like `getent:` against ansible.builtin/etc first, same as real
+      # Ansible's own module search path.
+      resolved_module_name = resolve_module_name(module_name)
+      unless resolved_module_name
         raise "Plugin not available: #{module_name}"
       end
+      module_name = resolved_module_name
 
       task = Task.new(name, module_name)
 
