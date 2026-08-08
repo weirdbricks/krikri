@@ -193,6 +193,7 @@ PLUGINS=(
     "blockinfile"
     "uri"
     "assert"
+    "fail"
     "wait_for"
     "fetch"
     "pause"

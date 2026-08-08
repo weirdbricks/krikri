@@ -350,6 +350,7 @@ module CrystalPlay
       "ansible.builtin.blockinfile",
       "ansible.builtin.uri",
       "ansible.builtin.assert",
+      "ansible.builtin.fail",
       "ansible.builtin.wait_for",
       "ansible.builtin.fetch",
       "ansible.builtin.pause",

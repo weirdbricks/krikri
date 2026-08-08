@@ -807,6 +807,17 @@ module CrystalPlay
         case value.raw
         when Int64, Int32, Float64 then true
         when String                then value.as_s.to_f64? != nil
+        # Python's bool is a subclass of int (isinstance(True, int) is
+        # True) - real ansible-core's own argument-spec validator
+        # accepts a bool value for a declared int/float param on that
+        # basis. dev-sec mysql_hardening's own argument_specs.yml
+        # declares mysql_hardening_skip_show_database as `type: int,
+        # default: 1` while defaults/main.yml sets it to the literal
+        # boolean `true` - a real (if sloppy) mismatch in the role
+        # itself that real ansible-playbook tolerates via this exact
+        # coercion; rejecting it here failed the role's own argument-
+        # spec validation task before any hardening logic ever ran.
+        when Bool                  then true
         else                             false
         end
       when "path", "str", "raw"
