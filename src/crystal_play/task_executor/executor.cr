@@ -1544,9 +1544,11 @@ module CrystalPlay
                        # iteration N-1's accumulated list, not the loop's
                        # starting value every time.
                        running_vars_context = base_vars_context.dup
+                       loop_var = task.loop_var
                        loop_items.map do |item|
                          vars_context = running_vars_context.dup
                          vars_context["item"] = item
+                         vars_context[loop_var] = item if loop_var
                          result = execute_task_once(task, host, vars_context, item_label: item_display(item), exec_host: exec_host, defer_loop_stats: true)
                          if result && (facts = result["ansible_facts"]?) && (facts_hash = facts.as_h?)
                            facts_hash.each { |key, value| running_vars_context[key] = value }
@@ -1595,10 +1597,12 @@ module CrystalPlay
       item_contexts = Hash(Int32, Hash(String, JSON::Any)).new
       steps = [] of BatchScript::Step
       step_indices = [] of Int32
+      loop_var = task.loop_var
 
       loop_items.each_with_index do |item, idx|
         vars_context = base_vars_context.dup
         vars_context["item"] = item
+        vars_context[loop_var] = item if loop_var
         item_contexts[idx] = vars_context
 
         # Per item, not per call: each iteration builds its own context
@@ -2046,9 +2050,11 @@ module CrystalPlay
       loop_items = task.loop_items
 
       if loop_items
+        loop_var = task.loop_var
         loop_items.each do |item|
           vars_context = base_vars_context.dup
           vars_context["item"] = item
+          vars_context[loop_var] = item if loop_var
           run_include_role_once(task, host, vars_context, item_display(item))
         end
       else
@@ -2091,7 +2097,12 @@ module CrystalPlay
       end
 
       if item = vars_context["item"]?
-        (included_tasks + included_handlers).each { |included_task| included_task.vars["item"] = item }
+        (included_tasks + included_handlers).each do |included_task|
+          included_task.vars["item"] = item
+          if (loop_var = task.loop_var) && (bound = vars_context[loop_var]?)
+            included_task.vars[loop_var] = bound
+          end
+        end
       end
 
       @handler_runner.handlers.concat(included_handlers) unless included_handlers.empty?
