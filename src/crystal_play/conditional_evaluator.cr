@@ -219,9 +219,9 @@ module CrystalPlay
 
       case operator
       when "=="
-        left == right
+        values_equal?(left, right)
       when "!="
-        left != right
+        !values_equal?(left, right)
       when "<"
         compare_values(left, right) < 0
       when ">"
@@ -385,6 +385,30 @@ module CrystalPlay
     end
 
     # Compare two values (for <, >, <=, >=)
+    # `==`/`!=`: a raw match first, then a numeric-string fallback - see
+    # ComparisonEvaluator#values_equal? (the {{ }}-side counterpart to
+    # this bare when:/assert:-condition evaluator) for why: a value that
+    # went through a filter chain/parenthesized sub-expression may come
+    # back as a real Int64 while the other side is a quoted string
+    # literal (or vice versa) purely as an artifact of this codebase's
+    # string-heavy evaluation pipeline, not because the two values are
+    # actually different.
+    private def self.values_equal?(left : String | Int64 | Bool | Nil | Array(String), right : String | Int64 | Bool | Nil | Array(String)) : Bool
+      return true if left == right
+
+      left_num = numeric_or_nil(left)
+      right_num = numeric_or_nil(right)
+      !left_num.nil? && !right_num.nil? && left_num == right_num
+    end
+
+    private def self.numeric_or_nil(value : String | Int64 | Bool | Nil | Array(String)) : Float64?
+      case value
+      when Int64  then value.to_f64
+      when String then value.to_f64?
+      else nil
+      end
+    end
+
     private def self.compare_values(left : String | Int64 | Bool | Nil | Array(String),
                                     right : String | Int64 | Bool | Nil | Array(String)) : Int32
       # Try numeric comparison first

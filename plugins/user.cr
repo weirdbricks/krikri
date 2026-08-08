@@ -80,7 +80,46 @@ module CrystalPlay
     end
 
     private def ensure_present(name : String, current : PluginHelpers::UserState::User?, check_mode : Bool) : PluginResult
-      current ? modify(name, current, check_mode) : create(name, check_mode)
+      base = current ? modify(name, current, check_mode) : create(name, check_mode)
+      return base if base.failed
+
+      ageing = apply_password_ageing(name, check_mode)
+      return base unless ageing
+      return ageing if ageing.failed
+
+      PluginResult.new(
+        changed: base.changed || ageing.changed,
+        failed: false,
+        msg: ageing.changed ? ageing.msg : base.msg
+      )
+    end
+
+    # password_expire_min:/_max:/_warn: - real Ansible's user module sets
+    # these via a separate `chage` call (neither useradd nor usermod has
+    # an equivalent flag), always run after create/modify regardless of
+    # whether the account was just created or already existed - dev-sec
+    # os_hardening's own password-ageing tasks rely on this to actually
+    # take effect (previously silently unhandled: the params were never
+    # even read, so the account's real chage fields never changed no
+    # matter what was requested, always reporting "already up to date").
+    private def apply_password_ageing(name : String, check_mode : Bool) : PluginResult?
+      min = @params["password_expire_min"]?
+      max = @params["password_expire_max"]?
+      warn = @params["password_expire_warn"]?
+      return nil unless min || max || warn
+
+      shadow = remote_exec("cat /etc/shadow")
+      return PluginResult.new(changed: false, failed: true, msg: "Could not read /etc/shadow") unless shadow[:exit_code] == 0
+
+      current = PluginHelpers::UserState.shadow_ageing(shadow[:stdout], name)
+      flags = PluginHelpers::UserState.chage_flags(current, min, max, warn)
+      return PluginResult.new(changed: false, failed: false, msg: "Password ageing already up to date") if flags.empty?
+      return PluginResult.new(changed: true, failed: false, msg: "Would update password ageing (check mode)") if check_mode
+
+      result = remote_exec("chage #{flags.join(" ")} #{name}")
+      return command_failure("update password ageing", result) unless result[:exit_code] == 0
+
+      PluginResult.new(changed: true, failed: false, msg: "Password ageing updated")
     end
 
     private def create(name : String, check_mode : Bool) : PluginResult

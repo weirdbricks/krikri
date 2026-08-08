@@ -65,6 +65,42 @@ module CrystalPlay
         remove_home ? ["-r", name] : [name]
       end
 
+      # `/etc/shadow`'s own password-ageing fields (min/max/warn - the 4th/
+      # 5th/6th colon-separated fields), for `password_expire_min:`/`_max:`/
+      # `_warn:`'s idempotency check. Real Ansible's user module sets these
+      # via `chage`, a separate call after useradd/usermod - neither
+      # supports password-ageing flags directly (usermod's own `-m` means
+      # "move home directory", not "min days"). nil for a field the account
+      # has no value for at all (a freshly `useradd`'d account with no
+      # `-m`/`-M`/`-W`-equivalent given), matching a missing param's own nil.
+      record ShadowAgeing, min : String?, max : String?, warn : String?
+
+      def self.shadow_ageing(shadow_content : String, name : String) : ShadowAgeing
+        shadow_content.each_line do |line|
+          fields = line.split(':')
+          next unless fields.size >= 6 && fields[0] == name
+          return ShadowAgeing.new(blank_to_nil(fields[3]), blank_to_nil(fields[4]), blank_to_nil(fields[5]))
+        end
+        ShadowAgeing.new(nil, nil, nil)
+      end
+
+      private def self.blank_to_nil(field : String) : String?
+        field.empty? ? nil : field
+      end
+
+      # `chage -m <min> -M <max> -W <warn> <name>` flags needed to
+      # reconcile the account's current password-ageing fields with the
+      # desired ones - only ever emitted for a param that was actually
+      # given (non-nil) and differs from the current value, same
+      # changed_flag convention every other *_flags helper here uses.
+      def self.chage_flags(current : ShadowAgeing, min : String?, max : String?, warn : String?) : Array(String)
+        [
+          changed_flag("-m", min, current.min || ""),
+          changed_flag("-M", max, current.max || ""),
+          changed_flag("-W", warn, current.warn || ""),
+        ].compact
+      end
+
       # Extracts the `/etc/shadow` password-hash field (the 2nd
       # colon-separated field) for *name* from a real `/etc/shadow`'s
       # full content - verified against real Ansible's own

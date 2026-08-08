@@ -29,9 +29,9 @@ module CrystalPlay
             
             result = case op
             when "=="
-              left == right
+              values_equal?(left, right)
             when "!="
-              left != right
+              !values_equal?(left, right)
             when "<"
               compare_values(left, right) < 0
             when ">"
@@ -73,22 +73,25 @@ module CrystalPlay
           return int_val
         end
 
-        # Handle a filter chain used as a comparison operand
-        # (`mylist | length > 0`, `result.stdout | trim == "ok"`) - a
-        # real, previously-broken case, not just when:'s own bare
-        # conditionals: `evaluate` checks for a comparison operator
-        # before ever checking for `|`, so an expression combining both
-        # always routed here with the filter chain still attached as
-        # part of the operand text, which then failed as an ordinary
-        # (and undefined) variable lookup. FilterEngine.split_chain
-        # splits `|`-respecting quotes/parens, so a filter argument
-        # containing its own `|` (`replace('a|b', 'c')`) isn't
-        # mis-split.
-        if expr.includes?("|")
-          segments = FilterEngine.split_chain(expr)
-          head = resolve_json(segments[0]) || JSON::Any.new(nil)
-          result = segments[1..].reduce(head) { |acc, filter_expr| @filter.apply(acc, filter_expr) }
-          return json_any_to_value(result)
+        # A filter chain or parenthesized sub-expression used as a
+        # comparison operand (`mylist | length > 0`, `result.stdout |
+        # trim == "ok"`, `(expiry.stdout | trim) == '7'` - dev-sec
+        # os_hardening's own password-ageing verification, inside a {{ }}
+        # rather than a bare when:/assert:) - `evaluate` above checks for
+        # a comparison operator before ever checking `|`/`(`, so an
+        # expression combining both always routed here with the operand
+        # text still attached, which then failed as an ordinary (and
+        # undefined) variable lookup. Delegates to a fresh
+        # ExpressionEvaluator - the operand text here never contains a
+        # comparison operator itself (evaluate already split those off),
+        # so this can't recurse back into ComparisonEvaluator. The same
+        # delegation ConditionalEvaluator uses for bare when:/assert:
+        # conditions, needed here too since {{ }}-wrapped comparisons
+        # reach this separate evaluator instead.
+        if expr.includes?("|") || expr.starts_with?('(')
+          rendered = ExpressionEvaluator.new(@vars).evaluate(expr)
+          parsed = (JSON.parse(rendered) rescue nil)
+          return json_any_to_value(parsed || JSON::Any.new(rendered))
         end
 
         # Handle nested variable access (e.g., result.rc)
@@ -105,8 +108,34 @@ module CrystalPlay
         lookup_simple_variable(expr)
       end
       
+      # `==`/`!=`: a raw match first (handles Bool/Nil, and same-type
+      # values that already match), then a numeric-string fallback - a
+      # value that went through a filter chain/parenthesized
+      # sub-expression (dev-sec os_hardening's own `(expiry_warndays.stdout
+      # | trim) == '7'`) may come back as a real Int64 while the other
+      # side is a quoted string literal (or vice versa) purely as an
+      # artifact of this codebase's string-heavy evaluation pipeline, not
+      # because the two values are actually different - "7" and 7 should
+      # compare equal here the same way compare_values already treats
+      # them for `<`/`>`/etc, just applied to `==`/`!=` too.
+      private def values_equal?(left : String | Int64 | Bool | Nil, right : String | Int64 | Bool | Nil) : Bool
+        return true if left == right
+
+        left_num = numeric_or_nil(left)
+        right_num = numeric_or_nil(right)
+        !left_num.nil? && !right_num.nil? && left_num == right_num
+      end
+
+      private def numeric_or_nil(value : String | Int64 | Bool | Nil) : Float64?
+        case value
+        when Int64  then value.to_f64
+        when String then value.to_f64?
+        else nil
+        end
+      end
+
       # Compare two values intelligently
-      private def compare_values(left : String | Int64 | Bool | Nil, 
+      private def compare_values(left : String | Int64 | Bool | Nil,
                                   right : String | Int64 | Bool | Nil) : Int32
         # Try numeric comparison first
         if left.is_a?(Int64) && right.is_a?(Int64)
