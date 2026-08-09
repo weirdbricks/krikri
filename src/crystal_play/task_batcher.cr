@@ -117,7 +117,14 @@ module CrystalPlay
     # trades a little round-trip efficiency for the same safety
     # property real Ansible has here unconditionally.
     private def self.reconfigures_firewall?(task : Task) : Bool
-      task.module_name.ends_with?("ufw")
+      # ufw: applies live firewall rules; sysctl: (ansible.posix.sysctl)
+      # can just as easily disrupt live networking when the setting
+      # touches netfilter/conntrack state - konstruktoid-hardening's own
+      # "Configure conntrack sysctl" task (a `with_dict:` loop over
+      # `net.netfilter.nf_conntrack_*` settings, immediately after its
+      # UFW rule section) reproduced the identical batched-connection-
+      # drop failure mode ufw: tasks already needed this same fix for.
+      task.module_name.ends_with?("ufw") || task.module_name.ends_with?("sysctl")
     end
 
     # template: (and any future action plugin) renders on the
