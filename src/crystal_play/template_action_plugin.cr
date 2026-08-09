@@ -64,6 +64,20 @@ module CrystalPlay
         # left untouched.
         template_content = rewrite_inline_ternaries(template_content)
 
+        # Jinja2's `{%+ ... %}`/`{% ... +%}` whitespace-control modifier
+        # (explicitly keeping whitespace trim_blocks/lstrip_blocks would
+        # otherwise strip around this one tag) - Crinja's parser doesn't
+        # recognize `+` as a modifier at all here, and fails outright with
+        # "no tag with name '+' registered", failing the whole template
+        # render. konstruktoid-hardening's sshd_config.j2 uses this around
+        # its `Match Address/Group/User` section headers. Since this
+        # renderer already forces lstrip_blocks off unconditionally (see
+        # below), the left-side `+` is always a no-op here already; the
+        # right-side `+%}` losing its trim_blocks override (when
+        # trim_blocks is on) is an imperfect but acceptable trade against
+        # the alternative of failing the entire render.
+        template_content = template_content.gsub(/\{%\+/, "{%").gsub(/\+%\}/, "%}")
+
         # A `#jinja2: key:value, key2:value2` directive on the template's
         # very first line (real Ansible's own per-template override for
         # trim_blocks/lstrip_blocks/etc. - dev-sec ssh_hardening's

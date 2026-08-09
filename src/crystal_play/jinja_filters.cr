@@ -241,6 +241,25 @@ module CrystalPlay
       end
     end
 
+    # `regex(pattern, ignorecase=False, multiline=False)` - Ansible's own
+    # test (ansible.builtin.regex), not part of standard Jinja2 and not
+    # provided by Crinja at all: konstruktoid-hardening's own
+    # sshd_config.j2 gates its post-quantum KEX comment on `sshd_kex_
+    # algorithms is not regex("sntrup761x25519-*")`. Crinja raised "no
+    # test with name 'regex' registered" on any `{% if %}`/`{% elif %}`
+    # using it (`is not regex(...)` parses as `not (X is regex(...))`,
+    # so the missing test fails the whole render either way), same
+    # all-or-nothing failure mode as the missing `version` test above.
+    # Real Ansible defaults to a search anywhere in the string (not a
+    # full match) - implemented that way here too.
+    Crinja.test(:regex) do
+      pattern = arguments.varargs[0]?.try(&.to_s) || ""
+      opts = Regex::Options::None
+      opts |= Regex::Options::IGNORE_CASE if arguments.kwargs["ignorecase"]?.try(&.truthy?)
+      opts |= Regex::Options::MULTILINE if arguments.kwargs["multiline"]?.try(&.truthy?)
+      !!(target.to_s =~ Regex.new(pattern, opts))
+    end
+
     # Splits a version string into its numeric components (`"8.9p1"` ->
     # `[8, 9, 1]`, ignoring the non-digit "p" separator), then compares
     # two such component lists lexicographically, treating a missing
