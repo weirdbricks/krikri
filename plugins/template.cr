@@ -240,7 +240,12 @@ module CrystalPlay
     # file can't be read - this is best-effort diagnostic content, never
     # something a caller should treat as required.
     private def extract_error_context(path : String, validator_output : String) : String
-      return "" unless match = validator_output.match(/:\s*line\s+(\d+):/)
+      # `sshd -T`'s own line-citing format varies by which check failed -
+      # sometimes "path: line N: message", sometimes "path line N:
+      # message" (no colon before "line") - matched loosely enough to
+      # catch both rather than assuming one specific validator's exact
+      # phrasing.
+      return "" unless match = validator_output.match(/line\s+(\d+):/)
       line_num = match[1].to_i
 
       lines = File.read_lines(path)

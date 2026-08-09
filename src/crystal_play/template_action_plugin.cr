@@ -58,15 +58,6 @@ module CrystalPlay
     # Render Jinja2 template with variables
     private def render_template(template_content : String, template_path : String) : String?
       begin
-        # Crinja 0.9.0 cannot parse Jinja2's inline conditional expression
-        # `{{ A if C else B }}`. Real Ansible supports it and real roles
-        # (dev-sec os_hardening's login.defs and ufw templates) use it, so
-        # rewrite the idiomatic form into the ternary filter we provide
-        # (`{{ C | ternary(A, B) }}`) before Crinja sees it. Only the
-        # literal `X if C else Y` shape is rewritten; `{% if %}` blocks are
-        # left untouched.
-        template_content = rewrite_inline_ternaries(template_content)
-
         # Jinja2's `{%+ ... %}`/`{% ... +%}` whitespace-control modifier
         # (explicitly keeping whitespace trim_blocks/lstrip_blocks would
         # otherwise strip around this one tag) - Crinja's parser doesn't
@@ -79,7 +70,27 @@ module CrystalPlay
         # right-side `+%}` losing its trim_blocks override (when
         # trim_blocks is on) is an imperfect but acceptable trade against
         # the alternative of failing the entire render.
+        #
+        # MUST run before #rewrite_inline_ternaries: TAG_IF_ELIF's own
+        # regex only recognizes a bare `{%`/plain `-` prefix, not `{%+` -
+        # so a `{%+ if X +%}` tag left unstripped skips the pytruthy
+        # rewrite entirely and reaches Crinja's *native* `{% if %}`
+        # evaluation instead, which has its own real bug (Crinja::Value#
+        # truthy? treats an empty string as truthy - see real_truthy?'s
+        # own comment in jinja_filters.cr). Found via this exact
+        # template's `{%+ if sshd_sftp_only_group +%}` (default `""`):
+        # rendered "Match Group " with the condition's own variable
+        # empty and unset, instead of skipping the block entirely.
         template_content = template_content.gsub(/\{%\+/, "{%").gsub(/\+%\}/, "%}")
+
+        # Crinja 0.9.0 cannot parse Jinja2's inline conditional expression
+        # `{{ A if C else B }}`. Real Ansible supports it and real roles
+        # (dev-sec os_hardening's login.defs and ufw templates) use it, so
+        # rewrite the idiomatic form into the ternary filter we provide
+        # (`{{ C | ternary(A, B) }}`) before Crinja sees it. Only the
+        # literal `X if C else Y` shape is rewritten; `{% if %}` blocks are
+        # left untouched.
+        template_content = rewrite_inline_ternaries(template_content)
 
         # A `#jinja2: key:value, key2:value2` directive on the template's
         # very first line (real Ansible's own per-template override for
