@@ -26,7 +26,11 @@ module CrystalPlay
   # the target - consistent with this project's existing assumption of a
   # Debian/RHEL-family Linux target elsewhere (dpkg/rpm detection, etc.).
   module BatchScript
-    REMOTE_DIR_PREFIX = "/tmp/.crystal-play/batch-"
+    # `/var/tmp`, not `/tmp` - see PluginManager::REMOTE_PLUGIN_DIR for
+    # why (some hardening roles remount `/tmp` as a fresh, empty tmpfs
+    # mid-play, which would silently wipe this batch's own per-step
+    # output files out from under it).
+    REMOTE_DIR_PREFIX = "/var/tmp/.crystal-play/batch-"
 
     # One step to run remotely as part of a batch.
     struct Step

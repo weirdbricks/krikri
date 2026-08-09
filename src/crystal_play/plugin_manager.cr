@@ -12,6 +12,19 @@ module CrystalPlay
   # Plugin Manager - Handles plugin execution locally or remotely
   # For remote hosts, uploads plugin binary and executes it there
   class PluginManager
+    # Where plugin binaries live on the *remote* host. Deliberately
+    # `/var/tmp`, not `/tmp`: several real hardening roles (konstruktoid-
+    # hardening's "Start tmp.mount" task among them) mount a fresh, empty
+    # systemd tmpfs over `/tmp` mid-play as part of hardening it - which
+    # silently wipes out every plugin binary already uploaded there,
+    # breaking every subsequent task and handler with "command not
+    # found" even though `ensure_uploaded`'s cache still (correctly, as
+    # far as it knows) believes they're present. Those same roles
+    # generally redirect their own `$TMPDIR`/`$TMP` to `/var/tmp` for
+    # exactly this reason (konstruktoid-hardening's tmp.mount task does),
+    # which is survivable across a tmpfs remount the way `/tmp` isn't.
+    REMOTE_PLUGIN_DIR = "/var/tmp/.crystal-play/plugins"
+
     # Cache of plugins already uploaded to remote hosts
     @@uploaded_plugins = Hash(String, Set(String)).new
 
@@ -210,7 +223,7 @@ module CrystalPlay
       # Initialize plugin cache for this host
       @@uploaded_plugins[host_key] ||= Set(String).new
 
-      remote_plugin_dir = "/tmp/.crystal-play/plugins"
+      remote_plugin_dir = REMOTE_PLUGIN_DIR
 
       candidates = plugin_names.reject { |name| @@uploaded_plugins[host_key].includes?(name) }
       return if candidates.empty?
@@ -505,8 +518,8 @@ module CrystalPlay
       interpret_remote_result(result[:exit_code], result[:stdout], result[:stderr])
     end
 
-    # Resolves a plugin's remote path (`/tmp/.crystal-play/plugins/<simple
-    # name>`) and, if `become`, wraps it in `sudo -n -u <become_user> --`.
+    # Resolves a plugin's remote path (`REMOTE_PLUGIN_DIR/<simple name>`)
+    # and, if `become`, wraps it in `sudo -n -u <become_user> --`.
     # Shared by the normal one-task-at-a-time remote path above and by
     # TaskExecutor's batch script generation (batching, on by default),
     # so both ways of reaching a remote plugin resolve the exact same
@@ -523,7 +536,7 @@ module CrystalPlay
     # a file that may itself be templated, so their contents are unknown
     # until they actually run. A module used *only* inside one therefore
     # reached the target with no binary present and failed with a bare
-    # "/tmp/.crystal-play/plugins/set_fact: No such file or directory",
+    # "REMOTE_PLUGIN_DIR/set_fact: No such file or directory",
     # which is both confusing and, for a role like dev-sec's
     # os_hardening, fatal on the first included task.
     #
@@ -554,7 +567,7 @@ module CrystalPlay
 
     def self.remote_plugin_target(plugin_name : String, become : Bool, become_user : String?) : String
       simple_name = plugin_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community\.(general|docker|mysql|postgresql|crypto))\./, "")
-      remote_plugin_path = "/tmp/.crystal-play/plugins/#{simple_name}"
+      remote_plugin_path = "#{REMOTE_PLUGIN_DIR}/#{simple_name}"
       become ? "sudo -n -u #{become_user} -- #{remote_plugin_path}" : remote_plugin_path
     end
 
