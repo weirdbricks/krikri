@@ -181,6 +181,21 @@ module CrystalPlay
       end
     end
 
+    # `regex_replace(pattern, replacement='')` - Ansible's own filter
+    # (not part of standard Jinja2, not provided by Crinja at all),
+    # wrapping Python's `re.sub`. konstruktoid-hardening's
+    # sysctl.ipv6.conf.j2 uses it to turn a VLAN interface name's dot
+    # into the `/` sysctl's key-path syntax needs (`eth0.100` ->
+    # `eth0/100`); `\1`/`\2` group backreferences in *replacement*
+    # (Python's `re.sub` syntax) are translated to Crystal's `$1`/`$2`
+    # before use, since Crystal's own regex replacement syntax differs.
+    Crinja.filter(:regex_replace) do
+      pattern = arguments.varargs[0]?.try(&.to_s) || ""
+      replacement = arguments.varargs[1]?.try(&.to_s) || ""
+      replacement = replacement.gsub(/\\(\d)/) { "$#{$1}" }
+      Crinja::Value.new(target.to_s.gsub(Regex.new(pattern), replacement))
+    end
+
     Crinja.filter(:difference) do
       arg = arguments.varargs[0]?
       target_vals = target.sequence? ? target.to_a : [] of Crinja::Value

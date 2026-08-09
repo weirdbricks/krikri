@@ -253,9 +253,25 @@ def parse_os_release : Hash(String, String)?
 end
 
 def gather_network_facts(facts)
-  ipv4 = `ip -4 route get 1 2>/dev/null | head -1 | awk '{print $7}'`.strip
+  # `ip -4 route get 1` prints one line shaped like
+  # "1.0.0.0 via 192.168.1.1 dev eth0 src 192.168.1.50 uid 0" - $7 is the
+  # source address (this host's own IP on the default route), $5 the
+  # outbound interface name. Real Ansible's `ansible_default_ipv4` fact
+  # includes both (plus more fields this doesn't bother gathering) -
+  # `interface` specifically is what konstruktoid-hardening's
+  # sysctl.ipv6.conf.j2 template reads (`ansible_facts.default_ipv4.
+  # interface`) to scope an IPv6 sysctl key to the default route's own
+  # interface. Omitting it left that lookup undefined, which the
+  # `regex_replace` filter downstream can't operate on - failing the
+  # whole template render.
+  default_route = `ip -4 route get 1 2>/dev/null | head -1`.strip
+  route_fields = default_route.split(/\s+/)
+  ipv4 = route_fields[6]?.to_s
+  interface = route_fields[4]?.to_s
   if !ipv4.empty?
-    facts["ansible_default_ipv4"] = {"address" => ipv4}
+    default_ipv4 = {"address" => ipv4}
+    default_ipv4["interface"] = interface unless interface.empty?
+    facts["ansible_default_ipv4"] = default_ipv4
   end
   
   all_ipv4 = `ip -4 addr show 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1`.strip
