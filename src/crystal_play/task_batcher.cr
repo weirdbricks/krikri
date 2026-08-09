@@ -95,7 +95,29 @@ module CrystalPlay
     private def self.breaks_run?(task : Task) : Bool
       structural_or_dynamic?(task) || needs_controller_control_flow?(task) ||
         !!task.delegate_to || task.run_once || retroactive_verdict?(task) ||
-        produces_ansible_facts?(task) || runs_as_action_plugin?(task)
+        produces_ansible_facts?(task) || runs_as_action_plugin?(task) ||
+        reconfigures_firewall?(task)
+    end
+
+    # ufw: (community.general.ufw) applies live firewall rules - real
+    # Ansible runs every task as its own separate SSH connection, so a
+    # transient connectivity blip from one rule taking effect (a brief
+    # conntrack table flush/reset, a rule that momentarily touches the
+    # control connection's own path) only ever risks *that* task's
+    # connection, which reconnects fresh for the next one. Batching
+    # holds one continuous SSH session open across every task in the
+    # group - if a firewall rule anywhere in the middle of a long batch
+    # causes even a brief interruption, the *entire* batch's single
+    # shared connection can drop and never recover, failing every
+    # remaining step in that group along with it (observed running
+    # konstruktoid-hardening's UFW rule section: the whole host went
+    # unreachable partway through a batched run of consecutive `ufw:`
+    # tasks, at a point real ansible-playbook's own one-connection-per-
+    # task run had already gotten past cleanly). Always its own group
+    # trades a little round-trip efficiency for the same safety
+    # property real Ansible has here unconditionally.
+    private def self.reconfigures_firewall?(task : Task) : Bool
+      task.module_name.ends_with?("ufw")
     end
 
     # template: (and any future action plugin) renders on the
