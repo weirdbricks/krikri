@@ -2178,7 +2178,15 @@ module CrystalPlay
         # the value used to register the fact under the literal key
         # `{{ item.key }}`, making `{{ auditd_package }}` resolve undefined
         # in the next task.
-        result[substitutor.substitute(key)] = substitutor.substitute(value)
+        substituted_value = substitutor.substitute(value)
+
+        # `{{ ... | default(omit) }}` (real Ansible's magic variable for
+        # dropping a parameter entirely rather than giving it any real
+        # value - see OMIT_SENTINEL) - skip the key altogether instead of
+        # sending the plugin a literal sentinel string as the param value.
+        next if substituted_value == OMIT_SENTINEL
+
+        result[substitutor.substitute(key)] = substituted_value
       end
 
       result

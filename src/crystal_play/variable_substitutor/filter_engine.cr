@@ -216,6 +216,19 @@ module CrystalPlay
       # reference it is.
       private def resolve_default_arg(args : String) : JSON::Any
         first_arg = split_top_level_args(args).first? || ""
+
+        # `default(omit)` - real Ansible's magic variable that drops the
+        # *parameter itself* from the module call rather than substituting
+        # any real value (konstruktoid-hardening's "Allow outgoing
+        # specified ports" task uses `proto: "{{ item.proto | default(omit)
+        # }}"` to skip proto for loop items that don't specify one). `omit`
+        # is a bare, unquoted identifier here - not a variable lookup - so
+        # it's special-cased before falling into #resolve_expression, which
+        # would otherwise treat it as an ordinary (undefined) variable
+        # reference. See CrystalPlay::OMIT_SENTINEL for where this value is
+        # consumed (#substitute_task_params strips the whole param).
+        return JSON::Any.new(OMIT_SENTINEL) if first_arg.strip == "omit"
+
         resolve_expression(first_arg)
       end
 

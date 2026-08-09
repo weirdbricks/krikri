@@ -7,6 +7,18 @@ require "./variable_substitutor/variable_lookup"
 require "./variable_substitutor/crinja_renderer"
 
 module CrystalPlay
+  # Sentinel a rendered param value is compared against to detect real
+  # Ansible's `omit` magic variable (`{{ item.proto | default(omit) }}` -
+  # konstruktoid-hardening's "Allow outgoing specified ports" task uses
+  # exactly this to drop `proto:` for loop items that don't specify one).
+  # Real Ansible's `omit` causes the *parameter itself* to be dropped from
+  # the module call entirely, not set to some placeholder value - can't be
+  # represented as a plain rendered string, so FilterEngine's `default`
+  # resolves a bare `omit` argument to this unique marker instead, and
+  # #substitute_task_params (the one place that assembles a task's final
+  # param hash) strips any key whose fully-substituted value equals it.
+  OMIT_SENTINEL = "__crystal_ansible_omit__"
+
   # VariableSubstitutor - Main class for variable substitution
   # Uses modular components from variable_substitutor/ directory
   class VarSubstitutor
