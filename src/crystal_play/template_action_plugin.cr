@@ -13,6 +13,8 @@ module CrystalPlay
   # Then sends rendered content to remote host
   
   class TemplateActionPlugin < ActionPlugin
+    @render_error : String? = nil
+
     def execute : ActionResult
       # Get source template path
       src = @params["src"]?
@@ -35,7 +37,8 @@ module CrystalPlay
       # Render template on CONTROLLER
       rendered_content = render_template(template_content, src)
       unless rendered_content
-        return ActionResult.failure("Failed to render template")
+        detail = @render_error ? ": #{@render_error}" : ""
+        return ActionResult.failure("Failed to render template#{detail}")
       end
       
       # Calculate MD5 of rendered content
@@ -133,7 +136,8 @@ module CrystalPlay
         rendered += "\n" unless rendered.ends_with?("\n")
         
         return rendered
-      rescue
+      rescue ex
+        @render_error = ex.message
         return nil
       end
     end
@@ -149,14 +153,20 @@ module CrystalPlay
     # match keeps the ` if ` / ` else ` as the top-level separator, so an
     # operand that is itself a parenthesized ternary (`(B if C2 else D)`)
     # is handled naturally by the nested `( ... )` captures.
+    # The ` else ... ` branch is optional - real Jinja2 permits `{{ A if C
+    # }}` on its own (renders as empty/Undefined when C is false;
+    # konstruktoid-hardening's sshd_config.j2 does this throughout, e.g.
+    # `{{ 'Ciphers ' ~ sshd_ciphers | join(',') if sshd_ciphers }}` to
+    # omit the whole config line entirely when the list is empty).
+    # #rewrite_ternary_expr treats a missing else branch as `''`.
     INLINE_TERNARY = /
       \{\{                          # opening {{
       (                             # capture the whole expression
         (?:[^}]*?)                 # lazy: up to the ternary
         \s+if\s+                  # the ` if ` keyword
         (?:[^}]*?)                 # condition (lazy)
-        \s+else\s+                # the ` else ` keyword
-        (?:[^}]*?)                 # else branch (lazy)
+        (?:\s+else\s+              # the ` else ` keyword (optional)
+        (?:[^}]*?))?                # else branch (lazy, optional)
       )
       \}\}                        # closing }}
     /x
@@ -419,11 +429,18 @@ module CrystalPlay
       if_idx = index_of_token(expr, " if ")
       return expr unless if_idx >= 0
       else_idx = index_of_token_from(expr, " else ", if_idx)
-      return expr unless else_idx >= 0
 
       then_part = rewrite_ternary_expr(strip_wrapping_parens(expr[0...if_idx].strip))
-      cond_part = rewrite_in_expr(expr[if_idx + 4...else_idx].strip)
-      else_part = rewrite_ternary_expr(strip_wrapping_parens(expr[else_idx + 6..].strip))
+      # A missing ` else ` branch (`{{ A if C }}`, real Jinja2's own
+      # else-less inline conditional) renders as empty/Undefined when C
+      # is false - `''` reproduces that in the ternary filter form.
+      if else_idx >= 0
+        cond_part = rewrite_in_expr(expr[if_idx + 4...else_idx].strip)
+        else_part = rewrite_ternary_expr(strip_wrapping_parens(expr[else_idx + 6..].strip))
+      else
+        cond_part = rewrite_in_expr(expr[if_idx + 4..].strip)
+        else_part = "''"
+      end
 
       # cond_part is parenthesized unconditionally before the pipe: real
       # Jinja2's `|` binds *tighter* than `is`, so an unparenthesized `X
