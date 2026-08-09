@@ -261,6 +261,23 @@ module CrystalPlay
           # correctness bug and a multi-hour hang, not just wrong data.
           other = as_array(resolve_expression(filter_args)).to_set
           JSON::Any.new(as_array(value).uniq.select { |item| other.includes?(item) })
+        when "difference"
+          # difference(other) - real Ansible's own filter: elements of
+          # *value* that do NOT appear in *other*, deduplicated, order
+          # taken from *value*. Like intersect above, this fell through to
+          # the unfiltered passthrough below (returning *value* itself
+          # unchanged) - found via linux-system-roles/journald's `when:
+          # __journald_required_facts | difference(ansible_facts.keys() |
+          # list) | length > 0` gate around a `setup:` re-gather task: with
+          # no filtering, the "still-needed facts" list was always the
+          # full required-facts list regardless of what was already
+          # gathered, so the guard never skipped - a redundant `setup:` re-
+          # run every time instead of a correctness bug on its own, but a
+          # PLAY RECAP divergence (task counted as "ok" instead of
+          # "skipped") that would recur in any role using this common
+          # required-facts guard pattern.
+          other_set = as_array(resolve_expression(filter_args)).to_set
+          JSON::Any.new(as_array(value).uniq.reject { |item| other_set.includes?(item) })
         else
           # Unknown filter - return value as-is (matches prior behavior)
           value
