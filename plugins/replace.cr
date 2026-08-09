@@ -28,7 +28,15 @@ module CrystalPlay
     end
 
     def execute : PluginResult
-      path = @params["path"]?
+      # path (aliases: dest, name) - matches real Ansible's own
+      # argument_spec, where `dest:` is the long-standing legacy alias
+      # most existing playbooks/roles still write (lineinfile.cr already
+      # supports the same three spellings). Found via konstruktoid-
+      # hardening's own "Set default bash.bashrc umask" task, which uses
+      # `dest:` - "Missing required parameter: path" even though the
+      # task supplied a perfectly valid (if not the newest-spelling)
+      # target file parameter.
+      path = @params["path"]? || @params["dest"]? || @params["name"]?
       unless path
         return PluginResult.new(
           changed: false,
