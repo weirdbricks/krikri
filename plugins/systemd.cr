@@ -271,11 +271,40 @@ module CrystalPlay
         msg += " (check mode)"
       end
 
+      # `status:` - real Ansible's systemd module always populates this
+      # (from `systemctl show <name>`, every KEY=VALUE property verbatim)
+      # whenever a unit `name:` is given, independent of what state:/
+      # enabled:/masked: management was also requested - a query-only
+      # task (`systemd_service: {name: foo.target}`, no other params) is
+      # a completely normal, real usage (konstruktoid-hardening's own
+      # "Get ctrl-alt-del.target information" does exactly this, then a
+      # later task reads `.status.FragmentPath` from the registered
+      # result). Previously never populated at all, so `.status.
+      # anything` always resolved to undefined - which then rendered as
+      # the literal string "undefined" wherever it was used as a
+      # path/value, not merely "empty".
+      status = name ? systemctl_show(name) : nil
+
       PluginResult.new(
         changed: changed,
         failed: false,
-        msg: msg
+        msg: msg,
+        status: status
       )
+    end
+
+    # Runs `systemctl show <name>` and parses its `KEY=VALUE` lines
+    # (one per real systemd unit property - ActiveState, FragmentPath,
+    # UnitFileState, etc.) into a plain string-keyed hash, matching
+    # what real Ansible's systemd module exposes as `.status`.
+    private def systemctl_show(name : String) : Hash(String, String)
+      result = remote_exec("systemctl show #{name}")
+      status = Hash(String, String).new
+      result[:stdout].each_line do |line|
+        key, sep, value = line.partition('=')
+        status[key] = value if sep == "="
+      end
+      status
     end
 
     # Whether the unit is currently active (running).
