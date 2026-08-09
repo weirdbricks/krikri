@@ -193,7 +193,10 @@ module CrystalPlay
       in_double = false
       started = false
 
-      cmd.each_char do |char|
+      chars = cmd.each_char.to_a
+      i = 0
+      while i < chars.size
+        char = chars[i]
         if in_single
           if char == '\''
             in_single = false
@@ -216,6 +219,25 @@ module CrystalPlay
           when '"'
             in_double = true
             started = true
+          when '\\'
+            # Unquoted backslash-escape (shlex/POSIX shell semantics,
+            # not just a literal character) - the char immediately
+            # after is taken verbatim and the backslash itself dropped.
+            # Real Ansible's command module parses `cmd:` the same way
+            # (Python's shlex.split). Found via konstruktoid-hardening's
+            # own `find ... -exec aa-enforce {} \;` - without this, the
+            # final argv token was the two characters `\;` instead of
+            # find's actual required terminator `;`, and find rejected
+            # it outright ("missing argument to `-exec'"). A trailing
+            # backslash with nothing after it is kept as a literal
+            # backslash rather than silently dropped.
+            if i + 1 < chars.size
+              current << chars[i + 1]
+              i += 1
+            else
+              current << char
+            end
+            started = true
           when ' ', '\t', '\n'
             if started
               parts << current.to_s
@@ -227,6 +249,7 @@ module CrystalPlay
             started = true
           end
         end
+        i += 1
       end
 
       parts << current.to_s if started
