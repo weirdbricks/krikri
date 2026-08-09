@@ -175,6 +175,22 @@ module CrystalPlay
           # (fell through to the `else` passthrough below), silently
           # discarding every merge-in argument.
           split_top_level_args(filter_args).reduce(value) { |acc, arg_expr| combine_hash(acc, resolve_expression(arg_expr)) }
+        when "intersect"
+          # intersect(other) - real Ansible's own filter (ansible.builtin,
+          # not standard Jinja2): elements of *value* that also appear in
+          # *other*, deduplicated, order taken from *value*. Was
+          # previously unimplemented (fell through to the `else`
+          # passthrough below, returning the *unfiltered* left-hand list)
+          # - found via konstruktoid-hardening's own `ansible_facts.
+          # packages.keys() | intersect(packages_blocklist)` (computing
+          # which of a ~25-item denylist are actually installed): with no
+          # filtering at all, that expression evaluated to literally every
+          # installed package (600+), turning the next task's "remove
+          # each blocklisted package" loop into "attempt to
+          # apt-get-remove every installed package one at a time" -
+          # correctness bug and a multi-hour hang, not just wrong data.
+          other = as_array(resolve_expression(filter_args)).to_set
+          JSON::Any.new(as_array(value).uniq.select { |item| other.includes?(item) })
         else
           # Unknown filter - return value as-is (matches prior behavior)
           value
