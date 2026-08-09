@@ -38,32 +38,32 @@ describe CrystalPlay::PluginHelpers::UfwCommand do
 
     it "prepends --dry-run right after the binary name when dry_run: true" do
       params = {"rule" => "allow", "to_port" => "22"}
-      CrystalPlay::PluginHelpers::UfwCommand.rule_command(params, dry_run: true).should eq("ufw --dry-run allow port 22")
+      CrystalPlay::PluginHelpers::UfwCommand.rule_command(params, dry_run: true).should eq("ufw --dry-run allow from any to any port 22")
     end
 
     it "includes route and delete flags" do
       params = {"rule" => "allow", "route" => "true", "delete" => "true", "to_port" => "22"}
-      CrystalPlay::PluginHelpers::UfwCommand.rule_command(params).should eq("ufw route delete allow port 22")
+      CrystalPlay::PluginHelpers::UfwCommand.rule_command(params).should eq("ufw route delete allow from any to any port 22")
     end
 
     it "includes insert only when delete is not set" do
       params = {"rule" => "allow", "insert" => "1", "to_port" => "22"}
-      CrystalPlay::PluginHelpers::UfwCommand.rule_command(params).should eq("ufw insert 1 allow port 22")
+      CrystalPlay::PluginHelpers::UfwCommand.rule_command(params).should eq("ufw insert 1 allow from any to any port 22")
     end
 
     it "prefers interface: over interface_in:/interface_out:" do
       params = {"rule" => "allow", "interface" => "eth0", "to_port" => "22"}
-      CrystalPlay::PluginHelpers::UfwCommand.rule_command(params).should eq("ufw allow on eth0 port 22")
+      CrystalPlay::PluginHelpers::UfwCommand.rule_command(params).should eq("ufw allow on eth0 from any to any port 22")
     end
 
-    it "appends from_port/to_port independently of from_ip/to_ip - a port given without its matching ip is still appended alone (matches real Ansible's source, which checks each of the four keys independently, not as ip+port pairs)" do
+    it "appends from_port/to_port independently of from_ip/to_ip - a port given without its matching ip is still appended alone (matches real Ansible's source, which checks each of the four keys independently, not as ip+port pairs), and from_ip/to_ip default to 'any' (real Ansible's own argument default) rather than being omitted" do
       params = {"rule" => "allow", "from_port" => "1000", "to_ip" => "10.0.0.1"}
-      CrystalPlay::PluginHelpers::UfwCommand.rule_command(params).should eq("ufw allow port 1000 to 10.0.0.1")
+      CrystalPlay::PluginHelpers::UfwCommand.rule_command(params).should eq("ufw allow from any port 1000 to 10.0.0.1")
     end
 
     it "includes an app profile and a comment" do
       params = {"rule" => "allow", "name" => "OpenSSH", "comment" => "allow ssh"}
-      CrystalPlay::PluginHelpers::UfwCommand.rule_command(params).should eq("ufw allow app 'OpenSSH' comment 'allow ssh'")
+      CrystalPlay::PluginHelpers::UfwCommand.rule_command(params).should eq("ufw allow from any to any app 'OpenSSH' comment 'allow ssh'")
     end
   end
 

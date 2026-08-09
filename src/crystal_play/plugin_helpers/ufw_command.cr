@@ -61,13 +61,21 @@ module CrystalPlay
       end
 
       # from_ip/from_port/to_ip/to_port are four independent appends in
-      # real Ansible's source (a plain list of (key, template) pairs
-      # each checked on their own), not two ip+port pairs - a port given
-      # without its matching ip still gets appended alone.
+      # real Ansible's source (a plain list of (key, template) pairs each
+      # checked on their own), not two ip+port pairs - a port given
+      # without its matching ip still gets appended alone. Crucially,
+      # from_ip/to_ip default to `'any'` in real Ansible's argument spec
+      # (`from_ip=dict(..., default='any', ...)`), not unset/None - so
+      # "from any"/"to any" is *always* emitted, even when the task only
+      # gave a bare `to_port:`/`from_port:` with no ip at all. Omitting it
+      # in that case (as this used to) produces a bare `ufw allow out
+      # port 22 ...` that real `ufw` itself rejects with "ERROR: Need
+      # 'to' or 'from' clause" - found running konstruktoid-hardening's
+      # "Allow outgoing specified ports" task, which does exactly this.
       private def self.append_endpoints(parts : Array(String), params : Hash(String, String))
-        parts << "from #{params["from_ip"]}" if params["from_ip"]?
+        parts << "from #{params["from_ip"]? || "any"}"
         parts << "port #{params["from_port"]}" if params["from_port"]?
-        parts << "to #{params["to_ip"]}" if params["to_ip"]?
+        parts << "to #{params["to_ip"]? || "any"}"
         parts << "port #{params["to_port"]}" if params["to_port"]?
       end
 
