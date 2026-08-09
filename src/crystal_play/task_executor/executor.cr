@@ -2225,7 +2225,20 @@ module CrystalPlay
       final_params = params.dup
       final_params["check_mode"] = @check_mode.to_s
       final_params["diff_mode"] = @diff_mode.to_s
-      
+
+      # environment: - substituted here (once, with the same vars_context
+      # every other param already uses) and forwarded as a single JSON
+      # blob under a reserved param key; BasePlugin#remote_exec/#local_exec
+      # read it back out and prefix whatever command the plugin shells out
+      # with the equivalent `export K=V; ...` - applies uniformly to every
+      # plugin that shells out (command/shell/apt/systemctl/...) rather
+      # than needing separate wiring per plugin.
+      if task_env = task.environment
+        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+        substituted_env = task_env.transform_values { |v| substitutor.substitute(v) }
+        final_params["_environment"] = substituted_env.to_json
+      end
+
       config = {
         "host" => {
           "name" => host.name,

@@ -138,6 +138,7 @@ module CrystalPlay
     end
 
     protected def remote_exec(command : String) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
+      command = with_environment(command)
       if is_local_connection?
         # Execute locally
         LocalExecutor.exec(command)
@@ -151,6 +152,32 @@ module CrystalPlay
           identity_file: get_identity_file
         )
       end
+    end
+
+    # Prefixes *command* with `export K='V'; ...` for each entry in the
+    # task's `environment:` (real Ansible's per-task env-var keyword,
+    # forwarded here as a JSON blob under the `_environment` param key by
+    # TaskExecutor#build_plugin_config, already {{ }}-substituted). One
+    # shared implementation so every plugin that shells out via
+    # #remote_exec gets `environment:` support automatically rather than
+    # each plugin needing its own wiring.
+    private def with_environment(command : String) : String
+      env_json = @params["_environment"]?
+      return command unless env_json
+
+      env = Hash(String, String).from_json(env_json)
+      return command if env.empty?
+
+      exports = env.map { |key, value| "export #{key}=#{shell_single_quote(value)}" }.join("; ")
+      "#{exports}; #{command}"
+    end
+
+    # Single-quotes *str* for shell embedding, escaping any embedded
+    # single quote - same convention as BatchScript/PluginManager's own
+    # copies of this helper (each kept separate rather than shared across
+    # unrelated classes).
+    private def shell_single_quote(str : String) : String
+      "'" + str.gsub("'", "'\\''") + "'"
     end
 
     protected def remote_upload(local_path : String, remote_path : String)

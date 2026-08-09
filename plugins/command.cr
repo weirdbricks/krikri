@@ -119,6 +119,7 @@ module CrystalPlay
         process = Process.new(
           command_name,
           args,
+          env: task_environment,
           output: stdout,
           error: stderr,
           input: stdin_data ? Process::Redirect::Pipe : Process::Redirect::Close
@@ -168,6 +169,23 @@ module CrystalPlay
     # argv element, so a quoted argument here is kept whole and the quotes
     # (single or double) stripped, matching how Process.new would have
     # received it under a shell-less invocation.
+    # `environment:` (real Ansible's per-task env-var keyword), forwarded
+    # here as a JSON blob under the `_environment` param key by
+    # TaskExecutor#build_plugin_config (already {{ }}-substituted). Unlike
+    # every other plugin, command.cr execs `command_name`/`args` directly
+    # via Process.new rather than through a shell - BasePlugin#remote_exec's
+    # `export K=V; ...` shell-prefix trick (which every *other* plugin's
+    # shelled-out commands go through automatically) has nothing to attach
+    # to here, so this reads the same `_environment` param directly and
+    # passes it through Process.new's own `env:` instead.
+    private def task_environment : Process::Env
+      env_json = @params["_environment"]?
+      return nil unless env_json
+
+      env = Hash(String, String).from_json(env_json)
+      env.empty? ? nil : env.transform_values { |v| v.as(String?) }
+    end
+
     private def parse_command(cmd : String) : Array(String)
       parts = [] of String
       current = String::Builder.new

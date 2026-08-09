@@ -166,11 +166,29 @@ module CrystalPlay
       if validate_cmd = @params["validate"]?
         validation = validate_file(temp_file, validate_cmd)
         unless validation[:ok]
-          File.delete(temp_file) if File.exists?(temp_file)
+          # Left in place (not deleted) deliberately - a validation
+          # failure means the rendered content itself is almost always
+          # what's actually wrong, and there's no other way to inspect
+          # what got rendered (the real destination file was never
+          # touched). The path is in the message specifically so it's
+          # not just silently orphaned.
+          #
+          # Also inlines a few lines of context around whatever line
+          # number the validator's own output cites (`sshd -T`/`nginx
+          # -t`-style tools report "line N: ..."), read directly from
+          # this plugin's own filesystem (it's already running ON the
+          # target host) - a second SSH round trip to fetch the file
+          # separately isn't guaranteed to still be possible by the time
+          # anyone looks (the whole play keeps running past this one
+          # failed task, and can reach a task that drops the control
+          # connection - e.g. this exact template's own role locking out
+          # SSH access later in the same play - well before a human gets
+          # a chance to inspect it).
+          context = extract_error_context(temp_file, validation[:output])
           return PluginResult.new(
             changed: false,
             failed: true,
-            msg: "Validation failed: #{validation[:output]}"
+            msg: "Validation failed: #{validation[:output]} (rendered content left at #{temp_file} for inspection)#{context}"
           )
         end
       end
@@ -215,6 +233,27 @@ module CrystalPlay
       end
     end
     
+    # Reads a few lines of context out of *path* around whatever line
+    # number *validator_output* cites (`"...: line 34: ..."`, the shape
+    # `sshd -T`/most other line-oriented config validators use). Returns
+    # "" (not an error) if the output doesn't cite a line number, or the
+    # file can't be read - this is best-effort diagnostic content, never
+    # something a caller should treat as required.
+    private def extract_error_context(path : String, validator_output : String) : String
+      return "" unless match = validator_output.match(/:\s*line\s+(\d+):/)
+      line_num = match[1].to_i
+
+      lines = File.read_lines(path)
+      from = Math.max(0, line_num - 3)
+      to = Math.min(lines.size - 1, line_num + 1)
+      return "" if from > to
+
+      context_lines = (from..to).map { |i| "#{i + 1}: #{lines[i]}" }.join("\n")
+      "\n--- context around line #{line_num} ---\n#{context_lines}"
+    rescue
+      ""
+    end
+
     # Validate file with command. Captures stdout+stderr (not discarded,
     # as this used to) so a validation failure - real Ansible's own
     # `validate:` commands are typically `sshd -T -f %s`/`nginx -t -c

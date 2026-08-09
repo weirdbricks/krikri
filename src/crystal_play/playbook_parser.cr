@@ -10,6 +10,11 @@ module CrystalPlay
     property module_name : String
     property params : Hash(String, String)
     property vars : Hash(String, JSON::Any)
+    # environment: - per-task env vars (real Ansible keyword). Raw,
+    # unsubstituted string values, same convention as `params` - the
+    # executor substitutes them at run time and forwards the result to
+    # the plugin, which applies them around its own shelled-out commands.
+    property environment : Hash(String, String)?
     property when_condition : String?
     property register : String?
     property notify : Array(String)?
@@ -702,7 +707,7 @@ module CrystalPlay
                       "with_dict", "with_fileglob", "with_first_found", "with_nested", "with_sequence",
                       "with_community.general.flattened", "with_subelements", "with_indexed_items", "until", "retries", "delay",
                       "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "run_once",
-                      "async", "poll", "vars",
+                      "async", "poll", "vars", "environment",
                       "block", "rescue", "always", "import_tasks", "include_tasks", "include_role",
                       "meta", "include_vars"]
       # ... and the same names fully qualified, since directive() accepts
@@ -761,6 +766,22 @@ module CrystalPlay
       # broken, since it draws from the exact same vars_context.
       if vars_yaml = task_hash["vars"]?.try(&.as_h?)
         vars_yaml.each { |key, value| task.vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
+      end
+
+      # Parse environment: - real Ansible's per-task env-var-setting
+      # keyword, used throughout konstruktoid-hardening (PATH overrides
+      # around several `command:`/`shell:` tasks, `DEBIAN_FRONTEND:
+      # noninteractive` around package installs). Previously not in
+      # special_keys at all, so the parser misread "environment" itself
+      # as the *module name* to dispatch on - failing plugin resolution
+      # ("Plugin not available: environment") and silently skipping the
+      # entire task, not just the env-var setting. Values are kept as
+      # raw (unsubstituted) strings here, same as task.params - real
+      # {{ }} substitution happens at execution time once the vars
+      # context exists.
+      if env_yaml = task_hash["environment"]?.try(&.as_h?)
+        task.environment = Hash(String, String).new
+        env_yaml.each { |key, value| task.environment.not_nil![key.to_s] = stringify_value(value) }
       end
 
       # Parse notify (can be string or array)
