@@ -164,12 +164,13 @@ module CrystalPlay
       
       # Validate if requested
       if validate_cmd = @params["validate"]?
-        unless validate_file(temp_file, validate_cmd)
+        validation = validate_file(temp_file, validate_cmd)
+        unless validation[:ok]
           File.delete(temp_file) if File.exists?(temp_file)
           return PluginResult.new(
             changed: false,
             failed: true,
-            msg: "Validation failed"
+            msg: "Validation failed: #{validation[:output]}"
           )
         end
       end
@@ -214,20 +215,23 @@ module CrystalPlay
       end
     end
     
-    # Validate file with command
-    private def validate_file(path : String, validate_cmd : String) : Bool
-      # Replace %s with file path
+    # Validate file with command. Captures stdout+stderr (not discarded,
+    # as this used to) so a validation failure - real Ansible's own
+    # `validate:` commands are typically `sshd -T -f %s`/`nginx -t -c
+    # %s`-style syntax checkers whose whole purpose is to explain exactly
+    # what's wrong - reports *what* failed, not just that it did.
+    private def validate_file(path : String, validate_cmd : String) : NamedTuple(ok: Bool, output: String)
       cmd = validate_cmd.gsub("%s", path)
-      
-      # Execute validation command using Crystal Process
+      output = IO::Memory.new
+
       result = Process.run(
         "/bin/sh",
         ["-c", cmd],
-        output: Process::Redirect::Close,
-        error: Process::Redirect::Close
+        output: output,
+        error: output
       )
-      
-      result.exit_code == 0
+
+      {ok: result.exit_code == 0, output: output.to_s.strip}
     end
     
     # Apply file attributes (owner, group, mode)
