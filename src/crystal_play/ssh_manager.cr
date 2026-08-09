@@ -35,6 +35,64 @@ module CrystalPlay
       @@stats
     end
     
+    # Runs *block* (given the just-spawned *process*) on a separate fiber
+    # and bounds it to *timeout_seconds* wall-clock time - both `exec`
+    # and `exec_script` accepted a `timeout:` parameter that was never
+    # actually enforced anywhere, leaving every blocking Process call
+    # (`#wait`, and for exec_script, the write of a potentially large
+    # script into the process's own stdin pipe) able to hang forever
+    # with no escape hatch at all. `-o ServerAliveInterval=`/
+    # `ServerAliveCountMax=` only bound an *established* SSH session
+    # going idle - they do nothing for a local pipe write blocking
+    # because nothing is reading the other end (the remote host went
+    # unreachable mid-handshake, before ssh itself even started
+    # forwarding stdin), which is a local blocking syscall the SSH
+    # protocol's own keepalive machinery never sees. Found running
+    # konstruktoid-hardening's newly-batched (0.9.155) 411-item "Find
+    # possible suid binaries" step: the whole crystal-ansible process
+    # sat silent, producing no further output and no error, until an
+    # *external* `timeout` wrapper eventually killed it - a real host/
+    # network hang, not a task bug, and previously nothing inside
+    # crystal-ansible itself could ever recover from it.
+    #
+    # On timeout, SIGKILLs the process and gives it a further 5s to
+    # actually exit and report a status before giving up entirely (a
+    # hard bound of its own, in case even the kill signal doesn't
+    # unblock the fiber - e.g. if it's wedged in kernel-level uninter-
+    # ruptible I/O, vanishingly rare but not impossible).
+    private def self.run_with_timeout(
+      process : Process,
+      timeout_seconds : Int32,
+      &block : Process -> NamedTuple(exit_code: Int32, stdout: String, stderr: String)
+    ) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
+      channel = Channel(NamedTuple(exit_code: Int32, stdout: String, stderr: String)).new(1)
+
+      spawn do
+        result = begin
+          block.call(process)
+        rescue ex
+          {exit_code: 255, stdout: "", stderr: "SSH execution failed: #{ex.message}"}
+        end
+        channel.send(result)
+      end
+
+      select
+      when result = channel.receive
+        result
+      when timeout(timeout_seconds.seconds)
+        begin
+          process.terminate(graceful: false)
+        rescue
+        end
+        select
+        when result = channel.receive
+          result
+        when timeout(5.seconds)
+          {exit_code: 255, stdout: "", stderr: "SSH command timed out after #{timeout_seconds}s (host likely unreachable) and did not exit even after being killed"}
+        end
+      end
+    end
+
     # Reset statistics
     def self.reset_stats
       @@stats.each_key do |key|
@@ -81,7 +139,7 @@ module CrystalPlay
       
       stdout = IO::Memory.new
       stderr = IO::Memory.new
-      
+
       begin
         process = Process.new(
           ssh_cmd[0],
@@ -89,14 +147,15 @@ module CrystalPlay
           output: stdout,
           error: stderr
         )
-        
-        status = process.wait
-        
-        {
-          exit_code: status.exit_code,
-          stdout: stdout.to_s,
-          stderr: stderr.to_s
-        }
+
+        run_with_timeout(process, timeout) do |proc|
+          status = proc.wait
+          {
+            exit_code: status.exit_code,
+            stdout: stdout.to_s,
+            stderr: stderr.to_s,
+          }
+        end
       rescue ex
         {
           exit_code: 255,
@@ -156,16 +215,17 @@ module CrystalPlay
           error: stderr
         )
 
-        process.input.print(script)
-        process.input.close
+        run_with_timeout(process, timeout) do |proc|
+          proc.input.print(script)
+          proc.input.close
 
-        status = process.wait
-
-        {
-          exit_code: status.exit_code,
-          stdout: stdout.to_s,
-          stderr: stderr.to_s,
-        }
+          status = proc.wait
+          {
+            exit_code: status.exit_code,
+            stdout: stdout.to_s,
+            stderr: stderr.to_s,
+          }
+        end
       rescue ex
         {
           exit_code: 255,
