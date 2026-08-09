@@ -66,12 +66,57 @@ module CrystalPlay
         end
       end
 
-      # Get package name(s) - can be optional if just updating cache
+      # Get package name(s) - can be optional if just updating cache, or
+      # running autoremove/autoclean/clean (real Ansible's apt module
+      # supports all four with no `name:` at all - konstruktoid-hardening's
+      # own "Run apt-get autoremove"/"Run apt-get clean" handlers do
+      # exactly `autoremove: true` and `autoclean: true, clean: true`
+      # with no name).
       name_param = @params["name"]?
+      autoremove = is_true?(@params["autoremove"]?)
+      autoclean = is_true?(@params["autoclean"]?)
+      clean = is_true?(@params["clean"]?)
+
+      if autoremove || autoclean || clean
+        {
+          {autoremove, "apt-get -y autoremove", "packages removed"},
+          {autoclean, "apt-get -y autoclean", "autocleaned"},
+          {clean, "apt-get clean", "cache cleaned"},
+        }.each do |(enabled, cmd, label)|
+          next unless enabled
+
+          if @check_mode
+            messages << "Would run: #{cmd}"
+            changed = true
+            next
+          end
+
+          result = remote_exec(cmd)
+          if result[:exit_code] != 0
+            return PluginResult.new(changed: false, failed: true, msg: "#{cmd} failed: #{result[:stderr]}")
+          end
+
+          # `autoremove` prints apt's own "nothing to do" summary line
+          # when there's genuinely nothing to remove; `autoclean`/`clean`
+          # print nothing at all when the cache was already clean - both
+          # signal "unchanged" as empty/no-op output, matching real
+          # Ansible's apt module's own changed: for these flags.
+          did_something = if cmd.includes?("autoremove")
+                             !result[:stdout].includes?("0 upgraded, 0 newly installed, 0 to remove")
+                           else
+                             !result[:stdout].strip.empty?
+                           end
+
+          if did_something
+            changed = true
+            messages << label
+          end
+        end
+      end
 
       # If no package name provided, just return cache update result
       unless name_param
-        if update_cache
+        if update_cache || autoremove || autoclean || clean
           msg = messages.empty? ? "Cache up to date" : messages.join(", ")
           return PluginResult.new(
             changed: changed,
