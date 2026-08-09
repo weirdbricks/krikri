@@ -116,9 +116,26 @@ module CrystalPlay
         when "list"
           value
         when "first"
-          as_array(value).first? || JSON::Any.new(nil)
+          # Real Jinja2's `first`/`last` work on any sequence, including
+          # a plain string (Python treats a str as a sequence of
+          # characters) - `as_array` only ever extracts a real JSON
+          # array, silently returning nil/"" for a String value instead
+          # of its first character. Found via konstruktoid-hardening's
+          # own `... | regex_search(pattern, '\1') | first` (regex_search
+          # with one backreference arg returns a plain string, matching
+          # real Ansible - `first` on that string must then return its
+          # first *character*, not nil).
+          if str = value.as_s?
+            JSON::Any.new(str.empty? ? nil : str[0].to_s)
+          else
+            as_array(value).first? || JSON::Any.new(nil)
+          end
         when "last"
-          as_array(value).last? || JSON::Any.new(nil)
+          if str = value.as_s?
+            JSON::Any.new(str.empty? ? nil : str[-1].to_s)
+          else
+            as_array(value).last? || JSON::Any.new(nil)
+          end
         when "min"
           as_array(value).min_by? { |v| numeric(v) } || JSON::Any.new(nil)
         when "max"
@@ -175,6 +192,37 @@ module CrystalPlay
           # (fell through to the `else` passthrough below), silently
           # discarding every merge-in argument.
           split_top_level_args(filter_args).reduce(value) { |acc, arg_expr| combine_hash(acc, resolve_expression(arg_expr)) }
+        when "regex_search"
+          # regex_search(pattern, group_ref='') - real Ansible's own
+          # filter (not standard Jinja2): searches *pattern* anywhere in
+          # value (Python re.search, not a full match), and with a
+          # backreference-style second argument (`'\\1'`) returns that
+          # captured group's text instead of the whole match. No match
+          # at all resolves to "undefined" (matching the general
+          # unresolved-lookup convention elsewhere in this evaluator),
+          # not an empty string, so a caller chaining `| first` (real
+          # Ansible would get `None` back and typically guards with
+          # `default(...)`) doesn't silently succeed on bogus data.
+          # Found via konstruktoid-hardening's own `sshd_version.
+          # stderr_lines | regex_search('OpenSSH_(...)', '\\1') | first`
+          # (extracting the installed OpenSSH version) - previously
+          # unimplemented and falling through to the `else` passthrough
+          # below, returning `sshd_version.stderr_lines` *itself*
+          # unfiltered as "the version", which downstream `is
+          # version(...)` comparisons then read nonsense out of.
+          args = split_top_level_args(filter_args)
+          pattern = args[0]?.try { |arg| as_string(resolve_expression(arg)) } || ""
+          group_ref = args[1]?.try { |arg| as_string(resolve_expression(arg)) }
+
+          if match = as_string(value).match(Regex.new(pattern))
+            if group_ref
+              JSON::Any.new(group_ref.gsub(/\\(\d)/) { match[$1.to_i]? || "" })
+            else
+              JSON::Any.new(match[0])
+            end
+          else
+            JSON::Any.new("undefined")
+          end
         when "intersect"
           # intersect(other) - real Ansible's own filter (ansible.builtin,
           # not standard Jinja2): elements of *value* that also appear in
