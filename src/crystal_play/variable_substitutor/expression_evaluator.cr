@@ -1,4 +1,5 @@
 require "json"
+require "../conditional_evaluator"
 module CrystalPlay
   module VariableSubstitutor
     # ExpressionEvaluator - Orchestrates evaluation of all expression types
@@ -17,8 +18,26 @@ module CrystalPlay
         @lookup = VariableLookup.new(@vars)
       end
       
-      # Evaluate any expression and return string result
+      # Evaluate any expression and return string result. A thin guard in
+      # front of #evaluate_expr for the inline ternary `TRUTHY if COND else
+      # FALSY` (real Jinja2/Ansible syntax, used directly in default vars
+      # like konstruktoid-hardening's `sysctl_conf_dir: "{{
+      # '/usr/lib/sysctl.d' if usr_lib_sysctl_d_dir else '/etc/sysctl.d'
+      # }}"`) - split out from the main body (rather than added as another
+      # branch in it) purely to keep that method's already-high cyclomatic
+      # complexity from tipping over ameba's threshold. Checked before any
+      # of #evaluate_expr's own checks since COND itself commonly contains
+      # a comparison - splitting first keeps that comparison scoped to COND
+      # instead of being (wrongly) evaluated against the whole expression.
       def evaluate(expr : String) : String
+        if ternary = split_ternary(expr)
+          evaluate_ternary(ternary)
+        else
+          evaluate_expr(expr)
+        end
+      end
+
+      private def evaluate_expr(expr : String) : String
         # Check for comparison operators FIRST (before filters)
         if has_comparison?(expr)
           return @comparison.evaluate(expr)
@@ -97,6 +116,63 @@ module CrystalPlay
         @lookup.simple(expr)
       end
       
+      # Resolves the branch selected by a ternary's condition. A branch
+      # that's a plain quoted string literal (the common case - both
+      # branches of `X if C else Y` are usually literals) is unquoted
+      # directly rather than handed to `evaluate`, which has no top-level
+      # "bare quoted literal" case of its own and would otherwise try
+      # (and fail) to look it up as a variable name, quotes included.
+      private def evaluate_ternary(ternary : {String, String, String}) : String
+        truthy_expr, cond_expr, falsy_expr = ternary
+        chosen = ConditionalEvaluator.evaluate(cond_expr, @vars) ? truthy_expr : falsy_expr
+        quoted_string_literal(chosen).try(&.as_s) || evaluate(chosen)
+      end
+
+      # Splits *expr* on a top-level ` if ` ... ` else ` (outside
+      # quotes/brackets), returning {truthy, condition, falsy} or nil if
+      # the expression isn't a ternary at all. Only the first top-level
+      # ` if ` and the last top-level ` else ` are used as delimiters, so
+      # a condition that itself contains " if "/" else " inside quotes or
+      # nested parens/brackets is left intact.
+      private def split_ternary(expr : String) : {String, String, String}?
+        if_idx = top_level_keyword_index(expr, " if ")
+        return nil unless if_idx
+
+        else_idx = top_level_keyword_index(expr, " else ", if_idx + 4)
+        return nil unless else_idx
+
+        truthy = expr[0...if_idx].strip
+        cond = expr[(if_idx + 4)...else_idx].strip
+        falsy = expr[(else_idx + 6)..].strip
+        return nil if truthy.empty? || cond.empty? || falsy.empty?
+
+        {truthy, cond, falsy}
+      end
+
+      # Finds the index of *keyword* at bracket/quote depth 0, starting the
+      # scan at *from*.
+      private def top_level_keyword_index(expr : String, keyword : String, from : Int32 = 0) : Int32?
+        depth = 0
+        quote = nil.as(Char?)
+        i = from
+        while i < expr.size
+          char = expr[i]
+          if q = quote
+            quote = nil if char == q
+          elsif char == '\'' || char == '"'
+            quote = char
+          elsif "[({".includes?(char)
+            depth += 1
+          elsif "])}".includes?(char)
+            depth -= 1
+          elsif depth == 0 && expr[i, keyword.size]? == keyword
+            return i
+          end
+          i += 1
+        end
+        nil
+      end
+
       # Check if expression contains comparison operators
       private def has_comparison?(expr : String) : Bool
         expr.includes?("==") || expr.includes?("!=") || 
