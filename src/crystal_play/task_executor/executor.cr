@@ -2248,6 +2248,28 @@ module CrystalPlay
       config.to_json
     end
     
+    # Matches real Ansible's `stdout_lines`/`stderr_lines` (built from
+    # Python's `str.splitlines()`), not Crystal's plain `String#split("\n")`.
+    # The two differ on exactly the cases that matter for real command
+    # output: empty input - Python's splitlines() gives `[]`, Crystal's
+    # split gives `[""]` (one empty element) - and any trailing newline,
+    # which split() turns into a spurious final empty element that
+    # splitlines() never produces. Found via konstruktoid-hardening's
+    # "Delete unmanaged UFW rules" task: its `ufw_not_managed` command's
+    # `grep -v` legitimately matches nothing (every rule this role adds is
+    # tagged "ansible managed" and filtered out), producing empty stdout;
+    # `ufw_not_managed.stdout_lines | length > 0` should then gate the
+    # whole loop off, but the spurious `[""]` made it loop once with an
+    # empty item, running `ufw delete ` with no rule spec at all - which
+    # real `ufw` rejects with "ERROR: Invalid syntax".
+    private def ansible_splitlines(text : String) : Array(String)
+      return [] of String if text.empty?
+
+      lines = text.split("\n")
+      lines.pop if lines.last?.try(&.empty?)
+      lines
+    end
+
     # Register task result as a variable
     private def register_result(host : Host, register_name : String, result : JSON::Any)
       # Create a mutable copy of the result to add stdout_lines/stderr_lines
@@ -2255,13 +2277,13 @@ module CrystalPlay
       
       # Add stdout_lines by splitting stdout on newlines (Ansible behavior)
       if stdout = result_hash["stdout"]?.try(&.as_s)
-        stdout_lines = stdout.split("\n").map { |line| JSON::Any.new(line) }
+        stdout_lines = ansible_splitlines(stdout).map { |line| JSON::Any.new(line) }
         result_hash["stdout_lines"] = JSON::Any.new(stdout_lines)
       end
-      
+
       # Add stderr_lines by splitting stderr on newlines (Ansible behavior)
       if stderr = result_hash["stderr"]?.try(&.as_s)
-        stderr_lines = stderr.split("\n").map { |line| JSON::Any.new(line) }
+        stderr_lines = ansible_splitlines(stderr).map { |line| JSON::Any.new(line) }
         result_hash["stderr_lines"] = JSON::Any.new(stderr_lines)
       end
       
