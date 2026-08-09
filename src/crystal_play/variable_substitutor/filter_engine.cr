@@ -223,6 +223,28 @@ module CrystalPlay
           else
             JSON::Any.new("undefined")
           end
+        when "ternary"
+          # ternary(true_val, false_val) - real Ansible's own filter
+          # (ansible.builtin, not standard Jinja2): `true_val` if value
+          # is truthy, else `false_val`. Was entirely unimplemented in
+          # this plain `{{ }}` evaluator (only the separate Crinja
+          # pipeline used for `{% %}` template files had one) - fell
+          # through to the `else` passthrough, returning *value itself*
+          # unfiltered instead of either branch. Found via linux-system-
+          # roles' journald role: `(is_ostree | d(false)) | ternary(
+          # 'ansible.posix.rhel_rpm_ostree', omit)` as a module param
+          # value (not inside a template), which only ever reaches this
+          # evaluator, never Crinja's.
+          args = split_top_level_args(filter_args)
+          chosen = (truthy?(value) ? args[0]? : args[1]?).try(&.strip) || ""
+
+          if chosen == "omit"
+            JSON::Any.new(OMIT_SENTINEL)
+          elsif quoted_literal?(chosen)
+            JSON::Any.new(chosen[1..-2])
+          else
+            resolve_expression(chosen)
+          end
         when "intersect"
           # intersect(other) - real Ansible's own filter (ansible.builtin,
           # not standard Jinja2): elements of *value* that also appear in

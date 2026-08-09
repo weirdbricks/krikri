@@ -35,7 +35,32 @@ module CrystalPlay
           msg: "Missing required parameter: name"
         )
       end
-      
+
+      # `name: "{{ some_list_var }}"` templates a *list* var through a
+      # plain `{{ }}` substitution - since @params values are always
+      # String, that renders as the var's JSON form (`["systemd"]`), not
+      # a bare name. Passed straight through into `apt-get install -y
+      # #{name}`/`dpkg -l #{name}` unparsed, this used to send apt the
+      # literal text `["systemd"]` (brackets and quotes included) as a
+      # single malformed package spec - apt's own confused response to
+      # that was "you have held broken packages", nothing to do with any
+      # real package hold. Space-joining a parsed JSON array here (apt-
+      # get/dpkg -l both accept multiple space-separated names as
+      # distinct arguments) fixes the common single/short list case this
+      # simpler OS-agnostic module was already scoped to; per-package
+      # idempotency for longer multi-package lists remains an existing
+      # limitation of this module's single-name-string design (apt.cr/
+      # dnf.cr's own richer per-package handling doesn't apply here).
+      trimmed = name.strip
+      if trimmed.starts_with?('[') && trimmed.ends_with?(']')
+        parsed = begin
+          Array(String).from_json(trimmed)
+        rescue
+          nil
+        end
+        name = parsed.join(" ") if parsed
+      end
+
       state = @params["state"]? || "present"
       
       # Detect package manager

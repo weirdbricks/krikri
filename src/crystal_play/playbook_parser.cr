@@ -601,6 +601,32 @@ module CrystalPlay
     # individually. loop: is not supported on import_tasks (use
     # include_tasks instead) and is simply ignored here. Returns nil when
     # the YAML node isn't an import_tasks: entry at all.
+    # Resolves an include_tasks:/import_tasks: file path, trying the
+    # direct interpretation first (relative to *file_dir*, the
+    # including file's own directory) and falling back to stripping a
+    # leading `tasks/` from *file_rel* and retrying against the same
+    # directory if that doesn't exist. Real Ansible's own include-path
+    # search considers multiple roots (including the role root itself,
+    # not just the including file's directory), so a role convention
+    # like `include_tasks: tasks/foo.yml` written *inside* a file that's
+    # already directly in `<role>/tasks/` resolves there correctly - our
+    # single-root resolution doubled it into `<role>/tasks/tasks/foo.yml`
+    # instead. Found via linux-system-roles' journald role, whose
+    # tasks/main.yml does exactly this (`include_tasks: tasks/set_vars.
+    # yml`) - a common enough convention (explicit `tasks/` prefix even
+    # from within the tasks dir) that this isn't specific to one role.
+    def self.resolve_include_path(file_rel : String, file_dir : String) : String
+      direct = File.expand_path(file_rel, file_dir)
+      return direct if File.exists?(direct)
+
+      if file_rel.starts_with?("tasks/")
+        stripped = File.expand_path(file_rel[6..], file_dir)
+        return stripped if File.exists?(stripped)
+      end
+
+      direct
+    end
+
     private def self.try_parse_import_tasks(yaml : YAML::Any, play : Play, file_dir : String) : Array(Task)?
       hash = yaml.as_h?
       return nil unless hash
@@ -611,7 +637,7 @@ module CrystalPlay
       file_rel = import_value.as_h?.try(&.["file"]?).try(&.as_s?) || import_value.as_s?
       raise "import_tasks: missing a file path" unless file_rel
 
-      resolved_path = File.expand_path(file_rel, file_dir)
+      resolved_path = resolve_include_path(file_rel, file_dir)
       raise "Imported tasks file not found: #{resolved_path}" unless File.exists?(resolved_path)
 
       imported_yaml = YAML.parse(Vault.maybe_decrypt(File.read(resolved_path)))

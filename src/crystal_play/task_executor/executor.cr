@@ -1996,7 +1996,7 @@ module CrystalPlay
 
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       file_rel = substitutor.substitute(task.include_file.as(String))
-      resolved_path = File.expand_path(file_rel, task.include_file_dir.as(String))
+      resolved_path = PlaybookParser.resolve_include_path(file_rel, task.include_file_dir.as(String))
 
       unless File.exists?(resolved_path)
         fail_include(task, host, "Included tasks file not found: #{resolved_path}")
