@@ -1,4 +1,5 @@
 require "json"
+require "base64"
 require "digest/md5"
 require "colorize"
 require "./ssh_manager"
@@ -472,12 +473,31 @@ module CrystalPlay
       ensure_uploaded(host, plugin_name, vars)
       target = remote_plugin_target(plugin_name, become, become_user)
 
-      # Execute plugin remotely with config via stdin
-      command = "echo '#{config.gsub("'", "'\\''")}' | #{target}"
-      result = SSHManager.exec(
+      # Execute plugin remotely with config via stdin. *config* embeds the
+      # task's whole vars_context - ansible_facts, every registered var
+      # accumulated so far in the play, gathered package facts, etc. - and
+      # can grow to hundreds of KB deep into a long-running role.
+      # `SSHManager.exec` builds a single `/bin/bash -c <string>` argv
+      # element, so embedding config directly in that string (as this used
+      # to) makes *that one argument* grow with it - and eventually blows
+      # the local `ssh` process's own execve() argument-length limit
+      # ("Argument list too long"), independent of anything on the remote
+      # side. Found running konstruktoid-hardening's handlers late in the
+      # play, after 80+ prior tasks had accumulated enough vars context to
+      # cross that limit.
+      #
+      # `SSHManager.exec_script` (already used by the batching path -
+      # BatchScript - for exactly this reason, see its own base64 + `|
+      # base64 -d |` pattern) sends the script over the *SSH process's own
+      # stdin* instead, which has no such limit - config size no longer
+      # matters. Base64-encoded (not just single-quoted) so a `'` or
+      # newline inside the JSON can't break the remote `echo` line either.
+      encoded = Base64.strict_encode(config)
+      script = "echo #{shell_single_quote(encoded)} | base64 -d | #{target}\n"
+      result = SSHManager.exec_script(
         connection_host,
         host.user || "root",
-        command,
+        script,
         host.port,
         identity_file: vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
       )
@@ -520,6 +540,16 @@ module CrystalPlay
       return if @@uploaded_plugins[host_key]?.try(&.includes?(simple_name))
 
       upload_plugins_to_host(host, [simple_name])
+    end
+
+    # Single-quotes *str* for shell embedding, escaping any embedded
+    # single quote - str here is always our own base64 output (alphabet
+    # `[A-Za-z0-9+/=]`, never contains a quote), so this is belt-and-
+    # suspenders, not load-bearing, but cheap enough to keep unconditional.
+    # Same helper as BatchScript's own private copy (kept separate rather
+    # than shared - this class doesn't otherwise depend on BatchScript).
+    private def self.shell_single_quote(str : String) : String
+      "'" + str.gsub("'", "'\\''") + "'"
     end
 
     def self.remote_plugin_target(plugin_name : String, become : Bool, become_user : String?) : String
