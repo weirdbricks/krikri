@@ -83,6 +83,12 @@ module CrystalPlay
               # "skipped" in the recap.
               if result["skipped"]?.try(&.as_bool)
                 results[host.name]["skipped"] = (results[host.name]["skipped"]? || 0) + 1
+              elsif result["already_displayed"]?.try(&.as_bool)
+                # A looped handler (execute_handler_loop) already printed
+                # its own per-item result lines - only the stats (from
+                # its changed:/failed: aggregate across every item) still
+                # need recording here, not a second summary display line.
+                ResultDisplay.update_stats(results[host.name], result)
               else
                 ResultDisplay.display_result(host, result, diff_mode)
                 ResultDisplay.update_stats(results[host.name], result)

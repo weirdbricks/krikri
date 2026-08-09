@@ -2447,12 +2447,80 @@ module CrystalPlay
         end
       end
 
-      # FIXED: Use VarSubstitutor instead of VariableSubstitutor
+      # loop:/with_*: on a handler (e.g. linux-system-roles' journald
+      # role: `loop: "{{ __journald_services }}"`, restarting each
+      # service in a role-vars list) - previously entirely unhandled
+      # here, so a looped handler ran its module exactly once with
+      # `item` undefined instead of once per item ("Failed to restart
+      # undefined.service: Unit undefined.service not found."). Mirrors
+      # the essential semantics of the regular-task loop path
+      # (execute_looped_task/finish_looped_task) without reusing it
+      # directly - that path is wired into @results/@registered_vars/
+      # display bookkeeping specific to the TASK recap, whereas a
+      # handler's own accounting already happens in HandlerRunner#run
+      # around this method's single return value. Resolves the same
+      # loop sources a regular task's own resolution chain does, minus
+      # with_fileglob/with_first_found (need a delegate host + shared
+      # substitutor a handler has no equivalent concept of, and are
+      # vanishingly rare on a handler in practice).
+      loop_items = handler.loop_items ||
+        resolve_loop_template(handler, vars_context) ||
+        resolve_loop_flattened(handler, vars_context) ||
+        resolve_loop_subelements(handler, vars_context)
+
+      if loop_items
+        return execute_handler_loop(handler, host, vars_context, loop_items)
+      end
+
+      execute_handler_plugin_once(handler, host, vars_context)
+    end
+
+    # Runs *handler*'s module once per *loop_items* entry (item/loop_var
+    # bound in a per-iteration copy of *vars_context*, matching a regular
+    # task's own loop binding), printing each item's own result line and
+    # returning one aggregate result (changed: true if any item changed,
+    # failed: true if any item failed) - HandlerRunner#run's own
+    # display/stats step is then a no-op on the boolean summary alone,
+    # not a second full display pass, via the `already_displayed` marker.
+    private def execute_handler_loop(
+      handler : Task,
+      host : Host,
+      base_vars_context : Hash(String, JSON::Any),
+      loop_items : Array(JSON::Any)
+    ) : JSON::Any
+      loop_var = handler.loop_var
+      any_changed = false
+      any_failed = false
+
+      loop_items.each do |item|
+        vars_context = base_vars_context.dup
+        vars_context["item"] = item
+        vars_context[loop_var] = item if loop_var
+
+        result = execute_handler_plugin_once(handler, host, vars_context)
+        next if result["skipped"]?.try(&.as_bool)
+
+        any_changed ||= result["changed"]?.try(&.as_bool) || false
+        any_failed ||= result["failed"]?.try(&.as_bool) || false
+        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item))
+      end
+
+      JSON.parse({
+        "changed"            => JSON::Any.new(any_changed),
+        "failed"             => JSON::Any.new(any_failed),
+        "already_displayed"  => JSON::Any.new(true),
+      }.to_json)
+    end
+
+    # The actual single-execution body every handler run (looped or not)
+    # goes through - unchanged from before loop: support was added, just
+    # extracted so execute_handler_loop can call it once per item.
+    private def execute_handler_plugin_once(handler : Task, host : Host, vars_context : Hash(String, JSON::Any)) : JSON::Any
       substitutor = VarSubstitutor.new(
         vars: vars_context,
         host_name: host.name
       )
-      
+
       # Substitute variables in handler parameters
       substituted_params = substitute_task_params(handler.params, substitutor)
       substituted_become_user = handler.become_user.try { |raw_user| substitutor.substitute(raw_user) }
