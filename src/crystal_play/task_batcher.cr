@@ -1,4 +1,5 @@
 require "./playbook_parser"
+require "./action_plugin_manager"
 
 module CrystalPlay
   # Pure planning logic for task batching (on by default; --no-batching
@@ -94,7 +95,25 @@ module CrystalPlay
     private def self.breaks_run?(task : Task) : Bool
       structural_or_dynamic?(task) || needs_controller_control_flow?(task) ||
         !!task.delegate_to || task.run_once || retroactive_verdict?(task) ||
-        produces_ansible_facts?(task)
+        produces_ansible_facts?(task) || runs_as_action_plugin?(task)
+    end
+
+    # template: (and any future action plugin) renders on the
+    # *controller*, at batch-*preparation* time - before the single SSH
+    # round trip that actually executes any group member remotely. A
+    # template referencing an earlier group member's `register:`ed
+    # result (konstruktoid-hardening's own "Check if ssh_config.d
+    # exits" -> "Configure ssh client" pair, both inside the same
+    # `block:`) would render against a vars_context that doesn't have it
+    # yet - `references_register?` below can't catch this the way it
+    # catches an ordinary task's params/when: referencing it, because
+    # the reference lives inside the *template file's own content*
+    # (a separate file, never scanned for register-name references at
+    # batch-planning time), not in any of the task's own YAML fields.
+    # Always its own group sidesteps the whole class of bug, the same
+    # way produces_ansible_facts? does for getent:/set_fact:.
+    private def self.runs_as_action_plugin?(task : Task) : Bool
+      ActionPluginManager.has_action_plugin?(task.module_name)
     end
 
     # getent:/package_facts:/set_fact: (unlike a plain register:, which
