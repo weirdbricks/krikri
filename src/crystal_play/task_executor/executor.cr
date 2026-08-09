@@ -1252,6 +1252,7 @@ module CrystalPlay
       substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
       substituted_params = substitute_task_params(task.params, substitutor)
       substituted_params = resolve_role_relative_src(task, substituted_params)
+      substituted_params = inline_copy_source_content(task, substituted_params)
       substituted_become_user = task.become_user.try { |raw_user| substitutor.substitute(raw_user) }
 
       if ActionPluginManager.has_action_plugin?(task.module_name)
@@ -1322,6 +1323,7 @@ module CrystalPlay
       return nil unless when_passes?(task, vars_context, host, item_label, shared: substitutor, defer_stats: defer_loop_stats)
       substituted_params = substitute_task_params(task.params, substitutor)
       substituted_params = resolve_role_relative_src(task, substituted_params)
+      substituted_params = inline_copy_source_content(task, substituted_params)
       # become_user: goes through the same {{ }} substitution as any
       # params: value (e.g. become_user: "{{ service_user }}", a common
       # real-playbook pattern) - task.become_user itself is never mutated
@@ -2210,6 +2212,45 @@ module CrystalPlay
 
       resolved = params.dup
       resolved["src"] = File.join(role_dir, src)
+      resolved
+    end
+
+    # copy.cr runs on the *target* host (uploaded there like every other
+    # plugin, unlike template: - an action plugin that runs on the
+    # controller and already handles this correctly by reading its own
+    # src: file locally before dispatch). A copy: task's `src:` names a
+    # file on the *controller*, so copy.cr's own `File.exists?(src)`
+    # check - a plain local filesystem check, from the perspective of
+    # wherever it's actually running - can never find it once the play
+    # targets a genuinely remote host: the file was never transferred
+    # there. Found via konstruktoid-hardening's "Add cracklib password
+    # list" (its only `copy:` task with a real src: file, previously
+    # entirely untested territory) - failed with "Source file not found"
+    # citing the exact real (and really-existing-on-the-controller) path.
+    #
+    # Read here, on the controller, and forwarded as `content:` instead -
+    # copy.cr already has a fully-working content-write path (used by
+    # any `copy: {content: ..., dest: ...}` task), so this reuses it
+    # rather than needing a separate upload mechanism. Left alone for
+    # `remote_src: true` (real Ansible's own remote-to-remote copy,
+    # where src: already refers to a path on the target, not the
+    # controller - reading it here would be wrong).
+    private def inline_copy_source_content(task : Task, params : Hash(String, String)) : Hash(String, String)
+      return params unless task.module_name == "ansible.builtin.copy"
+      return params if ["true", "yes", "1", "on"].includes?(params["remote_src"]?.try(&.downcase))
+
+      src = params["src"]?
+      return params unless src && src.starts_with?('/')
+
+      begin
+        content = File.read(src)
+      rescue
+        return params
+      end
+
+      resolved = params.dup
+      resolved.delete("src")
+      resolved["content"] = content
       resolved
     end
 
