@@ -1252,7 +1252,7 @@ module CrystalPlay
       substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
       substituted_params = substitute_task_params(task.params, substitutor)
       substituted_params = resolve_role_relative_src(task, substituted_params)
-      substituted_params = inline_copy_source_content(task, substituted_params)
+      substituted_params = inline_copy_source_content(task, substituted_params, host, vars_context)
       substituted_become_user = task.become_user.try { |raw_user| substitutor.substitute(raw_user) }
 
       if ActionPluginManager.has_action_plugin?(task.module_name)
@@ -1323,7 +1323,7 @@ module CrystalPlay
       return nil unless when_passes?(task, vars_context, host, item_label, shared: substitutor, defer_stats: defer_loop_stats)
       substituted_params = substitute_task_params(task.params, substitutor)
       substituted_params = resolve_role_relative_src(task, substituted_params)
-      substituted_params = inline_copy_source_content(task, substituted_params)
+      substituted_params = inline_copy_source_content(task, substituted_params, exec_host, vars_context)
       # become_user: goes through the same {{ }} substitution as any
       # params: value (e.g. become_user: "{{ service_user }}", a common
       # real-playbook pattern) - task.become_user itself is never mutated
@@ -2234,10 +2234,16 @@ module CrystalPlay
     # rather than needing a separate upload mechanism. Left alone for
     # `remote_src: true` (real Ansible's own remote-to-remote copy,
     # where src: already refers to a path on the target, not the
-    # controller - reading it here would be wrong).
-    private def inline_copy_source_content(task : Task, params : Hash(String, String)) : Hash(String, String)
+    # controller - reading it here would be wrong) and for a local
+    # connection (copy.cr already runs on the same filesystem as the
+    # controller in that case, so src: already resolves correctly as-is -
+    # converting it anyway would only change check-mode's message
+    # ("Would copy SRC to DEST" -> a generic content message) for no
+    # actual correctness gain).
+    private def inline_copy_source_content(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String)
       return params unless task.module_name == "ansible.builtin.copy"
       return params if ["true", "yes", "1", "on"].includes?(params["remote_src"]?.try(&.downcase))
+      return params if PluginManager.is_local_connection?(host, vars_context)
 
       src = params["src"]?
       return params unless src && src.starts_with?('/')

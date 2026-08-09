@@ -34,6 +34,17 @@ module CrystalPlay
         return error
       end
 
+      # `state: absent` on a file that doesn't exist at all is a real-
+      # Ansible no-op ("file not present", changed: false) - there's
+      # nothing to remove a line *from*. Only `state: present` (or an
+      # explicit `create: true`) needs the file to actually exist.
+      # Found via konstruktoid-hardening's "Clean cron and at" task,
+      # `state: absent` on /etc/at.allow/cron.allow, neither of which
+      # exist on a stock image - failed outright instead of no-op'ing.
+      if state == "absent" && !File.exists?(path) && !is_true?(@params["create"]?)
+        return PluginResult.new(changed: false, failed: false, msg: "file not present")
+      end
+
       being_created, error = ensure_file_exists(path, is_true?(@params["create"]?), check_mode)
       return error if error
 
