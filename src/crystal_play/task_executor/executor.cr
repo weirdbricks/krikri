@@ -1601,13 +1601,30 @@ module CrystalPlay
     # running_vars_context comment above) - a single upfront batch script
     # can't do that, so it's excluded here rather than silently losing
     # the accumulation.
+    #
+    # changed_when:/failed_when: do NOT need excluding here (they used
+    # to be, copied over from task_batcher.cr's retroactive_verdict?
+    # category for *mixed*-task batching, where the real concern is a
+    # later task's changed_when referencing an earlier task's *not-yet-
+    # applied* register: result) - execute_looped_task_batched already
+    # calls apply_changed_failed_when per item, after the batch script
+    # returns, using that item's own result. There's no cross-item
+    # reference to get wrong the way mixed-task batching has. Excluding
+    # it here bought nothing and cost a lot: konstruktoid-hardening's
+    # "Find possible suid binaries" loops `command -v` over 411 items
+    # with `changed_when: false, failed_when: false` (an extremely
+    # common idiom for "this is read-only, never report changed") -
+    # falling back to one real SSH round trip *per item* turned a task
+    # that should take a couple of seconds into many minutes, consistent
+    # with two separate real-host runs both dying of a `timeout 2400`
+    # wrapper at the exact same point (identical line counts) rather
+    # than any actual host/network failure.
     private def loop_batch_eligible?(task : Task, host : Host, exec_host : Host, vars_context : Hash(String, JSON::Any)) : Bool
       return false unless @batching_enabled
       return false unless exec_host == host
       return false if task.module_name.ends_with?("set_fact")
       return false if task.delegate_to
       return false if PluginManager.is_local_connection?(exec_host, vars_context)
-      return false if task.changed_when || task.failed_when
       true
     end
 
