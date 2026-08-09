@@ -139,8 +139,17 @@ module CrystalPlay
         end
       end
       
-      # Write to temporary file first (for atomic write + validation)
-      temp_file = "/tmp/.crystal-play-template-#{Random::Secure.hex(8)}.tmp"
+      # Write to temporary file first (for atomic write + validation).
+      # Staged in *dest_dir* itself, not a global /tmp path: `File.rename`
+      # is only atomic (and only works at all) within a single
+      # filesystem - `/tmp` is very commonly its own separate tmpfs mount
+      # (systemd's tmp.mount, on by default on many modern distros even
+      # before any hardening role touches it), so renaming a /tmp staging
+      # file onto a destination elsewhere on disk hit "Invalid
+      # cross-device link" and failed the whole task. Found via
+      # konstruktoid-hardening's "Configure sshd using sshd_config.d" task
+      # (writing to /usr/lib/tmpfiles.d/ssh.conf).
+      temp_file = File.join(dest_dir, ".crystal-play-template-#{Random::Secure.hex(8)}.tmp")
       
       begin
         # Write content using native Crystal File.write
