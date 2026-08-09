@@ -130,6 +130,24 @@ def gather_os_facts(facts)
   # systemctl binary exists).
   if Dir.exists?("/run/systemd/system")
     facts["ansible_service_mgr"] = "systemd"
+
+    # ansible_systemd.version / .features - real Ansible parses these from
+    # `systemctl --version`'s two lines (version number on line 1, feature
+    # flags on line 2+). Roles gate systemd-feature-specific config on the
+    # version (dev-sec's ssh_hardening and konstruktoid's resolved.conf.j2
+    # both do `ansible_facts.systemd.version | int >= N`).
+    version_output = capture("systemctl", ["--version"])
+    unless version_output.empty?
+      lines = version_output.lines
+      if first_line = lines[0]?
+        if version = first_line.split(" ")[1]?
+          systemd_facts = {} of String => String
+          systemd_facts["version"] = version
+          systemd_facts["features"] = lines[1..].join(" ").strip
+          facts["ansible_systemd"] = systemd_facts
+        end
+      end
+    end
   elsif Dir.exists?("/etc/openrc")
     facts["ansible_service_mgr"] = "openrc"
   elsif File.exists?("/sbin/upstart") || Dir.exists?("/etc/init")

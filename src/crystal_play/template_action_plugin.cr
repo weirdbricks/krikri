@@ -85,10 +85,20 @@ module CrystalPlay
         # `directive_overrides.fetch` (not `||`) so an explicit `false`
         # in the directive isn't treated as "unset, fall through".
         trim_blocks = directive_overrides.fetch("trim_blocks", is_true?(@params["trim_blocks"]?, default: true))
-        lstrip_blocks = directive_overrides.fetch("lstrip_blocks", is_true?(@params["lstrip_blocks"]?, default: false))
 
         env.config.trim_blocks = trim_blocks
-        env.config.lstrip_blocks = lstrip_blocks
+
+        # Crinja's lstrip_blocks is broken: even a bare, unindented `{% if %}`
+        # on its own line (no leading whitespace to strip) makes it eat the
+        # *preceding* line's newline too, and an indented tag eats every
+        # newline in the whole block ("A\n    {% if %}\nB\n    {% endif %}\nC\n"
+        # renders as "ABC" instead of "A\nB\nC\n"). Real templates set
+        # `lstrip_blocks: True` via the `#jinja2:` directive precisely to get
+        # clean, newline-correct output (konstruktoid-hardening's
+        # resolved.conf.j2 does), so honoring the broken implementation would
+        # produce worse output than ignoring the request - always render with
+        # it off regardless of what was requested.
+        env.config.lstrip_blocks = false
         
         # Prepare template variables
         template_vars = prepare_template_vars
