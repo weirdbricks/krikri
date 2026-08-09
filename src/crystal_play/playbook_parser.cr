@@ -356,6 +356,10 @@ module CrystalPlay
       "community.postgresql.postgresql_user",
       "community.postgresql.postgresql_privs",
       "community.crypto.openssl_dhparam",
+      "community.crypto.openssh_keypair",
+      "community.general.modprobe",
+      "community.general.pamd",
+      "ansible.builtin.service_facts",
       "ansible.builtin.set_fact",
       "ansible.builtin.get_url",
       "ansible.builtin.blockinfile",
@@ -398,7 +402,26 @@ module CrystalPlay
     # a pseudo-module like "_block"), otherwise the first
     # MODULE_SEARCH_COLLECTIONS prefix that matches. nil if nothing
     # matches at all (a genuinely unimplemented/unknown module).
+    # Real Ansible module aliases - a second FQCN (or bare name) that
+    # resolves to the exact same module, not merely a similarly-named
+    # one. `systemd_service` was added in ansible-core 2.12 as the
+    # "correct" name (`systemd` was ambiguous with `systemd_service`/
+    # `systemd_socket`... at the time only one of each ever shipped);
+    # `systemd` is still kept as a working alias, and real-world roles
+    # use both spellings interchangeably (konstruktoid/ansible-role-
+    # hardening's own tasks write `ansible.builtin.systemd_service` 19
+    # times across 14 files, never the bare `ansible.builtin.systemd`
+    # this codebase's plugin is actually named after). Checked before
+    # the AVAILABLE_PLUGINS/MODULE_SEARCH_COLLECTIONS lookups below, so
+    # both spellings resolve to the one real plugin binary.
+    MODULE_ALIASES = {
+      "systemd_service"                 => "ansible.builtin.systemd",
+      "ansible.builtin.systemd_service" => "ansible.builtin.systemd",
+      "ansible.legacy.systemd_service"  => "ansible.builtin.systemd",
+    }
+
     def self.resolve_module_name(raw : String) : String?
+      return MODULE_ALIASES[raw] if MODULE_ALIASES.has_key?(raw)
       return raw if AVAILABLE_PLUGINS.includes?(raw) || raw.starts_with?('_')
 
       MODULE_SEARCH_COLLECTIONS.each do |collection|
