@@ -107,12 +107,31 @@ module CrystalPlay
       
       # Try 'name' parameter (can be string or list)
       if name_param = @params["name"]?
-        # Handle comma-separated list
-        if name_param.includes?(",")
-          names = name_param.split(",").map(&.strip)
-        else
-          names = [name_param]
-        end
+        trimmed = name_param.strip
+        # `name: "{{ some_list_var }}"` templates a *list* var through a
+        # plain `{{ }}` substitution - since @params values are always
+        # String, that renders as the var's JSON form
+        # (`["foo","bar"]`), not a bare comma-joined string. Parsed as
+        # real JSON here rather than falling into the comma-split below,
+        # which would otherwise leave the brackets/quotes stuck to the
+        # first/last entries (see apt.cr's own parse_package_names for
+        # the same bug, found via konstruktoid-hardening's package
+        # installation task).
+        parsed_json = if trimmed.starts_with?('[') && trimmed.ends_with?(']')
+                         begin
+                           Array(String).from_json(trimmed)
+                         rescue
+                           nil
+                         end
+                       end
+
+        names = if parsed_json
+                   parsed_json
+                 elsif name_param.includes?(",")
+                   name_param.split(",").map(&.strip)
+                 else
+                   [name_param]
+                 end
       end
       
       # Try 'list' parameter (array of packages)

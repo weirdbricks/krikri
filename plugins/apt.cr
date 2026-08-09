@@ -197,8 +197,29 @@ module CrystalPlay
       end
     end
 
-    # Parse package names from parameter (handles comma-separated or single)
+    # Parse package names from parameter (handles comma-separated, single,
+    # or a JSON-array-shaped string).
     private def parse_package_names(name_param : String) : Array(String)
+      # `name: "{{ packages_debian }}"` (konstruktoid-hardening's own
+      # "Debian family package installation" task) templates a *list*
+      # var through a plain `{{ }}` substitution - since @params values
+      # are always String, the substitutor's own format_value renders an
+      # Array as its JSON form (`["acct","apparmor-profiles",...]`), not
+      # a bare comma-joined string. Splitting that on "," (the plain
+      # comma-separated case below) left the brackets/quotes stuck to
+      # the first and last entries ("[acct", "wamerican]"), which apt
+      # then rejected outright as invalid package names. Detected here
+      # and parsed as real JSON instead.
+      trimmed = name_param.strip
+      if trimmed.starts_with?('[') && trimmed.ends_with?(']')
+        parsed = begin
+          Array(String).from_json(trimmed)
+        rescue
+          nil
+        end
+        return parsed if parsed
+      end
+
       # Split by comma and clean up whitespace
       packages = name_param.split(",").map(&.strip).reject(&.empty?)
       packages
