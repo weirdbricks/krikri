@@ -114,14 +114,48 @@ module CrystalPlay
         end
       end
 
+      # `upgrade: safe|yes|dist|full` with no `name:` (konstruktoid-
+      # hardening's own "Run apt upgrade" task, `upgrade: safe`) - real
+      # Ansible's apt module maps safe/yes to a plain `apt-get upgrade`
+      # and dist/full to `apt-get dist-upgrade`. The task registers this
+      # result and computes its own `changed_when` from `.stdout` (`'0
+      # upgraded, 0 newly installed, 0 to remove' not in
+      # apt_upgrade_response.stdout`), so the raw command output has to
+      # actually reach the registered var's `stdout` field, not just
+      # inform `changed`/`msg` here - passed through via the `stdout:`
+      # kwarg the same way the package-install path below already does.
+      upgrade = @params["upgrade"]?
+      upgrade_stdout = ""
+      if upgrade
+        dist = upgrade == "dist" || upgrade == "full"
+        cmd = dist ? "apt-get -y dist-upgrade" : "apt-get -y upgrade"
+
+        if @check_mode
+          messages << "Would run: #{cmd}"
+          changed = true
+        else
+          result = remote_exec(cmd)
+          if result[:exit_code] != 0
+            return PluginResult.new(changed: false, failed: true, msg: "#{cmd} failed: #{result[:stderr]}", stdout: result[:stdout], stderr: result[:stderr])
+          end
+
+          upgrade_stdout = result[:stdout]
+          unless result[:stdout].includes?("0 upgraded, 0 newly installed, 0 to remove")
+            changed = true
+          end
+          messages << result[:stdout]
+        end
+      end
+
       # If no package name provided, just return cache update result
       unless name_param
-        if update_cache || autoremove || autoclean || clean
+        if update_cache || autoremove || autoclean || clean || upgrade
           msg = messages.empty? ? "Cache up to date" : messages.join(", ")
           return PluginResult.new(
             changed: changed,
             failed: false,
-            msg: msg
+            msg: msg,
+            stdout: upgrade_stdout
           )
         else
           return PluginResult.new(
