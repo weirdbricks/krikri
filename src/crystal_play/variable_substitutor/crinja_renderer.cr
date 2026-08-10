@@ -1,6 +1,7 @@
 require "json"
 require "crinja"
 require "../crinja_hash_ext"
+require "../variable_substitutor"
 
 module CrystalPlay
   module VariableSubstitutor
@@ -63,10 +64,30 @@ module CrystalPlay
       end
 
       # Prepare variables for Crinja rendering
+      #
+      # Real Ansible recursively re-templates every variable's value when
+      # it's actually used, no matter where - including inside a real
+      # .j2 template FILE, not just a plain task-param `{{ }}`. Role
+      # `defaults/main.yml` commonly relies on this: geerlingguy.nginx's
+      # own `nginx_worker_processes: '"{{ ansible_processor_vcpus |
+      # default(ansible_processor_count) }}"'` is a YAML string whose
+      # *value* is itself more Jinja - real Jinja2 has no such recursive
+      # behavior on its own (a variable's string value is just a string
+      # to it), so without this, `{{ nginx_worker_processes }}` inside
+      # nginx.conf.j2 rendered the literal, still-unparsed `{{
+      # ansible_processor_vcpus | ... }}` text straight into the config
+      # file, and nginx's own config parser then choked on it. The plain
+      # `{{ }}` evaluator (VarSubstitutor#substitute) already implements
+      # exactly this re-templating for task params via its own bounded
+      # multi-pass loop - reused here (a plain, non-Crinja
+      # VarSubstitutor pass, so no risk of this recursing back into this
+      # same render) rather than duplicating that logic.
       private def prepare_crinja_vars : Hash(String, Crinja::Value)
         vars = Hash(String, Crinja::Value).new
+        substitutor = VarSubstitutor.new(vars: @vars)
 
         @vars.each do |key, value|
+          value = JSON::Any.new(substitutor.substitute(value.as_s)) if value.raw.is_a?(String) && value.as_s.includes?("{{")
           vars[key] = json_any_to_crinja_value(value)
         end
 
