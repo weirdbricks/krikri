@@ -1616,6 +1616,24 @@ module CrystalPlay
                          vars_context = running_vars_context.dup
                          vars_context["item"] = item
                          vars_context[loop_var] = item if loop_var
+
+                         # A task-level vars: that references `item`
+                         # (linux-system-roles/kernel_settings' own
+                         # `vars: {new_item: "{{ {item.name: new_value}
+                         # }}"}` on a looped set_fact:) was only ever
+                         # rendered *once*, by build_vars_context, before
+                         # this loop even started - when `item` was still
+                         # unbound. Every iteration then reused that same
+                         # first (wrong) rendered value instead of
+                         # recomputing it against its own item. Restoring
+                         # task.vars' original unrendered text before each
+                         # iteration's render_task_vars call fixes this;
+                         # cheap enough even for a task whose vars: don't
+                         # reference item at all (identical result either
+                         # way), so no need to detect which case this is.
+                         task.vars.each { |key, raw_value| vars_context[key] = raw_value }
+                         render_task_vars(task, vars_context, host.name)
+
                          result = execute_task_once(task, host, vars_context, item_label: item_display(item), exec_host: exec_host, defer_loop_stats: true)
                          if result && (facts = result["ansible_facts"]?) && (facts_hash = facts.as_h?)
                            facts_hash.each { |key, value| running_vars_context[key] = value }
