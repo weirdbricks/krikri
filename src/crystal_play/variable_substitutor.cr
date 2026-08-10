@@ -113,9 +113,29 @@ module CrystalPlay
       # (and stops as soon as a pass makes no further progress) so a value
       # that can never fully resolve, or one that legitimately contains a
       # literal "{{", doesn't loop forever.
+      #
+      # A leftover "{%"/"{#" (not just "{{") needs the same re-pass, but
+      # routed through the FULL Crinja renderer, not another mustache-
+      # span-only pass - expand_mustache_spans has no concept of block
+      # tags at all. Real bug found benchmarking githubixx.ansible_role_
+      # wireguard: `wireguard_remote_directory`'s own default value is a
+      # multi-line `{%- if ... -%}...{%- elif ... -%}...{%- endif -%}`
+      # block (no `{{ }}` inside at all) - a task param like `dest: "{{
+      # wireguard_remote_directory }}/{{ wireguard_conf_filename }}"`
+      # fetched that raw block-tag text as a plain string (format_value
+      # doesn't template it) and, since the outer loop only ever checked
+      # for leftover "{{", never got a second pass to actually evaluate
+      # it - the literal, unparsed "{%- if ... %}" text became the real
+      # `dest:` path, so the config was never actually written anywhere
+      # real, and the wg-quick service failed to start ("config file
+      # does not exist") with no obvious tie back to this.
       depth = 0
-      while result.includes?("{{") && depth < 5
-        next_result = expand_mustache_spans(result) { |inner| evaluator.evaluate(inner.strip).strip }
+      while (result.includes?("{{") || result.includes?("{%") || result.includes?("{#")) && depth < 5
+        next_result = if result.includes?("{%") || result.includes?("{#")
+                        renderer.render(result)
+                      else
+                        expand_mustache_spans(result) { |inner| evaluator.evaluate(inner.strip).strip }
+                      end
         break if next_result == result
         result = next_result
         depth += 1

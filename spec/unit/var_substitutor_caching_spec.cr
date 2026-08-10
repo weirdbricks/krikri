@@ -87,4 +87,35 @@ describe CrystalPlay::VarSubstitutor do
       subject.substitute("{{ inventory_hostname }}").should eq("web1")
     end
   end
+
+  describe "re-templating a value that is itself more Jinja" do
+    it "re-renders a variable's own value through the full Crinja pipeline when it contains block tags, not just {{ }}" do
+      # Real bug found benchmarking githubixx.ansible_role_wireguard:
+      # `wireguard_remote_directory`'s own default value is a multi-line
+      # `{%- if ... -%}...{%- elif ... -%}...{%- endif -%}` block (no
+      # `{{ }}` inside at all). A task param like `dest: "{{
+      # wireguard_remote_directory }}/{{ wireguard_conf_filename }}"`
+      # fetched that raw block-tag text as a plain string - format_value
+      # doesn't template it - and the outer re-pass loop only ever
+      # checked for leftover "{{", never "{%"/"{#", so it never got a
+      # second pass to actually evaluate the block. The literal,
+      # unparsed "{%- if ... %}" text became the real `dest:` path.
+      v = Hash(String, JSON::Any).new
+      v["use_netplan"] = JSON::Any.new(false)
+      v["remote_dir"] = JSON::Any.new(<<-JINJA.strip)
+        {%- if use_netplan -%}
+        /etc/netplan
+        {%- else -%}
+        /etc/wireguard
+        {%- endif -%}
+        JINJA
+      v["conf_filename"] = JSON::Any.new("wg0.conf")
+      subject = CrystalPlay::VarSubstitutor.new(vars: v, host_name: "h")
+
+      result = subject.substitute("{{ remote_dir }}/{{ conf_filename }}")
+      result.should_not contain("{%")
+      result.should contain("/etc/wireguard")
+      result.should contain("wg0.conf")
+    end
+  end
 end
