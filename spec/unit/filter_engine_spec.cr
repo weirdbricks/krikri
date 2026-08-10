@@ -121,4 +121,16 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     engine.apply(value, "min").as_i.should eq(1)
     engine.apply(value, "max").as_i.should eq(3)
   end
+
+  it "strips the last path component with dirname, and keeps only it with basename" do
+    # Real bug found benchmarking geerlingguy.mysql: entirely
+    # unimplemented before, so `path | dirname` fell through to the
+    # unknown-filter passthrough (the full path unchanged) - a `file:
+    # {path: "{{ mysql_log_error | dirname }}", state: directory}` task
+    # then created a directory at the *full* log-error path itself
+    # instead of its parent, so mysqld found a directory where it
+    # expected to open its error log file and failed to start.
+    engine.apply(s("/var/log/mysql/mysql.err"), "dirname").as_s.should eq("/var/log/mysql")
+    engine.apply(s("/var/log/mysql/mysql.err"), "basename").as_s.should eq("mysql.err")
+  end
 end

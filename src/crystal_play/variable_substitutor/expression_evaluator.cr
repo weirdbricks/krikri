@@ -845,6 +845,15 @@ module CrystalPlay
                   # evaluate_expr, just reached via a different path since
                   # top_level_pipe? routes anything with a `|` here first.
                   evaluate_range(var_expr[6..-2])
+                elsif literal = quoted_string_literal(var_expr)
+                  # A quoted string literal as the chain's head
+                  # (`{{ 'foo' | upper }}`, `{{ mysql_log_error | dirname
+                  # }}`'s own sibling pattern with a literal instead of a
+                  # variable) - previously fell to the plain-lookup else
+                  # branch below, treating the literal text (quotes
+                  # included) as a variable NAME to resolve, always
+                  # undefined.
+                  literal
                 elsif var_expr.includes?("[")
                   # Array slicing (`list[0:2]`) and plain indexing
                   # (`list[0]`) aren't resolved to JSON::Any directly here

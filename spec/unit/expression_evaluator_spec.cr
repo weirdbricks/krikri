@@ -125,6 +125,19 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("lookup('first_found', params)").should eq(File.join(role_dir, "otherdir", "x.yml"))
   end
 
+  it "evaluates a quoted string literal piped into a filter chain" do
+    # `{{ 'foo' | upper }}` - a literal, not a variable, as the chain's
+    # head. Previously the base-value resolution in evaluate_with_filter
+    # only understood a bare variable name, `(...)`, `range(...)`, or
+    # `[...]` indexing as the chain's head - a quoted literal fell to the
+    # plain-lookup fallback, treating the literal text (quotes included)
+    # as a variable NAME to resolve, always undefined.
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("'hello' | upper").should eq("HELLO")
+    evaluator.evaluate("'/var/log/mysql/mysql.err' | dirname").should eq("/var/log/mysql")
+  end
+
   it "resolves an explicit relative paths: entry against the role dir, not cwd" do
     # The actual real-world spelling that broke geerlingguy.docker/mysql/
     # postgresql: `paths: ['vars']`, an explicit but RELATIVE entry -

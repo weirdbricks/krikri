@@ -101,6 +101,20 @@ module CrystalPlay
           transform_string(value) { |text| text.split.map(&.capitalize).join(" ") }
         when "trim", "strip"
           transform_string(value, &.strip)
+        when "dirname"
+          # Real Ansible/Jinja2 filter (Python's os.path.dirname) -
+          # entirely unimplemented, so it fell through to the unknown-
+          # filter passthrough (returning the full path unchanged), found
+          # via geerlingguy.mysql's own "Ensure error log directory
+          # exists": `path: "{{ mysql_log_error | dirname }}"` with
+          # `state: directory`. Left unchanged, that created a directory
+          # at the *full* log-error path itself ("/var/log/mysql/
+          # mysql.err") rather than its parent ("/var/log/mysql"), so
+          # mysqld's own attempt to open its error log at that same path
+          # found a directory instead of a file and failed to start.
+          transform_string(value, &->File.dirname(String))
+        when "basename"
+          transform_string(value, &->File.basename(String))
         when "length", "count"
           JSON::Any.new(length_of(value).to_i64)
         when "replace"
