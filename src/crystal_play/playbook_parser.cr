@@ -545,9 +545,24 @@ module CrystalPlay
         play.tags = tags_yaml.map(&.as_s)
       end
 
+      # pre_tasks:/post_tasks: - real Ansible's execution order is
+      # pre_tasks, then roles:, then tasks:, then post_tasks:. Previously
+      # entirely unparsed (a play with only pre_tasks:/roles:, no tasks:
+      # at all, silently ran nothing but the role - geerlingguy.docker/
+      # mysql/postgresql/nginx/php/security's own molecule converge.yml
+      # ALL use exactly this shape for an apt-cache-update pre_task).
+      # Handler notify:/flush timing across section boundaries isn't
+      # modeled separately - handlers notified from a pre_task still
+      # flush at the same point regular tasks' handlers do - a
+      # simplification, but the sequencing itself (which is what was
+      # actually broken - pre_tasks silently never ran at all) is exact.
+      pre_tasks = [] of Task
+      if pre_tasks_yaml = yaml["pre_tasks"]?.try(&.as_a?)
+        pre_tasks = parse_tasks(pre_tasks_yaml, play, "pre_task in play '#{name}'", playbook_dir)
+      end
+
       # Parse roles: - their tasks/handlers run BEFORE the play's own
-      # tasks:/handlers: (matching Ansible; pre_tasks:/post_tasks: aren't
-      # implemented, so this is simplified to just roles-then-tasks).
+      # tasks:/handlers:, after any pre_tasks: (matching Ansible).
       role_tasks = [] of Task
       role_handlers = [] of Task
       if roles_yaml = yaml["roles"]?.try(&.as_a?)
@@ -559,7 +574,13 @@ module CrystalPlay
       if tasks_yaml = yaml["tasks"]?.try(&.as_a?)
         own_tasks = parse_tasks(tasks_yaml, play, "task in play '#{name}'", playbook_dir)
       end
-      play.tasks = role_tasks + own_tasks
+
+      post_tasks = [] of Task
+      if post_tasks_yaml = yaml["post_tasks"]?.try(&.as_a?)
+        post_tasks = parse_tasks(post_tasks_yaml, play, "post_task in play '#{name}'", playbook_dir)
+      end
+
+      play.tasks = pre_tasks + role_tasks + own_tasks + post_tasks
 
       # Parse handlers
       own_handlers = [] of Task

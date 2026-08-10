@@ -75,6 +75,36 @@ describe CrystalPlay::PlaybookParser do
       task.tags.should eq(["demo"])
     end
 
+    it "orders pre_tasks:, roles:, tasks:, and post_tasks: correctly, matching real Ansible" do
+      # Real gap found benchmarking every one of geerlingguy.docker/mysql/
+      # postgresql/nginx/php/security: pre_tasks:/post_tasks: were
+      # entirely unparsed (a documented-in-comment, but not in
+      # KNOWN_MISSING.md, simplification) - a play using pre_tasks: for
+      # its usual "update apt cache" idiom (the exact shape every one of
+      # those roles' own molecule converge.yml uses) silently never ran
+      # it at all, with no warning.
+      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML
+        - name: play
+          hosts: all
+          pre_tasks:
+            - name: pre one
+              ansible.builtin.debug:
+                msg: pre
+          tasks:
+            - name: main one
+              ansible.builtin.debug:
+                msg: main
+          post_tasks:
+            - name: post one
+              ansible.builtin.debug:
+                msg: post
+        YAML
+      )
+
+      play = playbook.plays[0]
+      play.tasks.map(&.name).should eq(["pre one", "main one", "post one"])
+    end
+
     it "raises when the only play has no hosts field" do
       # parse_play's error is caught per-play and downgraded to a warning,
       # so a playbook where every play fails to parse surfaces as this
