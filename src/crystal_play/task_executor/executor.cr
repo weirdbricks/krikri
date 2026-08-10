@@ -588,6 +588,39 @@ module CrystalPlay
     # context is fully assembled, so a task var can reference
     # ansible_facts/registered vars/other role vars - anything already in
     # scope by this point.
+    # include_role:'s own vars: (unlike a block's or a plain task's vars:,
+    # both handled by render_task_vars/propagate_role_context) were passed
+    # to RoleLoader.load_single_role completely unrendered - a templated
+    # value (linux-system-roles/logging's own `include_role: name: "{{
+    # role_path }}/roles/rsyslog" vars: rsyslog_custom_config_files: "{{
+    # __custom_config_files + logging_custom_config_files }}"`) landed in
+    # the subrole's vars as the literal `"{{ ... }}"` text - a non-empty,
+    # "defined" string instead of the empty list it should have rendered
+    # to. Every task in the subrole referencing that var saw the raw
+    # template text as its value; here that fed `loop: "{{
+    # rsyslog_custom_config_files | flatten }}"`, turning a should-be-
+    # empty (and thus skipped) loop into one bogus iteration whose `item`
+    # was the whole unparsed template string, sent straight into `copy:
+    # src: "{{ item }}"` and failing there instead.
+    private def render_include_role_vars(vars : Hash(String, JSON::Any)?, vars_context : Hash(String, JSON::Any), host_name : String) : Hash(String, JSON::Any)
+      return Hash(String, JSON::Any).new unless vars
+
+      rendered_vars = Hash(String, JSON::Any).new
+      vars.each do |key, value|
+        raw_string = value.raw.as?(String)
+        unless raw_string && raw_string.includes?("{{")
+          rendered_vars[key] = value
+          next
+        end
+
+        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host_name)
+        rendered = substitutor.substitute(raw_string)
+        parsed = (rendered.starts_with?('{') || rendered.starts_with?('[')) ? (JSON.parse(rendered) rescue nil) : nil
+        rendered_vars[key] = parsed || JSON::Any.new(rendered)
+      end
+      rendered_vars
+    end
+
     private def render_task_vars(task : Task, vars_context : Hash(String, JSON::Any), host_name : String)
       task.vars.each_key do |key|
         raw = vars_context[key]?
@@ -2155,7 +2188,7 @@ module CrystalPlay
       begin
         included_tasks, included_handlers = RoleLoader.load_single_role(
           role_name,
-          task.include_role_vars || Hash(String, JSON::Any).new,
+          render_include_role_vars(task.include_role_vars, vars_context, host.name),
           task.tags,
           inherited,
           task.include_role_dir.as(String)
