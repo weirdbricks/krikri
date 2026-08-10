@@ -207,7 +207,19 @@ module CrystalPlay
     # assumed - so a captured trailing `[N]` is rewritten to `.N` rather
     # than carried through as-is; #rewrite_inline_ternaries's own gsub
     # call is responsible for making that substitution (see below).
-    SPLIT_METHOD = /([A-Za-z_][\w.]*(?:\[[^\]]*\])*)\.split\(([^)]*)\)(?:\[(\d+)\])?/
+    #
+    # Group 1 alternates `.ident`/`[...]` suffixes in any order - real
+    # bug found benchmarking githubixx.ansible_role_wireguard's own
+    # wg.conf.j2: the old pattern only allowed dot-segments *before* any
+    # bracket-index suffix (`foo.bar[0]`), so `hostvars[host].
+    # wireguard_address.split('/')[0]` (a bracket, THEN more dots) never
+    # matched starting from "hostvars" at all - the regex engine instead
+    # found a match starting mid-expression, from "wireguard_address"
+    # alone, silently leaving the "hostvars[host]." prefix untouched and
+    # producing the syntactically invalid "hostvars[host].(wireguard_
+    # address | split('/', 0))" (a stray `.(` Crinja's own parser
+    # rejects outright: "Expected IDENTIFIER, got LEFT_PAREN").
+    SPLIT_METHOD = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*|\[[^\]]*\])*)\.split\(([^)]*)\)(?:\[(\d+)\])?/
 
     # A `{% if EXPR %}`/`{% elif EXPR %}` statement tag - $1/$4 are the
     # optional whitespace-trim `-` markers (preserved as-is on rewrite),
