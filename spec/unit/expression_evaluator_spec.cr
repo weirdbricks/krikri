@@ -225,4 +225,23 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("false if vault_install_hashi_repo else true").should eq("false")
   end
+
+  it "re-templates a filter chain's own head variable when its raw value is still unrendered Jinja" do
+    # Real bug found benchmarking ansible-community.ansible-vault's own
+    # `vault_tls_gossip: "{{ lookup('env', 'VAULT_TLS_GOSSIP') | default(
+    # false, true) }}"` used later as `vault_tls_gossip | bool` - the
+    # filter chain's own head-variable resolution (the plain-lookup
+    # fallback in evaluate_with_filter) returned the raw, unrendered
+    # template text unchanged, which is a non-empty string - so `| bool`
+    # saw it as truthy regardless of what it actually rendered to.
+    v = Hash(String, JSON::Any).new
+    v["vault_tls_gossip"] = JSON::Any.new(%({{ lookup('env', 'CRYSTAL_ANSIBLE_SPEC_FILTER_ENV_TEST') | default(false, true) }}))
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("vault_tls_gossip | bool").should eq("False")
+
+    ENV["CRYSTAL_ANSIBLE_SPEC_FILTER_ENV_TEST"] = "true"
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("vault_tls_gossip | bool").should eq("True")
+    ENV.delete("CRYSTAL_ANSIBLE_SPEC_FILTER_ENV_TEST")
+  end
 end

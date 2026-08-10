@@ -991,7 +991,31 @@ module CrystalPlay
                   rendered = evaluate(var_expr)
                   JSON.parse(rendered) rescue JSON::Any.new(rendered)
                 else
-                  @lookup.resolve(var_expr) || JSON::Any.new(nil)
+                  resolved = @lookup.resolve(var_expr)
+
+                  # Real Ansible's recursive re-templating: a variable
+                  # whose own raw value is itself unrendered Jinja (a
+                  # role default defined in terms of another default,
+                  # e.g. ansible-community.ansible-vault's own
+                  # `vault_tls_gossip: "{{ lookup('env',
+                  # 'VAULT_TLS_GOSSIP') | default(false, true) }}"`) must
+                  # be rendered before a filter chain sees it - otherwise
+                  # `vault_tls_gossip | bool` saw the raw, non-empty
+                  # template text itself (truthy) rather than the real
+                  # (false) rendered value. Same class of bug as
+                  # ConditionalEvaluator's identical fix for a bare `when:
+                  # vault_tls_gossip` condition - this is the filter-chain
+                  # counterpart, since `{{ vault_tls_gossip }}` alone (no
+                  # filter) already got a re-render pass elsewhere but a
+                  # filter chain's own head resolution here didn't.
+                  if resolved && (raw = resolved.raw).is_a?(String) && raw.includes?("{{")
+                    inner = raw.strip
+                    inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
+                    rendered = evaluate(inner)
+                    JSON.parse(rendered) rescue JSON::Any.new(rendered)
+                  else
+                    resolved || JSON::Any.new(nil)
+                  end
                 end
 
         result = segments[1..].reduce(value) { |acc, filter_expr| @filter.apply(acc, filter_expr) }
