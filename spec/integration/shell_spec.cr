@@ -27,4 +27,20 @@ describe "shell plugin" do
 
     result["stderr"].as_s.should eq("oops")
   end
+
+  it "preserves the command's own embedded single quotes when executable: names a custom shell" do
+    # Real bug found benchmarking ansible-community.ansible-vault's own
+    # "Get installed Vault version" task (`args: {executable: /bin/bash}`,
+    # cmd containing `cut -d' ' -f2 | tr -d 'v'`) - a non-default
+    # executable: wraps the whole command in `-c '...'`, and naively
+    # embedding a command that has its own single quotes prematurely
+    # closed that outer quoting, corrupting everything after the first
+    # embedded quote ("cut: option requires an argument -- 'd'").
+    result = PluginSpecHelper.run("shell", {
+      "cmd"        => "echo 'v1.2.3' | cut -d' ' -f2 | tr -d 'v'",
+      "executable" => "/bin/bash",
+    })
+
+    result["stdout"].as_s.should eq("1.2.3")
+  end
 end

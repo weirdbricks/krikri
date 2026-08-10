@@ -100,8 +100,17 @@ module CrystalPlay
                  # Default shell - just pass the command directly
                  remote_exec(full_cmd)
                else
-                 # Custom shell - invoke it explicitly
-                 remote_exec("#{executable} -c '#{full_cmd}'")
+                 # Custom shell - invoke it explicitly. full_cmd routinely
+                 # contains its own single quotes (`cut -d' ' -f2`, `tr -d
+                 # 'v'` - ansible-community.ansible-vault's own "Get
+                 # installed Vault version" task uses both) - naively
+                 # wrapping it in another bare `'...'` pair let those
+                 # embedded quotes prematurely close the outer quoting,
+                 # corrupting the command bash actually saw. Real bug
+                 # found benchmarking that role: "cut: option requires an
+                 # argument -- 'd'" with the rest of the pipeline showing
+                 # up as unquoted trailing shell text.
+                 remote_exec("#{executable} -c #{shell_single_quote(full_cmd)}")
                end
 
       # Build diff data if diff mode enabled
