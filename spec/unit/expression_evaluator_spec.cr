@@ -207,4 +207,22 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate(%('+ent' if vault_enterprise)).should eq("+ent")
   end
+
+  it "resolves a ternary whose branches are bare boolean literals, not quoted strings" do
+    # Real bug found benchmarking ansible-community.ansible-vault's own
+    # `vault_tls_copy_keys: "{{ false if (vault_install_hashi_repo) else
+    # true }}"` - the chosen branch's bare `true`/`false` text (as
+    # opposed to a quoted string literal like '+ent') fell through to a
+    # plain variable lookup on that literal identifier, always
+    # "undefined" - which `| bool` downstream then treated as truthy
+    # regardless of the actual condition.
+    v = Hash(String, JSON::Any).new
+    v["vault_install_hashi_repo"] = JSON::Any.new(false)
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("false if vault_install_hashi_repo else true").should eq("true")
+
+    v["vault_install_hashi_repo"] = JSON::Any.new(true)
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("false if vault_install_hashi_repo else true").should eq("false")
+  end
 end

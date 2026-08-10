@@ -184,4 +184,20 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     result = engine_with_vars.apply(value, %(sum(attribute='packages', start=[])))
     result.as_a.map(&.as_s).should eq(["foo", "bar", "baz"])
   end
+
+  it "resolves a parenthesized ternary as a default() argument" do
+    # Real bug found benchmarking ansible-community.ansible-vault's own
+    # `vault_tls_certs_path: "{{ lookup('env', 'VAULT_TLS_DIR') | default(
+    # ('/opt/vault/tls' if (vault_install_hashi_repo) else '/etc/vault/
+    # tls'), true) }}"` - the outer parens around the ternary put its own
+    # " if "/" else " one level deep, so the plain ternary splitter never
+    # matched and the whole parenthesized text fell through to an
+    # (always-undefined) plain variable lookup, silently resolving to "".
+    v = Hash(String, JSON::Any).new
+    v["vault_install_hashi_repo"] = JSON::Any.new(false)
+    engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(v)
+
+    result = engine.apply(JSON::Any.new(""), %(default(('/opt/vault/tls' if (vault_install_hashi_repo) else '/etc/vault/tls'), true)))
+    result.as_s.should eq("/etc/vault/tls")
+  end
 end

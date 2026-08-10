@@ -600,6 +600,7 @@ module CrystalPlay
       # matter, since the mis-split had already happened).
       private def resolve_expression(expr : String) : JSON::Any
         expr = expr.strip
+        expr = unwrap_outer_parens(expr)
 
         if ternary = split_ternary(expr)
           true_expr, condition, false_expr = ternary
@@ -653,6 +654,49 @@ module CrystalPlay
       private def quoted_literal?(expr : String) : Bool
         (expr.starts_with?("'") && expr.ends_with?("'")) ||
           (expr.starts_with?('"') && expr.ends_with?('"'))
+      end
+
+      # Strips a single layer of fully-wrapping parens, same rule as
+      # ConditionalEvaluator's own copy of this (kept as a separate copy
+      # here rather than shared, since the two live in different
+      # modules): only unwraps when the parens enclose the *entire*
+      # expression, not just its head. Needed so a `default(( 'a' if X
+      # else 'b' ))` argument's own #split_ternary (below) actually sees
+      # the ` if `/` else ` at depth 0 - real bug found benchmarking
+      # ansible-community.ansible-vault's own `vault_tls_certs_path:
+      # "{{ lookup('env', 'VAULT_TLS_DIR') | default(('/opt/vault/tls' if
+      # (vault_install_hashi_repo) else '/etc/vault/tls'), true) }}"`:
+      # the outer parens around the ternary put its own " if "/" else "
+      # one level deep, so #split_ternary never matched and the whole
+      # parenthesized text fell through to a plain (always-undefined)
+      # variable lookup, silently resolving to "".
+      private def unwrap_outer_parens(expr : String) : String
+        return expr unless expr.starts_with?('(')
+
+        depth = 0
+        in_quotes = false
+        quote_char = ' '
+        expr.each_char_with_index do |char, idx|
+          if (char == '"' || char == '\'') && (idx == 0 || expr[idx - 1] != '\\')
+            if in_quotes && char == quote_char
+              in_quotes = false
+            elsif !in_quotes
+              in_quotes = true
+              quote_char = char
+            end
+          end
+
+          next if in_quotes
+
+          if char == '('
+            depth += 1
+          elsif char == ')'
+            depth -= 1
+            return expr if depth == 0 && idx < expr.size - 1
+          end
+        end
+
+        expr[1..-2].strip
       end
 
       # Finds a top-level (outside quotes/brackets) " if " ... " else "

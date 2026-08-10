@@ -45,6 +45,20 @@ module CrystalPlay
       end
 
       private def evaluate_expr(expr : String) : String
+        # A bare boolean literal (`true`/`false`/`True`/`False`), as
+        # opposed to a quoted string one - real Ansible/Jinja2 accepts
+        # both spellings as literals. Checked before anything else falls
+        # through to a plain variable lookup on the literal identifier
+        # text itself (always undefined). Real bug found benchmarking
+        # ansible-community.ansible-vault's own `vault_tls_copy_keys:
+        # "{{ false if (vault_install_hashi_repo) else true }}"` - the
+        # ternary's own branch-resolution in #evaluate_ternary re-enters
+        # #evaluate on whichever bare literal branch was chosen, which
+        # previously always came back "undefined" (a non-empty string,
+        # so `| bool` downstream treated it as truthy regardless of the
+        # actual condition).
+        return expr.downcase if expr == "true" || expr == "false" || expr == "True" || expr == "False"
+
         # `lookup('first_found', ffparams)` - real Ansible's lookup()
         # function call syntax (distinct from a `|` filter chain), used
         # pervasively across linux-system-roles to pick an OS-version-
