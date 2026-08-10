@@ -44,6 +44,21 @@ describe UserState do
       args = UserState.useradd_args("bob", nil, nil, "sudo,docker", nil, nil, "Bob Q", false, true)
       args.should eq(["-G sudo,docker", "-c \"Bob Q\"", "-m", "bob"])
     end
+
+    it "omits a flag whose value is an empty string, not just nil" do
+      # Real bug found benchmarking ansible-community.ansible-vault:
+      # `groups: "{{ vault_groups }}"` where vault_groups: null renders
+      # to the empty string "" (real Ansible's own format_value for
+      # Nil), not nil - the old `if groups` check treated "" as truthy
+      # (Crystal only treats nil/false as falsy), adding a value-less
+      # "-G " flag. Joined into one shell command string with the
+      # following flags, that shifted every subsequent token left by
+      # one - the *next* flag's own name ("-c") got consumed as if it
+      # were "-G"'s value, producing useradd's own confusing "group
+      # '-c' does not exist".
+      args = UserState.useradd_args("vault", nil, "bin", "", nil, nil, "Vault user", true, false)
+      args.should eq(["-g bin", "-c \"Vault user\"", "-r", "-M", "vault"])
+    end
   end
 
   describe ".usermod_flags" do
@@ -67,6 +82,11 @@ describe UserState do
       current = SAMPLE_USER
       flags = UserState.usermod_flags(current, "2002", "1001", "/bin/bash", "/home/alice2", "Alice Example")
       flags.should eq(["-u 2002", "-d /home/alice2"])
+    end
+
+    it "does not flag an empty-string desired value as a change, matching useradd_args' same fix" do
+      current = SAMPLE_USER
+      UserState.usermod_flags(current, "", "", "", "", "").should eq([] of String)
     end
   end
 

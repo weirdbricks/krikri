@@ -28,13 +28,25 @@ module CrystalPlay
         system : Bool,
         create_home : Bool,
       ) : Array(String)
+        # A blank (non-nil but empty) value - e.g. `groups: "{{
+        # some_var }}"` where some_var is YAML `null`, real Ansible's
+        # own format_value renders that to "" - used to add a flag with
+        # no value at all ("-G " with nothing after it). Joined into one
+        # shell command string with the following flags, that shifted
+        # every subsequent token left by one: the *next* flag's own name
+        # (e.g. "-c") got consumed as if it were THIS flag's value,
+        # producing useradd's own "group '-c' does not exist" - a
+        # confusing error with no evident tie back to an unrelated blank
+        # groups:/uid:/etc param. Found via ansible-community.ansible-
+        # vault's own `groups: "{{ vault_groups }}"` (vault_groups:
+        # null in defaults/main.yml).
         args = [] of String
-        args << "-u #{uid}" if uid
-        args << "-g #{gid}" if gid
-        args << "-G #{groups}" if groups
-        args << "-s #{shell}" if shell
-        args << "-d #{home}" if home
-        args << "-c #{comment.inspect}" if comment
+        args << "-u #{uid}" if uid.presence
+        args << "-g #{gid}" if gid.presence
+        args << "-G #{groups}" if groups.presence
+        args << "-s #{shell}" if shell.presence
+        args << "-d #{home}" if home.presence
+        args << "-c #{comment.inspect}" if comment.presence
         args << "-r" if system
         args << (create_home ? "-m" : "-M")
         args << name
@@ -57,7 +69,7 @@ module CrystalPlay
           changed_flag("-g", gid, current.gid),
           changed_flag("-s", shell, current.shell),
           changed_flag("-d", home, current.home),
-          comment && comment != current.comment ? "-c #{comment.inspect}" : nil,
+          comment.presence && comment != current.comment ? "-c #{comment.inspect}" : nil,
         ].compact
       end
 
@@ -178,7 +190,7 @@ module CrystalPlay
       end
 
       private def self.changed_flag(flag : String, desired : String?, current : String) : String?
-        desired && desired != current ? "#{flag} #{desired}" : nil
+        desired.presence && desired != current ? "#{flag} #{desired}" : nil
       end
     end
   end
