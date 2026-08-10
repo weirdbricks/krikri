@@ -757,6 +757,43 @@ describe CrystalPlay::PlaybookParser do
       playbook.plays[0].tasks.map(&.name).should eq(["role task", "own task"])
     end
 
+    it "templates an import_tasks: file path against the role's own defaults/vars" do
+      # Real bug found benchmarking openstack.ansible-hardening: its own
+      # tasks/main.yml does `import_tasks: "{{ stig_version }}stig/main.
+      # yml"` (stig_version is a plain role default, "rhel7") to pick
+      # its OS-versioned STIG control set - 105 of the role's ~112 tasks
+      # live behind this one import. import_tasks:'s file path was never
+      # templated at all - the literal, unrendered "{{ stig_version
+      # }}stig/main.yml" was used directly, always "file not found",
+      # silently skipping the entire STIG control set with just a
+      # warning (not a hard failure, so easy to miss).
+      root = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "playbook_parser_import_tasks_templated_path_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks", "rhel7stig"))
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "defaults"))
+      File.write(File.join(root, "roles", "myrole", "defaults", "main.yml"), "stig_version: rhel7\n")
+      File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - name: import versioned stig tasks
+          import_tasks: "{{ stig_version }}stig/main.yml"
+        YAML
+      File.write(File.join(root, "roles", "myrole", "tasks", "rhel7stig", "main.yml"), <<-YAML)
+        - name: stig task
+          ansible.builtin.debug:
+            msg: stig ran
+        YAML
+
+      playbook_yaml = <<-YAML
+        - name: play
+          hosts: all
+          roles:
+            - myrole
+        YAML
+
+      playbook = CrystalPlay::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
+
+      playbook.plays[0].tasks.map(&.name).should eq(["stig task"])
+    end
+
     it "raises a warning (not a hard failure) when a role can't be found, matching other unparseable-task handling" do
       root = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "playbook_parser_missing_role_spec")
       FileUtils.rm_rf(root) if Dir.exists?(root)

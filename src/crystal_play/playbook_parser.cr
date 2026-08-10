@@ -2,6 +2,7 @@ require "yaml"
 require "./loop_resolver"
 require "./role_loader"
 require "./vault"
+require "./variable_substitutor"
 
 module CrystalPlay
   # Represents a single task in a playbook
@@ -601,12 +602,12 @@ module CrystalPlay
     # include_tasks: paths relative to that file (not the top-level
     # playbook), and passed down unchanged for block/rescue/always since
     # those stay within the same file.
-    def self.parse_tasks(tasks_yaml : Array(YAML::Any), play : Play, context : String, file_dir : String) : Array(Task)
+    def self.parse_tasks(tasks_yaml : Array(YAML::Any), play : Play, context : String, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil) : Array(Task)
       tasks = [] of Task
 
       tasks_yaml.each_with_index do |task_yaml, index|
         begin
-          if imported = try_parse_import_tasks(task_yaml, play, file_dir)
+          if imported = try_parse_import_tasks(task_yaml, play, file_dir, known_vars)
             tasks.concat(imported)
           else
             tasks << parse_task(task_yaml, index, play, file_dir)
@@ -654,7 +655,7 @@ module CrystalPlay
       direct
     end
 
-    private def self.try_parse_import_tasks(yaml : YAML::Any, play : Play, file_dir : String) : Array(Task)?
+    private def self.try_parse_import_tasks(yaml : YAML::Any, play : Play, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil) : Array(Task)?
       hash = yaml.as_h?
       return nil unless hash
 
@@ -664,13 +665,27 @@ module CrystalPlay
       file_rel = import_value.as_h?.try(&.["file"]?).try(&.as_s?) || import_value.as_s?
       raise "import_tasks: missing a file path" unless file_rel
 
+      # import_tasks:'s file path is templated against whatever's known
+      # at PARSE time (role defaults/vars/invocation vars - never
+      # runtime facts, matching real Ansible's own early-resolution
+      # constraint for this keyword) before being resolved - openstack.
+      # ansible-hardening's own `import_tasks: "{{ stig_version
+      # }}stig/main.yml"` (105 of the role's ~112 tasks, gathering STIG
+      # controls for the target OS) previously left the literal
+      # unrendered "{{ stig_version }}stig/main.yml" as the path,
+      # always "file not found" and silently skipping the entire STIG
+      # control set with just a warning.
+      if known_vars && file_rel.includes?("{{")
+        file_rel = VarSubstitutor.new(vars: known_vars).substitute(file_rel)
+      end
+
       resolved_path = resolve_include_path(file_rel, file_dir)
       raise "Imported tasks file not found: #{resolved_path}" unless File.exists?(resolved_path)
 
       imported_yaml = YAML.parse(Vault.maybe_decrypt(File.read(resolved_path)))
       raise "Imported tasks file must be a YAML list: #{resolved_path}" unless imported_yaml.as_a?
 
-      imported_tasks = parse_tasks(imported_yaml.as_a, play, "task in imported #{resolved_path}", File.dirname(resolved_path))
+      imported_tasks = parse_tasks(imported_yaml.as_a, play, "task in imported #{resolved_path}", File.dirname(resolved_path), known_vars)
 
       import_when = hash["when"]?.try { |v| condition_to_string(v) }
       import_tags = hash["tags"]?.try(&.as_a?).try(&.map(&.as_s)) || [] of String

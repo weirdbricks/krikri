@@ -108,8 +108,13 @@ module CrystalPlay
       templates_dir = existing_dir(File.join(role_dir, "templates"))
       vars_dir = existing_dir(File.join(role_dir, "vars"))
 
-      role_tasks = load_tasks_file(File.join(role_dir, "tasks", "main.yml"), play)
-      role_handlers = load_tasks_file(File.join(role_dir, "handlers", "main.yml"), play)
+      # Known at parse time, before facts gathering - real Ansible's own
+      # constraint for what import_tasks:'s own file path may reference
+      # (see try_parse_import_tasks in playbook_parser.cr). role_vars
+      # wins over defaults, matching normal precedence.
+      known_vars = defaults.merge(role_vars)
+      role_tasks = load_tasks_file(File.join(role_dir, "tasks", "main.yml"), play, known_vars)
+      role_handlers = load_tasks_file(File.join(role_dir, "handlers", "main.yml"), play, known_vars)
 
       if validation_task = load_argument_spec_validation_task(role_dir)
         role_tasks.unshift(validation_task)
@@ -208,13 +213,13 @@ module CrystalPlay
       task
     end
 
-    private def self.load_tasks_file(path : String, play : Play) : Array(Task)
+    private def self.load_tasks_file(path : String, play : Play, known_vars : Hash(String, JSON::Any)? = nil) : Array(Task)
       return [] of Task unless File.exists?(path)
 
       yaml = YAML.parse(Vault.maybe_decrypt(File.read(path)))
       return [] of Task unless yaml.as_a?
 
-      PlaybookParser.parse_tasks(yaml.as_a, play, "task in #{path}", File.dirname(path))
+      PlaybookParser.parse_tasks(yaml.as_a, play, "task in #{path}", File.dirname(path), known_vars)
     end
   end
 end
