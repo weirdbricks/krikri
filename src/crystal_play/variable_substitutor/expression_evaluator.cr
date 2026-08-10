@@ -155,8 +155,19 @@ module CrystalPlay
         # an expr that *starts* with `[` can be this case; `list[0]`/
         # `list[0:2]` always start with the variable name instead, so this
         # can't misfire on real indexing/slicing.
-        if expr.includes?("[")
-          return evaluate_bracket_expr(expr)
+        # A literal Jinja dict (`{item.name: new_value}` - linux-system-
+        # roles/kernel_settings' own dynamic-key dict literal, merged in
+        # via `| combine(__new_item)`) shares a dispatch branch with the
+        # `[` bracket case for the same reasoning as the literal-array
+        # comment inside evaluate_bracket_expr (FilterEngine's own
+        # parse_dict_literal only ever sees this as a filter *argument*,
+        # and even there treats the key as literal text rather than an
+        # expression - wrong for a dynamic key like `item.name`), just for
+        # `{...}` instead of `[...]`. Combined into one method purely to
+        # keep this method's own branch count under ameba's cyclomatic-
+        # complexity threshold.
+        if result = evaluate_bracket_or_dict_expr(expr)
+          return result
         end
 
         # Check for nested access (.)
@@ -189,8 +200,21 @@ module CrystalPlay
         @lookup.indexed(expr)
       end
 
+      # Returns nil (not a String) when *expr* is neither a dict literal
+      # nor `[`-bearing at all, so evaluate_expr's caller knows to fall
+      # through to the plain `.`/simple-lookup checks instead.
+      private def evaluate_bracket_or_dict_expr(expr : String) : String?
+        return evaluate_dict_literal(expr) if literal_dict_expr?(expr)
+        return evaluate_bracket_expr(expr) if expr.includes?("[")
+        nil
+      end
+
       private def literal_array_expr?(expr : String) : Bool
         expr.starts_with?('[') && expr.ends_with?(']')
+      end
+
+      private def literal_dict_expr?(expr : String) : Bool
+        expr.starts_with?('{') && expr.ends_with?('}')
       end
 
       # Resolves the branch selected by a ternary's condition. A branch
@@ -463,6 +487,31 @@ module CrystalPlay
 
       private def lookup_array(value : JSON::Any?) : Array(JSON::Any)
         value.try(&.as_a?) || [] of JSON::Any
+      end
+
+      # A literal Jinja dict (`{item.name: new_value}`, `{"a": 1}`) - each
+      # key AND value resolved as a full expression via resolve_plus_
+      # operand (a bare identifier, dotted path, quoted literal, or filter
+      # chain), unlike FilterEngine's own parse_dict_literal (used only
+      # for a filter argument like `combine({...})`), which treats the key
+      # as literal already-final text. A key that resolves to a non-
+      # string (e.g. a bare number) is stringified, matching how a real
+      # dict's string keys work once templated.
+      private def evaluate_dict_literal(expr : String) : String
+        inner = expr[1..-2].strip
+        return @lookup.format_value(JSON::Any.new(Hash(String, JSON::Any).new)) if inner.empty?
+
+        h = Hash(String, JSON::Any).new
+        split_top_level_commas(inner).each do |pair|
+          key_part, sep, val_part = pair.partition(':')
+          next if sep.empty?
+
+          key_value = resolve_plus_operand(key_part.strip)
+          key = key_value.as_s? || key_value.as_i64?.try(&.to_s) || @lookup.format_value(key_value)
+          h[key] = resolve_plus_operand(val_part.strip)
+        end
+
+        @lookup.format_value(JSON::Any.new(h))
       end
 
       # A literal Jinja list (`['/dev', '/dev/shm']`) is valid Python/Jinja
