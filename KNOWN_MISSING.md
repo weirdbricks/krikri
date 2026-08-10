@@ -8,7 +8,7 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.180`.**
+**Currently at `0.9.209`.**
 
 ---
 
@@ -21,6 +21,36 @@ parsed, a missing `d()` filter alias, dict/array literals unsupported
 outside a `+` operand, among others - `git log --oneline --grep=
 "0\.9\.1[5-7][0-9]" -E` for the full list). Treat "no gap remains open"
 as "none is known right now," not as a claim the search is finished.
+
+`0.9.198`-`0.9.209` (a second broader-mix round: `openstack.ansible-
+hardening`, `githubixx.ansible_role_wireguard`, `ansible-community.
+ansible-vault`): the `ansible-vault` role in particular surfaced a
+cluster of related bugs all in the same family - real Ansible's
+"recursive re-templating" (a variable whose own value is itself more
+Jinja gets re-evaluated wherever referenced) turned out to have **four
+separate, independently-buggy plain-lookup fallbacks** across the
+engine, each fixed on its own: ConditionalEvaluator's bare `when:`
+variable check, ExpressionEvaluator's filter-chain head resolution,
+FilterEngine's `default()`-argument resolution, and ComparisonEvaluator's
+bare comparison-operand lookup - `git log --oneline --grep="0\.9\.19
+[9]\|0\.9\.20[0-9]" -E` for the full list. Also fixed in this round:
+an else-less inline-if (`'x' if cond`, no `else`) not rendering as ""
+like real Jinja2's `Undefined`; a ternary branch that's a bare `true`/
+`false` literal (not a quoted string) resolving to "undefined"; a
+parenthesized ternary as a `default()` argument not being unwrapped
+before its own `if`/`else` was searched for; Jinja2's `~` string-concat
+operator being entirely unimplemented anywhere in the engine; `or`/
+`and`/`is` boolean logic not understood inside a plain `{{ }}` span
+(only inside a bare `when:`); `copy:` embedding a large file's whole
+content as a JSON param string then base64-encoding the *entire config*
+a second time for SSH transport, overflowing Crystal stdlib's
+`Base64.encode_size` (Int32 arithmetic) for a ~530MB file and crashing
+the whole engine rather than failing one task; `copy:` not handling an
+existing-directory `dest:` (real Ansible appends `src`'s basename); and
+`shell:`'s `executable:` (custom-shell) form naively wrapping the whole
+command in `'...'` without escaping the command's own embedded single
+quotes, corrupting anything using `cut -d' '`/`tr -d 'x'`-style
+pipelines.
 
 `0.9.172`-`0.9.180`: the `geerlingguy.*` role family (docker, mysql,
 postgresql, nginx, php, security - none tried before) found 13 more real

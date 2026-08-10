@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.180-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.209-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -285,16 +285,19 @@ not yet implemented.
 **No known cross-cutting engine gap is currently open.** These get found
 and closed on an ongoing basis via real-host benchmark rounds against
 production Ansible roles (dev-sec, konstruktoid, linux-system-roles,
-geerlingguy) - see `git log` for the full log of what's been found and
-fixed. Most recently, a round against the `geerlingguy.*` role family
-(docker/mysql/postgresql/nginx/php/security) found 13 more bugs through
-`0.9.180`, the highest-value being **`pre_tasks:`/`post_tasks:` play
-keywords were entirely unparsed** (silently never ran, no warning) and
-real Ansible's own recursive re-templating of a variable whose *value*
-is itself more Jinja not being applied inside real `.j2` template files
-(only in plain `{{ }}` task-param substitution) - see KNOWN_MISSING.md
-for the full list of that round plus the `range(...)` fix from `0.9.172`
-before it.
+geerlingguy, openstack.ansible-hardening, wireguard, ansible-vault) -
+see `git log` for the full log of what's been found and fixed. Most
+recently, a round against `ansible-community.ansible-vault` found that
+real Ansible's "recursive re-templating" (a variable whose own value is
+itself more Jinja gets re-evaluated wherever referenced) had **four
+separate, independently-buggy plain-lookup fallbacks** scattered across
+the engine - one each in the bare `when:` evaluator, the `{{ }}` filter-
+chain evaluator, `default()`'s own argument resolver, and the bare-
+comparison-operand resolver - plus Jinja2's `~` string-concat operator
+being entirely unimplemented, and a large-file `copy:` crashing the
+whole engine via an Int32 overflow in a stdlib base64 call. See
+KNOWN_MISSING.md for the full list of that round (`0.9.198`-`0.9.209`)
+plus the `geerlingguy.*` and `range(...)` rounds before it.
 
 The remaining open items are narrow, documented scope cuts:
 
