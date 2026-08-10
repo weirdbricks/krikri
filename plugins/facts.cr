@@ -119,7 +119,9 @@ def gather_os_facts(facts)
       facts["ansible_distribution_release"] = release
     end
   end
-  
+
+  facts["ansible_pkg_mgr"] = detect_pkg_mgr
+
   facts["ansible_system"] = "Linux"
 
   # ansible_machine_id - real Ansible reads /etc/machine-id (falling back to
@@ -199,6 +201,31 @@ end
 # heuristics real Ansible's fact gathering uses. Returns the virtualization
 # type name (e.g. "docker", "lxc", "kvm", "xen"), or "None" (the exact
 # string real Ansible uses) when running on bare metal / a plain host.
+# ansible_pkg_mgr / ansible_facts.pkg_mgr - which package manager real
+# Ansible's own pkg_mgr.py fact module reports, entirely unset before this
+# (found via openstack.ansible-hardening's own `include_tasks: "{{
+# ansible_facts['pkg_mgr'] }}.yml"` - the role's main OS-dispatch point,
+# resolving to the literal "undefined.yml" and failing the include
+# outright, taking the rest of that STIG control file's tasks down with
+# it). Real Ansible's own detection checks a longer, more exhaustive list
+# of package-manager binary paths and has extra dnf-vs-yum-symlink
+# disambiguation; this covers the package managers real roles actually
+# gate on (apt/dnf/yum/zypper/pacman/apk/pkgng), checked in the same
+# dnf-before-yum priority real Ansible uses so a modern RHEL system
+# (where /usr/bin/yum is often just a symlink to dnf) reports "dnf".
+def detect_pkg_mgr : String
+  candidates = {
+    "/usr/bin/dnf"     => "dnf",
+    "/usr/bin/yum"     => "yum",
+    "/usr/bin/apt-get" => "apt",
+    "/usr/bin/zypper"  => "zypper",
+    "/usr/bin/pacman"  => "pacman",
+    "/sbin/apk"        => "apk",
+    "/usr/sbin/pkg"    => "pkgng",
+  }
+  candidates.find { |path, _| File.exists?(path) }.try(&.[1]) || "unknown"
+end
+
 def detect_virtualization : String
   # Container markers first - the cheapest, most unambiguous signals.
   return "docker" if File.exists?("/.dockerenv") || File.exists?("/.dockerinit")
