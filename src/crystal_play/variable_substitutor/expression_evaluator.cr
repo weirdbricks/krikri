@@ -121,6 +121,21 @@ module CrystalPlay
           return evaluate_plus(segments)
         end
 
+        # Jinja2's `~` string-concatenation operator (distinct from `+`,
+        # which errors on mismatched operand types - `~` always
+        # stringifies both sides first) - real bug found benchmarking
+        # ansible-community.ansible-vault's own `installed_vault_version.
+        # stdout != vault_version~('+ent' if vault_enterprise)`.
+        # Entirely unimplemented before (no `~` handling anywhere in the
+        # engine) - fell through everywhere else to a plain variable
+        # lookup on the whole literal text, always "undefined", so the
+        # role's own version-comparison logic always concluded a
+        # (re-)install was needed regardless of what was actually
+        # installed.
+        if segments = split_top_level_tilde(expr)
+          return evaluate_tilde(segments)
+        end
+
         # A leading parenthesized sub-expression, optionally followed by
         # dotted/indexed access on its result (`( a | to_datetime(...) -
         # b | to_datetime(...) ).days` - dev-sec os_hardening's own
@@ -471,6 +486,61 @@ module CrystalPlay
         end
 
         @lookup.resolve(expr) || JSON::Any.new(nil)
+      end
+
+      # Splits *expr* on every top-level `~` (outside quotes/brackets),
+      # same depth-tracking approach as #split_top_level_plus - a
+      # separate copy (rather than a parameterized shared helper) since
+      # `~` needs none of #split_top_level_plus's `+`-vs-`-`-adjacent
+      # bookkeeping.
+      private def split_top_level_tilde(expr : String) : Array(String)?
+        parts = [] of String
+        current = String::Builder.new
+        depth = 0
+        quote = nil.as(Char?)
+        found = false
+
+        expr.each_char do |char|
+          if q = quote
+            current << char
+            quote = nil if char == q
+            next
+          end
+
+          case char
+          when '\'', '"'
+            quote = char
+            current << char
+          when '[', '(', '{'
+            depth += 1
+            current << char
+          when ']', ')', '}'
+            depth -= 1
+            current << char
+          when '~'
+            if depth == 0
+              parts << current.to_s.strip
+              current = String::Builder.new
+              found = true
+            else
+              current << char
+            end
+          else
+            current << char
+          end
+        end
+
+        parts << current.to_s.strip
+        found ? parts : nil
+      end
+
+      # `~` always stringifies both operands (unlike `+`, which errors on
+      # a type mismatch) - reuses #resolve_plus_operand for parsing each
+      # segment (literal/paren/filter-chain/plain-variable resolution is
+      # identical either way), then joins their string forms directly
+      # rather than #combine_plus's type-preserving add/concat.
+      private def evaluate_tilde(segments : Array(String)) : String
+        segments.map { |seg| @lookup.format_value(resolve_plus_operand(seg)) }.join
       end
 
       private def quoted_string_literal(expr : String) : JSON::Any?

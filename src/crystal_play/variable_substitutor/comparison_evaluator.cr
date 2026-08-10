@@ -88,7 +88,14 @@ module CrystalPlay
         # delegation ConditionalEvaluator uses for bare when:/assert:
         # conditions, needed here too since {{ }}-wrapped comparisons
         # reach this separate evaluator instead.
-        if expr.includes?("|") || expr.starts_with?('(')
+        # `~` (Jinja2 string concat) alongside the filter/paren cases
+        # already delegated here - a comparison operand built with it
+        # (`installed.stdout != vault_version~('+ent' if vault_enterprise)`
+        # - ansible-community.ansible-vault's own version-check) has no
+        # `|` and doesn't start with `(`, so it fell through everywhere
+        # below to a plain variable lookup on the whole literal operand
+        # text, always undefined/never equal.
+        if expr.includes?("|") || expr.starts_with?('(') || expr.includes?("~")
           rendered = ExpressionEvaluator.new(@vars).evaluate(expr)
           parsed = (JSON.parse(rendered) rescue nil)
           return json_any_to_value(parsed || JSON::Any.new(rendered))

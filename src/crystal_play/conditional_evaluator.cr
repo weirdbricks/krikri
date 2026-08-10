@@ -468,7 +468,7 @@ module CrystalPlay
       # which - among other gaps - had no concept of `|` nested inside an
       # unclosed paren at all, so a condition shaped like the one above
       # always evaluated to undefined.
-      if expr.includes?("|") || expr.starts_with?('(') || expr.includes?(" - ")
+      if expr.includes?("|") || expr.starts_with?('(') || expr.includes?(" - ") || expr.includes?("~")
         evaluator = VariableSubstitutor::ExpressionEvaluator.new(vars)
         rendered = evaluator.evaluate(expr)
         parsed = (JSON.parse(rendered) rescue nil)

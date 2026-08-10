@@ -60,5 +60,20 @@ describe CrystalPlay::VariableSubstitutor::ComparisonEvaluator do
       evaluator = CrystalPlay::VariableSubstitutor::ComparisonEvaluator.new(v)
       evaluator.evaluate(%(result.stdout | trim == "hello")).should eq("true")
     end
+
+    it "evaluates a `~`-concatenated operand on the right side of a comparison" do
+      # Real bug found benchmarking ansible-community.ansible-vault's own
+      # `installed_vault_version.stdout != vault_version~('+ent' if
+      # vault_enterprise)` - the right operand has no `|` and doesn't
+      # start with `(`, so it fell through to a plain (always-undefined)
+      # variable lookup on the whole literal "vault_version~(...)" text,
+      # never equal to anything.
+      v = Hash(String, JSON::Any).new
+      v["installed"] = JSON::Any.new("2.0.3")
+      v["vault_version"] = JSON::Any.new("2.0.3")
+      v["vault_enterprise"] = JSON::Any.new(false)
+      evaluator = CrystalPlay::VariableSubstitutor::ComparisonEvaluator.new(v)
+      evaluator.evaluate("installed != vault_version~('+ent' if vault_enterprise)").should eq("false")
+    end
   end
 end

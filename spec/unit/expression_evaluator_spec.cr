@@ -244,4 +244,22 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("vault_tls_gossip | bool").should eq("True")
     ENV.delete("CRYSTAL_ANSIBLE_SPEC_FILTER_ENV_TEST")
   end
+
+  it "concatenates operands with Jinja2's `~` string-concat operator" do
+    # Real bug found benchmarking ansible-community.ansible-vault's own
+    # `vault_version~('+ent' if vault_enterprise)` (a bare-`~`
+    # concatenation whose right operand is itself a parenthesized,
+    # else-less ternary) - `~` was entirely unimplemented anywhere in the
+    # engine, so the whole expression fell through to a plain (always-
+    # undefined) variable lookup on the literal text.
+    v = Hash(String, JSON::Any).new
+    v["vault_version"] = JSON::Any.new("2.0.3")
+    v["vault_enterprise"] = JSON::Any.new(false)
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("vault_version~('+ent' if vault_enterprise)").should eq("2.0.3")
+
+    v["vault_enterprise"] = JSON::Any.new(true)
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("vault_version~('+ent' if vault_enterprise)").should eq("2.0.3+ent")
+  end
 end
