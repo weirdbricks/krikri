@@ -239,7 +239,7 @@ module CrystalPlay
     # Ansible's own module, not something introduced here, and not
     # something to silently "fix" by deviating from what real Ansible
     # actually runs (parity means matching real behavior, bugs
-    # included) - see the compat verification note in ROADMAP.md.
+    # included) - see the compat verification note in git log.
     private def ensure_ppa_key(ppa : PluginHelpers::AptPpa::Info, codename : String) : PluginResult?
       fingerprint = begin
         fetch_ppa_signing_key(ppa)

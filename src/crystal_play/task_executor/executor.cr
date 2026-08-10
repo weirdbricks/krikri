@@ -42,8 +42,8 @@ module CrystalPlay
     # play.cr reads this after #run to carry a failed host forward and
     # exclude it from every *remaining* play in the whole run too, not
     # just the rest of this one (real Ansible's actual behavior; see
-    # ROADMAP.md's `0.9.61`-found, `0.9.64`-fixed cross-cutting engine
-    # gap entry).
+    # git log's `0.9.61`-found, `0.9.64`-fixed cross-cutting engine
+    # gap commit).
     getter halted_hosts : Set(String)
     # Full inventory, used to resolve delegate_to: targets that aren't
     # necessarily in this play's own host list (e.g. "localhost" when the
@@ -55,8 +55,8 @@ module CrystalPlay
     # Batches consecutive independent tasks bound for the same remote
     # host into a single SSH round trip instead of one round trip per
     # task - default on since 0.9.63; --no-batching opts out. See
-    # TaskBatcher for the batchability predicate and ROADMAP.md's
-    # `0.9.61`/`0.9.62`/`0.9.63` entries for the design, hardening pass,
+    # TaskBatcher for the batchability predicate and git log's
+    # `0.9.61`/`0.9.62`/`0.9.63` commits for the design, hardening pass,
     # and the correctness/timing verification behind the default flip.
     @batching_enabled : Bool
     # Maps a task to the full group (including itself) TaskBatcher.plan
@@ -260,7 +260,7 @@ module CrystalPlay
     # completions never scramble the display - this was Stage A of the
     # cross-host parallelism work (`0.9.75`); Stage B, parallelizing the
     # per-task host loop itself via `--forks`, landed separately in
-    # `0.9.77`. See ROADMAP.md for both.
+    # `0.9.77`. See git log for both.
     private def gather_facts_for_all_hosts
       # --gathering smart: a host whose facts this run already collected
       # (in an earlier play, via the shared run-scoped store) is not

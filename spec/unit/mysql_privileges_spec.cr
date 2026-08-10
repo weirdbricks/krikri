@@ -36,7 +36,7 @@ describe CrystalPlay::PluginHelpers::MysqlPrivileges do
   end
 
   # Real `SHOW GRANTS FOR user@host` output, captured from a live MariaDB
-  # 11 server - see ROADMAP.md's mysql_user entry.
+  # 11 server - see git log's mysql_user commits.
   describe ".parse_show_grants_line" do
     it "returns nil for the baseline GRANT USAGE identity row" do
       line = "GRANT USAGE ON *.* TO `demo4`@`%` IDENTIFIED BY PASSWORD '*14E65567ABDB5135D0CFD9A70B3032C179A49EE7'"

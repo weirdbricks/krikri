@@ -3,7 +3,7 @@
 # gzip + bzip2 + xz dump, restoring each dump into a second database,
 # row-count round-trip verification, and the missing-target failure path.
 # Real Ansible's own keyword here is
-# `restore`, not `import` like mysql_db's equivalent - see ROADMAP.md.
+# `restore`, not `import` like mysql_db's equivalent - see git log.
 # The playbook starts its own throwaway PostgreSQL cluster inside the
 # container via the init.d script (no systemd in this image), the same
 # server-and-client-from-the-same-distro pairing the Dockerfile installs.
@@ -42,7 +42,7 @@
         timeout: 60
 
     # crystal-ansible parses become:/become_user: but doesn't actually
-    # apply privilege escalation to command execution (see ROADMAP.md) -
+    # apply privilege escalation to command execution (see git log, 0.9.41) -
     # using it here would silently run as root on one engine and as
     # postgres on the other. su directly instead, which is plain shell and
     # behaves identically on both engines.

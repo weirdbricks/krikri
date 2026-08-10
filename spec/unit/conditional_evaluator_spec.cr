@@ -189,7 +189,7 @@ describe CrystalPlay::ConditionalEvaluator do
     # all, so any condition combining a filter with a comparison (or used
     # bare) evaluated the filter-chain text itself as an undefined
     # variable name - `mylist | length > 0` always evaluated false,
-    # regardless of the actual list (see ROADMAP.md's 0.9.58 entry).
+    # regardless of the actual list (see git log's 0.9.58 commit).
 
     it "evaluates a filter chain combined with a comparison (the originally-reported case)" do
       v = Hash(String, JSON::Any).new

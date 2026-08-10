@@ -27,8 +27,8 @@ compiled binary plus a directory of plugin binaries. It supports:
   Docker-based compatibility harness (`compat/`) runs the same playbooks
   through both engines side by side and diffs the resulting state
 
-See [ROADMAP.md](ROADMAP.md) for the full, continuously-updated tracking of
-what's implemented, what's a documented scope cut, and why.
+See [KNOWN_MISSING.md](KNOWN_MISSING.md) for what's still missing, and
+`git log` for implementation history.
 
 ---
 
@@ -61,7 +61,7 @@ what's implemented, what's a documented scope cut, and why.
 - ✅ Task batching - consecutive independent tasks bound for the same
   remote host run in a single SSH round trip instead of one round trip
   per task, on by default (`--no-batching` to disable; see the
-  Performance section below and `ROADMAP.md`'s `0.9.61`-`0.9.63` entries)
+  Performance section below and `git log`'s `0.9.61`-`0.9.63` commits)
 
 ### Plugins (59 total)
 
@@ -217,8 +217,8 @@ Supports standard Ansible playbook syntax. See the
 
 ## ⚡ Performance
 
-Measured against real `ansible-playbook`, not assumed - see `ROADMAP.md`
-for the full, continuously-updated methodology and results.
+Measured against real `ansible-playbook`, not assumed - see `git log`
+for the full methodology and results behind each number.
 
 ### vs. real Ansible, end to end
 
@@ -236,7 +236,7 @@ against both tools:
 
 > These two rows were measured at `0.9.77`/`0.9.78` and have **not** been
 > re-run since against later engine-level performance work - see
-> `ROADMAP.md` for what's changed since. Rather than scale the old
+> `git log` for what's changed since. Rather than scale the old
 > numbers by later isolated-benchmark ratios, they are left exactly as
 > measured until the whole comparison is re-run against both tools on the
 > same hosts.
@@ -275,17 +275,17 @@ harness covers and how it works.
 
 ## 🚧 Limitations
 
-See [ROADMAP.md](ROADMAP.md) for the live, detailed tracking of what is
-implemented, what is not, and what is planned next.
+See [KNOWN_MISSING.md](KNOWN_MISSING.md) for the live tracking of what is
+not yet implemented.
 
 **No known cross-cutting engine gap is currently open.** These get found
 and closed on an ongoing basis via real-host benchmark rounds against
 production Ansible roles (dev-sec, konstruktoid, linux-system-roles) -
-see `ROADMAP.md` for the full, continuously-updated log of what's been
-found and fixed, most recently a batch of plain-`{{ }}`-evaluator gaps
-(depth-unaware operator parsing, dict/array literals outside a `+`
-operand, a missing `d()` filter alias, block-level `vars:` never parsed,
-among others) through `0.9.171`.
+see `git log` for the full log of what's been found and fixed, most
+recently a batch of plain-`{{ }}`-evaluator gaps (depth-unaware operator
+parsing, dict/array literals outside a `+` operand, a missing `d()`
+filter alias, block-level `vars:` never parsed, among others) through
+`0.9.171`.
 
 The remaining open items are narrow, documented scope cuts:
 
@@ -321,7 +321,7 @@ module supports is implemented, including `function`/`procedure` and
 
 Contributions welcome! Please:
 
-1. Review the existing code structure and [ROADMAP.md](ROADMAP.md)
+1. Review the existing code structure and [KNOWN_MISSING.md](KNOWN_MISSING.md)
 2. Verify any Ansible-compatibility claims against real `ansible-playbook`
    output, not just documentation
 3. Test your changes thoroughly (`crystal spec`, and `compat/run.cr` for

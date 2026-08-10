@@ -114,7 +114,7 @@ describe "mount plugin" do
   end
 
   # state: remounted needs a genuinely already-mounted filesystem to
-  # remount (verified for real separately - see ROADMAP.md - against a
+  # remount (verified for real separately - see git log - against a
   # real tmpfs mount inside a --privileged container, since the shared
   # CI/dev sandbox this spec suite runs in can't mount anything at all
   # without one), so only its check_mode path - which never touches a

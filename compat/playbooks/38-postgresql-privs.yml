@@ -25,7 +25,7 @@
 # there is nothing to compare. This playbook is deliberately scoped to prove
 # the implemented surface works, not to be a full postgresql_privs
 # feature matrix. session_role: isn't covered here either - verified
-# manually instead against a real server (see the 0.9.54 ROADMAP entry),
+# manually instead against a real server (see git log, 0.9.54),
 # to avoid the extra role-membership setup complexity in this already
 # multi-role playbook.
 #

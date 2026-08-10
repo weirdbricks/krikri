@@ -118,7 +118,7 @@ across two separate runs. `find` (`19-find.yml`) covers non-recursive vs
 recursive search, `excludes:`, `hidden:`, `file_type: directory`, and
 `depth:` - compared via each run's `matched` count, plus (since
 `map(attribute=...)`/`sort`/`join` filter-chaining shipped, see
-`ROADMAP.md`) the actual sorted `files` path list itself
+git log, 0.9.42) the actual sorted `files` path list itself
 (`recursive.files | map(attribute='path') | sort | join(',')`), closing
 what was previously a real, separate gap unrelated to `find` itself: this
 codebase's filter engine only ever split a `{{ }}` pipeline on the first
@@ -143,7 +143,7 @@ reason as `archive`'s own compat playbook. `apt_repository`
 an idempotent rerun, adding a second repo with a derived filename,
 removing a repo, and an idempotent rerun of the removal - this is the
 plugin that caught the `grep -v`/`&&` short-circuit bug (see
-`ROADMAP.md`), which only ever showed up running a removal *twice*, not
+git log), which only ever showed up running a removal *twice*, not
 once. `yum_repository` (`23-yum-repository.yml`) covers writing a
 `.repo` file, an idempotent rerun, a rewrite with a different parameter
 set (confirming keys not passed this time are dropped, not merged), a
@@ -159,7 +159,7 @@ the container's real running kernel is never touched. `mount`
 `unmounted` (which run real `mount`/`umount`) aren't exercised here,
 matching how `spec/integration/mount_spec.cr` only checks those via
 `check_mode`. `firewalld` (`26-firewalld.yml`, `offline: true,
-permanent: true` throughout - see `ROADMAP.md` for why) covers enabling
+permanent: true` throughout - see git log for why) covers enabling
 a service, an idempotent rerun, a rich rule, masquerade, disabling the
 service, and an idempotent disable rerun - compared via `changed` plus
 `firewall-offline-cmd --query-<thing>` state checks rather than a raw
@@ -179,7 +179,7 @@ start a real local `python3 -m http.server` in the background (no real
 network access in this container) and hit it - `get_url`'s idempotent
 rerun uses a `checksum:` computed ahead of time via `stat:`, not
 crystal-ansible's own get_url result (a real field-naming bug this
-playbook caught - see `ROADMAP.md`'s `get_url` entry). `blockinfile`
+playbook caught - see git log's `get_url`/0.9.25 commits). `blockinfile`
 (`29-blockinfile.yml`) covers insert-at-EOF, an idempotent rerun, an
 in-place content update, `insertbefore:` with custom markers, removal,
 and file creation. `assert` (`31-assert.yml`) covers a passing
@@ -212,7 +212,7 @@ via a plain `su postgres -c '...'` shell command rather than
 `become:`/`become_user:` - at the time this playbook was written,
 crystal-ansible parsed `become:` but didn't actually apply privilege
 escalation to command execution (a real, previously-undocumented gap found
-while writing this playbook - see `ROADMAP.md`), so using it here would
+while writing this playbook - see git log, 0.9.41), so using it here would
 have silently run as root on one engine and as `postgres` on the other.
 Since fixed (see `37-become.yml` below) - this playbook wasn't retrofitted
 to use `become:` instead, since the plain `su` command already works fine
@@ -266,14 +266,14 @@ gap and not a fixture mistake: the identical command ran fine under real
 `ansible-playbook` in the same container. `32-wait-for.yml` works around
 it with `nohup sh -c 'sleep N; daemon' &` (one process backgrounded
 directly, no separate parent shell left waiting) - full detail and a
-suggested fix direction in `ROADMAP.md`.
+suggested fix direction in git log, 0.9.33.
 
 `ufw` has no compat playbook, unusually for this repo - `ufw` itself
 refuses to run at all without root (even a bare `ufw status` fails), and
 the container lacks working netfilter access even running as root.
 Confirmed this isn't crystal-ansible-specific: real `ansible-playbook`'s
 own `community.general.ufw` module fails identically in the same
-container, even in `--check` mode. See `ROADMAP.md`'s `ufw` entry for
+container, even in `--check` mode. See git log's `ufw` commits for
 what verification *was* possible (unit tests on the pure
 command-construction logic).
 

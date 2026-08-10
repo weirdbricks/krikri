@@ -15,7 +15,7 @@
       # permanent server that never exits, that shell never exits either,
       # so it never releases the stdout/stderr pipe crystal-ansible's shell
       # plugin reads until EOF, hanging the task forever (a real, if narrow,
-      # LocalExecutor gap found via this very playbook - see ROADMAP.md).
+      # LocalExecutor gap found via this very playbook - see git log, 0.9.33).
       ansible.builtin.shell: nohup sh -c 'sleep 1; python3 -m http.server 18082 --directory /work/serve' >/tmp/http-waitfor.log 2>&1 &
       changed_when: false
 

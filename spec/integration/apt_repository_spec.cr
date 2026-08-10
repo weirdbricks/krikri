@@ -57,7 +57,7 @@ describe "apt_repository plugin" do
   # _get_ppa_info) - so they're safe to exercise for real, unlike a
   # genuine PPA add/remove which would need real internet access and
   # write access to /etc/apt/. The actual network+GPG path was verified
-  # by hand in a container instead - see ROADMAP.md.
+  # by hand in a container instead - see git log.
   it "expands ppa: to the exact real-Ansible deb line shape and reports it would add (check mode, no network)" do
     result = PluginSpecHelper.run("apt_repository", {
       "repo" => "ppa:nginx/stable", "codename" => "jammy", "check_mode" => "true",
