@@ -278,17 +278,14 @@ harness covers and how it works.
 See [ROADMAP.md](ROADMAP.md) for the live, detailed tracking of what is
 implemented, what is not, and what is planned next.
 
-**No cross-cutting engine gap remains open.** The last one - bare
-`when:`/`assert: that:`/`until:`/`changed_when:`/`failed_when:`
-conditions not seeing magic variables like `inventory_hostname` - was
-fixed in `0.9.82`, along with two related bugs it exposed:
-`ansible_host` and `ansible_hostname` were being overwritten with the
-inventory name, so an inventory's `ansible_host=192.0.2.55` and a
-gathered `ansible_hostname` fact are now both preserved, matching
-`ansible-core`. The four earlier gaps (Jinja2 filter-chaining,
-`become:`/`become_user:`, filters in bare conditionals, and a failed
-host not being excluded from every remaining play) closed in
-`0.9.41`-`0.9.64`.
+**No known cross-cutting engine gap is currently open.** These get found
+and closed on an ongoing basis via real-host benchmark rounds against
+production Ansible roles (dev-sec, konstruktoid, linux-system-roles) -
+see `ROADMAP.md` for the full, continuously-updated log of what's been
+found and fixed, most recently a batch of plain-`{{ }}`-evaluator gaps
+(depth-unaware operator parsing, dict/array literals outside a `+`
+operand, a missing `d()` filter alias, block-level `vars:` never parsed,
+among others) through `0.9.171`.
 
 The remaining open items are narrow, documented scope cuts:
 
@@ -303,6 +300,15 @@ The remaining open items are narrow, documented scope cuts:
 - **Cloud plugins** (`ec2`, `s3_bucket`, `azure_rm_*`) and inventory
   *plugins* (`aws_ec2.yml` et al.) remain explicitly lowest-ROI and are
   not planned.
+- **Role-private custom modules** (a role's own `library/*.py`, outside
+  the `ansible.builtin`/`community.*`/etc. plugin set this engine ships)
+  aren't executed - there's no generic arbitrary-Python-module runner.
+  A task using one is skipped with a "Plugin not available" warning
+  rather than crashing the run; anything downstream that depends on its
+  result sees that value as undefined, which can cascade into broader
+  task-status divergence from real Ansible for roles that lean on this
+  (seen repeatedly benchmarking linux-system-roles - `sr_fingerprint`,
+  `timesync_provider`, `kernel_settings_get_config`, `blivet`).
 
 `postgresql_privs`, which this roadmap tracked scope cuts against for a
 long time, is complete as of `0.9.84` - every `type:` real Ansible's
