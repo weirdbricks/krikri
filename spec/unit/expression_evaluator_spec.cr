@@ -190,4 +190,21 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
 
     evaluator.evaluate(%(lookup('env', 'CRYSTAL_ANSIBLE_SPEC_ENV_LOOKUP_TEST_2') | default('2.0.3', true))).should eq("2.0.3")
   end
+
+  it "evaluates an else-less inline if as empty string when the condition is false" do
+    # Real bug found benchmarking ansible-community.ansible-vault's own
+    # `vault_version_release_site_suffix: "{{ '+ent' if vault_enterprise
+    # }}{{ '.hsm' if vault_enterprise_hsm }}"` - real Jinja2 renders the
+    # missing else branch as "" (Undefined's default __str__), but this
+    # fell through to plain variable lookup on the literal text `'+ent' if
+    # vault_enterprise`, always resolving to "undefined".
+    v = Hash(String, JSON::Any).new
+    v["vault_enterprise"] = JSON::Any.new(false)
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(%('+ent' if vault_enterprise)).should eq("")
+
+    v["vault_enterprise"] = JSON::Any.new(true)
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(%('+ent' if vault_enterprise)).should eq("+ent")
+  end
 end

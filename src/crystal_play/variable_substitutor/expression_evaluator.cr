@@ -37,6 +37,8 @@ module CrystalPlay
       def evaluate(expr : String) : String
         if ternary = split_ternary(expr)
           evaluate_ternary(ternary)
+        elsif ternary_no_else = split_ternary_no_else(expr)
+          evaluate_ternary_no_else(ternary_no_else)
         else
           evaluate_expr(expr)
         end
@@ -261,6 +263,32 @@ module CrystalPlay
         return nil if truthy.empty? || cond.empty? || falsy.empty?
 
         {truthy, cond, falsy}
+      end
+
+      # Splits *expr* on a top-level ` if ` with NO ` else ` clause at all
+      # - real Jinja2's else-less inline-if (`TRUTHY if COND`), which
+      # renders as an empty string when COND is false (Jinja evaluates the
+      # missing else branch to Undefined, whose default __str__ is "").
+      # Real bug found benchmarking ansible-community.ansible-vault's own
+      # `vault_version_release_site_suffix: "{{ '+ent' if vault_enterprise
+      # }}{{ '.hsm' if vault_enterprise_hsm }}"` - previously fell through
+      # to #evaluate_expr on the literal text `'+ent' if vault_enterprise`,
+      # always resolving to the string "undefined" instead of "".
+      private def split_ternary_no_else(expr : String) : {String, String}?
+        if_idx = top_level_keyword_index(expr, " if ")
+        return nil unless if_idx
+
+        truthy = expr[0...if_idx].strip
+        cond = expr[(if_idx + 4)..].strip
+        return nil if truthy.empty? || cond.empty?
+
+        {truthy, cond}
+      end
+
+      private def evaluate_ternary_no_else(ternary : {String, String}) : String
+        truthy_expr, cond_expr = ternary
+        return "" unless ConditionalEvaluator.evaluate(cond_expr, @vars)
+        quoted_string_literal(truthy_expr).try(&.as_s) || evaluate(truthy_expr)
       end
 
       # Finds the index of *keyword* at bracket/quote depth 0, starting the
