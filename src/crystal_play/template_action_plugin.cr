@@ -520,11 +520,25 @@ module CrystalPlay
 
 
     # Prepare variables for template rendering
+    #
+    # A String value that itself contains "{{" is re-templated first -
+    # see CrinjaRenderer#prepare_crinja_vars for the full rationale
+    # (real Ansible re-templates every variable's value recursively
+    # wherever it's used; real Jinja2 itself does not, so a role default
+    # like geerlingguy.nginx's own `nginx_worker_processes: '"{{
+    # ansible_processor_vcpus | default(ansible_processor_count) }}"'`
+    # would otherwise render as the literal, still-unparsed inner text).
+    # This plugin has its own separate prepare_*_vars (see that
+    # method's own comment for why its Crinja environment can't be
+    # shared with CrinjaRenderer's), so it needs the identical fix
+    # applied here too, not just there.
     private def prepare_template_vars : Hash(String, Crinja::Value)
       vars = Hash(String, Crinja::Value).new
-      
+      substitutor = VarSubstitutor.new(vars: @vars)
+
       # Add all vars
       @vars.each do |key, value|
+        value = JSON::Any.new(substitutor.substitute(value.as_s)) if value.raw.is_a?(String) && value.as_s.includes?("{{")
         vars[key] = VariableSubstitutor::CrinjaRenderer.json_any_to_crinja_value(value)
       end
       
