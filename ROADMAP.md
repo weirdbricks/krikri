@@ -1,5 +1,15 @@
 # Crystal Play - Roadmap to Ansible Parity
 
+**Currently at `0.9.171`** - real-host benchmark rounds against
+production Ansible roles keep finding and closing bugs past the "Phases
+0-5 complete" milestone below; see the `linux-system-roles` benchmark
+round entry (search this file for `0.9.158`) for the most recent one.
+The narrative below is largely historical (last fully rewritten at
+`0.9.84`) and is not re-litigated on every release - treat version
+numbers cited inline as "true as of when that paragraph was written,"
+and prefer `git log`/this file's own newest entries over the framing
+text below for current state.
+
 **Status as of 2026-08-05 (currently at `0.9.84`):** **all of Phase 0 through
 Phase 5 are done** - see the checkboxes in each phase section below (roles,
 import/include, vault, every Phase 3 plugin, every Phase 4
@@ -3889,6 +3899,217 @@ compat playbook's own task wouldn't have suggested was there).
     the default privileges actually took effect rather than merely being
     recorded in the catalog.
 
+**Real-host benchmark round: linux-system-roles (`0.9.158`-`0.9.171`).**
+Same real-host-benchmark methodology as the dev-sec/konstruktoid rounds
+this section was originally built around - two fresh Atlantic.net Ubuntu
+22.04 hosts (one per engine), running actual roles from the officially
+Red Hat/Fedora-maintained `linux-system-roles` collection
+(`journald`/`logging`/`timesync`/`kernel_settings`, each much smaller and
+more focused than dev-sec's `os_hardening`), diffing crystal-ansible's
+run against real `ansible-playbook`'s. Found and fixed **19 real bugs**,
+almost all in the plain `{{ }}` expression evaluator - this role family
+leans much harder on `d()`/ternary/dict-literal Jinja idioms and
+`lookup('first_found', ...)` for OS-version vars files than the earlier
+rounds did:
+
+- [x] `include_tasks:`/`import_tasks:` doubled `tasks/tasks/x.yml` when a
+  file already inside `<role>/tasks/` includes a sibling by its full
+  `tasks/foo.yml`-relative spelling (`0.9.158`) - real Ansible searches
+  multiple roots including the role root itself; added a strip-leading-
+  `tasks/` fallback in `PlaybookParser.resolve_include_path`, used by
+  both `try_parse_import_tasks` and `run_include_tasks_once`.
+- [x] `package:`'s `name:` parameter mishandled multi-package lists two
+  separate ways, found in two different rounds of this same benchmark
+  (`0.9.158`, `0.9.168`): a templated list var renders as JSON-bracket
+  text (`["a","b"]`) that was sent to `apt-get`/`dpkg`/`rpm` unparsed
+  until space-joined; a *literal* YAML list value is stringified comma-
+  joined by `playbook_parser.cr` ("the format every other plugin's list
+  params expect") but needed space-joining too. Separately, the
+  installed-check used *one* combined `dpkg -l`/`rpm -q` call across all
+  named packages, true the moment *any one* matched - masked a
+  genuinely-missing package (`tuned`) behind an already-installed one
+  (`python3-configobj`); fixed with a per-package `all_packages_
+  installed?` helper shared between `handle_apt`/`handle_dnf`.
+- [x] `ternary()` and `difference()` Jinja filters were entirely
+  unimplemented in the plain evaluator (`0.9.158`, `0.9.160`) - only
+  Crinja's separate template-file pipeline had them, the same "two
+  independent evaluator implementations disagree" root cause behind
+  several bugs in earlier rounds too.
+- [x] **Handlers had zero `loop:`/`with_*:` support at all** (`0.9.159`)
+  - a notified handler ran its module exactly once regardless of a
+  `loop:` keyword, leaving `item` undefined. Extracted the single-
+  execution body into `execute_handler_plugin_once`, added
+  `execute_handler_loop` mirroring how a looped regular task already
+  resolves its loop source and binds `item`/`loop_var` per iteration,
+  with a new `already_displayed` result marker so `HandlerRunner#run`
+  records stats without printing a second, redundant summary line.
+- [x] `ansible_machine_id` fact was never gathered at all (`0.9.161`) -
+  found via a `difference()`-based required-facts guard (`when:
+  required_facts | difference(ansible_facts.keys() | list) | length >
+  0`) that could never see all required facts as gathered, so a should-
+  be-skipped re-gather `setup:` task ran on every play. Reads
+  `/etc/machine-id`, falling back to `/var/lib/dbus/machine-id`, matching
+  real Ansible's own fallback order.
+- [x] Block-level `vars:` was never parsed at all (`0.9.162`) -
+  `parse_block_task` set `when_condition`/`ignore_errors`/`become`/`tags`
+  but never read `task_hash["vars"]`, so a block-scoped helper var
+  computed for a nested task's `when:` was silently invisible even
+  though `TaskExecutor#propagate_role_context` already had the merge
+  logic to push it down - it just always saw an empty hash. The
+  identical gap existed separately in `parse_include_vars_task`, found
+  later via the `lookup()` work below (`0.9.166`) - same missing-vars-
+  parsing bug pattern in two different parse functions.
+- [x] `role_path` magic variable (the currently-executing role's own
+  root directory) was never set anywhere (`0.9.163`) - `include_role:
+  name: "{{ role_path }}/roles/rsyslog"` (a role referencing its own
+  private subrole, a real pattern this collection uses repeatedly)
+  rendered `"undefined/roles/rsyslog"` and failed to load. `RoleLoader.
+  load_role` already computes the exact absolute path needed
+  (`role_dir`); stored on `Task#role_path`, propagated through blocks/
+  includes the same way `role_files_dir`/`role_vars_dir` already are,
+  and exposed as the `role_path` vars_context entry.
+- [x] **A genuine stack overflow**, not just a wrong answer (`0.9.163`):
+  `has_comparison?` did a naive substring search for `<`/`>`/`==`
+  instead of depth-aware scanning, so a `>` nested inside a ternary's
+  own condition (`a + (b if (x > 0) else []) + (c | flatten)`) routed
+  the *entire* plus-expression into `ComparisonEvaluator`, which split
+  on the nested operator with its own naive text split, producing an
+  operand with an unbalanced trailing `)`. Fed back into the evaluator,
+  every depth-tracking scanner downstream (`split_top_level_plus`,
+  `FilterEngine.split_chain`) could never find its target at depth 0
+  again and fell back to "re-evaluate the same unchanged string" -
+  forever. Fixed by making `has_comparison?` (and a new `top_level_
+  pipe?`) properly depth/quote-aware, matching the existing style of
+  `top_level_keyword_index` and the `+`/`-` splitters. Same commit also
+  fixed a related, standalone bug: a literal array (`[]`, `['x']`) used
+  outside a `+` operand (e.g. a ternary branch) fell through to indexed-
+  access and always resolved `"undefined"`.
+- [x] `return X rescue Y` is **not** `return (X rescue Y)` in Crystal - a
+  real language-parsing gotcha, not a logic bug (`0.9.163`). The rescue
+  modifier attaches to the whole `return X` *statement*; if `X` raises,
+  the exception is caught but `return` never completed and `Y`'s value
+  is simply discarded, falling through to whatever comes after the
+  enclosing `if`. `resolve_plus_operand`'s `return JSON.parse(rendered)
+  rescue JSON::Any.new(rendered)` silently dropped every `+` operand
+  whose rendered text wasn't valid JSON (a bare word like
+  `"local-modules"`) instead of falling back to it as a string,
+  collapsing an entire `+` chain to just its other operands. Fixed by
+  parenthesizing: `return (JSON.parse(rendered) rescue
+  JSON::Any.new(rendered))`. Worth grepping for `return .* rescue ` again
+  in any future audit - only this one instance existed this time, but
+  it's a general enough Crystal footgun to re-check.
+- [x] **`d(...)`, Jinja2/Ansible's extremely common shorthand for
+  `default(...)`, was never recognized as a filter name at all**
+  (`0.9.163`) - 268 combined occurrences in just two of these roles.
+  Every `d(...)` call silently passed its input through unchanged
+  instead of substituting the default, masked whenever the input
+  happened to already be defined (the common case). Also fixed in the
+  same commit: `resolve_default_arg` (the `default`/`d` filter's own
+  argument resolver) had no concept of a top-level `+`/`-` chain of
+  parenthesized sub-expressions in its argument at all (only a bare
+  ternary or filter chain) - added a fallback to the full
+  `ExpressionEvaluator` when a top-level `+`/`-` is detected in the
+  argument text.
+- [x] `include_role:`/`include_vars:` `vars:` were never rendered/parsed
+  before reaching the sub-scope (`0.9.165`, `0.9.166`) - `include_role:`
+  passed its `vars:` dict through to `RoleLoader.load_single_role`
+  completely unrendered (a templated value like `rsyslog_custom_config_
+  files: "{{ a + b }}"` landed as the literal `"{{ ... }}"` text, a
+  non-empty "defined" string instead of the empty list it should have
+  rendered to - fed a `loop:` that should have been skipped, producing
+  one bogus iteration); `include_vars:`'s own `vars:` keyword (used to
+  pass parameters like `ffparams` into a `lookup('first_found',
+  ffparams)` expression) was never parsed into `task.vars` at all, the
+  same class of gap as the block-vars fix above.
+- [x] `lookup('first_found', params)` - real Ansible's lookup-plugin
+  function-call syntax, distinct from a `|` filter chain - had zero
+  support (`0.9.166`). Added the specific `first_found` case (searches
+  `files:` under `paths:` on the *controller's* filesystem, in order,
+  re-rendering each entry since they arrive at this evaluator still
+  carrying their own unrendered `{{ }}` markers - they came from a task's
+  `vars:` dict, past the point where `VarSubstitutor#substitute`'s own
+  mustache-span extraction would have rendered them).
+  - Fixing this and the `d()`/dict-literal work together surfaced a
+    require-graph gap: `variable_lookup.cr`/`filter_engine.cr` started
+    referencing `ExpressionEvaluator`/`OMIT_SENTINEL` directly but never
+    required the files defining them - invisible for the main
+    `crystal-play.cr` binary (which happens to pull in every
+    `variable_substitutor/*` file via the `variable_substitutor.cr`
+    aggregator regardless of require order) but broke standalone plugin
+    builds (`debug.cr`, `assert.cr`) with "undefined constant". **Worth
+    remembering for future evaluator changes**: `crystal build
+    crystal-play.cr` succeeding is not sufficient proof a
+    `variable_substitutor/*` change is safe - spot-check `crystal build
+    plugins/<touched-family>.cr` too, since each plugin is its own
+    independent compilation unit with its own require graph.
+- [x] `selectattr(..., 'sameas', true/false)` fell to the unknown-test
+  default (`!attr_value.nil?`, i.e. "is defined") - (`0.9.167`) every
+  defined value matched both `sameas(true)` and `sameas(false)`
+  regardless of actual type, so an ordinary integer sysctl value tripped
+  a boolean-value guard's `fail:` unconditionally. Also fixed in the
+  same commit: bare `true`/`false` literals in filter-test arguments
+  resolved to the *string* `"true"`/`"false"` via the variable-lookup
+  fallback, not a real JSON boolean - needed for `sameas` to ever compare
+  unequal to a same-valued non-boolean.
+- [x] **Crinja (the real-Jinja2-template-file engine) has no Python dict
+  `.keys()`/`.values()`/`.items()` method support at all** (`0.9.169`) -
+  a plain `Hash` doesn't implement the `crinja_attribute`/`crinja_call`
+  interface Crinja's own method dispatch requires (only the vendored
+  library's own custom types, like its `Cycler`, do). Fixed by reopening
+  `Hash(K, V)` (from crystal-play's own code, not by patching the
+  vendored shard) to implement `crinja_call` for these three method
+  names - covers every Hash-valued template variable this engine ever
+  hands to Crinja, not just the one role's template that surfaced it. A
+  reasonable, low-risk pattern worth reaching for again before assuming
+  a Crinja gap needs a vendored-library patch.
+- [x] A bare `{{ {key: value} }}` dict literal - especially with a
+  *dynamic* (expression) key, `{item.name: new_value}` - had no handling
+  anywhere in the plain evaluator's main dispatch (`0.9.170`). Only
+  `FilterEngine`'s own `parse_dict_literal` covered `{...}`, and only as
+  a filter *argument* (`combine({...})`), where it also treats the key
+  as literal already-final text rather than an expression - wrong for a
+  dynamic key. A bare dict literal fell through to the `.`-nested-access
+  check (dict literals routinely contain a `.` in a dynamic key
+  expression) and got treated as a dotted variable path off the literal
+  brace text, always undefined. Added `evaluate_dict_literal`, resolving
+  both key and value as full expressions via `resolve_plus_operand`.
+- [x] **Task-level `vars:` referencing `item` inside a `loop:` were
+  rendered exactly once**, by `build_vars_context`, *before* the loop
+  even started (`0.9.171`) - at that point `item` was unbound, and every
+  iteration then reused that same first (wrong) rendered value instead
+  of recomputing it per item. A dict-accumulation pattern (`vars:
+  {new_item: "{{ {item.name: new_value} }}"}` feeding a looped
+  `set_fact: acc: "{{ acc | combine(new_item) }}"`) lost every entry
+  this way. Fixed in `execute_looped_task`'s one-at-a-time branch:
+  restore `task.vars`' original unrendered text into that iteration's
+  `vars_context` (it had been overwritten with the stale rendered value
+  from the eager pass) and call `render_task_vars` again, now with
+  `item` correctly bound. Not yet checked against the *batched* loop
+  path (`execute_looped_task_batched`) - `set_fact:` is already excluded
+  from batching entirely by a pre-existing, unrelated guard, so every
+  case this round actually hit used the one-at-a-time path; a future
+  round hitting this same pattern on a batchable module+loop+item-
+  referencing-vars: combination should check that path too.
+
+Timesync and kernel_settings both stopped short of a fully clean recap
+match against real Ansible, but for a reason outside this engine's
+scope, not a bug: both roles depend on **role-private custom Python
+modules** (`timesync_provider.sh`, `kernel_settings_get_config.py`) that
+this engine correctly and gracefully skips ("Plugin not available")
+rather than crashing, since there is no generic arbitrary-third-party-
+module runner - anything downstream that depends on the skipped task's
+result then diverges from real Ansible too. `network` and `storage` (two
+more roles cloned for this round) were tried and abandoned for similar
+reasons before any real bug-hunting could start: `network`'s own python
+baseline fails on this Ubuntu test host trying to install `network-
+scripts` (a RHEL-only package name); `storage` defaults to
+`storage_provider: "blivet"`, a heavy custom-Python-module dependency for
+real LVM/filesystem management. Neither is a crystal-ansible defect to
+chase - see the new "Role-private custom modules" bullet in the README's
+Limitations section.
+
+825 specs, 0 failures throughout every one of the 19 fixes above.
+
 **Per-plugin scope cuts - the incremental parity list this section has
 been working through is now empty:**
 
@@ -3915,12 +4136,22 @@ when:/assert: that: conditions (or combined with a comparison in the
 same `{{ }}` expression), a failed host not being excluded from
 every remaining play in the run, and magic variables not reaching bare
 conditions - are **all now fixed**; see the `0.9.42`, `0.9.41`, `0.9.64`
-and `0.9.82` entries. No cross-cutting engine gap remains open. Cloud plugins
-(`ec2`, `s3_bucket`, `azure_rm_*`) and inventory *plugins* (`aws_ec2.yml`
-et al.) remain explicitly lowest-ROI and are not planned - everything else
-in this list is being picked off incrementally, each verified against real
-`ansible-playbook` directly and via the compat harness the same way every
-other entry in this file has been, not assumed from documentation.
+and `0.9.82` entries. **No *known* cross-cutting engine gap is currently
+open** - but that status is continuously re-earned, not permanent: the
+`linux-system-roles` benchmark round above (`0.9.158`-`0.9.171`) found
+and fixed 15 more cross-cutting plain-`{{ }}`-evaluator bugs well after
+this paragraph was first written at `0.9.84` (depth-unaware operator
+parsing that could stack-overflow, block-level `vars:` never parsed, a
+missing `d()` filter alias, dict/array literals unsupported outside a
+`+` operand, among others - see that section for the full list). Treat
+"no gap remains open" as "none is known right now", re-verified by each
+new real-host benchmark round, not as a claim the search is finished.
+Cloud plugins (`ec2`, `s3_bucket`, `azure_rm_*`) and inventory *plugins*
+(`aws_ec2.yml` et al.) remain explicitly lowest-ROI and are not planned -
+everything else in this list is being picked off incrementally, each
+verified against real `ansible-playbook` directly and via the compat
+harness the same way every other entry in this file has been, not
+assumed from documentation.
 
 **Fixed in `0.9.42`:** the `{{ }}`-wrapped filter pipeline only ever split
 on the *first* `|`, so a single filter chained after another (e.g. `x |
