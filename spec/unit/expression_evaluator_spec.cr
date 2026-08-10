@@ -285,4 +285,21 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("result is failed or a != b").should eq("True")
   end
+
+  it "compares a dotted operand against a `~`-concatenated one, full ansible-vault expression" do
+    # End-to-end regression for the exact expression benchmarked from
+    # ansible-community.ansible-vault's own "Compute if installation is
+    # required" task: `installed_vault_version.stdout != vault_version~
+    # ('+ent' if vault_enterprise)`. Comparison operators must be
+    # detected (has_comparison?) before the `~` split ever runs, or the
+    # whole thing gets sliced on `~` first instead of `!=` - covering the
+    # dispatch-order interaction directly, on top of the narrower
+    # ComparisonEvaluator-only and ExpressionEvaluator-only specs above.
+    v = Hash(String, JSON::Any).new
+    v["installed_vault_version"] = JSON.parse(%({"stdout": "2.0.3"}))
+    v["vault_version"] = JSON::Any.new("2.0.3")
+    v["vault_enterprise"] = JSON::Any.new(false)
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("installed_vault_version.stdout != vault_version~('+ent' if vault_enterprise)").should eq("false")
+  end
 end
