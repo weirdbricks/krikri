@@ -785,7 +785,7 @@ module CrystalPlay
 
       # Find the module (first key that's not a special keyword)
       special_keys = ["name", "when", "register", "ignore_errors", "check_mode",
-                      "diff", "become", "become_user", "tags", "with_items", "loop",
+                      "diff", "become", "become_user", "tags", "args", "with_items", "loop",
                       "with_dict", "with_fileglob", "with_first_found", "with_nested", "with_sequence",
                       "with_community.general.flattened", "with_subelements", "with_indexed_items", "until", "retries", "delay",
                       "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "run_once",
@@ -828,6 +828,23 @@ module CrystalPlay
 
       # Parse module parameters
       task.params = parse_module_params(module_params.not_nil!, module_name)
+
+      # args: - a sibling keyword (not nested inside the module's own
+      # key) for extra params on a free-form module, real Ansible's own
+      # idiom for command/shell's own stdin:/chdir:/creates:/etc when
+      # the module's own value is a bare command string rather than a
+      # dict (`command: "wg pubkey"` / `args: {stdin: "{{ key }}"}`).
+      # Previously not in special_keys at all (risking being misread as
+      # the module name itself if it happened to sort first) and never
+      # merged into task.params regardless - githubixx.ansible_role_
+      # wireguard's own public-key derivation feeds the private key via
+      # exactly this pattern; without the merge, `wg pubkey` always ran
+      # with empty stdin, always "Key is not the correct length or
+      # format" - a confusing failure with no evident tie back to args:
+      # never being read.
+      if args_yaml = task_hash["args"]?.try(&.as_h?)
+        parse_module_params(YAML::Any.new(args_yaml), module_name).each { |key, value| task.params[key] = value }
+      end
 
       # Parse task-level settings - FIXED to handle boolean values safely
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }

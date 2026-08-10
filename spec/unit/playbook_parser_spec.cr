@@ -75,6 +75,28 @@ describe CrystalPlay::PlaybookParser do
       task.tags.should eq(["demo"])
     end
 
+    it "merges args: (a sibling keyword) into a free-form module's params" do
+      # Real bug found benchmarking githubixx.ansible_role_wireguard's
+      # own public-key derivation: `command: "wg pubkey" / args: {stdin:
+      # "{{ key }}"}` - real Ansible's own idiom for extra params on a
+      # free-form module (command/shell's stdin:/chdir:/creates:/etc)
+      # when the module's own value is a bare command string. args: was
+      # not in special_keys at all (risking misdetection as the module
+      # name itself) and never merged into task.params regardless -
+      # `wg pubkey` always ran with empty stdin, always "Key is not the
+      # correct length or format".
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: cat
+          args:
+            stdin: "hello"
+            chdir: /tmp
+        YAML
+
+      task.params["stdin"].should eq("hello")
+      task.params["chdir"].should eq("/tmp")
+    end
+
     it "orders pre_tasks:, roles:, tasks:, and post_tasks: correctly, matching real Ansible" do
       # Real gap found benchmarking every one of geerlingguy.docker/mysql/
       # postgresql/nginx/php/security: pre_tasks:/post_tasks: were
