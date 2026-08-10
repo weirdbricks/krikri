@@ -59,6 +59,15 @@ module CrystalPlay
           nil
         end
         name = parsed.join(" ") if parsed
+      elsif trimmed.includes?(',')
+        # A *literal* YAML list (`name: [tuned, python3-configobj]`,
+        # unlike the templated-var JSON-bracket case above) is stringified
+        # comma-joined by the parser - "the format every existing
+        # plugin's list params already expect" per playbook_parser.cr's
+        # own stringify_value, but apt-get/dpkg -l/rpm -q all need space-
+        # separated names, not comma-separated (a real single package
+        # name never contains a comma, so this can't misfire).
+        name = trimmed.split(',').map(&.strip).reject(&.empty?).join(" ")
       end
 
       state = @params["state"]? || "present"
@@ -89,6 +98,14 @@ module CrystalPlay
       end
     end
     
+    # `name:` may be several space-separated package names (this module's
+    # own space-joining of a templated list var - see the JSON-array
+    # handling in #execute above). True only if *every* one is installed,
+    # not merely one of them.
+    private def all_packages_installed?(name : String, & : String -> Bool) : Bool
+      name.split(' ').reject(&.empty?).all? { |pkg| yield pkg }
+    end
+
     # Detect which package manager is available
     private def detect_package_manager() : String?
       # Try dnf first (newer)
@@ -108,9 +125,14 @@ module CrystalPlay
     
     # Handle DNF/YUM package management
     private def handle_dnf(name : String, state : String) : PluginResult
-      # Check if package is installed
-      check_result = remote_exec("rpm -q #{name}")
-      is_installed = check_result[:exit_code] == 0
+      # Check if package is installed - each name checked individually
+      # (not `rpm -q #{name}` as one combined call) so a multi-package
+      # `name:` (this module's own space-joined list, from a templated
+      # list var) can't have one installed package mask another that
+      # isn't: linux-system-roles/kernel_settings' `name: "tuned
+      # python3-configobj"` previously read as "installed" the moment
+      # *either* package matched.
+      is_installed = all_packages_installed?(name) { |pkg| remote_exec("rpm -q #{pkg}")[:exit_code] == 0 }
       
       case state
       when "present"
@@ -218,9 +240,11 @@ module CrystalPlay
     
     # Handle APT package management
     private def handle_apt(name : String, state : String) : PluginResult
-      # Check if package is installed
-      check_result = remote_exec("dpkg -l #{name} 2>/dev/null | grep '^ii'")
-      is_installed = check_result[:exit_code] == 0
+      # Check if package is installed - each name checked individually
+      # (see handle_dnf's own comment for why: a single combined `dpkg -l
+      # pkg1 pkg2 | grep '^ii'` matches as soon as *any* one of them is
+      # installed, not all of them).
+      is_installed = all_packages_installed?(name) { |pkg| remote_exec("dpkg -l #{pkg} 2>/dev/null | grep '^ii'")[:exit_code] == 0 }
       
       case state
       when "present"
