@@ -39,6 +39,21 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     renderer.render("{{ 'Ansible managed' | comment }}").should eq("#\n# Ansible managed\n#")
   end
 
+  it "exposes the whole variable scope under the 'vars' magic variable, for dynamic-key lookups" do
+    # Real bug found benchmarking openstack.ansible-hardening's own
+    # audit-rule template: `{% if vars['security_rhel7_audit_' +
+    # command_sanitized] | bool %}` (picking which of ~40 individually-
+    # named enable/disable flags applies to the audit rule currently
+    # being rendered) - real Ansible's own `vars` magic variable, a dict
+    # of the whole current scope, entirely absent before ("vars is
+    # undefined" failed the whole template render outright).
+    v = Hash(String, JSON::Any).new
+    v["security_rhel7_audit_foo"] = JSON::Any.new(true)
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render("{{ vars['security_rhel7_audit_foo'] }}").should eq("true")
+  end
+
   it "honors decoration= for a non-'#' comment style" do
     # Real bug found benchmarking geerlingguy.php: `{{ ansible_managed |
     # comment(decoration='; ') }}` (www.conf.j2's own header, a php-fpm

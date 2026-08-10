@@ -91,6 +91,20 @@ module CrystalPlay
           vars[key] = json_any_to_crinja_value(value)
         end
 
+        # `vars` - real Ansible's own magic variable exposing the whole
+        # current variable scope as a dict, letting a template look up a
+        # DYNAMICALLY-COMPUTED variable name (`vars['prefix_' +
+        # suffix]`) rather than a fixed one. openstack.ansible-hardening's
+        # own audit-rule template does exactly this (`vars['security_
+        # rhel7_audit_' + command_sanitized] | bool`, picking which of ~40
+        # individually-named enable/disable flags applies to the audit
+        # rule currently being rendered) - entirely absent before,
+        # "vars is undefined" failed the whole template render outright.
+        # A shallow snapshot (not recursively containing itself under its
+        # own "vars" key) is enough for every real lookup-by-computed-key
+        # usage.
+        vars["vars"] = Crinja::Value.new(vars.reduce(Crinja::Dictionary.new) { |dict, (key, value)| dict[Crinja::Value.new(key)] = value; dict })
+
         vars
       end
       

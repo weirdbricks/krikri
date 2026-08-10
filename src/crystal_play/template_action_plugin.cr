@@ -546,7 +546,15 @@ module CrystalPlay
       vars["inventory_hostname"] = Crinja::Value.new(@host.name)
       vars["ansible_hostname"] = Crinja::Value.new(@host.name)
       vars["ansible_host"] = Crinja::Value.new(@host.name)
-      
+
+      # `vars` magic variable - see CrinjaRenderer#prepare_crinja_vars
+      # for the full rationale (real Ansible's own dict-of-the-whole-
+      # scope, letting a template look up a dynamically-computed
+      # variable name). Snapshotted after the host-info assignments
+      # above so `vars['inventory_hostname']` etc. resolve too, matching
+      # real Ansible.
+      vars["vars"] = Crinja::Value.new(vars.reduce(Crinja::Dictionary.new) { |dict, (key, value)| dict[Crinja::Value.new(key)] = value; dict })
+
       vars
     end
     
