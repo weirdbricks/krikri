@@ -171,12 +171,32 @@ module CrystalPlay
       # Look up a simple variable
       private def lookup_simple_variable(name : String) : String | Int64 | Bool | Nil
         name = name.strip
-        
+
         if @vars.has_key?(name)
           value = @vars[name]
-          case value.raw
+          case raw = value.raw
           when String
-            return value.as_s.strip
+            # Real Ansible's recursive re-templating: a variable whose
+            # own raw value is itself unrendered Jinja (a role default
+            # defined in terms of another default, e.g. ansible-
+            # community.ansible-vault's own `vault_version: "{{
+            # lookup('env', 'VAULT_VERSION') | default('2.0.3', true)
+            # }}"`) must be rendered before being compared - otherwise
+            # `installed_vault_version.stdout != vault_version` compared
+            # the real installed version string against the raw,
+            # unrendered template text itself (never equal to anything),
+            # always concluding a reinstall was needed. `{{ vault_version
+            # }}` alone rendered correctly (a different code path -
+            # VarSubstitutor#substitute's own re-templating pass -
+            # already handled it), but this plain-lookup fallback for a
+            # bare comparison operand didn't.
+            if raw.includes?("{{")
+              inner = raw.strip
+              inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
+              rendered = VariableSubstitutor::ExpressionEvaluator.new(@vars).evaluate(inner)
+              return rendered.to_i64? || rendered
+            end
+            return raw.strip
           when Int64
             return value.as_i64
           when Bool
@@ -187,7 +207,7 @@ module CrystalPlay
             return value.to_s
           end
         end
-        
+
         nil
       end
       

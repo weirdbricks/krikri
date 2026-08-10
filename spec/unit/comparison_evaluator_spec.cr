@@ -75,5 +75,24 @@ describe CrystalPlay::VariableSubstitutor::ComparisonEvaluator do
       evaluator = CrystalPlay::VariableSubstitutor::ComparisonEvaluator.new(v)
       evaluator.evaluate("installed != vault_version~('+ent' if vault_enterprise)").should eq("false")
     end
+
+    it "re-templates a bare comparison operand when its raw value is still unrendered Jinja" do
+      # Real bug found alongside the `~` one above, on the exact same
+      # role: `installed_vault_version.stdout != vault_version` alone
+      # (no `~` at all) ALSO always evaluated true, because
+      # vault_version's own raw value was itself unrendered Jinja (`{{
+      # lookup('env', 'VAULT_VERSION') | default('2.0.3', true) }}`) -
+      # lookup_simple_variable's plain-lookup fallback for a bare
+      # comparison operand (no `|`, no `(`, no `~`, no `.`) returned
+      # that raw template text unchanged rather than rendering it, so it
+      # never matched the real (rendered) value on the other side. `{{
+      # vault_version }}` alone rendered correctly elsewhere (a
+      # different code path), masking this for a long time.
+      v = Hash(String, JSON::Any).new
+      v["installed"] = JSON.parse(%({"stdout": "2.0.3"}))
+      v["vault_version"] = JSON::Any.new(%({{ lookup('env', 'CRYSTAL_ANSIBLE_SPEC_CMP_ENV_TEST') | default('2.0.3', true) }}))
+      evaluator = CrystalPlay::VariableSubstitutor::ComparisonEvaluator.new(v)
+      evaluator.evaluate("installed.stdout != vault_version").should eq("false")
+    end
   end
 end
