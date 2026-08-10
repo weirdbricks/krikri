@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.171-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.172-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -225,30 +225,34 @@ for the full methodology and results behind each number.
 3 fresh Atlantic.net instances per row (Ubuntu 22.04, all destroyed
 immediately after each run), the same 12-task mixed playbook (`file`,
 `copy`+loop x10, `lineinfile`+loop x10, `shell`+`register`,
-`changed_when`/`failed_when`, `stat`, `assert`, `find`, `debug`) run
-against both tools:
+`command`+`register`, `changed_when`/`failed_when`, `stat`, `assert`,
+`find`, `set_fact`, `debug`) run against both tools:
 
 | | Fresh run | Idempotent re-run (median of 3) |
 |---|---|---|
-| Python `ansible-core` 2.19.4 (`forks=5` default) | 33.5s | 30.3s |
-| `crystal-ansible` `--forks 1` (one-host-at-a-time) | 26.6s (1.26x) | 5.4s (5.6x) |
-| `crystal-ansible` `--forks 3` | 27.5s (1.22x) | **2.9s (10.4x)** |
+| Python `ansible-core` 2.19.4 (`forks=5` default) | 39.6s | 32.5s |
+| `crystal-ansible` `--forks 1` (one-host-at-a-time) | 25.8s (1.54x) | 8.6s (3.8x) |
+| `crystal-ansible` `--forks 3` | 14.4s (2.76x) | **3.5s (9.3x)** |
 
-> These two rows were measured at `0.9.77`/`0.9.78` and have **not** been
-> re-run since against later engine-level performance work - see
-> `git log` for what's changed since. Rather than scale the old
-> numbers by later isolated-benchmark ratios, they are left exactly as
-> measured until the whole comparison is re-run against both tools on the
-> same hosts.
+> Re-measured `0.9.171` (2026-08-10), replacing the `0.9.77`/`0.9.78`
+> numbers this table carried for a long time - see `git log` for the
+> engine-level performance work done in between. Same methodology (3
+> fresh Atlantic.net `G3.1GB` instances per row, interleaved-by-row on
+> this dev box against the same 3-node inventory), but the fresh-run
+> gap between `--forks 1` and `--forks 3` is now much larger than the
+> earlier snapshot showed (1.54x/2.76x here vs. 1.26x/1.22x before) -
+> plausibly explained by this benchmark environment's own
+> network latency/jitter mattering more now that only 3 target hosts are
+> in play, letting higher forks overlap their SSH round trips more
+> visibly. Treat the ratios as directionally solid, not as tightly
+> reproducible absolute numbers.
 
-Fresh-run time stays close across all three rows - that time is
-dominated by the actual work (writing files, running commands), which
-is identical regardless of orchestrator or fork count. The idempotent
-case is where native compiled modules plus batched, forked SSH round
-trips show through cleanly: Python ships and starts a fresh interpreter
-per task per host even when nothing needs to change, while
-`crystal-ansible` finishes in under 3 seconds. Idempotent reruns are
-also the more common real-world case for a config-management tool.
+The idempotent case is where native compiled modules plus batched,
+forked SSH round trips show through cleanly: Python ships and starts a
+fresh interpreter per task per host even when nothing needs to change,
+while `crystal-ansible` finishes in single-digit seconds. Idempotent
+reruns are also the more common real-world case for a config-management
+tool.
 
 `--forks` defaults to `5` since `0.9.78`, matching real
 `ansible-playbook`'s own default - the two rows above measured `--forks 1`
@@ -284,8 +288,9 @@ production Ansible roles (dev-sec, konstruktoid, linux-system-roles) -
 see `git log` for the full log of what's been found and fixed, most
 recently a batch of plain-`{{ }}`-evaluator gaps (depth-unaware operator
 parsing, dict/array literals outside a `+` operand, a missing `d()`
-filter alias, block-level `vars:` never parsed, among others) through
-`0.9.171`.
+filter alias, block-level `vars:` never parsed, a `range(...)`
+function-call `loop:` source silently running once instead of
+iterating, among others) through `0.9.172`.
 
 The remaining open items are narrow, documented scope cuts:
 

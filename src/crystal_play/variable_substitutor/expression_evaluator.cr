@@ -57,6 +57,19 @@ module CrystalPlay
           return evaluate_lookup(expr[7..-2])
         end
 
+        # `range(...)` - real Jinja2/Python's function-call range syntax,
+        # commonly used as a `loop:` source (`loop: "{{ range(1, 11) |
+        # list }}"`) rather than the engine's own `with_sequence:`
+        # keyword. Checked here (bare, no filter chain) for the no-filter
+        # case; the filter-chain case (`range(...) | list`) is handled in
+        # evaluate_with_filter's own base-value resolution, since a bare
+        # `range(` prefix check there would otherwise never be reached -
+        # top_level_pipe? routes any expression with a `|` straight past
+        # this method into evaluate_with_filter before this line runs.
+        if expr.starts_with?("range(") && expr.ends_with?(')')
+          return @lookup.format_value(evaluate_range(expr[6..-2]))
+        end
+
         # Check for comparison operators FIRST (before filters)
         if has_comparison?(expr)
           return @comparison.evaluate(expr)
@@ -489,6 +502,36 @@ module CrystalPlay
         value.try(&.as_a?) || [] of JSON::Any
       end
 
+      # Python/Jinja2 `range(stop)` / `range(start, stop)` /
+      # `range(start, stop, step)` - each argument may itself be an
+      # expression (a variable, a filter chain, ...), so every part is
+      # evaluated (not just parsed as a literal int) before being coerced
+      # to Int32. Matches Python's own half-open, stop-exclusive range.
+      private def evaluate_range(args : String) : JSON::Any
+        parts = split_top_level_commas(args).map { |part| resolve_plus_operand(part).as_i }
+        start, stop, step = case parts.size
+                             when 1 then {0, parts[0], 1}
+                             when 2 then {parts[0], parts[1], 1}
+                             else        {parts[0], parts[1], parts[2]}
+                             end
+        return JSON::Any.new([] of JSON::Any) if step == 0
+
+        values = [] of JSON::Any
+        n = start
+        if step > 0
+          while n < stop
+            values << JSON::Any.new(n.to_i64)
+            n += step
+          end
+        else
+          while n > stop
+            values << JSON::Any.new(n.to_i64)
+            n += step
+          end
+        end
+        JSON::Any.new(values)
+      end
+
       # A literal Jinja dict (`{item.name: new_value}`, `{"a": 1}`) - each
       # key AND value resolved as a full expression via resolve_plus_
       # operand (a bare identifier, dotted path, quoted literal, or filter
@@ -759,6 +802,12 @@ module CrystalPlay
                   # the entire with_dict: source to nothing.
                   rendered = evaluate(var_expr[1..-2].strip)
                   JSON.parse(rendered) rescue JSON::Any.new(rendered)
+                elsif var_expr.starts_with?("range(") && var_expr.ends_with?(')')
+                  # `range(1, 11) | list` / `range(1, 11) | ...` - same
+                  # function-call syntax as the no-filter case in
+                  # evaluate_expr, just reached via a different path since
+                  # top_level_pipe? routes anything with a `|` here first.
+                  evaluate_range(var_expr[6..-2])
                 elsif var_expr.includes?("[")
                   # Array slicing (`list[0:2]`) and plain indexing
                   # (`list[0]`) aren't resolved to JSON::Any directly here

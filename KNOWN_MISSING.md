@@ -8,7 +8,7 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.171`.**
+**Currently at `0.9.172`.**
 
 ---
 
@@ -21,6 +21,14 @@ parsed, a missing `d()` filter alias, dict/array literals unsupported
 outside a `+` operand, among others - `git log --oneline --grep=
 "0\.9\.1[5-7][0-9]" -E` for the full list). Treat "no gap remains open"
 as "none is known right now," not as a claim the search is finished.
+Most recently (`0.9.172`, found while rebuilding the perf-benchmark
+playbook, not a role round): Jinja2/Python's `range(...)` function-call
+syntax (`loop: "{{ range(1, 11) | list }}"`) was never recognized -
+routed to a plain variable lookup on the literal text `range(1, 11)`,
+always undefined, silently running the loop body once with `item`
+undefined instead of iterating. Fixed generally (bare `range(stop)`,
+`range(start, stop)`, `range(start, stop, step)`, negative step,
+expression/variable arguments, with or without a following `| list`).
 
 Narrow, deliberately-scoped items:
 

@@ -53,4 +53,41 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("mylist | length > 0").should eq("false")
   end
+
+  it "evaluates range(stop) with the | list filter, matching Python's range()" do
+    # Real bug found benchmarking a perf playbook: `loop: "{{ range(1, 11)
+    # | list }}"` silently resolved to nil (fell through to plain variable
+    # lookup on the literal text "range(1, 11)", always undefined),
+    # running the loop body once with `item` undefined instead of 10
+    # times.
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("range(3) | list").should eq(%([0,1,2]))
+  end
+
+  it "evaluates bare range(stop) with no filter at all" do
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("range(3)").should eq(%([0,1,2]))
+  end
+
+  it "evaluates range(start, stop)" do
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("range(1, 11) | list").should eq(%([1,2,3,4,5,6,7,8,9,10]))
+  end
+
+  it "evaluates range(start, stop, step) including a negative step" do
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("range(0, 10, 2) | list").should eq(%([0,2,4,6,8]))
+    evaluator.evaluate("range(5, 0, -1) | list").should eq(%([5,4,3,2,1]))
+  end
+
+  it "evaluates range() arguments that are themselves variables" do
+    v = Hash(String, JSON::Any).new
+    v["n"] = JSON::Any.new(4_i64)
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("range(1, n) | list").should eq(%([1,2,3]))
+  end
 end
