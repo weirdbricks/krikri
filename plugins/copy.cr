@@ -184,6 +184,17 @@ module CrystalPlay
     
     # Copy file from src to dest
     private def handle_file_copy(src : String, dest : String) : PluginResult
+      # Real ansible.builtin.copy: "If dest is a directory, either the
+      # file or content will be copied there" - dest is the directory
+      # itself, not the final file path, whenever it's already an
+      # existing directory (no trailing "/" required). Real bug found
+      # benchmarking ansible-community.ansible-vault's own "Install
+      # Vault" task (`dest: "{{ vault_bin_path }}"`, defaulting to the
+      # plain directory "/usr/local/bin") - previously dest was always
+      # treated as a literal file path, so writing to it opened the
+      # directory itself with mode "wb" and failed.
+      dest = File.join(dest, File.basename(src)) if Dir.exists?(dest)
+
       # Check if source exists
       unless File.exists?(src)
         return PluginResult.new(
