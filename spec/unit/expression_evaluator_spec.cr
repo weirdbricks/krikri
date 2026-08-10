@@ -90,4 +90,56 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("range(1, n) | list").should eq(%([1,2,3]))
   end
+
+  it "defaults lookup('first_found', ...) with no paths: to the current role's vars/ dir" do
+    # Real bug found benchmarking geerlingguy.docker/mysql/postgresql/php,
+    # which all share this exact idiom: `include_vars: "{{
+    # lookup('first_found', params) }}"` with `vars: params: {files:
+    # [...]}` and NO `paths:` at all - relying entirely on first_found's
+    # own default search roots to find an OS-specific file living in the
+    # role's own vars/ dir. Previously defaulted unconditionally to ".",
+    # ignoring role context entirely, so the task always failed with
+    # "file not found: undefined" for every role using this pattern.
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_role_spec")
+    `rm -rf #{role_dir}`
+    Dir.mkdir_p(File.join(role_dir, "vars"))
+    File.write(File.join(role_dir, "vars", "Debian.yml"), "greeting: hello\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    v["params"] = JSON.parse(%({"files": ["Debian.yml"]}))
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("lookup('first_found', params)").should eq(File.join(role_dir, "vars", "Debian.yml"))
+  end
+
+  it "still honors an explicit absolute paths: entry, unaffected by role-relative resolution" do
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_explicit_paths_spec")
+    `rm -rf #{role_dir}`
+    Dir.mkdir_p(File.join(role_dir, "otherdir"))
+    File.write(File.join(role_dir, "otherdir", "x.yml"), "greeting: hello\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    v["params"] = JSON.parse(%({"files": ["x.yml"], "paths": [#{File.join(role_dir, "otherdir").to_json}]}))
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("lookup('first_found', params)").should eq(File.join(role_dir, "otherdir", "x.yml"))
+  end
+
+  it "resolves an explicit relative paths: entry against the role dir, not cwd" do
+    # The actual real-world spelling that broke geerlingguy.docker/mysql/
+    # postgresql: `paths: ['vars']`, an explicit but RELATIVE entry -
+    # previously joined straight against the process's cwd
+    # ("vars/Debian.yml"), essentially never the role's own vars/ dir a
+    # real ansible-playbook run resolves it against.
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_relative_paths_spec")
+    `rm -rf #{role_dir}`
+    Dir.mkdir_p(File.join(role_dir, "vars"))
+    File.write(File.join(role_dir, "vars", "Debian.yml"), "greeting: hello\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    v["params"] = JSON.parse(%({"files": ["Debian.yml"], "paths": ["vars"]}))
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("lookup('first_found', params)").should eq(File.join(role_dir, "vars", "Debian.yml"))
+  end
 end

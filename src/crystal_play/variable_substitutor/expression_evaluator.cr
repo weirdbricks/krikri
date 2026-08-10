@@ -471,21 +471,38 @@ module CrystalPlay
       # these came from a task's own `vars:` dict and were never passed
       # through VarSubstitutor#substitute's mustache-span extraction, only
       # this evaluator's bare-expression path, so re-rendering here is the
-      # first point either ever sees `{{ }}` syntax. `paths:` defaults to
-      # the current directory (real Ansible's own default) when absent.
-      # Resolves entirely against the controller's own filesystem - real
-      # Ansible's first_found always does (it's how role vars files that
-      # live on the controller, not the managed host, get found).
+      # first point either ever sees `{{ }}` syntax.
+      #
+      # Two real, related bugs found benchmarking geerlingguy.docker/
+      # mysql/postgresql/php, which all share this exact idiom
+      # (`lookup('first_found', params)` with a task `vars: params:
+      # {files: [...], paths: [...]}`), fixed together since both are
+      # "a relative paths: entry means role-relative, not cwd-relative":
+      #   1. `paths:` omitted entirely used to default unconditionally to
+      #      "." (plain cwd) - real Ansible's own default for a role-scoped
+      #      first_found is the role's files/templates/vars dirs.
+      #   2. `paths: ['vars']` (this idiom's actual common spelling - the
+      #      docker/mysql/postgresql roles all give an explicit relative
+      #      "vars") was joined straight against cwd too - "vars/Ubuntu.yml"
+      #      against the *process's* cwd, essentially never the role dir a
+      #      real `ansible-playbook` run resolves it against.
+      # Both now go through resolve_first_found_root, which prepends
+      # `role_path` (already sitting in @vars as a magic var - see
+      # TaskExecutor#build_vars_context) to any relative entry, absolute
+      # entries and non-role usage passing through unchanged. Resolves
+      # entirely against the controller's own filesystem - real Ansible's
+      # first_found always does (it's how role vars files that live on the
+      # controller, not the managed host, get found).
       private def evaluate_first_found(params : JSON::Any) : String
         params_hash = params.as_h?
         return "undefined" unless params_hash
 
         files = lookup_array(params_hash["files"]?)
         paths_raw = params_hash["paths"]?
-        paths = paths_raw ? lookup_array(paths_raw) : [JSON::Any.new(".")]
+        paths = paths_raw ? lookup_array(paths_raw) : default_first_found_paths
 
         renderer = VarSubstitutor.new(vars: @vars, host_name: "localhost")
-        rendered_paths = paths.map { |path_entry| renderer.substitute(path_entry.as_s? || "") }
+        rendered_paths = paths.map { |path_entry| resolve_first_found_root(renderer.substitute(path_entry.as_s? || "")) }
 
         files.each do |file_entry|
           rendered_file = renderer.substitute(file_entry.as_s? || "")
@@ -500,6 +517,26 @@ module CrystalPlay
 
       private def lookup_array(value : JSON::Any?) : Array(JSON::Any)
         value.try(&.as_a?) || [] of JSON::Any
+      end
+
+      # Matches the (files, templates, vars) root order TaskExecutor#
+      # resolve_first_found_path already uses for the with_first_found:
+      # keyword form, for the same result regardless of which of the two
+      # real Ansible `first_found` spellings a role happens to use.
+      private def default_first_found_paths : Array(JSON::Any)
+        [JSON::Any.new("files"), JSON::Any.new("templates"), JSON::Any.new("vars"), JSON::Any.new(".")]
+      end
+
+      # A relative first_found `paths:` entry resolves against the
+      # current role's own directory (`role_path`, set as a magic var
+      # whenever the current task came from a role - see
+      # TaskExecutor#build_vars_context), not the process's cwd. An
+      # absolute entry, or any entry when there's no enclosing role,
+      # passes through unchanged.
+      private def resolve_first_found_root(path : String) : String
+        return path if path.starts_with?("/")
+        role_path = @vars["role_path"]?.try(&.as_s?)
+        role_path ? File.join(role_path, path) : path
       end
 
       # Python/Jinja2 `range(stop)` / `range(start, stop)` /
