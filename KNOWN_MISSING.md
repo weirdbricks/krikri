@@ -8,7 +8,7 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.172`.**
+**Currently at `0.9.180`.**
 
 ---
 
@@ -21,14 +21,41 @@ parsed, a missing `d()` filter alias, dict/array literals unsupported
 outside a `+` operand, among others - `git log --oneline --grep=
 "0\.9\.1[5-7][0-9]" -E` for the full list). Treat "no gap remains open"
 as "none is known right now," not as a claim the search is finished.
-Most recently (`0.9.172`, found while rebuilding the perf-benchmark
-playbook, not a role round): Jinja2/Python's `range(...)` function-call
-syntax (`loop: "{{ range(1, 11) | list }}"`) was never recognized -
-routed to a plain variable lookup on the literal text `range(1, 11)`,
-always undefined, silently running the loop body once with `item`
-undefined instead of iterating. Fixed generally (bare `range(stop)`,
-`range(start, stop)`, `range(start, stop, step)`, negative step,
-expression/variable arguments, with or without a following `| list`).
+
+`0.9.172`-`0.9.180`: the `geerlingguy.*` role family (docker, mysql,
+postgresql, nginx, php, security - none tried before) found 13 more real
+bugs in one round, several engine-wide rather than role-specific -
+`git log --oneline --grep="0\.9\.1[7-8][0-9]" -E` for the full list.
+Highest-value: **`pre_tasks:`/`post_tasks:` play keywords were entirely
+unparsed** (a documented-in-comment, but not previously listed here,
+simplification) - silently never ran, no warning; and real Ansible's own
+recursive re-templating of a variable whose *value* is itself more Jinja
+(common in role defaults, e.g. `nginx_worker_processes: '"{{
+ansible_processor_vcpus | default(ansible_processor_count) }}"'`) wasn't
+applied when that variable was used inside a real `.j2` template file,
+only in plain `{{ }}` task-param substitution - the literal unparsed
+`{{ ... }}` text landed in the rendered config file itself. Also fixed:
+`lookup('first_found', ...)` resolving `paths:` against the wrong
+directory (cwd instead of the current role, both when omitted and when
+given as an explicit relative path); a `with_items:` single-element-array
+item that merely *embeds* a template misparsed as the unrelated "whole
+array is a list template" idiom; `.split(sep)[index]` Python-style
+dotted method calls; `dirname`/`basename` filters entirely missing; the
+`comment` filter's `decoration=` kwarg ignored; a loop item's own bare
+`{{ var }}` value losing its native type (int/bool) once rendered;
+`default(fallback, true)`'s boolean form not catching a real falsy
+(not just undefined) value; and `postgresql_db`'s `encoding:` over-
+validated as a strict SQL identifier when it's actually a safely-quoted
+string literal.
+
+`0.9.172` (found rebuilding the perf-benchmark playbook, not a role
+round): Jinja2/Python's `range(...)` function-call syntax (`loop: "{{
+range(1, 11) | list }}"`) was never recognized - routed to a plain
+variable lookup on the literal text `range(1, 11)`, always undefined,
+silently running the loop body once with `item` undefined instead of
+iterating. Fixed generally (bare `range(stop)`, `range(start, stop)`,
+`range(start, stop, step)`, negative step, expression/variable
+arguments, with or without a following `| list`).
 
 Narrow, deliberately-scoped items:
 
@@ -63,6 +90,14 @@ Narrow, deliberately-scoped items:
 - **`to_datetime()`/timedelta arithmetic beyond subtraction** stayed
   narrowly scoped to what real roles have needed so far - revisit if a
   role needs more.
+- **`ansible.builtin.deb822_repository`** (real ansible-core module,
+  2.15+, for Debian's newer `.sources` repo format) isn't implemented -
+  `geerlingguy.docker`'s own "Add or remove Docker repository." task is
+  skipped ("Plugin not available"), so the Docker apt repo is never
+  added and every downstream `docker-ce` package install fails. A
+  reasonably scoped candidate for a future session (signed_by: URL
+  download + local keyring storage needs verifying against real
+  ansible-playbook's exact semantics first, not assumed).
 
 `postgresql_privs` is the one per-plugin scope-cut list this project
 originally tracked that reached **zero open items** (`0.9.84`) - every

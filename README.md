@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.172-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.180-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -284,13 +284,17 @@ not yet implemented.
 
 **No known cross-cutting engine gap is currently open.** These get found
 and closed on an ongoing basis via real-host benchmark rounds against
-production Ansible roles (dev-sec, konstruktoid, linux-system-roles) -
-see `git log` for the full log of what's been found and fixed, most
-recently a batch of plain-`{{ }}`-evaluator gaps (depth-unaware operator
-parsing, dict/array literals outside a `+` operand, a missing `d()`
-filter alias, block-level `vars:` never parsed, a `range(...)`
-function-call `loop:` source silently running once instead of
-iterating, among others) through `0.9.172`.
+production Ansible roles (dev-sec, konstruktoid, linux-system-roles,
+geerlingguy) - see `git log` for the full log of what's been found and
+fixed. Most recently, a round against the `geerlingguy.*` role family
+(docker/mysql/postgresql/nginx/php/security) found 13 more bugs through
+`0.9.180`, the highest-value being **`pre_tasks:`/`post_tasks:` play
+keywords were entirely unparsed** (silently never ran, no warning) and
+real Ansible's own recursive re-templating of a variable whose *value*
+is itself more Jinja not being applied inside real `.j2` template files
+(only in plain `{{ }}` task-param substitution) - see KNOWN_MISSING.md
+for the full list of that round plus the `range(...)` fix from `0.9.172`
+before it.
 
 The remaining open items are narrow, documented scope cuts:
 
@@ -302,6 +306,10 @@ The remaining open items are narrow, documented scope cuts:
   underlying `docr` client uses unversioned endpoint URLs throughout, so
   pinning a version means touching every endpoint in a separate shard.
   The unversioned URLs negotiate fine against current Docker and Podman.
+- **`ansible.builtin.deb822_repository`** (Debian's newer `.sources`
+  repo format, ansible-core 2.15+) isn't implemented - blocks
+  `geerlingguy.docker`'s own repo-setup task; a reasonably scoped
+  candidate for a future session.
 - **Cloud plugins** (`ec2`, `s3_bucket`, `azure_rm_*`) and inventory
   *plugins* (`aws_ec2.yml` et al.) remain explicitly lowest-ROI and are
   not planned.
@@ -314,6 +322,9 @@ The remaining open items are narrow, documented scope cuts:
   task-status divergence from real Ansible for roles that lean on this
   (seen repeatedly benchmarking linux-system-roles - `sr_fingerprint`,
   `timesync_provider`, `kernel_settings_get_config`, `blivet`).
+- **`crystal-mysql`'s wire-protocol driver has no `unix_socket`/
+  `auth_socket` auth support** - reconfirmed again benchmarking
+  `geerlingguy.mysql`; see KNOWN_MISSING.md.
 
 `postgresql_privs`, which this roadmap tracked scope cuts against for a
 long time, is complete as of `0.9.84` - every `type:` real Ansible's
