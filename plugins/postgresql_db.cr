@@ -121,8 +121,19 @@ module CrystalPlay
 
       owner = @params["owner"]?
       encoding = @params["encoding"]?
-      unless identifier_safe?(owner) && identifier_safe?(encoding)
-        return PluginResult.new(changed: false, failed: true, msg: "owner/encoding may only contain letters, digits, and underscores")
+      # owner: is interpolated as a raw SQL IDENTIFIER (quote_ident below
+      # only escapes embedded double-quotes, not arbitrary content), so it
+      # genuinely needs restricting to a safe character set. encoding:
+      # goes through quote_str instead - a SQL STRING literal, already
+      # injection-safe via its own quote-escaping - so the same
+      # restriction on it is both unnecessary and wrong: real PostgreSQL
+      # accepts encoding aliases quote_ident's character class would
+      # reject, e.g. geerlingguy.postgresql's own default `encoding:
+      # 'UTF-8'` (the hyphen isn't in [A-Za-z0-9_]) - confirmed against
+      # real ansible-playbook, which creates the database fine with this
+      # exact value.
+      unless identifier_safe?(owner)
+        return PluginResult.new(changed: false, failed: true, msg: "owner may only contain letters, digits, and underscores")
       end
 
       clause = String.build do |s|
