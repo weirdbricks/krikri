@@ -2036,9 +2036,19 @@ module CrystalPlay
     # included task individually.
     private def execute_include_tasks(task : Task, host : Host)
       base_vars_context = build_vars_context(task, host)
-      loop_items = task.loop_items
+      loop_items = task.loop_items || resolve_first_found(task, host, base_vars_context)
 
       if loop_items
+        # with_first_found:'s own no-candidate-matched, skip: true case -
+        # resolve_first_found returns an empty (not nil) array for it,
+        # matching execute_include_vars's identical handling of the same
+        # situation.
+        if loop_items.empty?
+          puts "skipping: [#{host.name}]".colorize(:cyan)
+          @results[host.name]["skipped"] += 1
+          return
+        end
+
         # The item is exposed as `item` (Ansible's default) and, when
         # loop_control.loop_var is set, under that custom name too (e.g.
         # `mount` in dev-sec os_hardening's per-mountpoint include loop).

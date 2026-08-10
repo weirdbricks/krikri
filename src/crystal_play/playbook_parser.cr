@@ -1169,14 +1169,24 @@ module CrystalPlay
       end
 
       # loop:/with_items: repeats the whole include once per item (unlike
-      # import_tasks, which doesn't support loop: at all). Only these two
-      # loop sources are supported here, not the full with_dict/with_nested/
-      # etc set a normal task gets - a reasonable scope limit given how
-      # rarely those combine with include_tasks in practice.
+      # import_tasks, which doesn't support loop: at all). with_first_found:
+      # is the other real-world combination - githubixx.ansible_role_
+      # wireguard's own "Include tasks depending on OS" picks the file
+      # itself this way (`include_tasks: {file: "{{ item }}"}` paired
+      # with `with_first_found: [...]` candidates) - previously
+      # unparsed, so `item` stayed completely unbound and the include's
+      # own `{{ item }}" file path rendered to the literal text
+      # "undefined", always "file not found". Not the full with_dict/
+      # with_nested/etc set a normal task gets - a reasonable scope
+      # limit given how rarely those combine with include_tasks in
+      # practice.
       if loop_yaml = task_hash["loop"]?.try(&.as_a?)
         task.loop_items = loop_yaml.map { |item| JSON.parse(item.to_json) }
       elsif with_items = task_hash["with_items"]?.try(&.as_a?)
         task.loop_items = with_items.map { |item| JSON.parse(item.to_json) }
+      elsif with_first_found = task_hash["with_first_found"]?
+        task.loop_first_found = parse_first_found(with_first_found)
+        task.loop_first_found_skip = first_found_skip?(with_first_found)
       end
 
       # loop_control.loop_var - expose each item under the custom name

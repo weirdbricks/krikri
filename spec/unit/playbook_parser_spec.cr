@@ -1021,6 +1021,25 @@ describe CrystalPlay::PlaybookParser do
       task.loop_items.try(&.map(&.as_s)).should eq(["a", "b", "c"])
     end
 
+    it "parses with_first_found: on the include statement itself" do
+      # Real bug found benchmarking githubixx.ansible_role_wireguard's
+      # own "Include tasks depending on OS" (`include_tasks: {file: "{{
+      # item }}"}` paired with with_first_found: candidates, picking the
+      # OS-specific setup file to include) - previously unparsed at all
+      # (only loop:/with_items: were), so `item` stayed completely
+      # unbound and the include's own "{{ item }}" file path rendered to
+      # the literal text "undefined", always "file not found".
+      task = single_task(<<-YAML)
+        - include_tasks:
+            file: "{{ item }}"
+          with_first_found:
+            - "setup-{{ ansible_facts['distribution'] }}.yml"
+            - "setup-default.yml"
+        YAML
+
+      task.loop_first_found.should eq(["setup-{{ ansible_facts['distribution'] }}.yml", "setup-default.yml"])
+    end
+
     it "does not recurse into the included file's tasks at parse time (dynamic, unlike import_tasks)" do
       task = single_task(<<-YAML)
         - include_tasks: does_not_exist_yet.yml
