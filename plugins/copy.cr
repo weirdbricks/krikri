@@ -193,7 +193,13 @@ module CrystalPlay
       # plain directory "/usr/local/bin") - previously dest was always
       # treated as a literal file path, so writing to it opened the
       # directory itself with mode "wb" and failed.
-      dest = File.join(dest, File.basename(src)) if Dir.exists?(dest)
+      # __original_src_basename - set by TaskExecutor#stage_large_copy_source
+      # when src is a random-named remote scratch path it SCP'd the real
+      # (large) source file to, not the user's real src: value - using
+      # File.basename(src) directly here would append that random
+      # scratch filename instead of the real one.
+      basename = @params["__original_src_basename"]?.presence || File.basename(src)
+      dest = File.join(dest, basename) if Dir.exists?(dest)
 
       # Check if source exists
       unless File.exists?(src)

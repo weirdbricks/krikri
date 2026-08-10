@@ -2460,6 +2460,14 @@ module CrystalPlay
       resolved = params.dup
       resolved["src"] = remote_tmp
       resolved["__cleanup_after_copy"] = "true"
+      # copy.cr's own "dest is an existing directory" handling appends
+      # File.basename(src) to dest - without this, that would append the
+      # random scratch filename (".crystal-ansible-copy-<hex>") instead
+      # of the real source's name, installing e.g. Vault's binary as
+      # "/usr/local/bin/.crystal-ansible-copy-<hex>" rather than
+      # "/usr/local/bin/vault". Real bug found immediately after adding
+      # the staging path above, benchmarking the same ansible-vault role.
+      resolved["__original_src_basename"] = File.basename(src)
       resolved
     end
 
