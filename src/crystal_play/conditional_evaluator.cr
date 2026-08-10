@@ -507,7 +507,26 @@ module CrystalPlay
 
       # Variable lookup
       if vars.has_key?(expr)
-        json_any_to_value(vars[expr])
+        value = vars[expr]
+
+        # Real Ansible's recursive re-templating: a variable whose own
+        # raw value is itself unrendered Jinja (a role default defined in
+        # terms of another default, e.g. ansible-community.ansible-vault's
+        # `vault_enterprise: "{{ lookup('env', 'VAULT_ENTERPRISE') |
+        # default(false, true) }}"`) must be evaluated before its
+        # truthiness is checked - otherwise the raw, non-empty template
+        # text itself is treated as a truthy string, so `vault_enterprise`
+        # always evaluated true regardless of the real (false) default.
+        if (raw = value.raw).is_a?(String) && raw.includes?("{{")
+          evaluator = VariableSubstitutor::ExpressionEvaluator.new(vars)
+          inner = raw.strip
+          inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
+          rendered = evaluator.evaluate(inner)
+          parsed = (JSON.parse(rendered) rescue nil)
+          json_any_to_value(parsed || JSON::Any.new(rendered))
+        else
+          json_any_to_value(value)
+        end
       else
         # Undefined variable - return nil
         nil

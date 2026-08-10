@@ -284,5 +284,22 @@ describe CrystalPlay::ConditionalEvaluator do
       v["mylist"] = JSON::Any.new([JSON::Any.new("a"), JSON::Any.new("b"), JSON::Any.new("c")])
       CrystalPlay::ConditionalEvaluator.evaluate("mylist | length > 0 and mylist | length == 3", v).should be_true
     end
+
+    it "re-templates a bare variable whose own raw value is still unrendered Jinja before checking truthiness" do
+      # Real bug found benchmarking ansible-community.ansible-vault:
+      # `vault_enterprise: "{{ lookup('env', 'VAULT_ENTERPRISE') |
+      # default(false, true) }}"` used as a bare ternary condition
+      # (`'+ent' if vault_enterprise`) elsewhere in the role's own
+      # defaults/main.yml. Previously the raw, unrendered template text
+      # was treated as a truthy non-empty string regardless of what it
+      # actually rendered to.
+      v = Hash(String, JSON::Any).new
+      v["vault_enterprise"] = JSON::Any.new(%({{ lookup('env', 'CRYSTAL_ANSIBLE_SPEC_COND_ENV_TEST') | default(false, true) }}))
+      CrystalPlay::ConditionalEvaluator.evaluate("vault_enterprise", v).should be_false
+
+      ENV["CRYSTAL_ANSIBLE_SPEC_COND_ENV_TEST"] = "true"
+      CrystalPlay::ConditionalEvaluator.evaluate("vault_enterprise", v).should be_true
+      ENV.delete("CRYSTAL_ANSIBLE_SPEC_COND_ENV_TEST")
+    end
   end
 end
