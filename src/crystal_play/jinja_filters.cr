@@ -1,4 +1,5 @@
 require "crinja"
+require "./crinja_hash_ext"
 
 # Custom Jinja2 filters that real Ansible's Jinja2 provides but Crinja
 # doesn't ship, registered into the global Crinja default library so they're
