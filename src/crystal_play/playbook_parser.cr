@@ -126,6 +126,11 @@ module CrystalPlay
     # verified against a real ansible-playbook run using a full local
     # path for `role:`, which echoed that exact path back.
     property role_name : String?
+    # The role's own root directory on disk - exposed to templates as the
+    # `role_path` magic var (linux-system-roles/logging's own `include_role:
+    # name: "{{ role_path }}/roles/rsyslog"`, a common pattern for a role to
+    # reference one of its own private subroles by absolute path).
+    property role_path : String?
     # include_tasks: - only set when module_name == "_include_tasks".
     # Unlike import_tasks (resolved at parse time), the file path may be
     # templated ({{ vars }}) and isn't resolved until this task actually
@@ -207,6 +212,7 @@ module CrystalPlay
       @role_templates_dir = nil
       @role_vars_dir = nil
       @role_name = nil
+      @role_path = nil
       @include_file = nil
       @include_file_dir = nil
       @include_vars = nil

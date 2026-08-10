@@ -548,6 +548,9 @@ module CrystalPlay
       if role_name = task.role_name
         vars_context["ansible_role_name"] = JSON::Any.new(role_name)
       end
+      if role_path = task.role_path
+        vars_context["role_path"] = JSON::Any.new(role_path)
+      end
 
       # `ansible_facts` - the same facts again, under their unprefixed
       # names, as one dict. Real Ansible exposes every fact both ways
@@ -1924,6 +1927,7 @@ module CrystalPlay
         nested_task.role_files_dir = enclosing.role_files_dir
         nested_task.role_templates_dir = enclosing.role_templates_dir
         nested_task.role_vars_dir = enclosing.role_vars_dir
+        nested_task.role_path = enclosing.role_path
 
         # A block's own `vars:` is inherited by every task nested inside it
         # (real Ansible scoping) - found via linux-system-roles/logging's
