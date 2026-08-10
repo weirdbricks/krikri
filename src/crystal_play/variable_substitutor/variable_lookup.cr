@@ -202,15 +202,25 @@ module CrystalPlay
       end
 
       # Handles a base expression (a bare name or a dotted path) followed
-      # by one or more `[...]` index accessors, chained left to right -
-      # `mylist[0]`, `mydict['key']`, and also `ansible_facts.getent_passwd
-      # [item][4]` (a dotted base, indexed by a *variable's* value, itself
-      # further indexed into the resulting list) - a shape dev-sec
-      # os_hardening's own user-account tasks use to pull a getent_passwd
-      # entry's home-dir field. Previously only a single bracket directly
-      # on a bare name was supported, and even then the index itself was
-      # never resolved as a variable reference (`list[item]` looked up the
-      # literal key "item", not item's value).
+      # by one or more `[...]` index accessors AND/OR further `.attr`
+      # access after them, chained left to right - `mylist[0]`,
+      # `mydict['key']`, `ansible_facts.getent_passwd[item][4]` (a
+      # dotted base, indexed by a *variable's* value, itself further
+      # indexed into the resulting list - dev-sec os_hardening's own
+      # user-account tasks pull a getent_passwd entry's home-dir field
+      # this way), and also a registered LOOPED task's own aggregated
+      # results indexed then walked further - `aide_conf.results[0].
+      # stat.exists` (openstack.ansible-hardening's own AIDE-config
+      # guard). That last shape used to silently drop everything after
+      # the final `]` - the old bracket-only regex scan below had no
+      # notion of a trailing `.attr` suffix at all, so `results[0].stat.
+      # exists` resolved to the *whole* results[0] hash instead of its
+      # nested boolean. Piped through `| bool` in a `when:`, any non-
+      # empty rendered hash is truthy, so a should-have-been-skipped
+      # task ran for real. Delegates to `walk` (already handles both
+      # `.attr` and `[idx]` generically, used elsewhere for a computed
+      # base value) for everything after the base instead of duplicating
+      # that logic with a bracket-only regex.
       private def resolve_indexed(expr : String) : JSON::Any?
         base_end = expr.index('[')
         return nil unless base_end
@@ -219,13 +229,9 @@ module CrystalPlay
         return nil if base_expr.empty?
 
         current = base_expr.includes?('.') ? resolve_nested(base_expr) : resolve_simple(base_expr)
+        return nil unless current
 
-        expr[base_end..].scan(/\[([^\]]+)\]/) do |match|
-          return nil unless current
-          current = index_into(current, resolve_index_key(match[1].strip))
-        end
-
-        current
+        walk(current, expr[base_end..])
       end
 
       # A `[...]` index's inner text: a quoted string literal, an integer

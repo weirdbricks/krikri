@@ -91,4 +91,22 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     lookup.indexed("ansible_facts.distribution_version.split('.')[0]").should eq("22")
     lookup.indexed("ansible_facts.distribution_version.split('.')[1]").should eq("04")
   end
+
+  it "walks a .attr suffix after an [index], not just the index alone" do
+    # Real bug found benchmarking openstack.ansible-hardening's own AIDE-
+    # config guard: `when: aide_conf.results[0].stat.exists | bool`, a
+    # registered LOOPED task's aggregated results, indexed then walked
+    # further. resolve_indexed's old bracket-only regex scan had no
+    # notion of anything after the final "]" - `results[0].stat.exists`
+    # resolved to the *whole* results[0] hash instead of its nested
+    # boolean. Piped through `| bool` in a when:, any non-empty rendered
+    # hash is truthy, so a should-have-been-skipped task ran for real.
+    v = Hash(String, JSON::Any).new
+    v["aide_conf"] = JSON.parse(%({"results": [{"item": "/etc/aide.conf", "stat": {"exists": false}}]}))
+    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup.indexed("aide_conf.results[0].stat.exists").should eq("False")
+
+    # Indexing alone (no trailing suffix) still resolves the item itself.
+    lookup.indexed("aide_conf.results[0].item").should eq("/etc/aide.conf")
+  end
 end
