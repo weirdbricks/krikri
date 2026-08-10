@@ -24,6 +24,14 @@ module CrystalPlay
     property check_mode : Bool?
     property diff_mode : Bool?
     property become : Bool
+    # Raw `{{ ... }}` text when become: is a templated expression rather
+    # than a literal boolean (ansible-community.ansible-vault's own
+    # `become: "{{ vault_privileged_install }}"`, defaulting false).
+    # `become` above still holds a best-effort parse-time guess (used as
+    # a fallback if this can't be rendered for some reason), but the
+    # executor re-renders and overrides it at execution time, once real
+    # host/role vars are available - parse time never has that context.
+    property become_expr : String?
     property become_user : String?
     property tags : Array(String)
     property loop : Array(JSON::Any)?
@@ -853,6 +861,7 @@ module CrystalPlay
       task.check_mode = task_hash["check_mode"]?.try(&.as_bool)
       task.diff_mode = task_hash["diff"]?.try(&.as_bool)
       task.become = resolve_become(task_hash, play)
+      task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
 
       # Parse task-level vars: - a real, previously-shipped gap: nothing
@@ -1133,6 +1142,7 @@ module CrystalPlay
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.become = resolve_become(task_hash, play)
+      task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
 
       if tags_yaml = task_hash["tags"]?.try(&.as_a?)
@@ -1173,6 +1183,7 @@ module CrystalPlay
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.become = resolve_become(task_hash, play)
+      task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
 
       if tags_yaml = task_hash["tags"]?.try(&.as_a?)
@@ -1243,6 +1254,7 @@ module CrystalPlay
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.become = resolve_become(task_hash, play)
+      task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
 
       if tags_yaml = task_hash["tags"]?.try(&.as_a?)
@@ -1508,6 +1520,21 @@ module CrystalPlay
     private def self.resolve_become(task_hash : Hash(YAML::Any, YAML::Any), play : Play) : Bool
       given = parse_become_value(task_hash["become"]?)
       given.nil? ? play.become : given
+    end
+
+    # Companion to #resolve_become: the raw `{{ ... }}` text of a
+    # task-level `become:`, if it was a templated expression rather than
+    # a literal boolean - nil otherwise (including when become: is
+    # absent, in which case the play's own literal become: applies with
+    # no re-rendering needed). Kept separate from #resolve_become rather
+    # than changing its return type, since most call sites only need the
+    # Bool and this keeps that path unchanged.
+    private def self.become_expr(task_hash : Hash(YAML::Any, YAML::Any)) : String?
+      yaml = task_hash["become"]?
+      return nil unless yaml
+      raw = yaml.raw
+      return nil unless raw.is_a?(String)
+      raw.strip.starts_with?("{{") ? raw.strip : nil
     end
 
     private def self.safe_yaml_to_string(yaml : YAML::Any) : String

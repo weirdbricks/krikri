@@ -58,7 +58,19 @@ module CrystalPlay
       
       # Handle src-based copy
       if src
-        return handle_file_copy(src, dest)
+        result = handle_file_copy(src, dest)
+
+        # __cleanup_after_copy - set by TaskExecutor#stage_large_copy_source
+        # when src is a remote scratch path it SCP'd the real source to
+        # (rather than embedding a huge file's content as a JSON param -
+        # see that method's own comment), not the user's real src: value.
+        # Best-effort: a leftover /tmp scratch file is far less harmful
+        # than a failed cleanup masking the copy's own real result.
+        if @params["__cleanup_after_copy"]? == "true"
+          File.delete(src) rescue nil
+        end
+
+        return result
       end
       
       # Should never reach here

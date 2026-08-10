@@ -1298,6 +1298,22 @@ module CrystalPlay
     # ever needing a remote call (only possible today via an action
     # plugin - e.g. template: - failing to render, or an invalid
     # become_user:), or a BatchScript::Step ready to send otherwise.
+    # Resolves a task's real become: value, re-rendering task.become_expr
+    # against live vars if the YAML source was a templated expression
+    # (`become: "{{ vault_privileged_install }}"`) rather than a literal
+    # boolean. Parse time has no host/role vars context to render this
+    # against, so the parser stashes the raw expression text and this is
+    # where it actually gets evaluated - falls back to task.become (the
+    # parser's best-effort literal guess) if there's no expr, or if
+    # rendering it produces something ConditionalEvaluator can't use.
+    private def resolve_task_become(task : Task, substitutor : VarSubstitutor) : Bool
+      expr = task.become_expr
+      return task.become unless expr
+
+      rendered = substitutor.substitute(expr)
+      ConditionalEvaluator.evaluate(rendered, {} of String => JSON::Any) rescue task.become
+    end
+
     private def prepare_batch_step(task : Task, host : Host, vars_context : Hash(String, JSON::Any), shared : VarSubstitutor? = nil) : JSON::Any | BatchScript::Step
       substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
       substituted_params = substitute_task_params(task.params, substitutor)
@@ -1320,7 +1336,7 @@ module CrystalPlay
         substituted_params = action_result.modified_params || substituted_params
       end
 
-      become = task.become
+      become = resolve_task_become(task, substitutor)
       become_user = nil
 
       if become
@@ -1432,7 +1448,7 @@ module CrystalPlay
       # parsed again. Identical defaults (become_user "root" when become:
       # is set but become_user: isn't) and identical error message -
       # and identical to what prepare_batch_step does for the batch path.
-      become = task.become
+      become = resolve_task_become(task, substitutor)
       become_user = nil
 
       if become
@@ -2375,6 +2391,19 @@ module CrystalPlay
     # converting it anyway would only change check-mode's message
     # ("Would copy SRC to DEST" -> a generic content message) for no
     # actual correctness gain).
+    # Above this size, embedding the file as a `content` param string
+    # would make the JSON config too large to safely round-trip through
+    # #execute_remote_plugin's own base64 encoding of the *whole config*
+    # (see the comment on that call): a real bug found benchmarking
+    # ansible-community.ansible-vault's own "Install Vault" task, which
+    # `copy:`s a ~530MB downloaded Vault release binary - Crystal
+    # stdlib's `Base64.encode_size` computes `str_size * 4` as native
+    # Int32 arithmetic before the final `.to_i`, and a base64'd-then-
+    # JSON-escaped-then-base64'd-again 530MB payload comfortably clears
+    # 2^31, crashing the whole engine with an unhandled OverflowError
+    # partway through a run - not a graceful per-task failure.
+    INLINE_COPY_MAX_BYTES = 8 * 1024 * 1024
+
     private def inline_copy_source_content(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String)
       return params unless task.module_name == "ansible.builtin.copy"
       return params if ["true", "yes", "1", "on"].includes?(params["remote_src"]?.try(&.downcase))
@@ -2382,6 +2411,13 @@ module CrystalPlay
 
       src = params["src"]?
       return params unless src && src.starts_with?('/')
+
+      size = File.size(src) rescue nil
+      return params unless size
+
+      if size > INLINE_COPY_MAX_BYTES
+        return stage_large_copy_source(params, src, host, vars_context)
+      end
 
       begin
         content = File.read(src)
@@ -2392,6 +2428,38 @@ module CrystalPlay
       resolved = params.dup
       resolved.delete("src")
       resolved["content"] = content
+      resolved
+    end
+
+    # Large-file counterpart to the inline `content` path above: SCPs
+    # *src* straight to a remote scratch path (no content embedded in
+    # the JSON config at all - just a path string, same size regardless
+    # of how big the underlying file is) and points the module at that
+    # instead. `copy.cr`'s own handle_file_copy already reads `src` from
+    # whatever filesystem the plugin process is actually running on, so
+    # once the file is really present on the target, no other change is
+    # needed there beyond deleting the scratch copy afterward (via the
+    # `__cleanup_after_copy` marker param).
+    private def stage_large_copy_source(params : Hash(String, String), src : String, host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String)
+      connection_host = PluginManager.get_connection_host(host, vars_context)
+      remote_tmp = "/tmp/.crystal-ansible-copy-#{Random::Secure.hex(8)}"
+
+      begin
+        SSHManager.upload(
+          connection_host,
+          host.user || "root",
+          src,
+          remote_tmp,
+          host.port,
+          identity_file: vars_context["ansible_ssh_private_key_file"]?.try(&.as_s?)
+        )
+      rescue
+        return params
+      end
+
+      resolved = params.dup
+      resolved["src"] = remote_tmp
+      resolved["__cleanup_after_copy"] = "true"
       resolved
     end
 
@@ -2654,7 +2722,7 @@ module CrystalPlay
 
       config = build_plugin_config(handler, host, substituted_params, wire_vars, substituted_become_user)
 
-      become = handler.become
+      become = resolve_task_become(handler, substitutor)
       become_user = nil
 
       if become
