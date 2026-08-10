@@ -26,13 +26,20 @@ module CrystalPlay
     end
     
     def execute : PluginResult
-      # Validate required parameters
+      # Validate required parameters. `name:` isn't required when
+      # update_cache: true is given with nothing else - real Ansible's
+      # own package:/apt: modules allow a cache-refresh-only invocation,
+      # a real idiom (ansible-community.ansible-vault's own "Update
+      # package cache" task does exactly this: `package: {update_cache:
+      # true}`, no name: at all). Matches apt.cr's own identical
+      # exception for the same case.
       name = @params["name"]?
+      update_cache = is_true?(@params["update_cache"]?)
       unless name
-        return PluginResult.new(
+        return update_cache ? update_cache_only : PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Missing required parameter: name"
+          msg: "Missing required parameter: name (unless using update_cache)"
         )
       end
 
@@ -104,6 +111,33 @@ module CrystalPlay
     # not merely one of them.
     private def all_packages_installed?(name : String, & : String -> Bool) : Bool
       name.split(' ').reject(&.empty?).all? { |pkg| yield pkg }
+    end
+
+    # update_cache: true with no name: - just refresh the package
+    # manager's own index, matching real Ansible's own cache-refresh-
+    # only idiom for package:/apt:.
+    private def update_cache_only : PluginResult
+      package_manager = detect_package_manager()
+      unless package_manager
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Could not detect package manager (tried: dnf, yum, apt)"
+        )
+      end
+
+      command = case package_manager
+                when "dnf" then "dnf makecache"
+                when "yum" then "yum makecache"
+                else            "apt-get update"
+                end
+
+      result = remote_exec(command)
+      if result[:exit_code] == 0
+        PluginResult.new(changed: true, failed: false, msg: "Package cache updated")
+      else
+        PluginResult.new(changed: false, failed: true, msg: "Failed to update package cache: #{result[:stderr]}")
+      end
     end
 
     # Detect which package manager is available
