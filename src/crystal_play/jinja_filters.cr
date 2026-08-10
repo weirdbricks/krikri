@@ -34,11 +34,23 @@ module CrystalPlay
     #
     # Matches real Ansible's default ("plain") style exactly: a bare "#"
     # line, each line of the value prefixed "# ", another bare "#" line.
-    # The style=/prefix=/postfix=/decoration= keyword variants (c/cpp/
-    # xml styles) aren't implemented - no template here uses them.
+    # `decoration=` overrides that prefix (real Ansible's own comment.py:
+    # the border lines become `decoration.rstrip`, each content line gets
+    # the full decoration prefix, a blank line gets the rstripped form so
+    # no trailing space is left dangling) - needed for any file whose own
+    # comment syntax isn't "#" at all, e.g. geerlingguy.php's own
+    # `www.conf.j2` (an INI-style php-fpm pool file, `decoration='; '`):
+    # left as a bare "#"-style header before this, php-fpm's own INI
+    # parser doesn't treat "#" as a comment character and failed outright
+    # ("value is NULL for a ZEND_INI_PARSER_ENTRY") on startup - the
+    # config looked fine to a human eye but never actually took effect.
+    # The style=/prefix=/postfix= keyword variants (c/cpp/xml styles)
+    # still aren't implemented - no template seen so far uses them.
     Crinja.filter(:comment) do
+      decoration = arguments.kwargs["decoration"]?.try(&.to_s) || "# "
+      border = decoration.rstrip
       lines = target.to_s.split('\n')
-      commented = (["#"] + lines.map { |line| "# #{line}" } + ["#"]).join('\n')
+      commented = ([border] + lines.map { |line| line.empty? ? border : "#{decoration}#{line}" } + [border]).join('\n')
       Crinja::Value.new(commented)
     end
 

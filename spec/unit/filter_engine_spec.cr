@@ -24,6 +24,23 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     engine.apply(JSON::Any.new(nil), "default(0)").as_i.should eq(0)
   end
 
+  it "default(fallback, true) also replaces a real, defined-but-falsy value" do
+    # Real bug found benchmarking geerlingguy.php: `pm.max_requests = {{
+    # item.pool_pm_max_requests | default(500, true) }}` where the real
+    # value is the int 0 (a legitimate, deliberately-set value meaning
+    # "unlimited", not a mistake) - defined and non-nil, so `undefined?`
+    # alone never caught it, always leaving the real 0 instead of the
+    # role's own intended fallback of 500. The 2-arg boolean form must
+    # also replace any falsy value (0, false, empty array/hash), not
+    # just nil/empty-string.
+    engine.apply(JSON::Any.new(0_i64), "default(500, true)").as_i.should eq(500)
+    engine.apply(JSON::Any.new(false), "default('yes', true)").as_s.should eq("yes")
+  end
+
+  it "default(fallback) without the boolean form leaves a falsy-but-defined value alone" do
+    engine.apply(JSON::Any.new(0_i64), "default(500)").as_i.should eq(0)
+  end
+
   it "uppercases with upper" do
     engine.apply(s("hello"), "upper").as_s.should eq("HELLO")
   end

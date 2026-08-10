@@ -10,6 +10,10 @@
     color_map:
       one: "1"
       two: "2"
+    max_requests: 0
+    pools:
+      - name: www
+        pm_max_requests: "{{ max_requests }}"
 
   tasks:
     - name: loop over a plain list
@@ -60,6 +64,17 @@
       ansible.builtin.debug:
         msg: "var dict: {{ item.key }}={{ item.value }}"
       with_dict: "{{ color_map }}"
+
+    - name: a loop item's own value that's a bare {{ var }} reference keeps var's native type
+      # Real bug found benchmarking geerlingguy.php: a loop item field
+      # whose raw value is exactly one bare "{{ ... }}" expression (no
+      # surrounding text) referencing an int/bool var previously always
+      # stringified to text once rendered, so `default(fallback, true)`
+      # downstream could never see it as falsy the way the real
+      # underlying value (e.g. int 0) is.
+      ansible.builtin.debug:
+        msg: "max_requests={{ item.pm_max_requests | default(500, true) }}"
+      with_items: "{{ pools }}"
 
     - name: SUCCESS
       ansible.builtin.debug:

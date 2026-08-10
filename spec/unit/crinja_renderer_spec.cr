@@ -31,4 +31,25 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
 
     renderer.render("{{ greeting }}, world").should eq("hello, world")
   end
+
+  it "defaults the comment filter to a bare '#' style" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render("{{ 'Ansible managed' | comment }}").should eq("#\n# Ansible managed\n#")
+  end
+
+  it "honors decoration= for a non-'#' comment style" do
+    # Real bug found benchmarking geerlingguy.php: `{{ ansible_managed |
+    # comment(decoration='; ') }}` (www.conf.j2's own header, a php-fpm
+    # INI-style pool file) previously ignored decoration= entirely and
+    # always used "#" - not a valid INI comment character, so php-fpm's
+    # own config parser rejected the file outright at startup ("value is
+    # NULL for a ZEND_INI_PARSER_ENTRY"), even though the file looked
+    # fine to a human reader.
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render("{{ 'Ansible managed' | comment(decoration='; ') }}").should eq(";\n; Ansible managed\n;")
+  end
 end

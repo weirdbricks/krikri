@@ -90,7 +90,22 @@ module CrystalPlay
           # that case), but any genuinely-undefined value stayed
           # undefined instead of getting its default, appearing as
           # "undefined"/empty text at the template-rendering layer.
-          undefined?(value) ? resolve_default_arg(filter_args) : value
+          #
+          # The 2-arg boolean form (`default(fallback, true)`) also needs
+          # to treat any FALSY value as needing the default, not just
+          # undefined/nil/empty-string (what undefined? alone catches) -
+          # a real int 0 or bool false slipped through here previously.
+          # Found via geerlingguy.php's own `pm.max_requests = {{
+          # item.pool_pm_max_requests | default(500, true) }}`: a real
+          # int 0 (meaning "unlimited" - a legitimate, deliberately-set
+          # value, not a mistake) is falsy, so real Ansible replaces it
+          # with 500 here; this filter previously only ever checked
+          # undefined?, leaving the real int 0 in place.
+          if undefined?(value) || (default_boolean_arg?(filter_args) && !truthy?(value))
+            resolve_default_arg(filter_args)
+          else
+            value
+          end
         when "upper"
           transform_string(value, &.upcase)
         when "lower"
@@ -345,6 +360,15 @@ module CrystalPlay
       # argument and returned that entire literal text as the "default"
       # value instead of resolving `mountinfo.device` as the variable
       # reference it is.
+      # Whether `default(...)`'s optional second (boolean) argument is
+      # present and true - a bare `true` literal, the only spelling real
+      # roles use for this filter's own boolean arg (unlike a general
+      # expression, which could also be a variable reference, but no
+      # real usage seen so far needs that).
+      private def default_boolean_arg?(args : String) : Bool
+        split_top_level_args(args)[1]?.try(&.strip) == "true"
+      end
+
       private def resolve_default_arg(args : String) : JSON::Any
         first_arg = split_top_level_args(args).first? || ""
 

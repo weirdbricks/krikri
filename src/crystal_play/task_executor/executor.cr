@@ -2260,6 +2260,28 @@ module CrystalPlay
         JSON::Any.new(raw.map { |value| deep_render_item(value, vars_context, host_name) })
       when String
         return item unless raw.includes?("{{")
+
+        # A raw value that's *exactly* one bare `{{ variable }}` span (no
+        # surrounding text, no filter chain) resolves to the variable's
+        # own native JSON type - matching real Ansible's own templating,
+        # which preserves the referenced value's type when the whole
+        # input is a single expression, only falling back to string
+        # concatenation for partial/mixed text. The general `substitute`
+        # path below always stringifies (it has to - the general case
+        # can mix literal text with an expression), which previously
+        # silently turned every such role default into a string:
+        # geerlingguy.php's own `pool_pm_max_requests: "{{
+        # php_fpm_pm_max_requests }}"` (php_fpm_pm_max_requests: 0, a
+        # real int meant to disable the request-count limit) rendered as
+        # the STRING "0" - not falsy to Crinja's `default(500, true)`
+        # filter the way the real int 0 is, so pm.max_requests stayed 0
+        # instead of the role's own intended fallback of 500.
+        stripped = raw.strip
+        if stripped.starts_with?("{{") && stripped.ends_with?("}}") && stripped.scan("{{").size == 1
+          native = VariableSubstitutor::VariableLookup.new(vars_context).resolve(stripped[2..-3].strip)
+          return native if native
+        end
+
         substitutor = VarSubstitutor.new(vars: vars_context, host_name: host_name)
         JSON::Any.new(substitutor.substitute(raw))
       else

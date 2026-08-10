@@ -90,6 +90,7 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("var loop item: blue")
     output.should contain("var dict: one=1")
     output.should contain("var dict: two=2")
+    output.should contain("max_requests=500")
   end
 
   it "counts a looped task once in the recap (not once per item), matching Ansible" do
