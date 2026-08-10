@@ -200,4 +200,17 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     result = engine.apply(JSON::Any.new(""), %(default(('/opt/vault/tls' if (vault_install_hashi_repo) else '/etc/vault/tls'), true)))
     result.as_s.should eq("/etc/vault/tls")
   end
+
+  it "resolves a bare boolean literal as default()'s own fallback argument" do
+    # Real bug found benchmarking ansible-community.ansible-vault's own
+    # `vault_tls_gossip: "{{ lookup('env', 'VAULT_TLS_GOSSIP') | default(
+    # false, true) }}"` - the bare `false` fallback (not a quoted string)
+    # fell through resolve_base_expression to a plain (always-undefined)
+    # variable lookup on the literal identifier "false", resolving the
+    # whole default() call to JSON null - which stringifies to "" - not
+    # the literal false it was supposed to substitute.
+    engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
+    engine.apply(JSON::Any.new(""), "default(false, true)").as_bool.should eq(false)
+    engine.apply(JSON::Any.new(""), "default(true, true)").as_bool.should eq(true)
+  end
 end

@@ -618,6 +618,17 @@ module CrystalPlay
 
         return JSON::Any.new(expr[1..-2]) if quoted_literal?(expr)
         return JSON::Any.new(nil) if expr == "None"
+        # Bare boolean literal (`true`/`false`, not a quoted string) -
+        # same class of bug as ExpressionEvaluator's own identical fix:
+        # real bug found benchmarking ansible-community.ansible-vault's
+        # own `vault_tls_gossip: "{{ lookup('env', 'VAULT_TLS_GOSSIP') |
+        # default(false, true) }}"` - the bare `false` fallback argument
+        # fell through to a plain (always-undefined) variable lookup on
+        # the literal identifier "false", resolving the whole default()
+        # call to JSON null (stringifies to "") instead of the literal
+        # false it was supposed to substitute.
+        return JSON::Any.new(true) if expr == "true" || expr == "True"
+        return JSON::Any.new(false) if expr == "false" || expr == "False"
         return parse_dict_literal(expr) if expr.starts_with?('{') && expr.ends_with?('}')
 
         if int_val = expr.to_i64?
