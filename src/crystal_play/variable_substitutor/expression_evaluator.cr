@@ -96,15 +96,21 @@ module CrystalPlay
           return evaluate_with_filter(expr)
         end
 
-        # FIXED: Check for array slicing [: or :] pattern specifically
-        # This must come BEFORE the general [ check
-        if expr.includes?("[:") || expr.includes?(":]")
-          return @slicer.slice(expr)
-        end
-
-        # Check for dictionary/list access
+        # A literal Jinja array (`[]`, `['x']`, `[item]`) standing alone -
+        # `resolve_plus_operand` already special-cases this for a `+`
+        # operand via parse_literal_array, but the general dispatch here
+        # had no equivalent, so the same literal used anywhere else (a
+        # ternary branch: linux-system-roles/logging's rsyslog subrole
+        # `__rsyslog_tls_packages if (...) else []`) fell through to the
+        # generic `[` dict/list-access check below, which treats the
+        # bracketed text as *indexing syntax* on the (empty, since there's
+        # no variable name before the bracket) prefix - always failing and
+        # resolving to "undefined" instead of an empty/literal list. Only
+        # an expr that *starts* with `[` can be this case; `list[0]`/
+        # `list[0:2]` always start with the variable name instead, so this
+        # can't misfire on real indexing/slicing.
         if expr.includes?("[")
-          return @lookup.indexed(expr)
+          return evaluate_bracket_expr(expr)
         end
 
         # Check for nested access (.)
@@ -115,7 +121,32 @@ module CrystalPlay
         # Simple variable lookup
         @lookup.simple(expr)
       end
-      
+
+      # Dispatches every `[`-bearing expr that isn't already a top-level
+      # +/-/filter/paren case (those are checked before this in
+      # evaluate_expr). A literal Jinja array (`[]`, `['x']`, `[item]`)
+      # standing alone must be checked first: `resolve_plus_operand`
+      # already special-cases this for a `+` operand via
+      # parse_literal_array, but a ternary branch (linux-system-roles/
+      # logging's rsyslog subrole: `__rsyslog_tls_packages if (...) else
+      # []`) reaches this general dispatch instead - without this check it
+      # fell through to the indexed-access branch, which treats the
+      # bracketed text as *indexing syntax* on the (empty, since there's
+      # no variable name before the bracket) prefix, always failing and
+      # resolving to "undefined" instead of an empty/literal list. Only an
+      # expr that *starts* with `[` can be this case; `list[0]`/
+      # `list[0:2]` always start with the variable name instead, so this
+      # can't misfire on real indexing/slicing.
+      private def evaluate_bracket_expr(expr : String) : String
+        return @lookup.format_value(parse_literal_array(expr)) if literal_array_expr?(expr)
+        return @slicer.slice(expr) if expr.includes?("[:") || expr.includes?(":]")
+        @lookup.indexed(expr)
+      end
+
+      private def literal_array_expr?(expr : String) : Bool
+        expr.starts_with?('[') && expr.ends_with?(']')
+      end
+
       # Resolves the branch selected by a ternary's condition. A branch
       # that's a plain quoted string literal (the common case - both
       # branches of `X if C else Y` are usually literals) is unquoted
@@ -173,12 +204,49 @@ module CrystalPlay
         nil
       end
 
-      # Check if expression contains comparison operators
+      # Check if expression contains a comparison operator *at the top
+      # level* - depth/quote-aware, like top_level_keyword_index and the
+      # +/- splitters below, rather than a plain substring search. A naive
+      # substring check fires on an operator nested inside a paren'd sub-
+      # expression too (linux-system-roles/logging's own rsyslog subrole:
+      # `a + (b if (cond_len > 0) else []) + (c | flatten)`, where the `>`
+      # belongs to the ternary's own condition, not a top-level comparison
+      # of the whole plus-expression) - routing the *entire* expression
+      # into ComparisonEvaluator in that case makes it split on the nested
+      # operator using its own naive text split, producing a garbage
+      # operand with an unbalanced trailing `)`. That operand, fed back
+      # into the evaluator, permanently unbalances every depth-tracking
+      # scanner downstream (split_top_level_plus, FilterEngine.split_chain)
+      # - each returns the *unchanged* input as "the whole thing to
+      # evaluate again" once it can never find its target token at depth
+      # 0, and evaluate_expr/evaluate_with_filter call each other with
+      # that identical string forever: a stack overflow, not just a wrong
+      # answer.
       private def has_comparison?(expr : String) : Bool
-        expr.includes?("==") || expr.includes?("!=") || 
-        expr.includes?("<=") || expr.includes?(">=") ||
-        (expr.includes?(">") && !expr.includes?(">=")) ||
-        (expr.includes?("<") && !expr.includes?("<="))
+        depth = 0
+        quote = nil.as(Char?)
+        i = 0
+        while i < expr.size
+          char = expr[i]
+          if q = quote
+            quote = nil if char == q
+          elsif char == '\'' || char == '"'
+            quote = char
+          elsif "[({".includes?(char)
+            depth += 1
+          elsif "])}".includes?(char)
+            depth -= 1
+          elsif depth == 0 && top_level_comparison_char?(expr, i, char)
+            return true
+          end
+          i += 1
+        end
+        false
+      end
+
+      private def top_level_comparison_char?(expr : String, i : Int32, char : Char) : Bool
+        two = expr[i, 2]?
+        two == "==" || two == "!=" || two == "<=" || two == ">=" || char == '>' || char == '<'
       end
 
       # Splits *expr* on every top-level `+` (outside quotes/brackets),
