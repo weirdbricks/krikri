@@ -97,6 +97,37 @@ describe CrystalPlay::PlaybookParser do
       task.params["chdir"].should eq("/tmp")
     end
 
+    it "does not drop the whole task when become: is a templated string, not a literal boolean" do
+      # Real bug found benchmarking ansible-community.ansible-vault's own
+      # `become: "{{ vault_privileged_install }}"` - the old `.as_bool`
+      # call raised outright for anything that wasn't a literal YAML
+      # boolean, and that exception propagated all the way up to
+      # parse_tasks' own per-task rescue, silently dropping the ENTIRE
+      # task (not just mis-resolving become:) with only a generic "Cast
+      # from String to Bool failed" warning nowhere near obviously about
+      # become: at all.
+      task = single_task(<<-YAML)
+        - name: t
+          become: "{{ some_var }}"
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+
+      task.name.should eq("t")
+      task.become.should be_true
+    end
+
+    it "still parses a literal become: boolean normally" do
+      task = single_task(<<-YAML)
+        - name: t
+          become: false
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+
+      task.become.should be_false
+    end
+
     it "orders pre_tasks:, roles:, tasks:, and post_tasks: correctly, matching real Ansible" do
       # Real gap found benchmarking every one of geerlingguy.docker/mysql/
       # postgresql/nginx/php/security: pre_tasks:/post_tasks: were

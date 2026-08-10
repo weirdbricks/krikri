@@ -528,7 +528,7 @@ module CrystalPlay
       play = Play.new(name, hosts)
 
       # Parse play-level settings
-      play.become = yaml["become"]?.try(&.as_bool) || false
+      play.become = parse_become_value(yaml["become"]?) || false
       play.become_user = yaml["become_user"]?.try(&.as_s)
       gather_facts_yaml = yaml["gather_facts"]?
       play.gather_facts = gather_facts_yaml ? gather_facts_yaml.as_bool : true
@@ -852,7 +852,7 @@ module CrystalPlay
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.check_mode = task_hash["check_mode"]?.try(&.as_bool)
       task.diff_mode = task_hash["diff"]?.try(&.as_bool)
-      task.become = task_hash["become"]?.try(&.as_bool) || play.become
+      task.become = parse_become_value(task_hash["become"]?) || play.become
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
 
       # Parse task-level vars: - a real, previously-shipped gap: nothing
@@ -1132,7 +1132,7 @@ module CrystalPlay
       # nested task still evaluates its own when:/tags:/etc in addition.
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
-      task.become = task_hash["become"]?.try(&.as_bool) || play.become
+      task.become = parse_become_value(task_hash["become"]?) || play.become
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
 
       if tags_yaml = task_hash["tags"]?.try(&.as_a?)
@@ -1172,7 +1172,7 @@ module CrystalPlay
 
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
-      task.become = task_hash["become"]?.try(&.as_bool) || play.become
+      task.become = parse_become_value(task_hash["become"]?) || play.become
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
 
       if tags_yaml = task_hash["tags"]?.try(&.as_a?)
@@ -1242,7 +1242,7 @@ module CrystalPlay
 
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
-      task.become = task_hash["become"]?.try(&.as_bool) || play.become
+      task.become = parse_become_value(task_hash["become"]?) || play.become
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
 
       if tags_yaml = task_hash["tags"]?.try(&.as_a?)
@@ -1456,6 +1456,40 @@ module CrystalPlay
         end
       else
         false
+      end
+    end
+
+    # `become:`'s value at parse time - a literal YAML boolean the vast
+    # majority of the time, but real Ansible also accepts a templated
+    # string (`become: "{{ vault_privileged_install }}"`,
+    # ansible-community.ansible-vault's own idiom). The old `.as_bool`
+    # call raised outright for anything that wasn't a literal boolean
+    # (YAML::Any#as_bool has no nil-safe variant that just returns nil
+    # for a wrong type - it always raises), and that exception propagated
+    # all the way up to parse_tasks' own per-task rescue, silently
+    # dropping the ENTIRE task (not just mis-resolving become:) with only
+    # a generic "Cast from String to Bool failed" warning nowhere near
+    # obviously about become: at all.
+    #
+    # Full deferred (execution-time) evaluation of a templated become:
+    # would need Task#become to become a runtime-resolved value instead
+    # of a fixed Bool set once at parse time - real, but a bigger change
+    # than this fix. A `{{ }}`-shaped string defaults to true here: real
+    # playbooks essentially never write `become: "{{ x }}"` to mean "no,
+    # don't" (a literal `become: false` is how that's actually
+    # expressed), so this default is right far more often than a random
+    # guess, and - critically - never worse than the previous behavior
+    # of losing the whole task outright.
+    private def self.parse_become_value(yaml : YAML::Any?) : Bool?
+      return nil unless yaml
+      case raw = yaml.raw
+      when Bool
+        raw
+      when String
+        return true if raw.strip.starts_with?("{{")
+        raw.strip.downcase.in?("true", "yes", "1")
+      else
+        nil
       end
     end
 
