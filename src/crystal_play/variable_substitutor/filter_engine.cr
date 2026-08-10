@@ -387,6 +387,19 @@ module CrystalPlay
           attr_value != compare_value
         when "undefined"
           attr_value.nil?
+        when "sameas"
+          # Real Jinja2's `sameas` is Python `is` - object identity, which
+          # for a JSON value means "same type AND same value" (unlike
+          # `equalto`'s looser Ansible-style cross-type comparison
+          # elsewhere in this file - `30000 == true` is meaningfully
+          # different from `30000 is sameas true`, and this test exists
+          # specifically to tell them apart: linux-system-roles/
+          # kernel_settings' own `selectattr('value', 'sameas', true)`
+          # guard against a real boolean sysctl value would otherwise
+          # match on truthiness alone, treating every non-zero integer
+          # sysctl value as if it were the literal `true`).
+          !attr_value.nil? && !compare_value.nil? &&
+            attr_value.raw.class == compare_value.raw.class && attr_value == compare_value
         else
           !attr_value.nil?
         end
@@ -422,6 +435,18 @@ module CrystalPlay
 
         return JSON::Any.new(expr[1..-2]) if quoted_literal?(expr)
         return JSON::Any.new(nil) if expr == "None"
+
+        # A bare (unquoted) `true`/`false` - Jinja2/Python boolean
+        # literals, most commonly `selectattr('value', 'sameas', true)`
+        # (linux-system-roles/kernel_settings' own boolean-sysctl-value
+        # guard). Checked before the int/float/var-lookup fallbacks below,
+        # which would otherwise treat "true"/"false" as a variable name
+        # (almost always undefined) and stringify it to the *text*
+        # "true"/"false" rather than a real JSON boolean - `sameas`
+        # specifically needs the real type to ever compare unequal to a
+        # non-boolean attr_value.
+        return JSON::Any.new(true) if expr == "true" || expr == "True"
+        return JSON::Any.new(false) if expr == "false" || expr == "False"
 
         if int_val = expr.to_i64?
           return JSON::Any.new(int_val)
