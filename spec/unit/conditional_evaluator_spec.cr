@@ -82,6 +82,25 @@ describe CrystalPlay::ConditionalEvaluator do
       v["os_security_users_allow"] = JSON::Any.new([JSON::Any.new("change_user")])
       CrystalPlay::ConditionalEvaluator.evaluate(%('change_user' not in os_security_users_allow), v).should be_false
     end
+
+    it "checks membership in a literal numeric list against a real int item" do
+      # Real bug found benchmarking openstack.ansible-hardening's own
+      # kdump-service check: `failed_when: result.rc not in [0, 3, 4]`.
+      # Every array value this evaluator produces (literal or variable)
+      # stringifies its elements, but the compared item (a registered
+      # command's `.rc`) keeps its real Int64 type - comparing an Int64
+      # against String array elements unstringified always came back
+      # false, so `rc not in [...]` always evaluated true regardless of
+      # the real rc, hard-failing a task real Ansible treats as success.
+      v = Hash(String, JSON::Any).new
+      v["result"] = JSON.parse(%({"rc": 4}))
+      CrystalPlay::ConditionalEvaluator.evaluate("result.rc in [0, 3, 4]", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("result.rc not in [0, 3, 4]", v).should be_false
+
+      v["result"] = JSON.parse(%({"rc": 7}))
+      CrystalPlay::ConditionalEvaluator.evaluate("result.rc in [0, 3, 4]", v).should be_false
+      CrystalPlay::ConditionalEvaluator.evaluate("result.rc not in [0, 3, 4]", v).should be_true
+    end
   end
 
   describe "out-of-line parentheses from list-when ANDing" do

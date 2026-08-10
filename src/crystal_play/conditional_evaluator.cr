@@ -341,11 +341,26 @@ module CrystalPlay
       item = evaluate_value(parts[0].strip, vars)
       container = evaluate_value(parts[1].strip, vars)
 
-      # Check if item is in container (string or array)
+      # Check if item is in container (string or array). Every array
+      # value this evaluator ever produces - whether from a literal
+      # `[0, 3, 4]` or a real variable - is Array(String), since
+      # evaluate_value/json_any_to_value both stringify every element
+      # (Array(String) is the only array shape this method's own return
+      # type allows). `item` itself, though, keeps its real type (an
+      # Int64 for something like a registered command's `.rc`) - so
+      # comparing it against the container unstringified
+      # (`container.includes?(item)`) compared an Int64 against String
+      # elements, which Crystal's `==` never treats as equal, so
+      # membership always came back false. `failed_when: result.rc not
+      # in [0, 3, 4]` (openstack.ansible-hardening's own kdump-service
+      # check, "not in" is `!evaluate_in`) therefore always evaluated
+      # true regardless of the real rc, hard-failing a task real
+      # Ansible treats as a legitimate rc=3/4 success and halting the
+      # rest of the play for that host.
       if container.is_a?(String)
         container.includes?(item.to_s)
       elsif container.is_a?(Array)
-        container.includes?(item)
+        container.includes?(item.to_s)
       else
         false
       end
