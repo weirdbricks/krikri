@@ -128,6 +128,38 @@ describe CrystalPlay::PlaybookParser do
       task.become.should be_false
     end
 
+    it "lets a task's explicit become: false override a play-level become: true" do
+      # Real, deeper pre-existing bug found while fixing the templated-
+      # become: crash above (benchmarking ansible-community.ansible-
+      # vault): `parse_become_value(...) || play.become` treated an
+      # EXPLICIT `become: false` identically to become: being absent
+      # entirely, since Bool false and nil are both falsy to `||` - a
+      # task deliberately opting OUT of a play-level `become: true`
+      # (the role's own "Check Vault package file (local)": `become:
+      # false`, delegate_to: 127.0.0.1, explicitly not wanting to sudo
+      # for a controller-side stat check) silently kept becoming root
+      # anyway - "sudo: a password is required" with no evident tie
+      # back to the task's own explicit become: false.
+      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML
+        - name: play
+          hosts: all
+          become: true
+          tasks:
+            - name: opts out
+              become: false
+              ansible.builtin.debug:
+                msg: hi
+            - name: inherits play become
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+      )
+
+      tasks = playbook.plays[0].tasks
+      tasks[0].become.should be_false
+      tasks[1].become.should be_true
+    end
+
     it "orders pre_tasks:, roles:, tasks:, and post_tasks: correctly, matching real Ansible" do
       # Real gap found benchmarking every one of geerlingguy.docker/mysql/
       # postgresql/nginx/php/security: pre_tasks:/post_tasks: were

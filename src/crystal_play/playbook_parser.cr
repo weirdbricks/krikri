@@ -852,7 +852,7 @@ module CrystalPlay
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.check_mode = task_hash["check_mode"]?.try(&.as_bool)
       task.diff_mode = task_hash["diff"]?.try(&.as_bool)
-      task.become = parse_become_value(task_hash["become"]?) || play.become
+      task.become = resolve_become(task_hash, play)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
 
       # Parse task-level vars: - a real, previously-shipped gap: nothing
@@ -1132,7 +1132,7 @@ module CrystalPlay
       # nested task still evaluates its own when:/tags:/etc in addition.
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
-      task.become = parse_become_value(task_hash["become"]?) || play.become
+      task.become = resolve_become(task_hash, play)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
 
       if tags_yaml = task_hash["tags"]?.try(&.as_a?)
@@ -1172,7 +1172,7 @@ module CrystalPlay
 
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
-      task.become = parse_become_value(task_hash["become"]?) || play.become
+      task.become = resolve_become(task_hash, play)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
 
       if tags_yaml = task_hash["tags"]?.try(&.as_a?)
@@ -1242,7 +1242,7 @@ module CrystalPlay
 
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
-      task.become = parse_become_value(task_hash["become"]?) || play.become
+      task.become = resolve_become(task_hash, play)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
 
       if tags_yaml = task_hash["tags"]?.try(&.as_a?)
@@ -1491,6 +1491,23 @@ module CrystalPlay
       else
         nil
       end
+    end
+
+    # A task's own become: falls back to the play's when not given at
+    # all - but "not given" must mean exactly that, not merely falsy.
+    # `parse_become_value(...) || play.become` (used until this helper
+    # replaced it) treated an EXPLICIT `become: false` identically to
+    # become: being absent entirely, since Bool false and nil are both
+    # falsy to `||` - a task deliberately opting OUT of a play-level
+    # `become: true` (ansible-community.ansible-vault's own "Check Vault
+    # package file (local)": `become: false`, delegate_to: 127.0.0.1,
+    # explicitly NOT wanting to sudo for a controller-side stat check)
+    # silently kept becoming root anyway. Found investigating a stat:
+    # task inexplicably failing with "sudo: a password is required"
+    # despite its own explicit become: false.
+    private def self.resolve_become(task_hash : Hash(YAML::Any, YAML::Any), play : Play) : Bool
+      given = parse_become_value(task_hash["become"]?)
+      given.nil? ? play.become : given
     end
 
     private def self.safe_yaml_to_string(yaml : YAML::Any) : String
