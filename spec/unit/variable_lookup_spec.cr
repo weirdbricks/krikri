@@ -73,4 +73,22 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     lookup.indexed("flags[0]").should eq("True")
     lookup.indexed("flags[1]").should eq("False")
   end
+
+  it "resolves a Python-style .split(sep)[index] method call chained off a dotted path" do
+    # Real bug found benchmarking geerlingguy.postgresql's own "Include
+    # OS-specific variables (Debian)." task: `include_vars: "{{
+    # ansible_facts.distribution }}-{{ ansible_facts.distribution_version
+    # .split('.')[0] }}.yml"`. Two compounding gaps: resolve_nested's
+    # naive `expr.split(".")` broke on the METHOD ARGUMENT's own literal
+    # "." (splitting "split('.')" into two garbled parts instead of
+    # leaving it whole), and even with that fixed, no String method-call
+    # handling existed at all (only Hash's .keys()/.values()/.items()) -
+    # together these always resolved to "undefined" ("Ubuntu-undefined.
+    # yml" instead of "Ubuntu-22.yml").
+    v = Hash(String, JSON::Any).new
+    v["ansible_facts"] = JSON.parse(%({"distribution_version": "22.04"}))
+    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup.indexed("ansible_facts.distribution_version.split('.')[0]").should eq("22")
+    lookup.indexed("ansible_facts.distribution_version.split('.')[1]").should eq("04")
+  end
 end

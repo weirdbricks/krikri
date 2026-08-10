@@ -88,7 +88,7 @@ module CrystalPlay
       end
 
       private def resolve_nested(expr : String) : JSON::Any?
-        parts = expr.split(".")
+        parts = split_dotted_parts(expr)
         current = @vars[parts[0]]?
         return nil unless current
 
@@ -96,6 +96,12 @@ module CrystalPlay
           dict_method = hash_method_call(current, part)
           if dict_method
             current = dict_method
+            next
+          end
+
+          string_method = string_method_call(current, part)
+          if string_method
+            current = string_method
             next
           end
 
@@ -109,6 +115,68 @@ module CrystalPlay
         end
 
         current
+      end
+
+      # Splits a dotted access path on top-level "." only - outside
+      # quotes and parens. A naive `expr.split(".")` breaks on a method
+      # call whose own argument contains a literal "." (`ansible_facts.
+      # distribution_version.split('.')[0]`, geerlingguy.postgresql's own
+      # OS-major-version idiom): the argument's dot got treated as a
+      # *path* separator too, splitting "split('.')" into two garbled
+      # parts ("split('" and "')") instead of leaving it whole for
+      # string_method_call below to parse.
+      private def split_dotted_parts(expr : String) : Array(String)
+        parts = [] of String
+        current = String::Builder.new
+        depth = 0
+        quote_char = nil.as(Char?)
+
+        expr.each_char do |char|
+          if quote_char
+            current << char
+            quote_char = nil if char == quote_char
+            next
+          end
+
+          case char
+          when '\'', '"'
+            quote_char = char
+            current << char
+          when '('
+            depth += 1
+            current << char
+          when ')'
+            depth -= 1
+            current << char
+          when '.'
+            if depth == 0
+              parts << current.to_s
+              current = String::Builder.new
+            else
+              current << char
+            end
+          else
+            current << char
+          end
+        end
+        parts << current.to_s
+        parts
+      end
+
+      # Jinja2/Python string method-call syntax (`.split(sep)`) - geerling
+      # guy.postgresql/mysql/php's own `ansible_facts.distribution_version
+      # .split('.')[0]` idiom for picking an OS-major-version vars file.
+      # Only the single-quoted-separator form is needed (the only one
+      # these roles use); returns an array of strings, matching Python's
+      # own str.split so a trailing `[0]` (handled by resolve_indexed,
+      # the caller one level up) picks the first component.
+      private def string_method_call(current : JSON::Any, part : String) : JSON::Any?
+        return nil unless current.raw.is_a?(String)
+        return nil unless match = part.match(/^split\(\s*(['"])(.*)\1\s*\)$/)
+
+        sep = match[2]
+        pieces = sep.empty? ? current.as_s.chars.map(&.to_s) : current.as_s.split(sep)
+        JSON::Any.new(pieces.map { |piece| JSON::Any.new(piece) })
       end
 
       # Jinja2/Python dict method-call syntax (`.keys()`, `.values()`,
