@@ -116,8 +116,11 @@ module CrystalPlay
         return conn.as_s? == "local"
       end
       
-      # Check if host is localhost
-      @host.name == "localhost"
+      # Check if host is localhost - "127.0.0.1" is real Ansible's other
+      # well-known spelling for the controller itself (see
+      # PluginManager.is_local_connection?'s identical fix for the
+      # rationale).
+      @host.name == "localhost" || @host.name == "127.0.0.1"
     end
     
     # Get the actual hostname to connect to (checks ansible_host variable)

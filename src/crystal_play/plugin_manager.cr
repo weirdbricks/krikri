@@ -687,8 +687,16 @@ module CrystalPlay
         return conn.as_s? == "local"
       end
 
-      # Check if host is localhost
-      host.name == "localhost"
+      # Check if host is localhost - "127.0.0.1" is real Ansible's other
+      # well-known spelling for the controller itself (`delegate_to:
+      # 127.0.0.1` is a common idiom for a controller-side task,
+      # ansible-community.ansible-vault's own local package download/
+      # unarchive tasks all use it) and is treated identically to
+      # "localhost" - without this, a delegated task tried to SSH-upload
+      # plugin binaries to "127.0.0.1" as if it were a genuine remote
+      # target, which needs actual SSH access to itself and isn't what
+      # `delegate_to: 127.0.0.1` means at all.
+      host.name == "localhost" || host.name == "127.0.0.1"
     end
 
     # Get the actual hostname to connect to (checks ansible_host

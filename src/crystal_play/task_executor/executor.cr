@@ -498,7 +498,7 @@ module CrystalPlay
       end
 
       fallback = Host.new(target_name, ENV["USER"]? || "root", 22)
-      fallback.vars["ansible_connection"] = JSON::Any.new("local") if target_name == "localhost"
+      fallback.vars["ansible_connection"] = JSON::Any.new("local") if target_name == "localhost" || target_name == "127.0.0.1"
       fallback
     end
 
@@ -1470,7 +1470,7 @@ module CrystalPlay
     # session ending, which this codebase's plain exec-over-SSH connection
     # model doesn't support - a documented scope cut, not an oversight.
     private def execute_async(task : Task, exec_host : Host, config_json : String) : JSON::Any
-      is_local = exec_host.vars["ansible_connection"]?.try(&.as_s?) == "local" || exec_host.name == "localhost"
+      is_local = exec_host.vars["ansible_connection"]?.try(&.as_s?) == "local" || exec_host.name == "localhost" || exec_host.name == "127.0.0.1"
       unless is_local
         return JSON.parse({
           "changed" => false,
