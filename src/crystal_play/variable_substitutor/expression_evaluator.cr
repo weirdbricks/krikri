@@ -4,6 +4,7 @@ require "./comparison_evaluator"
 require "./filter_engine"
 require "./array_slicer"
 require "./variable_lookup"
+require "../variable_substitutor"
 module CrystalPlay
   module VariableSubstitutor
     # ExpressionEvaluator - Orchestrates evaluation of all expression types
@@ -42,6 +43,20 @@ module CrystalPlay
       end
 
       private def evaluate_expr(expr : String) : String
+        # `lookup('first_found', ffparams)` - real Ansible's lookup()
+        # function call syntax (distinct from a `|` filter chain), used
+        # pervasively across linux-system-roles to pick an OS-version-
+        # specific vars file: `include_vars: "{{ lookup('first_found',
+        # ffparams) }}"` where ffparams is `{files: [...], paths: [...]}`.
+        # Checked first (function-call syntax, not an operator) since
+        # nothing else in this dispatch chain understands `name(args)` at
+        # all - it fell through everywhere else to a plain variable
+        # lookup on the literal text "lookup('first_found', ffparams)",
+        # always undefined.
+        if expr.starts_with?("lookup(") && expr.ends_with?(')')
+          return evaluate_lookup(expr[7..-2])
+        end
+
         # Check for comparison operators FIRST (before filters)
         if has_comparison?(expr)
           return @comparison.evaluate(expr)
@@ -391,6 +406,63 @@ module CrystalPlay
         elsif float_val = expr.to_f64?
           JSON::Any.new(float_val)
         end
+      end
+
+      # `lookup('first_found', params)` - only the "first_found" lookup
+      # type is supported (the one linux-system-roles actually uses, for
+      # OS-version-specific vars files); any other lookup type resolves
+      # to "undefined" rather than raising, matching how every other
+      # unsupported construct in this evaluator degrades.
+      private def evaluate_lookup(args : String) : String
+        parts = split_top_level_commas(args)
+        lookup_type = parts[0]?.try { |part| quoted_string_literal(part.strip) }.try(&.as_s?)
+        return "undefined" unless lookup_type == "first_found"
+
+        params = parts[1]?.try { |part| resolve_plus_operand(part.strip) }
+        return "undefined" unless params
+
+        evaluate_first_found(params)
+      end
+
+      # Real Ansible's first_found: the first `files:` entry that exists
+      # under any `paths:` entry (both lists, in order - outer loop over
+      # files, inner over paths, matching real Ansible's own search
+      # order), each entry independently rendered since it commonly still
+      # carries its own `{{ }}` markers (linux-system-roles/timesync's
+      # `"{{ ansible_facts['distribution'] }}_{{ ansible_facts
+      # ['distribution_version'] }}.yml"`) - unlike a bare expression,
+      # these came from a task's own `vars:` dict and were never passed
+      # through VarSubstitutor#substitute's mustache-span extraction, only
+      # this evaluator's bare-expression path, so re-rendering here is the
+      # first point either ever sees `{{ }}` syntax. `paths:` defaults to
+      # the current directory (real Ansible's own default) when absent.
+      # Resolves entirely against the controller's own filesystem - real
+      # Ansible's first_found always does (it's how role vars files that
+      # live on the controller, not the managed host, get found).
+      private def evaluate_first_found(params : JSON::Any) : String
+        params_hash = params.as_h?
+        return "undefined" unless params_hash
+
+        files = lookup_array(params_hash["files"]?)
+        paths_raw = params_hash["paths"]?
+        paths = paths_raw ? lookup_array(paths_raw) : [JSON::Any.new(".")]
+
+        renderer = VarSubstitutor.new(vars: @vars, host_name: "localhost")
+        rendered_paths = paths.map { |path_entry| renderer.substitute(path_entry.as_s? || "") }
+
+        files.each do |file_entry|
+          rendered_file = renderer.substitute(file_entry.as_s? || "")
+          rendered_paths.each do |path|
+            candidate = File.join(path, rendered_file)
+            return candidate if File.exists?(candidate)
+          end
+        end
+
+        "undefined"
+      end
+
+      private def lookup_array(value : JSON::Any?) : Array(JSON::Any)
+        value.try(&.as_a?) || [] of JSON::Any
       end
 
       # A literal Jinja list (`['/dev', '/dev/shm']`) is valid Python/Jinja

@@ -996,6 +996,18 @@ module CrystalPlay
         task.tags = tags_yaml.as_a?.try(&.map(&.as_s)) || [tags_yaml.as_s]
       end
 
+      # A task's own vars: was never parsed here at all (same gap
+      # parse_block_task had before it was fixed) - linux-system-roles/
+      # timesync's own `include_vars: "{{ lookup('first_found', ffparams)
+      # }}" vars: ffparams: {files: [...], paths: [...]}` needs ffparams
+      # visible when the file: expression is rendered; without this it
+      # resolved undefined.
+      if vars_yaml = task_hash["vars"]?.try(&.as_h?)
+        vars = Hash(String, JSON::Any).new
+        vars_yaml.each { |key, var_value| vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(var_value.to_json)) }
+        task.vars = vars
+      end
+
       # with_first_found: is the loop form this module is almost always
       # paired with - "load whichever of these files exists".
       if with_first_found = task_hash["with_first_found"]?
