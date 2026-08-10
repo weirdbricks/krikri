@@ -1054,6 +1054,20 @@ module CrystalPlay
         task.tags = tags_yaml.map(&.as_s)
       end
 
+      # A block's own `vars:` is inherited by every task nested inside it
+      # (real Ansible scoping) - was never parsed at all here, so it
+      # silently vanished even though TaskExecutor#propagate_role_context
+      # already merges enclosing.vars into each nested task, because
+      # enclosing.vars was always empty for a block. Found via
+      # linux-system-roles/logging's `Check logging inputs` block, which
+      # computes `__logging_input_names` at block level for a nested
+      # looped task's `when:` to reference.
+      if vars_yaml = task_hash["vars"]?.try(&.as_h?)
+        vars = Hash(String, JSON::Any).new
+        vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
+        task.vars = vars
+      end
+
       task
     end
 

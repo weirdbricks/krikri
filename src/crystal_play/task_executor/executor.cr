@@ -1924,6 +1924,23 @@ module CrystalPlay
         nested_task.role_files_dir = enclosing.role_files_dir
         nested_task.role_templates_dir = enclosing.role_templates_dir
         nested_task.role_vars_dir = enclosing.role_vars_dir
+
+        # A block's own `vars:` is inherited by every task nested inside it
+        # (real Ansible scoping) - found via linux-system-roles/logging's
+        # `Check logging inputs` block, which computes `__logging_input_names:
+        # "{{ logging_inputs | map(attribute='name') | list }}"` at the block
+        # level and references it from a nested looped task's `when:`.
+        # Without this, build_vars_context (which only ever reads a task's
+        # *own* task.vars) never saw the block's vars at all, so
+        # __logging_input_names resolved undefined - `intersect(undefined)`
+        # returned empty, tripping the "includes undefined logging_inputs
+        # item" fail: unconditionally. Merged so the nested task's own vars:
+        # (if any) still win over the same key inherited from the block.
+        unless enclosing.vars.empty?
+          merged = enclosing.vars.dup
+          nested_task.vars.each { |key, value| merged[key] = value }
+          nested_task.vars = merged
+        end
       end
     end
 
