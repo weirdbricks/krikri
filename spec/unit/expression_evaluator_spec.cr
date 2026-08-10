@@ -155,4 +155,39 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("lookup('first_found', params)").should eq(File.join(role_dir, "vars", "Debian.yml"))
   end
+
+  it "evaluates lookup('env', 'VAR') for both a set and an unset environment variable" do
+    # Real bug found benchmarking ansible-community.ansible-vault's own
+    # `vault_version: "{{ lookup('env', 'VAULT_VERSION') | default(
+    # '2.0.3', true) }}"` - lookup('env', ...) was entirely unimplemented
+    # (only 'first_found' was), always "undefined" regardless of the
+    # real env var.
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    ENV["CRYSTAL_ANSIBLE_SPEC_ENV_LOOKUP_TEST"] = "hello"
+    evaluator.evaluate("lookup('env', 'CRYSTAL_ANSIBLE_SPEC_ENV_LOOKUP_TEST')").should eq("hello")
+    ENV.delete("CRYSTAL_ANSIBLE_SPEC_ENV_LOOKUP_TEST")
+
+    evaluator.evaluate("lookup('env', 'CRYSTAL_ANSIBLE_SPEC_ENV_LOOKUP_TEST')").should eq("")
+  end
+
+  it "resolves lookup(...) followed by a filter chain, not swallowing the whole thing as one bare call" do
+    # Real bug found alongside the env lookup above: `lookup('env',
+    # 'VAULT_VERSION') | default('2.0.3', true)` - the naive `starts_with
+    # ("lookup(") && ends_with(')')` check in evaluate_expr matched the
+    # *whole* string (default(...)'s own closing paren satisfies
+    # ends_with(')') too, not just lookup(...)'s), swallowing the entire
+    # filter chain into evaluate_lookup as one garbled, unbalanced
+    # argument before top_level_pipe?/evaluate_with_filter ever got a
+    # chance to split it properly. An unset env var with no matching
+    # default(..., true) call previously stayed the literal string
+    # "undefined" (non-empty, so default()'s own falsy check never fired
+    # even once reached) instead of "" (real Ansible's own lookup('env',
+    # ...) return for an unset var).
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    evaluator.evaluate(%(lookup('env', 'CRYSTAL_ANSIBLE_SPEC_ENV_LOOKUP_TEST_2') | default('2.0.3', true))).should eq("2.0.3")
+  end
 end

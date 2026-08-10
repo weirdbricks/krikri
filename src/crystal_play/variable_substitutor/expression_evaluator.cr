@@ -53,7 +53,7 @@ module CrystalPlay
         # all - it fell through everywhere else to a plain variable
         # lookup on the literal text "lookup('first_found', ffparams)",
         # always undefined.
-        if expr.starts_with?("lookup(") && expr.ends_with?(')')
+        if bare_call?(expr, "lookup(")
           return evaluate_lookup(expr[7..-2])
         end
 
@@ -66,7 +66,7 @@ module CrystalPlay
         # `range(` prefix check there would otherwise never be reached -
         # top_level_pipe? routes any expression with a `|` straight past
         # this method into evaluate_with_filter before this line runs.
-        if expr.starts_with?("range(") && expr.ends_with?(')')
+        if bare_call?(expr, "range(")
           return @lookup.format_value(evaluate_range(expr[6..-2]))
         end
 
@@ -453,12 +453,32 @@ module CrystalPlay
       private def evaluate_lookup(args : String) : String
         parts = split_top_level_commas(args)
         lookup_type = parts[0]?.try { |part| quoted_string_literal(part.strip) }.try(&.as_s?)
-        return "undefined" unless lookup_type == "first_found"
 
-        params = parts[1]?.try { |part| resolve_plus_operand(part.strip) }
-        return "undefined" unless params
-
-        evaluate_first_found(params)
+        case lookup_type
+        when "first_found"
+          params = parts[1]?.try { |part| resolve_plus_operand(part.strip) }
+          return "undefined" unless params
+          evaluate_first_found(params)
+        when "env"
+          # lookup('env', 'VAR_NAME') - real Ansible's own env lookup
+          # plugin, reads an environment variable from the CONTROLLER
+          # (not the target - this always runs on the controller side,
+          # same as first_found above). Entirely unimplemented before -
+          # fell through to the `unless lookup_type == "first_found"`
+          # guard, always "undefined" regardless of the real env var.
+          # Found via ansible-community.ansible-vault's own `vault_
+          # version: "{{ lookup('env', 'VAULT_VERSION') | default(
+          # '2.0.3', true) }}"` - real Ansible's own env lookup returns
+          # an empty string for an unset var (not an error), which is
+          # what makes the `default(..., true)` fallback actually kick
+          # in; "undefined" is a non-empty string, so default() never
+          # replaced it, leaving the literal text "undefined" as the
+          # real Vault version used to build the download URL.
+          var_name = parts[1]?.try { |part| resolve_plus_operand(part.strip) }.try(&.as_s?)
+          var_name ? (ENV[var_name]? || "") : "undefined"
+        else
+          "undefined"
+        end
       end
 
       # Real Ansible's first_found: the first `files:` entry that exists
@@ -544,6 +564,47 @@ module CrystalPlay
       # expression (a variable, a filter chain, ...), so every part is
       # evaluated (not just parsed as a literal int) before being coerced
       # to Int32. Matches Python's own half-open, stop-exclusive range.
+      # Whether *expr* is ENTIRELY one bare `prefix(...)` function call -
+      # not just "starts with prefix( and ends with some )", which a
+      # trailing filter chain's own closing paren can satisfy too
+      # (`lookup('env', 'X') | default('2.0.3', true)` starts with
+      # "lookup(" and does end with ")" - just default(...)'s, not
+      # lookup(...)'s own matching one). Finds the paren that actually
+      # matches `prefix`'s own opening one (depth/quote-aware) and
+      # confirms it's the expression's last character; if there's
+      # trailing content after it (like " | default(...)"), this isn't
+      # a bare call at all. Real bug found benchmarking ansible-
+      # community.ansible-vault's own `lookup('env', 'VAULT_VERSION') |
+      # default('2.0.3', true)`: the naive check swallowed the entire
+      # string (filter chain included) into evaluate_lookup as one
+      # garbled, unbalanced argument, never reaching top_level_pipe?/
+      # evaluate_with_filter at all.
+      private def bare_call?(expr : String, prefix : String) : Bool
+        return false unless expr.starts_with?(prefix) && expr.ends_with?(')')
+
+        depth = 0
+        quote : Char? = nil
+        (prefix.size...expr.size).each do |i|
+          char = expr[i]
+          if quote
+            quote = nil if char == quote
+            next
+          end
+          case char
+          when '\'', '"'
+            quote = char
+          when '('
+            depth += 1
+          when ')'
+            if depth == 0
+              return i == expr.size - 1
+            end
+            depth -= 1
+          end
+        end
+        false
+      end
+
       private def evaluate_range(args : String) : JSON::Any
         parts = split_top_level_commas(args).map { |part| resolve_plus_operand(part).as_i }
         start, stop, step = case parts.size
@@ -845,6 +906,29 @@ module CrystalPlay
                   # evaluate_expr, just reached via a different path since
                   # top_level_pipe? routes anything with a `|` here first.
                   evaluate_range(var_expr[6..-2])
+                elsif var_expr.starts_with?("lookup(") && var_expr.ends_with?(')')
+                  # `lookup('env', 'VAULT_VERSION') | default('2.0.3',
+                  # true)` - same function-call syntax as evaluate_expr's
+                  # own bare (no-filter) `lookup(` case, just reached via
+                  # a different path since top_level_pipe? routes
+                  # anything with a `|` here first. split_chain already
+                  # isolated var_expr to exactly this call (depth-aware,
+                  # so the filter chain's own trailing `)` from
+                  # default(...) was never part of it) - the actual bug
+                  # this sits alongside was evaluate_expr's own top-level
+                  # `starts_with("lookup(") && ends_with(')')` check
+                  # wrongly matching the *whole* "lookup(...) |
+                  # default(...)" text (any trailing filter call ending
+                  # in its own `)` satisfies ends_with(')') too),
+                  # swallowing the entire expression into evaluate_lookup
+                  # with a garbled, unbalanced argument string before
+                  # top_level_pipe? ever got a chance to run - fixed via
+                  # #bare_call?, which confirms the matching close paren
+                  # for `lookup(`'s own open paren is the expression's
+                  # actual last character, not just checking whether the
+                  # tail of the string happens to be some `)`.
+                  lookup_rendered = evaluate_lookup(var_expr[7..-2])
+                  (JSON.parse(lookup_rendered) rescue JSON::Any.new(lookup_rendered))
                 elsif literal = quoted_string_literal(var_expr)
                   # A quoted string literal as the chain's head
                   # (`{{ 'foo' | upper }}`, `{{ mysql_log_error | dirname
