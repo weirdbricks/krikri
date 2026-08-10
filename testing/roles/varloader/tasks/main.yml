@@ -40,3 +40,21 @@
   with_first_found:
     - files: ["NoSuchVarsFile.yml"]
       skip: true
+
+- name: load a candidate with the vars/ prefix baked into the filename itself
+  ansible.builtin.include_vars:
+    file: "{{ item }}"
+    name: os_vars_prefixed
+  with_first_found:
+    # geerlingguy.mysql's own style (unlike the bare "Linux.yml" case
+    # above): the candidate is "vars/Linux.yml", not "Linux.yml", so this
+    # only resolves once the role's own ROOT directory (not just its
+    # vars/ subdir) is a first_found search root.
+    - files:
+        - "vars/NoSuchCandidate.yml"
+        - "vars/Linux.yml"
+      skip: true
+
+- name: show the vars/-prefixed dict
+  ansible.builtin.debug:
+    msg: "prefixed={{ os_vars_prefixed.varloader_marker | default('MISSING') }}"

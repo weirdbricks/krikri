@@ -692,10 +692,24 @@ module CrystalPlay
         # holding a template that expands to a list becomes that list.
         # dev-sec os_hardening's yum gpg-check writes it this way, with a
         # `map(attribute='path')` / `difference(...)` filter chain inside.
+        #
+        # Only when the element IS one bare `{{ ... }}` expression (after
+        # stripping whitespace) - not merely *contains* one. A real, quite
+        # different one-element-array idiom (geerlingguy.mysql's own
+        # "Disallow root login remotely": `with_items: ["DELETE FROM
+        # mysql.user WHERE User='{{ mysql_root_username }}' AND ..."]`) is
+        # a single LITERAL loop item whose text happens to embed a
+        # template - rendering it produces a plain string, not a list, so
+        # it must stay one loop item, not be treated as "the whole array
+        # is secretly a list-producing template". The old `includes?("{{")`
+        # check couldn't tell these apart and always guessed "list
+        # template", so this always bound `item` to nil ("undefined")
+        # instead of the rendered SQL string.
         if arr = value.as_a?
           if arr.size == 1
             inner = arr.first?.try(&.as_s?)
-            return {key, inner} if inner && inner.includes?("{{")
+            stripped = inner.try(&.strip)
+            return {key, inner} if inner && stripped && stripped.starts_with?("{{") && stripped.ends_with?("}}")
           end
         end
       end

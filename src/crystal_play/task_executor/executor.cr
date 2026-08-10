@@ -693,6 +693,19 @@ module CrystalPlay
     #   files/ copy, and a name present only in vars/ was skipped);
     # - include_vars: itself searches the role's `vars/`, which is the
     #   whole point of that directory.
+    #
+    # Also searches the ROLE ROOT itself (`task.role_path`), not just
+    # its files/templates/vars subdirs directly - geerlingguy.mysql's
+    # own "Include OS-specific variables." bakes the `vars/` prefix into
+    # each candidate itself (`with_first_found: files:
+    # ["vars/{{ansible_facts.os_family}}.yml"]`), unlike dev-sec
+    # os_hardening's bare-filename style above. Without the role root as
+    # a search root, "vars/Debian.yml" only ever got joined against
+    # role_vars_dir (producing a nonexistent doubled "vars/vars/
+    # Debian.yml"), so this always silently resolved to zero candidates
+    # (`skip: true` on the with_first_found meant it skipped rather than
+    # failed) and every var the role expected from that file - including
+    # mysql_daemon - stayed undefined for the rest of the run.
     private def resolve_first_found_path(task : Task, candidate : String) : String?
       return File.exists?(candidate) ? candidate : nil if candidate.starts_with?("/")
 
@@ -705,6 +718,7 @@ module CrystalPlay
       # role's vars/ dir. Include vars/ in the search roots so those resolve
       # the same way resolve_include_vars_path already looks there.
       task.role_vars_dir.try { |dir| roots << dir }
+      task.role_path.try { |dir| roots << dir }
       task.include_file_dir.try { |dir| roots << dir }
       roots << Dir.current
 

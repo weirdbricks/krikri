@@ -189,6 +189,31 @@ describe CrystalPlay::PlaybookParser do
       task.loop_template.should eq("{{ my_list | default([]) | map(attribute='path') | list }}")
     end
 
+    it "parses a single-element-array with_items whose item merely embeds a template as a literal loop_items entry, not a loop template" do
+      # Real bug found benchmarking geerlingguy.mysql's "Disallow root
+      # login remotely": `with_items: ["DELETE FROM mysql.user WHERE
+      # User='{{ mysql_root_username }}' AND ..."]` - a single LITERAL
+      # loop item whose text happens to embed a template, unlike the
+      # spec above where the element IS one bare `{{ ... }}` expression
+      # standing for the whole list. The old check (`includes?("{{")`)
+      # couldn't tell these apart and always treated this shape as a
+      # list-producing template too, so task.loop_items ended up nil and
+      # the task ran once with `item` completely unbound ("undefined")
+      # instead of once with the rendered SQL string.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: '{{ item }}'
+          with_items:
+            - "DELETE FROM mysql.user WHERE User='{{ mysql_root_username }}' AND Host NOT IN ('localhost')"
+        YAML
+
+      task.loop_template_kind.should be_nil
+      task.loop_items.try(&.size).should eq(1)
+      task.loop_items.try(&.first.as_s).should eq(
+        "DELETE FROM mysql.user WHERE User='{{ mysql_root_username }}' AND Host NOT IN ('localhost')"
+      )
+    end
+
     it "parses loop_control.loop_var onto the task" do
       task = single_task(<<-YAML)
         - name: t

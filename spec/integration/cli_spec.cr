@@ -255,6 +255,21 @@ describe "crystal-ansible CLI (--check mode)" do
       output.should contain("skipping:")
       output.should_not contain("file not found")
     end
+
+    it "resolves a with_first_found candidate that bakes vars/ into the filename against the role root" do
+      # Real bug found benchmarking geerlingguy.mysql: a candidate like
+      # "vars/Linux.yml" (the vars/ prefix baked into the filename itself,
+      # rather than relying on a separate paths:) previously only ever
+      # got joined against the role's vars/ dir directly - producing a
+      # nonexistent doubled "vars/vars/Linux.yml" - so this always
+      # silently resolved to zero candidates via skip: true.
+      status, output = run_playbook(
+        "test-include-vars-quick.yml", [] of String, inventory: testservers
+      )
+
+      status.success?.should be_true
+      output.should contain("prefixed=from-os-family-file")
+    end
   end
 
   describe "magic variables" do
