@@ -122,6 +122,19 @@ def gather_os_facts(facts)
   
   facts["ansible_system"] = "Linux"
 
+  # ansible_machine_id - real Ansible reads /etc/machine-id (falling back to
+  # /var/lib/dbus/machine-id) and strips the trailing newline. Roles gate
+  # re-gather guards on its presence (linux-system-roles/journald's `when:
+  # __journald_required_facts | difference(ansible_facts.keys() | list) |
+  # length > 0`, where machine_id is one of the required facts) - omitting
+  # it entirely made that guard never see all required facts as already
+  # gathered, so the guarded setup: task ran on every play instead of being
+  # skipped.
+  machine_id = ["/etc/machine-id", "/var/lib/dbus/machine-id"].compact_map do |path|
+    File.exists?(path) ? File.read(path).strip : nil
+  end.find { |contents| !contents.empty? }
+  facts["ansible_machine_id"] = machine_id if machine_id
+
   # service_mgr - which init system is PID 1. Real Ansible reports this
   # separately from os_family, and modern roles gate systemd-only tasks on
   # it (dev-sec os_hardening's ctrl-alt-del + coredump tasks all do).
