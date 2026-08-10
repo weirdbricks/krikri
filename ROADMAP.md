@@ -1,134 +1,80 @@
 # Crystal Play - Roadmap to Ansible Parity
 
-**Currently at `0.9.171`** - real-host benchmark rounds against
-production Ansible roles keep finding and closing bugs past the "Phases
-0-5 complete" milestone below; see the `linux-system-roles` benchmark
-round entry (search this file for `0.9.158`) for the most recent one.
-The narrative below is largely historical (last fully rewritten at
-`0.9.84`) and is not re-litigated on every release - treat version
-numbers cited inline as "true as of when that paragraph was written,"
-and prefer `git log`/this file's own newest entries over the framing
-text below for current state.
-
-**Status as of 2026-08-05 (currently at `0.9.84`):** **all of Phase 0 through
-Phase 5 are done** - see the checkboxes in each phase section below (roles,
-import/include, vault, every Phase 3 plugin, every Phase 4
-advanced-execution feature, and all eight Phase 5 modules: `set_fact`
-`0.9.24`, `get_url` `0.9.25`/`0.9.32`, `blockinfile` `0.9.26`, `uri` `0.9.27`,
-`assert` `0.9.28`, `wait_for` `0.9.29`, `fetch` `0.9.30`, `pause` `0.9.31`).
-**All four cross-cutting engine gaps this roadmap has ever tracked are now
-fixed:** dotted-variable access in bare conditionals (`0.9.34`), the recap
-`ok`/`changed` counter overlap (`0.9.35`), `become:`/`become_user:`
-privilege escalation (`0.9.41`), and Jinja2 filter-chaining (`0.9.42`). The
-per-plugin scope-cut grab-bag is fully closed for every plugin that had one
-at Phase 5's completion: `stat`'s `get_mime`/`get_attributes` (`0.9.36`),
-`find`'s `age`/`age_stamp`/`contains`/`read_whole_file` (`0.9.37`),
-`archive`'s `exclude_path` (`0.9.38`), `ufw`'s `insert_relative_to`
-(`0.9.39`), and `mysql_db`/`postgresql_db`'s `state: dump`/
-`import`(`restore`) (`0.9.40`, `.bz2`/`.xz` compression added `0.9.43`)
-have all shipped - work has now moved on to closing the *remaining*
-documented per-plugin scope cuts one at a time in pursuit of fuller
-`ansible-core`/`community.*` parity, most recently `postgresql_privs`
-(`0.9.44`, previously not implemented at all), `mount`'s `remounted`
-state (`0.9.45`), `wait_for`'s `state: drained` (`0.9.46`), and
-`apt_repository`'s `ppa:` shorthand (`0.9.47`), `user`'s `password:`/
-`update_password:`/`password_lock:` (`0.9.48`), `mount`'s
-`state: ephemeral` (`0.9.49`), `yum_repository`'s tuning-knob
-expansion plus a real `baseurl:`/`gpgkey:` multi-value list-join bug fix
-(`0.9.50`), and `docker_container`'s `networks:` plus `docker_network`'s
-`connected:`/`appends:` (`0.9.51`, along with a real engine-level bug fix
-to how list-of-dict module params get encoded - see that entry), and
-`mysql_db`'s `.zst` compression plus `postgresql_db`'s `.tar`/`.pgc`/
-`.dir` `pg_restore`-based formats (`0.9.52`), `mysql_db`'s
-`config_file:`/`name: all`/remaining `mysqldump` tuning knobs (`0.9.53`),
-`postgresql_privs`' `type: language`/`tablespace`/`type`,
-`ALL_IN_SCHEMA`, `session_role:`, and `fail_on_role:` (`0.9.54`), and
-`docker_*`'s TLS options for connecting to a remote Docker daemon
-(`0.9.55`), `postgresql_privs`' `type: foreign_data_wrapper`/
-`foreign_server`/`parameter`/`group` (`0.9.56`), and `docker_*`'s
-`tls_hostname:` plus `DOCKER_TLS`/`DOCKER_TLS_VERIFY`/`DOCKER_CERT_PATH`
-environment variable fallbacks (`0.9.57`), and four real bugs found via a
-genuine real-SSH benchmark against real remote hosts - not a local
-container - comparing crystal-ansible against real `ansible-playbook`
-end to end (`0.9.58`, see that entry) - see "Also still
-open" near the end of
-Phase 5 for what's left and the running list of what's already been
-closed past that point. **All four cross-cutting engine gaps are closed, and as of `0.9.82` no
-cross-cutting engine gap remains open at all** - the last one (magic
-variables invisible to bare `when:`/`assert: that:`/`until:`/
-`changed_when:`/`failed_when:` conditions) is fixed; see that entry.
-Engine performance work `0.9.66`-`0.9.81` closed two full review
-documents; see those entries for the measured before/after against real
-hosts. All 793 specs pass in an environment with
-`mysql`/`mysqldump`/`psql`/`pg_dump`/`pg_restore` client binaries on
-`PATH` and a live MySQL/MariaDB + PostgreSQL server reachable at
-`127.0.0.1:13306`/`15432`; without those (neither installed on this host
-by default) the same 2 exceptions as always apply - see the `0.9.40`
-entry for how dump/restore was originally verified anyway, and the
-`0.9.52` entry below for how a real server *was* reached this time
-(client binaries extracted from the same Docker images used for the
-`0.9.52` verification itself, onto `~/.local/bin`, not a permanent host
-change), `ameba` clean
-on all new/touched code. A Docker-based compatibility harness (`compat/`,
-see `compat/README.md`) runs the same playbooks through real
-`ansible-playbook` and `crystal-ansible` side by side and diffs the
-resulting filesystem state + exit codes - ground truth instead of
-assumptions; **39/39 compat playbooks pass** (`mount`'s own `remounted`/
-`ephemeral`, `wait_for`'s own `drained:`, `apt_repository`'s own `ppa:`,
-`user`'s own `password:`, `docker_container`/`docker_network`'s own
-`networks:`/`connected:`, and `mysql_db`/`postgresql_db`'s own `0.9.52`
-formats all happened outside the harness instead, for different reasons
-documented in their own `0.9.45`-`0.9.52` entries - see each for how it
-was verified instead;
-`yum_repository`'s `0.9.50` work is covered by an extended
-`23-yum-repository.yml` harness entry instead) - see each entry below and
-`compat/README.md`'s Coverage section for what each one caught.
-
-Two cross-cutting efforts also landed since Phases 3/4 were marked done:
-
-- **Native syscall conversion (0.9.15-0.9.23):** a survey found most plugins
-  shelled out to `/bin/bash` subprocesses for operations Crystal can do with
-  stdlib syscalls. Nearly all are now native (5x-250x faster, and more robust -
-  no reliance on command exit codes): `stat`/`find` (0.9.15), `archive`
-  tar/gz/zip/xz/bz2 (0.9.16-0.9.18), `file` (0.9.19), `apt_repository`/
-  `yum_repository` (0.9.20), `authorized_key` (0.9.21), `mount` (0.9.22),
-  `sysctl` (0.9.23). The
-  deliberate exceptions - genuine system/network operations with no faithful
-  native Crystal equivalent - are documented per-plugin and stay shelled out
-  (`apt`/`dnf`/`package` package-manager calls, `mount`/`umount`,
-  `sysctl -w`/`-p`, `service` systemctl, `git`, `ufw`, `firewalld`). Plugins
-  that genuinely support remote hosts (`mount`, `sysctl`, `authorized_key`)
-  keep an SSH branch per converted call; the pure-local file plugins do not.
-  The `compat/Dockerfile` image build was fixed (it had silently broken when
-  `archive` went native - the image lacked the `-dev` link deps) and switched
-  to a **debug** build for faster iteration; the `authorized_key` playbook was
-  extended to cover user home resolution.
-
-- **Bug-fix history:** the harness plus manual testing, self-review, and unit
-  tests found and fixed many real bugs across Phases 1-4 (FQCN mis-registration,
-  templating/boolean-render divergences, `grep`-exit-code edge cases, variable/
-  include parsing gaps, `find`/`archive` path-matching bugs, check-mode guards,
-  and more). These are recorded in the commit history (`git log`); they are not
-  repeated here to keep this header scannable.
-
-**The real parity gap (Phase 5, now complete):** the roadmap's earlier claim of
-"full parity for Linux server automation" was overstated - several *very common*
-`ansible.builtin` modules were entirely missing (`set_fact`, `get_url`,
-`blockinfile`, `uri`, `assert`, `wait_for`, `fetch`, `pause`), each failing
-with "Plugin binary not found." All eight have now shipped (`0.9.24`-`0.9.31`,
-see each entry under Phase 5 below for what was actually implemented,
-including several points where this roadmap's own scoping - written before
-any of them were built - turned out to be wrong once checked against real
-`ansible-playbook` runs). The remaining lower-priority scope cuts and engine
-gaps are listed at the end of the Phase 5 section.
-
-This roadmap sequences work into phases, with the test-foundation phase
-(Phase 0) landing first so every phase after it ships with a regression net
-instead of drifting untested.
+**Currently at `0.9.171`.** The goal is 100% behavioral compatibility with
+`ansible-playbook`, verified against real runs rather than assumed - not
+"cover the common cases." This file is organized around that: **Known
+Gaps** right below is what's actually missing today and is the part
+worth reading. Everything past it is historical implementation narrative
+(engine build-out, per-plugin work, real-host benchmark rounds that found
+and fixed bugs) kept for context on *why* something was built a certain
+way, not a forward-looking plan - prefer `git log` and this file's own
+newest entries over old framing text for current state.
 
 ---
 
-## Phase 0 - Foundation (do this before adding anything else)
+## Known Gaps
+
+**No known cross-cutting engine gap is open right now** - but that status
+is continuously re-earned, not permanent. Each real-host benchmark round
+against a new production Ansible role tends to find more (most recently
+15 in the `linux-system-roles` round, `0.9.158`-`0.9.171`: depth-unaware
+operator parsing that could stack-overflow, block-level `vars:` never
+parsed, a missing `d()` filter alias, dict/array literals unsupported
+outside a `+` operand, among others - search this file for `0.9.158` for
+the full list). Treat "no gap remains open" as "none is known right
+now," not as a claim the search is finished.
+
+Narrow, deliberately-scoped items:
+
+- **`meta:`** supports only `clear_facts`. `end_play`/`flush_handlers`/
+  `refresh_inventory`/`clear_host_errors` act on execution-flow machinery
+  this engine models differently, and are rejected at parse time rather
+  than silently ignored.
+- **`docker_*` `api_version:`** is deliberately not planned - the
+  underlying `docr` client uses unversioned endpoint URLs throughout, so
+  pinning a version means touching every endpoint in a separate shard.
+  The unversioned URLs negotiate fine against current Docker and Podman.
+  Revisit only if a real playbook actually needs the pin.
+- **Cloud plugins** (`ec2`, `s3_bucket`, `azure_rm_*`) and inventory
+  *plugins* (`aws_ec2.yml` et al.) remain explicitly lowest-ROI and are
+  not planned.
+- **Role-private custom modules** (a role's own `library/*.py`, outside
+  the `ansible.builtin`/`community.*`/etc. plugin set this engine ships)
+  aren't executed - there's no generic arbitrary-Python-module runner. A
+  task using one is skipped with "Plugin not available" rather than
+  crashing the run, but anything downstream that depends on its result
+  sees that value as undefined, which can cascade into broader task-
+  status divergence from real Ansible. Seen repeatedly benchmarking
+  `linux-system-roles`: `sr_fingerprint`, `timesync_provider`,
+  `kernel_settings_get_config`, `blivet`.
+- **`crystal-mysql`'s wire-protocol driver has no `unix_socket`/
+  `auth_socket` auth support** - only `mysql_native_password`/
+  `caching_sha2_password`. A role connecting via `login_unix_socket:`
+  with no password (a common, real MariaDB/Debian-packaging pattern)
+  fails every `mysql_*` plugin call. Real low-level driver work (raw
+  socket fd access, plugin negotiation) - not fixed, documented as a
+  candidate for a dedicated session. See the `mysql_hardening` benchmark
+  entry (search for "auth_socket") for the full detail.
+- **`to_datetime()`/timedelta arithmetic beyond subtraction** stayed
+  narrowly scoped to what real roles have needed so far (see the
+  `os_hardening` password-ageing entry) - revisit if a role needs more.
+
+`postgresql_privs` is the one per-plugin scope-cut list this file
+originally tracked that reached **zero open items** (`0.9.84`) - every
+`type:` real Ansible's module supports is implemented, including
+`function`/`procedure` signatures and `default_privs`. New scope cuts get
+found continuously through the benchmark rounds below instead of from a
+static pre-planned list; check each round's own entry for what it left
+open, if anything.
+
+---
+
+## Implementation History
+
+Everything below is historical narrative on how the engine, plugin set,
+and compatibility harness got built and hardened - kept for context on
+*why* something works the way it does, not as a forward-looking plan.
+Read "Known Gaps" above first; this section is reference material.
 
 There is currently no `spec/` directory, no test framework dependency, and no CI.
 Every plugin added past this point needs a regression net or the project will drift
@@ -148,8 +94,6 @@ the same way it did between January and now.
 **Every phase below ships plugins/features with specs, not just code.**
 
 ---
-
-## Phase 1 - Essential gaps (~2-3 weeks)
 
 - [x] Loop constructs (`0.2.1`): `loop`/`with_items` (already parsed but
   previously never executed - was a dead field), `with_dict`, `with_nested`,
@@ -242,8 +186,6 @@ the same way it did between January and now.
 **Result:** ~99.95% playbook coverage per prior analysis.
 
 ---
-
-## Phase 2 - Organizational (~2-3 weeks)
 
 - [x] Roles (`0.6.0`): `roles/<name>/{tasks,handlers,vars,files,templates,
   defaults,meta}` directory resolution (searched under `<playbook_dir>/roles/`
@@ -376,8 +318,6 @@ the same way it did between January and now.
 **Result:** enterprise-ready. Phase 2 is now fully complete.
 
 ---
-
-## Phase 3 - Extended plugins (~4-6 weeks)
 
 - [x] `stat` (`0.9.0`; `get_mime`/`get_attributes` added in `0.9.36`):
   read-only file/filesystem status, feeding `register:` +
@@ -1237,8 +1177,6 @@ fully complete - every plugin originally scoped for it has shipped.
 
 ---
 
-## Phase 4 - Advanced execution features (~4-6 weeks)
-
 - [x] `changed_when` / `failed_when` (`0.9.7`): override a task's own
   changed/failed verdict with a condition evaluated against the task's
   result. Parsed identically to `until:` (`Task#changed_when`/
@@ -1399,8 +1337,6 @@ the Phase 5 goal below - the common-module gaps it tracks are what a "full
 parity" claim was previously missing.
 
 ---
-
-## Phase 5 - Missing common modules (the real parity gap) (~2-3 weeks)
 
 This is the **current priority**. The checked phases below cover a lot, but not
 some of the most frequently-used `ansible.builtin` modules - each of these is
@@ -4110,48 +4046,13 @@ Limitations section.
 
 825 specs, 0 failures throughout every one of the 19 fixes above.
 
-**Per-plugin scope cuts - the incremental parity list this section has
-been working through is now empty:**
-
-- `postgresql_privs`: **nothing open** as of `0.9.84` - every `type:`
-  real Ansible's module supports is implemented, including
-  `default_privs` and `target_roles:`.
-- `docker_*`: `api_version:` - **deliberately not planned.** This
-  codebase's `docr`-based API calls carry no version prefix on any
-  endpoint URL at all, on a local socket either, so supporting it means
-  touching every endpoint across the separate `docr` shard rather than
-  just connection setup. That is a meaningfully bigger change than
-  anything else closed in this section, for a parameter that only
-  matters when pinning against an old daemon - the unversioned URLs
-  already negotiate fine against current Docker and Podman. Revisit only
-  if a real playbook actually needs the pin.
-- `meta:`: only `clear_facts` is implemented (`0.9.79`).
-  `end_play`/`flush_handlers`/`refresh_inventory`/`clear_host_errors`
-  act on execution-flow machinery this engine models differently, and
-  are rejected at parse time rather than silently ignored.
-Cross-cutting engine gaps this section used to track here - Jinja2
-filter-chaining (inside `{{ }}` substitution), `become:`/
-`become_user:` privilege escalation, filter chains inside bare
-when:/assert: that: conditions (or combined with a comparison in the
-same `{{ }}` expression), a failed host not being excluded from
-every remaining play in the run, and magic variables not reaching bare
-conditions - are **all now fixed**; see the `0.9.42`, `0.9.41`, `0.9.64`
-and `0.9.82` entries. **No *known* cross-cutting engine gap is currently
-open** - but that status is continuously re-earned, not permanent: the
-`linux-system-roles` benchmark round above (`0.9.158`-`0.9.171`) found
-and fixed 15 more cross-cutting plain-`{{ }}`-evaluator bugs well after
-this paragraph was first written at `0.9.84` (depth-unaware operator
-parsing that could stack-overflow, block-level `vars:` never parsed, a
-missing `d()` filter alias, dict/array literals unsupported outside a
-`+` operand, among others - see that section for the full list). Treat
-"no gap remains open" as "none is known right now", re-verified by each
-new real-host benchmark round, not as a claim the search is finished.
-Cloud plugins (`ec2`, `s3_bucket`, `azure_rm_*`) and inventory *plugins*
-(`aws_ec2.yml` et al.) remain explicitly lowest-ROI and are not planned -
-everything else in this list is being picked off incrementally, each
-verified against real `ansible-playbook` directly and via the compat
-harness the same way every other entry in this file has been, not
-assumed from documentation.
+*(Cross-cutting engine gaps this file used to track here - Jinja2
+filter-chaining, `become:`/`become_user:`, filter chains inside bare
+when:/assert: that: conditions, a failed host not excluded from
+remaining plays, magic variables invisible to bare conditions - are all
+fixed; see the `0.9.42`, `0.9.41`, `0.9.64`, `0.9.82` entries below. The
+current gap status lives in "Known Gaps" near the top of this file, not
+here.)*
 
 **Fixed in `0.9.42`:** the `{{ }}`-wrapped filter pipeline only ever split
 on the *first* `|`, so a single filter chained after another (e.g. `x |
@@ -4419,19 +4320,7 @@ one command shape.
   the main executable's own mtime check was fixed for previously (see
   Phase 3's `file` plugin entry), now closed for plugins too.
 
-**Result (with Phase 5 complete):** genuine parity for routine Linux server
-automation - the full set of commonly-used `ansible.builtin` modules plus the
-already-shipped core engine, plugins, and compatibility harness.
-
----
-
-## Total estimate
-
-Roughly 12-18 weeks of focused work across Phases 1-4, plus Phase 0 up front.
-**Phases 0-5 are all now complete** (Phase 5 as of `0.9.31`, with full
-compat-harness coverage for all eight of its modules added at `0.9.32`).
-All four cross-cutting engine gaps this roadmap ever tracked are now fixed
-(dotted-variable access `0.9.34`, recap counter overlap `0.9.35`, `become:`
-`0.9.41`, Jinja2 filter-chaining `0.9.42` - see each entry above). What
-remains is only the lower-priority per-plugin scope-cut list documented in
-each shipping plugin's own entry.
+The foundational engine, plugin set, and compatibility harness described
+above are all shipped - see the "Known Gaps" section near the top of this
+file for what's actually still missing, which is the part worth reading
+first.
