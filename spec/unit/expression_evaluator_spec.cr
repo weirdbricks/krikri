@@ -262,4 +262,27 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("vault_version~('+ent' if vault_enterprise)").should eq("2.0.3+ent")
   end
+
+  it "evaluates a full boolean expression (is test, or, comparison) inside a plain {{ }} span" do
+    # Real bug found benchmarking ansible-community.ansible-vault's own
+    # `installation_required: "{{ vault_installation is failed or
+    # installed_vault_version.stdout != vault_version~(...) }}"` -
+    # ConditionalEvaluator (used for bare when:/failed_when:/assert
+    # conditions) already understood `is failed`/`or`/comparisons, but
+    # this evaluator (used for {{ }} spans, e.g. set_fact: values) had no
+    # concept of any of the three - `is failed` alone rendered
+    # "undefined", and the whole `or` expression fell through to a plain
+    # (always-undefined) variable lookup on the literal text, which
+    # formatted as truthy "True" regardless of the real values.
+    v = Hash(String, JSON::Any).new
+    v["result"] = JSON.parse(%({"failed": false}))
+    v["a"] = JSON::Any.new("x")
+    v["b"] = JSON::Any.new("x")
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("result is failed or a != b").should eq("False")
+
+    v["b"] = JSON::Any.new("y")
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("result is failed or a != b").should eq("True")
+  end
 end

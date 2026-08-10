@@ -39,9 +39,44 @@ module CrystalPlay
           evaluate_ternary(ternary)
         elsif ternary_no_else = split_ternary_no_else(expr)
           evaluate_ternary_no_else(ternary_no_else)
+        elsif boolean_logic?(expr)
+          # A full boolean expression (`X is failed or Y != Z`, `A and
+          # B`) as a `{{ }}` span's entire content, most commonly a
+          # set_fact: value - real Ansible/Jinja2 evaluates `or`/`and`/
+          # `is` tests identically whether they sit inside a bare when:
+          # or a `{{ }}` substitution, but this evaluator (the "plain"
+          # one used for {{ }} spans) had no concept of any of the
+          # three; only ConditionalEvaluator (used for bare when:/
+          # failed_when:/assert conditions) did. Real bug found
+          # benchmarking ansible-community.ansible-vault's own
+          # `installation_required: "{{ vault_installation is failed or
+          # installed_vault_version.stdout != vault_version~(...) }}"` -
+          # `is failed` alone rendered "undefined", and the whole `or`
+          # expression fell through to a plain (always-undefined)
+          # variable lookup on the literal text, formatting as "True"
+          # (self.class of bug as the other bare-boolean-literal fixes
+          # nearby - a non-empty string is truthy) regardless of the
+          # real installed version, forcing every run to redundantly
+          # reinstall the package.
+          ConditionalEvaluator.evaluate(expr, @vars) ? "True" : "False"
         else
           evaluate_expr(expr)
         end
+      end
+
+      # Whether *expr* has a top-level (outside quotes/brackets/parens)
+      # ` or `, ` and `, or ` is ` - the three Jinja/Ansible boolean-logic
+      # keywords ConditionalEvaluator natively understands but this
+      # evaluator otherwise doesn't. Depth-aware for the same reason
+      # #top_level_keyword_index already is elsewhere in this file: a
+      # nested `(a is defined) or b`'s own " is " inside the parens must
+      # not trip this at the outer level (ConditionalEvaluator's own
+      # recursive descent already handles that correctly once the whole
+      # expression is handed to it).
+      private def boolean_logic?(expr : String) : Bool
+        !top_level_keyword_index(expr, " or ").nil? ||
+          !top_level_keyword_index(expr, " and ").nil? ||
+          !top_level_keyword_index(expr, " is ").nil?
       end
 
       private def evaluate_expr(expr : String) : String
