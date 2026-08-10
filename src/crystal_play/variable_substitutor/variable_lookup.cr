@@ -1,4 +1,5 @@
 require "json"
+require "./expression_evaluator"
 
 module CrystalPlay
   module VariableSubstitutor
@@ -160,15 +161,26 @@ module CrystalPlay
       end
 
       # A `[...]` index's inner text: a quoted string literal, an integer
-      # literal, or a bare identifier - the last resolved as a variable
-      # reference (`list[item]`) rather than used as a literal key, since
-      # that's how every real playbook writes a variable-indexed lookup.
+      # literal, a bare identifier (resolved as a variable reference,
+      # `list[item]`), or a full sub-expression with its own filter chain
+      # (`rsyslog_weight_map[inner_item.type | d('rules')]` - linux-
+      # system-roles/logging's rsyslog subrole, computing a config
+      # filename's numeric weight prefix by dict-indexing on a defaulted
+      # type). That last case used to fall through resolve_simple/
+      # resolve_nested (neither of which understands `|`), silently
+      # returning the whole unindexed base value instead - delegates to a
+      # fresh ExpressionEvaluator the same way ComparisonEvaluator's own
+      # evaluate_simple_value already does for a comparison operand.
       private def resolve_index_key(index_expr : String) : String | Int32
-        if (index_expr.starts_with?('\'') && index_expr.ends_with?('\'')) ||
-           (index_expr.starts_with?('"') && index_expr.ends_with?('"'))
-          return index_expr[1..-2]
+        if quoted = quoted_index_literal(index_expr)
+          return quoted
         end
         return index_expr.to_i if index_expr.to_i?
+
+        if index_expr.includes?('|')
+          rendered = ExpressionEvaluator.new(@vars).evaluate(index_expr)
+          return rendered.to_i? || rendered
+        end
 
         resolved = resolve_simple(index_expr) || resolve_nested(index_expr)
         case raw = resolved.try(&.raw)
@@ -176,6 +188,12 @@ module CrystalPlay
         when Int64, Int32 then raw.to_i
         else                   index_expr
         end
+      end
+
+      private def quoted_index_literal(index_expr : String) : String?
+        return nil unless index_expr.size >= 2
+        return nil unless index_expr[0] == index_expr[-1] && (index_expr[0] == '\'' || index_expr[0] == '"')
+        index_expr[1..-2]
       end
 
       private def index_into(current : JSON::Any, key : String | Int32) : JSON::Any?

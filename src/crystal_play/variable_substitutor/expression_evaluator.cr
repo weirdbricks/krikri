@@ -1,5 +1,9 @@
 require "json"
 require "../conditional_evaluator"
+require "./comparison_evaluator"
+require "./filter_engine"
+require "./array_slicer"
+require "./variable_lookup"
 module CrystalPlay
   module VariableSubstitutor
     # ExpressionEvaluator - Orchestrates evaluation of all expression types
@@ -43,24 +47,6 @@ module CrystalPlay
           return @comparison.evaluate(expr)
         end
 
-        # A leading parenthesized sub-expression, optionally followed by
-        # dotted/indexed access on its result (`( a | to_datetime(...) -
-        # b | to_datetime(...) ).days` - dev-sec os_hardening's own
-        # password-ageing day-count assert). Recurses into the inner
-        # expression (which may itself contain `-`/`+`/filters/anything
-        # else `evaluate` understands) and, once resolved, walks any
-        # trailing `.attr`/`[index]` suffix against the *result* rather
-        # than against @vars - VariableLookup#walk exists for exactly
-        # this (a base value that didn't come from a plain variable
-        # lookup). Checked before `+`/`-` below: those are correctly
-        # depth-aware and would already skip content inside the leading
-        # paren, but a bare `(x)` or `(x).attr` with no top-level
-        # operator at all still needs unwrapping here or it falls through
-        # to a lookup on the literal text "(x)".
-        if paren = split_leading_paren(expr)
-          return evaluate_leading_paren(paren)
-        end
-
         # Check for top-level `-` subtraction - specifically datetime
         # subtraction (dev-sec os_hardening's own `to_datetime(...) -
         # to_datetime(...)`, producing a timedelta `.days` can then read)
@@ -91,8 +77,53 @@ module CrystalPlay
           return evaluate_plus(segments)
         end
 
-        # Check for filters (|)
-        if expr.includes?("|")
+        # A leading parenthesized sub-expression, optionally followed by
+        # dotted/indexed access on its result (`( a | to_datetime(...) -
+        # b | to_datetime(...) ).days` - dev-sec os_hardening's own
+        # password-ageing day-count assert). Recurses into the inner
+        # expression (which may itself contain `-`/`+`/filters/anything
+        # else `evaluate` understands) and, once resolved, walks any
+        # trailing `.attr`/`[index]` suffix against the *result* rather
+        # than against @vars - VariableLookup#walk exists for exactly
+        # this (a base value that didn't come from a plain variable
+        # lookup). Checked AFTER `+`/`-` above (moved here - was
+        # previously first, before either): those are correctly depth-
+        # aware and skip content inside the leading paren on their own,
+        # so a genuine `(x) + y`/`(x) - y` is now handled by the +/-
+        # splitters, whose own per-operand resolution already knows how
+        # to unwrap a leading-paren operand. Left first, this check's own
+        # evaluate_leading_paren blindly treated *any* non-empty text
+        # after the closing paren as a `.attr`/`[idx]`/`|filter` walk
+        # suffix - `(ternary_returning_int) + '-'` (linux-system-roles/
+        # logging's rsyslog subrole, building a config filename) had its
+        # trailing ` + '-'` handed to VariableLookup#walk, which
+        # recognizes neither `.` nor `[` as its first char and returns
+        # nil - collapsing the whole expression to "undefined" instead of
+        # concatenating. A bare `(x)` or `(x).attr` with no top-level
+        # operator at all still reaches this unchanged, since split_top_
+        # level_plus/minus return nil for those and fall through here.
+        if paren = split_leading_paren(expr)
+          return evaluate_leading_paren(paren)
+        end
+
+        # Check for filters (|) - depth-aware: a `|` nested inside a
+        # `[...]` index (`rsyslog_weight_map[inner_item.type | d('rules')]`
+        # - linux-system-roles/logging's rsyslog subrole again, this time
+        # a filter chain used as a dict index rather than a ternary
+        # branch) belongs to the index expression, not a top-level filter
+        # chain on the whole thing. A naive substring check routed the
+        # *entire* `name[key | filter]` expression into evaluate_with_
+        # filter, whose own var_expr/segments[0] split treats an unclosed
+        # `[` as "still part of the base lookup" and calls back into
+        # evaluate() with that same (now `[`-containing, so still
+        # `|`-routed) text - not infinite (unlike the has_comparison? bug
+        # above, evaluate_with_filter's `[`-branch only recurses one level
+        # before falling back to a plain lookup that fails), but it always
+        # silently returned the *unindexed* base value instead of properly
+        # indexing it. See resolve_index_key for the other half of the fix
+        # - actually evaluating a filter-chain index key once dispatch
+        # correctly reaches the bracket-access path below.
+        if top_level_pipe?(expr)
           return evaluate_with_filter(expr)
         end
 
@@ -202,6 +233,13 @@ module CrystalPlay
           i += 1
         end
         nil
+      end
+
+      # Whether expr has a `|` outside any bracket/paren/quote nesting -
+      # reuses the same depth-tracking top_level_keyword_index already
+      # does for " if "/" else ".
+      private def top_level_pipe?(expr : String) : Bool
+        !top_level_keyword_index(expr, "|").nil?
       end
 
       # Check if expression contains a comparison operator *at the top
@@ -321,7 +359,21 @@ module CrystalPlay
         # only ever resolves a bare/dotted/indexed name.
         if expr.includes?('|') || (expr.starts_with?('(') && expr.ends_with?(')'))
           rendered = evaluate(expr)
-          return JSON.parse(rendered) rescue JSON::Any.new(rendered)
+          # `return X rescue Y` is NOT `return (X rescue Y)` in Crystal -
+          # the rescue modifier attaches to the whole `return X` statement,
+          # so when X raises, the exception is caught but `return` never
+          # completed and Y's value is simply discarded, falling through
+          # to whatever comes after this `if` block instead of actually
+          # returning it. `rendered` is frequently plain unparseable text
+          # ("local-modules" is not valid JSON) - every such case silently
+          # fell through to @lookup.resolve(expr) below, which can't
+          # resolve raw pipe/paren text either, collapsing the whole `+`
+          # operand to undefined (found via linux-system-roles/logging's
+          # rsyslog subrole building a config filename: `(inner_item.name
+          # | d('rules')) + ...` inside a larger `+` chain silently
+          # dropped the name entirely). Parenthesizing forces the rescue
+          # to actually produce the value `return` sends back.
+          return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
         end
 
         @lookup.resolve(expr) || JSON::Any.new(nil)

@@ -1,6 +1,8 @@
 require "json"
 require "time"
 require "./variable_lookup"
+require "./expression_evaluator"
+require "../variable_substitutor"
 
 module CrystalPlay
   module VariableSubstitutor
@@ -75,7 +77,19 @@ module CrystalPlay
         end
 
         case filter_name
-        when "default"
+        when "default", "d"
+          # "d" is Jinja2/Ansible's extremely common shorthand alias for
+          # "default" (linux-system-roles uses it pervasively - 268
+          # occurrences combined across just the logging and journald
+          # roles: `inner_item.suffix | d('conf')`, `__rsyslog_enabled |
+          # d(false)`, etc). Unrecognized before this, "d(...)" fell to
+          # the unknown-filter passthrough below, silently returning the
+          # *original* (often undefined) value unchanged instead of the
+          # default - masked whenever the value happened to already be
+          # defined (the passthrough and a real default filter agree in
+          # that case), but any genuinely-undefined value stayed
+          # undefined instead of getting its default, appearing as
+          # "undefined"/empty text at the template-rendering layer.
           undefined?(value) ? resolve_default_arg(filter_args) : value
         when "upper"
           transform_string(value, &.upcase)
@@ -332,6 +346,22 @@ module CrystalPlay
         # consumed (#substitute_task_params strips the whole param).
         return JSON::Any.new(OMIT_SENTINEL) if first_arg.strip == "omit"
 
+        # A default value that's itself a `+`-concatenation of parenthesized
+        # ternaries/filter chains (linux-system-roles/logging's rsyslog
+        # subrole computing a config filename: `inner_item.filename | d(
+        # (weight_expr) + "-" + (name_expr) + "." + (suffix_expr))`) is
+        # beyond what resolve_expression below understands - it only ever
+        # splits a ternary or a `|` filter chain, with no concept of a
+        # top-level `+`/`-`/leading-paren operator chain. Delegating to the
+        # full ExpressionEvaluator (which already handles all of that, and
+        # gives identical results for the plain ternary-or-filter-chain
+        # cases resolve_expression already covers) fixes the complex case
+        # without touching every other resolve_expression caller.
+        if top_level_plus_or_minus?(first_arg)
+          rendered = ExpressionEvaluator.new(@vars || Hash(String, JSON::Any).new).evaluate(first_arg)
+          return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
+        end
+
         resolve_expression(first_arg)
       end
 
@@ -544,6 +574,29 @@ module CrystalPlay
       # (`default('1' if x | default(y, true) in [...] else '0', true)` -
       # dev-sec os_hardening's dump:/passno: computation - the inner
       # `default(y, true)`'s comma must not split the outer call's args).
+      # Whether *expr* has a top-level `+` or `-` outside any quote/bracket
+      # nesting - used only to decide whether resolve_default_arg needs to
+      # hand off to the full ExpressionEvaluator instead of this class's
+      # own (ternary-or-filter-chain-only) resolve_expression.
+      private def top_level_plus_or_minus?(expr : String) : Bool
+        depth = 0
+        quote : Char? = nil
+        expr.each_char do |char|
+          if q = quote
+            quote = nil if char == q
+          elsif char == '\'' || char == '"'
+            quote = char
+          elsif "[({".includes?(char)
+            depth += 1
+          elsif "])}".includes?(char)
+            depth -= 1
+          elsif depth == 0 && (char == '+' || char == '-')
+            return true
+          end
+        end
+        false
+      end
+
       private def split_top_level_args(args : String) : Array(String)
         parts = [] of String
         current = String::Builder.new
