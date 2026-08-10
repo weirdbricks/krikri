@@ -128,6 +128,42 @@ describe CrystalPlay::ConditionalEvaluator do
     end
   end
 
+  describe "registered task result tests (is failed/succeeded/success/changed/skipped)" do
+    # Real bug found benchmarking ansible-community.ansible-vault's own
+    # `when: not vault_installation is failed` (gating "Get installed
+    # Vault version" on the previous task's own success) - entirely
+    # unimplemented before, fell through to #evaluate_truthiness (no
+    # notion of `is` tests at all), always evaluating the whole "X is
+    # failed" text as an undefined variable lookup - always falsy,
+    # so `not ... is failed` was always true regardless of the real
+    # result, running the version-check command even on a completely
+    # fresh host where the previous task had genuinely failed.
+    it "reads 'failed' off a registered result" do
+      v = Hash(String, JSON::Any).new
+      v["check"] = JSON.parse(%({"failed": true, "changed": false}))
+      CrystalPlay::ConditionalEvaluator.evaluate("check is failed", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("not check is failed", v).should be_false
+      CrystalPlay::ConditionalEvaluator.evaluate("check is not failed", v).should be_false
+    end
+
+    it "'succeeded'/'success' are the inverse of 'failed', not a separate stored field" do
+      v = Hash(String, JSON::Any).new
+      v["check"] = JSON.parse(%({"failed": false, "changed": true}))
+      CrystalPlay::ConditionalEvaluator.evaluate("check is succeeded", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("check is success", v).should be_true
+
+      v["check"] = JSON.parse(%({"failed": true}))
+      CrystalPlay::ConditionalEvaluator.evaluate("check is succeeded", v).should be_false
+    end
+
+    it "reads 'changed'/'skipped' off a registered result" do
+      v = Hash(String, JSON::Any).new
+      v["check"] = JSON.parse(%({"failed": false, "changed": true}))
+      CrystalPlay::ConditionalEvaluator.evaluate("check is changed", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("check is not skipped", v).should be_true
+    end
+  end
+
   describe "truthiness" do
     it "treats a bare true variable as truthy" do
       v = vars({"flag" => true} of String => JSON::Any::Type)

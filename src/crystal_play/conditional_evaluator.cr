@@ -132,6 +132,32 @@ module CrystalPlay
         return !vars.has_key?(var_name)
       end
 
+      # Handle 'is failed' / 'is succeeded' / 'is success' / 'is changed'
+      # / 'is skipped' (plus each "is not ..." negation) - real Ansible's
+      # own tests on a registered task result, reading the corresponding
+      # boolean field out of its result dict. Entirely unimplemented
+      # before (fell through to #evaluate_truthiness, which has no
+      # notion of `is` tests at all and treated the whole "X is failed"
+      # text as an undefined variable lookup - always falsy). Found via
+      # ansible-community.ansible-vault's own `when: not vault_installation
+      # is failed` (gating "Get installed Vault version" on the previous
+      # task's own success) - always evaluated true (the `not` of a
+      # falsy fallback), running the version-check command even on a
+      # completely fresh host where "Check Vault installation" had
+      # genuinely failed and left `.stdout` empty, producing a bogus
+      # "-version" command with no vault binary in it at all.
+      # "succeeded"/"success" are the same test - real Ansible provides
+      # both spellings.
+      {"failed", "succeeded", "success", "changed", "skipped"}.each do |test_name|
+        if condition.includes?(" is not #{test_name}")
+          var_name = condition.gsub(" is not #{test_name}", "").strip
+          return !result_field(vars, var_name, test_name)
+        elsif condition.includes?(" is #{test_name}")
+          var_name = condition.gsub(" is #{test_name}", "").strip
+          return result_field(vars, var_name, test_name)
+        end
+      end
+
       # Handle bare variable (truthiness check)
       return evaluate_truthiness(condition, vars)
     end
@@ -281,6 +307,27 @@ module CrystalPlay
     # (also a quoted literal, e.g. `'>='`) - see the call site above for
     # why this needs to run before the generic comparison-operator
     # checks.
+    # Reads *test_name* ("failed"/"changed"/"skipped"/"succeeded"/
+    # "success") off a registered task result. "succeeded"/"success"
+    # aren't real result-dict keys - Ansible doesn't store a positive
+    # "it worked" flag, only "failed" - so both spellings are the
+    # inverse of "failed" instead. A field genuinely absent (a var that
+    # isn't a registered result at all, or a task type whose result
+    # never sets "skipped") defaults to false, matching real Ansible's
+    # own tests never raising for a missing field.
+    private def self.result_field(vars : Hash(String, JSON::Any), var_name : String, test_name : String) : Bool
+      result = vars[var_name]?
+      return false unless result
+
+      failed = result["failed"]?.try(&.as_bool?) || false
+      case test_name
+      when "succeeded", "success"
+        !failed
+      else
+        result[test_name]?.try(&.as_bool?) || false
+      end
+    end
+
     private def self.evaluate_version_test(left_expr : String, compare_to_expr : String, operator_expr : String, vars : Hash(String, JSON::Any)) : Bool
       left = evaluate_value(left_expr.strip, vars).to_s
       compare_to = unquote_literal(compare_to_expr.strip)
