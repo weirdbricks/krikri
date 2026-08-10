@@ -150,4 +150,38 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     engine.apply(s("/var/log/mysql/mysql.err"), "dirname").as_s.should eq("/var/log/mysql")
     engine.apply(s("/var/log/mysql/mysql.err"), "basename").as_s.should eq("mysql.err")
   end
+
+  it "re-templates a selectattr()-compared attribute that's itself an unrendered template string" do
+    # Real bug found benchmarking openstack.ansible-hardening's own
+    # package install/removal: `stig_packages_rhel7 | selectattr(
+    # 'enabled') | selectattr('state', 'equalto', item) | sum(attribute
+    # ='packages', start=[])`, where every entry's `state:` is given as
+    # `"{{ security_package_state }}"` rather than a literal "present"/
+    # "absent" (real Ansible's usual recursive value re-templating).
+    # Comparing that raw, still-`{{ }}`-bearing text against a real
+    # "present" value never matched, so `selectattr('state', 'equalto',
+    # 'present')` always excluded every such entry - chrony (gated
+    # exactly this way) was silently never installed.
+    v = Hash(String, JSON::Any).new
+    v["security_package_state"] = JSON::Any.new("present")
+    engine_with_vars = CrystalPlay::VariableSubstitutor::FilterEngine.new(v)
+    value = JSON.parse(%([{"packages": ["chrony"], "state": "{{ security_package_state }}", "enabled": true}]))
+
+    result = engine_with_vars.apply(value, %(selectattr('state', 'equalto', 'present')))
+    result.as_a.size.should eq(1)
+  end
+
+  it "sums a selected list's own attribute values (list concatenation, not just numeric addition)" do
+    # Real bug found alongside the selectattr fix above: `sum(attribute
+    # ='packages', start=[])` was entirely unimplemented (fell through to
+    # the unknown-filter passthrough, returning the selected items
+    # themselves unchanged instead of concatenating their `packages`
+    # attribute). With a list-valued start:, real Jinja2's sum()
+    # concatenates rather than numerically adds.
+    engine_with_vars = CrystalPlay::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
+    value = JSON.parse(%([{"packages": ["foo", "bar"]}, {"packages": ["baz"]}]))
+
+    result = engine_with_vars.apply(value, %(sum(attribute='packages', start=[])))
+    result.as_a.map(&.as_s).should eq(["foo", "bar", "baz"])
+  end
 end

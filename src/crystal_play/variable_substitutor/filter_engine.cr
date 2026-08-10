@@ -226,6 +226,34 @@ module CrystalPlay
           # dotted access on the result works via the ordinary Hash-key
           # path.
           parse_to_datetime(value, filter_args.strip.empty? ? "%Y-%m-%d %H:%M:%S" : parse_filter_arg(filter_args))
+        when "sum"
+          # sum(attribute='packages', start=[]) - real Jinja2's sum()
+          # filter, entirely unimplemented before (fell through to the
+          # unknown-filter passthrough, returning the *selected items
+          # themselves* unchanged rather than summing/concatenating
+          # them). With a list-valued start:, this concatenates each
+          # item's attribute value (or the item itself, with no
+          # attribute=) onto start - openstack.ansible-hardening's own
+          # package install/removal tasks build their final package
+          # list this way (`stig_packages_rhel7 | selectattr(...) |
+          # selectattr(...) | sum(attribute='packages', start=[])`).
+          # With a numeric start: (real Jinja2's own default, 0), sums
+          # the values/attributes as numbers instead - not needed by any
+          # real usage seen so far, but a one-line addition once the
+          # list-concatenation case already needs the split.
+          attr = parse_kwarg(filter_args, "attribute")
+          start_value = parse_kwarg_expr(filter_args, "start") || JSON::Any.new(0_i64)
+          items = as_array(value).map { |item| attr ? (item[attr]? || JSON::Any.new(nil)) : item }
+
+          if start_value.raw.is_a?(Array)
+            result = start_value.as_a.dup
+            items.each { |item| result.concat(as_array(item)) }
+            JSON::Any.new(result)
+          else
+            total = numeric(start_value)
+            items.each { |item| total += numeric(item) }
+            JSON::Any.new(total)
+          end
         when "combine"
           # combine(other1, other2, ...) - shallow dict merge, later
           # arguments win on key collisions. dev-sec os_hardening chains
@@ -418,6 +446,27 @@ module CrystalPlay
       private def selectattr_matches?(item : JSON::Any, attr : String, test : String, compare_value : JSON::Any?) : Bool
         attr_value = item.raw.is_a?(Hash) ? item[attr]? : nil
 
+        # A dict-list entry's own attribute can itself be an unrendered
+        # template string - openstack.ansible-hardening's own
+        # `stig_packages_rhel7` list gives every entry's `state:` as
+        # `"{{ security_package_state }}"` rather than a literal
+        # "present"/"absent", relying on real Ansible's usual recursive
+        # value re-templating. Comparing that raw, still-`{{ }}`-bearing
+        # text against a real "present"/"absent" compare_value never
+        # matched, so `selectattr('state', 'equalto', item)` (picking
+        # which packages to install/remove per computed state) always
+        # excluded every such entry - chrony (gated exactly this way)
+        # was silently never installed, only surfacing much later as an
+        # unrelated-looking "Unit file chrony.service does not exist"
+        # failure. `map(attribute=...)` on the same data happens to
+        # produce the right-looking text via an unrelated later re-
+        # templating pass over the *whole rendered expression string* -
+        # not available to a mid-filter-chain JSON::Any comparison like
+        # this one, which needs the same rendering done explicitly here.
+        if (vars = @vars) && (raw_string = attr_value.try(&.raw.as?(String))) && raw_string.includes?("{{")
+          attr_value = JSON::Any.new(VarSubstitutor.new(vars: vars).substitute(raw_string))
+        end
+
         case test
         when "equalto", "eq", "=="
           attr_value == compare_value
@@ -473,6 +522,21 @@ module CrystalPlay
 
         return JSON::Any.new(expr[1..-2]) if quoted_literal?(expr)
         return JSON::Any.new(nil) if expr == "None"
+
+        # A literal array/dict (`start=[]`, sum()'s own list-accumulator
+        # kwarg default openstack.ansible-hardening's own package-list-
+        # building filter chain relies on) - checked before the numeric/
+        # var-lookup fallbacks below, which have no notion of `[`/`{` at
+        # all and would otherwise resolve "[]" as an (undefined) variable
+        # named "[]", stringified back to the literal text "[]" rather
+        # than a real empty array.
+        if expr.starts_with?('[') && expr.ends_with?(']')
+          parsed = (JSON.parse(expr) rescue nil)
+          return parsed if parsed && parsed.raw.is_a?(Array)
+        elsif expr.starts_with?('{') && expr.ends_with?('}')
+          parsed = (JSON.parse(expr) rescue nil)
+          return parsed if parsed && parsed.raw.is_a?(Hash)
+        end
 
         # A bare (unquoted) `true`/`false` - Jinja2/Python boolean
         # literals, most commonly `selectattr('value', 'sameas', true)`
@@ -805,6 +869,19 @@ module CrystalPlay
         if match = args.match(/#{name}\s*=\s*(['"])(.*?)\1/)
           match[2]
         end
+      end
+
+      # Same as parse_kwarg, but for a kwarg whose value isn't necessarily
+      # a quoted string - `start=[]` (sum()'s own list-accumulator kwarg)
+      # needs the full literal/expression resolver, not just quote
+      # stripping.
+      private def parse_kwarg_expr(args : String, name : String) : JSON::Any?
+        split_top_level_args(args).each do |part|
+          part = part.strip
+          next unless part.starts_with?("#{name}=")
+          return resolve_default_expression(part[(name.size + 1)..])
+        end
+        nil
       end
 
       # Parse a single filter argument (remove quotes)
