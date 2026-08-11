@@ -350,6 +350,7 @@ module CrystalPlay
       "ansible.builtin.unarchive",
       "ansible.builtin.yum_repository",
       "ansible.builtin.apt_repository",
+      "ansible.builtin.apt_key",
       "ansible.posix.mount",
       "ansible.posix.sysctl",
       "community.general.ufw",
