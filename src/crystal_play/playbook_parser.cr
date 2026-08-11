@@ -1314,6 +1314,34 @@ module CrystalPlay
             # back into an Array(String) on the plugin side.
             statements = value.as_a.map { |item| stringify_value(item) }
             params[key.to_s] = statements.to_json
+          elsif key.to_s.in?({"mode", "directory_mode"}) && (raw = value.raw).is_a?(Int64 | Int32)
+            # `mode: 0770` (unquoted, no string quotes - the way most
+            # real playbooks write it) is genuinely ambiguous YAML: 1.1's
+            # spec treats a leading-zero unquoted scalar as octal
+            # notation, and Crystal's own YAML parser follows that,
+            # silently resolving "0770" to the *decimal* value 504
+            # (verified: `YAML.parse("mode: 0770")["mode"].raw` is the
+            # Int64 504, not the string "0770"). #stringify_value's
+            # normal Int64 handling (`yaml.as_i.to_s`) then produces the
+            # literal string "504", which file.cr's own octal parser
+            # (`mode.to_i(8)`) - expecting the *digit text* a user typed,
+            # like real Ansible's own YAML loader preserves - reinterprets
+            # as MORE octal digits, corrupting it a second time (504 -> a
+            # chmod of 0o504 instead of the intended 0o770). Found
+            # benchmarking cloudalchemy.prometheus's own directory/file
+            # tasks, several of which use exactly this unquoted-mode
+            # style and all silently got the wrong permissions - in one
+            # case restrictive enough that the prometheus service user
+            # couldn't even read its own config file at all.
+            #
+            # `raw.to_s(8)` re-derives the original octal digit text from
+            # the (already-decimal-converted) integer value - the two
+            # are bit-for-bit equivalent (504 decimal has the exact same
+            # bit pattern as 0o770), so formatting it back through base 8
+            # recovers "770", which file.cr's `to_i(8)` then parses back
+            # to the same 504 - correctly, this time, since it's actually
+            # being asked to parse octal digit text now.
+            params[key.to_s] = raw.to_s(8)
           else
             params[key.to_s] = Vault.maybe_decrypt(stringify_value(value))
           end

@@ -1242,5 +1242,57 @@ describe CrystalPlay::PlaybookParser do
       parsed.size.should eq(1)
       parsed[0]["name"].as_s.should eq("solo-net")
     end
+
+    it "recovers the octal digit text for an unquoted mode: value" do
+      # Real bug found benchmarking cloudalchemy.prometheus's own
+      # directory/file tasks (mode: 0770, mode: 0644, unquoted - the way
+      # most real playbooks write it): YAML 1.1 treats a leading-zero
+      # unquoted scalar as octal notation, and Crystal's own YAML parser
+      # follows that, silently resolving "0770" to the *decimal* value
+      # 504 rather than preserving the literal digit text real Ansible's
+      # own YAML loader would. stringify_value's normal Int64 handling
+      # then produced the literal string "504", which file.cr's own
+      # octal parser (mode.to_i(8)) reinterpreted as MORE octal digits -
+      # a chmod of 0o504 instead of the intended 0o770. In one real case
+      # this was restrictive enough that the prometheus service user
+      # couldn't even read its own config file.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.file:
+            path: /tmp/x
+            mode: 0770
+        YAML
+
+      task.params["mode"].should eq("770")
+    end
+
+    it "applies the same octal round-trip to a leading-zero-less mode: too, matching real ansible-playbook" do
+      # Verified against real ansible-playbook directly: `mode: 644`
+      # (no leading zero) parses as plain decimal 644, which Ansible's
+      # own file module then ALSO reinterprets via octal conversion -
+      # producing mode 1204 (a real, if surprising, well-known Ansible
+      # gotcha: "always quote your mode or use a leading 0"), not the
+      # literal digits 644. This matches that real behavior exactly
+      # rather than trying to "fix" it into something more intuitive.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.file:
+            path: /tmp/x
+            mode: 644
+        YAML
+
+      task.params["mode"].should eq("1204")
+    end
+
+    it "leaves an explicitly-quoted mode: string untouched" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.file:
+            path: /tmp/x
+            mode: "0770"
+        YAML
+
+      task.params["mode"].should eq("0770")
+    end
   end
 end
