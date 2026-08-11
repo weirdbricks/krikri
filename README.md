@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.229-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.231-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -288,7 +288,20 @@ production Ansible roles (dev-sec, konstruktoid, linux-system-roles,
 geerlingguy, openstack.ansible-hardening, wireguard, ansible-vault,
 cloudalchemy.prometheus, cloudalchemy.grafana, haproxy, certbot) - see
 `git log` for the full log of what's been found and fixed. Most
-recently, a `geerlingguy.apache`/`geerlingguy.nodejs` round passed
+recently, a `geerlingguy.jenkins`/`geerlingguy.elasticsearch` round
+found four real bugs in `jenkins` - a handler written as
+`include_tasks: file.yml` crashed the whole process for any remote
+host; a handler using `template:` never ran the controller-side render
+step at all (a separate dispatch path from regular tasks, missing the
+same `ActionPluginManager` check); `lineinfile`'s "line already
+present" idempotency check was gated behind `!regexp`, so any
+`regexp:` that failed to match appended a fresh duplicate line every
+run; and `get_url`'s `force: true` unconditionally reported changed
+after every download instead of comparing content first - and one in
+`elasticsearch`: plain-string character indexing (`"7.x"[0]`) was
+entirely unsupported, so the role's own version-branch `when:` silently
+picked the wrong (pre-7.x) config layout and failed to start the
+service. Before that, a `geerlingguy.apache`/`geerlingguy.nodejs` round passed
 `apache` clean on the first try (byte-identical vhost config) and found
 that `nodejs` needed `ansible.builtin.deb822_repository` - already
 flagged as a known gap from `geerlingguy.docker` hitting it too, now
@@ -312,7 +325,7 @@ whose one templated element resolves to a scalar silently producing no
 loop items at all, and `cron:` required `cron_file:` (a documented but
 overly-broad scope cut - real Ansible's own default, editing a live
 user crontab, is what `certbot`'s own renewal-cron task needs). See
-KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.229`),
+KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.231`),
 the `ansible-vault` and `prometheus`/`grafana` rounds before that
 (`0.9.198`-`0.9.224`), and the `geerlingguy.*`/`range(...)` rounds
 before that.

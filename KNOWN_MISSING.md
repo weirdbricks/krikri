@@ -8,7 +8,7 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.229`.**
+**Currently at `0.9.231`.**
 
 ---
 
@@ -21,6 +21,36 @@ parsed, a missing `d()` filter alias, dict/array literals unsupported
 outside a `+` operand, among others - `git log --oneline --grep=
 "0\.9\.1[5-7][0-9]" -E` for the full list). Treat "no gap remains open"
 as "none is known right now," not as a claim the search is finished.
+
+`0.9.230`-`0.9.231` (a seventh real-host round: `geerlingguy.jenkins`,
+`geerlingguy.elasticsearch` - both new, both required overriding a role
+default to work at all in this environment: `geerlingguy.java`'s own
+default installs Java 17, which current Jenkins packages refuse to run
+on (needs 21) - an environment/role-staleness issue affecting real
+`ansible-playbook` identically, not a crystal-ansible gap, fixed by
+overriding `java_packages:` for the round). `geerlingguy.jenkins` found
+four real bugs: a handler written as `include_tasks: file.yml` (real
+Ansible's own shorthand) crashed the whole process outright for any
+remote host - the handler-collection loop in `batch_upload_plugins_
+for_playbook` had no pseudo-module guard, unlike the regular-tasks
+collection path; a handler using an action-plugin module (`template:`)
+never ran the controller-side render step at all, since
+`execute_handler_plugin_once` (a separate dispatch path from regular
+tasks) never checked `ActionPluginManager`; `lineinfile`'s "exact line
+already present" idempotency check was gated behind `!regexp`, so ANY
+`regexp:` that failed to match - regardless of whether the target line
+already existed verbatim - skipped straight to insertion, appending a
+fresh duplicate line on every single run; and `get_url`'s `force: true`
+unconditionally reported `changed: true` after every download, when
+real Ansible's own `force: true` means "bypass freshness checks before
+re-fetching," not "always report changed" - it still compares the
+downloaded content against `dest:` first. `geerlingguy.elasticsearch`
+found that plain-string character indexing (`elasticsearch_version[0]`
+on `"7.x"`, matching real Jinja2/Python `str[0]`) was entirely
+unsupported - only Array/Hash indexing existed - so the role's own
+`elasticsearch_version[0] | int < 7` version-branch `when:` silently
+defaulted to comparing against `0`, picking the wrong (pre-7.x) config
+file layout and failing to start the service outright.
 
 `0.9.225`-`0.9.226`: a proactive audit pass (not a real-host round -
 grepping every remaining `VariableLookup#resolve` call site in the
