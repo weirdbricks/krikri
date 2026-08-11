@@ -341,6 +341,7 @@ module CrystalPlay
       "ansible.builtin.user",
       "ansible.builtin.group",
       "ansible.builtin.git",
+      "ansible.builtin.pip",
       "ansible.builtin.cron",
       "ansible.posix.authorized_key",
       "ansible.builtin.stat",

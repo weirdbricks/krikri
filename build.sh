@@ -200,6 +200,7 @@ PLUGINS=(
     "user"
     "group"
     "git"
+    "pip"
     "cron"
     "authorized_key"
     "stat"
