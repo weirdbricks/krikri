@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.209-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.224-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -285,19 +285,22 @@ not yet implemented.
 **No known cross-cutting engine gap is currently open.** These get found
 and closed on an ongoing basis via real-host benchmark rounds against
 production Ansible roles (dev-sec, konstruktoid, linux-system-roles,
-geerlingguy, openstack.ansible-hardening, wireguard, ansible-vault) -
-see `git log` for the full log of what's been found and fixed. Most
-recently, a round against `ansible-community.ansible-vault` found that
-real Ansible's "recursive re-templating" (a variable whose own value is
-itself more Jinja gets re-evaluated wherever referenced) had **four
-separate, independently-buggy plain-lookup fallbacks** scattered across
-the engine - one each in the bare `when:` evaluator, the `{{ }}` filter-
-chain evaluator, `default()`'s own argument resolver, and the bare-
-comparison-operand resolver - plus Jinja2's `~` string-concat operator
-being entirely unimplemented, and a large-file `copy:` crashing the
-whole engine via an Int32 overflow in a stdlib base64 call. See
-KNOWN_MISSING.md for the full list of that round (`0.9.198`-`0.9.209`)
-plus the `geerlingguy.*` and `range(...)` rounds before it.
+geerlingguy, openstack.ansible-hardening, wireguard, ansible-vault,
+cloudalchemy.prometheus, cloudalchemy.grafana) - see `git log` for the
+full log of what's been found and fixed. Most recently, a round against
+`cloudalchemy.prometheus`/`cloudalchemy.grafana` (both now reach
+`failed=0` with genuinely healthy running services, not just a clean
+exit code) found that `resolve_plus_operand`'s own plain-lookup
+fallback was the *fifth* independent copy of the "recursive re-
+templating" bug the `ansible-vault` round before it had already found
+four copies of, plus two real engine crashes (a bare-quoted-literal fix
+regressing into swallowing a `+`-chain; a genuine stack overflow when
+one variable's value mixes `{{ }}` and `{% %}`) and `copy:`'s own
+`owner:`/`group:` handling turning out to be a dead no-op stub the
+whole time. See KNOWN_MISSING.md for the full list of that round
+(`0.9.210`-`0.9.224`), the `ansible-vault` round before it
+(`0.9.198`-`0.9.209`), and the `geerlingguy.*`/`range(...)` rounds
+before that.
 
 The remaining open items are narrow, documented scope cuts:
 

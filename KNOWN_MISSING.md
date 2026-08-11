@@ -8,7 +8,7 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.209`.**
+**Currently at `0.9.224`.**
 
 ---
 
@@ -51,6 +51,42 @@ existing-directory `dest:` (real Ansible appends `src`'s basename); and
 command in `'...'` without escaping the command's own embedded single
 quotes, corrupting anything using `cut -d' '`/`tr -d 'x'`-style
 pipelines.
+
+`0.9.210`-`0.9.224` (a third broader-mix round: `cloudalchemy.
+prometheus`, `cloudalchemy.grafana` - both new monitoring-stack roles,
+both now reach `failed=0` with genuinely healthy services, not just a
+clean exit code): `resolve_plus_operand`'s own plain-lookup fallback
+turned out to be the FIFTH independent copy of the recursive-re-
+templating bug (a bare identifier used as a `+`/`~` operand, e.g.
+`('linux-' + go_arch + '.tar.gz')`) - `git log --oneline --grep="0\.9\.2
+1[0-9]\|0\.9\.22[0-4]" -E` for the full list. Two real engine crashes
+found and fixed: a bare quoted-literal fix regressed into wrongly
+swallowing a `+`-chain (`'a' + var + 'b'` both start/end with `'`,
+mistaken for one literal - fixed immediately after, same round); and a
+genuine stack overflow when a single variable's value mixes `{{ }}`
+and `{% %}` in the same string (`CrinjaRenderer#prepare_crinja_vars`'s
+own pre-render step recursing into itself unboundedly - fixed with a
+process-wide recursion-depth cap). Also fixed: `lookup('url', ...)`
+entirely unimplemented (plus not following redirects, which is how
+GitHub actually serves release-asset URLs in practice); `copy:`
+directory-`src:` support entirely unimplemented (a documented scope
+cut, real Ansible's own rsync-style trailing-`/` convention now
+matched); `copy:`'s own `owner:`/`group:` handling was a **dead no-op
+stub** the whole time (comments claimed "not available in Crystal
+stdlib," which was simply wrong); `apt:`/`package:`'s own `state:
+latest` used `apt-get install --only-upgrade`, which silently skips
+(doesn't install) a package that isn't already present - two
+independent copies of the same bug, in two different plugins;
+`with_fileglob:` templating a list variable rendered the JSON-array
+TEXT as one glob pattern instead of one pattern per list element;
+`mode: 0770` (unquoted - the way most playbooks write it) got silently
+decimal-converted by YAML 1.1's own leading-zero-is-octal rule, then
+double-octal-reinterpreted downstream; `is mapping`/`is sequence`
+Jinja2 type tests and `is (not) defined` on a dotted path
+(`x.y is not defined`) both entirely unimplemented; `to_nice_yaml`
+(a real Ansible filter) unimplemented; `ansible.builtin.apt_key`
+(deprecated in real ansible-core but still shipped and still used)
+unimplemented.
 
 `0.9.172`-`0.9.180`: the `geerlingguy.*` role family (docker, mysql,
 postgresql, nginx, php, security - none tried before) found 13 more real
