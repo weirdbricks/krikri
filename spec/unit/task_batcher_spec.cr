@@ -66,6 +66,29 @@ describe CrystalPlay::TaskBatcher do
     groups.size.should eq(1)
   end
 
+  it "ends the run at a service_facts: task, even with no register: for a later task to reference" do
+    # Real bug found benchmarking geerlingguy.ntp: its own "Disable
+    # systemd-timesyncd if it's running but ntp is enabled." task reads
+    # the bare `services` fact (service_facts:'s own top-level
+    # registered var, no register: name at all) in a `when:` right
+    # after "Populate service facts." - produces_ansible_facts? already
+    # had this exact guard for getent:/package_facts:/set_fact:, which
+    # write facts with no register: name either, but service_facts:
+    # itself was missing from that list. Batched together, the later
+    # task's `when:` got rendered against pre-batch (still-undefined)
+    # `services`, always silently skipping - a real behavioral
+    # divergence from real Ansible, not just wasted batching.
+    a = task("a")
+    b = CrystalPlay::Task.new("b", "ansible.builtin.service_facts")
+    c = task("c")
+    c.when_condition = "\"foo.service\" in services"
+    tasks = [a, b, c]
+
+    groups = CrystalPlay::TaskBatcher.plan(tasks)
+
+    groups.map { |group| group.map(&.name) }.should eq([["a"], ["b"], ["c"]])
+  end
+
   it "ends the run at a block: task" do
     a = task("a")
     b = CrystalPlay::Task.new("b", "_block")

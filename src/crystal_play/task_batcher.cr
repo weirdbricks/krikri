@@ -145,20 +145,30 @@ module CrystalPlay
       ActionPluginManager.has_action_plugin?(task.module_name)
     end
 
-    # getent:/package_facts:/set_fact: (unlike a plain register:, which
-    # references_register? below already guards) write new ansible_facts/
-    # variables as a normal part of *every* run, with no register: name
-    # for a later group member's params to be caught referencing. A batch
-    # group's member params are all rendered up front, before the single
-    # SSH round trip that actually runs any of them - a later member
-    # referencing one of these facts (dev-sec os_hardening's own molecule
-    # test: `getent: {database: passwd}` immediately followed by tasks
-    # reading `ansible_facts.getent_passwd`) would render against
-    # whatever that fact was *before* this task ran, not after. Always
-    # its own group avoids the whole class of bug, the same way
-    # structural_or_dynamic?'s pseudo-modules are.
+    # getent:/package_facts:/service_facts:/set_fact: (unlike a plain
+    # register:, which references_register? below already guards) write
+    # new ansible_facts/variables as a normal part of *every* run, with
+    # no register: name for a later group member's params to be caught
+    # referencing. A batch group's member params are all rendered up
+    # front, before the single SSH round trip that actually runs any of
+    # them - a later member referencing one of these facts (dev-sec
+    # os_hardening's own molecule test: `getent: {database: passwd}`
+    # immediately followed by tasks reading `ansible_facts.getent_passwd`)
+    # would render against whatever that fact was *before* this task ran,
+    # not after. Always its own group avoids the whole class of bug, the
+    # same way structural_or_dynamic?'s pseudo-modules are.
+    #
+    # service_facts: was missing from this list entirely - real bug
+    # found benchmarking geerlingguy.ntp's own "Disable systemd-
+    # timesyncd if it's running but ntp is enabled." task, which reads
+    # the bare `services` fact (`service_facts:`'s own registered
+    # top-level var) in a `when:` immediately after a "Populate service
+    # facts." task. Batched together, `services` was still undefined
+    # when the `when:` got rendered, so the task always silently skipped
+    # - a real behavioral divergence (real Ansible correctly ran it),
+    # not just wasted work.
     private def self.produces_ansible_facts?(task : Task) : Bool
-      %w[getent package_facts set_fact].any? { |name| task.module_name.ends_with?(name) }
+      %w[getent package_facts service_facts set_fact].any? { |name| task.module_name.ends_with?(name) }
     end
 
     private def self.structural_or_dynamic?(task : Task) : Bool
