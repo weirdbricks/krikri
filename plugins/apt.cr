@@ -347,10 +347,28 @@ module CrystalPlay
         end
       else
         pkg_list = packages.join(" ")
-        upgrade_result = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade #{pkg_list}")
+        # `--only-upgrade` skips a package that isn't ALREADY installed
+        # entirely ("Skipping grafana, it is not installed and only
+        # upgrades are requested" - exit 0, "0 upgraded, 0 newly
+        # installed") - real Ansible's own state: latest installs a
+        # not-yet-present package too (apt-get's plain `install` already
+        # does both: fresh-install when absent, upgrade when present and
+        # outdated), so this plugin's own `--only-upgrade` flag was
+        # simply wrong. Real bug found benchmarking cloudalchemy.
+        # grafana's own "Install Grafana" task (state: "{{ (grafana_
+        # version == 'latest') | ternary('latest', 'present') }}") -
+        # reported "changed: Package grafana upgraded to latest" while
+        # the package was never actually installed at all.
+        upgrade_result = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get install -y #{pkg_list}")
 
-        # Check if anything was actually upgraded
-        was_upgraded = !upgrade_result[:stdout].includes?("already the newest version")
+        # "N upgraded, M newly installed, ..." is apt's own reliable,
+        # locale-stable summary line - checking for the English phrase
+        # "already the newest version" (the previous approach) missed
+        # the "not installed and only upgrades are requested" case
+        # entirely (a different message, so the check wrongly concluded
+        # something HAD changed).
+        summary = upgrade_result[:stdout][/(\d+) upgraded, (\d+) newly installed/]?
+        was_upgraded = summary ? summary.scan(/\d+/).map(&.[0].to_i).sum > 0 : upgrade_result[:exit_code] == 0
         if was_upgraded
           messages << "Package#{packages.size > 1 ? "s" : ""} #{packages.join(", ")} upgraded to latest"
           changed = true
