@@ -8,7 +8,7 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.238`.**
+**Currently at `0.9.239`.**
 
 ---
 
@@ -21,6 +21,18 @@ parsed, a missing `d()` filter alias, dict/array literals unsupported
 outside a `+` operand, among others - `git log --oneline --grep=
 "0\.9\.1[5-7][0-9]" -E` for the full list). Treat "no gap remains open"
 as "none is known right now," not as a claim the search is finished.
+
+`0.9.239` (a fourth extension of the eighth round, same hosts:
+`geerlingguy.postgresql`, new; `geerlingguy.nginx`/`geerlingguy.docker`
+re-run as regression checks, both still pass): the recursive-re-
+templating bug class's newest sub-case - a role default that's a list
+of dicts (`postgresql_hba_entries`), whose own field values are
+themselves unrendered Jinja (`auth_method: "{{ postgresql_auth_method
+}}"`, a default computed from another default). Every prior fix for
+this bug class only ever re-rendered a *top-level* String variable
+value; both `CrinjaRenderer#prepare_crinja_vars` and the separate
+`TemplateActionPlugin#prepare_template_vars` now recurse into Array/
+Hash values too, re-rendering every String leaf.
 
 `0.9.238` (a third extension of the eighth round, same hosts:
 `geerlingguy.haproxy`/`geerlingguy.certbot` re-run as regression checks
