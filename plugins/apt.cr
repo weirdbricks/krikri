@@ -225,6 +225,26 @@ module CrystalPlay
       packages
     end
 
+    # Real Ansible's apt module supports real apt's own `name=version`
+    # pinning syntax (e.g. `rabbitmq-server={{ rabbitmq_version }}-1`,
+    # geerlingguy.rabbitmq's own install task) - `dpkg -l` doesn't
+    # understand that syntax at all (it takes a bare package-name glob,
+    # not `name=version`), so passing the raw pinned string straight to
+    # `dpkg -l` in the is-it-already-installed check always failed to
+    # match, reporting "changed" on literally every single run even
+    # once the exact pinned version was already installed.
+    private def split_name_version(pkg : String) : {String, String?}
+      idx = pkg.index('=')
+      idx ? {pkg[0...idx], pkg[(idx + 1)..]} : {pkg, nil}
+    end
+
+    # Parses the version column (3rd whitespace-separated field) out of
+    # a `dpkg -l <pkg> | grep '^ii'` line, e.g. "ii  rabbitmq-server
+    # 3.12.2-1  amd64  ...".
+    private def installed_version(dpkg_line : String) : String?
+      dpkg_line.split(/\s+/)[2]?
+    end
+
     # Handle installing packages
     private def handle_install(packages : Array(String), messages : Array(String), changed : Bool) : PluginResult
       to_install = [] of String
@@ -232,8 +252,9 @@ module CrystalPlay
 
       # Check which packages need installation
       packages.each do |pkg|
-        check_result = remote_exec("dpkg -l #{pkg} 2>/dev/null | grep '^ii'")
-        if check_result[:exit_code] == 0
+        base_name, pinned_version = split_name_version(pkg)
+        check_result = remote_exec("dpkg -l #{base_name} 2>/dev/null | grep '^ii'")
+        if check_result[:exit_code] == 0 && (pinned_version.nil? || installed_version(check_result[:stdout]) == pinned_version)
           already_installed << pkg
         else
           to_install << pkg
@@ -285,9 +306,12 @@ module CrystalPlay
       to_remove = [] of String
       already_absent = [] of String
 
-      # Check which packages need removal
+      # Check which packages need removal - state: absent removes by
+      # NAME regardless of any `=version` pin (matching real apt-get
+      # remove semantics), so only the base name is checked here.
       packages.each do |pkg|
-        check_result = remote_exec("dpkg -l #{pkg} 2>/dev/null | grep '^ii'")
+        base_name, _ = split_name_version(pkg)
+        check_result = remote_exec("dpkg -l #{base_name} 2>/dev/null | grep '^ii'")
         if check_result[:exit_code] == 0
           to_remove << pkg
         else

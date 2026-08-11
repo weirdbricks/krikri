@@ -1,6 +1,8 @@
 #!/usr/bin/env crystal
 
 require "json"
+require "http/client"
+require "uri"
 require "../src/crystal_play/base_plugin"
 
 module CrystalPlay
@@ -34,14 +36,24 @@ module CrystalPlay
   # - uris (required): the repo URL(s), space-separated if more than one
   # - suites (required): distro suite/codename(s)
   # - components: repo component(s), e.g. "main"
-  # - signed_by: a path to an *already-local* keyring/armored-key file
-  #   (real Ansible's own module also accepts a URL to fetch-and-dearmor,
-  #   or inline ASCII-armored key text written directly into the
-  #   Signed-By: field - neither implemented here; every real playbook
-  #   seen so far downloads the key separately via get_url: first,
-  #   exactly like geerlingguy.nodejs's own "Download NodeSource's
-  #   signing key." task immediately before this one, then passes the
-  #   local dest: path)
+  # - signed_by: a path to an *already-local* keyring/armored-key file,
+  #   OR a URL - fetched (binary-safe, matching get_url.cr's own
+  #   response.body_io streaming rather than a UTF-8-decoding String
+  #   read), dearmored via `gpg --dearmor` if it's ASCII-armored text
+  #   (detected by its own "-----BEGIN PGP" leading bytes) or stored
+  #   as-is if already binary, into `/etc/apt/keyrings/<name>-archive-
+  #   keyring.gpg` (real Ansible's own exact naming convention) - the
+  #   *local* path is what actually lands in the rendered Signed-By:
+  #   field either way. Real gap found benchmarking geerlingguy.
+  #   rabbitmq's own "Add RabbitMQ repository" task, which gives a bare
+  #   `https://keys.openpgp.org/...` URL directly (unlike geerlingguy.
+  #   docker/nodejs, which both download the key separately via
+  #   get_url: first and pass a local path) - previously written
+  #   completely literally into Signed-By:, which apt rejects outright
+  #   ("not a fingerprint"). Inline ASCII-armored key text given
+  #   directly as signed_by: (not a URL, not an existing local path)
+  #   remains unimplemented - no real playbook seen yet writes it that
+  #   way.
   # - state: present (default) | absent
   # - mode: applied to the resulting file (default "0644", matching
   #   real Ansible's own module default)
@@ -84,10 +96,52 @@ module CrystalPlay
       if architectures = @params["architectures"]?
         lines << "Architectures: #{architectures.gsub(',', ' ')}"
       end
-      if signed_by = @params["signed_by"]?
+      if signed_by = resolve_signed_by
         lines << "Signed-By: #{signed_by}"
       end
       lines.join('\n') + '\n'
+    end
+
+    private def resolve_signed_by : String?
+      raw = @params["signed_by"]?
+      return nil unless raw
+      return raw unless raw.starts_with?("http://") || raw.starts_with?("https://")
+
+      name = @params["name"]?.not_nil!
+      keyring_dir = "/etc/apt/keyrings"
+      keyring_path = File.join(keyring_dir, "#{name}-archive-keyring.gpg")
+      Dir.mkdir_p(keyring_dir)
+
+      tmp_path = "#{keyring_path}.#{Process.pid}.tmp"
+      download_binary(raw, tmp_path)
+
+      armored = File.open(tmp_path, "r") { |f| (f.gets(30) || "").starts_with?("-----BEGIN PGP") }
+      if armored
+        remote_exec("gpg --batch --yes --dearmor -o #{keyring_path} #{tmp_path}")
+        File.delete(tmp_path) if File.exists?(tmp_path)
+      else
+        File.rename(tmp_path, keyring_path)
+      end
+
+      keyring_path
+    end
+
+    # Binary-safe download - response.body_io streamed straight to disk,
+    # matching get_url.cr's own #download (a plain HTTP::Client#get with
+    # a String-returning body would UTF-8-decode and corrupt arbitrary
+    # binary GPG key bytes).
+    private def download_binary(url : String, dest : String)
+      uri = URI.parse(url)
+      client = HTTP::Client.new(uri)
+      client.connect_timeout = 10.seconds
+      client.read_timeout = 10.seconds
+
+      client.get(uri.request_target) do |response|
+        raise "server returned #{response.status_code}" unless response.status.success?
+        File.open(dest, "w") { |file| IO.copy(response.body_io, file) }
+      end
+    ensure
+      client.try(&.close)
     end
 
     private def add(target : String, check_mode : Bool) : PluginResult
