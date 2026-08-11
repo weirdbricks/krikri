@@ -132,6 +132,29 @@ module CrystalPlay
         return !vars.has_key?(var_name)
       end
 
+      # Handle 'is mapping' / 'is sequence' (plus each "is not ..."
+      # negation) - real Jinja2's own type tests (a dict/Hash vs. a
+      # list/Array), used e.g. as a defaults-sanity assert:
+      # `grafana_security is mapping`. Entirely unimplemented before -
+      # fell through to #evaluate_truthiness, which has no notion of
+      # `is` tests at all and treated the whole "X is mapping" text as
+      # an undefined variable lookup, always false - failing the assert
+      # regardless of the variable's real type. `sequence` deliberately
+      # does NOT match a bare String (Python/Jinja2's own `is sequence`
+      # test technically would, since strings are iterable - but every
+      # real playbook using this pattern means "is this a list", and
+      # matching String too would make `is not sequence` wrongly reject
+      # ordinary string variables).
+      {"mapping", "sequence"}.each do |test_name|
+        if condition.includes?(" is not #{test_name}")
+          var_name = condition.gsub(" is not #{test_name}", "").strip
+          return !matches_type_test?(vars, var_name, test_name)
+        elsif condition.includes?(" is #{test_name}")
+          var_name = condition.gsub(" is #{test_name}", "").strip
+          return matches_type_test?(vars, var_name, test_name)
+        end
+      end
+
       # Handle 'is failed' / 'is succeeded' / 'is success' / 'is changed'
       # / 'is skipped' (plus each "is not ..." negation) - real Ansible's
       # own tests on a registered task result, reading the corresponding
@@ -325,6 +348,28 @@ module CrystalPlay
         !failed
       else
         result[test_name]?.try(&.as_bool?) || false
+      end
+    end
+
+    # Resolves *var_name* (a bare or dotted variable reference, the same
+    # grammar #evaluate_value's own dotted-access branch handles) and
+    # checks whether its real JSON type matches "mapping" (Hash) or
+    # "sequence" (Array only, not a bare String).
+    private def self.matches_type_test?(vars : Hash(String, JSON::Any), var_name : String, test_name : String) : Bool
+      value = if var_name.includes?(".") || var_name.includes?("[")
+                VariableSubstitutor::VariableLookup.new(vars).resolve(var_name)
+              else
+                vars[var_name]?
+              end
+      return false unless value
+
+      case test_name
+      when "mapping"
+        value.raw.is_a?(Hash)
+      when "sequence"
+        value.raw.is_a?(Array)
+      else
+        false
       end
     end
 

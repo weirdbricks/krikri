@@ -318,5 +318,30 @@ describe CrystalPlay::ConditionalEvaluator do
       v["item"] = JSON::Any.new("prometheus-2.27.0.linux-amd64.tar.gz")
       CrystalPlay::ConditionalEvaluator.evaluate(%(('linux-' + go_arch + '.tar.gz') in item), v).should be_true
     end
+
+    it "evaluates 'is mapping' / 'is sequence' (plus negations), real Jinja2 type tests" do
+      # Real bug found benchmarking cloudalchemy.grafana's own defaults-
+      # sanity assert: `grafana_security is mapping`. Entirely
+      # unimplemented before - fell through to #evaluate_truthiness,
+      # which has no notion of `is` tests at all and treated the whole
+      # "X is mapping" text as an undefined variable lookup, always
+      # false - failing the assert regardless of the variable's real
+      # type.
+      v = Hash(String, JSON::Any).new
+      v["a_dict"] = JSON.parse(%({"http_port": 3000}))
+      v["a_list"] = JSON.parse(%([1, 2, 3]))
+      v["a_string"] = JSON::Any.new("hello")
+
+      CrystalPlay::ConditionalEvaluator.evaluate("a_dict is mapping", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("a_list is mapping", v).should be_false
+      CrystalPlay::ConditionalEvaluator.evaluate("a_list is sequence", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("a_dict is not sequence", v).should be_true
+      # A bare String deliberately does NOT match `is sequence` - every
+      # real playbook using this pattern means "is this a list", and
+      # matching String too (technically valid Python/Jinja2 semantics,
+      # since strings are iterable) would make `is not sequence` wrongly
+      # reject ordinary string variables.
+      CrystalPlay::ConditionalEvaluator.evaluate("a_string is not sequence", v).should be_true
+    end
   end
 end
