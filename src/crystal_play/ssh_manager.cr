@@ -243,12 +243,13 @@ module CrystalPlay
       remote_path : String,
       port : Int32 = 22,
       mode : Int32? = 0o644,
-      identity_file : String? = nil
+      identity_file : String? = nil,
+      recursive : Bool = false
     )
       init
       @@stats["files_uploaded"] += 1
 
-      unless File.exists?(local_path)
+      unless recursive ? Dir.exists?(local_path) : File.exists?(local_path)
         raise "Local file not found: #{local_path}"
       end
 
@@ -261,7 +262,7 @@ module CrystalPlay
         "-o", "ControlPath=#{control_path}",
         "-o", "ControlPersist=600",
         "-o", "StrictHostKeyChecking=accept-new",
-      ] + identity_args(identity_file) + [
+      ] + (recursive ? ["-r"] : [] of String) + identity_args(identity_file) + [
         "-P", port.to_s,
         local_path,
         "#{user}@#{host}:#{remote_path}"

@@ -2412,6 +2412,8 @@ module CrystalPlay
       src = params["src"]?
       return params unless src && src.starts_with?('/')
 
+      return stage_directory_copy_source(params, src, host, vars_context) if Dir.exists?(src)
+
       size = File.size(src) rescue nil
       return params unless size
 
@@ -2468,6 +2470,44 @@ module CrystalPlay
       # "/usr/local/bin/vault". Real bug found immediately after adding
       # the staging path above, benchmarking the same ansible-vault role.
       resolved["__original_src_basename"] = File.basename(src)
+      resolved
+    end
+
+    # Directory counterpart to #stage_large_copy_source: SCPs the whole
+    # source directory tree to a remote scratch path (`scp -r`) instead
+    # of leaving `src` pointing at a path that only exists on the
+    # controller - `copy.cr`'s own directory-copy logic already reads
+    # `src` from wherever the plugin process is actually running, so
+    # once the directory is really present on the target, no other
+    # change is needed there beyond deleting the scratch copy afterward.
+    private def stage_directory_copy_source(params : Hash(String, String), src : String, host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String)
+      connection_host = PluginManager.get_connection_host(host, vars_context)
+      remote_tmp = "/tmp/.crystal-ansible-copy-dir-#{Random::Secure.hex(8)}"
+
+      begin
+        SSHManager.upload(
+          connection_host,
+          host.user || "root",
+          src.rstrip('/'),
+          remote_tmp,
+          host.port,
+          mode: nil,
+          identity_file: vars_context["ansible_ssh_private_key_file"]?.try(&.as_s?),
+          recursive: true
+        )
+      rescue
+        return params
+      end
+
+      resolved = params.dup
+      # `scp -r src remote_tmp` (remote_tmp not previously existing)
+      # makes remote_tmp itself an exact copy of src's contents - the
+      # trailing "/" on the ORIGINAL src: value still has to be
+      # preserved here, since copy.cr's own directory-copy dispatch uses
+      # it (real Ansible's own convention) to decide whether src's
+      # contents land directly in dest or as a dest/<basename> subdir.
+      resolved["src"] = src.ends_with?('/') ? "#{remote_tmp}/" : remote_tmp
+      resolved["__cleanup_after_copy_dir"] = "true"
       resolved
     end
 

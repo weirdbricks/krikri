@@ -70,6 +70,14 @@ module CrystalPlay
           File.delete(src) rescue nil
         end
 
+        # __cleanup_after_copy_dir - directory counterpart, set by
+        # TaskExecutor#stage_directory_copy_source. src here may carry
+        # the trailing "/" that method preserves for the directory-copy
+        # dispatch's own convention, which File paths don't need.
+        if @params["__cleanup_after_copy_dir"]? == "true"
+          FileUtils.rm_rf(src.rstrip('/')) rescue nil
+        end
+
         return result
       end
       
@@ -184,6 +192,11 @@ module CrystalPlay
     
     # Copy file from src to dest
     private def handle_file_copy(src : String, dest : String) : PluginResult
+      # Directory src - dispatched before any of the file-specific dest
+      # resolution below, which doesn't apply to a directory copy (its
+      # own trailing-"/" convention decides the dest layout instead).
+      return handle_directory_copy(src, dest) if Dir.exists?(src)
+
       # Real ansible.builtin.copy: "If dest is a directory, either the
       # file or content will be copied there" - dest is the directory
       # itself, not the final file path, whenever it's already an
@@ -209,7 +222,7 @@ module CrystalPlay
           msg: "Source file not found: #{src}"
         )
       end
-      
+
       # Handle directory copy (not fully implemented yet)
       if File.directory?(src)
         return PluginResult.new(
@@ -321,6 +334,72 @@ module CrystalPlay
       )
     end
     
+    # Directory src - real Ansible copy: "if src is a directory, it is
+    # copied recursively", with a `src:` trailing "/" meaning "copy the
+    # CONTENTS of src", no trailing "/" meaning "copy src itself as a
+    # subdirectory of dest" (identical to rsync's own convention). Real
+    # bug found benchmarking cloudalchemy.prometheus's own "propagate
+    # official console templates" task (`src: ".../console_libraries/"`,
+    # both trailing-slash) - directory copy was entirely unimplemented,
+    # always "Directory copy not yet implemented" (a documented, but
+    # real-world-blocking, scope cut).
+    #
+    # Idempotency is a per-file existence+checksum check (identical to
+    # the single-file path's own MD5 comparison), not real Ansible's
+    # fuller directory-diff/prune semantics (e.g. `dest:` files with no
+    # `src:` counterpart aren't removed) - narrowly scoped to what
+    # actually copies a directory tree correctly, matching several other
+    # deliberately-scoped gaps already in this codebase.
+    private def handle_directory_copy(src : String, dest : String) : PluginResult
+      dest_root = src.ends_with?('/') ? dest : File.join(dest, File.basename(src.rstrip('/')))
+
+      begin
+        Dir.mkdir_p(dest_root)
+      rescue ex
+        return PluginResult.new(changed: false, failed: true, msg: "Failed to create destination directory: #{ex.message}")
+      end
+
+      changed = false
+      copied = 0
+
+      Dir.glob(File.join(src, "**", "*"), follow_symlinks: false).sort.each do |entry|
+        relative = entry.sub(src.rstrip('/') + "/", "")
+        dest_path = File.join(dest_root, relative)
+
+        if File.directory?(entry)
+          unless Dir.exists?(dest_path)
+            Dir.mkdir_p(dest_path)
+            changed = true
+          end
+          next
+        end
+
+        Dir.mkdir_p(File.dirname(dest_path))
+
+        if File.exists?(dest_path) && File.read(dest_path) == File.read(entry)
+          apply_file_attributes(dest_path)
+          next
+        end
+
+        begin
+          File.copy(entry, dest_path)
+        rescue ex
+          return PluginResult.new(changed: changed, failed: true, msg: "Failed to copy #{entry}: #{ex.message}")
+        end
+
+        apply_file_attributes(dest_path)
+        changed = true
+        copied += 1
+      end
+
+      PluginResult.new(
+        changed: changed,
+        failed: false,
+        msg: changed ? "Directory copied successfully" : "Directory already up to date",
+        dest: dest_root
+      )
+    end
+
     # Create backup of file
     private def create_backup(path : String) : String
       timestamp = Time.utc.to_s("%Y-%m-%d@%H:%M:%S")
