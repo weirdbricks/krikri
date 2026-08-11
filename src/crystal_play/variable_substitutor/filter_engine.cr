@@ -154,8 +154,23 @@ module CrystalPlay
           args = parse_filter_args(filter_args)
           transform_string(value) { |text| args.size >= 2 ? text.gsub(args[0], args[1]) : text }
         when "split"
-          delimiter = parse_filter_arg(filter_args)
-          parts = as_string(value).split(delimiter).map { |part| JSON::Any.new(part) }
+          # Real bug found benchmarking geerlingguy.nfs (via `nfs_exports
+          # | map('split') | map('first')`, applying `split` with NO
+          # argument to each export line): real Python/Jinja2's
+          # `str.split()` with no separator splits on any whitespace run
+          # (leading/trailing whitespace ignored, no empty strings in the
+          # result) - Crystal's own `String#split(delimiter)` with an
+          # EMPTY STRING delimiter instead splits into individual
+          # *characters*, since `parse_filter_arg("")` (no args given)
+          # returned "" rather than nil. `"/path  *(opts)".split("")`
+          # produced one single-char JSON::Any per character, and
+          # `map('first')` on the corresponding [outer-split-then-first]
+          # chain(via the map() fix immediately above) then grabbed the
+          # first CHARACTER ("/") instead of the first WHITESPACE-
+          # SEPARATED WORD ("/path"). Crystal's own no-arg `String#split`
+          # overload (not `split("")`) already matches Python's
+          # whitespace-run semantics exactly.
+          parts = (filter_args.strip.empty? ? as_string(value).split : as_string(value).split(parse_filter_arg(filter_args))).map { |part| JSON::Any.new(part) }
           JSON::Any.new(parts)
         when "sort"
           JSON::Any.new(sort_json(as_array(value)))
@@ -212,13 +227,27 @@ module CrystalPlay
         when "abs"
           JSON::Any.new(numeric(value).abs)
         when "map"
-          # map(attribute='x') - real Jinja2's map() also has a
-          # filter-name form (`list | map('upper')`); only the attribute=
-          # form is implemented, since that's the one real playbooks
-          # combine with stat:/find:'s own dict-list output (real Ansible
-          # docs: "see stat module for full output of each dictionary").
+          # map(attribute='x') or map('filtername', ...args) - real
+          # Jinja2's map() has both forms; only attribute= was
+          # implemented before. Real bug found benchmarking geerlingguy.
+          # nfs's own "Ensure directories to export exist" task:
+          # `nfs_exports | map('split') | map('first') | unique` (pulling
+          # just the directory-path column out of each raw "/path
+          # *(opts)" export line) silently no-op'd on the filter-name
+          # form, leaving the WHOLE export line - options text included
+          # - as the `file:` module's `path:`, creating a garbage
+          # directory instead of the real export path. Recurses into
+          # #apply for each item so any already-implemented filter (not
+          # just split/first) works as a map() argument too -
+          # parse_filter_args already strips the surrounding quotes off
+          # a filter-name form's first argument ('split' -> "split"),
+          # the same as any other quoted filter argument.
           if attr = parse_kwarg(filter_args, "attribute")
             JSON::Any.new(as_array(value).map { |item| item.raw.is_a?(Hash) ? (item[attr]? || JSON::Any.new(nil)) : JSON::Any.new(nil) })
+          elsif (inner_name = parse_filter_args(filter_args)[0]?)
+            inner_args = parse_filter_args(filter_args)[1..].join(", ")
+            inner_expr = inner_args.empty? ? inner_name : "#{inner_name}(#{inner_args})"
+            JSON::Any.new(as_array(value).map { |item| apply(item, inner_expr) })
           else
             value
           end

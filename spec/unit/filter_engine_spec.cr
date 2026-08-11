@@ -78,6 +78,36 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     result.should eq(["a", "b", "c"])
   end
 
+  it "split with no argument splits on whitespace runs, matching Python's str.split()" do
+    # Real bug found benchmarking geerlingguy.nfs: `split` with no
+    # delimiter argument (`nfs_exports | map('split')`) passed an EMPTY
+    # STRING delimiter to Crystal's own String#split, which splits into
+    # individual *characters* for an empty-string arg - not the same as
+    # Crystal's own no-arg String#split overload, which already matches
+    # Python/Jinja2's whitespace-run default.
+    result = engine.apply(s("/srv/nfs/share  *(ro,sync)"), "split").as_a.map(&.as_s)
+    result.should eq(["/srv/nfs/share", "*(ro,sync)"])
+  end
+
+  it "map('split') applies the filter-name form, not just map(attribute=...)" do
+    # Real bug found benchmarking geerlingguy.nfs's own "Ensure
+    # directories to export exist" task: `nfs_exports | map('split') |
+    # map('first') | unique` (pulling the directory-path column out of
+    # each raw export line). Only map(attribute='x') was implemented -
+    # the filter-name positional form silently no-op'd, so the whole
+    # export line (options text included) got used as a directory path.
+    list = JSON::Any.new(["a,b,c", "d,e,f"].map { |s| JSON::Any.new(s) })
+    result = engine.apply(list, %(map('split', ','))).as_a.map { |item| item.as_a.map(&.as_s) }
+    result.should eq([["a", "b", "c"], ["d", "e", "f"]])
+  end
+
+  it "map('split') then map('first') extracts the first whitespace-separated word from each item" do
+    list = JSON::Any.new(["/srv/nfs/share  *(ro,sync)", "/srv/nfs/other  10.0.0.0/24(rw)"].map { |s| JSON::Any.new(s) })
+    split_result = engine.apply(list, "map('split')")
+    result = engine.apply(split_result, "map('first')").as_a.map(&.as_s)
+    result.should eq(["/srv/nfs/share", "/srv/nfs/other"])
+  end
+
   it "returns the value unchanged for an unknown filter" do
     engine.apply(s("hello"), "mystery").as_s.should eq("hello")
   end
