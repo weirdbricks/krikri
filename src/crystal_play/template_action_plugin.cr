@@ -549,8 +549,19 @@ module CrystalPlay
       substitutor = VarSubstitutor.new(vars: @vars)
 
       # Add all vars
+      #
+      # Real bug found benchmarking geerlingguy.postgresql: a role
+      # default that's a list of dicts (postgresql_hba_entries) whose
+      # OWN field values are themselves unrendered Jinja
+      # ("{{ postgresql_auth_method }}", a default computed from
+      # ANOTHER default) never got re-rendered, since this only ever
+      # checked the top-level value for `raw.is_a?(String)` -
+      # `postgresql_hba_entries` itself is an Array, so it never even
+      # reached that check. #rerender_nested_templates recurses into
+      # Array/Hash values too, matching real Ansible's own recursive
+      # re-templating at every level of a nested structure.
       @vars.each do |key, value|
-        value = JSON::Any.new(substitutor.substitute(value.as_s)) if value.raw.is_a?(String) && value.as_s.includes?("{{")
+        value = VariableSubstitutor::CrinjaRenderer.rerender_nested_templates(value, substitutor)
         vars[key] = VariableSubstitutor::CrinjaRenderer.json_any_to_crinja_value(value)
       end
       

@@ -24,6 +24,27 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     renderer.render("worker_processes  {{ nginx_worker_processes }};").should eq(%(worker_processes  "1";))
   end
 
+  it "re-templates a still-unrendered {{ }} nested inside a list-of-dicts variable's own field" do
+    # Real bug found benchmarking geerlingguy.postgresql: its own
+    # pg_hba.conf.j2 iterates `postgresql_hba_entries` (a list of
+    # dicts) via `{% for client in ... %} ... {{ client.auth_method
+    # }} ...{% endfor %}`, where each entry's `auth_method:` field is
+    # itself `"{{ postgresql_auth_method }}"` - a role default computed
+    # from ANOTHER default. #prepare_crinja_vars only ever re-rendered
+    # a *top-level* String value - `postgresql_hba_entries` itself is
+    # an Array, so it never even reached the `raw.is_a?(String)` check
+    # at all, and the literal unrendered "{{ postgresql_auth_method }}"
+    # text landed straight into the rendered config file (PostgreSQL
+    # then refused to start: "invalid authentication method '{{'").
+    v = Hash(String, JSON::Any).new
+    v["postgresql_auth_method"] = JSON::Any.new("md5")
+    v["postgresql_hba_entries"] = JSON.parse(%([{"type": "host", "auth_method": "{{ postgresql_auth_method }}"}]))
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    result = renderer.render("{% for client in postgresql_hba_entries %}{{ client.type }} {{ client.auth_method }}{% endfor %}")
+    result.should eq("host md5")
+  end
+
   it "leaves an ordinary variable (no embedded template) unaffected" do
     v = Hash(String, JSON::Any).new
     v["greeting"] = JSON::Any.new("hello")

@@ -87,8 +87,7 @@ module CrystalPlay
         substitutor = VarSubstitutor.new(vars: @vars)
 
         @vars.each do |key, value|
-          value = JSON::Any.new(substitutor.substitute(value.as_s)) if value.raw.is_a?(String) && value.as_s.includes?("{{")
-          vars[key] = json_any_to_crinja_value(value)
+          vars[key] = json_any_to_crinja_value(rerender_nested_templates(value, substitutor))
         end
 
         # `vars` - real Ansible's own magic variable exposing the whole
@@ -107,9 +106,50 @@ module CrystalPlay
 
         vars
       end
-      
+
+      # Real bug found benchmarking geerlingguy.postgresql: its own
+      # pg_hba.conf.j2 iterates `postgresql_hba_entries` (a list of
+      # dicts) via `{% for client in ... %} ... {{ client.auth_method
+      # }} ...{% endfor %}`, where each entry's `auth_method:` field is
+      # itself `"{{ postgresql_auth_method }}"` - a role default
+      # computed from ANOTHER default, the same recursive-re-templating
+      # shape this codebase has already fixed a dozen-odd times over
+      # for plain scalar variable values. This is a distinct sub-case
+      # none of those fixes covered: #prepare_crinja_vars only ever
+      # re-rendered a *top-level* String value - `postgresql_hba_
+      # entries` itself is an Array, so it never even reached the
+      # `raw.is_a?(String)` check at all, and the literal unrendered
+      # `{{ postgresql_auth_method }}` text landed straight into the
+      # rendered config file (PostgreSQL then refused to start:
+      # "invalid authentication method '{{'"). Real Ansible's own
+      # recursive re-templating applies at every level of a nested
+      # structure, not just the outermost value - walks Array/Hash
+      # values recursively, re-rendering every String leaf that still
+      # contains "{{".
+      private def rerender_nested_templates(value : JSON::Any, substitutor : VarSubstitutor) : JSON::Any
+        CrinjaRenderer.rerender_nested_templates(value, substitutor)
+      end
+
       private def json_any_to_crinja_value(json : JSON::Any) : Crinja::Value
         CrinjaRenderer.json_any_to_crinja_value(json)
+      end
+
+      # Exposed as a class method for the same reason
+      # #json_any_to_crinja_value is: TemplateActionPlugin has its own
+      # separate prepare_*_vars (a genuinely separate Crinja
+      # environment - see that method's own comment) that needs this
+      # identical recursive-re-render fix, not just this class's.
+      def self.rerender_nested_templates(value : JSON::Any, substitutor : VarSubstitutor) : JSON::Any
+        case raw = value.raw
+        when String
+          raw.includes?("{{") ? JSON::Any.new(substitutor.substitute(raw)) : value
+        when Array
+          JSON::Any.new(raw.map { |item| rerender_nested_templates(item, substitutor) })
+        when Hash
+          JSON::Any.new(raw.transform_values { |item| rerender_nested_templates(item, substitutor) })
+        else
+          value
+        end
       end
 
       # Convert JSON::Any to Crinja::Value.
