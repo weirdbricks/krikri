@@ -344,6 +344,32 @@ describe CrystalPlay::ConditionalEvaluator do
       CrystalPlay::ConditionalEvaluator.evaluate("a_string is not sequence", v).should be_true
     end
 
+    it "evaluates 'is match(...)' / 'is search(...)' (plus negations), real Jinja2 regex tests" do
+      # Real bug found benchmarking geerlingguy.node_exporter's own
+      # `when: node_exporter_version is match("latest") or
+      # node_exporter_version is not defined` (deciding whether to
+      # resolve "latest" to a real GitHub release tag). Entirely
+      # unimplemented before - fell through to #evaluate_truthiness,
+      # always false - so node_exporter_version stayed the literal
+      # string "latest", building a download URL for a release that
+      # doesn't exist and failing the download outright.
+      v = Hash(String, JSON::Any).new
+      v["version"] = JSON::Any.new("latest")
+      v["path"] = JSON::Any.new("v1.8.2-rc1")
+
+      # match() anchors at the START only (Python's re.match, not a
+      # full-string anchor) - "latest" itself, and any string merely
+      # *starting* with "latest", both match.
+      CrystalPlay::ConditionalEvaluator.evaluate(%(version is match("latest")), v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate(%(version is not match("late")), v).should be_false
+      CrystalPlay::ConditionalEvaluator.evaluate(%(version is match("^lat")), v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate(%(version is match("stable")), v).should be_false
+
+      # search() matches anywhere in the string (Python's re.search).
+      CrystalPlay::ConditionalEvaluator.evaluate(%(path is search("\\d+\\.\\d+\\.\\d+")), v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate(%(path is not search("nomatch")), v).should be_true
+    end
+
     it "resolves 'is (not) defined' against a dotted variable path" do
       # Real bug found benchmarking cloudalchemy.grafana's own "Fail
       # when grafana admin user isn't set" task: `grafana_security.

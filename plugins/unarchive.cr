@@ -1,6 +1,8 @@
 #!/usr/bin/env crystal
 
 require "json"
+require "http/client"
+require "uri"
 require "../src/crystal_play/base_plugin"
 
 module CrystalPlay
@@ -11,10 +13,12 @@ module CrystalPlay
   # ansible.builtin.* like most other plugins here).
   #
   # Supported parameters:
-  # - src: path to the archive (required) - always treated as remote_src
-  #   (already present on the target), matching how crystal-ansible's
-  #   copy: plugin already handles local-vs-remote; a plain `remote_src`
-  #   param is accepted for compatibility but has no effect
+  # - src: path to the archive (required) - a local (already-on-target)
+  #   path in the common case, matching how crystal-ansible's copy:
+  #   plugin already handles local-vs-remote; a plain `remote_src` param
+  #   is accepted for compatibility but otherwise has no effect. If src:
+  #   contains "://" (a URL), it's fetched first regardless of
+  #   remote_src:'s own value - real Ansible's own documented behavior
   # - dest: existing directory to extract into (required - crystal-ansible
   #   fails if it doesn't already exist, same as real Ansible: this module
   #   never creates dest itself)
@@ -57,6 +61,8 @@ module CrystalPlay
   # `src` isn't read through `Vault.maybe_decrypt` here), SELinux options,
   # `unsafe_writes`, `attributes`.
   class UnarchivePlugin < BasePlugin
+    MAX_REDIRECTS = 10
+
     def execute : PluginResult
       src = @params["src"]?
       dest = @params["dest"]?
@@ -70,6 +76,30 @@ module CrystalPlay
         end
       end
 
+      # Real bug found benchmarking geerlingguy.node_exporter's own
+      # "Download and unarchive node_exporter into temporary location."
+      # task: `src: "{{ node_exporter_download_url }}"` (a real HTTPS
+      # URL) with `remote_src: true`. Real Ansible's own unarchive
+      # module explicitly documents this combination - "If remote_src
+      # is yes and src contains ://, the remote machine will download
+      # the file from the url first" - previously entirely
+      # unimplemented here (the class doc above's own claim that
+      # remote_src "has no effect" was simply wrong for this case):
+      # `src` went straight to `remote_file_exists?`, which checks for
+      # a local FILE PATH on the target, always false for a URL,
+      # failing every such task outright with "Source ... failed to
+      # transfer" even though the URL itself was perfectly reachable.
+      tmp_download_path = nil
+      if src.starts_with?("http://") || src.starts_with?("https://")
+        tmp_download_path = "/tmp/.crystal-ansible-unarchive-#{Random.rand(100000..999999)}"
+        begin
+          download(src, tmp_download_path)
+        rescue ex
+          return PluginResult.new(changed: false, failed: true, msg: "Source '#{src}' failed to transfer: #{ex.message}")
+        end
+        src = tmp_download_path
+      end
+
       unless remote_file_exists?(src)
         return PluginResult.new(changed: false, failed: true, msg: "Source '#{src}' failed to transfer")
       end
@@ -78,7 +108,39 @@ module CrystalPlay
         return PluginResult.new(changed: false, failed: true, msg: "dest '#{dest}' must be an existing dir")
       end
 
-      run(src, dest)
+      begin
+        run(src, dest)
+      ensure
+        File.delete(tmp_download_path) if tmp_download_path && File.exists?(tmp_download_path)
+      end
+    end
+
+    # Binary-safe download with redirect-following - matches get_url.cr's
+    # own #download (a downloaded release tarball is arbitrary binary
+    # data, and GitHub's own release-asset URLs are themselves a 302
+    # redirect to a signed S3/Azure blob URL, so following redirects
+    # isn't optional here).
+    private def download(url : String, tmp_path : String, redirects_left : Int32 = MAX_REDIRECTS)
+      raise "too many redirects" if redirects_left < 0
+
+      uri = URI.parse(url)
+      client = HTTP::Client.new(uri)
+      client.connect_timeout = 15.seconds
+      client.read_timeout = 30.seconds
+
+      client.get(uri.request_target, headers: HTTP::Headers{"User-Agent" => "ansible-httpget"}) do |response|
+        if response.status.redirection? && (location = response.headers["Location"]?)
+          client.close
+          resolved = URI.parse(location).absolute? ? location : URI.parse(url).resolve(location).to_s
+          return download(resolved, tmp_path, redirects_left - 1)
+        end
+
+        raise "server returned #{response.status_code}" unless response.status.success?
+
+        File.open(tmp_path, "w") { |file| IO.copy(response.body_io, file) }
+      end
+    ensure
+      client.try(&.close)
     end
 
     private def detect_handler(src : String) : Symbol?

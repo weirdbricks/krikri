@@ -73,6 +73,31 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     engine.apply(s("hello world"), %(replace('world', 'there'))).as_s.should eq("hello there")
   end
 
+  it "strips a regex-matched prefix with regex_replace and a backreference" do
+    # Real bug found benchmarking geerlingguy.node_exporter's own
+    # `_github_release.json.tag_name | regex_replace('^v?([0-9\.]+)$',
+    # '\1')` (stripping a GitHub release tag's leading "v", e.g.
+    # "v1.12.1" -> "1.12.1") - regex_replace was entirely missing from
+    # this plain `{{ }}` evaluator (Crinja's own separate pipeline
+    # already had one, but a bare `{{ tag | regex_replace(...) }}` span
+    # never reaches Crinja at all), so it fell through to the
+    # unknown-filter passthrough, returning the value completely
+    # unchanged - the still-"v"-prefixed version then built a download
+    # URL with a doubled "v" that doesn't exist as a real release.
+    result = engine.apply(s("v1.12.1"), %(regex_replace('^v?([0-9\.]+)$', '\\1')))
+    result.as_s.should eq("1.12.1")
+  end
+
+  it "regex_replace replaces every match, not just the first" do
+    result = engine.apply(s("a1 b2 c3"), %(regex_replace('[a-z](\\d)', 'X\\1')))
+    result.as_s.should eq("X1 X2 X3")
+  end
+
+  it "regex_replace with no replacement argument removes every match" do
+    result = engine.apply(s("hello123world"), %(regex_replace('\\d+')))
+    result.as_s.should eq("helloworld")
+  end
+
   it "splits into a real array, not just the first element" do
     result = engine.apply(s("a,b,c"), %(split(','))).as_a.map(&.as_s)
     result.should eq(["a", "b", "c"])

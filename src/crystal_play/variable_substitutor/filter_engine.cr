@@ -341,6 +341,29 @@ module CrystalPlay
           else
             JSON::Any.new("undefined")
           end
+        when "regex_replace"
+          # regex_replace(pattern, replacement='') - real Ansible's own
+          # filter: replaces every match of *pattern* in value with
+          # *replacement* (Python re.sub, not just the first match),
+          # backreferences (`\1`) in replacement substituted from the
+          # matched capture groups. Entirely missing from this plain
+          # `{{ }}` evaluator (Crinja's own pipeline, used only for
+          # `{%`/`{#` block-tag escalation, already had one) - fell
+          # through to the unknown-filter passthrough, returning value
+          # completely unchanged. Found via geerlingguy.node_exporter's
+          # own `_github_release.json.tag_name | regex_replace('^v?
+          # ([0-9\.]+)$', '\1')` (stripping a GitHub release tag's
+          # leading "v", e.g. "v1.12.1" -> "1.12.1") - the still-"v"-
+          # prefixed version then built a download URL with a doubled
+          # "v" ("vv1.12.1"), which doesn't exist as a real release.
+          args = split_top_level_args(filter_args)
+          pattern = args[0]?.try { |arg| as_string(resolve_expression(arg)) } || ""
+          replacement = args[1]?.try { |arg| as_string(resolve_expression(arg)) } || ""
+
+          result = as_string(value).gsub(Regex.new(pattern)) do |_, match|
+            replacement.gsub(/\\(\d)/) { match[$1.to_i]? || "" }
+          end
+          JSON::Any.new(result)
         when "ternary"
           # ternary(true_val, false_val) - real Ansible's own filter
           # (ansible.builtin, not standard Jinja2): `true_val` if value

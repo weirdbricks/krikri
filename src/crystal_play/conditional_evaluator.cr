@@ -181,6 +181,38 @@ module CrystalPlay
         end
       end
 
+      # Handle 'is match(...)' / 'is search(...)' (plus each "is not ..."
+      # negation) - real Jinja2's own regex tests: match() anchors at
+      # the START of the string only (Python's re.match, NOT a full-
+      # string anchor - "latestXYZ" is match("latest") is still true),
+      # search() matches anywhere in the string (re.search). Entirely
+      # unimplemented before (fell through to #evaluate_truthiness,
+      # which has no notion of `is` tests at all and treated the whole
+      # "X is match(...)" text as an undefined variable lookup, always
+      # falsy). Found via geerlingguy.node_exporter's own `when:
+      # node_exporter_version is match("latest") or node_exporter_version
+      # is not defined` (deciding whether to resolve "latest" to a real
+      # release tag via the GitHub API) - always skipped, leaving
+      # node_exporter_version as the literal string "latest" and
+      # building a download URL for a release that doesn't exist
+      # ("vlatest"/"node_exporter-latest..."), failing the download
+      # outright.
+      if test_match = condition.match(/^(.+?)\s+is\s+(not\s+)?(match|search)\((.+)\)\s*$/)
+        var_expr = test_match[1].strip
+        negate = !test_match[2]?.nil?
+        anchored = test_match[3] == "match"
+        pattern = unquote_literal(test_match[4].strip)
+
+        str_value = case value = evaluate_value(var_expr, vars)
+                    when String then value
+                    when Nil    then ""
+                    else             value.to_s
+                    end
+
+        matched = !!(str_value =~ Regex.new(anchored ? "^(?:#{pattern})" : pattern))
+        return negate ? !matched : matched
+      end
+
       # Handle bare variable (truthiness check)
       return evaluate_truthiness(condition, vars)
     end
