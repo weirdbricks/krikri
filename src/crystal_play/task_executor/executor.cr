@@ -979,7 +979,23 @@ module CrystalPlay
 
       case kind
       when "loop", "with_items"
-        value.as_a?
+        # A single-element array holding one bare `{{ var }}` span
+        # (`with_items: ["{{ scalar_var }}"]`/`loop: ["{{ scalar_var
+        # }}"]`) is what routed this whole task here in the first place
+        # (see find_loop_template's own "flatten one level" comment) -
+        # but that parse-time heuristic can't know whether `var` will
+        # turn out to be a list or a scalar; only this runtime
+        # resolution can. `value.as_a?` alone returns nil for a scalar,
+        # which fell through every other resolver too and left the task
+        # with NO loop items at all - not skipped, not looped, just run
+        # once with `item` whatever (usually nothing) happened to
+        # already be in scope, silently "undefined" instead of the
+        # real value. Verified against real ansible-playbook directly:
+        # both `loop:` and `with_items:` treat a resolved-to-scalar
+        # single-element list as exactly one iteration with that scalar
+        # as `item`, identically - not just with_items:'s own
+        # documented legacy flatten behavior.
+        value.as_a? || [value]
       when "with_dict"
         hash = value.as_h?
         return nil unless hash
@@ -1075,6 +1091,21 @@ module CrystalPlay
       parts[1..].each do |part|
         break unless current
         current = current.as_h?.try(&.[part]?)
+      end
+
+      # Audit pass (2026-08-11), a 10th copy of the recursive-re-
+      # templating gap found alongside deep_render_item's own fix: a
+      # loop: source itself (`loop: "{{ templated_default }}"`) whose
+      # raw value is itself unrendered Jinja (a role default computed
+      # from another default) was returned as-is - the caller's own
+      # `value.as_a?`/`value.as_h?` checks then always failed against
+      # the literal "{{ ... }}" text, so the loop silently resolved to
+      # no items at all.
+      if current && (raw = current.raw).is_a?(String) && raw.includes?("{{")
+        inner = raw.strip
+        inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
+        rendered = VariableSubstitutor::ExpressionEvaluator.new(vars_context).evaluate(inner)
+        current = (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
       end
 
       current
