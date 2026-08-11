@@ -213,4 +213,20 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     engine.apply(JSON::Any.new(""), "default(false, true)").as_bool.should eq(false)
     engine.apply(JSON::Any.new(""), "default(true, true)").as_bool.should eq(true)
   end
+
+  it "audit pass: re-templates default()'s own fallback variable when its raw value is unrendered Jinja" do
+    # Proactive audit (2026-08-11): resolve_base_expression's plain-
+    # lookup fallback (default()'s first/fallback argument, when it's a
+    # bare variable reference) had no re-render guard - found by
+    # grepping every remaining VariableLookup#resolve call site in the
+    # engine after rounds 2-3 turned up 5 independent copies of this
+    # bug class. resolve_default_expression (selectattr/sum's own
+    # argument resolver, a DIFFERENT function in this same file) had the
+    # identical gap.
+    v = Hash(String, JSON::Any).new
+    v["fallback_var"] = JSON::Any.new("{{ real_val }}")
+    v["real_val"] = JSON::Any.new("resolved")
+    engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(v)
+    engine.apply(JSON::Any.new(nil), "default(fallback_var)").as_s.should eq("resolved")
+  end
 end

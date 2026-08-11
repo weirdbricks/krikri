@@ -360,5 +360,33 @@ describe CrystalPlay::ConditionalEvaluator do
       CrystalPlay::ConditionalEvaluator.evaluate("grafana_security.admin_user is not defined", v).should be_false
       CrystalPlay::ConditionalEvaluator.evaluate("grafana_security.admin_password is not defined", v).should be_true
     end
+
+    it "audit pass: re-templates before checking 'is mapping'/'is sequence'" do
+      # Proactive audit (2026-08-11), not found via a real-host round:
+      # after finding 5 independent copies of the recursive-re-
+      # templating bug across rounds 2-3, grepped every remaining
+      # VariableLookup#resolve call site in the engine for the same
+      # missing guard. matches_type_test? (is mapping/sequence) was one
+      # of them - a variable whose own raw value is itself unrendered
+      # Jinja (a role default computed from another default) resolved
+      # to a String here, always failing the test regardless of what it
+      # actually renders to.
+      v = Hash(String, JSON::Any).new
+      v["templated_dict"] = JSON::Any.new("{{ real_dict }}")
+      v["real_dict"] = JSON.parse(%({"a": 1}))
+      CrystalPlay::ConditionalEvaluator.evaluate("templated_dict is mapping", v).should be_true
+    end
+
+    it "audit pass: re-templates a dotted lookup's own unrendered value" do
+      # Same audit as above - #evaluate_value's dotted-access branch and
+      # #resolve_json (used by the `in` operator's left-hand side and
+      # filter-chain heads on a dotted path) both lacked the re-render
+      # guard the BARE-identifier "Variable lookup" case right below
+      # them already had.
+      v = Hash(String, JSON::Any).new
+      v["outer"] = JSON.parse(%({"inner": "{{ real_val }}"}))
+      v["real_val"] = JSON::Any.new("resolved")
+      CrystalPlay::ConditionalEvaluator.evaluate("outer.inner == 'resolved'", v).should be_true
+    end
   end
 end

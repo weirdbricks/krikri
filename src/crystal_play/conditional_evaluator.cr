@@ -368,16 +368,42 @@ module CrystalPlay
       end
     end
 
+    # Audit pass (2026-08-11, following the ansible-vault/prometheus/
+    # grafana rounds finding 5 independent copies of this exact bug):
+    # re-renders *value* if its raw form is still a String containing
+    # `{{` - real Ansible's recursive re-templating applied to whatever
+    # a caller already resolved, rather than duplicating the "strip one
+    # {{ }} layer and re-run through ExpressionEvaluator" logic at every
+    # call site. Shared within this file only (ComparisonEvaluator and
+    # FilterEngine keep their own copies rather than a cross-class
+    # shared helper, matching how this bug class has always been fixed
+    # here - narrowly, per call site, not via a bigger refactor).
+    private def self.rerender_if_templated(vars : Hash(String, JSON::Any), value : JSON::Any?) : JSON::Any?
+      return value unless value
+      return value unless (raw = value.raw).is_a?(String) && raw.includes?("{{")
+
+      inner = raw.strip
+      inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
+      rendered = VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate(inner)
+      (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+    end
+
     # Resolves *var_name* (a bare or dotted variable reference, the same
     # grammar #evaluate_value's own dotted-access branch handles) and
     # checks whether its real JSON type matches "mapping" (Hash) or
-    # "sequence" (Array only, not a bare String).
+    # "sequence" (Array only, not a bare String). Found in the audit
+    # pass above, not from a real-host round: a variable whose own raw
+    # value is itself unrendered Jinja (e.g. a role default computed
+    # from another default) would resolve to a String here, always
+    # failing `is mapping`/`is sequence` regardless of what it actually
+    # renders to.
     private def self.matches_type_test?(vars : Hash(String, JSON::Any), var_name : String, test_name : String) : Bool
       value = if var_name.includes?(".") || var_name.includes?("[")
                 VariableSubstitutor::VariableLookup.new(vars).resolve(var_name)
               else
                 vars[var_name]?
               end
+      value = rerender_if_templated(vars, value)
       return false unless value
 
       case test_name
@@ -562,7 +588,13 @@ module CrystalPlay
       if (expr.includes?(".") || expr.includes?("[")) && !expr.to_f64?
         parts = expr.split(/[.\[]/)
         if !parts.empty? && vars.has_key?(parts[0])
-          resolved = VariableSubstitutor::VariableLookup.new(vars).resolve(expr)
+          # Same recursive-re-templating gap as the bare "Variable
+          # lookup" case just below (which already has this fix) -
+          # found in the audit pass, not a real-host round: a dotted
+          # path (`result.stdout`, `x.y`) whose resolved value's own
+          # raw form is itself still unrendered Jinja was returned
+          # as-is, un-rendered.
+          resolved = rerender_if_templated(vars, VariableSubstitutor::VariableLookup.new(vars).resolve(expr))
           return resolved ? json_any_to_value(resolved) : nil
         end
       end
@@ -601,7 +633,9 @@ module CrystalPlay
     # its raw JSON::Any value - delegates to VariableLookup#resolve, the
     # same chained dotted+indexed resolver {{ }} substitution uses.
     private def self.resolve_json(expr : String, vars : Hash(String, JSON::Any)) : JSON::Any?
-      VariableSubstitutor::VariableLookup.new(vars).resolve(expr.strip)
+      # Same recursive-re-templating gap as #evaluate_value's own two
+      # copies above - found in the audit pass, not a real-host round.
+      rerender_if_templated(vars, VariableSubstitutor::VariableLookup.new(vars).resolve(expr.strip))
     end
 
     # Converts a resolved JSON::Any into the same union evaluate_value

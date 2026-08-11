@@ -12,6 +12,22 @@ module CrystalPlay
       def initialize(@vars : Hash(String, JSON::Any))
         @filter = FilterEngine.new(@vars)
       end
+
+      # Audit pass (2026-08-11, following the ansible-vault/prometheus/
+      # grafana rounds finding 5 independent copies of this exact bug):
+      # re-renders *value* if it's still a String containing `{{` - real
+      # Ansible's recursive re-templating applied to whatever a plain-
+      # lookup fallback already resolved, rather than duplicating the
+      # "strip one {{ }} layer and re-run through ExpressionEvaluator"
+      # logic at each call site in this class.
+      private def rerender_if_templated(value : JSON::Any) : JSON::Any
+        return value unless (raw = value.raw).is_a?(String) && raw.includes?("{{")
+
+        inner = raw.strip
+        inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
+        rendered = VariableSubstitutor::ExpressionEvaluator.new(@vars).evaluate(inner)
+        (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+      end
       
       # Evaluate a comparison expression
       # Example: ssl_check.rc == 0, count > 5
@@ -229,7 +245,7 @@ module CrystalPlay
           end
         end
         
-        current.to_s
+        rerender_if_templated(current).to_s
       end
 
       # Resolves a simple or dotted expression to its raw JSON::Any value
@@ -250,7 +266,7 @@ module CrystalPlay
           current = next_value
         end
 
-        current
+        rerender_if_templated(current)
       end
 
       # Converts a resolved JSON::Any (a filter chain's result) into this

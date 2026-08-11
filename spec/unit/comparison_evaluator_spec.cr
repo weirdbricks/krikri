@@ -94,5 +94,20 @@ describe CrystalPlay::VariableSubstitutor::ComparisonEvaluator do
       evaluator = CrystalPlay::VariableSubstitutor::ComparisonEvaluator.new(v)
       evaluator.evaluate("installed.stdout != vault_version").should eq("false")
     end
+
+    it "audit pass: re-templates a DOTTED comparison operand's own unrendered value" do
+      # Proactive audit (2026-08-11): lookup_simple_variable (the BARE-
+      # identifier case, fixed above) had this guard; lookup_nested_
+      # variable and resolve_json (the DOTTED-path counterparts, used
+      # for `outer.inner == ...` and dotted filter-chain heads) didn't -
+      # found by grepping every remaining plain-lookup fallback in the
+      # engine after rounds 2-3 turned up 5 independent copies of this
+      # bug class.
+      v = Hash(String, JSON::Any).new
+      v["outer"] = JSON.parse(%({"inner": "{{ real_val }}"}))
+      v["real_val"] = JSON::Any.new("resolved")
+      evaluator = CrystalPlay::VariableSubstitutor::ComparisonEvaluator.new(v)
+      evaluator.evaluate("outer.inner == 'resolved'").should eq("true")
+    end
   end
 end

@@ -2329,7 +2329,19 @@ module CrystalPlay
         stripped = raw.strip
         if stripped.starts_with?("{{") && stripped.ends_with?("}}") && stripped.scan("{{").size == 1
           native = VariableSubstitutor::VariableLookup.new(vars_context).resolve(stripped[2..-3].strip)
-          return native if native
+          # Audit pass (2026-08-11, following the ansible-vault/
+          # prometheus/grafana rounds finding 5 independent copies of
+          # this exact bug): a variable whose own raw value is itself
+          # still unrendered Jinja (a role default computed from
+          # another default) must NOT be returned directly here - that
+          # would hand back the literal, unparsed "{{ ... }}" text as
+          # the loop item's "native" value instead of falling through
+          # to the #substitute path below, which actually renders it
+          # (at the cost of losing native typing, same tradeoff every
+          # other fallback in this codebase makes for this case).
+          if native && !((raw2 = native.raw).is_a?(String) && raw2.includes?("{{"))
+            return native
+          end
         end
 
         substitutor = VarSubstitutor.new(vars: vars_context, host_name: host_name)

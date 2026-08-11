@@ -26,6 +26,24 @@ module CrystalPlay
       def initialize(@vars : Hash(String, JSON::Any)? = nil)
       end
 
+      # Audit pass (2026-08-11, following the ansible-vault/prometheus/
+      # grafana rounds finding 5 independent copies of this exact bug):
+      # re-renders *value* if its raw form is still a String containing
+      # `{{` - real Ansible's recursive re-templating applied to
+      # whatever a plain-lookup fallback already resolved, rather than
+      # duplicating the "strip one {{ }} layer and re-run through
+      # ExpressionEvaluator" logic at each call site in this class.
+      private def rerender_if_templated(value : JSON::Any) : JSON::Any
+        vars = @vars
+        return value unless vars
+        return value unless (raw = value.raw).is_a?(String) && raw.includes?("{{")
+
+        inner = raw.strip
+        inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
+        rendered = ExpressionEvaluator.new(vars).evaluate(inner)
+        (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+      end
+
       # Splits a `|`-joined filter chain into its individual filter
       # expressions, ignoring any `|` inside a quoted string or a
       # parenthesized argument list - `replace('a|b', 'c')` is one filter,
@@ -557,7 +575,8 @@ module CrystalPlay
         end
 
         if (vars = @vars) && !expr.empty?
-          VariableLookup.new(vars).resolve(expr) || JSON::Any.new(expr)
+          resolved = VariableLookup.new(vars).resolve(expr)
+          resolved ? rerender_if_templated(resolved) : JSON::Any.new(expr)
         else
           JSON::Any.new(expr)
         end
@@ -638,7 +657,8 @@ module CrystalPlay
         end
 
         if (vars = @vars) && !expr.empty?
-          VariableLookup.new(vars).resolve(expr) || JSON::Any.new(nil)
+          resolved = VariableLookup.new(vars).resolve(expr)
+          resolved ? rerender_if_templated(resolved) : JSON::Any.new(nil)
         else
           JSON::Any.new(nil)
         end
