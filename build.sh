@@ -209,6 +209,8 @@ PLUGINS=(
     "unarchive"
     "yum_repository"
     "apt_repository"
+    "apt_key"
+    "deb822_repository"
     "mount"
     "sysctl"
     "ufw"
