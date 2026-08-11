@@ -1,4 +1,6 @@
 require "json"
+require "http/client"
+require "uri"
 require "../conditional_evaluator"
 require "./comparison_evaluator"
 require "./filter_engine"
@@ -93,6 +95,19 @@ module CrystalPlay
         # so `| bool` downstream treated it as truthy regardless of the
         # actual condition).
         return expr.downcase if expr == "true" || expr == "false" || expr == "True" || expr == "False"
+
+        # A bare quoted string literal (`{{ 'some.url/with.dots' }}`,
+        # the whole `{{ }}` span, no filter/operator at all) - previously
+        # unchecked anywhere in this dispatch chain, so a literal
+        # containing a `.` (routine for a URL or IP address, e.g. a
+        # `lookup('url', ...)` argument built via `+` concatenation and
+        # re-evaluated as its own bare operand) fell through to the
+        # `expr.includes?(".")` dotted-lookup branch further down, which
+        # treated the literal text - quotes included - as a dotted
+        # variable PATH rather than a string value, always undefined.
+        if literal = quoted_string_literal(expr)
+          return literal.as_s
+        end
 
         # `lookup('first_found', ffparams)` - real Ansible's lookup()
         # function call syntax (distinct from a `|` filter chain), used
@@ -623,9 +638,61 @@ module CrystalPlay
           # real Vault version used to build the download URL.
           var_name = parts[1]?.try { |part| resolve_plus_operand(part.strip) }.try(&.as_s?)
           var_name ? (ENV[var_name]? || "") : "undefined"
+        when "url"
+          # lookup('url', url_expr, wantlist=True) - real Ansible's own
+          # url lookup plugin, fetching a URL from the CONTROLLER (same
+          # controller-side rule as env/first_found above). Entirely
+          # unimplemented before - fell through to "undefined", so
+          # cloudalchemy.prometheus's own checksum-pinning idiom
+          # (`lookup('url', '.../sha256sums.txt', wantlist=True) |
+          # list`, then looping over each line to find the right
+          # architecture's checksum) never populated a real checksum -
+          # `checksum:` on the subsequent get_url: task compared against
+          # the literal string "undefined", always failing. The url_expr
+          # itself is commonly a `+`-concatenation of literals and
+          # variables (`'https://...v' + prometheus_version + '/...'`),
+          # so it's rendered via the full #evaluate (not
+          # #resolve_plus_operand, which only understands a single
+          # operand) rather than a bare variable/literal lookup.
+          url = parts[1]?.try { |part| evaluate(part.strip) }
+          url ? fetch_url_lines(url) : "undefined"
         else
           "undefined"
         end
+      end
+
+      # Fetches *url* (a plain GET, no auth/headers - matches what these
+      # real playbooks actually need it for: fetching a public checksums
+      # file) and returns its body as a JSON array of non-blank lines,
+      # matching how cloudalchemy.prometheus's own `wantlist=True) |
+      # list` usage then loops over each line looking for one containing
+      # a specific filename substring. Real Ansible's own url lookup
+      # plugin has richer options (headers, auth, split_lines:) not
+      # implemented here - narrowly scoped to what's actually been
+      # needed so far, like several other lookup/filter gaps in this
+      # file.
+      private def fetch_url_lines(url : String, redirects_left : Int32 = 5) : String
+        return "undefined" if redirects_left < 0
+
+        response = HTTP::Client.get(url)
+
+        # GitHub (and most CDNs fronting release assets, exactly what
+        # this lookup is used for in practice) answers a plain GET with
+        # a 302 to a signed, one-shot storage URL - Crystal's
+        # `HTTP::Client.get` doesn't follow redirects on its own, so the
+        # very first real call this lookup was tested against returned
+        # an empty 302 body instead of the checksums file.
+        if response.status.redirection? && (location = response.headers["Location"]?)
+          resolved = URI.parse(location).absolute? ? location : URI.parse(url).resolve(location).to_s
+          return fetch_url_lines(resolved, redirects_left - 1)
+        end
+
+        return "undefined" unless response.success?
+
+        lines = response.body.lines.map(&.strip).reject(&.empty?)
+        lines.to_json
+      rescue
+        "undefined"
       end
 
       # Real Ansible's first_found: the first `files:` entry that exists

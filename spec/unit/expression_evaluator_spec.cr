@@ -302,4 +302,18 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("installed_vault_version.stdout != vault_version~('+ent' if vault_enterprise)").should eq("false")
   end
+
+  it "evaluates a bare quoted string literal with no filter/operator at all" do
+    # Real bug found benchmarking cloudalchemy.prometheus: a bare
+    # literal containing a `.` (routine for a URL or IP address -
+    # `lookup('url', '...' + version + '...')`'s own URL argument, once
+    # split out and re-evaluated as its own operand) fell through to
+    # the `expr.includes?(".")` dotted-lookup branch, which treated the
+    # literal text - quotes included - as a dotted variable PATH rather
+    # than a plain string value, always undefined. No prior spec covered
+    # a bare `{{ '...' }}` span with no `|`/ternary/operator at all.
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(%('http://127.0.0.1:8080/some.file.txt')).should eq("http://127.0.0.1:8080/some.file.txt")
+  end
 end
