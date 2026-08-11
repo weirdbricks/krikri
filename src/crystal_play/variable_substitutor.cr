@@ -24,6 +24,7 @@ module CrystalPlay
   class VarSubstitutor
     @vars : Hash(String, JSON::Any)
     @host_name : String
+    getter vars
     # Both are built on first use rather than in the constructor. A
     # VarSubstitutor is constructed 2-4x per task per host (when:,
     # execute_task_once, apply_changed_failed_when, delegate_to:), but

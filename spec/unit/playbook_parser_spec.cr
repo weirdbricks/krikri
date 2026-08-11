@@ -1317,4 +1317,36 @@ describe CrystalPlay::PlaybookParser do
       task.params["mode"].should eq("0770")
     end
   end
+
+  describe "legacy inline key=value module args" do
+    # Real bug found benchmarking geerlingguy.redis: its handler uses
+    # the legacy free-form syntax (`service: "name={{ x }} state=y"`),
+    # where a value itself contains `{{ redis_daemon }}` - a Jinja span
+    # with its own internal spaces. split_shell_like tokenized on every
+    # whitespace character with no awareness of `{{ }}`/`{% %}` as an
+    # opaque span, shattering the expression into three bogus tokens
+    # (`name={{`, `redis_daemon`, `}}`) - the middle two silently
+    # dropped (no `=`), leaving params["name"] as the literal,
+    # unrenderable string "{{". The service module then tried to
+    # restart a unit literally named "{{".
+    it "keeps a {{ }} expression with internal spaces as one token" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.service: "name={{ redis_daemon }} state=restarted"
+        YAML
+
+      task.params["name"].should eq("{{ redis_daemon }}")
+      task.params["state"].should eq("restarted")
+    end
+
+    it "keeps a {% %} statement span with internal spaces as one token" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug: "msg={% if x %}yes{% else %}no{% endif %} other=val"
+        YAML
+
+      task.params["msg"].should eq("{% if x %}yes{% else %}no{% endif %}")
+      task.params["other"].should eq("val")
+    end
+  end
 end

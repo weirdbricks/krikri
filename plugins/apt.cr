@@ -247,7 +247,7 @@ module CrystalPlay
           changed = true
         else
           pkg_list = to_install.join(" ")
-          install_result = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get install -y #{pkg_list}")
+          install_result = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold #{pkg_list}")
           if install_result[:exit_code] == 0
             messages << "Package#{to_install.size > 1 ? "s" : ""} #{to_install.join(", ")} installed"
             changed = true
@@ -359,7 +359,7 @@ module CrystalPlay
         # version == 'latest') | ternary('latest', 'present') }}") -
         # reported "changed: Package grafana upgraded to latest" while
         # the package was never actually installed at all.
-        upgrade_result = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get install -y #{pkg_list}")
+        upgrade_result = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold #{pkg_list}")
 
         # "N upgraded, M newly installed, ..." is apt's own reliable,
         # locale-stable summary line - checking for the English phrase

@@ -2400,6 +2400,35 @@ module CrystalPlay
         # in the next task.
         substituted_value = substitutor.substitute(value)
 
+        # `mode:` piped through a variable (`mode: "{{ redis_conf_dir_mode
+        # }}"`, geerlingguy.redis's own style) loses its octal-ness the
+        # same way a *direct* unquoted `mode: 0770` literal does (see
+        # playbook_parser.cr's own #parse_task_params octal-mode comment)
+        # - Crystal's YAML parser already decimal-converted the variable's
+        # defining `redis_conf_dir_mode: 02770` at vars-file parse time,
+        # so #substitute above just stringifies that decimal (Int64 1528)
+        # as "1528" verbatim. Real Ansible's own file module hits the
+        # exact same decimal-rendered string internally, but recovers the
+        # original octal digits because its `mode:` argspec is `type:
+        # raw` - a *bare* single `{{ }}` template preserves the
+        # variable's native Python int type instead of stringifying, and
+        # the module's own `set_fs_attributes_if_different` explicitly
+        # reformats an int mode via `'%04o' % mode` before ever comparing
+        # or applying it. Re-derive the same octal digit text here,
+        # narrowly scoped to key == "mode" (matching the parse-time fix's
+        # own scope) rather than generally preserving native types for
+        # every param, since only mode: has this real-Ansible-specific
+        # int -> octal-string reinterpretation.
+        if key == "mode"
+          stripped = value.strip
+          if stripped.starts_with?("{{") && stripped.ends_with?("}}") && stripped.scan("{{").size == 1
+            native = VariableSubstitutor::VariableLookup.new(substitutor.vars).resolve(stripped[2..-3].strip)
+            if native && (raw = native.raw).is_a?(Int64)
+              substituted_value = "0" + raw.to_s(8)
+            end
+          end
+        end
+
         # `{{ ... | default(omit) }}` (real Ansible's magic variable for
         # dropping a parameter entirely rather than giving it any real
         # value - see OMIT_SENTINEL) - skip the key altogether instead of

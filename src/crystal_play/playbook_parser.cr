@@ -1417,11 +1417,31 @@ module CrystalPlay
       tokens = [] of String
       current = String::Builder.new
       quote : Char? = nil
+      brace_depth = 0
+      chars = s.chars
+      i = 0
 
-      s.each_char do |char|
+      while i < chars.size
+        char = chars[i]
+        next_char = i + 1 < chars.size ? chars[i + 1] : nil
+
         if q = quote
           current << char
           quote = nil if char == q
+        elsif brace_depth > 0
+          if (char == '{' && (next_char == '{' || next_char == '%')) ||
+             (char == '}' && next_char == '}') || (char == '%' && next_char == '}')
+            current << char << next_char.not_nil!
+            brace_depth += 1 if char == '{'
+            brace_depth -= 1 if char == '}' || char == '%'
+            i += 1
+          else
+            current << char
+          end
+        elsif (char == '{' && (next_char == '{' || next_char == '%'))
+          current << char << next_char.not_nil!
+          brace_depth += 1
+          i += 1
         elsif char == '\'' || char == '"'
           quote = char
           current << char
@@ -1433,6 +1453,7 @@ module CrystalPlay
         else
           current << char
         end
+        i += 1
       end
       tokens << current.to_s if current.bytesize > 0
       tokens
