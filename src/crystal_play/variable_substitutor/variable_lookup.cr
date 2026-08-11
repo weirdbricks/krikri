@@ -277,6 +277,22 @@ module CrystalPlay
           idx ? current[idx]? : nil
         when Hash
           current[key.to_s]?
+        when String
+          # Real Jinja2/Python character indexing (`elasticsearch_version[0]`
+          # on a plain "7.x" string) - real bug found benchmarking
+          # geerlingguy.elasticsearch's own version-branch `when:`
+          # (`elasticsearch_version[0] | int < 7` / `>= 7`): this fell
+          # through to the `else -> nil` branch below, `| int` on `nil`/
+          # "undefined" defaulted to 0, and `0 < 7` picked the WRONG
+          # config-file layout (pre-7.x elasticsearch.yml/jvm.options
+          # instead of 7+'s elasticsearch.yml/jvm.options.d/heap.options)
+          # - Elasticsearch then failed to start outright against the
+          # mismatched config. Negative indices supported too, matching
+          # Python string indexing (and the Array branch just above).
+          idx = key.is_a?(Int32) ? key : key.to_i?
+          return nil unless idx
+          char = current.as_s[idx]?
+          char ? JSON::Any.new(char.to_s) : nil
         else
           nil
         end

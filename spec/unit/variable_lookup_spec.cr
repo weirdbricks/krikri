@@ -35,6 +35,30 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     lookup.indexed("items[1]").should eq("b")
   end
 
+  it "resolves character indexing on a plain string, matching real Jinja2/Python str[0]" do
+    # Real bug found benchmarking geerlingguy.elasticsearch: its own
+    # version-branch `when: elasticsearch_version[0] | int < 7` (on
+    # elasticsearch_version: "7.x", a plain string) fell through
+    # index_into's `else -> nil` case (only Array/Hash were handled),
+    # `| int` on the resulting "undefined" defaulted to 0, and `0 < 7`
+    # silently picked the WRONG config-file layout (pre-7.x
+    # elasticsearch.yml/jvm.options instead of 7+'s
+    # jvm.options.d/heap.options) - Elasticsearch then failed to start
+    # against the mismatched config.
+    v = Hash(String, JSON::Any).new
+    v["version"] = JSON::Any.new("7.x")
+    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup.indexed("version[0]").should eq("7")
+    lookup.indexed("version[1]").should eq(".")
+  end
+
+  it "resolves negative character indexing on a plain string" do
+    v = Hash(String, JSON::Any).new
+    v["version"] = JSON::Any.new("7.x")
+    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup.indexed("version[-1]").should eq("x")
+  end
+
   it "resolves quoted hash key indexing" do
     v = Hash(String, JSON::Any).new
     v["config"] = JSON.parse(%({"host": "example.com"}))
