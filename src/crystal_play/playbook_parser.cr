@@ -1341,7 +1341,18 @@ module CrystalPlay
             # recovers "770", which file.cr's `to_i(8)` then parses back
             # to the same 504 - correctly, this time, since it's actually
             # being asked to parse octal digit text now.
-            params[key.to_s] = raw.to_s(8)
+            #
+            # A leading "0" is prepended unconditionally - `Int#to_s(8)`
+            # never includes one, but two of the three plugins that read
+            # mode: (copy.cr, template.cr) branch on `mode.starts_with?
+            # ("0")` to decide octal-vs-decimal (only file.cr's own
+            # regex-based parse_numeric_mode treats the leading zero as
+            # always-optional). Without it, "640" reached template.cr's
+            # own parser as a bare *decimal* 640, chmod'ing prometheus's
+            # own config file to an unreadable 1200 instead of 0640 -
+            # found immediately after the fix above, on the very next
+            # task in the same real-host round.
+            params[key.to_s] = "0" + raw.to_s(8)
           else
             params[key.to_s] = Vault.maybe_decrypt(stringify_value(value))
           end

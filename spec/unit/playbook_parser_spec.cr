@@ -1263,7 +1263,7 @@ describe CrystalPlay::PlaybookParser do
             mode: 0770
         YAML
 
-      task.params["mode"].should eq("770")
+      task.params["mode"].should eq("0770")
     end
 
     it "applies the same octal round-trip to a leading-zero-less mode: too, matching real ansible-playbook" do
@@ -1281,7 +1281,29 @@ describe CrystalPlay::PlaybookParser do
             mode: 644
         YAML
 
-      task.params["mode"].should eq("1204")
+      task.params["mode"].should eq("01204")
+    end
+
+    it "prepends a leading zero so copy.cr/template.cr's own starts_with?(\"0\") octal check still fires" do
+      # Real regression caught immediately after the fix above, on the
+      # very next task in the same real-host round: Int#to_s(8) never
+      # includes a leading zero, but copy.cr and template.cr (unlike
+      # file.cr's own regex-based parser, which treats a leading zero as
+      # always-optional) branch on `mode.starts_with?("0")` to decide
+      # octal-vs-decimal. Without the leading zero, "640" reached
+      # template.cr's own parser as a bare *decimal* 640, chmod'ing
+      # prometheus's own config file to an unreadable 1200 instead of
+      # 0640.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.template:
+            src: x.j2
+            dest: /tmp/x
+            mode: 0640
+        YAML
+
+      task.params["mode"].should eq("0640")
+      task.params["mode"].starts_with?("0").should be_true
     end
 
     it "leaves an explicitly-quoted mode: string untouched" do
