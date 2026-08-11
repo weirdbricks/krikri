@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.227-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.228-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -286,22 +286,31 @@ not yet implemented.
 and closed on an ongoing basis via real-host benchmark rounds against
 production Ansible roles (dev-sec, konstruktoid, linux-system-roles,
 geerlingguy, openstack.ansible-hardening, wireguard, ansible-vault,
-cloudalchemy.prometheus, cloudalchemy.grafana) - see `git log` for the
-full log of what's been found and fixed. Most recently, a proactive
+cloudalchemy.prometheus, cloudalchemy.grafana, haproxy, certbot) - see
+`git log` for the full log of what's been found and fixed. Most
+recently, a `geerlingguy.redis`/`geerlingguy.postfix` round passed
+`postfix` clean on the first try (byte-identical `main.cf`) and found
+three bugs in `redis`: `apt:` install/upgrade never passed real
+Ansible's own default `--force-confdef`/`--force-confold` dpkg options,
+hanging forever on an interactive conffile prompt; the legacy free-form
+`key={{ x }} state=y` inline module-args tokenizer split on whitespace
+with no awareness of `{{ }}` as an opaque span, corrupting a templated
+value's own internal spaces; and `mode:` piped through a variable that's
+itself an unquoted-octal YAML literal lost its octal-ness in a way a
+*direct* `mode:` literal already didn't. Before that, a proactive
 *audit pass* (not a real-host round - grepping every remaining
 `VariableLookup#resolve` call site in the engine after two rounds found
 5 independent copies of the "recursive re-templating" bug) found and
 fixed **8 more copies**, plus a 10th while writing a test for one of
 them, plus - unrelated - a single-element `loop:`/`with_items:` list
 whose one templated element resolves to a scalar silently producing no
-loop items at all. A `geerlingguy.haproxy`/`geerlingguy.certbot` round
-right before that passed `haproxy` clean on the first try and found
-`cron:` required `cron_file:` (a documented but overly-broad scope cut
-- real Ansible's own default, editing a live user crontab, is what
-`certbot`'s own renewal-cron task needs). See KNOWN_MISSING.md for the
-full list of both (`0.9.225`-`0.9.227`), the `ansible-vault` and
-`prometheus`/`grafana` rounds before that (`0.9.198`-`0.9.224`), and
-the `geerlingguy.*`/`range(...)` rounds before that.
+loop items at all, and `cron:` required `cron_file:` (a documented but
+overly-broad scope cut - real Ansible's own default, editing a live
+user crontab, is what `certbot`'s own renewal-cron task needs). See
+KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.228`),
+the `ansible-vault` and `prometheus`/`grafana` rounds before that
+(`0.9.198`-`0.9.224`), and the `geerlingguy.*`/`range(...)` rounds
+before that.
 
 The remaining open items are narrow, documented scope cuts:
 

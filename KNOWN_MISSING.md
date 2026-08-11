@@ -8,7 +8,7 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.227`.**
+**Currently at `0.9.228`.**
 
 ---
 
@@ -54,6 +54,34 @@ producing a blank line at the end of the installed crontab that made
 every subsequent run see a "changed" diff against itself forever -
 caught by testing idempotency explicitly (a second run), not just a
 single successful one.
+
+`0.9.228` (a fifth real-host round: `geerlingguy.redis`, `geerlingguy.
+postfix` - both new): `geerlingguy.postfix` passed clean on the first
+try, including a byte-identical `main.cf` (module the two hosts'
+hostnames, expected to differ). `geerlingguy.redis` found three real
+bugs: `apt:` install/upgrade never passed `--force-confdef`/
+`--force-confold` (real Ansible's own `apt` module default
+`dpkg_options`), so installing a package whose shipped conffile
+differs from a pre-existing one (redis's role templates its config
+file before installing the package) hung forever on dpkg's interactive
+conffile prompt with no stdin to answer it; the legacy free-form
+`key={{ x }} key2=y` inline module-args tokenizer split on every
+whitespace character with no awareness of `{{ }}`/`{% %}` as an opaque
+span, shattering a templated value's own internal spaces into bogus
+tokens and corrupting the expression irrecoverably before templating
+ever ran (`service: "name={{ redis_daemon }} state=restarted"`,
+real Ansible's legacy syntax, is exactly the shape geerlingguy.redis's
+own handler uses); and `mode:` piped through a variable that's itself
+an unquoted-octal YAML literal (`redis_conf_dir_mode: 02770`) lost its
+octal-ness - Crystal's own YAML parser (like real Ansible's) resolves
+that literal to a decimal Int64 at vars-file parse time, and unlike a
+*direct* `mode: 0770` task literal (which already recovers its octal
+digit text, see the `0.9.210`-`0.9.224` entry below), piping the same
+decimal-converted int through a variable and a bare `{{ }}` template
+bypassed that recovery entirely - `chmod` received an invalid mode,
+silently no-opped, and the directory reported "changed" on every
+subsequent run since the never-applied target mode could never match
+the real one.
 
 `0.9.198`-`0.9.209` (a second broader-mix round: `openstack.ansible-
 hardening`, `githubixx.ansible_role_wireguard`, `ansible-community.
