@@ -1349,4 +1349,56 @@ describe CrystalPlay::PlaybookParser do
       task.params["other"].should eq("val")
     end
   end
+
+  describe "command:/shell: trailing special params (creates:/removes:/chdir:/executable:)" do
+    # Real bug found benchmarking geerlingguy.firewall's own "Flush
+    # iptables the first time playbook runs." task: `command: >
+    # iptables -F creates=/etc/firewall.bash`. Real Ansible's command:/
+    # shell: modules recognize these as trailing key=value params
+    # written inline, stripping them out of the actual command text
+    # before running it - previously the ENTIRE string was dumped
+    # verbatim into cmd, so "iptables -F creates=/etc/firewall.bash"
+    # ran literally and iptables failed trying to interpret
+    # "creates=..." as an option/chain name.
+    it "extracts a trailing creates= and leaves the rest of the command untouched" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: iptables -F creates=/etc/firewall.bash
+        YAML
+
+      task.params["cmd"].should eq("iptables -F")
+      task.params["creates"].should eq("/etc/firewall.bash")
+    end
+
+    it "extracts multiple trailing special params in any order" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.shell: echo hello chdir=/tmp creates=/tmp/marker
+        YAML
+
+      task.params["cmd"].should eq("echo hello")
+      task.params["chdir"].should eq("/tmp")
+      task.params["creates"].should eq("/tmp/marker")
+    end
+
+    it "does not corrupt a command containing its own unrelated = text" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: env VAR=1 somecommand
+        YAML
+
+      task.params["cmd"].should eq("env VAR=1 somecommand")
+      task.params.has_key?("creates").should be_false
+    end
+
+    it "leaves a quoted creates= value's spaces intact" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: touch somefile creates="/path with spaces/marker"
+        YAML
+
+      task.params["cmd"].should eq("touch somefile")
+      task.params["creates"].should eq("/path with spaces/marker")
+    end
+  end
 end

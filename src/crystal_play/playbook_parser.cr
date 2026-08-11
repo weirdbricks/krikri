@@ -1378,7 +1378,27 @@ module CrystalPlay
         # was silently discarded, and the task ran as if none of them
         # had been given at all.
         if RAW_COMMAND_MODULES.includes?(module_name)
-          params["cmd"] = yaml.as_s
+          # Real bug found benchmarking geerlingguy.firewall's own
+          # "Flush iptables the first time playbook runs." task:
+          # `command: > iptables -F creates=/etc/firewall.bash` - real
+          # Ansible's command:/shell: modules recognize a handful of
+          # trailing key=value params (creates:, removes:, chdir:,
+          # executable:) written inline this way, same as any other
+          # module's free-form syntax, stripping them out of the actual
+          # command text before running it. Previously the ENTIRE
+          # string (options text included) was dumped verbatim into
+          # cmd, so `iptables -F creates=/etc/firewall.bash` ran
+          # literally - iptables tried to interpret "creates=..." as an
+          # option/chain name and failed outright ("No chain/target/
+          # match by that name"). Only strips from the *trailing end*
+          # (repeatedly, for multiple such params) rather than
+          # re-tokenizing the whole string, so a command containing its
+          # own unrelated "=" text (`VAR=1 somecommand`, the general
+          # case this class's own free-form key=value parsing
+          # deliberately avoids for command:/shell:) is left untouched.
+          cmd, special = extract_command_special_params(yaml.as_s)
+          params["cmd"] = cmd
+          special.each { |key, value| params[key] = value }
         else
           parse_inline_kv_params(yaml.as_s).each { |key, value| params[key] = value }
           params["_raw_params"] = yaml.as_s
@@ -1467,6 +1487,28 @@ module CrystalPlay
       else
         s
       end
+    end
+
+    # Repeatedly strips a trailing " key=value" token (key one of
+    # command:/shell:'s own recognized special params) off the end of
+    # *raw*, returning the remaining command text and the extracted
+    # params. Only ever touches the trailing end - the command body
+    # itself, including any "=" it legitimately contains
+    # (`VAR=1 somecommand`), is never re-tokenized or rewritten.
+    private def self.extract_command_special_params(raw : String) : {String, Hash(String, String)}
+      special = Hash(String, String).new
+      remaining = raw
+
+      loop do
+        match = remaining.match(/\A(.*?)\s+(creates|removes|chdir|executable)=("[^"]*"|'[^']*'|\S+)\s*\z/m)
+        break unless match
+
+        remaining = match[1]
+        key = match[2]
+        special[key] ||= unquote_inline_value(match[3])
+      end
+
+      {remaining, special}
     end
 
     # Helper: Safely convert any YAML value to string
