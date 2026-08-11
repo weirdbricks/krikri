@@ -2855,6 +2855,39 @@ module CrystalPlay
       substituted_params = substitute_task_params(handler.params, substitutor)
       substituted_become_user = handler.become_user.try { |raw_user| substitutor.substitute(raw_user) }
 
+      # Real bug found benchmarking geerlingguy.jenkins: its own
+      # "configure default users" handler is a template: task
+      # (`handlers/main.yml`, not `tasks/`) - unlike #execute_task_once/
+      # #prepare_batch_step above, this method never ran a handler's
+      # module through ActionPluginManager at all, so template:'s own
+      # controller-side render step (reading/rendering the .j2 file
+      # locally, then injecting the result as a `content:` param before
+      # dispatch) never happened for ANY handler, only regular tasks:.
+      # The plugin then ran on the remote host with no `content:` param
+      # at all and failed outright - not a silent divergence, every
+      # template:/copy:-with-role-src:/etc. handler in a real playbook
+      # would hit this identically.
+      if ActionPluginManager.has_action_plugin?(handler.module_name)
+        action_result = ActionPluginManager.execute_action(
+          handler.module_name,
+          substituted_params,
+          vars_context,
+          host
+        )
+
+        unless action_result.success
+          return JSON.parse({
+            "changed" => false,
+            "failed"  => true,
+            "msg"     => action_result.error_message || "Action plugin failed",
+          }.to_json)
+        end
+
+        if modified_params = action_result.modified_params
+          substituted_params = modified_params
+        end
+      end
+
       # Build config for plugin - serialized once, with
       # ansible_connection=local already in the wire payload when this
       # handler runs over SSH (same treatment as execute_task_once).

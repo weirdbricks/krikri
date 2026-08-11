@@ -66,10 +66,16 @@ module CrystalPlay
 
         collect_required_plugins(play.tasks, required_plugins)
 
-        play.handlers.each do |handler|
-          simple_name = handler.module_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community\.(general|docker|mysql|postgresql|crypto))\./, "")
-          required_plugins.add(simple_name)
-        end
+        # Real crash found benchmarking geerlingguy.jenkins: its own
+        # "restart jenkins" handler is `include_tasks: tasks/restart.yml`
+        # - a pseudo-module ("_include_tasks", no corresponding plugin
+        # binary) exactly like the block:/include_tasks:/include_role:
+        # cases #collect_required_plugins above already guards against
+        # for regular tasks:, but this separate handlers loop had no such
+        # guard at all, so it went straight to get_local_plugin_path and
+        # crashed the whole process outright for any playbook with a
+        # handler written this way and a real (non-local) target host.
+        collect_required_plugins(play.handlers, required_plugins)
       end
 
       # Add facts plugin if any play needs it

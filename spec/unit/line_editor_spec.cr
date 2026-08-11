@@ -84,6 +84,27 @@ describe LineEditor do
       lines.should eq(["x", "y"])
       changed.should be_true
     end
+
+    it "reports unchanged when regexp: is given but doesn't match, and the exact line already exists elsewhere" do
+      # Real bug found benchmarking geerlingguy.jenkins: its own "Modify
+      # variables in init file." task gives a regexp: that never
+      # actually matches the already-installed line (a trailing space
+      # in the role's own regexp: - `^Environment="JENKINS_OPTS ` -
+      # doesn't match the real line's `Environment="JENKINS_OPTS="`, no
+      # space before the `=`), while line: is the exact text already
+      # present. The "already present" dedup check was gated behind
+      # `!regexp` - since a regexp: WAS given here (it just never
+      # matched anything), the check was skipped entirely and a fresh
+      # duplicate got appended on every single run, never converging.
+      lines, changed = LineEditor.ensure_present(
+        ["Environment=\"JENKINS_OPTS=\""],
+        "Environment=\"JENKINS_OPTS=\"",
+        "^Environment=\"JENKINS_OPTS ",
+        false, nil, nil
+      )
+      lines.should eq(["Environment=\"JENKINS_OPTS=\""])
+      changed.should be_false
+    end
   end
 
   describe ".matches_regexp?" do

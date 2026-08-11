@@ -84,6 +84,26 @@ module CrystalPlay
         end
       end
 
+      # Real bug found benchmarking geerlingguy.jenkins: its own "Add
+      # Jenkins apt repository key." task uses `force: true` - real
+      # Ansible's own get_url module treats force: true as "always
+      # re-download, bypassing freshness checks" (Last-Modified/ETag),
+      # NOT "always report changed": it still compares the freshly
+      # downloaded content against whatever's already at dest: before
+      # deciding changed, so a `force: true` task whose URL's content
+      # hasn't actually changed still converges to changed: false on a
+      # rerun. Unconditionally reporting changed: true here meant EVERY
+      # force: true get_url task (a common idiom for "always fetch the
+      # latest, but converge if identical" URLs like signing keys)
+      # reported changed forever, with no way to ever settle.
+      unchanged = File.exists?(dest) && native_checksum(dest, "sha256") == native_checksum(tmp_path, "sha256")
+
+      if unchanged
+        File.delete(tmp_path)
+        apply_owner_group_mode(dest, @params["owner"]?, @params["group"]?, @params["mode"]?)
+        return PluginResult.new(changed: false, failed: false, msg: "file already exists and content matches", dest: dest)
+      end
+
       if is_true?(@params["backup"]?) && File.exists?(dest)
         File.copy(dest, "#{dest}.#{Time.utc.to_s("%Y-%m-%d@%H:%M:%S")}~")
       end

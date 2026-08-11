@@ -92,6 +92,29 @@ describe "get_url plugin" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
+  it "is idempotent when force is given but the existing content already matches (no checksum needed)" do
+    # Real bug found benchmarking geerlingguy.jenkins: its own "Add
+    # Jenkins apt repository key." task uses force: true (real
+    # Ansible's own get_url semantics: force: true means "always
+    # re-fetch, bypassing freshness checks" - NOT "always report
+    # changed"; it still compares the freshly downloaded content
+    # against dest: before deciding changed). Previously
+    # unconditionally returned changed: true after every force:
+    # download regardless of whether the content actually differed, so
+    # this exact task reported changed forever on a real host, never
+    # converging.
+    dest = File.tempname("get-url-spec")
+    File.write(dest, FILE_CONTENT)
+
+    result = PluginSpecHelper.run("get_url", {"url" => "#{get_url_base}/file.txt", "dest" => dest, "force" => "yes"})
+
+    result["changed"].as_bool.should be_false
+    result["failed"].as_bool.should be_false
+    File.read(dest).should eq(FILE_CONTENT)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
   it "reports changed without downloading under check_mode" do
     dest = File.tempname("get-url-spec")
 

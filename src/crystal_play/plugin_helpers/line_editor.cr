@@ -78,7 +78,19 @@ module CrystalPlay
         # of leaving the file alone).
         return {new_lines, false} if backrefs
 
-        return {new_lines, false} if !regexp && new_lines.any? { |existing| lines_equal?(existing, line) }
+        # Real bug found benchmarking geerlingguy.jenkins: its own
+        # "Modify variables in init file." task gives a regexp: that
+        # never actually matches the line it (redundantly) also passes
+        # as line: - a real, if unusual, shape a real playbook can
+        # write, and real Ansible's own lineinfile module still
+        # recognizes the target line as already present when it finds
+        # it verbatim elsewhere in the file, regardless of whether a
+        # regexp: was given at all. Gating this check behind `!regexp`
+        # meant ANY regexp: that failed to match (whether or not the
+        # target line already existed) skipped straight to insertion -
+        # a fresh duplicate `Environment="JENKINS_OPTS="` line got
+        # appended on literally every single run, never converging.
+        return {new_lines, false} if new_lines.any? { |existing| lines_equal?(existing, line) }
 
         insert_index = insertion_index(new_lines, insertafter, insertbefore)
         new_lines.insert(insert_index, line)
