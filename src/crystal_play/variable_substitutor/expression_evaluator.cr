@@ -548,7 +548,30 @@ module CrystalPlay
           return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
         end
 
-        @lookup.resolve(expr) || JSON::Any.new(nil)
+        resolved = @lookup.resolve(expr)
+
+        # Real Ansible's recursive re-templating - the fifth (and, so
+        # far, last) independent plain-lookup fallback in this engine
+        # found needing this exact fix, alongside ConditionalEvaluator's
+        # bare when:, ExpressionEvaluator's filter-chain head,
+        # FilterEngine's default() argument, and ComparisonEvaluator's
+        # bare comparison operand. Found via cloudalchemy.prometheus's
+        # own `go_arch: "{{ go_arch_map[ansible_architecture] | default(
+        # ansible_architecture) }}"` (role vars/main.yml, not defaults/)
+        # used as a bare `+`-operand inside `('linux-' + go_arch +
+        # '.tar.gz') in item` - `{{ go_arch }}` alone rendered correctly
+        # elsewhere (a different, already-fixed code path), but this
+        # plain-lookup fallback for a bare `+`/`~` operand returned the
+        # raw, unrendered template text, so the "in" check against every
+        # real checksum-file line always came back false.
+        if resolved && (raw = resolved.raw).is_a?(String) && raw.includes?("{{")
+          inner = raw.strip
+          inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
+          rendered = evaluate(inner)
+          return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
+        end
+
+        resolved || JSON::Any.new(nil)
       end
 
       # Splits *expr* on every top-level `~` (outside quotes/brackets),

@@ -301,5 +301,22 @@ describe CrystalPlay::ConditionalEvaluator do
       CrystalPlay::ConditionalEvaluator.evaluate("vault_enterprise", v).should be_true
       ENV.delete("CRYSTAL_ANSIBLE_SPEC_COND_ENV_TEST")
     end
+
+    it "re-templates a bare variable used as a `+`-operand inside an `in` check" do
+      # Real bug found benchmarking cloudalchemy.prometheus's own
+      # `go_arch: "{{ go_arch_map[ansible_architecture] | default(
+      # ansible_architecture) }}"` (role vars/main.yml, not defaults/)
+      # used as `('linux-' + go_arch + '.tar.gz') in item` - the fifth
+      # (and so far last) independent plain-lookup fallback needing this
+      # exact fix. `{{ go_arch }}` alone rendered correctly elsewhere (a
+      # different, already-fixed code path), but resolve_plus_operand's
+      # own plain-lookup fallback for a bare `+`-operand returned the
+      # raw, unrendered template text, so the `in` check against every
+      # real checksum-file line always came back false.
+      v = Hash(String, JSON::Any).new
+      v["go_arch"] = JSON::Any.new(%({{ lookup('env', 'CRYSTAL_ANSIBLE_SPEC_COND_ENV_TEST_2') | default('amd64', true) }}))
+      v["item"] = JSON::Any.new("prometheus-2.27.0.linux-amd64.tar.gz")
+      CrystalPlay::ConditionalEvaluator.evaluate(%(('linux-' + go_arch + '.tar.gz') in item), v).should be_true
+    end
   end
 end
