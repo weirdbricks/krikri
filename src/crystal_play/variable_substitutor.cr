@@ -40,6 +40,28 @@ module CrystalPlay
     @evaluator : VariableSubstitutor::ExpressionEvaluator?
     @renderer : VariableSubstitutor::CrinjaRenderer?
 
+    # Guards the `{%`/`{#` escalation in #substitute against genuine
+    # infinite recursion: CrinjaRenderer#prepare_crinja_vars pre-renders
+    # any `{{`-containing variable value via a *fresh* VarSubstitutor
+    # (see that method's own comment - "no risk of this recursing back
+    # into this same render", which held only for a value containing
+    # `{{` alone). A value containing BOTH `{{` AND a block tag (`{%`/
+    # `{#`) escalates straight to `renderer.render` here, which calls
+    # prepare_crinja_vars again on the *same* @vars, which builds
+    # *another* fresh VarSubstitutor for the same still-unrendered
+    # value, forever - real bug found benchmarking cloudalchemy.
+    # grafana's own `grafana_package: "grafana{% if ... %}-rpi{% endif
+    # %}{{ (grafana_version != 'latest') | ternary(...) }}"` (vars/
+    # debian.yml - unconditional role vars, not a default), which
+    # crashed the whole engine with a stack overflow instead of failing
+    # one task. `@vars` is fixed for a renderer's lifetime and rendering
+    # never yields the fiber (CrinjaRenderer's own shared_env comment),
+    # so a single process-wide counter - not a per-instance one, since
+    # each recursion level constructs a brand new VarSubstitutor/
+    # CrinjaRenderer pair - is the correct guard here.
+    @@block_tag_escalation_depth = 0
+    MAX_BLOCK_TAG_ESCALATION_DEPTH = 50
+
     def initialize(vars : Hash(String, String | JSON::Any) = {} of String => String | JSON::Any, 
                    host_name : String = "localhost",
                    facts : Hash(String, JSON::Any) = {} of String => JSON::Any)
@@ -99,7 +121,13 @@ module CrystalPlay
       return text unless text.includes?("{{")
 
       if text.includes?("{%") || text.includes?("{#")
-        return renderer.render(text)
+        return text if @@block_tag_escalation_depth >= MAX_BLOCK_TAG_ESCALATION_DEPTH
+        @@block_tag_escalation_depth += 1
+        begin
+          return renderer.render(text)
+        ensure
+          @@block_tag_escalation_depth -= 1
+        end
       end
 
       result = expand_mustache_spans(text) { |inner| evaluator.evaluate(inner.strip).strip }
@@ -132,7 +160,13 @@ module CrystalPlay
       depth = 0
       while (result.includes?("{{") || result.includes?("{%") || result.includes?("{#")) && depth < 5
         next_result = if result.includes?("{%") || result.includes?("{#")
-                        renderer.render(result)
+                        break if @@block_tag_escalation_depth >= MAX_BLOCK_TAG_ESCALATION_DEPTH
+                        @@block_tag_escalation_depth += 1
+                        begin
+                          renderer.render(result)
+                        ensure
+                          @@block_tag_escalation_depth -= 1
+                        end
                       else
                         expand_mustache_spans(result) { |inner| evaluator.evaluate(inner.strip).strip }
                       end

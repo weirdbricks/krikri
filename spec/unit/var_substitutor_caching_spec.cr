@@ -117,5 +117,44 @@ describe CrystalPlay::VarSubstitutor do
       result.should contain("/etc/wireguard")
       result.should contain("wg0.conf")
     end
+
+    it "doesn't stack-overflow on a variable whose value mixes {{ }} and {% %}" do
+      # Real bug found benchmarking cloudalchemy.grafana's own
+      # `grafana_package: "grafana{% if ansible_architecture == 'armv6l'
+      # %}-rpi{% endif %}{{ (grafana_version != 'latest') |
+      # ternary('=' ~ grafana_version, '') }}"` (vars/debian.yml -
+      # unconditional role vars, not a default). CrinjaRenderer#
+      # prepare_crinja_vars pre-renders any `{{`-containing value via a
+      # *fresh* VarSubstitutor (documented there as safe since it "can't
+      # recurse back into this same render" - true only when the value
+      # contains `{{` alone). A value with BOTH `{{` and a block tag
+      # escalates straight to renderer.render, which calls
+      # prepare_crinja_vars again on the same @vars, building *another*
+      # fresh VarSubstitutor for the same still-unrendered value,
+      # forever - crashed the whole engine with a stack overflow instead
+      # of failing one task.
+      #
+      # The guarantee this asserts is termination without a crash, not
+      # full resolution: the fix is a process-wide recursion-depth cap
+      # (MAX_BLOCK_TAG_ESCALATION_DEPTH), which turns unbounded
+      # recursion into a bounded one that returns the raw, still-
+      # unrendered text once the cap is hit rather than segfaulting -
+      # verified separately, against the full engine with a realistic
+      # vars_context (many more magic vars than this minimal 3-key one),
+      # to actually converge to the correct "grafana" rather than
+      # hitting the cap; a bare, hand-built vars hash this small doesn't
+      # reliably reach the same convergence path.
+      v = Hash(String, JSON::Any).new
+      v["ansible_architecture"] = JSON::Any.new("x86_64")
+      v["grafana_version"] = JSON::Any.new("latest")
+      v["grafana_package"] = JSON::Any.new(
+        %(grafana{% if ansible_architecture == 'armv6l' %}-rpi{% endif %}{{ (grafana_version != 'latest') | ternary('=' ~ grafana_version, '') }})
+      )
+      subject = CrystalPlay::VarSubstitutor.new(vars: v, host_name: "h")
+
+      result = subject.substitute("{{ grafana_package }}")
+      result.should_not be_nil
+      result.starts_with?("grafana").should be_true
+    end
   end
 end
