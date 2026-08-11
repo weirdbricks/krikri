@@ -8,7 +8,7 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.224`.**
+**Currently at `0.9.227`.**
 
 ---
 
@@ -21,6 +21,39 @@ parsed, a missing `d()` filter alias, dict/array literals unsupported
 outside a `+` operand, among others - `git log --oneline --grep=
 "0\.9\.1[5-7][0-9]" -E` for the full list). Treat "no gap remains open"
 as "none is known right now," not as a claim the search is finished.
+
+`0.9.225`-`0.9.226`: a proactive audit pass (not a real-host round -
+grepping every remaining `VariableLookup#resolve` call site in the
+engine after rounds 2-3 found 5 independent copies of the recursive-
+re-templating bug) found and fixed **8 more copies** of the exact same
+gap: `ConditionalEvaluator`'s `is mapping`/`is sequence` test and its
+dotted-access lookup, two separate `FilterEngine` fallbacks, both of
+`ComparisonEvaluator`'s dotted-path counterparts, and `TaskExecutor#
+deep_render_item`'s loop-item native-type fast path. Fixing one of
+those (a loop item's own re-render) surfaced a **10th, related** copy
+in `TaskExecutor#resolve_template_value` (the loop: SOURCE itself, not
+just each item) - found while writing a test, not via a real-host
+round. That same investigation turned up a genuinely different bug: a
+single-element `loop:`/`with_items:` list holding one bare `{{ var }}`
+span, where `var` resolves to a scalar rather than a list, silently
+produced NO loop items at all instead of one iteration - verified
+against real `ansible-playbook` directly (both `loop:` and
+`with_items:` treat this identically) before fixing.
+
+`0.9.227` (a fourth real-host round): `geerlingguy.haproxy` passed
+clean on the first try - byte-identical rendered config, no bugs.
+`geerlingguy.certbot` found that `cron:` required `cron_file:`, a
+documented but overly-broad scope cut - the real risk (this test
+suite's OWN crontab getting mutated as a spec side effect) doesn't
+apply to managing an arbitrary TARGET user's live crontab via `crontab
+-u`, which is real Ansible's own default (`cron_file:` omitted) and
+exactly what certbot's own renewal-cron task uses. Implementing it
+surfaced its own bug: the install path added an extra trailing newline
+on top of one `PluginHelpers::CronTable.upsert` already appends,
+producing a blank line at the end of the installed crontab that made
+every subsequent run see a "changed" diff against itself forever -
+caught by testing idempotency explicitly (a second run), not just a
+single successful one.
 
 `0.9.198`-`0.9.209` (a second broader-mix round: `openstack.ansible-
 hardening`, `githubixx.ansible_role_wireguard`, `ansible-community.
