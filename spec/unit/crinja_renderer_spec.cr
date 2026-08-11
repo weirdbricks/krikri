@@ -67,4 +67,26 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
 
     renderer.render("{{ 'Ansible managed' | comment(decoration='; ') }}").should eq(";\n; Ansible managed\n;")
   end
+
+  it "renders to_nice_yaml, real Ansible's own pretty-YAML filter" do
+    # Real bug found benchmarking cloudalchemy.prometheus's own alerting-
+    # rules template: `{{ prometheus_alert_rules | to_nice_yaml(indent=2,
+    # sort_keys=False) }}` - to_nice_yaml was entirely unimplemented,
+    # Crinja raised "no filter with name \"to_nice_yaml\" registered",
+    # failing the whole template render (all-or-nothing).
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render(%({{ [{"name": "x", "rules": ["a", "b"]}] | to_nice_yaml }})).should eq(
+      "- name: x\n  rules:\n  - a\n  - b"
+    )
+  end
+
+  it "sorts to_nice_yaml's own mapping keys by default, honors sort_keys=False" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render(%({{ {"b": 1, "a": 2} | to_nice_yaml }})).should eq("a: 2\nb: 1")
+    renderer.render(%({{ {"b": 1, "a": 2} | to_nice_yaml(sort_keys=False) }})).should eq("b: 1\na: 2")
+  end
 end

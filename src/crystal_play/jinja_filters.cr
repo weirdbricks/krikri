@@ -1,4 +1,5 @@
 require "crinja"
+require "yaml"
 require "./crinja_hash_ext"
 
 # Custom Jinja2 filters that real Ansible's Jinja2 provides but Crinja
@@ -145,6 +146,51 @@ module CrystalPlay
       end
     end
 
+    # Recursively converts a Crinja::Value into a YAML::Any, for
+    # #to_nice_yaml. Deliberately NOT built via Value#to_json (a JSON
+    # round-trip is a valid YAML flow subset, and would have been
+    # simpler) - Value#to_json(builder) raises "Starting document before
+    # ending previous one" when called via the no-arg Object#to_json
+    # convenience wrapper Crinja doesn't override, so this walks
+    # Value#raw directly instead.
+    def self.crinja_value_to_yaml_any(value : Crinja::Value) : YAML::Any
+      case raw = value.raw
+      when Nil
+        YAML::Any.new(nil)
+      when Bool, String
+        YAML::Any.new(raw)
+      when Int32, Int64
+        YAML::Any.new(raw.to_i64)
+      when Float64
+        YAML::Any.new(raw)
+      when Time
+        YAML::Any.new(raw.to_s)
+      when Array(Crinja::Value)
+        YAML::Any.new(raw.map { |v| crinja_value_to_yaml_any(v) })
+      when Crinja::Dictionary
+        YAML::Any.new(raw.to_a.to_h { |(k, v)| {YAML::Any.new(k.to_s), crinja_value_to_yaml_any(v)} })
+      else
+        YAML::Any.new(raw.to_s)
+      end
+    end
+
+    # Recursively rebuilds *any* with every mapping's keys sorted
+    # lexically (real Ansible's own `to_nice_yaml`'s `sort_keys=True`
+    # default) - Crystal's `YAML::Any` wraps an ordered `Hash`, which
+    # `to_yaml` emits in that same (insertion) order, so sorting has to
+    # happen by rebuilding the structure, not by asking YAML::Builder
+    # for it.
+    def self.sort_yaml_keys(any : YAML::Any) : YAML::Any
+      if hash = any.as_h?
+        sorted = hash.to_a.sort_by { |(k, _)| k.to_s }
+        YAML::Any.new(sorted.to_h { |(k, v)| {k, sort_yaml_keys(v)} })
+      elsif arr = any.as_a?
+        YAML::Any.new(arr.map { |v| sort_yaml_keys(v) })
+      else
+        any
+      end
+    end
+
     # `difference(iterable)` - set difference: the elements of the target
     # sequence not present in the argument sequence. os_hardening's
     # modprobe task uses it to subtract mounted fs types from a candidate
@@ -216,6 +262,36 @@ module CrystalPlay
       a = arg
       arg_set = a.to_a if a && a.sequence?
       Crinja::Value.new(target_vals.reject { |item| arg_set.includes?(item) })
+    end
+
+    # `to_nice_yaml(indent=N, sort_keys=True)` - real Ansible's own
+    # filter (ansible.plugins.filter.core), a pretty-printed YAML dump
+    # commonly used to embed a structured variable straight into a
+    # generated config file. Entirely unimplemented before - Crinja
+    # raised "no filter with name \"to_nice_yaml\" registered", failing
+    # the whole template render. Found via cloudalchemy.prometheus's own
+    # alerting-rules template: `{{ prometheus_alert_rules | to_nice_yaml
+    # (indent=2, sort_keys=False) | indent(2, False) }}`.
+    #
+    # Converts via target.to_json -> YAML.parse -> to_yaml (JSON is a
+    # valid YAML flow-syntax subset, so this round-trips cleanly through
+    # Crystal stdlib's own YAML formatter without hand-rolling a YAML
+    # emitter) rather than a custom serializer. `sort_keys=` is honored
+    # (Hash insertion order is preserved either way, sorted only when
+    # asked); `indent=` is NOT - Crystal's YAML::Builder has no
+    # configurable indent width, so this always emits its own default
+    # (2 spaces for nested maps) regardless of what indent= requested.
+    # Narrowly scoped like several other filters in this file - revisit
+    # only if a real template needs indent= to actually change the
+    # output width.
+    Crinja.filter(:to_nice_yaml) do
+      sort_keys = arguments.kwargs["sort_keys"]?.try { |v| JinjaFilters.real_truthy?(v) }
+      sort_keys = true if sort_keys.nil?
+
+      any = JinjaFilters.crinja_value_to_yaml_any(target)
+      any = JinjaFilters.sort_yaml_keys(any) if sort_keys
+
+      Crinja::Value.new(any.to_yaml.sub(/\A---\n/, "").rstrip)
     end
 
     # `version(comparison_version, operator='==')` - Ansible's own test
