@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.231-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.232-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -288,7 +288,18 @@ production Ansible roles (dev-sec, konstruktoid, linux-system-roles,
 geerlingguy, openstack.ansible-hardening, wireguard, ansible-vault,
 cloudalchemy.prometheus, cloudalchemy.grafana, haproxy, certbot) - see
 `git log` for the full log of what's been found and fixed. Most
-recently, a `geerlingguy.jenkins`/`geerlingguy.elasticsearch` round
+recently, a `geerlingguy.memcached`/`geerlingguy.rabbitmq` round passed
+`memcached` clean on the first try (byte-identical config) and found
+two bugs in `rabbitmq`: `deb822_repository`'s `signed_by:` only handled
+a local path (added the round before), not a bare URL - rabbitmq's own
+task gives one directly, now fetched and dearmored into a local
+keyring, matching real Ansible's own naming convention; and `apt:`'s
+`name=version` pinning syntax was passed straight to `dpkg -l`, which
+doesn't understand it, so a pinned package reported changed on every
+single run even once already installed at that exact version. (A third
+role, `varnish`, was blocked by an external packagecloud.io repo issue
+affecting real ansible-playbook identically - not chased.) Before that,
+a `geerlingguy.jenkins`/`geerlingguy.elasticsearch` round
 found four real bugs in `jenkins` - a handler written as
 `include_tasks: file.yml` crashed the whole process for any remote
 host; a handler using `template:` never ran the controller-side render
@@ -325,7 +336,7 @@ whose one templated element resolves to a scalar silently producing no
 loop items at all, and `cron:` required `cron_file:` (a documented but
 overly-broad scope cut - real Ansible's own default, editing a live
 user crontab, is what `certbot`'s own renewal-cron task needs). See
-KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.231`),
+KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.232`),
 the `ansible-vault` and `prometheus`/`grafana` rounds before that
 (`0.9.198`-`0.9.224`), and the `geerlingguy.*`/`range(...)` rounds
 before that.

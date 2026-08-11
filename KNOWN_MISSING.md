@@ -8,7 +8,7 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.231`.**
+**Currently at `0.9.232`.**
 
 ---
 
@@ -21,6 +21,26 @@ parsed, a missing `d()` filter alias, dict/array literals unsupported
 outside a `+` operand, among others - `git log --oneline --grep=
 "0\.9\.1[5-7][0-9]" -E` for the full list). Treat "no gap remains open"
 as "none is known right now," not as a claim the search is finished.
+
+`0.9.232` (an eighth real-host round: `geerlingguy.memcached`,
+`geerlingguy.rabbitmq` - both new; `geerlingguy.varnish` was also
+attempted but blocked by an external issue - its packagecloud.io apt
+repo currently has no valid Release file for Ubuntu jammy, reproduced
+identically on real `ansible-playbook`, not a crystal-ansible gap;
+`geerlingguy.mongodb` doesn't exist on Galaxy anymore, skipped):
+`geerlingguy.memcached` passed clean on the first try - byte-identical
+`/etc/memcached.conf`. `geerlingguy.rabbitmq` found two bugs:
+`deb822_repository`'s own `signed_by:` support (added last round) only
+handled an already-local path - rabbitmq's own task gives a bare
+`keys.openpgp.org` URL directly, previously written completely
+literally into `Signed-By:`, which apt rejected outright; now fetched
+(binary-safe), dearmored via `gpg` if ASCII-armored, and stored at
+`/etc/apt/keyrings/<name>-archive-keyring.gpg` (real Ansible's own
+naming convention). Separately, `apt:`'s own `name=version` pinning
+syntax (`rabbitmq-server={{ rabbitmq_version }}-1`) was passed straight
+to `dpkg -l` for the already-installed check, which doesn't understand
+that syntax at all - reported changed on literally every run even once
+the exact pinned version was already installed.
 
 `0.9.230`-`0.9.231` (a seventh real-host round: `geerlingguy.jenkins`,
 `geerlingguy.elasticsearch` - both new, both required overriding a role
