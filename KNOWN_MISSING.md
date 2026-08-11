@@ -8,7 +8,7 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.239`.**
+**Currently at `0.9.242`.**
 
 ---
 
@@ -21,6 +21,41 @@ parsed, a missing `d()` filter alias, dict/array literals unsupported
 outside a `+` operand, among others - `git log --oneline --grep=
 "0\.9\.1[5-7][0-9]" -E` for the full list). Treat "no gap remains open"
 as "none is known right now," not as a claim the search is finished.
+
+`0.9.240`-`0.9.242` (a ninth real-host round: `geerlingguy.munin`,
+`geerlingguy.samba`, `geerlingguy.supervisor`, `geerlingguy.htpasswd` -
+all new). `geerlingguy.samba` passed clean on the first try (a mid-round
+apt 404 turned out to be a stale package-list cache on the crystal-
+ansible host specifically, from never having run `apt-get update` there
+- confirmed environmental by reproducing the exact same 404 with raw
+`apt-get install` before a cache refresh, then clean after one).
+`geerlingguy.munin` and `geerlingguy.htpasswd` both found the same root
+cause: `community.general.htpasswd` had no plugin at all (every
+`htpasswd:` task - munin's own admin-user setup, the whole point of the
+`htpasswd` role - silently skipped with "Plugin not available").
+Implemented from scratch: reads/writes the `user:hash` file format
+directly, hashes via `openssl passwd -stdin` (password piped over
+stdin, never an argv element) rather than hand-rolling apr1/md5-crypt's
+bit-level algorithm, supports `apr_md5_crypt` (default)/`md5_crypt`/
+`sha256_crypt`/`sha512_crypt`/`plaintext`, and is idempotent by
+recomputing the hash with the existing entry's own salt and comparing
+byte-for-byte rather than always writing a fresh (unmatchable) random
+salt. Verified independently against `openssl passwd -apr1` directly,
+not just self-consistently. `geerlingguy.supervisor` found two real
+engine bugs from one template file (`supervisord.conf.j2`): the `hash`
+filter (`{{ supervisor_password|hash('sha1') }}`, real Ansible's own
+`ansible.plugins.filter.core.hash`, wrapping Python's `hashlib`) was
+entirely unimplemented in both the Crinja template pipeline and the
+plain `{{ }}` evaluator - the whole template render failed outright;
+and a bare boolean interpolated into a `.j2` template (`nodaemon = {{
+supervisor_nodaemon }}`) rendered Crystal's lowercase "false" instead
+of real Jinja2/Python's capitalized "False" (the plain `{{ }}`
+evaluator already had this right via `VariableLookup#format_value` -
+only the separate Crinja pipeline's own `Finalizer` was missing a Bool-
+specific stringify case, another instance of the two independent
+evaluators diverging on the same bug class). A third, cosmetic-only
+divergence in the same template was found and left open - see the
+narrow-scope-cuts list below.
 
 `0.9.239` (a fourth extension of the eighth round, same hosts:
 `geerlingguy.postgresql`, new; `geerlingguy.nginx`/`geerlingguy.docker`
@@ -314,6 +349,27 @@ arguments, with or without a following `| list`).
 
 Narrow, deliberately-scoped items:
 
+- **Crinja's `-%}`/`{%-` explicit whitespace-control markers under-trim
+  by one blank line across a skipped `{% if false %}...{% endif -%}`
+  block immediately followed by another `{%- if %}...{% endif %}`
+  block** - found via `geerlingguy.supervisor`'s own supervisord.conf.j2
+  (two adjacent `[unix_http_server]`/`[inet_http_server]` conditional
+  sections, both false by default): real Jinja2 (verified directly
+  against Python's own `jinja2.Environment(trim_blocks=True)`, and
+  against the real-host `ansible-playbook` output) collapses the blank
+  line between the two blocks' tags to nothing; Crinja leaves one blank
+  line behind, a single stray byte in the rendered file. Purely cosmetic
+  - INI-style config parsers (supervisord's included) ignore blank
+  lines, and the affected service started and passed a real functional
+  check (`supervisorctl status` showing the configured program
+  running) - not chased further given the fix would need touching
+  vendored `lib/crinja`'s own lexer-level trim-distance tracking
+  (`lib/crinja/src/parser/template_lexer.cr`'s `check_for_end`/
+  `trim_left`/`trim_right` handling), already flagged elsewhere in this
+  codebase (`lstrip_blocks` is forced off - see
+  `template_action_plugin.cr`'s own comments) as an area with known
+  quirks. Revisit if a real template's correctness (not just
+  byte-identical output) ever depends on it.
 - **`meta:`** supports only `clear_facts`. `end_play`/`flush_handlers`/
   `refresh_inventory`/`clear_host_errors` act on execution-flow machinery
   this engine models differently, and are rejected at parse time rather

@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.239-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.242-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -17,7 +17,7 @@ compiled binary plus a directory of plugin binaries. It supports:
 - **Ansible-syntax playbooks** - roles, imports/includes, blocks, loops,
   handlers, vault, `become:`, Jinja2 templating - not just a handful of
   modules bolted onto a task runner
-- **59 built-in plugins** covering package/service/file management, users
+- **63 built-in plugins** covering package/service/file management, users
   and groups, Docker, MySQL/MariaDB, PostgreSQL, firewalls, archives,
   SELinux/PAM, and more (see below)
 - **Single binary deployment** - no dependencies, no Python required on
@@ -63,7 +63,7 @@ See [KNOWN_MISSING.md](KNOWN_MISSING.md) for what's still missing, and
   per task, on by default (`--no-batching` to disable; see the
   Performance section below and `git log`'s `0.9.61`-`0.9.63` commits)
 
-### Plugins (59 total)
+### Plugins (63 total)
 
 **Files & templates:** `copy`, `template`, `file`, `lineinfile`,
 `blockinfile`, `replace`, `stat`, `find`, `archive`, `unarchive`, `fetch`,
@@ -72,11 +72,11 @@ See [KNOWN_MISSING.md](KNOWN_MISSING.md) for what's still missing, and
 **Execution:** `command`, `shell`, `async_status`, `debug`, `assert`,
 `fail`, `set_fact`, `pause`, `wait_for`, `uri`
 
-**Packages:** `apt`, `apt_repository`, `dnf`, `yum_repository`, `package`,
-`package_facts`
+**Packages:** `apt`, `apt_key`, `apt_repository`, `deb822_repository`,
+`dnf`, `yum_repository`, `package`, `package_facts`, `pip`
 
 **Users, groups & access:** `user`, `group`, `authorized_key`, `cron`,
-`getent`, `openssh_keypair`
+`getent`, `openssh_keypair`, `htpasswd`
 
 **Services & system:** `service`, `systemd`, `service_facts`, `sysctl`,
 `mount`, `modprobe`, `firewalld`, `ufw`, `facts`, `setup`
@@ -129,7 +129,7 @@ crystal-ansible/
 ├── crystal-play.cr              # CLI entry point
 ├── src/crystal_play/            # Engine: parser, task executor, SSH,
 │                                 # inventory, roles, loops, vault, facts
-├── plugins/                     # One binary per Ansible module (59 total)
+├── plugins/                     # One binary per Ansible module (63 total)
 ├── spec/                        # crystal spec unit + integration tests
 ├── compat/                      # Docker-based real-ansible-playbook
 │                                 # compatibility harness
@@ -288,7 +288,19 @@ production Ansible roles (dev-sec, konstruktoid, linux-system-roles,
 geerlingguy, openstack.ansible-hardening, wireguard, ansible-vault,
 cloudalchemy.prometheus, cloudalchemy.grafana, haproxy, certbot) - see
 `git log` for the full log of what's been found and fixed. Most
-recently, `geerlingguy.postgresql` found the recursive-re-templating
+recently, a `geerlingguy.munin`/`geerlingguy.samba`/`geerlingguy.
+supervisor`/`geerlingguy.htpasswd` round passed `samba` clean on the
+first try and found `community.general.htpasswd` had no plugin at all
+(implemented from scratch - `openssl passwd -stdin` for hashing,
+apr_md5_crypt/md5_crypt/sha256_crypt/sha512_crypt/plaintext schemes,
+idempotent via re-hashing with the existing entry's own salt), fixing
+both `munin` (its own admin-user setup) and `htpasswd` (the whole point
+of the role) in one fix; and two bugs in `supervisor`'s own
+supervisord.conf.j2 template: the `hash` filter
+(`ansible.plugins.filter.core.hash`) was entirely unimplemented in both
+Jinja2 evaluators, and a bare boolean interpolated into a `.j2`
+template rendered Crystal's lowercase "false" instead of real
+Jinja2/Python's capitalized "False". Before that, `geerlingguy.postgresql` found the recursive-re-templating
 bug class's newest sub-case: a role default that's a list of dicts,
 whose own field values are themselves unrendered Jinja - every prior
 fix for this bug class only re-rendered a top-level String value, not
@@ -365,7 +377,7 @@ whose one templated element resolves to a scalar silently producing no
 loop items at all, and `cron:` required `cron_file:` (a documented but
 overly-broad scope cut - real Ansible's own default, editing a live
 user crontab, is what `certbot`'s own renewal-cron task needs). See
-KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.239`),
+KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.242`),
 the `ansible-vault` and `prometheus`/`grafana` rounds before that
 (`0.9.198`-`0.9.224`), and the `geerlingguy.*`/`range(...)` rounds
 before that.
@@ -380,10 +392,6 @@ The remaining open items are narrow, documented scope cuts:
   underlying `docr` client uses unversioned endpoint URLs throughout, so
   pinning a version means touching every endpoint in a separate shard.
   The unversioned URLs negotiate fine against current Docker and Podman.
-- **`ansible.builtin.deb822_repository`** (Debian's newer `.sources`
-  repo format, ansible-core 2.15+) isn't implemented - blocks
-  `geerlingguy.docker`'s own repo-setup task; a reasonably scoped
-  candidate for a future session.
 - **Cloud plugins** (`ec2`, `s3_bucket`, `azure_rm_*`) and inventory
   *plugins* (`aws_ec2.yml` et al.) remain explicitly lowest-ROI and are
   not planned.

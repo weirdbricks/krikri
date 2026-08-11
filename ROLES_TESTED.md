@@ -37,6 +37,10 @@ or already-clean roles as if they were new.
 | geerlingguy.node_exporter | ✅ Clean |
 | geerlingguy.firewall | ✅ Clean |
 | geerlingguy.pip | ✅ Clean |
+| geerlingguy.munin | ✅ Clean (after fixing `community.general.htpasswd`, previously unimplemented) |
+| geerlingguy.samba | ✅ Clean |
+| geerlingguy.supervisor | ✅ Clean (after fixing the `hash` filter and Crinja's boolean stringification) |
+| geerlingguy.htpasswd | ✅ Clean (after fixing `community.general.htpasswd`, previously unimplemented) |
 | geerlingguy.varnish | ❌ Not testable — role's own packagecloud.io apt repo has no valid Release file for Ubuntu jammy (reproduces on real ansible-playbook too) |
 | geerlingguy.php-mysql | ❌ Not testable — role's own repo ships no `vars/Debian.yml` at all (reproduces on real ansible-playbook too) |
 | geerlingguy.mongodb | ❌ Not testable — role no longer exists on Ansible Galaxy |
