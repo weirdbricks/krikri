@@ -316,4 +316,20 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate(%('http://127.0.0.1:8080/some.file.txt')).should eq("http://127.0.0.1:8080/some.file.txt")
   end
+
+  it "does not mistake a `+` chain starting and ending in quotes for one bare literal" do
+    # Real regression introduced fixing the bug above: the bare-literal
+    # check used #quoted_string_literal (first/last char only), which
+    # also matches `'a' + var + 'b'` - both ends are quotes too, just not
+    # the SAME literal. Caught immediately via cloudalchemy.prometheus's
+    # own `lookup('url', 'https://...v' + prometheus_version + '/...',
+    # wantlist=True)` - the URL argument gets re-evaluated as its own
+    # bare operand, and the naive check stripped only the outer quotes,
+    # leaving " + prometheus_version + " as literal garbage text in the
+    # middle of the "URL".
+    v = Hash(String, JSON::Any).new
+    v["prometheus_version"] = JSON::Any.new("2.27.0")
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(%('https://example.com/v' + prometheus_version + '/sums.txt')).should eq("https://example.com/v2.27.0/sums.txt")
+  end
 end

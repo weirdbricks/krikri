@@ -105,8 +105,21 @@ module CrystalPlay
         # `expr.includes?(".")` dotted-lookup branch further down, which
         # treated the literal text - quotes included - as a dotted
         # variable PATH rather than a string value, always undefined.
-        if literal = quoted_string_literal(expr)
-          return literal.as_s
+        #
+        # `sole_quoted_literal?` (not the plain `quoted_string_literal`
+        # every other bare-literal check in this file already uses)
+        # matters here specifically: this check runs before the `+`
+        # splitter below, and `quoted_string_literal` only looks at the
+        # FIRST and LAST characters - `'a' + var + 'b'` also starts and
+        # ends with `'`, so the plain check wrongly swallowed the whole
+        # `+` chain as one "literal", stripping just the outer quotes
+        # and leaving the middle ` + var + ` as literal garbage text.
+        # Real regression introduced fixing the bug above, caught
+        # immediately after via cloudalchemy.prometheus's own
+        # `lookup('url', 'https://...v' + prometheus_version + '/...',
+        # wantlist=True)` - the URL argument is built exactly this way.
+        if literal = sole_quoted_literal?(expr)
+          return literal
         end
 
         # `lookup('first_found', ffparams)` - real Ansible's lookup()
@@ -599,6 +612,33 @@ module CrystalPlay
         JSON::Any.new(expr[1..-2])
       end
 
+      # Stricter counterpart to #quoted_string_literal: nil unless *expr*
+      # is a single quoted literal spanning its ENTIRE length, not just
+      # matching first/last characters. `'a' + var + 'b'` starts and
+      # ends with `'` too but is a `+` chain, not one literal -
+      # confirmed by walking from the opening quote and requiring its
+      # first unescaped matching close to be the expression's last
+      # character.
+      private def sole_quoted_literal?(expr : String) : String?
+        return nil if expr.size < 2
+        quote = expr[0]
+        return nil unless quote == '\'' || quote == '"'
+
+        i = 1
+        while i < expr.size
+          char = expr[i]
+          if char == '\\' && i + 1 < expr.size
+            i += 2
+            next
+          end
+          if char == quote
+            return i == expr.size - 1 ? expr[1...i] : nil
+          end
+          i += 1
+        end
+        nil
+      end
+
       private def numeric_literal(expr : String) : JSON::Any?
         if int_val = expr.to_i64?
           JSON::Any.new(int_val)
@@ -691,7 +731,7 @@ module CrystalPlay
 
         lines = response.body.lines.map(&.strip).reject(&.empty?)
         lines.to_json
-      rescue
+      rescue ex
         "undefined"
       end
 
