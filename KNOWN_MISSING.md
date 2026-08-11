@@ -8,7 +8,7 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.237`.**
+**Currently at `0.9.238`.**
 
 ---
 
@@ -21,6 +21,14 @@ parsed, a missing `d()` filter alias, dict/array literals unsupported
 outside a `+` operand, among others - `git log --oneline --grep=
 "0\.9\.1[5-7][0-9]" -E` for the full list). Treat "no gap remains open"
 as "none is known right now," not as a claim the search is finished.
+
+`0.9.238` (a third extension of the eighth round, same hosts:
+`geerlingguy.haproxy`/`geerlingguy.certbot` re-run as regression checks
+- both still pass exactly as they did in round 4, no divergence -
+plus `geerlingguy.pip`, new): `ansible.builtin.pip` was entirely
+unimplemented (no plugin at all) - every real playbook's `pip:` task
+silently skipped. Implemented supporting name/version/state (present/
+absent/latest)/virtualenv/executable/extra_args/chdir/requirements.
 
 `0.9.234`-`0.9.237` (a second extension of the eighth round, same
 hosts: `geerlingguy.ntp`, `geerlingguy.node_exporter`,

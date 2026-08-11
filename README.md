@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.237-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.238-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -288,7 +288,11 @@ production Ansible roles (dev-sec, konstruktoid, linux-system-roles,
 geerlingguy, openstack.ansible-hardening, wireguard, ansible-vault,
 cloudalchemy.prometheus, cloudalchemy.grafana, haproxy, certbot) - see
 `git log` for the full log of what's been found and fixed. Most
-recently, `geerlingguy.ntp` found `service_facts:` missing from task
+recently, `ansible.builtin.pip` was implemented from scratch
+(`geerlingguy.pip` - no plugin existed at all, so every real playbook's
+`pip:` task silently skipped); `geerlingguy.haproxy`/`geerlingguy.
+certbot` were re-run as regression checks and still pass exactly as
+they did in round 4. Before that, `geerlingguy.ntp` found `service_facts:` missing from task
 batching's fact-producing guard (a `when:` reading its output right
 after gathering it always silently skipped); `geerlingguy.node_exporter`
 found THREE bugs from one "download latest GitHub release and extract
@@ -355,7 +359,7 @@ whose one templated element resolves to a scalar silently producing no
 loop items at all, and `cron:` required `cron_file:` (a documented but
 overly-broad scope cut - real Ansible's own default, editing a live
 user crontab, is what `certbot`'s own renewal-cron task needs). See
-KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.237`),
+KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.238`),
 the `ansible-vault` and `prometheus`/`grafana` rounds before that
 (`0.9.198`-`0.9.224`), and the `geerlingguy.*`/`range(...)` rounds
 before that.
