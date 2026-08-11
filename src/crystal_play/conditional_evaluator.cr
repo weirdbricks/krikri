@@ -120,16 +120,16 @@ module CrystalPlay
       # near this one).
       if condition.includes?(" is not undefined")
         var_name = condition.gsub(" is not undefined", "").strip
-        return vars.has_key?(var_name)
+        return defined?(vars, var_name)
       elsif condition.includes?(" is undefined")
         var_name = condition.gsub(" is undefined", "").strip
-        return !vars.has_key?(var_name)
+        return !defined?(vars, var_name)
       elsif condition.includes?(" is defined")
         var_name = condition.gsub(" is defined", "").strip
-        return vars.has_key?(var_name)
+        return defined?(vars, var_name)
       elsif condition.includes?(" is not defined")
         var_name = condition.gsub(" is not defined", "").strip
-        return !vars.has_key?(var_name)
+        return !defined?(vars, var_name)
       end
 
       # Handle 'is mapping' / 'is sequence' (plus each "is not ..."
@@ -348,6 +348,23 @@ module CrystalPlay
         !failed
       else
         result[test_name]?.try(&.as_bool?) || false
+      end
+    end
+
+    # Whether *var_name* (a bare OR dotted/indexed variable reference,
+    # e.g. `grafana_security.admin_user`) actually resolves to a real
+    # value - `vars.has_key?(var_name)` (the previous, and still correct
+    # for a BARE name, implementation) always returns false for a dotted
+    # path, since no literal key containing a "." exists in `vars` -
+    # `grafana_security.admin_user is not defined` therefore always
+    # evaluated true regardless of whether admin_user was actually set,
+    # found via cloudalchemy.grafana's own "Fail when grafana admin user
+    # isn't set" task.
+    private def self.defined?(vars : Hash(String, JSON::Any), var_name : String) : Bool
+      if var_name.includes?(".") || var_name.includes?("[")
+        !VariableSubstitutor::VariableLookup.new(vars).resolve(var_name).nil?
+      else
+        vars.has_key?(var_name)
       end
     end
 

@@ -343,5 +343,22 @@ describe CrystalPlay::ConditionalEvaluator do
       # reject ordinary string variables.
       CrystalPlay::ConditionalEvaluator.evaluate("a_string is not sequence", v).should be_true
     end
+
+    it "resolves 'is (not) defined' against a dotted variable path" do
+      # Real bug found benchmarking cloudalchemy.grafana's own "Fail
+      # when grafana admin user isn't set" task: `grafana_security.
+      # admin_user is not defined`. `vars.has_key?(var_name)` (the
+      # previous implementation) always returns false for a dotted
+      # path, since no literal key containing a "." exists in `vars` -
+      # this always evaluated true regardless of whether admin_user was
+      # actually set, unconditionally failing the role's own preflight
+      # check on every run.
+      v = Hash(String, JSON::Any).new
+      v["grafana_security"] = JSON.parse(%({"admin_user": "admin"}))
+
+      CrystalPlay::ConditionalEvaluator.evaluate("grafana_security.admin_user is defined", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("grafana_security.admin_user is not defined", v).should be_false
+      CrystalPlay::ConditionalEvaluator.evaluate("grafana_security.admin_password is not defined", v).should be_true
+    end
   end
 end
