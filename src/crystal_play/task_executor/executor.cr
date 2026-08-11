@@ -902,6 +902,30 @@ module CrystalPlay
 
       patterns.each do |pattern|
         substituted = substitutor.substitute(pattern)
+
+        # `with_fileglob: "{{ some_list_var }}"` (a single templated
+        # value that evaluates to a LIST of patterns, real Ansible's own
+        # idiom for e.g. cloudalchemy.prometheus's own
+        # `prometheus_alert_rules_files: [prometheus/rules/*.rules]`) -
+        # #substitute has no notion of the underlying value being a real
+        # array, so it rendered the whole thing as the JSON-array TEXT
+        # (`["prometheus/rules/*.rules"]`, literal brackets and quotes
+        # included) and handed that straight to Dir.glob as one pattern -
+        # its own bracket syntax means "character class", so an
+        # unbalanced/malformed one (as this always was) raised
+        # Regex::Error ("unterminated character set") instead of
+        # matching real files. A real single-file glob pattern never
+        # starts with "[" this way (that would mean "match one char from
+        # this set" as the pattern's very first token, not a realistic
+        # glob), so parsing it back as JSON here is safe.
+        if substituted.starts_with?('[')
+          parsed = (JSON.parse(substituted).as_a? rescue nil)
+          if parsed
+            parsed.each { |item| matches.concat(Dir.glob(item.to_s)) }
+            next
+          end
+        end
+
         matches.concat(Dir.glob(substituted))
       end
 
