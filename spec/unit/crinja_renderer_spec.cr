@@ -72,7 +72,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     v["security_rhel7_audit_foo"] = JSON::Any.new(true)
     renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
 
-    renderer.render("{{ vars['security_rhel7_audit_foo'] }}").should eq("true")
+    renderer.render("{{ vars['security_rhel7_audit_foo'] }}").should eq("True")
   end
 
   it "honors decoration= for a non-'#' comment style" do
@@ -87,6 +87,33 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render("{{ 'Ansible managed' | comment(decoration='; ') }}").should eq(";\n; Ansible managed\n;")
+  end
+
+  it "renders a bare boolean as Python-style 'True'/'False', not Crystal's lowercase" do
+    # Real bug found benchmarking geerlingguy.supervisor's own
+    # supervisord.conf.j2: `nodaemon = {{ supervisor_nodaemon }}`
+    # (default `false`) rendered "nodaemon = false" - real Ansible's own
+    # rendered file (verified directly against real ansible-playbook)
+    # reads "nodaemon = False", Python's str(bool) capitalization.
+    # Crinja's own Finalizer had no Bool-specific stringify overload and
+    # fell through to Crystal's native lowercase Bool#to_s.
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render("{{ true }}").should eq("True")
+    renderer.render("{{ false }}").should eq("False")
+  end
+
+  it "renders the hash filter, real Ansible's own filter" do
+    # Real bug found benchmarking geerlingguy.supervisor's own
+    # supervisord.conf.j2: `{SHA}{{ supervisor_password|hash('sha1') }}`
+    # - Crinja raised "no filter with name \"hash\" registered", failing
+    # the whole template render. Values verified against Python's own
+    # hashlib.
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new({} of String => JSON::Any)
+    renderer.render(%({{ "mysecret" | hash('sha1') }})).should eq("e9fe51f94eadabf54dbf2fbbd57188b9abee436e")
+    renderer.render(%({{ "mysecret" | hash }})).should eq("e9fe51f94eadabf54dbf2fbbd57188b9abee436e")
+    renderer.render(%({{ "mysecret" | hash('md5') }})).should eq("06c219e5bc8378f3a8a3f83b4b7e4649")
   end
 
   it "renders to_nice_yaml, real Ansible's own pretty-YAML filter" do

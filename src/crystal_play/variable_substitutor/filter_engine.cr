@@ -1,5 +1,6 @@
 require "json"
 require "time"
+require "openssl/digest"
 require "./variable_lookup"
 require "./expression_evaluator"
 require "../variable_substitutor"
@@ -364,6 +365,31 @@ module CrystalPlay
             replacement.gsub(/\\(\d)/) { match[$1.to_i]? || "" }
           end
           JSON::Any.new(result)
+        when "hash"
+          # hash(algorithm='sha1') - real Ansible's own filter
+          # (ansible.plugins.filter.core), wrapping Python's
+          # `hashlib.new()`. Defaults to sha1 when no argument is given.
+          # Mirrors the Crinja-side copy added for the same gap found via
+          # geerlingguy.supervisor's own supervisord.conf.j2 (a `.j2`
+          # template file, reaching Crinja not this evaluator) - added
+          # here too on the usual "check both evaluators" rule, since a
+          # bare `{{ x | hash('sha256') }}` task param would only ever
+          # reach this one.
+          args = split_top_level_args(filter_args)
+          algorithm = (args[0]?.try { |arg| as_string(resolve_expression(arg)) } || "sha1").downcase
+          openssl_name = case algorithm
+                         when "md5"    then "MD5"
+                         when "sha1"   then "SHA1"
+                         when "sha224" then "SHA224"
+                         when "sha256" then "SHA256"
+                         when "sha384" then "SHA384"
+                         when "sha512" then "SHA512"
+                         else
+                           raise "hash: unsupported algorithm '#{algorithm}'"
+                         end
+          digest = OpenSSL::Digest.new(openssl_name)
+          digest.update(as_string(value))
+          JSON::Any.new(digest.final.hexstring)
         when "ternary"
           # ternary(true_val, false_val) - real Ansible's own filter
           # (ansible.builtin, not standard Jinja2): `true_val` if value

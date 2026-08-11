@@ -1,6 +1,8 @@
 require "crinja"
 require "yaml"
+require "openssl/digest"
 require "./crinja_hash_ext"
+require "./crinja_bool_ext"
 
 # Custom Jinja2 filters that real Ansible's Jinja2 provides but Crinja
 # doesn't ship, registered into the global Crinja default library so they're
@@ -253,6 +255,30 @@ module CrystalPlay
       replacement = arguments.varargs[1]?.try(&.to_s) || ""
       replacement = replacement.gsub(/\\(\d)/) { "$#{$1}" }
       Crinja::Value.new(target.to_s.gsub(Regex.new(pattern), replacement))
+    end
+
+    # `hash(algorithm='sha1')` - real Ansible's own filter
+    # (ansible.plugins.filter.core), wrapping Python's `hashlib.new()`.
+    # Defaults to sha1 when no argument is given, matching real Ansible.
+    # Found via geerlingguy.supervisor's own supervisord.conf.j2:
+    # `password = {SHA}{{ supervisor_password|hash('sha1') }}` (a
+    # standard `{SHA}`-prefixed base64-ish supervisord auth format built
+    # on top of the raw hex digest this filter itself returns).
+    Crinja.filter(:hash) do
+      algorithm = (arguments.varargs[0]?.try(&.to_s) || "sha1").downcase
+      openssl_name = case algorithm
+                     when "md5"    then "MD5"
+                     when "sha1"   then "SHA1"
+                     when "sha224" then "SHA224"
+                     when "sha256" then "SHA256"
+                     when "sha384" then "SHA384"
+                     when "sha512" then "SHA512"
+                     else
+                       raise "hash: unsupported algorithm '#{algorithm}'"
+                     end
+      digest = OpenSSL::Digest.new(openssl_name)
+      digest.update(target.to_s)
+      Crinja::Value.new(digest.final.hexstring)
     end
 
     Crinja.filter(:difference) do

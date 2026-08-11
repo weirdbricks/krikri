@@ -98,6 +98,20 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     result.as_s.should eq("helloworld")
   end
 
+  it "hashes with the default sha1 algorithm when no argument is given" do
+    # Real bug found benchmarking geerlingguy.supervisor's own
+    # supervisord.conf.j2: `{SHA}{{ supervisor_password|hash('sha1') }}`
+    # (rendered via Crinja, not this evaluator, but the plain `{{ }}`
+    # evaluator had no `hash` filter at all either - checked both per
+    # this codebase's usual rule). Value verified against Python's own
+    # `hashlib.sha1(b'mysecret').hexdigest()`.
+    engine.apply(s("mysecret"), "hash").as_s.should eq("e9fe51f94eadabf54dbf2fbbd57188b9abee436e")
+  end
+
+  it "hashes with an explicit algorithm argument" do
+    engine.apply(s("mysecret"), %(hash('md5'))).as_s.should eq("06c219e5bc8378f3a8a3f83b4b7e4649")
+  end
+
   it "splits into a real array, not just the first element" do
     result = engine.apply(s("a,b,c"), %(split(','))).as_a.map(&.as_s)
     result.should eq(["a", "b", "c"])
