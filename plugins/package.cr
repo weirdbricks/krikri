@@ -364,9 +364,27 @@ module CrystalPlay
           end
         end
         
-        upgrade_result = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade #{name}")
-        was_upgraded = !upgrade_result[:stdout].includes?("already the newest version")
-        
+        # `--only-upgrade` skips a package that isn't ALREADY installed
+        # entirely (exit 0, "0 upgraded, 0 newly installed") - real
+        # Ansible's own state: latest installs a not-yet-present package
+        # too (plain apt-get install already does both), so this was
+        # simply wrong - same bug independently duplicated in apt.cr's
+        # own handle_latest (this module has its own separate apt
+        # dispatch, not a shared one). Found via cloudalchemy.grafana's
+        # own "Install Grafana" task (package: name: "{{ grafana_package
+        # }}", state: "{{ ... | ternary('latest', 'present') }}") -
+        # reported "changed: Package grafana upgraded to latest" while
+        # the package was never actually installed at all.
+        upgrade_result = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get install -y #{name}")
+
+        # "N upgraded, M newly installed, ..." is apt's own reliable,
+        # locale-stable summary line - checking for the English phrase
+        # "already the newest version" (the previous approach) missed
+        # the "not installed and only upgrades are requested" case
+        # entirely.
+        summary = upgrade_result[:stdout][/(\d+) upgraded, (\d+) newly installed/]?
+        was_upgraded = summary ? summary.scan(/\d+/).map(&.[0].to_i).sum > 0 : upgrade_result[:exit_code] == 0
+
         return PluginResult.new(
           changed: was_upgraded,
           failed: false,
