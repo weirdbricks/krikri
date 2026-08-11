@@ -382,6 +382,7 @@ module CrystalPlay
       "community.crypto.openssh_keypair",
       "community.general.modprobe",
       "community.general.pamd",
+      "community.general.htpasswd",
       "ansible.builtin.service_facts",
       "ansible.builtin.set_fact",
       "ansible.builtin.get_url",

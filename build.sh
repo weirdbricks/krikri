@@ -228,6 +228,7 @@ PLUGINS=(
     "openssh_keypair"
     "modprobe"
     "pamd"
+    "htpasswd"
     "service_facts"
     "postgresql_db"
     "postgresql_user"
