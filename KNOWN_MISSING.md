@@ -8,7 +8,7 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.233`.**
+**Currently at `0.9.237`.**
 
 ---
 
@@ -21,6 +21,28 @@ parsed, a missing `d()` filter alias, dict/array literals unsupported
 outside a `+` operand, among others - `git log --oneline --grep=
 "0\.9\.1[5-7][0-9]" -E` for the full list). Treat "no gap remains open"
 as "none is known right now," not as a claim the search is finished.
+
+`0.9.234`-`0.9.237` (a second extension of the eighth round, same
+hosts: `geerlingguy.ntp`, `geerlingguy.node_exporter`,
+`geerlingguy.firewall` - all new; `geerlingguy.golang`/`geerlingguy.
+consul` don't exist on Galaxy). `ntp` found `service_facts:` was
+missing from `TaskBatcher`'s fact-producing guard list (already had
+`getent`/`package_facts`/`set_fact` there) - a task's `when:` reading
+the bare `services` fact right after "Populate service facts." always
+silently skipped, since batching pre-renders every group member's
+params before any of them actually run. `node_exporter` found THREE
+bugs from one "download latest release from GitHub and extract it"
+task: `is match(...)`/`is search(...)` (real Jinja2's regex tests)
+were entirely unimplemented; `regex_replace` (Python's re.sub with
+backreferences) was missing from the plain `{{ }}` evaluator entirely
+(Crinja's separate pipeline had one, but a bare `{{ }}` span never
+reaches it); and `unarchive:`'s `src:` as a URL (with `remote_src:
+true`) was never implemented at all - real Ansible's own module
+explicitly fetches it first when `src:` contains "://". `firewall`
+found `command:`/`shell:`'s own legacy free-form syntax never
+extracted trailing `creates=`/`removes=`/`chdir=`/`executable=`
+key=value params the way every other module's inline syntax does -
+the whole string (options text included) ran as the literal command.
 
 `0.9.233` (an extension of the eighth round, same hosts:
 `geerlingguy.nfs` - new; `geerlingguy.php-mysql` was also attempted but
