@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.228-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.229-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -288,9 +288,14 @@ production Ansible roles (dev-sec, konstruktoid, linux-system-roles,
 geerlingguy, openstack.ansible-hardening, wireguard, ansible-vault,
 cloudalchemy.prometheus, cloudalchemy.grafana, haproxy, certbot) - see
 `git log` for the full log of what's been found and fixed. Most
-recently, a `geerlingguy.redis`/`geerlingguy.postfix` round passed
-`postfix` clean on the first try (byte-identical `main.cf`) and found
-three bugs in `redis`: `apt:` install/upgrade never passed real
+recently, a `geerlingguy.apache`/`geerlingguy.nodejs` round passed
+`apache` clean on the first try (byte-identical vhost config) and found
+that `nodejs` needed `ansible.builtin.deb822_repository` - already
+flagged as a known gap from `geerlingguy.docker` hitting it too, now
+implemented for the shape real playbooks actually write. Before that, a
+`geerlingguy.redis`/`geerlingguy.postfix` round passed `postfix` clean
+on the first try (byte-identical `main.cf`) and found three bugs in
+`redis`: `apt:` install/upgrade never passed real
 Ansible's own default `--force-confdef`/`--force-confold` dpkg options,
 hanging forever on an interactive conffile prompt; the legacy free-form
 `key={{ x }} state=y` inline module-args tokenizer split on whitespace
@@ -307,7 +312,7 @@ whose one templated element resolves to a scalar silently producing no
 loop items at all, and `cron:` required `cron_file:` (a documented but
 overly-broad scope cut - real Ansible's own default, editing a live
 user crontab, is what `certbot`'s own renewal-cron task needs). See
-KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.228`),
+KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.229`),
 the `ansible-vault` and `prometheus`/`grafana` rounds before that
 (`0.9.198`-`0.9.224`), and the `geerlingguy.*`/`range(...)` rounds
 before that.

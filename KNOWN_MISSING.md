@@ -8,7 +8,7 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.228`.**
+**Currently at `0.9.229`.**
 
 ---
 
@@ -54,6 +54,24 @@ producing a blank line at the end of the installed crontab that made
 every subsequent run see a "changed" diff against itself forever -
 caught by testing idempotency explicitly (a second run), not just a
 single successful one.
+
+`0.9.229` (a sixth real-host round: `geerlingguy.apache`, `geerlingguy.
+nodejs` - both new): `geerlingguy.apache` passed clean on the first try
+- byte-identical vhost config, matching enabled mods, healthy service.
+`geerlingguy.nodejs` hit the already-flagged `ansible.builtin.
+deb822_repository` gap (see the narrow-scope-cuts list below for what's
+now implemented) - a SECOND real role independently needing it after
+`geerlingguy.docker`, which raised its priority enough to implement
+this round rather than defer again. With the repo now actually added,
+`apt-get update` sees the NodeSource suite and the role's own
+subsequent `nodejs=20.x*` install task reached parity with real
+`ansible-playbook` up through that point; the install itself then hit
+an external NodeSource-repo/apt-cache inconsistency (`nodejs` briefly
+reporting as a virtual package with no installable candidate) that
+reproduced identically running the *exact same* raw `apt-get install`
+command directly on the real-ansible-playbook host too - confirmed
+environmental, not a crystal-ansible-specific divergence, and not
+chased further.
 
 `0.9.228` (a fifth real-host round: `geerlingguy.redis`, `geerlingguy.
 postfix` - both new): `geerlingguy.postfix` passed clean on the first
@@ -217,14 +235,14 @@ Narrow, deliberately-scoped items:
 - **`to_datetime()`/timedelta arithmetic beyond subtraction** stayed
   narrowly scoped to what real roles have needed so far - revisit if a
   role needs more.
-- **`ansible.builtin.deb822_repository`** (real ansible-core module,
-  2.15+, for Debian's newer `.sources` repo format) isn't implemented -
-  `geerlingguy.docker`'s own "Add or remove Docker repository." task is
-  skipped ("Plugin not available"), so the Docker apt repo is never
-  added and every downstream `docker-ce` package install fails. A
-  reasonably scoped candidate for a future session (signed_by: URL
-  download + local keyring storage needs verifying against real
-  ansible-playbook's exact semantics first, not assumed).
+- **`ansible.builtin.deb822_repository`** (fixed `0.9.229`) now supports
+  the shape real playbooks actually write (types, uris, suites,
+  components, a *local-path* signed_by, state, mode) - `signed_by:` as
+  a URL to fetch-and-dearmor, or inline ASCII-armored key text written
+  directly into the field, remain unimplemented (every real playbook
+  seen so far, `geerlingguy.docker` and `geerlingguy.nodejs` both,
+  downloads the key separately via `get_url:` first and passes the
+  local path).
 
 `postgresql_privs` is the one per-plugin scope-cut list this project
 originally tracked that reached **zero open items** (`0.9.84`) - every
