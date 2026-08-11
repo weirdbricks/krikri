@@ -8,7 +8,7 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.232`.**
+**Currently at `0.9.233`.**
 
 ---
 
@@ -21,6 +21,24 @@ parsed, a missing `d()` filter alias, dict/array literals unsupported
 outside a `+` operand, among others - `git log --oneline --grep=
 "0\.9\.1[5-7][0-9]" -E` for the full list). Treat "no gap remains open"
 as "none is known right now," not as a claim the search is finished.
+
+`0.9.233` (an extension of the eighth round, same hosts:
+`geerlingguy.nfs` - new; `geerlingguy.php-mysql` was also attempted but
+its own repo doesn't ship a `vars/Debian.yml` at all, and real
+`ansible-playbook` fails identically on that same task - a role
+limitation, not a crystal-ansible gap): found two bugs, both in the
+filter engine. `map()` only implemented the `map(attribute='x')` form;
+real Jinja2's filter-name positional form (`map('split')`,
+`map('first')`) silently no-op'd - `nfs`'s own "Ensure directories to
+export exist" task (`nfs_exports | map('split') | map('first') |
+unique`, pulling just the directory-path column out of each raw
+`"/path *(opts)"` export line) left the WHOLE export line - options
+text included - as the target directory path. Separately, `split` with
+no delimiter argument passed an empty string to Crystal's own
+`String#split`, which splits into individual *characters* for an
+empty-string arg rather than matching real Python/Jinja2's
+whitespace-run default (Crystal's own no-arg `String#split` overload
+already does, and is what's used now).
 
 `0.9.232` (an eighth real-host round: `geerlingguy.memcached`,
 `geerlingguy.rabbitmq` - both new; `geerlingguy.varnish` was also

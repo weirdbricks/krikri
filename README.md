@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.232-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.233-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -288,7 +288,15 @@ production Ansible roles (dev-sec, konstruktoid, linux-system-roles,
 geerlingguy, openstack.ansible-hardening, wireguard, ansible-vault,
 cloudalchemy.prometheus, cloudalchemy.grafana, haproxy, certbot) - see
 `git log` for the full log of what's been found and fixed. Most
-recently, a `geerlingguy.memcached`/`geerlingguy.rabbitmq` round passed
+recently, `geerlingguy.nfs` found two filter-engine bugs: `map()` only
+implemented the `map(attribute='x')` form, so real Jinja2's filter-name
+positional form (`map('split')`) silently no-op'd; and `split` with no
+delimiter argument split into individual characters instead of on
+whitespace runs, matching Python's `str.split()`. (`geerlingguy.
+php-mysql` was also attempted but its own repo is missing
+`vars/Debian.yml` entirely - real ansible-playbook fails identically,
+not a crystal-ansible gap.) Before that, a `geerlingguy.memcached`/
+`geerlingguy.rabbitmq` round passed
 `memcached` clean on the first try (byte-identical config) and found
 two bugs in `rabbitmq`: `deb822_repository`'s `signed_by:` only handled
 a local path (added the round before), not a bare URL - rabbitmq's own
@@ -336,7 +344,7 @@ whose one templated element resolves to a scalar silently producing no
 loop items at all, and `cron:` required `cron_file:` (a documented but
 overly-broad scope cut - real Ansible's own default, editing a live
 user crontab, is what `certbot`'s own renewal-cron task needs). See
-KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.232`),
+KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.233`),
 the `ansible-vault` and `prometheus`/`grafana` rounds before that
 (`0.9.198`-`0.9.224`), and the `geerlingguy.*`/`range(...)` rounds
 before that.
