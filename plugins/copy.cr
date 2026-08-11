@@ -432,18 +432,34 @@ module CrystalPlay
         end
       end
       
-      # Owner and group would require chown/chgrp which needs root
-      # For now, skip these on local operations
-      # (They would work via shell when running as root)
-      if owner = @params["owner"]?
-        # Would need: File.chown(path, owner) - not available in Crystal stdlib
-        # Skip for now
+      # Real bug found benchmarking cloudalchemy.grafana's own
+      # "Create/Update dashboards file (provisioning)" task (copy:
+      # content: ..., owner: root, group: grafana) - owner:/group: were
+      # never actually applied at all (a genuinely dead stub, not just
+      # narrowly scoped - the comments here claimed File.chown/File.chgrp
+      # "not available in Crystal stdlib", which is simply wrong; file.cr
+      # already uses File.chown successfully elsewhere in this same
+      # codebase). The file silently kept its default group (whatever
+      # the process creating it was already running as, "root" here
+      # rather than the intended "grafana"), which meant Grafana's own
+      # service user couldn't read its own dashboard provisioning
+      # config, "Failed to create provisioner: ... permission denied" -
+      # the whole service refused to start.
+      uid = -1
+      gid = -1
+
+      if (owner = @params["owner"]?) && (user = System::User.find_by?(name: owner))
+        uid = user.id.to_i
       end
-      
-      if group = @params["group"]?
-        # Would need: File.chgrp(path, group) - not available in Crystal stdlib  
-        # Skip for now
+
+      if (group = @params["group"]?) && (grp = System::Group.find_by?(name: group))
+        gid = grp.id.to_i
       end
+
+      File.chown(path, uid: uid, gid: gid) if uid != -1 || gid != -1
+    rescue
+      # A chown/chmod failure (e.g. not running as root/owner) shouldn't
+      # fail the whole task - matches file.cr's own identical rescue.
     end
     
     # Helper: Check if parameter is truthy
