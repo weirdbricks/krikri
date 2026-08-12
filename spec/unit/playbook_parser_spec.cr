@@ -1381,6 +1381,25 @@ describe CrystalPlay::PlaybookParser do
       task.params["creates"].should eq("/tmp/marker")
     end
 
+    it "extracts a trailing special param whose templated value has internal spaces" do
+      # Real bug found benchmarking geerlingguy.logstash's own "Get list
+      # of installed plugins." task: `./bin/logstash-plugin list
+      # chdir={{ logstash_dir }}` - the near-universal `{{ x }}` spacing
+      # style. The value alternation only had a quoted-string or bare
+      # `\S+` option, and `\S+` only matched up to the template's own
+      # leading space ("{{"), leaving "target_dir }}" where `\s*\z`
+      # needed pure trailing whitespace - the whole match failed
+      # silently, so chdir was never applied at all and the untemplated
+      # "chdir={{ logstash_dir }}" text stayed glued onto the command.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: ./bin/logstash-plugin list chdir={{ logstash_dir }}
+        YAML
+
+      task.params["cmd"].should eq("./bin/logstash-plugin list")
+      task.params["chdir"].should eq("{{ logstash_dir }}")
+    end
+
     it "does not corrupt a command containing its own unrelated = text" do
       task = single_task(<<-YAML)
         - name: t

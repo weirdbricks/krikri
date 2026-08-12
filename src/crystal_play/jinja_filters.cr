@@ -282,6 +282,56 @@ module CrystalPlay
       Crinja::Value.new(digest.final.hexstring)
     end
 
+    # `to_json(**kwargs)` - real Ansible's own filter (ansible.plugins.
+    # filter.core), a thin wrapper around Python's `json.dumps()`. Found
+    # via geerlingguy.logstash's own 30-elasticsearch-output.conf.j2:
+    # `hosts => {{ logstash_elasticsearch_hosts | to_json }}` - entirely
+    # unimplemented, failing the whole template render outright ("no
+    # filter with name \"to_json\" registered"). Python's `json.dumps`
+    # defaults to `", "`/`": "` item/key separators (not Crystal
+    # stdlib's own compact `,`/`:` JSON::Builder output) - matched here
+    # via a small recursive dump rather than Crystal's own to_json, so a
+    # byte-identical diff against real ansible-playbook's rendered file
+    # holds even for the common single/few-element list/dict case.
+    Crinja.filter(:to_json) do
+      String.build { |io| CrystalPlay::JinjaFilters.python_json_dump(target, io) }
+    end
+
+    def self.python_json_dump(value : Crinja::Value, io : IO)
+      case raw = value.raw
+      when Nil
+        io << "null"
+      when Bool
+        io << raw
+      when Crinja::SafeString
+        raw.to_s.to_json(io)
+      when String
+        raw.to_json(io)
+      when Number
+        io << raw
+      when Array(Crinja::Value)
+        io << '['
+        raw.each_with_index do |item, index|
+          io << ", " if index > 0
+          python_json_dump(item, io)
+        end
+        io << ']'
+      when Crinja::Dictionary
+        io << '{'
+        first = true
+        raw.each do |key, item|
+          io << ", " unless first
+          first = false
+          key.to_s.to_json(io)
+          io << ": "
+          python_json_dump(item, io)
+        end
+        io << '}'
+      else
+        raw.to_s.to_json(io)
+      end
+    end
+
     Crinja.filter(:difference) do
       arg = arguments.varargs[0]?
       target_vals = target.sequence? ? target.to_a : [] of Crinja::Value

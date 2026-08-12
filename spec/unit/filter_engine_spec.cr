@@ -112,6 +112,11 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     engine.apply(s("mysecret"), %(hash('md5'))).as_s.should eq("06c219e5bc8378f3a8a3f83b4b7e4649")
   end
 
+  it "to_json uses Python's own ', '/': ' separators, matching json.dumps" do
+    result = engine.apply(JSON.parse(%(["a", "b"])), "to_json")
+    result.as_s.should eq(%(["a", "b"]))
+  end
+
   it "splits into a real array, not just the first element" do
     result = engine.apply(s("a,b,c"), %(split(','))).as_a.map(&.as_s)
     result.should eq(["a", "b", "c"])

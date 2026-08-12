@@ -390,6 +390,15 @@ module CrystalPlay
           digest = OpenSSL::Digest.new(openssl_name)
           digest.update(as_string(value))
           JSON::Any.new(digest.final.hexstring)
+        when "to_json"
+          # to_json(**kwargs) - real Ansible's own filter, wraps Python's
+          # json.dumps() (default ", "/": " item/key separators, not
+          # Crystal's own compact JSON::Any#to_json) - added here too on
+          # the usual "check both evaluators" rule, matching the Crinja-
+          # side copy added for the same gap found via geerlingguy.
+          # logstash's own 30-elasticsearch-output.conf.j2 (a `.j2`
+          # template file, reaching Crinja not this evaluator).
+          JSON::Any.new(python_json_dump(value))
         when "ternary"
           # ternary(true_val, false_val) - real Ansible's own filter
           # (ansible.builtin, not standard Jinja2): `true_val` if value
@@ -954,6 +963,43 @@ module CrystalPlay
           value.to_json
         else
           value.to_s
+        end
+      end
+
+      private def python_json_dump(value : JSON::Any) : String
+        String.build { |io| python_json_dump(value, io) }
+      end
+
+      private def python_json_dump(value : JSON::Any, io : IO)
+        case raw = value.raw
+        when Nil
+          io << "null"
+        when Bool
+          io << raw
+        when String
+          raw.to_json(io)
+        when Int64, Int32, Float64
+          io << raw
+        when Array
+          io << '['
+          raw.each_with_index do |item, index|
+            io << ", " if index > 0
+            python_json_dump(item, io)
+          end
+          io << ']'
+        when Hash
+          io << '{'
+          first = true
+          raw.each do |key, item|
+            io << ", " unless first
+            first = false
+            key.to_s.to_json(io)
+            io << ": "
+            python_json_dump(item, io)
+          end
+          io << '}'
+        else
+          raw.to_s.to_json(io)
         end
       end
 

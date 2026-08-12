@@ -1502,7 +1502,22 @@ module CrystalPlay
       remaining = raw
 
       loop do
-        match = remaining.match(/\A(.*?)\s+(creates|removes|chdir|executable)=("[^"]*"|'[^']*'|\S+)\s*\z/m)
+        # The `\{\{.*?\}\}` alternative (checked before the bare `\S+`
+        # catch-all) treats a templated value as one opaque token even
+        # when it has internal spaces (`chdir={{ logstash_dir }}`, the
+        # near-universal style real playbooks write - `chdir={{x}}` with
+        # no spaces already worked). Without it, `\S+` only ever matched
+        # up to the template's own leading space (`{{`), leaving the
+        # rest of the string ("target_dir }}") where `\s*\z` needed pure
+        # trailing whitespace - the whole match failed, silently
+        # dropping this special-param extraction entirely and leaving
+        # the untemplated `chdir={{ logstash_dir }}` text glued onto the
+        # command itself. Found via geerlingguy.logstash's own "Get list
+        # of installed plugins." task (`./bin/logstash-plugin list
+        # chdir={{ logstash_dir }}`) - chdir silently never applied, so
+        # the command ran from the wrong directory and failed outright
+        # ("No such file or directory") even though the binary existed.
+        match = remaining.match(/\A(.*?)\s+(creates|removes|chdir|executable)=("[^"]*"|'[^']*'|\{\{.*?\}\}|\S+)\s*\z/m)
         break unless match
 
         remaining = match[1]

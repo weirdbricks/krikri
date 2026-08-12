@@ -122,6 +122,21 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     renderer.render("{{ false }}").should eq("False")
   end
 
+  it "renders the to_json filter with Python's own ', '/': ' separators" do
+    # Real bug found benchmarking geerlingguy.logstash's own 30-
+    # elasticsearch-output.conf.j2: `hosts => {{
+    # logstash_elasticsearch_hosts | to_json }}` - to_json was entirely
+    # unimplemented, failing the whole template render. Python's own
+    # json.dumps() (what real Ansible's to_json filter wraps) defaults
+    # to ", "/": " separators, not Crystal stdlib's compact ","/":" -
+    # verified directly against Python's own json.dumps.
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render(%({{ ["a", "b"] | to_json }})).should eq(%(["a", "b"]))
+    renderer.render(%({{ {"a": 1, "b": "two"} | to_json }})).should eq(%({"a": 1, "b": "two"}))
+  end
+
   it "renders the hash filter, real Ansible's own filter" do
     # Real bug found benchmarking geerlingguy.supervisor's own
     # supervisord.conf.j2: `{SHA}{{ supervisor_password|hash('sha1') }}`
