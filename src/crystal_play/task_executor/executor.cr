@@ -437,7 +437,7 @@ module CrystalPlay
       loop_items = task.loop_items || resolve_first_found(task, host, vars_context) ||
         resolve_fileglob(task, host, vars_context, shared: shared_sub) ||
         resolve_loop_template(task, vars_context) ||
-        resolve_loop_flattened(task, vars_context) ||
+        resolve_loop_flattened(task, vars_context, host.name) ||
         resolve_loop_subelements(task, vars_context)
 
       if loop_items
@@ -1053,24 +1053,70 @@ module CrystalPlay
     # var) yields no items, matching the collection's tolerance for optional
     # source lists. Returns the flattened items, or nil when the task has no
     # flattened source at all.
-    private def resolve_loop_flattened(task : Task, vars_context : Hash(String, JSON::Any)) : Array(JSON::Any)?
+    private def resolve_loop_flattened(task : Task, vars_context : Hash(String, JSON::Any), host_name : String = "localhost") : Array(JSON::Any)?
       sources = task.loop_flattened
       return nil unless sources
 
+      substitutor = VarSubstitutor.new(vars: vars_context, host_name: host_name)
       result = [] of JSON::Any
       sources.each do |raw|
         value = resolve_template_value(raw, vars_context)
-        next unless value
-        if value.raw.is_a?(Array)
-          value.as_a.each do |item|
-            # Flatten one level of board nesting, matching the
-            # collection's flattened semantics for a list-of-lists source.
-            if item.raw.is_a?(Array)
-              item.as_a.each { |leaf| result << leaf }
-            else
-              result << item
-            end
+
+        # A complex template - `"{{ sys_accs_cond | default([]) |
+        # difference(os_ignore_users) | list }}"` (dev-sec os_hardening's
+        # own "change system accounts" task) - isn't a plain variable
+        # reference, so #resolve_template_value returns nil.
+        # #resolve_template_value only understands a bare `{{ var }}`/
+        # `{{ var.dotted }}` shape; mirror #resolve_loop_template's own
+        # ExpressionEvaluator fallback for anything `{{ }}`-wrapped but
+        # more complex than that, before ever falling through to
+        # "treat the whole source as one literal string item" below -
+        # otherwise the filter chain rendered to ONE JSON-array-shaped
+        # STRING ("[\"daemon\",\"bin\",...]") pushed as a single item,
+        # instead of being evaluated and flattened into real per-item
+        # loop iterations (`user: name={{ item }}` then tried to
+        # useradd a literal string containing commas and brackets as
+        # one username).
+        stripped = raw.strip
+        if !value && stripped.starts_with?("{{") && stripped.ends_with?("}}")
+          bare = stripped[2..-3].strip
+          rendered = expression_evaluator_for(vars_context).evaluate(bare)
+          if parsed = parse_list_result(rendered, vars_context)
+            value = JSON::Any.new(parsed)
           end
+        end
+
+        if value
+          if value.raw.is_a?(Array)
+            value.as_a.each do |item|
+              # Flatten one level of board nesting, matching the
+              # collection's flattened semantics for a list-of-lists source.
+              if item.raw.is_a?(Array)
+                item.as_a.each { |leaf| result << leaf }
+              else
+                result << item
+              end
+            end
+          else
+            result << value
+          end
+        else
+          # A literal source (not a bare `{{ var }}` reference or a
+          # `{{ }}`-wrapped filter-chain expression at all) - dev-sec
+          # os_hardening's own with_flattened sources are mostly plain
+          # literal paths ('/usr/local/sbin', '/usr/local/bin', ...)
+          # mixed with exactly one templated (often-empty-by-default)
+          # list source. Previously `next unless value` dropped every
+          # literal source outright, so a loop mixing literal paths with
+          # one templated source produced ZERO items instead of the
+          # literal paths themselves - found via os-hardening's own
+          # "find files with write-permissions for group" task (6
+          # literal paths + `{{ os_env_extra_user_paths }}`, default
+          # `[]`), which skipped outright instead of running find
+          # against any of the 6 real directories. Still substituted
+          # (not just pushed raw) in case a literal source has `{{ }}`
+          # embedded alongside other text, not only as the whole string.
+          result << JSON::Any.new(substitutor.substitute(raw))
         end
       end
       result
@@ -2795,7 +2841,7 @@ module CrystalPlay
       # vanishingly rare on a handler in practice).
       loop_items = handler.loop_items ||
         resolve_loop_template(handler, vars_context) ||
-        resolve_loop_flattened(handler, vars_context) ||
+        resolve_loop_flattened(handler, vars_context, host.name) ||
         resolve_loop_subelements(handler, vars_context)
 
       if loop_items

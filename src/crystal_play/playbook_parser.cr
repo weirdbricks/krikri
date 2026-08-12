@@ -799,7 +799,7 @@ module CrystalPlay
       special_keys = ["name", "when", "register", "ignore_errors", "check_mode",
                       "diff", "become", "become_user", "tags", "args", "with_items", "loop",
                       "with_dict", "with_fileglob", "with_first_found", "with_nested", "with_sequence",
-                      "with_community.general.flattened", "with_subelements", "with_indexed_items", "until", "retries", "delay",
+                      "with_flattened", "with_community.general.flattened", "with_subelements", "with_indexed_items", "until", "retries", "delay",
                       "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "run_once",
                       "async", "poll", "vars", "environment",
                       "block", "rescue", "always", "import_tasks", "include_tasks", "include_role",
@@ -959,7 +959,19 @@ module CrystalPlay
                              else
                                [with_fileglob.as_s]
                              end
-      elsif with_flattened = task_hash["with_community.general.flattened"]?.try(&.as_a?)
+      elsif with_flattened = (task_hash["with_flattened"]? || task_hash["with_community.general.flattened"]?).try(&.as_a?)
+        # `with_flattened:` (the short lookup-plugin-name alias real
+        # playbooks actually write - confirmed via dev-sec.os-hardening's
+        # own "find files with write-permissions for group" task, which
+        # uses exactly this spelling, never the FQCN form) was entirely
+        # unrecognized before - only `with_community.general.flattened:`
+        # matched, so the whole `with_flattened:` keyword silently fell
+        # through as an unrecognized task key. The task then ran exactly
+        # ONCE, not looped at all, with `item` completely unbound -
+        # `{{ item }}` rendered the literal string "undefined" into the
+        # shell command, which then genuinely failed
+        # ("find: 'undefined': No such file or directory").
+        #
         # Each source is normally a `{{ var }}` reference to a list, so store
         # them verbatim and let TaskExecutor resolve + flatten at execution
         # time once the variable context exists (see resolve_loop_flattened).

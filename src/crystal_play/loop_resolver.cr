@@ -28,32 +28,18 @@ module CrystalPlay
     end
 
     # with_community.general.flattened: flattens a set of per-source lists
-    # into one flat list of items, in order. The module's real semantics
-    # flatten one level of nesting per source (a source that is itself a
-    # list of lists is flattened one level) and drop the sources' own
-    # boundaries - the role pattern is `with_collection.flattened: [list_a,
-    # list_b, {{ some_var }}]` where each element is a list of strings.
-    # dev-sec os_hardening uses it to gather paths from several
-    # individually-defined lists into one find loop.
-    def self.with_flattened(sources : Array(JSON::Any)) : Array(JSON::Any)
-      result = [] of JSON::Any
-      sources.each do |source|
-        if source.raw.is_a?(Array)
-          source.as_a.each do |item|
-            if item.raw.is_a?(Array)
-              # Flatten one level of board nesting (a list-of-lists source).
-              item.as_a.each { |leaf| result << leaf }
-            else
-              result << item
-            end
-          end
-        else
-          result << source
-        end
-      end
-      result
-    end
-
+    # into one flat list of items, in order - this module's own copy was
+    # dead code (never called from anywhere - grep for `LoopResolver.
+    # with_flattened` before assuming otherwise), and confusingly *looked*
+    # correct despite that. The real, actually-wired-up implementation
+    # lives in TaskExecutor#resolve_loop_flattened, which needs the
+    # runtime variable context to template each raw source string first
+    # (this module's other with_* methods all operate post-templating,
+    # already-resolved JSON::Any sources - with_flattened's own sources
+    # are usually a mix of literal strings and exactly one `{{ var }}`
+    # reference, so templating can't happen at parse time the way the
+    # others above do).
+    #
     # with_subelements(list, subelement_key) - for each dict in *list*,
     # yield [parent_dict, subelement] pairs for every element of that
     # dict's subelement_key list. Access in a task via item[0] (the parent
@@ -69,33 +55,6 @@ module CrystalPlay
         sub_list = entry.as_h[subelement]?.try(&.as_a?) || [] of JSON::Any
         sub_list.each do |sub|
           result << JSON::Any.new([entry, sub])
-        end
-      end
-      result
-    end
-
-    # with_community.general.flattened: flattens a set of per-source lists
-    # into one flat list of items, in order. The module's real semantics
-    # flatten one level of nesting per source (a source that is itself a
-    # list of lists is flattened one level) and drop the sources' own
-    # boundaries - the role pattern is `with_collection.flattened: [list_a,
-    # list_b, {{ some_var }}]` where each element is a list of strings.
-    # dev-sec os_hardening uses it to gather paths from several
-    # individually-defined lists into one find loop.
-    def self.with_flattened(sources : Array(JSON::Any)) : Array(JSON::Any)
-      result = [] of JSON::Any
-      sources.each do |source|
-        if source.raw.is_a?(Array)
-          source.as_a.each do |item|
-            if item.raw.is_a?(Array)
-              # Flatten one level of board nesting (a list-of-lists source).
-              item.as_a.each { |leaf| result << leaf }
-            else
-              result << item
-            end
-          end
-        else
-          result << source
         end
       end
       result
