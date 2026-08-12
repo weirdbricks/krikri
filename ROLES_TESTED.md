@@ -41,6 +41,10 @@ or already-clean roles as if they were new.
 | geerlingguy.samba | ✅ Clean |
 | geerlingguy.supervisor | ✅ Clean (after fixing the `hash` filter and Crinja's boolean stringification) |
 | geerlingguy.htpasswd | ✅ Clean (after fixing `community.general.htpasswd`, previously unimplemented) |
+| geerlingguy.clamav | ✅ Clean (after fixing `.find(substring)` string method, missing from `VariableLookup`) |
+| geerlingguy.kibana | ✅ Clean (after fixing Crinja's empty-string/array/hash truthiness) |
+| geerlingguy.logstash | ✅ Clean (after fixing the `to_json` filter and `chdir=`/etc. with a templated, space-containing value) |
+| geerlingguy.gitlab | ✅ Clean (after fixing handler `register:`/`changed_when:`/`failed_when:`, entirely unapplied, and the `bool` filter's keyword semantics) |
 | geerlingguy.varnish | ❌ Not testable — role's own packagecloud.io apt repo has no valid Release file for Ubuntu jammy (reproduces on real ansible-playbook too) |
 | geerlingguy.php-mysql | ❌ Not testable — role's own repo ships no `vars/Debian.yml` at all (reproduces on real ansible-playbook too) |
 | geerlingguy.mongodb | ❌ Not testable — role no longer exists on Ansible Galaxy |

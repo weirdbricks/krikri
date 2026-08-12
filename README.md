@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.242-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.248-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -288,7 +288,24 @@ production Ansible roles (dev-sec, konstruktoid, linux-system-roles,
 geerlingguy, openstack.ansible-hardening, wireguard, ansible-vault,
 cloudalchemy.prometheus, cloudalchemy.grafana, haproxy, certbot) - see
 `git log` for the full log of what's been found and fixed. Most
-recently, a `geerlingguy.munin`/`geerlingguy.samba`/`geerlingguy.
+recently, a `geerlingguy.clamav`/`geerlingguy.kibana`/`geerlingguy.
+logstash`/`geerlingguy.gitlab` round found six bugs, the deepest being a
+handler's own `register:`/`changed_when:`/`failed_when:` entirely
+unapplied (`execute_handler_plugin_once` just returned the raw plugin
+result) - `gitlab`'s own "restart gitlab" handler depends on
+`failed_when:` to suppress a real, expected upstream GitLab-version
+incompatibility (confirmed identically failing run directly on both
+hosts, a role issue not a crystal-ansible one); chasing why `| bool`
+didn't suppress it surfaced a second bug, the plain evaluator's `bool`
+filter reusing general truthiness instead of real Ansible's own
+keyword-only semantics. `kibana` found Crinja's own truthiness treated
+an empty String/Array/Hash as truthy (Python doesn't), silently breaking
+`and`/`or` wherever both operands could be empty. `logstash` found the
+`to_json` filter entirely unimplemented, and `command:`/`shell:`'s
+`chdir=`/etc. extraction breaking on a templated value with internal
+spaces (`chdir={{ x }}`, the near-universal style). `clamav` found
+`.find(substring)` missing from the String method-call resolver. Before
+that, a `geerlingguy.munin`/`geerlingguy.samba`/`geerlingguy.
 supervisor`/`geerlingguy.htpasswd` round passed `samba` clean on the
 first try and found `community.general.htpasswd` had no plugin at all
 (implemented from scratch - `openssl passwd -stdin` for hashing,
@@ -377,7 +394,7 @@ whose one templated element resolves to a scalar silently producing no
 loop items at all, and `cron:` required `cron_file:` (a documented but
 overly-broad scope cut - real Ansible's own default, editing a live
 user crontab, is what `certbot`'s own renewal-cron task needs). See
-KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.242`),
+KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.248`),
 the `ansible-vault` and `prometheus`/`grafana` rounds before that
 (`0.9.198`-`0.9.224`), and the `geerlingguy.*`/`range(...)` rounds
 before that.

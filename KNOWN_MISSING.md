@@ -8,7 +8,7 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.242`.**
+**Currently at `0.9.248`.**
 
 ---
 
@@ -21,6 +21,71 @@ parsed, a missing `d()` filter alias, dict/array literals unsupported
 outside a `+` operand, among others - `git log --oneline --grep=
 "0\.9\.1[5-7][0-9]" -E` for the full list). Treat "no gap remains open"
 as "none is known right now," not as a claim the search is finished.
+
+`0.9.243`-`0.9.248` (a tenth real-host round: `geerlingguy.clamav`,
+`geerlingguy.kibana`, `geerlingguy.logstash`, `geerlingguy.gitlab` - all
+new): six real bugs, several engine-wide. `clamav` found `.find(substring)`
+(Python's `str.find`, returns the match index or -1) was entirely missing
+from `VariableLookup#string_method_call` (only `.split(...)` existed) -
+`freshclam_result.stderr.find('locked by another process') != -1` in the
+role's own `failed_when:` always resolved to undefined, which compared
+truthy against `-1`, so the task's real (and, on Debian, expected)
+nonzero exit from freshclam's post-install auto-run always propagated as
+a genuine failure instead of being suppressed. `kibana` found Crinja's own
+`Value#truthy?` (lib/crinja/src/runtime/value.cr) only special-cased
+`false`/`0`/`nil`/undefined, leaving an empty String/Array/Hash truthy -
+Python/Jinja2 treats all three as falsy too. This silently broke `and`/
+`or` (both operators collapse straight to a Bool via `.truthy?`) wherever
+both operands could be empty: `{% if kibana_elasticsearch_username and
+kibana_elasticsearch_password %}` (both default to `""`) rendered the
+`{% if %}` branch - a live, wrong `elasticsearch.username: ""` pair -
+instead of real Ansible's own commented-out `{% else %}` placeholder.
+Fixed by reopening `Crinja::Value` (crinja_truthy_ext.cr), the sanctioned
+way to extend vendored Crinja without editing `lib/crinja` directly (see
+crinja_hash_ext.cr's own doc comment) - verified directly against real
+Python's own `jinja2.Environment`, not just the real host. `logstash`
+found two bugs: the `to_json` filter (wraps Python's `json.dumps()`) was
+entirely unimplemented in both Jinja2 evaluators - `hosts => {{
+logstash_elasticsearch_hosts | to_json }}` failed the whole template
+render outright (implemented to match Python's own `", "`/`": "` default
+separators, not Crystal stdlib's compact `,`/`:`, for a byte-identical
+diff); and `command:`/`shell:`'s own trailing `chdir=`/`creates=`/
+`removes=`/`executable=` extraction (added the firewall round,
+`0.9.234`-`0.9.237`) broke on a *templated* value with internal spaces
+(`chdir={{ logstash_dir }}`, the near-universal spacing style - the
+`chdir={{x}}` no-space form already worked) - `\S+` only matched up to
+the template's own leading space, so the whole extraction silently
+failed and the untemplated text stayed glued onto the command, which
+then ran from the wrong directory and failed outright even though the
+target binary existed. `gitlab` found the deepest bug of the round: a
+handler's own `register:`/`changed_when:`/`failed_when:` were entirely
+unapplied - `execute_handler_plugin_once` (the handler-only dispatch
+path already found missing an action-plugin-render step in the jenkins
+round) just returned the raw plugin result, so `register:` on a handler
+was silently never stored (invisible to anything downstream, including
+a same-named `listen:` follow-up) and `failed_when:`/`changed_when:`
+could never override a handler's default pass/fail. geerlingguy.gitlab's
+own "restart gitlab" handler (`command: gitlab-ctl reconfigure`,
+`failed_when: gitlab_restart_handler_failed_when | bool`) depends on
+this: the role hits a real, upstream GitLab-version incompatibility
+(`git_data_dirs` was removed in GitLab 18.0, but the role's own
+`gitlab.rb.j2` still writes it - confirmed identically failing when
+`gitlab-ctl reconfigure` is run directly on both hosts, a role/version-
+staleness issue, not a crystal-ansible bug) that `failed_when:` is
+specifically meant to suppress; real ansible-playbook reports this
+handler as "changed", not failed. Chasing why `| bool` didn't suppress
+it surfaced a second, independent bug: the plain `{{ }}` evaluator's own
+`bool` filter reused the *general* `#truthy?` helper (correct for
+`when:`/`{% if %}` truthiness) instead of real Ansible's own `bool`
+filter semantics (`ansible.module_utils.parsing.convert_bool.boolean()`,
+non-strict) - a small fixed keyword set for true/false, `false` for
+anything else - so ANY non-empty, non-"0"/"false" string filtered
+through `| bool` came out `true`. `gitlab_restart_handler_failed_when`'s
+own default value is the arbitrary expression *string*
+`'gitlab_restart.rc != 0'` (not a recognized keyword) - verified
+directly against real ansible-playbook that `{{ 'gitlab_restart.rc != 0'
+| bool }}` renders `false`, not `true` (the separate Crinja-side `bool`
+filter already had this right).
 
 `0.9.240`-`0.9.242` (a ninth real-host round: `geerlingguy.munin`,
 `geerlingguy.samba`, `geerlingguy.supervisor`, `geerlingguy.htpasswd` -
