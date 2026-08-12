@@ -52,6 +52,9 @@ or already-clean roles as if they were new.
 | geerlingguy.mongodb | ❌ Not testable — role no longer exists on Ansible Galaxy |
 | geerlingguy.consul | ❌ Not testable — role no longer exists on Ansible Galaxy |
 | geerlingguy.golang | ❌ Not testable — role no longer exists on Ansible Galaxy |
+| geerlingguy.registry | ❌ Not testable — role no longer exists on Ansible Galaxy |
+| geerlingguy.n8n | ❌ Not testable — role no longer exists on Ansible Galaxy |
+| geerlingguy.k3s | ❌ Not testable — role no longer exists on Ansible Galaxy |
 | geerlingguy.puppet | ❌ Not testable — Puppet Labs' own published apt GPG key is expired (reproduces on real ansible-playbook too) |
 | geerlingguy.phpmyadmin | ❌ Not testable — role version 1.3.3 uses `include:`, removed entirely from current ansible-core (real `ansible-playbook` refuses to parse the role at all); crystal-ansible still supports the legacy directive and runs further, but then hits the already-documented `geerlingguy.mysql` → crystal-mysql `unix_socket`/`auth_socket` auth gap, not a new issue |
 | geerlingguy.git | ✅ Clean (incl. the full download/build-from-source path, not just the already-installed default) |
@@ -66,6 +69,10 @@ or already-clean roles as if they were new.
 | geerlingguy.solr | ✅ Clean (after fixing 6 chained bugs: `creates=` extraction dropping single-template values, local-connection `become_user` plugin staging under a non-traversable install dir, Crinja missing `.split(...)` support entirely, Crinja's `trim_blocks` eating a literal space, and `file:` not chowning newly-created intermediate directory components — idempotent, service verified live via `systemctl`/`curl`) |
 | geerlingguy.passenger | ❌ Not testable — the role's own apt-key fetch uses a stale key ID (`561F9B9CAC40B2F7`); the actual repo now signs with a different key (`D870AB033FB45BD1`) (reproduces on real ansible-playbook too) |
 | geerlingguy.drupal | ❌ Not testable — its `composer require` task explicitly sets `become: false` (assumes a non-root deploy user); our benchmark harness connects as root throughout, so Composer's own root-safety check aborts regardless of engine (reproduces on real ansible-playbook too) |
+| geerlingguy.java | ✅ Clean (idempotent, `java -version` functionally verified) |
+| geerlingguy.containerd | ✅ Clean (idempotent, byte-identical `config.toml`, service verified live via `systemctl`/`ctr version`) |
+| geerlingguy.helm | ✅ Clean (after fixing `not a or b` evaluating as `not(a or b)` instead of `(not a) or b` — real operator-precedence bug in the hand-rolled `when:` evaluator; idempotent, `helm version` functionally verified) |
+| geerlingguy.gogs | ❌ Not testable — role version 1.4.3 uses the legacy `include:` directive, removed entirely from current ansible-core (real `ansible-playbook` refuses to parse the role at all), same failure mode as `geerlingguy.phpmyadmin` |
 
 **Legend:** ✅ Clean = engine matches real `ansible-playbook` (idempotent,
 healthy services, config parity) as of the last time it was run. ⚠️ = engine

@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.265-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.266-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -288,8 +288,21 @@ production Ansible roles (dev-sec, konstruktoid, linux-system-roles,
 geerlingguy, openstack.ansible-hardening, wireguard, ansible-vault,
 cloudalchemy.prometheus, cloudalchemy.grafana, haproxy, certbot) - see
 `git log` for the full log of what's been found and fixed. Most
-recently, a `geerlingguy.composer`/`geerlingguy.solr`/`geerlingguy.
-passenger`/`geerlingguy.drupal` round found two bugs in `composer`
+recently, a `geerlingguy.java`/`geerlingguy.containerd`/`geerlingguy.
+helm`/`geerlingguy.gogs` round found `java` and `containerd` both
+clean on the first try, and one high-value bug in `helm`: the
+hand-rolled `when:` evaluator checked a leading `not ` prefix BEFORE
+splitting on any top-level `and`/`or` at all, so `not X or Y` negated
+the entire remaining string as one unit instead of binding `not` only
+to the immediate next term - the opposite of real Python/Jinja2
+precedence (`not` binds tightest, `or` loosest), discarding `or`'s
+short-circuiting and silently skipping tasks gated on patterns like
+`when: not some.stat.exists or ...`. `gogs` isn't testable - its role
+uses the legacy `include:` directive, removed from current
+ansible-core, the same failure already documented for `geerlingguy.
+phpmyadmin`. Before that, a `geerlingguy.composer`/`geerlingguy.solr`/
+`geerlingguy.passenger`/`geerlingguy.drupal` round found two bugs in
+`composer`
 (`get_url:`'s checksum algorithm silently using SHA1 for anything but
 md5/sha256, and `command:`/`shell:`/`unarchive:`'s `creates=`/
 `removes=`/`chdir=` never expanding a leading `~`) and, chained across
@@ -464,7 +477,7 @@ whose one templated element resolves to a scalar silently producing no
 loop items at all, and `cron:` required `cron_file:` (a documented but
 overly-broad scope cut - real Ansible's own default, editing a live
 user crontab, is what `certbot`'s own renewal-cron task needs). See
-KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.265`),
+KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.266`),
 the `ansible-vault` and `prometheus`/`grafana` rounds before that
 (`0.9.198`-`0.9.224`), and the `geerlingguy.*`/`range(...)` rounds
 before that.

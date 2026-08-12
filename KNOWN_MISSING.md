@@ -8,9 +8,38 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.265`.**
+**Currently at `0.9.266`.**
 
 ---
+
+`0.9.266` (a fifteenth real-host round: `geerlingguy.java`,
+`geerlingguy.containerd`, `geerlingguy.helm`, `geerlingguy.gogs` -
+all new; `geerlingguy.registry`/`.n8n`/`.k3s` don't exist on Galaxy).
+`java` and `containerd` both passed clean on the first try (the
+latter's own `config.toml` byte-identical to real Ansible's). `gogs`
+isn't testable at all - role version 1.4.3 uses the legacy `include:`
+directive, removed entirely from current ansible-core (real
+`ansible-playbook` refuses to parse the role), the same failure mode
+already documented for `geerlingguy.phpmyadmin`.
+
+`helm` found one bug, but a high-value one: `ConditionalEvaluator#
+evaluate` checked a leading `not ` prefix BEFORE splitting on any
+top-level ` and `/` or ` at all, so `not X or Y` negated the ENTIRE
+remaining string as a single unit (`not (X or Y)`) instead of binding
+`not` only to the immediate next term (the correct `(not X) or Y`,
+matching real Python/Jinja2 operator precedence where `not` binds
+tightest and `or` loosest). The role's own "Download helm." task
+gates on `when: not helm_check.stat.exists or "..." not in
+helm_existing_version.stdout` - with the binary not yet installed,
+`not helm_check.stat.exists` alone is already true and real Ansible's
+`or` short-circuits there without evaluating the second (undefined-
+stdout) clause; here it evaluated false instead, silently skipping the
+install. Reordered to split on `or` first (lowest precedence), then
+`and`, then handle `not` last - this also fixes mixed `a and b or c`
+chains nesting correctly via the same recursive splitting, not just
+the specific `not`-prefixed case. Verified this was hand-rolled-
+evaluator-only: Crinja's real recursive-descent parser (backing `.j2`
+files) already gets `not`/`and`/`or` precedence right by construction.
 
 `0.9.259`-`0.9.265` (a fourteenth real-host round: `geerlingguy.
 composer`, `geerlingguy.solr`, `geerlingguy.passenger`, `geerlingguy.
