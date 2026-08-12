@@ -8,9 +8,47 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.248`.**
+**Currently at `0.9.249`.**
 
 ---
+
+`0.9.249` (a proactive audit pass, not a real-host round - following
+`0.9.244`'s Crinja `Value#truthy?` fix, checked whether the same
+empty-container-truthiness bug class had independent copies elsewhere,
+the way recursive re-templating turned out to have several): all 24 of
+Crinja's own `Value#truthy?` call sites (`{% if %}`, `{% for x in y if
+x %}`, `and`/`or`/`not`, `select`/`reject`, `default(fallback, true)`,
+etc.) verified correct now that the fix lives in the one shared method -
+Crinja centralizes truthiness through a single method, unlike this
+codebase's own hand-rolled evaluator, so no further Crinja-side copies
+existed. Did find one, though, in a *completely different* evaluator:
+`ConditionalEvaluator#evaluate_truthiness`/`#evaluate_value` (the bare
+`when:`/`assert:`/ternary-condition path, unrelated to Crinja) had no
+`Hash` case at all in its return union (an empty Hash's own `#to_s`,
+`"{}"`, is a non-empty *string* - always truthy) and no `Array` case in
+its own truthiness `case` either (silently falling through to an
+unconditional `else -> true`) - `when: my_list` with `my_list: []` (or
+`my_dict: {}`) always ran the task, verified directly against real
+Python's own `bool([])`/`bool({})`. Fixed by checking Hash/Array
+emptiness directly against the resolved `JSON::Any` (via
+`VariableLookup#resolve`, the same simple/dotted/indexed resolver `{{
+}}` substitution already uses) before ever going through the lossy
+union conversion - covers bare variables, dotted paths, and (since
+inline ternary already delegates its own condition to
+`ConditionalEvaluator`) `'x' if my_list else 'y'` too, all in one fix.
+
+Separately (not a bug, a redundancy worth knowing about): this file's
+own `real_truthy?`/`pytruthy` filter/`TAG_IF_ELIF` tag-rewriting
+machinery in `jinja_filters.cr`/`template_action_plugin.cr` was built
+specifically to work around the now-fixed `Value#truthy?` gap, on the
+(no-longer-true) assumption that `lib/crinja` couldn't be patched from
+outside. It's harmless to leave in place - `real_truthy?` and the fixed
+`Value#truthy?` now agree on every case - but it's duplicated logic
+that could silently drift out of sync if one is ever edited without the
+other. `TAG_IF_ELIF`'s rewrite can't be removed outright regardless (it
+also handles real Jinja2 `in`/`not in` infix-test rewriting in the same
+pass), just the `| pytruthy` suffix it appends is now redundant.
+Simplification candidate for a future session, not urgent.
 
 **No known cross-cutting engine gap is open right now** - but that status
 is continuously re-earned, not permanent. Each real-host benchmark round
