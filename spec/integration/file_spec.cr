@@ -248,4 +248,28 @@ describe "file plugin" do
       (File.info(File.join(root, "sub", "b.txt"), follow_symlinks: false).permissions.value & 0o777).should eq(0o700)
     end
   end
+
+  describe "creating a nested directory path" do
+    it "applies mode to every newly-created intermediate component, not just the leaf" do
+      # Real bug found benchmarking geerlingguy.solr: "Ensure Solr conf
+      # directories exist." (path: .../data/collection1/conf, owner:
+      # solr_user, recurse: true) needed a LATER become_user: solr task
+      # to delete/recreate that same conf/ subdirectory - which needs
+      # WRITE permission on its PARENT (collection1). Dir.mkdir_p
+      # created the whole missing chain in one shot with no
+      # per-component hook, so #apply_file_attributes only ever ran on
+      # the leaf afterward - every newly-created ANCESTOR directory
+      # (collection1 itself) kept the default mode/owner from whoever
+      # ran this process (root), not the requested one.
+      root = tmp_path("nesteddir")
+      leaf = File.join(root, "middle", "conf")
+
+      result = PluginSpecHelper.run("file", {"path" => leaf, "state" => "directory", "mode" => "0700"})
+      result["changed"].as_bool.should be_true
+
+      (File.info(root, follow_symlinks: false).permissions.value & 0o777).should eq(0o700)
+      (File.info(File.join(root, "middle"), follow_symlinks: false).permissions.value & 0o777).should eq(0o700)
+      (File.info(leaf, follow_symlinks: false).permissions.value & 0o777).should eq(0o700)
+    end
+  end
 end

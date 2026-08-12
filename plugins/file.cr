@@ -165,9 +165,35 @@ module CrystalPlay
         )
       end
 
-      # Create directory (like mkdir -p)
+      # Create directory (like mkdir -p), applying owner/group/mode to
+      # each newly-created path COMPONENT along the way, not just the
+      # leaf. Real Ansible's own file module (ensure_directory) walks
+      # the path component-by-component with a bare os.mkdir per
+      # missing dir, explicitly applying attributes to each one it
+      # creates; a single Dir.mkdir_p call has no such per-component
+      # hook, so a task creating a *nested* path whose intermediate
+      # components don't exist yet left every newly-created ancestor
+      # directory owned by whoever this process runs as (root) except
+      # the leaf, which #apply_file_attributes below still handles.
+      #
+      # Found benchmarking geerlingguy.solr: "Ensure Solr conf
+      # directories exist." (path: .../data/collection1/conf, owner:
+      # solr_user, recurse: true) needed a LATER become_user: solr
+      # task (`bin/solr create`) to delete/recreate that same conf/
+      # subdirectory - which needs WRITE permission on its parent
+      # (collection1), and a root-owned 0755 ancestor denies that to a
+      # non-root user ("Unable to delete file").
       created = begin
-        Dir.mkdir_p(path)
+        missing_components = [] of String
+        cursor = path
+        until cursor.empty? || cursor == "/" || Dir.exists?(cursor)
+          missing_components << cursor
+          cursor = File.dirname(cursor)
+        end
+        missing_components.reverse_each do |component|
+          Dir.mkdir(component) unless Dir.exists?(component)
+          apply_file_attributes(component, recursive: false)
+        end
         true
       rescue
         false
