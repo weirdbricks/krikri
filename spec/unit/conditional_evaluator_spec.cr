@@ -82,6 +82,24 @@ describe CrystalPlay::ConditionalEvaluator do
       v = vars({"a" => false} of String => JSON::Any::Type)
       CrystalPlay::ConditionalEvaluator.evaluate("not a", v).should be_true
     end
+
+    it "short-circuits 'not a or b' as (not a) or b, not not(a or b)" do
+      # Real bug found benchmarking geerlingguy.helm: "Download helm."
+      # gates on `when: not helm_check.stat.exists or "{{ helm_version
+      # }}" not in helm_existing_version.stdout`. With the binary not
+      # yet installed, `not helm_check.stat.exists` alone is already
+      # true, and real Ansible's `or` short-circuits there without ever
+      # evaluating the second clause (whose own `.stdout` is undefined
+      # after a failed_when:false command spawn failure - erroring if
+      # actually evaluated). `evaluate` used to check a leading "not "
+      # prefix BEFORE splitting on " or "/" and " at all, so it negated
+      # the ENTIRE remaining "a or b" as one unit (`not (a or b)`)
+      # instead of correctly binding only to the immediate next term -
+      # discarding short-circuiting and returning the wrong (and, for
+      # the real playbook, erroring-clause-dependent) result.
+      v = vars({"a" => false} of String => JSON::Any::Type)
+      CrystalPlay::ConditionalEvaluator.evaluate(%(not a or "x" in undefined_var.stdout), v).should be_true
+    end
   end
 
   describe "bare-variable truthiness" do

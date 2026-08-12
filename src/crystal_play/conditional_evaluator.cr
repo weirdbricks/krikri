@@ -27,9 +27,32 @@ module CrystalPlay
       condition = condition.strip
       condition = unwrap_outer_parens(condition)
 
-      # Handle 'not' at the beginning
-      if condition.starts_with?("not ")
-        return !evaluate(condition[4..-1].strip, vars)
+      # Operator precedence (matching real Python/Jinja2): `or` binds
+      # loosest, then `and`, then `not` binds tightest. Splitting on the
+      # LOWEST-precedence operator first and recursing into each side is
+      # what makes that nest correctly - `a and b or c` splits on `or`
+      # into ["a and b", "c"], and the recursive call on "a and b" then
+      # finds *its own* top-level `and` and splits that in turn, giving
+      # the correct `(a and b) or c` grouping.
+      #
+      # `not` used to be checked FIRST, before either split - a `not X
+      # or Y` condition therefore never reached the `or` split at all;
+      # `evaluate` matched the leading "not " and negated the ENTIRE
+      # remaining string "X or Y" as one unit (`not (X or Y)` instead of
+      # the correct `(not X) or Y`). Found benchmarking geerlingguy.helm:
+      # "Download helm." gates on `when: not helm_check.stat.exists or
+      # "{{ helm_version }}" not in helm_existing_version.stdout` - with
+      # the binary not yet installed, `not helm_check.stat.exists` alone
+      # is already true and real Ansible's `or` short-circuits there
+      # without ever evaluating the second (undefined-stdout) clause;
+      # here the whole `X or Y` got negated as one blob first, discarding
+      # short-circuiting entirely and evaluating false, so Download/Copy
+      # were skipped outright and helm was never installed.
+      #
+      # Handle 'or' operator (split and evaluate any part)
+      if condition.includes?(" or ")
+        parts = split_by_operator(condition, " or ")
+        return parts.any? { |part| evaluate(part.strip, vars) } if split_progressed?(parts, condition)
       end
 
       # Handle 'and' operator (split and evaluate all parts).
@@ -48,10 +71,11 @@ module CrystalPlay
         return parts.all? { |part| evaluate(part.strip, vars) } if split_progressed?(parts, condition)
       end
 
-      # Handle 'or' operator (split and evaluate any part)
-      if condition.includes?(" or ")
-        parts = split_by_operator(condition, " or ")
-        return parts.any? { |part| evaluate(part.strip, vars) } if split_progressed?(parts, condition)
+      # Handle 'not' at the beginning - checked last (highest
+      # precedence), after both boolean-operator splits above have had
+      # a chance to peel off any top-level `and`/`or` first.
+      if condition.starts_with?("not ")
+        return !evaluate(condition[4..-1].strip, vars)
       end
 
       # Handle 'is version(comparison_version, operator)' - Ansible's own
