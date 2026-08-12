@@ -12,6 +12,25 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+An eleventh real-host round (`geerlingguy.puppet`, `geerlingguy.
+munin-node`, `geerlingguy.phpmyadmin`, `geerlingguy.adminer` - all new)
+found **no crystal-ansible bugs at all** - `munin-node` and `adminer`
+(the latter including its `geerlingguy.apache` dependency's config-
+writing path, functionally verified serving `adminer.php` via `curl`)
+both passed byte-identical and idempotent on the first try. The other
+two hit real, confirmed-external blockers, not engine gaps: `puppet`'s
+own apt-key task fails identically on real `ansible-playbook` too -
+Puppet Labs' own published GPG key for the configured `puppet_version`
+has expired upstream. `phpmyadmin`'s pinned role version (1.3.3) uses
+`include:`, a directive real modern `ansible-core` (2.17) has removed
+entirely - real `ansible-playbook` refuses to even parse the role,
+making a real-host baseline comparison impossible with current
+ansible-core; crystal-ansible is more lenient and still supports the
+legacy directive, running the role further before hitting the
+already-documented `geerlingguy.mysql` dependency's `unix_socket`/
+`auth_socket` auth gap (see the `crystal-mysql` limitation below), not
+a new issue.
+
 `0.9.250`-`0.9.253` (a regression-verification round, not a new-role
 round - re-running `dev-sec.os-hardening`, previously marked clean back
 in an earlier session, specifically to stress-test the truthiness/bool

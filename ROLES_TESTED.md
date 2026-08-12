@@ -45,11 +45,15 @@ or already-clean roles as if they were new.
 | geerlingguy.kibana | ✅ Clean (re-verified 0.9.253, byte-identical config, idempotent) |
 | geerlingguy.logstash | ✅ Clean (after fixing the `to_json` filter and `chdir=`/etc. with a templated, space-containing value) |
 | geerlingguy.gitlab | ✅ Clean (after fixing handler `register:`/`changed_when:`/`failed_when:`, entirely unapplied, and the `bool` filter's keyword semantics) |
+| geerlingguy.munin-node | ✅ Clean |
+| geerlingguy.adminer | ✅ Clean (incl. its `geerlingguy.apache` config-writing path, functionally verified via `curl`) |
 | geerlingguy.varnish | ❌ Not testable — role's own packagecloud.io apt repo has no valid Release file for Ubuntu jammy (reproduces on real ansible-playbook too) |
 | geerlingguy.php-mysql | ❌ Not testable — role's own repo ships no `vars/Debian.yml` at all (reproduces on real ansible-playbook too) |
 | geerlingguy.mongodb | ❌ Not testable — role no longer exists on Ansible Galaxy |
 | geerlingguy.consul | ❌ Not testable — role no longer exists on Ansible Galaxy |
 | geerlingguy.golang | ❌ Not testable — role no longer exists on Ansible Galaxy |
+| geerlingguy.puppet | ❌ Not testable — Puppet Labs' own published apt GPG key is expired (reproduces on real ansible-playbook too) |
+| geerlingguy.phpmyadmin | ❌ Not testable — role version 1.3.3 uses `include:`, removed entirely from current ansible-core (real `ansible-playbook` refuses to parse the role at all); crystal-ansible still supports the legacy directive and runs further, but then hits the already-documented `geerlingguy.mysql` → crystal-mysql `unix_socket`/`auth_socket` auth gap, not a new issue |
 
 **Legend:** ✅ Clean = engine matches real `ansible-playbook` (idempotent,
 healthy services, config parity) as of the last time it was run. ⚠️ = engine

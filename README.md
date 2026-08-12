@@ -288,7 +288,14 @@ production Ansible roles (dev-sec, konstruktoid, linux-system-roles,
 geerlingguy, openstack.ansible-hardening, wireguard, ansible-vault,
 cloudalchemy.prometheus, cloudalchemy.grafana, haproxy, certbot) - see
 `git log` for the full log of what's been found and fixed. Most
-recently, a regression-verification pass (re-running `dev-sec.
+recently, a `geerlingguy.puppet`/`geerlingguy.munin-node`/`geerlingguy.
+phpmyadmin`/`geerlingguy.adminer` round found no engine bugs at all -
+`munin-node` and `adminer` (incl. its apache dependency) both passed
+byte-identical and idempotent on the first try; `puppet` and
+`phpmyadmin` both hit confirmed external/upstream blockers (an expired
+Puppet Labs apt key; a role version using the `include:` directive
+current ansible-core has removed entirely), not crystal-ansible gaps.
+Before that, a regression-verification pass (re-running `dev-sec.
 os-hardening`, `geerlingguy.kibana`, and `geerlingguy.supervisor` to
 stress-test a prior round's truthiness/bool fixes) found four MORE
 real, pre-existing bugs on `os-hardening` alone - none of them
