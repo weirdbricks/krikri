@@ -245,6 +245,21 @@ module CrystalPlay
       dpkg_line.split(/\s+/)[2]?
     end
 
+    # Parses apt-get's own end-of-run summary line ("0 upgraded, 0 newly
+    # installed, 0 to remove and N not upgraded.") to tell a genuine
+    # no-op apart from real work done - the "0 upgraded, 0 newly
+    # installed" case (a virtual package already satisfied by something
+    # else installed, or every named package already at the requested
+    # version) has exit code 0 just like a real install does. Defaults
+    # to "had an effect" (changed: true) if the summary line's own shape
+    # ever changes/isn't found, matching this codebase's usual
+    # fail-toward-"changed" bias for an unparseable case.
+    private def apt_summary_had_no_effect?(stdout : String) : Bool
+      match = stdout.match(/(\d+) upgraded, (\d+) newly installed/)
+      return false unless match
+      match[1] == "0" && match[2] == "0"
+    end
+
     # Handle installing packages
     private def handle_install(packages : Array(String), messages : Array(String), changed : Bool) : PluginResult
       to_install = [] of String
@@ -270,8 +285,27 @@ module CrystalPlay
           pkg_list = to_install.join(" ")
           install_result = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold #{pkg_list}")
           if install_result[:exit_code] == 0
-            messages << "Package#{to_install.size > 1 ? "s" : ""} #{to_install.join(", ")} installed"
-            changed = true
+            # A requested name can be a virtual package already satisfied
+            # by something else installed (`rubygems` - not a real
+            # package on modern Debian/Ubuntu at all, only a virtual one
+            # `ruby`'s own package Provides: - apt-get install then
+            # genuinely does nothing) - dpkg -l's own is-it-already-
+            # installed pre-check above only ever looks up the literal
+            # requested name, which a purely virtual package never has a
+            # real dpkg entry for, so it always fell through to "needs
+            # install" here. Real apt-get's own exit code is 0 either
+            # way, so trusting exit_code alone previously always
+            # reported changed: true even when apt's own summary line
+            # shows "0 upgraded, 0 newly installed" - real Ansible's own
+            # apt module (python-apt bindings, not this CLI-based
+            # shell-out) correctly resolves the Provides: relationship
+            # and reports changed: false here.
+            if apt_summary_had_no_effect?(install_result[:stdout])
+              messages << "Package#{to_install.size > 1 ? "s" : ""} #{to_install.join(", ")} already satisfied"
+            else
+              messages << "Package#{to_install.size > 1 ? "s" : ""} #{to_install.join(", ")} installed"
+              changed = true
+            end
           else
             return PluginResult.new(
               changed: changed,
