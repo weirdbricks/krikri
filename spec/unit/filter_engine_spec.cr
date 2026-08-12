@@ -205,6 +205,20 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     engine.apply(s("yes"), "bool").as_bool.should eq(true)
   end
 
+  it "bool filter only recognizes real Ansible's own keyword set, not general truthiness" do
+    # Real bug found benchmarking geerlingguy.gitlab's own "restart
+    # gitlab" handler: `failed_when: gitlab_restart_handler_failed_when
+    # | bool`, whose default value is the arbitrary expression STRING
+    # 'gitlab_restart.rc != 0' (not a recognized true/false keyword).
+    # Previously reused the generic (correct-for-`when:`) #truthy?
+    # helper, so any non-empty, non-"0"/"false" string came out true
+    # here - verified directly against real ansible-playbook (`{{
+    # 'gitlab_restart.rc != 0' | bool }}` renders "false") that an
+    # unrecognized string must render false, not true.
+    engine.apply(s("gitlab_restart.rc != 0"), "bool").as_bool.should eq(false)
+    engine.apply(s("some random text"), "bool").as_bool.should eq(false)
+  end
+
   it "returns first/last/min/max of an array" do
     value = JSON.parse(%([3, 1, 2]))
     engine.apply(value, "first").as_i.should eq(3)

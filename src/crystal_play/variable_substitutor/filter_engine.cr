@@ -224,7 +224,30 @@ module CrystalPlay
         when "string"
           JSON::Any.new(as_string(value))
         when "bool"
-          JSON::Any.new(truthy?(value))
+          # Real Ansible's own `bool` filter (ansible.module_utils.
+          # parsing.convert_bool.boolean(), non-strict) is NOT general
+          # truthiness - it matches only a fixed set of true/false
+          # keywords, and returns false (not a TypeError, not the
+          # string's own truthiness) for anything else. Previously
+          # reused the generic #truthy? helper (correct for `when:`/
+          # `{% if %}` truthiness, wrong here), so ANY non-empty,
+          # non-"0"/"false" string filtered through `| bool` came out
+          # true. Found via geerlingguy.gitlab's own "restart gitlab"
+          # handler: `failed_when: gitlab_restart_handler_failed_when |
+          # bool`, whose default value is the arbitrary expression
+          # STRING `'gitlab_restart.rc != 0'` (not one of the recognized
+          # keywords) - verified directly against real ansible-playbook
+          # (`{{ 'gitlab_restart.rc != 0' | bool }}` renders `false`,
+          # not `true`) - previously always true here, always marking
+          # the handler failed regardless of the reconfigure's actual
+          # exit code. Mirrors the Crinja-side `Crinja.filter(:bool)`
+          # (jinja_filters.cr), which already had this right.
+          case as_string(value).downcase
+          when "true", "yes", "on", "1"
+            JSON::Any.new(true)
+          else
+            JSON::Any.new(false)
+          end
         when "abs"
           JSON::Any.new(numeric(value).abs)
         when "map"

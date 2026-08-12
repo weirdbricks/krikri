@@ -2915,7 +2915,7 @@ module CrystalPlay
         end
       end
 
-      PluginManager.execute_plugin(
+      result = PluginManager.execute_plugin(
         handler.module_name,
         config,
         host,
@@ -2923,6 +2923,30 @@ module CrystalPlay
         become,
         become_user
       )
+
+      # A handler's own changed_when:/failed_when:/register: were
+      # entirely unapplied - this method just returned the raw plugin
+      # result. Same "separate dispatch path from regular tasks, missing
+      # a step the regular path already has" pattern already found for
+      # handlers using an action-plugin module and handler loops (see
+      # this method's own doc comment above, and execute_handler_loop's)
+      # - found via geerlingguy.gitlab's own "restart gitlab" handler
+      # (`command: gitlab-ctl reconfigure`, `failed_when:
+      # gitlab_restart_handler_failed_when | bool`, `register:
+      # gitlab_restart`): a real, expected-to-sometimes-fail reconfigure
+      # (a known upstream GitLab/role-version incompatibility, not a
+      # crystal-ansible bug - confirmed identically failing when run
+      # directly on both hosts) always propagated as a genuine task
+      # failure, since failed_when could never suppress it here, while
+      # real ansible-playbook's own run of the identical role reports
+      # this handler as "changed", not failed.
+      result = apply_changed_failed_when(handler, result, vars_context, host)
+
+      if register_name = handler.register
+        register_result(host, register_name, result) unless register_name.empty?
+      end
+
+      result
     end
   end
 end
