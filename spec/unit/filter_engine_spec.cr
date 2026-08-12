@@ -197,6 +197,22 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     chain.should eq([%(replace('a|b', 'c')), "upper"])
   end
 
+  it "int filter truncates a native Float64 directly, matching Python's int()" do
+    # Real bug found benchmarking geerlingguy.swap's own check-size.yml
+    # (`(stat.size / 1024 / 1024) | int`) once division itself was
+    # fixed - a division result is always a float in real Jinja2. The
+    # old implementation always went through #as_string first, turning
+    # a Float64 into its own decimal-point STRING repr ("256.0"), and
+    # Crystal's strict String#to_i64? rejects any decimal point
+    # outright, always falling to the 0 default - `{{ 256.0 | int }}`
+    # rendered "0" instead of "256", for ANY float, not just one
+    # arriving via division.
+    engine.apply(JSON::Any.new(256.0), "int").as_i64.should eq(256)
+    engine.apply(JSON::Any.new(5.7), "int").as_i64.should eq(5)
+    engine.apply(JSON::Any.new(-5.7), "int").as_i64.should eq(-5)
+    engine.apply(s("42.5"), "int").as_i64.should eq(42)
+  end
+
   it "converts to int/float/string/bool" do
     engine.apply(s("42"), "int").as_i.should eq(42)
     engine.apply(s("3.5"), "float").as_f.should eq(3.5)

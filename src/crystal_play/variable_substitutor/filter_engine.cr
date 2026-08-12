@@ -218,9 +218,42 @@ module CrystalPlay
         when "max"
           as_array(value).max_by? { |v| numeric(v) } || JSON::Any.new(nil)
         when "int"
-          JSON::Any.new(as_string(value).to_i64? || 0_i64)
+          # Real Jinja2's own `int` filter (do_int) truncates a native
+          # float/int directly (Python's `int(42.5) == 42`) - going
+          # through #as_string first (as this used to do unconditionally)
+          # turns a Float64 into its own decimal-point STRING repr
+          # ("256.0"), and Crystal's strict `String#to_i64?` rejects any
+          # decimal point outright, always falling to the `|| 0_i64`
+          # default. `{{ 256.0 | int }}` (or ANY float, not just one
+          # arriving via a division result) rendered "0" instead of
+          # "256". Found via geerlingguy.swap's own check-size.yml
+          # (`(stat.size / 1024 / 1024) | int`) once division itself was
+          # fixed - a division result is always a float in real Jinja2,
+          # so nearly every `int`-filtered division hit this. A numeric
+          # string still falls through to the string-parsing path below,
+          # itself widened to accept "42.5"-style decimal strings the
+          # same way real Jinja2 does (int() on the string fails, falls
+          # back to int(float(value))).
+          case raw = value.raw
+          when Int64, Int32
+            JSON::Any.new(raw.to_i64)
+          when Float64
+            JSON::Any.new(raw.to_i64)
+          when Bool
+            JSON::Any.new(raw ? 1_i64 : 0_i64)
+          else
+            str = as_string(value)
+            JSON::Any.new(str.to_i64? || str.to_f64?.try(&.to_i64) || 0_i64)
+          end
         when "float"
-          JSON::Any.new(as_string(value).to_f64? || 0.0)
+          case raw = value.raw
+          when Int64, Int32
+            JSON::Any.new(raw.to_f64)
+          when Float64
+            JSON::Any.new(raw)
+          else
+            JSON::Any.new(as_string(value).to_f64? || 0.0)
+          end
         when "string"
           JSON::Any.new(as_string(value))
         when "bool"

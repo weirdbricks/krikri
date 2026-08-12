@@ -96,6 +96,22 @@ module CrystalPlay
         # actual condition).
         return expr.downcase if expr == "true" || expr == "false" || expr == "True" || expr == "False"
 
+        # A bare numeric literal as the WHOLE expression (`{{ 5 }}`,
+        # `{{ 5.7 }}`) or a leading-paren-wrapped one that recurses back
+        # here (`{{ (5) | int }}`'s own `evaluate("5")` re-entry) - never
+        # checked anywhere in this dispatch chain on its own (only ever
+        # as an *operand* inside a `+`/`-`/`*`/`/` expression, via
+        # #resolve_plus_operand's own identical check), so it fell all
+        # the way through to a plain variable-name lookup on the literal
+        # digit text itself, always undefined. Found chasing geerlingguy.
+        # swap's own check-size.yml after fixing `*`/`/` arithmetic and
+        # the `int` filter's own float handling - a literal float/int
+        # piped straight into a filter with no variable or arithmetic
+        # involved at all (`{{ 256.0 | int }}`) hit this same gap.
+        if literal = numeric_literal(expr)
+          return @lookup.format_value(literal)
+        end
+
         # A bare quoted string literal (`{{ 'some.url/with.dots' }}`,
         # the whole `{{ }}` span, no filter/operator at all) - previously
         # unchecked anywhere in this dispatch chain, so a literal
@@ -182,6 +198,26 @@ module CrystalPlay
         # `var[key]` off a literal array operand's own brackets.
         if segments = split_top_level_plus(expr)
           return evaluate_plus(segments)
+        end
+
+        # Top-level `*`/`/`/`//` arithmetic - entirely unimplemented
+        # before (neither this dispatch nor #resolve_plus_operand's own
+        # `+`/`-`-operand resolution recognized them at all), so even a
+        # bare `{{ 10 / 2 }}` rendered the literal string "undefined".
+        # Found via geerlingguy.swap's own check-size.yml: `(swap_file_
+        # check.stat.size / 1024 / 1024) | int` (converting a stat'd
+        # byte count to MB) - the whole division chain resolved
+        # undefined, so the file-size comparison this feeds always
+        # differed, deleting and recreating the swap file on every
+        # single run instead of converging. Checked after both `-` and
+        # `+` (so `2 + 3 * 4` still splits on `+` first, each side
+        # separately reaching this check via #resolve_plus_operand,
+        # matching real Jinja2's normal precedence - `*`/`/` bind
+        # tighter than `+`/`-`) but before the filter/literal/variable
+        # checks further down.
+        if mult_div = split_top_level_mult_div(expr)
+          parts, ops = mult_div
+          return evaluate_mult_div(parts, ops)
         end
 
         # Jinja2's `~` string-concatenation operator (distinct from `+`,
@@ -507,6 +543,115 @@ module CrystalPlay
         state.current << char
       end
 
+      # Splits *expr* on every top-level `*`, `/`, or `//` (outside
+      # quotes/brackets - `*`/`/` need no spacing requirement, unlike
+      # `-`, since a bare `*` or `/` never appears inside an ordinary
+      # identifier). Returns {operands, operators} (one fewer operator
+      # than operand), or nil when there's no top-level `*`/`/` at all.
+      private def split_top_level_mult_div(expr : String) : {Array(String), Array(String)}?
+        parts = [] of String
+        ops = [] of String
+        current = String::Builder.new
+        depth = 0
+        quote : Char? = nil
+        chars = expr.chars
+        i = 0
+
+        while i < chars.size
+          char = chars[i]
+          if q = quote
+            current << char
+            quote = nil if char == q
+            i += 1
+            next
+          end
+
+          case char
+          when '\'', '"'
+            quote = char
+            current << char
+          when '[', '(', '{'
+            depth += 1
+            current << char
+          when ']', ')', '}'
+            depth -= 1
+            current << char
+          when '*'
+            if depth == 0
+              parts << current.to_s.strip
+              current = String::Builder.new
+              ops << "*"
+            else
+              current << char
+            end
+          when '/'
+            if depth == 0
+              parts << current.to_s.strip
+              current = String::Builder.new
+              if i + 1 < chars.size && chars[i + 1] == '/'
+                ops << "//"
+                i += 1
+              else
+                ops << "/"
+              end
+            else
+              current << char
+            end
+          else
+            current << char
+          end
+          i += 1
+        end
+        parts << current.to_s.strip
+
+        ops.empty? ? nil : {parts, ops}
+      end
+
+      # Resolves each operand (the same resolver `+`/`-` operands use -
+      # a literal, a variable, or a whole sub-expression with its own
+      # filter chain) and combines them left to right, matching real
+      # Jinja2/Python's own arithmetic: `/` always produces a float
+      # (true division, even for an evenly-divisible pair), `*`
+      # preserves int when both operands are int, `//` floors to int.
+      private def evaluate_mult_div(parts : Array(String), ops : Array(String)) : String
+        values = parts.map { |p| resolve_plus_operand(p) }
+        result = values[0]
+        ops.each_with_index do |op, idx|
+          result = combine_mult_div(result, values[idx + 1], op)
+        end
+        @lookup.format_value(result)
+      end
+
+      private def combine_mult_div(a : JSON::Any, b : JSON::Any, op : String) : JSON::Any
+        af = numeric_operand(a)
+        bf = numeric_operand(b)
+        return JSON::Any.new(nil) unless af && bf
+
+        both_int = a.raw.is_a?(Int64) && b.raw.is_a?(Int64)
+
+        case op
+        when "*"
+          both_int ? JSON::Any.new((af * bf).to_i64) : JSON::Any.new(af * bf)
+        when "/"
+          JSON::Any.new(af / bf)
+        when "//"
+          JSON::Any.new((af / bf).floor.to_i64)
+        else
+          JSON::Any.new(nil)
+        end
+      end
+
+      private def numeric_operand(value : JSON::Any) : Float64?
+        case raw = value.raw
+        when Int64
+          raw.to_f64
+        when Float64
+          raw
+        else
+          nil
+        end
+      end
+
       # Resolves and concatenates/adds every operand of a top-level `+`
       # expression, left to right - array+array concatenates, string+string
       # concatenates, number+number adds; anything else falls back to
@@ -524,6 +669,16 @@ module CrystalPlay
         return literal if literal
 
         return parse_literal_array(expr) if expr.starts_with?('[') && expr.ends_with?(']')
+
+        # A `*`/`/`/`//` sub-expression nested inside a `+`/`-` operand
+        # (`2 + 3 * 4`'s own right-hand `+`-segment) - checked here so
+        # `*`/`/` bind tighter than the `+`/`-` that already split this
+        # segment out, matching real Jinja2 precedence.
+        if mult_div = split_top_level_mult_div(expr)
+          parts, ops = mult_div
+          rendered = evaluate_mult_div(parts, ops)
+          return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
+        end
 
         # A filter chain or parenthesized sub-expression operand (`acc |
         # default([])` in `acc | default([]) + [item]`) needs the full
@@ -1214,6 +1369,19 @@ module CrystalPlay
                   # branch below, treating the literal text (quotes
                   # included) as a variable NAME to resolve, always
                   # undefined.
+                  literal
+                elsif literal = numeric_literal(var_expr)
+                  # A bare numeric literal as the chain's head (`{{ 5.7 |
+                  # int }}`, `{{ 256.0 | int }}`) - same gap as the
+                  # quoted-string-literal case just above, one level
+                  # deeper: found via geerlingguy.swap's own check-
+                  # size.yml (`(stat.size / 1024 / 1024) | int` - the
+                  # parenthesized form recurses through #evaluate_expr's
+                  # own now-fixed bare-numeric-literal check, but a
+                  # *literal* head with no parens at all, as in this
+                  # simplified repro, never reached any numeric check
+                  # here and fell to the plain-lookup else branch,
+                  # always undefined).
                   literal
                 elsif var_expr.includes?("[")
                   # Array slicing (`list[0:2]`) and plain indexing

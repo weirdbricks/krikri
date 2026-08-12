@@ -49,6 +49,24 @@ describe CrystalPlay::ConditionalEvaluator do
     end
   end
 
+  describe "arithmetic operators in a bare when:/assert: value" do
+    it "evaluates */÷ in a comparison operand, not just inside {{ }} interpolation" do
+      # Real bug found benchmarking geerlingguy.swap's own check-size.yml
+      # doing its own `stat.size / 1024 / 1024` comparison as a bare
+      # when:/assert:-style value: #evaluate_value's own guard for "does
+      # this need the full ExpressionEvaluator" checked for `|`, leading
+      # `(`, ` - `, and `~`, but not `*`/`/` - even after
+      # ExpressionEvaluator itself gained arithmetic support (for `{{ }}`
+      # interpolation), a bare `when: n / 2 == 5` still fell through to
+      # this module's own much simpler dispatch, which has no arithmetic
+      # concept at all, and always evaluated false.
+      v = vars({"n" => 10_i64} of String => JSON::Any::Type)
+      CrystalPlay::ConditionalEvaluator.evaluate("n / 2 == 5", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("n / 2 == 6", v).should be_false
+      CrystalPlay::ConditionalEvaluator.evaluate("n * 2 == 20", v).should be_true
+    end
+  end
+
   describe "boolean operators" do
     it "evaluates 'and' requiring all parts true" do
       v = vars({"a" => true, "b" => false} of String => JSON::Any::Type)

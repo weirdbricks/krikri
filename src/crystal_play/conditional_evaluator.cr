@@ -603,17 +603,24 @@ module CrystalPlay
       # (possibly with trailing dotted/indexed access - dev-sec
       # os_hardening's own password-ageing assert: `( expiry_date.stdout |
       # trim | to_datetime(...) - ansible_facts.date_time.date |
-      # to_datetime(...) ).days == 60`), or a top-level `-` subtraction -
-      # delegates to ExpressionEvaluator, the same evaluator {{ }}
-      # substitution uses and the only one of the two that understands
-      # nested filter calls inside a parenthesized operand, datetime
-      # subtraction, and dotted access on a sub-expression's *result*
-      # (not just on a plain variable). Previously this module had its
-      # own separate, far less capable filter-chain-only handling here,
-      # which - among other gaps - had no concept of `|` nested inside an
-      # unclosed paren at all, so a condition shaped like the one above
-      # always evaluated to undefined.
-      if expr.includes?("|") || expr.starts_with?('(') || expr.includes?(" - ") || expr.includes?("~")
+      # to_datetime(...) ).days == 60`), or a top-level `-`/`*`/`/`
+      # arithmetic operator - delegates to ExpressionEvaluator, the same
+      # evaluator {{ }} substitution uses and the only one of the two
+      # that understands nested filter calls inside a parenthesized
+      # operand, datetime subtraction, `*`/`/`/`//` arithmetic, and
+      # dotted access on a sub-expression's *result* (not just on a
+      # plain variable). Previously this module had its own separate,
+      # far less capable filter-chain-only handling here, which - among
+      # other gaps - had no concept of `|` nested inside an unclosed
+      # paren at all, so a condition shaped like the one above always
+      # evaluated to undefined. `*`/`/` specifically were missing from
+      # this guard even after ExpressionEvaluator itself gained
+      # arithmetic support - found via geerlingguy.swap's own
+      # check-size.yml doing its own `{{ stat.size / 1024 / 1024 }}`
+      # comparison as a bare `when:`/`assert:`-style value, not just
+      # inside `{{ }}` template interpolation.
+      if expr.includes?("|") || expr.starts_with?('(') || expr.includes?(" - ") || expr.includes?("~") ||
+         expr.includes?("*") || expr.includes?("/")
         evaluator = VariableSubstitutor::ExpressionEvaluator.new(vars)
         rendered = evaluator.evaluate(expr)
         parsed = (JSON.parse(rendered) rescue nil)

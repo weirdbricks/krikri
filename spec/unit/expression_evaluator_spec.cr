@@ -263,6 +263,49 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("vault_version~('+ent' if vault_enterprise)").should eq("2.0.3+ent")
   end
 
+  it "renders a bare numeric literal, alone or as a filter chain's own head" do
+    # Real bug found in the same investigation as the */÷ arithmetic fix
+    # below: a bare numeric literal was never checked anywhere in this
+    # dispatch chain on its own (only ever as an *operand* inside a
+    # `+`/`-`/`*`/`/` expression) - `{{ 5 }}` alone, or `{{ 5.7 | int
+    # }}` (a literal float piped straight into a filter, no variable or
+    # arithmetic involved), both fell through to a plain variable-name
+    # lookup on the literal digit text itself, always "undefined".
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    evaluator.evaluate("5").should eq("5")
+    evaluator.evaluate("5.7").should eq("5.7")
+    evaluator.evaluate("5.7 | int").should eq("5")
+    evaluator.evaluate("(5.7) | int").should eq("5")
+  end
+
+  it "evaluates *, /, and // arithmetic, matching real Jinja2/Python semantics exactly" do
+    # Real bug found benchmarking geerlingguy.swap's own check-size.yml:
+    # `(swap_file_check.stat.size / 1024 / 1024) | int` (converting a
+    # stat'd byte count to MB) - `*`/`/`/`//` were entirely unimplemented
+    # anywhere in the engine (only `+`/`-`/`~` had top-level operator
+    # support), so even a bare `{{ 10 / 2 }}` rendered the literal
+    # string "undefined". The whole file-size comparison this feeds
+    # always differed, deleting and recreating the swap file on every
+    # single run instead of converging. Values verified directly against
+    # real Python's own jinja2.Environment: `/` always produces a float
+    # (true division, even when evenly divisible), `*` preserves int
+    # when both operands are int, `//` floors to int, and `*`/`/` bind
+    # tighter than `+`/`-` (`2 + 3 * 4` == 14, not 20).
+    v = Hash(String, JSON::Any).new
+    v["n"] = JSON::Any.new(268435456_i64)
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    evaluator.evaluate("10 / 2").should eq("5.0")
+    evaluator.evaluate("10 / 3").should eq("3.3333333333333335")
+    evaluator.evaluate("10 // 3").should eq("3")
+    evaluator.evaluate("10 * 2").should eq("20")
+    evaluator.evaluate("2.5 * 2").should eq("5.0")
+    evaluator.evaluate("2 + 3 * 4").should eq("14")
+    evaluator.evaluate("n / 1024 / 1024").should eq("256.0")
+  end
+
   it "evaluates a full boolean expression (is test, or, comparison) inside a plain {{ }} span" do
     # Real bug found benchmarking ansible-community.ansible-vault's own
     # `installation_required: "{{ vault_installation is failed or
