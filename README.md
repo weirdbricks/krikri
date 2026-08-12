@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.253-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.256-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -288,7 +288,24 @@ production Ansible roles (dev-sec, konstruktoid, linux-system-roles,
 geerlingguy, openstack.ansible-hardening, wireguard, ansible-vault,
 cloudalchemy.prometheus, cloudalchemy.grafana, haproxy, certbot) - see
 `git log` for the full log of what's been found and fixed. Most
-recently, a `geerlingguy.puppet`/`geerlingguy.munin-node`/`geerlingguy.
+recently, a `geerlingguy.tomcat6`/`geerlingguy.exim`/`geerlingguy.git`/
+`geerlingguy.swap` round found `mount:` never recognized `name:`, real
+Ansible's own original alias for `path:` - and fixing that surfaced a
+much deeper gap chasing it down: `*`/`/`/`//` arithmetic were entirely
+unimplemented anywhere in the plain `{{ }}` evaluator (even a bare
+`{{ 10 / 2 }}` rendered "undefined"), which in turn meant `geerlingguy.
+swap`'s own file-size comparison always differed, silently deleting and
+recreating the swap file every single run instead of converging.
+Implementing arithmetic (verified digit-for-digit against real Python's
+own jinja2.Environment) surfaced two more compounding bugs: the `int`
+filter always converted its input to a string first, so ANY float
+(not just one from division) silently became 0; and a bare numeric
+literal used alone or as a filter chain's own head was never
+recognized at all. `git`/`exim` both passed clean (including git's
+full download-and-build-from-source path); `tomcat6` isn't testable -
+its package doesn't exist on Ubuntu 22.04 and both engines reject its
+own deprecated `state: installed` identically. Before that, a
+`geerlingguy.puppet`/`geerlingguy.munin-node`/`geerlingguy.
 phpmyadmin`/`geerlingguy.adminer` round found no engine bugs at all -
 `munin-node` and `adminer` (incl. its apache dependency) both passed
 byte-identical and idempotent on the first try; `puppet` and
@@ -414,7 +431,7 @@ whose one templated element resolves to a scalar silently producing no
 loop items at all, and `cron:` required `cron_file:` (a documented but
 overly-broad scope cut - real Ansible's own default, editing a live
 user crontab, is what `certbot`'s own renewal-cron task needs). See
-KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.253`),
+KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.256`),
 the `ansible-vault` and `prometheus`/`grafana` rounds before that
 (`0.9.198`-`0.9.224`), and the `geerlingguy.*`/`range(...)` rounds
 before that.

@@ -8,9 +8,54 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.253`.**
+**Currently at `0.9.256`.**
 
 ---
+
+`0.9.254`-`0.9.256` (a twelfth real-host round: `geerlingguy.
+tomcat6`, `geerlingguy.exim`, `geerlingguy.git`, `geerlingguy.swap` -
+all new): `git` (incl. its full download/build-from-source path, not
+just the already-installed default) and `exim` both passed clean.
+`tomcat6` isn't testable at all - the `tomcat6` package doesn't exist
+on Ubuntu 22.04 (only `tomcat9`), and both engines also independently
+reject the role's own deprecated `state: installed` before ever
+reaching that task, confirmed identical on real ansible-playbook.
+`swap` found a chain of real bugs, most severe found in a while: the
+`mount:` module never recognized `name:`, real Ansible's own original
+(still commonly used, predating `path:`) alias for `path:` - the
+role's own "Manage swap file entry in fstab." task (`mount: {name:
+none, src: ..., state: ...}`) always failed outright with "missing
+required argument: path and state are both required" even though both
+were given. Fixing that surfaced a much deeper gap: `*`/`/`/`//`
+arithmetic were **entirely unimplemented anywhere in the plain `{{ }}`
+evaluator** - even a bare `{{ 10 / 2 }}` rendered the literal string
+"undefined" (only `+`/`-`/`~` had top-level operator support before).
+The role's own `check-size.yml` does `(stat.size / 1024 / 1024) | int`
+to compare an existing swap file's size in MB against the configured
+one - the whole division chain resolving undefined meant this
+comparison always differed, silently deleting and recreating the swap
+file on every single run instead of converging (only caught by
+re-running the role twice, per this project's own established
+discipline). Implementing `*`/`/`/`//` (verified digit-for-digit
+against real Python's own jinja2.Environment: `/` always produces a
+float even when evenly divisible, `*` preserves int when both operands
+are int, `//` floors to int, and `*`/`/` bind tighter than `+`/`-`)
+surfaced two more, each masking the next: the `int` filter always
+converted its input to a decimal-point STRING first ("256.0"), and
+Crystal's own strict `String#to_i64?` rejects any decimal point
+outright, silently defaulting to 0 for ANY float input, not just one
+arriving via division (Crinja's own separate `int` filter, for real
+`.j2` template files, already had this right); and a bare numeric
+literal (`{{ 5 }}`, or a literal float piped straight into a filter
+with no variable or arithmetic involved, `{{ 5.7 | int }}`) was never
+checked anywhere in the dispatch chain **on its own** - only ever as an
+*operand* inside a larger `+`/`-`/`*`/`/` expression - so it fell
+through to a plain variable-name lookup on the literal digit text
+itself, always undefined. The bare `when:`/`assert:`-condition
+evaluator (`ConditionalEvaluator`, entirely separate from the `{{ }}`
+one) had its own independent copy of the same `*`/`/`-recognition gap
+too - a bare `when: n / 2 == 5` never routed to the arithmetic-capable
+evaluator at all.
 
 An eleventh real-host round (`geerlingguy.puppet`, `geerlingguy.
 munin-node`, `geerlingguy.phpmyadmin`, `geerlingguy.adminer` - all new)

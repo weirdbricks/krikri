@@ -54,6 +54,10 @@ or already-clean roles as if they were new.
 | geerlingguy.golang | ❌ Not testable — role no longer exists on Ansible Galaxy |
 | geerlingguy.puppet | ❌ Not testable — Puppet Labs' own published apt GPG key is expired (reproduces on real ansible-playbook too) |
 | geerlingguy.phpmyadmin | ❌ Not testable — role version 1.3.3 uses `include:`, removed entirely from current ansible-core (real `ansible-playbook` refuses to parse the role at all); crystal-ansible still supports the legacy directive and runs further, but then hits the already-documented `geerlingguy.mysql` → crystal-mysql `unix_socket`/`auth_socket` auth gap, not a new issue |
+| geerlingguy.git | ✅ Clean (incl. the full download/build-from-source path, not just the already-installed default) |
+| geerlingguy.exim | ✅ Clean |
+| geerlingguy.swap | ✅ Clean (after fixing `mount:`'s `name:` alias, missing `*`/`/`/`//` arithmetic entirely, and the `int` filter's native-float handling) |
+| geerlingguy.tomcat6 | ❌ Not testable — the `tomcat6` package doesn't exist on Ubuntu 22.04 (only `tomcat9`); both engines also reject the role's own deprecated `state: installed` identically before ever reaching the package task |
 
 **Legend:** ✅ Clean = engine matches real `ansible-playbook` (idempotent,
 healthy services, config parity) as of the last time it was run. ⚠️ = engine
