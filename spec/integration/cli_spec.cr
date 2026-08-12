@@ -622,6 +622,23 @@ describe "crystal-ansible CLI (--check mode)" do
     match.should_not be_nil
     match.not_nil![1].should eq(match.not_nil![2])
     output.should contain("become smoke test complete!")
+
+    # Real bug found benchmarking geerlingguy.solr's own "Ensure core
+    # configuration directories exist." task (become_user: solr,
+    # crystal-ansible installed under /root/...): execute_local_plugin
+    # always ran the compiled plugin binary straight from wherever
+    # crystal-ansible itself lives, which broke the moment that install
+    # directory wasn't traversable by become_user (a root-owned
+    # /root/... install is a common real-world case) - `sudo: Sorry,
+    # user root is not allowed to execute '/root/.../plugins/command'
+    # as solr`, really a plain EACCES on /root's own 0700 mode, not an
+    # actual sudoers policy denial. A become: task must now stage a
+    # world-traversable copy of the plugin binary at REMOTE_PLUGIN_DIR
+    # before sudo-ing to it, exactly as this "become to the current
+    # user" task (command:, become: true) already exercises above.
+    staged_command_plugin = "/var/tmp/.crystal-play/plugins/command"
+    File.exists?(staged_command_plugin).should be_true
+    (File.info(staged_command_plugin).permissions.value & 0o777).should eq(0o755)
   end
 
   it "recovers a failed block: via rescue:, always runs always:, and the play continues" do

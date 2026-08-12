@@ -2,6 +2,7 @@ require "json"
 require "base64"
 require "digest/md5"
 require "colorize"
+require "file_utils"
 require "./ssh_manager"
 require "./local_executor"
 require "./playbook_parser"
@@ -27,6 +28,10 @@ module CrystalPlay
 
     # Cache of plugins already uploaded to remote hosts
     @@uploaded_plugins = Hash(String, Set(String)).new
+
+    # Plugins already staged to REMOTE_PLUGIN_DIR for a *local*-connection
+    # become_user execution this process - see #staged_local_plugin_path.
+    @@staged_local_plugins = Set(String).new
 
     # Digest of each *local* plugin binary, keyed by resolved local path.
     # The local file cannot change mid-run, so this is computed once per
@@ -415,6 +420,7 @@ module CrystalPlay
     # Execute plugin locally
     private def self.execute_local_plugin(plugin_name : String, config : String, become : Bool, become_user : String?) : JSON::Any
       plugin_path = get_local_plugin_path(plugin_name)
+      plugin_path = staged_local_plugin_path(plugin_name, plugin_path) if become && become_user
 
       # Execute plugin with config via stdin using Process
       stdout = IO::Memory.new
@@ -681,6 +687,44 @@ module CrystalPlay
       return compiled if File.exists?(compiled)
 
       raise "Plugin binary not found: #{plugin_name} (looked for #{compiled})"
+    end
+
+    # Stages *source_path* (the compiled plugin binary, resolved next to
+    # crystal-ansible's own executable) into the world-traversable
+    # REMOTE_PLUGIN_DIR before a local-connection `become_user:` exec.
+    #
+    # Real Ansible never executes its own module files in place - it
+    # always copies them to a tmp location the target user can reach
+    # first. execute_local_plugin previously always ran the compiled
+    # binary straight from wherever crystal-ansible itself was installed
+    # - fine when become_user is the invoking user, but broken the
+    # moment crystal-ansible lives under a directory that become_user
+    # can't traverse (a root-owned install dir like /root/... is a
+    # common real-world case for anything run as root). Found
+    # benchmarking geerlingguy.solr's own "Ensure core configuration
+    # directories exist." task (become_user: solr, crystal-ansible
+    # installed under /root/crystal-ansible-bin): `sudo: Sorry, user
+    # root is not allowed to execute '/root/.../plugins/command' as
+    # solr` - not actually a sudoers policy denial (`sudo -n -u solr --
+    # /bin/echo hi` worked fine on the same host), but a plain EACCES
+    # from execve needing +x on every path component including /root
+    # itself (mode 0700) - sudo's own error text doesn't distinguish
+    # that from a real policy denial, so it read like one.
+    #
+    # Copies once per plugin per process (mirrors upload_plugins_to_
+    # host's own memoization for the SSH path) - the local binary can't
+    # change mid-run.
+    private def self.staged_local_plugin_path(plugin_name : String, source_path : String) : String
+      staged_path = File.join(REMOTE_PLUGIN_DIR, File.basename(source_path))
+      return staged_path if @@staged_local_plugins.includes?(plugin_name)
+
+      Dir.mkdir_p(REMOTE_PLUGIN_DIR)
+      File.chmod(File.dirname(REMOTE_PLUGIN_DIR), 0o755)
+      File.chmod(REMOTE_PLUGIN_DIR, 0o755)
+      FileUtils.cp(source_path, staged_path)
+      File.chmod(staged_path, 0o755)
+      @@staged_local_plugins << plugin_name
+      staged_path
     end
 
     # Check if connection is local. Public - TaskExecutor's batch path
