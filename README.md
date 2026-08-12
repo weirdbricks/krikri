@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.258-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.265-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -288,7 +288,26 @@ production Ansible roles (dev-sec, konstruktoid, linux-system-roles,
 geerlingguy, openstack.ansible-hardening, wireguard, ansible-vault,
 cloudalchemy.prometheus, cloudalchemy.grafana, haproxy, certbot) - see
 `git log` for the full log of what's been found and fixed. Most
-recently, a `geerlingguy.tomcat6`/`geerlingguy.exim`/`geerlingguy.git`/
+recently, a `geerlingguy.composer`/`geerlingguy.solr`/`geerlingguy.
+passenger`/`geerlingguy.drupal` round found two bugs in `composer`
+(`get_url:`'s checksum algorithm silently using SHA1 for anything but
+md5/sha256, and `command:`/`shell:`/`unarchive:`'s `creates=`/
+`removes=`/`chdir=` never expanding a leading `~`) and, chained across
+a single role include file, six bugs in `solr`: a `creates=` extraction
+regex that dropped values with exactly one `{{ }}` template block and
+no other `}}` elsewhere in the string; local-connection `become_user:`
+plugin execution breaking under a non-root-traversable install
+directory (staged binaries fix it, mirroring the SSH upload path);
+Crinja missing Python's `.split(...)` string method entirely (and its
+own blanket exception handler silently discarding a whole template's
+render on that one failure); Crinja's `trim_blocks` eating a literal
+space instead of only a real newline; and `file:` not applying owner/
+group/mode to newly-created *intermediate* directory components, only
+the leaf. `passenger` and `drupal` both hit confirmed external
+blockers (a stale apt-key ID; a role task that explicitly opts out of
+root, which this benchmark harness's root-only connection violates for
+both engines equally) - not engine bugs. Before that, a `geerlingguy.
+tomcat6`/`geerlingguy.exim`/`geerlingguy.git`/
 `geerlingguy.swap` round found `mount:` never recognized `name:`, real
 Ansible's own original alias for `path:` - and fixing that surfaced a
 much deeper gap chasing it down: `*`/`/`/`//` arithmetic were entirely
@@ -445,7 +464,7 @@ whose one templated element resolves to a scalar silently producing no
 loop items at all, and `cron:` required `cron_file:` (a documented but
 overly-broad scope cut - real Ansible's own default, editing a live
 user crontab, is what `certbot`'s own renewal-cron task needs). See
-KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.258`),
+KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.265`),
 the `ansible-vault` and `prometheus`/`grafana` rounds before that
 (`0.9.198`-`0.9.224`), and the `geerlingguy.*`/`range(...)` rounds
 before that.

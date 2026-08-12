@@ -8,9 +8,68 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.258`.**
+**Currently at `0.9.265`.**
 
 ---
+
+`0.9.259`-`0.9.265` (a fourteenth real-host round: `geerlingguy.
+composer`, `geerlingguy.solr`, `geerlingguy.passenger`, `geerlingguy.
+drupal` - all new): `composer` and `solr` both passed clean after
+fixes; `passenger` and `drupal` both confirmed external blockers
+(reproducing identically on real ansible-playbook), not chased
+further - `passenger`'s own apt-key fetch uses a stale key ID no
+longer matching the actual repo's signing key, and `drupal`'s
+`composer require` task explicitly opts out of `become:` (assumes a
+non-root deploy user), which this benchmark harness's always-root
+connection violates for both engines equally.
+
+`composer` found two bugs. `get_url:`'s own `native_checksum`
+algorithm case only explicitly handled md5/sha256 - every other
+algorithm (sha1/sha224/sha384/sha512) silently computed SHA1 instead
+regardless of what was requested, so the role's own installer
+`checksum: "sha384:..."` verification always reported a mismatch on a
+download that was actually correct. Separately, `command:`/`shell:`/
+`unarchive:`'s `creates=`/`removes=`/`chdir=` never expanded a leading
+`~` before checking the filesystem - the role's own `composer_home_
+path` default is the literal string `'~/.composer'`, so the idempotency
+check against `~/.composer/vendor/x` could never match a real path and
+the task reported changed forever.
+
+`solr` found six bugs, chained across a single 5-task include file -
+each fix unblocked the next task rather than the role being "mostly
+clean" after the first one. (1) The `creates=`/`removes=`/`chdir=`
+trailing-param extraction regex's value alternative only matched a
+*single* `{{ }}` brace pair; it happened to keep working when a value
+had a second template block further along (the lazy match could
+backtrack into it), but failed outright for exactly one template block
+followed by trailing literal text with no other `}}` anywhere else in
+the string (`creates={{ solr_install_path }}/bin/solr`) - extraction
+silently never ran, and the raw untemplated text stayed glued onto the
+command. (2) Local-connection `become_user:` plugin execution always
+ran the compiled plugin binary straight from wherever crystal-ansible
+itself was installed, breaking the moment that install directory
+wasn't traversable by become_user (a root-owned `/root/...` install is
+a common real-world case) - not actually a sudoers policy denial
+despite sudo's own error text reading like one, but a plain EACCES on
+the install directory's own restrictive mode; fixed by staging plugin
+binaries to the same world-traversable directory the SSH path already
+uses. (3) Crinja had no support at all for Python's `.split(...)`
+method-call syntax on strings (`solr_version.split('.')[0] < '9'`,
+used inside a role default's own `{% if %}`) - and since
+`CrinjaRenderer#render`'s blanket exception handler falls back to
+returning the entire original template unrendered on ANY failure, this
+corrupted every task param built from that variable, not just the one
+expression. (4) Crinja's `trim_blocks` (always enabled, matching real
+Ansible's own Jinja2 default) incorrectly ate a literal space, not just
+a newline, whenever the text right after a block tag had no newline in
+it at all - real Jinja2's trim_blocks only ever removes one newline
+after a block tag and does nothing otherwise; this glued two adjacent
+`cp` command arguments into one. (5) `file:`'s directory creation
+applied owner/group/mode only to the final leaf path of a newly-created
+nested directory tree, leaving any missing *intermediate* ancestor
+directories root-owned - which mattered for real when a later
+`become_user:` task needed write permission on one of those ancestors
+to modify its own contents and got denied.
 
 `0.9.257`-`0.9.258` (a thirteenth real-host round: `geerlingguy.
 filebeat`, `geerlingguy.fluentd`, `geerlingguy.mailhog`, `geerlingguy.

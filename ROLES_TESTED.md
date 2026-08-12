@@ -62,6 +62,10 @@ or already-clean roles as if they were new.
 | geerlingguy.filebeat | ✅ Clean (byte-identical config; `apt: update_cache: true`'s own always-`changed` quirk on rerun confirmed to match real ansible-playbook exactly, not a bug) |
 | geerlingguy.ruby | ✅ Clean (after implementing `gem:`, entirely unimplemented, and fixing `apt:`'s idempotency for a purely virtual package name already satisfied via another package's `Provides:`) |
 | geerlingguy.fluentd | ❌ Not testable — the role's own td-agent apt repo (packages.treasuredata.com) has no valid Release file for Ubuntu jammy (reproduces on real ansible-playbook too) |
+| geerlingguy.composer | ✅ Clean (after fixing `get_url:`'s checksum algorithm silently using SHA1 for anything but md5/sha256, and `command:`/`shell:`/`unarchive:`'s `creates=`/`removes=`/`chdir=` not expanding a leading `~`) |
+| geerlingguy.solr | ✅ Clean (after fixing 6 chained bugs: `creates=` extraction dropping single-template values, local-connection `become_user` plugin staging under a non-traversable install dir, Crinja missing `.split(...)` support entirely, Crinja's `trim_blocks` eating a literal space, and `file:` not chowning newly-created intermediate directory components — idempotent, service verified live via `systemctl`/`curl`) |
+| geerlingguy.passenger | ❌ Not testable — the role's own apt-key fetch uses a stale key ID (`561F9B9CAC40B2F7`); the actual repo now signs with a different key (`D870AB033FB45BD1`) (reproduces on real ansible-playbook too) |
+| geerlingguy.drupal | ❌ Not testable — its `composer require` task explicitly sets `become: false` (assumes a non-root deploy user); our benchmark harness connects as root throughout, so Composer's own root-safety check aborts regardless of engine (reproduces on real ansible-playbook too) |
 
 **Legend:** ✅ Clean = engine matches real `ansible-playbook` (idempotent,
 healthy services, config parity) as of the last time it was run. ⚠️ = engine
