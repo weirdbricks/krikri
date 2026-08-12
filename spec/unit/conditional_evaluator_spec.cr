@@ -66,6 +66,41 @@ describe CrystalPlay::ConditionalEvaluator do
     end
   end
 
+  describe "bare-variable truthiness" do
+    it "treats an empty list/dict as falsy, matching real Python's bool([])/bool({})" do
+      # Real bug found in an audit pass following the Crinja Value#
+      # truthy? fix (same bug class - empty-container truthiness - in a
+      # completely separate, hand-rolled evaluator this codebase also
+      # maintains): #evaluate_value's own return union (String | Int64 |
+      # Bool | Nil | Array(String)) has no Hash case at all (an empty
+      # Hash's own #to_s, "{}", is a non-empty STRING - always truthy)
+      # and every Array collapsed to Array(String) with no truthiness
+      # case in #evaluate_truthiness's own `case` either (silently
+      # falling through to an unconditional `else -> true`). `when:
+      # my_list` with `my_list: []` (or `my_dict: {}`) always ran the
+      # task.
+      v = Hash(String, JSON::Any).new
+      v["my_list"] = JSON.parse("[]")
+      v["my_dict"] = JSON.parse("{}")
+      CrystalPlay::ConditionalEvaluator.evaluate("my_list", v).should be_false
+      CrystalPlay::ConditionalEvaluator.evaluate("my_dict", v).should be_false
+    end
+
+    it "treats a non-empty list/dict as truthy" do
+      v = Hash(String, JSON::Any).new
+      v["my_list"] = JSON.parse(%(["a"]))
+      v["my_dict"] = JSON.parse(%({"k": "v"}))
+      CrystalPlay::ConditionalEvaluator.evaluate("my_list", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("my_dict", v).should be_true
+    end
+
+    it "treats an empty list reached via a dotted path as falsy too" do
+      v = Hash(String, JSON::Any).new
+      v["nested"] = JSON.parse(%({"empty_list": []}))
+      CrystalPlay::ConditionalEvaluator.evaluate("nested.empty_list", v).should be_false
+    end
+  end
+
   describe "membership ('in')" do
     it "checks substring membership" do
       CrystalPlay::ConditionalEvaluator.evaluate(%("ba" in "bar"), EMPTY_VARS).should be_true

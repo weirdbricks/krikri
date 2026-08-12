@@ -535,6 +535,31 @@ module CrystalPlay
 
     # Evaluate truthiness of a value
     private def self.evaluate_truthiness(condition : String, vars : Hash(String, JSON::Any)) : Bool
+      # Real Ansible/Python `bool([])` and `bool({})` are both False -
+      # but #evaluate_value's own return union (String | Int64 | Bool |
+      # Nil | Array(String)) has no Hash case at all (an empty Hash's
+      # own #to_s, "{}", is a non-empty STRING - always truthy under the
+      # String case below) and every Array collapses to Array(String)
+      # with no truthiness case in the `case` below either (silently
+      # falling through to the unconditional `else -> true`). Checked
+      # directly against the resolved JSON::Any (VariableLookup#resolve,
+      # the same simple/dotted/indexed resolver {{ }} substitution
+      # already uses) before ever going through that lossy conversion.
+      # Found in the audit pass following the Crinja `Value#truthy?`
+      # fix (same bug class - empty-container truthiness - in a
+      # completely separate, hand-rolled evaluator this codebase also
+      # maintains): `when: my_list` with `my_list: []` (or `my_dict:
+      # {}`) always ran the task, verified directly against real
+      # Python's own `bool([])`/`bool({})`.
+      if resolved = VariableSubstitutor::VariableLookup.new(vars).resolve(condition)
+        case raw = resolved.raw
+        when Hash
+          return !raw.empty?
+        when Array
+          return !raw.empty?
+        end
+      end
+
       value = evaluate_value(condition, vars)
 
       case value
