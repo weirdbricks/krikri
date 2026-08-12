@@ -1510,54 +1510,51 @@ module CrystalPlay
     # params. Only ever touches the trailing end - the command body
     # itself, including any "=" it legitimately contains
     # (`VAR=1 somecommand`), is never re-tokenized or rewritten.
+    #
+    # Tokenizes via #split_shell_like (the same brace-depth-aware
+    # scanner #parse_inline_kv_params already uses) rather than a
+    # single backtracking regex over the whole string - two independent
+    # regex-based attempts here each had a real bug, in OPPOSITE
+    # directions, because a bare `\{\{.*?\}\}` alternative can't be
+    # trusted to stop at the boundary of a single template block:
+    #
+    # 1. Under-matching: a value with exactly one `{{ }}` block and no
+    #    further "}}" anywhere later in the string couldn't complete
+    #    the pattern's trailing `\s*\z` at all, so extraction silently
+    #    never happened (geerlingguy.solr's `creates={{
+    #    solr_install_path }}/bin/solr`).
+    # 2. Over-matching: with a SECOND "{{ }}" block later in the
+    #    string, the lazy `.*?` could backtrack straight through an
+    #    entire separate `key=value` param - including the space
+    #    between them and that param's own braces - to reach that
+    #    later "}}", silently absorbing it into the wrong param's
+    #    value. geerlingguy.svn's own "Create a test repository." task,
+    #    `svnadmin create testrepo chdir={{ svn_repository_home }}
+    #    creates={{ svn_repository_home }}/testrepo/README.txt`, hit
+    #    this: `chdir`'s value swallowed the entire trailing
+    #    ` creates={{ ... }}/testrepo/README.txt` text as part of
+    #    itself, so `chdir=` failed outright ("No such file or
+    #    directory") on the resulting, never-a-real-path string.
+    #
+    # A brace-depth-tracking tokenizer (rather than backtracking regex
+    # matching) can't make either mistake: it splits on whitespace
+    # *outside* any `{{ }}`/`{% %}` span, so each `key=value` token's
+    # boundary is exactly right regardless of how many template blocks
+    # appear anywhere else in the string.
     private def self.extract_command_special_params(raw : String) : {String, Hash(String, String)}
       special = Hash(String, String).new
-      remaining = raw
+      tokens = split_shell_like(raw)
 
-      loop do
-        # The `\{\{.*?\}\}` alternative (checked before the bare `\S+`
-        # catch-all) treats a templated value as one opaque token even
-        # when it has internal spaces (`chdir={{ logstash_dir }}`, the
-        # near-universal style real playbooks write - `chdir={{x}}` with
-        # no spaces already worked). Without it, `\S+` only ever matched
-        # up to the template's own leading space (`{{`), leaving the
-        # rest of the string ("target_dir }}") where `\s*\z` needed pure
-        # trailing whitespace - the whole match failed, silently
-        # dropping this special-param extraction entirely and leaving
-        # the untemplated `chdir={{ logstash_dir }}` text glued onto the
-        # command itself. Found via geerlingguy.logstash's own "Get list
-        # of installed plugins." task (`./bin/logstash-plugin list
-        # chdir={{ logstash_dir }}`) - chdir silently never applied, so
-        # the command ran from the wrong directory and failed outright
-        # ("No such file or directory") even though the binary existed.
-        #
-        # That `\{\{.*?\}\}` alone only covers a *single* brace pair -
-        # `.` is dot-all here, so the lazy `.*?` CAN stretch across an
-        # embedded "}}" if backtracking demands it, which happened to
-        # keep values with a SECOND `{{ }}` block further along
-        # matching by accident (`creates={{ a }}/vendor/{{ b }}`). A
-        # value with exactly one template block followed by trailing
-        # literal text and no further "}}" anywhere in the string -
-        # geerlingguy.solr's own "Run Solr installation script." task,
-        # `creates={{ solr_install_path }}/bin/solr` - had nothing left
-        # for the backtrack to reach, so the whole alternation failed,
-        # extraction silently didn't happen at all, and the untemplated
-        # "creates={{ solr_install_path }}/bin/solr" text stayed glued
-        # onto the command, running literally as
-        # "creates=/opt/solr/bin/solr" - the install script rejected it
-        # outright ("Unrecognized or misplaced argument"). Now matches
-        # one-or-more repetitions of "a whole {{ }} block" OR "a single
-        # non-space char" instead, which handles any number of embedded
-        # template blocks (0, 1, or many) uniformly.
-        match = remaining.match(/\A(.*?)\s+(creates|removes|chdir|executable)=("[^"]*"|'[^']*'|(?:\{\{.*?\}\}|\S)+)\s*\z/m)
+      while token = tokens.last?
+        match = token.match(/\A(creates|removes|chdir|executable)=(.*)\z/m)
         break unless match
 
-        remaining = match[1]
-        key = match[2]
-        special[key] ||= unquote_inline_value(match[3])
+        tokens.pop
+        key = match[1]
+        special[key] ||= unquote_inline_value(match[2])
       end
 
-      {remaining, special}
+      {tokens.join(" "), special}
     end
 
     # Helper: Safely convert any YAML value to string

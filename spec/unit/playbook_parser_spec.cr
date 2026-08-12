@@ -1421,6 +1421,30 @@ describe CrystalPlay::PlaybookParser do
       task.params["creates"].should eq("{{ solr_install_path }}/bin/solr")
     end
 
+    it "extracts two separate trailing special params, each with its own template block, without one absorbing the other" do
+      # Real bug found benchmarking geerlingguy.svn's own "Create a
+      # test repository." task: `svnadmin create testrepo chdir={{
+      # svn_repository_home }} creates={{ svn_repository_home }}/
+      # testrepo/README.txt` - TWO separate key=value params, each with
+      # its own `{{ }}` block. The regex-based extraction's `\{\{.*?
+      # \}\}` alternative could backtrack straight through the entire
+      # `creates=` param (including the space and braces separating it
+      # from `chdir=`) to reach ITS closing "}}", so `chdir`'s value
+      # absorbed the whole trailing "{{ svn_repository_home }}
+      # creates={{ svn_repository_home }}/testrepo/README.txt" as one
+      # blob instead of stopping at its own param boundary - `chdir=`
+      # failed outright ("No such file or directory") on the resulting
+      # not-a-real-path string.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: svnadmin create testrepo chdir={{ svn_repository_home }} creates={{ svn_repository_home }}/testrepo/README.txt
+        YAML
+
+      task.params["cmd"].should eq("svnadmin create testrepo")
+      task.params["chdir"].should eq("{{ svn_repository_home }}")
+      task.params["creates"].should eq("{{ svn_repository_home }}/testrepo/README.txt")
+    end
+
     it "does not corrupt a command containing its own unrelated = text" do
       task = single_task(<<-YAML)
         - name: t
