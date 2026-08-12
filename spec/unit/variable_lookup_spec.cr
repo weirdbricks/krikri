@@ -116,6 +116,27 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     lookup.indexed("ansible_facts.distribution_version.split('.')[1]").should eq("04")
   end
 
+  it "resolves a Python-style .find(substring) method call on a string" do
+    # Real bug found benchmarking geerlingguy.clamav's own "Run freshclam
+    # after ClamAV packages change." task: `failed_when: - freshclam_
+    # result is failed - freshclam_result.stderr.find('locked by
+    # another process') != -1` (only override the command module's own
+    # default nonzero-exit failure when THAT specific message is
+    # present - Debian's post-install freshclam run means a plain
+    # nonzero exit here is expected and not a real failure). No String
+    # method-call handling existed for `.find(...)` at all (only
+    # `.split(...)`) - resolve_nested's fallthrough (current isn't a
+    # Hash) returned nil/undefined, and `undefined != -1` evaluated
+    # true, so failed_when always fired regardless of the actual
+    # message - real ansible-playbook's own run of the identical role
+    # reports this task as "changed", not failed.
+    v = Hash(String, JSON::Any).new
+    v["r"] = JSON.parse(%({"stdout": "hello world"}))
+    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup.nested("r.stdout.find('world')").should eq("6")
+    lookup.nested("r.stdout.find('nope')").should eq("-1")
+  end
+
   it "walks a .attr suffix after an [index], not just the index alone" do
     # Real bug found benchmarking openstack.ansible-hardening's own AIDE-
     # config guard: `when: aide_conf.results[0].stat.exists | bool`, a

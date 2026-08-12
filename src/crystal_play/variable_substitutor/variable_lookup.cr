@@ -172,11 +172,19 @@ module CrystalPlay
       # the caller one level up) picks the first component.
       private def string_method_call(current : JSON::Any, part : String) : JSON::Any?
         return nil unless current.raw.is_a?(String)
-        return nil unless match = part.match(/^split\(\s*(['"])(.*)\1\s*\)$/)
 
-        sep = match[2]
-        pieces = sep.empty? ? current.as_s.chars.map(&.to_s) : current.as_s.split(sep)
-        JSON::Any.new(pieces.map { |piece| JSON::Any.new(piece) })
+        if match = part.match(/^split\(\s*(['"])(.*)\1\s*\)$/)
+          sep = match[2]
+          pieces = sep.empty? ? current.as_s.chars.map(&.to_s) : current.as_s.split(sep)
+          return JSON::Any.new(pieces.map { |piece| JSON::Any.new(piece) })
+        end
+
+        if match = part.match(/^find\(\s*(['"])(.*)\1\s*\)$/)
+          index = current.as_s.index(match[2])
+          return JSON::Any.new((index ? index : -1).to_i64)
+        end
+
+        nil
       end
 
       # Jinja2/Python dict method-call syntax (`.keys()`, `.values()`,
