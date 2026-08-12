@@ -89,6 +89,24 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     renderer.render("{{ 'Ansible managed' | comment(decoration='; ') }}").should eq(";\n; Ansible managed\n;")
   end
 
+  it "treats an empty string as falsy in 'and', matching real Python/Jinja2 truthiness" do
+    # Real bug found benchmarking geerlingguy.kibana's own kibana.yml.j2:
+    # `{% if kibana_elasticsearch_username and kibana_elasticsearch_
+    # password %}` (both default to "") - Crinja's own Value#truthy?
+    # only special-cased false/0/nil/undefined, so an empty string was
+    # truthy, and And/Or's own `op1.truthy? && op2.call.truthy?` always
+    # collapsed to true here - the rendered file had a LIVE (wrong)
+    # `elasticsearch.username: ""` pair instead of real Ansible's own
+    # commented-out `{% else %}` placeholder. Verified directly against
+    # real Python's own jinja2.Environment, not just the real host.
+    v = Hash(String, JSON::Any).new
+    v["a"] = JSON::Any.new("")
+    v["b"] = JSON::Any.new("")
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render(%({% if a and b %}T{% else %}F{% endif %})).should eq("F")
+  end
+
   it "renders a bare boolean as Python-style 'True'/'False', not Crystal's lowercase" do
     # Real bug found benchmarking geerlingguy.supervisor's own
     # supervisord.conf.j2: `nodaemon = {{ supervisor_nodaemon }}`
