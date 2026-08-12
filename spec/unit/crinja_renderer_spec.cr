@@ -53,6 +53,25 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     renderer.render("{{ greeting }}, world").should eq("hello, world")
   end
 
+  it "supports Python's str.split(...) method-call syntax inside a {% if %}" do
+    # Real bug found benchmarking geerlingguy.solr: its own
+    # solr_default_core_path default is `{% if solr_version.split('.')
+    # [0] < '9' %}...{% endif %}` - a plain Crystal String doesn't
+    # implement crinja_call, so `.split(...)` resolved as "split is
+    # undefined" (Crinja::TypeError), and CrinjaRenderer#render's own
+    # blanket `rescue` then returned the ENTIRE template - not just the
+    # one broken expression - completely unrendered. The plain
+    # hand-rolled {{ }} evaluator already supported `.split(...)`
+    # standalone (`{{ solr_version.split('.')[0] }}`) - this gap was
+    # Crinja-only, and only surfaced once `.split` sat inside a `{%
+    # if %}` (which forces escalation to the full Crinja renderer).
+    v = Hash(String, JSON::Any).new
+    v["solr_version"] = JSON::Any.new("8.11.2")
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render("{% if solr_version.split('.')[0] < '9' %}old{% else %}new{% endif %}").should eq("old")
+  end
+
   it "defaults the comment filter to a bare '#' style" do
     v = Hash(String, JSON::Any).new
     renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)

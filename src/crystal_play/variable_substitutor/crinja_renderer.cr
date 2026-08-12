@@ -1,6 +1,7 @@
 require "json"
 require "crinja"
 require "../crinja_hash_ext"
+require "../crinja_string_ext"
 require "../variable_substitutor"
 
 module CrystalPlay

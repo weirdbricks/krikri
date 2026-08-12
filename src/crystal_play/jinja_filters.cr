@@ -4,6 +4,7 @@ require "openssl/digest"
 require "./crinja_hash_ext"
 require "./crinja_bool_ext"
 require "./crinja_truthy_ext"
+require "./crinja_string_ext"
 
 # Custom Jinja2 filters that real Ansible's Jinja2 provides but Crinja
 # doesn't ship, registered into the global Crinja default library so they're
