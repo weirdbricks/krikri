@@ -403,20 +403,39 @@ module CrystalPlay
       left = stripped[0...in_idx].strip
       container = stripped[(in_idx + token_len)..].strip
       return expr if left.empty? || container.empty?
-      return expr unless container.starts_with?('[') || container.starts_with?('(')
 
       # A trailing top-level ` and `/` or ` after the container means this
       # is a compound condition, not a clean single `in` test - leave it
       # alone rather than mis-rewrite half of it.
       return expr if index_of_token(container, " and ") >= 0 || index_of_token(container, " or ") >= 0
 
-      if container.starts_with?('(')
-        inner = strip_wrapping_parens(container)
-        return expr if inner == container # not a single clean (...) wrap
-        list_literal = "[#{inner}]"
-      else
-        list_literal = container
-      end
+      list_literal = if container.starts_with?('[')
+                        container
+                      elsif container.starts_with?('(')
+                        inner = strip_wrapping_parens(container)
+                        return expr if inner == container # not a single clean (...) wrap
+                        "[#{inner}]"
+                      elsif container =~ /\A[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*|\[[^\]]+\])*\z/
+                        # A bare variable/dotted/indexed reference
+                        # (`ansible_facts.processor`, not a `[...]`
+                        # literal or `(...)` tuple) - real Ansible roles
+                        # check membership against a variable-bound list
+                        # far more often than an inline literal one.
+                        # Crinja's own `is in(seq)` test takes `seq:
+                        # Array(Crinja::Value)`, evaluated as a normal
+                        # expression - a bare variable reference needs no
+                        # bracket-wrapping at all, unlike the tuple-
+                        # literal case above. Found via dev-sec.os-
+                        # hardening's own `('amd' in ansible_facts.
+                        # processor) | pytruthy` - previously fell
+                        # through to `return expr` unrewritten (neither
+                        # `[`- nor `(`-prefixed), leaving Crinja's own
+                        # unsupported infix `in` operator untouched and
+                        # failing the whole template render outright.
+                        container
+                      else
+                        return expr
+                      end
       "#{left} is #{negated ? "not " : ""}in(#{list_literal})"
     end
 
