@@ -72,6 +72,28 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     renderer.render("{% if solr_version.split('.')[0] < '9' %}old{% else %}new{% endif %}").should eq("old")
   end
 
+  it "does not eat a literal space right after a block tag under trim_blocks (only a real newline)" do
+    # Real bug found benchmarking geerlingguy.solr: solr_default_core_
+    # path's own default is `{% if ... %}{{ a }}/conf/{% else %}{{ a
+    # }}/conf/{% endif %}`, used inside `command: "cp -r {{
+    # solr_default_core_path }} {{ solr_home }}/data/{{ item }}/"` -
+    # the space between the two cp arguments sits right after `{%
+    # endif %}` with no newline before the next `{{ }}`. Real Jinja2's
+    # trim_blocks only ever removes a newline immediately following a
+    # block tag - it should do nothing when there's no newline there.
+    # Crinja's own StringTrimmer.trim, when the text segment right
+    # after a block tag has no newline in it at all, unconditionally
+    # lstripped the WHOLE segment (correct only for an explicit `{%-
+    # %}` minus-trim, not for trim_blocks alone), eating the space and
+    # gluing both cp arguments into one ("cp: missing destination file
+    # operand").
+    v = Hash(String, JSON::Any).new
+    v["x"] = JSON::Any.new(true)
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render("cp -r {% if x %}A{% else %}B{% endif %} /dest/").should eq("cp -r A /dest/")
+  end
+
   it "defaults the comment filter to a bare '#' style" do
     v = Hash(String, JSON::Any).new
     renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
