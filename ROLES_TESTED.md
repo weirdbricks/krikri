@@ -8,8 +8,8 @@ or already-clean roles as if they were new.
 
 | Role | Status |
 |---|---|
-| dev-sec.os_hardening | ✅ Clean |
-| konstruktoid.hardening | ✅ Clean |
+| dev-sec.os_hardening | ✅ Clean (re-verified 0.9.253, after fixing `with_flattened:` alias unrecognized, literal/filter-chain loop sources dropped, and `in` against a dotted-path container) |
+| konstruktoid.hardening | ⚠️ Not re-verified this round — locked itself out of SSH mid-run on the real-ansible-playbook baseline host (port 22 closed, ICMP still responding); confirmed not crystal-ansible-side (only the python host was affected), not chased further |
 | linux-system-roles (various) | ✅ Clean |
 | geerlingguy.docker | ✅ Clean |
 | geerlingguy.mysql | ✅ Clean |
@@ -39,10 +39,10 @@ or already-clean roles as if they were new.
 | geerlingguy.pip | ✅ Clean |
 | geerlingguy.munin | ✅ Clean (after fixing `community.general.htpasswd`, previously unimplemented) |
 | geerlingguy.samba | ✅ Clean |
-| geerlingguy.supervisor | ✅ Clean (after fixing the `hash` filter and Crinja's boolean stringification) |
+| geerlingguy.supervisor | ✅ Clean (re-verified 0.9.253, byte-identical config, idempotent, `supervisorctl status` functionally authenticates with the `hash`-filter password) |
 | geerlingguy.htpasswd | ✅ Clean (after fixing `community.general.htpasswd`, previously unimplemented) |
 | geerlingguy.clamav | ✅ Clean (after fixing `.find(substring)` string method, missing from `VariableLookup`) |
-| geerlingguy.kibana | ✅ Clean (after fixing Crinja's empty-string/array/hash truthiness) |
+| geerlingguy.kibana | ✅ Clean (re-verified 0.9.253, byte-identical config, idempotent) |
 | geerlingguy.logstash | ✅ Clean (after fixing the `to_json` filter and `chdir=`/etc. with a templated, space-containing value) |
 | geerlingguy.gitlab | ✅ Clean (after fixing handler `register:`/`changed_when:`/`failed_when:`, entirely unapplied, and the `bool` filter's keyword semantics) |
 | geerlingguy.varnish | ❌ Not testable — role's own packagecloud.io apt repo has no valid Release file for Ubuntu jammy (reproduces on real ansible-playbook too) |

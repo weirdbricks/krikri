@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.249-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.253-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -288,7 +288,20 @@ production Ansible roles (dev-sec, konstruktoid, linux-system-roles,
 geerlingguy, openstack.ansible-hardening, wireguard, ansible-vault,
 cloudalchemy.prometheus, cloudalchemy.grafana, haproxy, certbot) - see
 `git log` for the full log of what's been found and fixed. Most
-recently, a `geerlingguy.clamav`/`geerlingguy.kibana`/`geerlingguy.
+recently, a regression-verification pass (re-running `dev-sec.
+os-hardening`, `geerlingguy.kibana`, and `geerlingguy.supervisor` to
+stress-test a prior round's truthiness/bool fixes) found four MORE
+real, pre-existing bugs on `os-hardening` alone - none of them
+regressions: `with_flattened:` (the short lookup-plugin-name alias real
+roles actually write, not the FQCN form) was entirely unrecognized as a
+loop keyword at all; the same resolver silently dropped every literal
+string loop source and never evaluated a filter-chain source, both
+masked by a misleading dead duplicate elsewhere in the codebase; and a
+real Jinja2 `in` test against a variable-bound list (not just an inline
+literal) failed to parse inside `{% if %}` outright. `os-hardening` now
+passes clean and fully idempotent; `kibana`/`supervisor` re-verified
+clean end to end too. Before that, a `geerlingguy.clamav`/`geerlingguy.
+kibana`/`geerlingguy.
 logstash`/`geerlingguy.gitlab` round found six bugs, the deepest being a
 handler's own `register:`/`changed_when:`/`failed_when:` entirely
 unapplied (`execute_handler_plugin_once` just returned the raw plugin
@@ -394,7 +407,7 @@ whose one templated element resolves to a scalar silently producing no
 loop items at all, and `cron:` required `cron_file:` (a documented but
 overly-broad scope cut - real Ansible's own default, editing a live
 user crontab, is what `certbot`'s own renewal-cron task needs). See
-KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.249`),
+KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.253`),
 the `ansible-vault` and `prometheus`/`grafana` rounds before that
 (`0.9.198`-`0.9.224`), and the `geerlingguy.*`/`range(...)` rounds
 before that.

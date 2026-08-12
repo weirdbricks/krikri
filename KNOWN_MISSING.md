@@ -8,9 +8,52 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.249`.**
+**Currently at `0.9.253`.**
 
 ---
+
+`0.9.250`-`0.9.253` (a regression-verification round, not a new-role
+round - re-running `dev-sec.os-hardening`, previously marked clean back
+in an earlier session, specifically to stress-test the truthiness/bool
+fixes from `0.9.240`-`0.9.249`): none of the 4 real bugs found were
+regressions from that work - all pre-existing gaps this specific role's
+own task shapes simply hadn't exercised before. `with_flattened:` (the
+short lookup-plugin-name alias real roles actually write - os-
+hardening's own "find files with write-permissions for group"/"change
+system accounts" tasks both use exactly this spelling, never the FQCN
+form) was **entirely unrecognized as a loop keyword** - missing from
+both the loop-source extraction and the special_keys allowlist that
+decides "is this a keyword or the module name" - so the whole task ran
+exactly ONCE, not looped at all, with `item` completely unbound
+(rendering the literal string "undefined" into the command). Fixing
+that surfaced two more real bugs in the SAME resolver
+(`TaskExecutor#resolve_loop_flattened`, also reachable via the FQCN
+form) that a misleading, dead, never-called duplicate in
+`loop_resolver.cr` had made look already-correct on a first read: every
+literal string source (`'/usr/local/sbin'`, not `{{ }}`-templated at
+all) was silently DROPPED rather than contributed as one item; and a
+filter-chain source (`"{{ x | difference(y) | list }}"`, not a bare
+`{{ var }}` reference) rendered to one JSON-array-shaped STRING pushed
+as a single item instead of being evaluated and flattened - `user:
+name={{ item }}` then tried to `useradd` one literal string containing
+every username joined by commas inside brackets. Separately: a real
+Jinja2 `in` test against a *variable-bound* list inside `{% if %}`
+(`'amd' in ansible_facts.processor`) failed to parse outright -
+`TemplateActionPlugin#rewrite_in_expr` (the `in`/`not in`-to-`is
+in(...)` rewrite Crinja itself needs, since it has no native infix `in`
+operator) only ever recognized a `[...]` literal or a `(...)` tuple as
+the right-hand container, never a bare variable/dotted-path reference -
+by far the more common real-world shape. `os_hardening` now passes
+`failed=0` and is fully idempotent (`changed=0` on rerun);
+`geerlingguy.kibana`/`geerlingguy.supervisor` were re-verified clean
+end to end too (byte-identical config, idempotent, `supervisorctl
+status` functionally authenticating with the `hash`-filter password).
+`konstruktoid.hardening` locked itself out of SSH mid-run on the REAL
+`ansible-playbook` baseline host (port 22 specifically closed, ICMP
+still responding - sshd or ufw, not a network drop) - confirmed not a
+crystal-ansible-side issue (only the python host was affected) and not
+chased further; abandoned for this round per the user's call, given
+`os_hardening` had already produced strong signal.
 
 `0.9.249` (a proactive audit pass, not a real-host round - following
 `0.9.244`'s Crinja `Value#truthy?` fix, checked whether the same
