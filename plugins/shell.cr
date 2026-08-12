@@ -48,7 +48,7 @@ module CrystalPlay
 
       # Check creates parameter (idempotency)
       if creates = @params["creates"]?
-        if remote_file_exists?(creates)
+        if remote_file_exists?(expand_tilde(creates))
           return PluginResult.new(
             changed: false,
             failed: false,
@@ -59,7 +59,7 @@ module CrystalPlay
 
       # Check removes parameter (conditional execution)
       if removes = @params["removes"]?
-        unless remote_file_exists?(removes)
+        unless remote_file_exists?(expand_tilde(removes))
           return PluginResult.new(
             changed: false,
             failed: false,

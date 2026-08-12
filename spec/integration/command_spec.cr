@@ -24,4 +24,22 @@ describe "command plugin" do
 
     result["stdout"].as_s.should eq("no-newline")
   end
+
+  it "expands a leading ~ in creates: before checking existence, matching real Ansible's expanduser" do
+    # Real bug found benchmarking geerlingguy.composer: its own
+    # composer_home_path default is the literal string '~/.composer',
+    # fed straight into `creates={{ composer_home_path }}/vendor/...`.
+    # Checking that string against the filesystem literally (no `~`
+    # expansion) can never match, so the task reported changed: true on
+    # every single run and never converged.
+    home = ENV["HOME"]? || "/root"
+    marker = File.join(home, "crystal-ansible-spec-tilde-marker")
+    File.write(marker, "present")
+
+    result = PluginSpecHelper.run("command", {"cmd" => "echo should-be-skipped", "creates" => "~/crystal-ansible-spec-tilde-marker"})
+
+    result["changed"].as_bool.should be_false
+  ensure
+    File.delete(marker) if marker && File.exists?(marker)
+  end
 end

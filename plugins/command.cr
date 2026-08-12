@@ -53,7 +53,7 @@ module CrystalPlay
 
       # Check creates parameter (idempotency)
       if creates = @params["creates"]?
-        if File.exists?(creates)
+        if File.exists?(expand_tilde(creates))
           return PluginResult.new(
             changed: false,
             failed: false,
@@ -65,7 +65,7 @@ module CrystalPlay
 
       # Check removes parameter (conditional execution)
       if removes = @params["removes"]?
-        unless File.exists?(removes)
+        unless File.exists?(expand_tilde(removes))
           return PluginResult.new(
             changed: false,
             failed: false,
@@ -86,7 +86,7 @@ module CrystalPlay
       end
 
       # Get optional parameters
-      chdir = @params["chdir"]?
+      chdir = @params["chdir"]?.try { |c| expand_tilde(c) }
       stdin_data = @params["stdin"]?
 
       # Change directory if requested

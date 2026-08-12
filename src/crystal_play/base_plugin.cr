@@ -296,6 +296,32 @@ module CrystalPlay
       digest.final.hexstring
     end
 
+    # Expands a leading `~` or `~username` the same way Python's own
+    # os.path.expanduser does - real Ansible's path-type params go
+    # through this before any existence check. geerlingguy.composer's
+    # own `composer_home_path: '~/.composer'` default feeds straight
+    # into command:'s `creates={{ composer_home_path }}/vendor/{{
+    # item.name }}`; checking that literal "~/.composer/vendor/..."
+    # string against the filesystem can never match (`~` is not a real
+    # path component), so the task reported changed: true on every
+    # single run, never converging - a real idempotency bug, not the
+    # role's fault (real Ansible's own AnsibleModule expands `~` for
+    # every path-type arg, creates/removes/chdir included).
+    protected def expand_tilde(path : String) : String
+      return path unless path.starts_with?('~')
+
+      rest = path[1..]
+      username, _, remainder = rest.partition('/')
+      home = if username.empty?
+               System::User.find_by?(id: LibC.getuid.to_s).try(&.home_directory) || ENV["HOME"]?
+             else
+               System::User.find_by?(name: username).try(&.home_directory)
+             end
+      return path unless home
+
+      remainder.empty? ? home : File.join(home, remainder)
+    end
+
     # Helper to check if a parameter is truthy
     protected def is_true?(value : String?, default : Bool = false) : Bool
       return default unless value

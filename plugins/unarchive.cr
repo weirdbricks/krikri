@@ -71,7 +71,8 @@ module CrystalPlay
       end
 
       if creates = @params["creates"]?
-        if remote_file_exists?(creates) || remote_dir_exists?(creates)
+        expanded_creates = expand_tilde(creates)
+        if remote_file_exists?(expanded_creates) || remote_dir_exists?(expanded_creates)
           return PluginResult.new(changed: false, failed: false, msg: "Skipped: #{creates} already exists")
         end
       end
