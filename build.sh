@@ -201,6 +201,7 @@ PLUGINS=(
     "group"
     "git"
     "pip"
+    "gem"
     "cron"
     "authorized_key"
     "stat"
