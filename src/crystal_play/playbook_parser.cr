@@ -1530,7 +1530,26 @@ module CrystalPlay
         # chdir={{ logstash_dir }}`) - chdir silently never applied, so
         # the command ran from the wrong directory and failed outright
         # ("No such file or directory") even though the binary existed.
-        match = remaining.match(/\A(.*?)\s+(creates|removes|chdir|executable)=("[^"]*"|'[^']*'|\{\{.*?\}\}|\S+)\s*\z/m)
+        #
+        # That `\{\{.*?\}\}` alone only covers a *single* brace pair -
+        # `.` is dot-all here, so the lazy `.*?` CAN stretch across an
+        # embedded "}}" if backtracking demands it, which happened to
+        # keep values with a SECOND `{{ }}` block further along
+        # matching by accident (`creates={{ a }}/vendor/{{ b }}`). A
+        # value with exactly one template block followed by trailing
+        # literal text and no further "}}" anywhere in the string -
+        # geerlingguy.solr's own "Run Solr installation script." task,
+        # `creates={{ solr_install_path }}/bin/solr` - had nothing left
+        # for the backtrack to reach, so the whole alternation failed,
+        # extraction silently didn't happen at all, and the untemplated
+        # "creates={{ solr_install_path }}/bin/solr" text stayed glued
+        # onto the command, running literally as
+        # "creates=/opt/solr/bin/solr" - the install script rejected it
+        # outright ("Unrecognized or misplaced argument"). Now matches
+        # one-or-more repetitions of "a whole {{ }} block" OR "a single
+        # non-space char" instead, which handles any number of embedded
+        # template blocks (0, 1, or many) uniformly.
+        match = remaining.match(/\A(.*?)\s+(creates|removes|chdir|executable)=("[^"]*"|'[^']*'|(?:\{\{.*?\}\}|\S)+)\s*\z/m)
         break unless match
 
         remaining = match[1]

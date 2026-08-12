@@ -1400,6 +1400,27 @@ describe CrystalPlay::PlaybookParser do
       task.params["chdir"].should eq("{{ logstash_dir }}")
     end
 
+    it "extracts a trailing special param with a single template block followed by trailing literal text" do
+      # Real bug found benchmarking geerlingguy.solr's own "Run Solr
+      # installation script." task: `creates={{ solr_install_path
+      # }}/bin/solr` - exactly one `{{ }}` block followed by literal
+      # text and no further "}}" anywhere else in the string. The old
+      # `\{\{.*?\}\}` alternative only ever matches a single brace
+      # pair; it happened to keep working for values with a SECOND
+      # template block further along (the lazy `.*?` could backtrack
+      # into it), but with only one block and no other "}}" to reach,
+      # the whole alternation failed outright, so extraction silently
+      # never ran and "creates={{ solr_install_path }}/bin/solr" stayed
+      # glued onto the command, running literally.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: /opt/solr/bin/install_solr_service.sh creates={{ solr_install_path }}/bin/solr
+        YAML
+
+      task.params["cmd"].should eq("/opt/solr/bin/install_solr_service.sh")
+      task.params["creates"].should eq("{{ solr_install_path }}/bin/solr")
+    end
+
     it "does not corrupt a command containing its own unrelated = text" do
       task = single_task(<<-YAML)
         - name: t
