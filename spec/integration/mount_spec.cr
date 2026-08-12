@@ -26,6 +26,25 @@ describe "mount plugin" do
     File.read(fstab).should eq("UUID=abc / ext4 errors=remount-ro 0 1\n/dev/sdb1 /mnt/data ext4 defaults 0 0\n")
   end
 
+  it "accepts name: as a documented alias for path:" do
+    # Real bug found benchmarking geerlingguy.swap's own "Manage swap
+    # file entry in fstab." task: `mount: {name: none, src: ..., fstype:
+    # swap, ...}` - `name:` is real Ansible's own original param name
+    # for the mount module (predating `path:`, still a documented and
+    # commonly-used alias). Only `path:` was ever read, so this always
+    # failed outright with "missing required argument: path and state
+    # are both required" even though both were given, just as `name:`/
+    # `state:`.
+    fstab = fresh_fstab("name-alias.fstab", "UUID=abc / ext4 errors=remount-ro 0 1\n")
+
+    result = PluginSpecHelper.run("mount", {
+      "name" => "none", "src" => "/swapfile", "fstype" => "swap", "opts" => "sw", "state" => "present", "fstab" => fstab,
+    })
+
+    result["changed"].as_bool.should be_true
+    File.read(fstab).should eq("UUID=abc / ext4 errors=remount-ro 0 1\n/swapfile none swap sw 0 0\n")
+  end
+
   it "reports changed: false on an idempotent rerun" do
     fstab = fresh_fstab("idempotent.fstab")
     params = {"path" => "/mnt/data", "src" => "/dev/sdb1", "fstype" => "ext4", "state" => "present", "fstab" => fstab}

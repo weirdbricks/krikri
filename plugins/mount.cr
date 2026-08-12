@@ -94,7 +94,11 @@ module CrystalPlay
     DEFAULT_FSTAB = "/etc/fstab"
 
     def execute : PluginResult
-      path = @params["path"]?
+      # `name:` is real Ansible's own documented alias for `path:` (the
+      # module's original param name, predating `path:` - still commonly
+      # used in real-world roles, e.g. geerlingguy.swap's own "Manage
+      # swap file entry in fstab." task: `mount: {name: none, src: ...}`).
+      path = @params["path"]? || @params["name"]?
       state = @params["state"]?
       unless path && state
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: path and state are both required")
