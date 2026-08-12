@@ -11,6 +11,11 @@ FILE_CHECKSUM = begin
   digest.update(FILE_CONTENT)
   digest.final.hexstring
 end
+FILE_CHECKSUM_SHA384 = begin
+  digest = OpenSSL::Digest.new("SHA384")
+  digest.update(FILE_CONTENT)
+  digest.final.hexstring
+end
 
 get_url_test_server = HTTP::Server.new do |context|
   case context.request.path
@@ -50,6 +55,28 @@ describe "get_url plugin" do
 
     result["failed"].as_bool.should be_true
     File.exists?(dest).should be_false
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "verifies a sha384 checksum correctly, not silently as sha1" do
+    # Real bug found benchmarking geerlingguy.composer's own "Download
+    # Composer installer." task: `checksum: "sha384:{{ ... }}"`.
+    # BasePlugin#native_checksum's own algorithm case only explicitly
+    # handled "md5"/"sha256" - every other algorithm (sha1, sha224,
+    # sha384, sha512) silently fell through to the `else` branch (SHA1)
+    # regardless of what was actually requested, always computing a
+    # 40-hex-char SHA1 digest against a 96-hex-char SHA384 expected
+    # value - "checksum mismatch" on a download that was genuinely
+    # correct.
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {
+      "url" => "#{get_url_base}/file.txt", "dest" => dest, "checksum" => "sha384:#{FILE_CHECKSUM_SHA384}",
+    })
+
+    result["changed"].as_bool.should be_true
+    result["failed"].as_bool.should be_false
+    File.read(dest).should eq(FILE_CONTENT)
   ensure
     File.delete(dest) if dest && File.exists?(dest)
   end

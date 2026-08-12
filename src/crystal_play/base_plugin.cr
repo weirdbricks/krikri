@@ -267,13 +267,27 @@ module CrystalPlay
       )
     end
 
-    # Native MD5/SHA1/SHA256 file checksum (no `md5sum`/`sha1sum`/
-    # `sha256sum` subprocess spawn) - streams the file through OpenSSL's
-    # generic EVP digest API rather than loading it fully into memory.
+    # Native MD5/SHA1/SHA224/SHA256/SHA384/SHA512 file checksum (no
+    # `md5sum`/`sha1sum`/`sha256sum` subprocess spawn) - streams the
+    # file through OpenSSL's generic EVP digest API rather than loading
+    # it fully into memory.
+    #
+    # Every algorithm other than md5/sha256 used to silently fall
+    # through to the `else` branch (SHA1) regardless of what was asked
+    # for - get_url:'s own `checksum: "sha384:..."` (geerlingguy.
+    # composer's own "Download Composer installer." task, verifying
+    # against the officially published installer signature) computed a
+    # 40-hex-char SHA1 digest against a 96-hex-char SHA384 expected
+    # value, always reporting "checksum mismatch" regardless of whether
+    # the download was genuinely correct.
     protected def native_checksum(path : String, algorithm : String) : String
-      openssl_name = case algorithm
+      openssl_name = case algorithm.downcase
                      when "md5"    then "MD5"
+                     when "sha1"   then "SHA1"
+                     when "sha224" then "SHA224"
                      when "sha256" then "SHA256"
+                     when "sha384" then "SHA384"
+                     when "sha512" then "SHA512"
                      else               "SHA1"
                      end
 
