@@ -8,9 +8,39 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.256`.**
+**Currently at `0.9.258`.**
 
 ---
+
+`0.9.257`-`0.9.258` (a thirteenth real-host round: `geerlingguy.
+filebeat`, `geerlingguy.fluentd`, `geerlingguy.mailhog`, `geerlingguy.
+ruby` - all new): `filebeat` and `mailhog` both passed clean (the
+latter's real HTTP service verified live via `curl`, not just task
+status). `fluentd`'s own td-agent apt repo
+(packages.treasuredata.com) has no valid Release file for Ubuntu
+jammy, reproducing identically on real ansible-playbook - the same
+external-repo failure class already seen with `geerlingguy.varnish`,
+not chased further. `ruby` found two real bugs: `ansible.builtin.gem`
+(Ruby gem management) had **no plugin at all** - both "Install
+Bundler." and "Install configured gems." silently skipped outright
+("Plugin not available"). Implemented (`plugins/gem.cr`, shelling out
+to the real `gem` CLI, matching real Ansible's own module's approach)
+supporting name/state (present/absent/latest)/version/executable
+(fluentd's own td-agent-bundled `fluent-gem` needs this)/user_install/
+bindir, idempotent via `gem list -i "^name$" [-v version]`. Separately:
+`apt:` unconditionally reported `changed: true` whenever `apt-get
+install`'s own exit code was 0, without checking whether it actually
+did anything - a requested name that's a purely *virtual* package
+already satisfied by something else installed (`rubygems` isn't a real
+package on modern Debian/Ubuntu at all, only a virtual one `ruby`'s own
+package `Provides:` - confirmed via `apt-cache showpkg rubygems`'s own
+"Reverse Provides: ruby") has no real `dpkg -l` entry for the
+is-it-already-installed pre-check to find, so it always fell through to
+"needs install," and apt-get's own exit code is 0 either way regardless
+of whether it did real work. Fixed by parsing apt-get's own end-of-run
+summary line ("N upgraded, N newly installed") post-execution, the same
+"trust the tool's own report of what happened, not just its exit code"
+approach `pip:`'s `state: latest` already uses.
 
 `0.9.254`-`0.9.256` (a twelfth real-host round: `geerlingguy.
 tomcat6`, `geerlingguy.exim`, `geerlingguy.git`, `geerlingguy.swap` -

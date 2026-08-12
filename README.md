@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.256-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.258-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -17,7 +17,7 @@ compiled binary plus a directory of plugin binaries. It supports:
 - **Ansible-syntax playbooks** - roles, imports/includes, blocks, loops,
   handlers, vault, `become:`, Jinja2 templating - not just a handful of
   modules bolted onto a task runner
-- **63 built-in plugins** covering package/service/file management, users
+- **64 built-in plugins** covering package/service/file management, users
   and groups, Docker, MySQL/MariaDB, PostgreSQL, firewalls, archives,
   SELinux/PAM, and more (see below)
 - **Single binary deployment** - no dependencies, no Python required on
@@ -63,7 +63,7 @@ See [KNOWN_MISSING.md](KNOWN_MISSING.md) for what's still missing, and
   per task, on by default (`--no-batching` to disable; see the
   Performance section below and `git log`'s `0.9.61`-`0.9.63` commits)
 
-### Plugins (63 total)
+### Plugins (64 total)
 
 **Files & templates:** `copy`, `template`, `file`, `lineinfile`,
 `blockinfile`, `replace`, `stat`, `find`, `archive`, `unarchive`, `fetch`,
@@ -73,7 +73,7 @@ See [KNOWN_MISSING.md](KNOWN_MISSING.md) for what's still missing, and
 `fail`, `set_fact`, `pause`, `wait_for`, `uri`
 
 **Packages:** `apt`, `apt_key`, `apt_repository`, `deb822_repository`,
-`dnf`, `yum_repository`, `package`, `package_facts`, `pip`
+`dnf`, `yum_repository`, `package`, `package_facts`, `pip`, `gem`
 
 **Users, groups & access:** `user`, `group`, `authorized_key`, `cron`,
 `getent`, `openssh_keypair`, `htpasswd`
@@ -129,7 +129,7 @@ crystal-ansible/
 ├── crystal-play.cr              # CLI entry point
 ├── src/crystal_play/            # Engine: parser, task executor, SSH,
 │                                 # inventory, roles, loops, vault, facts
-├── plugins/                     # One binary per Ansible module (63 total)
+├── plugins/                     # One binary per Ansible module (64 total)
 ├── spec/                        # crystal spec unit + integration tests
 ├── compat/                      # Docker-based real-ansible-playbook
 │                                 # compatibility harness
@@ -305,6 +305,20 @@ recognized at all. `git`/`exim` both passed clean (including git's
 full download-and-build-from-source path); `tomcat6` isn't testable -
 its package doesn't exist on Ubuntu 22.04 and both engines reject its
 own deprecated `state: installed` identically. Before that, a
+`geerlingguy.filebeat`/`geerlingguy.fluentd`/`geerlingguy.mailhog`/
+`geerlingguy.ruby` round found `ansible.builtin.gem` had no plugin at
+all (implemented from scratch, shelling out to the real `gem` CLI like
+real Ansible's own module does) and, separately, that `apt:`
+unconditionally reported `changed: true` whenever `apt-get install`
+exited 0 without checking whether it actually did anything - a purely
+*virtual* package name already satisfied via another installed
+package's own `Provides:` (`rubygems`, satisfied by `ruby`) has no real
+`dpkg -l` entry for the pre-check to find, so it always looked like it
+needed installing. Fixed by parsing apt-get's own end-of-run summary
+line post-execution instead of trusting the exit code alone.
+`filebeat`/`mailhog` both passed clean; `fluentd`'s own apt repo has no
+valid Release file for Ubuntu jammy, reproducing identically on real
+ansible-playbook. Before that, a
 `geerlingguy.puppet`/`geerlingguy.munin-node`/`geerlingguy.
 phpmyadmin`/`geerlingguy.adminer` round found no engine bugs at all -
 `munin-node` and `adminer` (incl. its apache dependency) both passed
@@ -431,7 +445,7 @@ whose one templated element resolves to a scalar silently producing no
 loop items at all, and `cron:` required `cron_file:` (a documented but
 overly-broad scope cut - real Ansible's own default, editing a live
 user crontab, is what `certbot`'s own renewal-cron task needs). See
-KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.256`),
+KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.258`),
 the `ansible-vault` and `prometheus`/`grafana` rounds before that
 (`0.9.198`-`0.9.224`), and the `geerlingguy.*`/`range(...)` rounds
 before that.

@@ -58,6 +58,10 @@ or already-clean roles as if they were new.
 | geerlingguy.exim | ✅ Clean |
 | geerlingguy.swap | ✅ Clean (after fixing `mount:`'s `name:` alias, missing `*`/`/`/`//` arithmetic entirely, and the `int` filter's native-float handling) |
 | geerlingguy.tomcat6 | ❌ Not testable — the `tomcat6` package doesn't exist on Ubuntu 22.04 (only `tomcat9`); both engines also reject the role's own deprecated `state: installed` identically before ever reaching the package task |
+| geerlingguy.mailhog | ✅ Clean (idempotent, service verified live via `curl`) |
+| geerlingguy.filebeat | ✅ Clean (byte-identical config; `apt: update_cache: true`'s own always-`changed` quirk on rerun confirmed to match real ansible-playbook exactly, not a bug) |
+| geerlingguy.ruby | ✅ Clean (after implementing `gem:`, entirely unimplemented, and fixing `apt:`'s idempotency for a purely virtual package name already satisfied via another package's `Provides:`) |
+| geerlingguy.fluentd | ❌ Not testable — the role's own td-agent apt repo (packages.treasuredata.com) has no valid Release file for Ubuntu jammy (reproduces on real ansible-playbook too) |
 
 **Legend:** ✅ Clean = engine matches real `ansible-playbook` (idempotent,
 healthy services, config parity) as of the last time it was run. ⚠️ = engine
