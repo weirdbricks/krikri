@@ -25,6 +25,17 @@ require "crinja"
 # `{% set %}` otherwise only ever supports a bare name target, so
 # namespace objects are specifically the one exception to that rule
 # (this file's `Tag::Set#interpret` override).
+#
+# A THIRD, unrelated `{% set %}` target shape got added to the same
+# override later (2026-08-13, same live-verification pass that found the
+# two features above needed real-host confirmation, not just a unit
+# test): `{% set a, b = expr %}` real Jinja2 tuple-target assignment,
+# found a few lines further into this exact same real template
+# (`{% set name, options = (collector.items()|list)[0] %}`) once
+# `namespace()` itself stopped being the blocker. Lives here rather than
+# a separate file because `Tag::Set#interpret` can only have ONE active
+# definition - splitting it across files would just make the last-loaded
+# one silently clobber the others.
 class Crinja::Namespace
   include Crinja::Object
 
@@ -104,6 +115,40 @@ class Crinja::Tag::Set
         raise TemplateSyntaxError.new(args.current_token, "'#{target_name}' is not a namespace object, cannot assign attribute '#{attr_name}'")
       end
       ns[attr_name] = value
+
+      args.close
+    elsif args.current_token.kind == Crinja::Parser::Token::Kind::IDENTIFIER &&
+          (peeked2 = args.peek_token?) && peeked2.kind == Crinja::Parser::Token::Kind::COMMA
+      # `{% set a, b = expr %}` - real Jinja2's tuple-target assignment
+      # (distinct from `parse_keyword_list`'s own `a = x, b = y` repeated-
+      # single-assignment syntax below - disambiguated by whether the
+      # token right after the first identifier is a comma, meaning
+      # another bare target name follows, or `=`, meaning a value).
+      # Evaluates the right-hand side ONCE and unpacks it positionally
+      # across every target name - found via prometheus.prometheus._
+      # common's own node_exporter.service.j2: `{% set name, options =
+      # (collector.items()|list)[0] %}`.
+      targets = [] of String
+      targets << args.current_token.value
+      args.next_token
+      while args.current_token.kind == Crinja::Parser::Token::Kind::COMMA
+        args.next_token
+        unless args.current_token.kind == Crinja::Parser::Token::Kind::IDENTIFIER
+          raise TemplateSyntaxError.new(args.current_token, "expected identifier in set tuple-target list")
+        end
+        targets << args.current_token.value
+        args.next_token
+      end
+
+      unless args.current_token.kind == Crinja::Parser::Token::Kind::KW_ASSIGN
+        raise TemplateSyntaxError.new(args.current_token, "expected '=' in set tuple assignment")
+      end
+      args.next_token
+
+      items = env.evaluate(args.parse_expression).each.to_a
+      targets.each_with_index do |target_name, i|
+        env.context[target_name] = items[i]? || Crinja::UNDEFINED
+      end
 
       args.close
     else

@@ -8,7 +8,59 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.311`.**
+**Currently at `0.9.320`.**
+
+---
+
+`0.9.312`-`0.9.320` (not a fresh-role benchmark round - a differential-
+harness-driven Crinja convergence pass (see `CRINJA.md`), followed by a
+live real-host re-verification of round 21's `prometheus.prometheus.
+node_exporter` specifically to confirm the fixes held end-to-end, which
+found 6 MORE real bugs beyond what the harness alone could catch (loop/
+control-flow interactions and a non-Crinja executor bug, neither the kind
+of thing a standalone-expression differential harness exercises):
+
+- `and`/`or` returned a stringified bool instead of the actual
+  short-circuited operand (`'' or 'fallback'` rendered `"True"`, not
+  `"fallback"`) - the single most common Ansible defaulting idiom, broken
+  in Crinja independently of the same bug class fixed in the hand-rolled
+  evaluator back in round 19.
+- `in`/`not in` was entirely absent from Crinja's grammar outside
+  `{% for x in y %}`'s own fixed keyword - not a narrow gap, any use of
+  the operator failed outright regardless of what was on either side.
+- `first`/`list`/`join`/`trim`/`replace` raised on an Undefined target
+  instead of the lenient empty-result real Jinja2 gives; `unique` filter
+  wasn't registered at all.
+- `namespace()` builtin (round 21's own blocker) plus `{% set ns.attr =
+  ... %}` dotted-target assignment - both entirely missing.
+- Filter/test parity audit against the hand-rolled `FilterEngine` found
+  11 more gaps: `basename`, `dirname`, `combine`, `intersect`, `max`,
+  `min` (the last two are standard Jinja2 CORE filters, missing from
+  Crinja entirely), `regex_search`, and the `match`/`search`/`ne`/
+  `truthy` tests.
+- Crinja's string lexer dropped unrecognized backslash escapes entirely
+  instead of passing them through literally - `{{ '\1' }}` rendered
+  `""`, breaking real Ansible's `'\1'`-style regex backreference syntax.
+- Live re-verification found 6 more: a ternary/`{% for x in y if COND %}`
+  parsing collision (the round-21 inline-ternary patch's `parse_expression`
+  override swallowed the for-loop's own `if` filter clause, evaluating the
+  filter condition before the loop variable was ever bound); `.startswith(
+  )`/`.endswith()` Python string methods missing; role defaults not
+  crossing an `include_role:` boundary (a real `task_executor/
+  variable_context.cr`/`role_loader.cr` bug, NOT Crinja - a role invoked
+  via `include_role:` from inside another role's tasks, like
+  `prometheus.prometheus`'s own `_common` shared-logic role, couldn't see
+  the CALLING role's own `defaults/main.yml`, discarding the whole
+  ancestor-role chain); `{% set a, b = expr %}` tuple-target assignment
+  unsupported; postfix `[index]`/`.attr`/`(call)` trailer after a
+  parenthesized expression (`(expr)[0]`) unsupported; and `not X is Y`
+  parsed as `(not X) is Y` instead of `not (X is Y)` (the same
+  misplaced-precedence bug class as the `not X in Y` fix above, but for
+  `is` tests - found because this exact round's own doc comment
+  incorrectly claimed it "already worked correctly" without testing it).
+
+`prometheus.prometheus.node_exporter` now runs clean end-to-end
+(idempotent, service verified live) - see `ROLES_TESTED.md`.
 
 ---
 

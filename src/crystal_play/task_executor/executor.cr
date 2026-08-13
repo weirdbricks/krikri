@@ -2470,6 +2470,14 @@ module CrystalPlay
       # chain plus the enclosing role's own name.
       child_parent_names = (task.role_parent_names || [] of String) + (task.role_name ? [task.role_name.as(String)] : [] of String)
       child_parent_paths = (task.role_parent_paths || [] of String) + (task.role_path ? [task.role_path.as(String)] : [] of String)
+      # task.role_defaults already represents the FULL accumulated
+      # ancestor-chain default set (RoleLoader#load_role merges
+      # parent_defaults into it before assigning), not just this role's
+      # own defaults/main.yml - so simply forwarding it here propagates
+      # the whole chain, same accumulate-not-replace approach as
+      # child_parent_names/child_parent_paths above. See RoleLoader#
+      # load_role's own comment on why this needs to happen at all.
+      child_parent_defaults = task.role_defaults || Hash(String, JSON::Any).new
 
       begin
         included_tasks, included_handlers = RoleLoader.load_single_role(
@@ -2480,7 +2488,8 @@ module CrystalPlay
           task.include_role_dir.as(String),
           task.include_role_tasks_from,
           child_parent_names,
-          child_parent_paths
+          child_parent_paths,
+          child_parent_defaults
         )
       rescue ex
         fail_include(task, host, "Failed to load role '#{role_name}': #{ex.message}")

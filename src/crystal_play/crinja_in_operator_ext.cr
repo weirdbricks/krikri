@@ -84,13 +84,33 @@ class Crinja::Parser::ExpressionParser
   # broadening for its `Symbol::OP_NOT` case - `not 'z' in ['a', 'b']`
   # parsed as `(not 'z') in ['a', 'b']` (`not 'z'` truthy-negates the
   # tight string literal to a bare `false`, then checks `false in [...]`)
-  # instead of the intended `not ('z' in ['a', 'b'])`. Scoped narrowly to
-  # the one construct real roles were found using (`not k in [...]`,
-  # `not collector is mapping` already worked correctly since `is`/`is
-  # not` tests are parsed separately at the filter level, untouched here)
-  # rather than a full precedence-chain rewrite, which would risk
-  # regressing whatever the existing low-precedence placement was relied
-  # on for elsewhere.
+  # instead of the intended `not ('z' in ['a', 'b'])`.
+  #
+  # The exact same misplaced-precedence bug applies to `is`/`is not`
+  # TESTS too, not just `in` - `not collector is mapping` parsed as
+  # `(not collector) is mapping` instead of `not (collector is mapping)`
+  # (confirmed directly: `Crinja.new.from_string("{% if not 'x' is
+  # mapping %}T{% else %}F{% endif %}").render` returned `"F"`, not the
+  # correct `"T"`) - a wrong INITIAL claim in this comment (this file's
+  # own prior revision asserted "is"/"is not" "already worked correctly"
+  # without actually testing it) that a live real-host verification run
+  # caught: prometheus.prometheus.node_exporter's own node_exporter.
+  # service.j2 has `{% if not collector is mapping %}` guarding its
+  # scalar-vs-dict collector branch, and it silently took the WRONG
+  # branch. Tests sit one level higher than `in`/`not in` in Crinja's own
+  # chain (`parse_filter`, which calls `parse_unary_expression` for ITS
+  # `left` and applies `|`/`is` on top of whatever comes back) - so
+  # fixing this means recognizing a trailing TEST here too and
+  # replicating `parse_filter`'s own TEST-branch logic (duplicated
+  # rather than shared, same reasoning as the `in`/`not in` case: no
+  # existing method boundary to call into without a bigger refactor of
+  # vendored code).
+  #
+  # Both fixes scoped narrowly to the two constructs real roles were
+  # found using (`not k in [...]`, `not collector is mapping`) rather
+  # than a full precedence-chain rewrite, which would risk regressing
+  # whatever the existing low-precedence placement was relied on for
+  # elsewhere.
   private def parse_unary_expression
     start_location = current_token.location
 
@@ -104,6 +124,28 @@ class Crinja::Parser::ExpressionParser
           next_token
           right = parse_tilde
           value = AST::ComparisonExpression.new("in", value, right).at(value, right)
+        end
+
+        if operator == Symbol::OP_NOT && current_token.kind == Kind::TEST
+          next_token
+
+          not_location = nil
+          if_token Kind::OPERATOR, "not" do
+            not_location = current_token.location
+            next_token
+          end
+
+          identifier = if_token(Kind::NONE) do
+            AST::IdentifierLiteral.new(current_token.value).at(current_token.location)
+          end || assert_token(Kind::IDENTIFIER) do
+            AST::IdentifierLiteral.new(current_token.value).at(current_token.location)
+          end
+          identifier.location_end = next_token.location
+
+          call = parse_call_expression identifier, with_parenthesis: false
+
+          value = AST::TestExpression.new(value, identifier, call.argumentlist, call.keyword_arguments).at(value, call)
+          value = AST::UnaryExpression.new("not", value).at(not_location, value.location_end) if not_location
         end
 
         return AST::UnaryExpression.new(operator, value).at(start_location, value.location_end)

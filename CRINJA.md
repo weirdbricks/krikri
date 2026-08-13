@@ -1,11 +1,110 @@
 # Crinja notes (round 21, 2026-08-13; strategy section updated 2026-08-13;
-# step-1 harness built and run 2026-08-13, see "Step 1 results" below)
+# step-1 harness built and run 2026-08-13, see "Step 1 results" below;
+# live re-verification round 2026-08-13, see "Live re-verification" below)
 
-> **If you are a model picking this up cold, read "Step 1 results" and then
-> "Strategy and next steps" at the bottom first** - they supersede the
-> older, vaguer "Recommendation for a more serious pass" thinking and tell
-> you what to actually do next and in what order. The bug sections in the
-> middle are reference material for when you get there.
+> **If you are a model picking this up cold, read "Step 1 results", then
+> "Strategy and next steps", then "Live re-verification" at the bottom
+> first** - they supersede the older, vaguer "Recommendation for a more
+> serious pass" thinking and tell you what to actually do next and in
+> what order. The bug sections in the middle are reference material for
+> when you get there.
+
+## Live re-verification (2026-08-13, same day as everything above)
+
+After steps 1, 2, 4, and the step-5 prep work below all landed, re-ran
+`prometheus.prometheus.node_exporter` (round 21's own role, the one
+`namespace()` had blocked) against a real 2-node Atlantic.net pair -
+partly to confirm the fixes held outside a unit-test/harness context,
+partly because CRINJA.md's own step-5 note already flagged that a
+dispatch-swap-adjacent change deserves live verification, not just
+`crystal spec` + the harness.
+
+**Found 6 more real bugs the harness alone never would have caught** -
+worth internalizing as a real limitation of the differential-harness
+approach, not just a footnote: `scripts/crinja_corpus/`'s corpus is
+STANDALONE `{{ }}` expressions and `{% if %}` conditions, scraped and
+rendered with no surrounding control flow. None of these six involve a
+standalone expression being wrong in isolation - every one of them is
+about an interaction between constructs (a for-loop's own `if` clause
+colliding with the ternary patch's `parse_expression` hook, a role's
+defaults not surviving an `include_role:` boundary, `not` binding wrong
+relative to a `TEST` token specifically vs. the `in` operator token
+already fixed) that only a real multi-line template, executed inside the
+real engine's actual control flow, would ever exercise. The harness sizes
+DIVERGENCES; it doesn't size CONTROL-FLOW INTERACTIONS. Worth widening
+the harness's own corpus to include full templates/for-loops/set-blocks
+if this ever gets picked up again, not just `{{ }}`/`{% if %}` spans -
+noted here rather than done, since round 21's `_common.node_exporter.
+service.j2` in isolation was sufficient to find all six anyway.
+
+The six, roughly in the order hit:
+
+1. **Ternary/`{% for x in y if COND %}` collision** - the round-21
+   `crinja_ternary_expr_ext.cr` patch overrides the single shared
+   `parse_expression` entry point; the for-tag's own iterable-parsing
+   call site also goes through it, so a for-loop's `if` filter clause got
+   swallowed as the ternary grammar's own `if`, evaluating `COND` once,
+   eagerly, before the loop ever bound its item variable -
+   `Crinja::UndefinedError` pointing at the loop variable itself. Fixed
+   by threading a `with_condexpr`-equivalent flag through (a
+   condexpr-free `parse_expression_no_condexpr` entry point) and a full
+   override of `Tag::For::Parser#parse_for_tag` to use it for the
+   iterable specifically - the exact same fix real Jinja2's own
+   `parser.py#parse_for` uses for this exact ambiguity.
+2. **`.startswith()`/`.endswith()` missing** - `crinja_string_ext.cr` had
+   `.split()` (round 2-ish) but never these two, a real gap hit directly
+   by the same template's own `m.mount.startswith('/home')`.
+3. **Role defaults not crossing an `include_role:` boundary** - NOT a
+   Crinja bug. `task_executor/variable_context.cr` builds each task's
+   vars from `task.role_defaults`, a single role's defaults assigned
+   per-task in `role_loader.cr` with no accumulation across a role-
+   inclusion chain - a role invoked via `include_role:` from inside
+   another role's tasks (`_common`, invoked by every exporter role in
+   the collection) couldn't see the CALLING role's own defaults. Real
+   Ansible keeps a role's defaults visible for the rest of the play once
+   loaded, not just for tasks physically inside that role's own files.
+   Fixed by threading an accumulated `parent_defaults` hash through
+   `RoleLoader.load_role`/`load_single_role`/`load_meta_dependencies`
+   (mirroring the existing `parent_names`/`parent_paths` chain-tracking
+   already built for round 21's parent-role template search), merged
+   under each role's own defaults at load time.
+4. **`{% set a, b = expr %}` tuple-target assignment** - real Jinja2
+   syntax, entirely unsupported (`parse_keyword_list` only ever supports
+   `a = x, b = y` repeated-single-assignment, a different grammar shape).
+   Added as a third branch in `Tag::Set#interpret` (already fully
+   replaced for `namespace()`'s own `{% set ns.attr = ... %}` case) -
+   disambiguated from the keyword-list form by peeking whether the token
+   after the first identifier is a comma (tuple target) or `=` (keyword
+   assignment).
+5. **Postfix `[index]`/`.attr`/`(call)` after a parenthesized expression**
+   - `(collector.items()|list)[0]` failed ("Did not expect any more
+   tokens, found: INTEGER"); `parse_parenthesis_expression` consumes the
+   closing `)` and returns immediately, never running the same postfix-
+   trailer loop `parse_variable_expression` gives bare identifiers. Fixed
+   by duplicating that loop into a full override (no shared method
+   boundary to hook into without a bigger refactor of vendored code).
+6. **`not X is Y` precedence** - parsed as `(not X) is Y` instead of
+   `not (X is Y)`, the exact same misplaced-precedence bug class as the
+   step-1 `not X in Y` fix, but for `is`/`is not` TESTS - which sit ONE
+   LEVEL HIGHER in Crinja's own chain (`parse_filter` calls
+   `parse_unary_expression` for its own `left`, then applies `is`/`|` on
+   top of whatever comes back), so fixing it meant recognizing a
+   trailing `TEST` token inside `parse_unary_expression`'s own `not`
+   case and replicating `parse_filter`'s TEST-branch logic inline.
+   Caught only because live verification hit `not collector is mapping`
+   directly - the fix that added the `in` version of this bug's comment
+   had explicitly (and wrongly) claimed tests "already worked correctly"
+   without testing it.
+
+Verified after each fix: full `crystal spec` (1050 examples), a harness
+re-run (regression-checking the already-fixed divergences, though none
+of these six were IN the harness's own corpus - see the limitation noted
+above), `./build.sh`, then redeploy + re-run on the live host. Final
+state: `prometheus.prometheus.node_exporter` runs clean end-to-end,
+idempotent (`changed=0` on rerun), `node_exporter` service verified
+active and serving `/metrics` via `curl`. 0.9.317 through 0.9.320 (one
+bump per fix or tightly-related pair). See `KNOWN_MISSING.md`/
+`ROLES_TESTED.md` for the terser cross-reference.
 
 Working notes for whoever picks up a more serious pass at Crinja (the vendored
 Jinja2-for-Crystal shard, `github: straight-shoota/crinja`, pinned to `branch:
