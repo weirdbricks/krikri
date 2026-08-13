@@ -9,8 +9,8 @@ authors:
 
 dependencies:
   crinja:
-    github: straight-shoota/crinja
-    branch: master
+    github: weirdbricks/crinja
+    tag: crystal-play-0.9.0
   docr:
     github: weirdbricks/docr
     branch: master

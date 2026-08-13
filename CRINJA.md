@@ -505,11 +505,23 @@ each individually rarer than #1-#5 and/or needing deeper parser surgery:
    downloads, not template rendering). Python-as-oracle is correct *here*
    even though it is rejected as a runtime engine. Expected output: a
    ranked list of divergence classes, which then sizes Decision 3.)
-2. **Fork Crinja.** Repoint `shard.yml` at the fork, **pinned to a tag or
-   SHA, not a branch**. Do not big-bang port the six `crinja_*_ext.cr`
-   patches - migrate each into the real source file the next time you need
-   to touch it. Keep a `PATCHES.md` in the fork listing every divergence
-   from upstream, so a future rebase is mechanical.
+2. **Fork Crinja. DONE 2026-08-13** - forked to
+   [`weirdbricks/crinja`](https://github.com/weirdbricks/crinja) via `gh
+   repo fork`. `shard.yml` now points there, pinned to tag
+   `crystal-play-0.9.0` (== commit `4688cc7764a113a3b1d337cb59dc0244896121e1`,
+   the exact commit `shard.lock` already had pinned before the fork existed
+   - zero behavior change from forking alone, confirmed via `shards
+   install` re-resolving to the same commit, then a clean `crystal spec`
+   (1050 examples) and `./build.sh`). Added a `PATCHES.md` to the fork
+   listing every existing `crinja_*_ext.cr` divergence and the still-open
+   gaps from "Step 1 results" above, per this plan step's own instruction
+   - **not yet migrated into the fork's real source**, per the same
+   instruction ("do not big-bang port... migrate each into the real
+   source file the next time you need to touch it"), so
+   `src/crystal_play/crinja_*_ext.cr` in THIS repo remains the
+   authoritative, currently-active source for all six pre-existing
+   patches plus the three added in the step-1 fix pass. The fork's
+   `PATCHES.md` is a manifest/roadmap, not yet a lived reality.
 3. **Upstream the clean, non-Ansible-specific fixes** as real PRs to
    `straight-shoota/crinja`, regardless of what else happens - the log
    shows outside PRs do get merged. Best candidates: the inline ternary
