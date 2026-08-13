@@ -32,6 +32,38 @@ module CrystalPlay
       private def crinja_renderer : VariableSubstitutor::CrinjaRenderer
         @crinja_renderer ||= VariableSubstitutor::CrinjaRenderer.new(@vars)
       end
+
+      # Guards the CRINJA.md step-5 delegation branches below against
+      # genuine infinite recursion: `CrinjaRenderer#prepare_crinja_vars`
+      # re-templates any variable whose OWN value still contains `{{` by
+      # building a fresh `VarSubstitutor`/`ExpressionEvaluator` and
+      # calling back into `#evaluate` - if THAT evaluation also delegates
+      # to Crinja (any of the branches below), it builds ANOTHER fresh
+      # `CrinjaRenderer`, which calls `prepare_crinja_vars` again on the
+      # same variables, which re-templates again, forever - each level
+      # constructing entirely new objects, so no single instance's own
+      # state could ever detect the cycle. Real crash found by this
+      # session's own `crystal spec` run immediately after adding the
+      # comparison-operator delegation branch (a variable holding a
+      # still-templated comparison as its default value). Same shape of
+      # bug, and same fix (a process-wide depth counter, not a per-
+      # instance one, since every recursion level IS a new instance), as
+      # `VarSubstitutor`'s own pre-existing `@@block_tag_escalation_
+      # depth` guard - see that class's own comment for the fuller
+      # rationale (cloudalchemy.grafana's `grafana_package:` stack
+      # overflow, round 3).
+      @@crinja_delegation_depth = 0
+      MAX_CRINJA_DELEGATION_DEPTH = 20
+
+      private def render_via_crinja(expr : String) : String
+        raise "crinja delegation depth exceeded" if @@crinja_delegation_depth >= MAX_CRINJA_DELEGATION_DEPTH
+        @@crinja_delegation_depth += 1
+        begin
+          crinja_renderer.render!("{{ #{expr} }}")
+        ensure
+          @@crinja_delegation_depth -= 1
+        end
+      end
       
       # Evaluate any expression and return string result. A thin guard in
       # front of #evaluate_expr for the inline ternary `TRUTHY if COND else
@@ -61,13 +93,13 @@ module CrystalPlay
           # since they're bound in `CrinjaRenderer`'s own shared vars
           # context, not specific to that branch.
           begin
-            crinja_renderer.render!("{{ #{expr} }}")
+            render_via_crinja(expr)
           rescue
             evaluate_ternary(ternary)
           end
         elsif ternary_no_else = split_ternary_no_else(expr)
           begin
-            crinja_renderer.render!("{{ #{expr} }}")
+            render_via_crinja(expr)
           rescue
             evaluate_ternary_no_else(ternary_no_else)
           end
@@ -127,7 +159,7 @@ module CrystalPlay
           # CrinjaRenderer#prepare_crinja_vars's own `omit` binding) -
           # without those this swap would have silently regressed both.
           begin
-            crinja_renderer.render!("{{ #{expr} }}")
+            render_via_crinja(expr)
           rescue
             evaluate_value_or_and(expr) || (ConditionalEvaluator.evaluate(expr, @vars) ? "True" : "False")
           end
@@ -298,7 +330,25 @@ module CrystalPlay
 
         # Check for comparison operators FIRST (before filters)
         if has_comparison?(expr)
-          return @comparison.evaluate(expr)
+          # CRINJA.md step 5, third construct: same try-Crinja-first,
+          # fall-back-to-the-exact-previous-code pattern as the
+          # boolean_logic?/ternary swaps above. `@comparison.evaluate`
+          # returns Crystal's own lowercase "true"/"false" (`Bool#to_s`)
+          # rather than real Python/Jinja2's capitalized "True"/"False" -
+          # already the SAME inconsistency the ternary swap's spec fix
+          # above found and corrected elsewhere, so this is intentional,
+          # not a regression. Confirmed safe before swapping: the one
+          # in-class consumer of a rendered comparison result
+          # (#truthy_string?, a few lines below) already checks BOTH
+          # casings (`"false"`/`"False"`) defensively; no other call site
+          # in this codebase pattern-matches a bare lowercase "true"/
+          # "false" against something this specific method could have
+          # produced.
+          return begin
+            render_via_crinja(expr)
+          rescue
+            @comparison.evaluate(expr)
+          end
         end
 
         # Check for top-level `-` subtraction - specifically datetime

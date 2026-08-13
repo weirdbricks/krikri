@@ -24,10 +24,13 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
   end
 
   it "dispatches comparisons before filters" do
+    # Real Python/Jinja2 stringifies a comparison result as "True"/
+    # "False" (capitalized), not Crystal's lowercase - verified directly
+    # against real Python's own jinja2.Environment.
     v = Hash(String, JSON::Any).new
     v["rc"] = JSON::Any.new(0_i64)
     evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
-    evaluator.evaluate("rc == 0").should eq("true")
+    evaluator.evaluate("rc == 0").should eq("True")
   end
 
   it "applies a filter to a simple variable" do
@@ -47,11 +50,11 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     v = Hash(String, JSON::Any).new
     v["mylist"] = JSON::Any.new([JSON::Any.new("a"), JSON::Any.new("b"), JSON::Any.new("c")])
     evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
-    evaluator.evaluate("mylist | length > 0").should eq("true")
+    evaluator.evaluate("mylist | length > 0").should eq("True")
 
     v["mylist"] = JSON::Any.new([] of JSON::Any)
     evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
-    evaluator.evaluate("mylist | length > 0").should eq("false")
+    evaluator.evaluate("mylist | length > 0").should eq("False")
   end
 
   it "evaluates range(stop) with the | list filter, matching Python's range()" do
@@ -394,7 +397,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     v["vault_version"] = JSON::Any.new("2.0.3")
     v["vault_enterprise"] = JSON::Any.new(false)
     evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
-    evaluator.evaluate("installed_vault_version.stdout != vault_version~('+ent' if vault_enterprise)").should eq("false")
+    evaluator.evaluate("installed_vault_version.stdout != vault_version~('+ent' if vault_enterprise)").should eq("False")
   end
 
   it "evaluates a bare quoted string literal with no filter/operator at all" do

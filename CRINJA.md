@@ -440,10 +440,64 @@ expected output exactly; differential harness re-run, no new
 divergences. `./build.sh` clean. 0.9.325.
 
 Same "not done" caveat as the first construct applies here too - no live
-real-host round yet for either swap. Next candidate, still unstarted:
-`#evaluate_expr`'s general comparison/filter dispatch (the largest,
-riskiest remaining piece - deserves its own dedicated pass, not a quick
-add-on to this one).
+real-host round yet for either swap.
+
+### Step 5, third construct: comparison operators (0.9.326)
+
+`#evaluate_expr`'s own `has_comparison?` branch (`==`/`!=`/`<`/`>`/`<=`/
+`>=` as the whole `{{ }}` span, dispatched to `ComparisonEvaluator`) -
+same try-Crinja-first pattern again. Before swapping, audited every
+in-codebase consumer of a rendered comparison string for a casing
+assumption (`ComparisonEvaluator#evaluate` returns Crystal's lowercase
+`"true"`/`"false"` via `Bool#to_s`, not real Python/Jinja2's capitalized
+form) - the one in-class consumer (`#truthy_string?`) already checks
+BOTH casings defensively, and nothing else in the codebase pattern-
+matches a bare lowercase comparison result. Same three spec assertions
+needed the same lowercase-to-capitalized correction as the ternary
+swap's spec fix, confirmed against real Python jinja2 directly before
+changing them.
+
+**Found a real, previously-latent bug this swap exposed: genuine
+infinite recursion**, not just a casing mismatch. `CrinjaRenderer#
+prepare_crinja_vars` re-templates any variable whose OWN value still
+contains `{{` by building a FRESH `VarSubstitutor`/`ExpressionEvaluator`
+pair and calling back into `#evaluate` - if that nested evaluation ALSO
+delegates to Crinja (as the comparison branch newly does), it builds
+ANOTHER fresh `CrinjaRenderer`, which calls `prepare_crinja_vars` again
+on the same variables, which re-templates again, forever - each
+recursion level constructs entirely new objects, so no single instance's
+own state could ever detect the cycle. Crashed `crystal spec` outright
+(a real stack overflow, not a slow test) the moment a spec exercised a
+variable whose default value was itself an unrendered comparison
+expression. Same bug SHAPE, and same fix, as `VarSubstitutor`'s own
+pre-existing `@@block_tag_escalation_depth` guard (round 3,
+cloudalchemy.grafana's `grafana_package:` stack overflow) - added an
+analogous process-wide `@@crinja_delegation_depth`/
+`MAX_CRINJA_DELEGATION_DEPTH` counter (`ExpressionEvaluator#render_via_
+crinja`, shared by all three constructs converged so far, not just this
+one) that falls back to the hand-rolled path once depth 20 is exceeded,
+instead of recursing without bound.
+
+This is exactly why this doc keeps insisting on incremental, individually-
+verified steps rather than a bigger swap: a construct that looked
+identical in shape and risk to the first two (try Crinja, fall back on
+failure) hid a real crash that only a full `crystal spec` run surfaced,
+and every EARLIER swap was silently exposed to the same latent risk the
+whole time (retroactively fixed for all three by the same shared guard,
+since `render_via_crinja` is now the one place all of them route
+through).
+
+Verified: full `crystal spec` (1050 examples, three assertions
+corrected); a direct repro of the exact recursion shape (a variable
+holding an unrendered comparison as its own default) confirmed no hang/
+crash and correct output; differential harness re-run, no new
+divergences. `./build.sh` clean. 0.9.326.
+
+Next candidate, still unstarted: `#evaluate_expr`'s general filter/
+lookup/literal dispatch (the largest, riskiest remaining piece -
+deserves its own dedicated pass, not a quick add-on to this one). No
+live real-host round yet for any of the three constructs converged so
+far - worth doing before starting a fourth.
 
 ## Why this matters enough to write down
 
