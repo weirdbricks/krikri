@@ -571,9 +571,62 @@ module CrystalPlay
         vars_context["ansible_facts"] = JSON::Any.new(facts_dict)
       end
 
+      vars_context["hostvars"] = JSON::Any.new(build_hostvars)
+
       render_task_vars(task, vars_context, host.name)
 
       vars_context
+    end
+
+    # Real Ansible's `hostvars[<name>]` magic variable - a dict of every
+    # host in the *whole inventory's* own vars (inventory-defined vars
+    # like ansible_host, any facts already gathered for it, and any
+    # vars it has registered so far), letting a task on one host look
+    # up another's connection details or state
+    # (`hostvars['node2'].ansible_host`) - the standard hand-written
+    # task shape every real multi-node Ansible playbook uses for
+    # cross-host orchestration (peer-probing a GlusterFS/etcd/Consul
+    # cluster's other members, templating a load balancer config from
+    # every backend's own facts, ...). Previously not populated at all,
+    # so `hostvars[...]` always resolved "undefined" - found
+    # benchmarking a real geerlingguy.glusterfs 3-node cluster: `gluster
+    # peer probe {{ hostvars['node2'].ansible_host }}` ran as `gluster
+    # peer probe undefined`, silently probing a bogus hostname instead
+    # of the real peer's IP.
+    #
+    # Deliberately sourced from @inventory.hosts (the FULL inventory),
+    # not @hosts (only this play's own `hosts:` pattern target list) -
+    # real hostvars is available for any inventory host, including ones
+    # a given play never targets itself (the glusterfs cluster playbook
+    # above: only node1 runs the peer-probe play, but needs node2/
+    # node3's hostvars too). Falls back to @hosts when there's no
+    # inventory reference at all (the async-job replay path constructs
+    # TaskExecutor without one) - covering only the current play's
+    # hosts there is still strictly better than not populating hostvars
+    # at all.
+    #
+    # Rebuilt fresh on every #build_vars_context call (once per task per
+    # host) rather than cached - real Ansible's own hostvars reflects a
+    # set_fact:/register: made by ANY host earlier in the same play, so
+    # a stale snapshot would miss updates. Deliberately narrower than a
+    # full recursive #build_vars_context call per other host (which
+    # would also need its own "hostvars" key excluded to avoid infinite
+    # recursion) - inventory vars + facts + registered vars covers every
+    # real-world hostvars[...] use seen so far.
+    private def build_hostvars : Hash(String, JSON::Any)
+      result = Hash(String, JSON::Any).new
+      all_hosts = @inventory.try(&.hosts.values) || @hosts
+      all_hosts.each do |other_host|
+        entry = Hash(String, JSON::Any).new
+        other_host.vars.each { |key, value| entry[key] = value }
+        @facts[other_host.name]?.try(&.each { |key, value| entry[key] = value })
+        @registered_vars[other_host.name]?.try(&.each { |key, value| entry[key] = value })
+        entry["inventory_hostname"] = JSON::Any.new(other_host.name)
+        entry["ansible_hostname"] ||= JSON::Any.new(other_host.name)
+        entry["ansible_host"] ||= JSON::Any.new(other_host.name)
+        result[other_host.name] = JSON::Any.new(entry)
+      end
+      result
     end
 
     # A task-level vars: value can itself be a template referencing other
@@ -2798,6 +2851,8 @@ module CrystalPlay
         end
         vars_context["ansible_facts"] = JSON::Any.new(facts_dict)
       end
+
+      vars_context["hostvars"] = JSON::Any.new(build_hostvars)
 
       # Evaluate the handler's own when: - real Ansible skips a notified
       # handler whose condition is false (e.g. os_hardening's "Restart

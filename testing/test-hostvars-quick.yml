@@ -1,0 +1,25 @@
+# Targets "hostvars_test" (same convention as test-become-quick.yml) - two
+# distinct inventory host aliases (h1/h2), both ansible_connection=local so
+# no real second machine is needed. Verifies hostvars['other_host'] cross-
+# host lookups resolve real inventory vars for a host OTHER than the one
+# currently executing, not just the current one.
+- name: hostvars smoke test
+  hosts: h1
+  gather_facts: false
+
+  tasks:
+    - name: look up h2's own inventory var via hostvars, bracket syntax
+      ansible.builtin.debug:
+        msg: "h2_via_bracket={{ hostvars['h2'].h2_only_var }}"
+
+    - name: look up h2's own inventory var via hostvars, dot syntax
+      ansible.builtin.debug:
+        msg: "h2_via_dot={{ hostvars.h2.h2_only_var }}"
+
+    - name: look up this host's own var via hostvars too, for symmetry
+      ansible.builtin.debug:
+        msg: "h1_via_hostvars={{ hostvars['h1'].h1_only_var }}"
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "hostvars smoke test complete!"

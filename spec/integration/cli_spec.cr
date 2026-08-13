@@ -641,6 +641,32 @@ describe "crystal-ansible CLI (--check mode)" do
     (File.info(staged_command_plugin).permissions.value & 0o777).should eq(0o755)
   end
 
+  it "resolves hostvars['other_host'] to that OTHER host's own inventory vars, both bracket and dot syntax" do
+    # Real bug found benchmarking a real geerlingguy.glusterfs 3-node
+    # cluster: hostvars wasn't populated in the vars_context at all, so
+    # `gluster peer probe {{ hostvars['node2'].ansible_host }}` ran as
+    # `gluster peer probe undefined` - silently probing a bogus hostname
+    # instead of the real peer's IP. hostvars is also real Ansible's
+    # standard way to reference ANY inventory host's own vars from a
+    # play that doesn't even target it, not just the current one - a
+    # naive fix that only populated hostvars from the current play's
+    # own @hosts (rather than the whole inventory) would still miss
+    # this exact case, since only node1 runs the peer-probe play in the
+    # real playbook that found this bug.
+    hostvars_inventory = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-hostvars-local.ini")
+    status, output = run_playbook(
+      "test-hostvars-quick.yml",
+      [] of String,
+      inventory: hostvars_inventory
+    )
+
+    status.success?.should be_true
+    output.should contain("h2_via_bracket=from_h2")
+    output.should contain("h2_via_dot=from_h2")
+    output.should contain("h1_via_hostvars=from_h1")
+    output.should contain("hostvars smoke test complete!")
+  end
+
   it "recovers a failed block: via rescue:, always runs always:, and the play continues" do
     status, output = run_playbook("test-error-handling-quick.yml", [] of String)
 
