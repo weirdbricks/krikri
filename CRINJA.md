@@ -1,13 +1,15 @@
 # Crinja notes (round 21, 2026-08-13; strategy section updated 2026-08-13;
 # step-1 harness built and run 2026-08-13, see "Step 1 results" below;
-# live re-verification round 2026-08-13, see "Live re-verification" below)
+# live re-verification round 2026-08-13, see "Live re-verification" below;
+# divergence-harness cleanup pass 2026-08-13, see that section below)
 
-> **If you are a model picking this up cold, read "Step 1 results", then
-> "Strategy and next steps", then "Live re-verification" at the bottom
-> first** - they supersede the older, vaguer "Recommendation for a more
-> serious pass" thinking and tell you what to actually do next and in
-> what order. The bug sections in the middle are reference material for
-> when you get there.
+> **If you are a model picking this up cold, read "Divergence-harness
+> cleanup pass" (near the top), then "Step 1 results", then "Strategy and
+> next steps", then "Live re-verification" (further down) first** - they
+> supersede the older, vaguer "Recommendation for a more serious pass"
+> thinking and tell you what to actually do next and in what order. The
+> bug sections in the middle are reference material for when you get
+> there.
 
 ## Live re-verification (2026-08-13, same day as everything above)
 
@@ -107,14 +109,96 @@ bump per fix or tightly-related pair). See `KNOWN_MISSING.md`/
 `ROLES_TESTED.md` for the terser cross-reference.
 
 Working notes for whoever picks up a more serious pass at Crinja (the vendored
-Jinja2-for-Crystal shard, `github: straight-shoota/crinja`, pinned to `branch:
-master` in `shard.yml`). Not committed - purely a handoff document for other
-models/sessions. Written after round 21 of the real-host benchmark workflow
-(see `CLAUDE.md`), which for the first time exercised a real Ansible
-**Collection** (`prometheus.prometheus`, specifically the `node_exporter`
-role and its shared `_common` role) rather than a plain Galaxy role. That
-role turned out to be an unusually deep stress-test of Crinja specifically,
-surfacing more distinct Crinja bugs in one round than any prior round.
+Jinja2-for-Crystal shard - originally `github: straight-shoota/crinja`
+pinned to `branch: master`, now forked to `github: weirdbricks/crinja`
+pinned to tag `crystal-play-0.9.0`, see Decision 2/step 2 below). Committed
+(this file is tracked in git as of the step-1 harness work) - a handoff
+document for other models/sessions, not end-user documentation. Written
+after round 21 of the real-host benchmark workflow (see `CLAUDE.md`), which
+for the first time exercised a real Ansible **Collection**
+(`prometheus.prometheus`, specifically the `node_exporter` role and its
+shared `_common` role) rather than a plain Galaxy role. That role turned out
+to be an unusually deep stress-test of Crinja specifically, surfacing more
+distinct Crinja bugs in one round than any prior round - and, months later
+the same day, an even deeper one once the live re-verification round below
+started using it as a torture test on purpose.
+
+## Divergence-harness cleanup pass (2026-08-13, after Live re-verification)
+
+Went back through every remaining `scripts/crinja_corpus/divergence_report.md`
+entry from "Step 1 results" below (16 at the time) plus a few the live
+re-verification round surfaced, fixing everything tractable:
+
+- `.get(key, default)` Python dict method on a dict LITERAL (not just a
+  Hash-valued template variable) - unimplemented, and failed with an
+  opaque `not implemented for Crinja::AST::DictLiteral` crash rather than
+  a clean error (see the `name_for_expression` fix below - the SAME
+  crash class, a separate root cause). Fixed in `crinja_hash_ext.cr`.
+- `.join(iterable)` Python string method (`' '.join(x)`, the reverse-
+  argument-order sibling of the `| join(sep)` FILTER, and of `.split()`/
+  `.startswith()`/`.endswith()` already fixed) - unimplemented. Fixed in
+  `crinja_string_ext.cr`.
+- `sum(attribute=..., start=[])` with an array-typed `start` (a real
+  Python idiom for flattening a list of lists) crashed instead of
+  concatenating - vendored Crinja always treated `start` as numeric.
+  Re-registered in `crinja_undefined_filter_ext.cr`.
+- `Evaluator#name_for_expression`'s fallback (only has overloads for
+  `IdentifierLiteral`/`MemberExpression`/`IndexExpression`) hard-crashed
+  with "not implemented for #{class}" on ANY other AST node type used as
+  an undefined-method receiver, turning what should be a clean error into
+  an opaque one - a general robustness gap, not scoped to one construct.
+  New `crinja_evaluator_errors_ext.cr`, degrades to the node's own `to_s`
+  instead of raising.
+- **The real root cause behind BOTH remaining bucket-A entries turned out
+  to be the same bug**, and it was bigger than either looked in isolation:
+  a no-parens filter/test call's argument-list parser has no way to stop
+  at a reserved keyword (`in`/`if`/`else`/`and`/`or`/`recursive` aren't
+  their own token `Kind`, just plain identifiers), so it greedily
+  swallows the next keyword as an implicit argument. This didn't just
+  break `x | string in [...]` (the originally-catalogued case) - it broke
+  `X if Y is SOMETEST else Z` for ANY no-parens test name, i.e. any
+  inline ternary whose condition is a bare `is`-test, a common
+  combination, not a narrow edge case. New
+  `crinja_no_parens_call_ext.cr`, full override of `parse_call_expression`
+  stopping before parsing args at all when the next token is one of a
+  fixed reserved-word set.
+- `is boolean`/`is integer`/`is float` (real Ansible type tests) were
+  fixed once already (round 18, robertdebock.zabbix_server) but only in
+  the HAND-ROLLED `ConditionalEvaluator` - never ported to Crinja's own
+  test registry, so any real `.j2` template or `{{ }}` ternary routed
+  through Crinja still hit "no test registered". Added to
+  `jinja_filters.cr` alongside the other Ansible-specific tests.
+- The harness itself (`scripts/crinja_corpus/oracle_crinja.cr`) switched
+  from requiring each `crinja_*_ext.cr` file individually to requiring
+  `jinja_filters.cr` directly (the real production entry point, which
+  transitively requires all of them) - closes a recurring self-inflicted
+  gap where a new ext file, or a filter/test added directly in
+  `jinja_filters.cr` itself, silently wasn't visible to the harness
+  because this one file's require list fell out of sync with the real
+  ones. Also correctly reclassifies real Ansible-only filters (`ternary`,
+  `regex_replace`, `bool`, `version`, ...) into bucket D ("python fails,
+  crinja succeeds") instead of bucket E's "both fail" noise, which is the
+  accurate story now that Crinja genuinely has an advantage there.
+- `map('split')` (one of the two remaining bucket-C generator/list-
+  stringification items after the above) was investigated and confirmed
+  to be pure harness noise, not a bug: real Python jinja2 has no `split`
+  FILTER either (only Crinja's own `.split()` METHOD, unrelated), and
+  fails identically to Crinja when given a real bound value - the
+  original corpus sample only "succeeded" on the Python side because the
+  unbound-variable input short-circuited before the filter lookup ever
+  ran. Confirmed via `env.filters` inspection and a bound-value repro
+  against real Python jinja2 directly.
+
+**Result: buckets A and B are now both 0.** Remaining bucket C (7 items,
+same ones as "Step 1 results" plus the two `map('split')`-adjacent items
+that flipped from erroring to a value mismatch once the harness's own
+require-chain fix let them run) are the same low-priority/explainable
+items already documented there - a CPython `Undefined.__iter__`-exists-so-
+`is iterable`-returns-True quirk, and `select`/`reject` without a trailing
+`| list` stringifying as an eager list in Crinja vs. a lazy generator repr
+in real Python (arguably more useful behavior, not a bug). Deliberately
+left unfixed, same reasoning as before. 0.9.321. Full `crystal spec` (1050
+examples) and `./build.sh` clean.
 
 ## Why this matters enough to write down
 

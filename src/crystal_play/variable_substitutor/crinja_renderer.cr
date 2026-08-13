@@ -10,6 +10,8 @@ require "../crinja_undefined_filter_ext"
 require "../crinja_namespace_ext"
 require "../crinja_paren_postfix_ext"
 require "../crinja_string_escape_ext"
+require "../crinja_evaluator_errors_ext"
+require "../crinja_no_parens_call_ext"
 require "../variable_substitutor"
 
 module CrystalPlay

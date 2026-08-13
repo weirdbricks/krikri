@@ -24,6 +24,33 @@ class Hash(K, V)
       ->(_arguments : Crinja::Arguments) do
         Crinja::Value.new(self.map { |key, value| Crinja::Value.new([Crinja::Value.new(key), Crinja::Value.new(value)]) })
       end
+    when "get"
+      # Real Python `dict.get(key, default=None)` as a plain method call -
+      # `.get()` on a DICT LITERAL (not a Hash-valued template variable,
+      # which uses string keys - a `{...}` literal parsed inside a
+      # template builds a `Crinja::Dictionary` = `Hash(Value, Value)`,
+      # hence the `is_a?` branch below rather than the unconditional
+      # `Crinja::Value.new(key)` the other methods above use) failed with
+      # a raw, uninformative "not implemented for Crinja::AST::
+      # DictLiteral" crash - not even a clean "method not found" -
+      # because the Evaluator's own error-formatting fallback
+      # (`name_for_expression`, see crinja_evaluator_errors_ext.cr) had
+      # no case for a dict-literal receiver either, compounding a plain
+      # missing-method gap into an opaque one.
+      ->(arguments : Crinja::Arguments) do
+        lookup = arguments.varargs[0]? || Crinja::Value.new(nil)
+        default = arguments.varargs[1]? || Crinja::Value.new(nil)
+        found = self.find do |k, _v|
+          key_value = k.is_a?(Crinja::Value) ? k.as(Crinja::Value) : Crinja::Value.new(k)
+          key_value == lookup
+        end
+        if found
+          v = found[1]
+          v.is_a?(Crinja::Value) ? v.as(Crinja::Value) : Crinja::Value.new(v)
+        else
+          default
+        end
+      end
     else
       nil
     end

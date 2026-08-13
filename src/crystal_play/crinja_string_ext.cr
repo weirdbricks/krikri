@@ -45,6 +45,19 @@ class String
         prefix = arguments.varargs[0]?.try(&.raw.try(&.to_s)) || ""
         Crinja::Value.new(self.starts_with?(prefix))
       end
+    when "join"
+      # Real Python `str.join(iterable)` as a plain method call - the
+      # SEPARATOR is the receiver (`' '.join(['a','b'])` -> `"a b"`),
+      # reverse argument order from Jinja2's own `| join(sep)` FILTER.
+      # Found chained with `.split()` (`' '.join(deps).split()`,
+      # Oefenweb.fail2ban's own per-element list rendering) - `.join`
+      # itself was never implemented as a method call at all (only the
+      # filter form was), so the whole chain failed before `.split()`
+      # ever got a chance to run.
+      ->(arguments : Crinja::Arguments) do
+        iterable = arguments.varargs[0]? || Crinja::Value.new([] of Crinja::Value)
+        Crinja::Value.new(iterable.each.map(&.to_s).to_a.join(self))
+      end
     when "endswith"
       # Same as `startswith` above, the natural pair - not found in a
       # real template yet, added alongside for completeness rather than

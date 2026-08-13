@@ -108,6 +108,51 @@ module Crinja::Filter
     end
   end
 
+  # `sum(attribute=none, start=0)` - real Python `sum()` supports any
+  # `start` value `+` is defined for, not just numbers - Ansible roles
+  # lean on this to FLATTEN a list of lists via
+  # `| sum(attribute='packages', start=[])` (dev-sec/konstruktoid-
+  # hardening's own STIG package-list pattern:
+  # `stig_packages_rhel7 | selectattr(...) | sum(attribute='packages',
+  # start=[])`, concatenating each matched item's own `packages` list
+  # into one flat list). Vendored Crinja's version always does
+  # `arguments["start"].as_number`, raising a raw `Cast from
+  # Array(Crinja::Value) to (Float64 | Int32 | Int64) failed` the moment
+  # `start:` isn't numeric. Re-registered (overwrite-by-later-`<<`, same
+  # pattern as `first`/`list`/`join` above) to branch on `start`'s own
+  # type: array-typed `start` concatenates, everything else keeps the
+  # vendored numeric-sum behavior unchanged.
+  Crinja.filter({attribute: nil, start: 0}, :sum) do
+    attribute = arguments["attribute"].as_s?
+    start = arguments["start"]
+
+    if (start_array = start.raw).is_a?(Array(Value))
+      result = start_array.dup
+      target.each do |item|
+        item = Resolver.resolve_dig(attribute, item) unless attribute.nil?
+        raw = item.raw
+        if raw.is_a?(Array(Value))
+          result.concat(raw)
+        else
+          result << item
+        end
+      end
+      result
+    else
+      sum = start.as_number
+      target.each do |item|
+        item = Resolver.resolve_dig(attribute, item) unless attribute.nil?
+        raw = item.raw
+        if raw.is_a?(Crinja::Number)
+          sum += raw
+        else
+          raise TypeError.new("cannot add #{raw.class} to sum, value: #{raw.inspect}")
+        end
+      end
+      sum
+    end
+  end
+
   # `unique(case_sensitive=false, attribute=none)` - not implemented in
   # Crinja at all ("no filter with name \"unique\" registered", failing
   # any `| ... | unique | ...` filter pipeline outright). A common

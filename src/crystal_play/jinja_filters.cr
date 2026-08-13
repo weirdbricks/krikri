@@ -13,6 +13,8 @@ require "./crinja_undefined_filter_ext"
 require "./crinja_namespace_ext"
 require "./crinja_paren_postfix_ext"
 require "./crinja_string_escape_ext"
+require "./crinja_evaluator_errors_ext"
+require "./crinja_no_parens_call_ext"
 
 # Custom Jinja2 filters that real Ansible's Jinja2 provides but Crinja
 # doesn't ship, registered into the global Crinja default library so they're
@@ -592,6 +594,27 @@ module CrystalPlay
     # already fixed centrally (`crinja_truthy_ext.cr`), so this is a
     # thin wrapper, not a new behavior.
     Crinja.test(:truthy) { target.truthy? }
+
+    # `boolean`/`integer`/`float` - real Ansible's own type tests
+    # (ansible.plugins.test.core), not standard Jinja2. Crinja's core
+    # test registry (lib/crinja/src/lib/test/tests.cr) already has
+    # `mapping`/`sequence`/`string`/`number`/`iterable`/`none` natively,
+    # but never these three - found via a chained-ternary corpus
+    # expression (`value | lower if value is boolean else value`,
+    # scripts/crinja_corpus/) that otherwise parsed and ran fine once
+    # the no-parens-call-swallows-`else` bug (crinja_no_parens_call_ext.
+    # cr) was fixed. This exact type-test set was already fixed once
+    # before, round 18 (robertdebock.zabbix_server) - but only in the
+    # hand-rolled `ConditionalEvaluator`, never ported to Crinja's own
+    # registry, so any of these three reached through a REAL `.j2`
+    # template or a `{{ }}` ternary (routed through Crinja, not the
+    # hand-rolled evaluator) still failed. `boolean`/`integer` need the
+    # real Python distinction that `bool` is a SEPARATE type from `int`
+    # even though Crystal's own `Bool`/`Int32`/`Int64` don't have that
+    # ambiguity to begin with, so no special-casing needed there.
+    Crinja.test(:boolean) { target.raw.is_a?(Bool) }
+    Crinja.test(:integer) { target.raw.is_a?(Int32) || target.raw.is_a?(Int64) }
+    Crinja.test(:float) { target.raw.is_a?(Float64) }
 
     # Splits a version string into its numeric components (`"8.9p1"` ->
     # `[8, 9, 1]`, ignoring the non-digit "p" separator), then compares

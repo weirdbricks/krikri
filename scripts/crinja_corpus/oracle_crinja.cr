@@ -2,11 +2,32 @@
 #
 # Renders every corpus.jsonl entry through raw Crinja directly (Crinja.new /
 # env.from_string(...).render - bypassing this codebase's own CrinjaRenderer
-# wrapper, per CRINJA.md's own recommendation), with all of this codebase's
-# crinja_*_ext.cr monkey-patches loaded (so already-fixed bugs don't show up
-# as noise) but WITHOUT CrinjaRenderer's text-level trim-marker workaround
-# (so bug #1's underlying lexer gap still shows, honestly, as a raw-engine
-# divergence).
+# wrapper, per CRINJA.md's own recommendation), with the FULL real-runtime
+# require chain loaded (`jinja_filters.cr`, which transitively requires
+# every `crinja_*_ext.cr` patch AND registers every Ansible-specific
+# filter/test this codebase adds - `ternary`, `regex_replace`, `match`,
+# `boolean`, etc.) but WITHOUT CrinjaRenderer's text-level trim-marker
+# workaround (so bug #1's underlying lexer gap still shows, honestly, as a
+# raw-engine divergence).
+#
+# Originally required each `crinja_*_ext.cr` file individually rather than
+# `jinja_filters.cr` itself, deliberately scoping the harness to "core
+# Crinja" and treating Ansible-specific additions as expected mutual gaps
+# (see this directory's own README on bucket E's "expected noise").
+# Switched to `jinja_filters.cr` directly (2026-08-13) after repeatedly
+# forgetting to add a new ext file to this list separately from the real
+# require chains (`src/crystal_play/jinja_filters.cr`/`variable_
+# substitutor/crinja_renderer.cr`), AND after several filters/tests added
+# directly in `jinja_filters.cr` itself (`match`/`search`/`ne`/`truthy`/
+# `boolean`/`integer`/`float`) kept showing as "missing" here even after
+# being verified fixed, purely because this file's require list didn't
+# reach them. Requiring the real production entry point directly
+# eliminates both problems at once - one require list to keep in sync,
+# not two - at the cost of also making some Ansible-specific gaps (real
+# Python jinja2 has no `ternary`/`regex_replace`/etc.) resolve to bucket D
+# ("python fails, crinja succeeds") instead of bucket E, which is
+# correct, not noise: Crinja does very legitimately have a real advantage
+# there now.
 #
 # No context variables are bound - same as oracle_python.py - so results
 # are driven by syntax/literal semantics, not guessed Ansible fact values.
@@ -16,19 +37,7 @@
 # entry, same order.
 
 require "json"
-require "crinja"
-require "../../src/crystal_play/crinja_hash_ext"
-require "../../src/crystal_play/crinja_bool_ext"
-require "../../src/crystal_play/crinja_truthy_ext"
-require "../../src/crystal_play/crinja_string_ext"
-require "../../src/crystal_play/crinja_trim_blocks_ext"
-require "../../src/crystal_play/crinja_ternary_expr_ext"
-require "../../src/crystal_play/crinja_logic_ext"
-require "../../src/crystal_play/crinja_in_operator_ext"
-require "../../src/crystal_play/crinja_undefined_filter_ext"
-require "../../src/crystal_play/crinja_namespace_ext"
-require "../../src/crystal_play/crinja_paren_postfix_ext"
-require "../../src/crystal_play/crinja_string_escape_ext"
+require "../../src/crystal_play/jinja_filters"
 
 def shared_env : Crinja
   env = Crinja.new
