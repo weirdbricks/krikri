@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.268-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.270-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -288,7 +288,27 @@ production Ansible roles (dev-sec, konstruktoid, linux-system-roles,
 geerlingguy, openstack.ansible-hardening, wireguard, ansible-vault,
 cloudalchemy.prometheus, cloudalchemy.grafana, haproxy, certbot) - see
 `git log` for the full log of what's been found and fixed. Most
-recently, a `geerlingguy.hdparm`/`geerlingguy.daemonize`/`geerlingguy.
+recently, a `geerlingguy.glusterfs` round (single instance, then a
+genuine 3-node cluster - real `ansible-playbook` orchestrating one
+cluster, `crystal-ansible` a separate one, both via real SSH, both
+forming actual replicated GlusterFS volumes) found single-instance
+install clean on the first try, and two real bugs in the 3-node
+cluster phase's hand-written peer-probe play (the standard shape any
+real multi-node playbook uses, not part of the role itself).
+`hostvars[<name>]`, Ansible's magic variable for looking up any OTHER
+inventory host's own vars, was entirely unimplemented - any
+`hostvars['node2'].ansible_host` lookup silently resolved "undefined",
+so a peer-probe task ran against a bogus hostname instead of the real
+peer's IP, breaking cluster formation outright. Separately,
+`evaluate_in`'s own naive string split on " in " wasn't quote-aware,
+so a quoted literal that itself contains the word "in" as its own word
+(`'already in peer list' not in ...` - gluster's own real idempotency-
+check message) split at the "in" INSIDE the quotes instead of the real
+operator, breaking `changed_when` idempotency for any multi-node
+cluster playbook using this pattern. Both fixed and re-verified: both
+3-node clusters converge to `changed=0` on rerun, with cross-node file
+replication through the mounted volume functionally confirmed. Before
+that, a `geerlingguy.hdparm`/`geerlingguy.daemonize`/`geerlingguy.
 svn`/`geerlingguy.blackfire` round found `hdparm` clean on the first
 try, and two more bugs. `svn` found a THIRD bug in the same trailing
 `creates=`/`removes=`/`chdir=` extraction logic two earlier rounds had
@@ -495,7 +515,7 @@ whose one templated element resolves to a scalar silently producing no
 loop items at all, and `cron:` required `cron_file:` (a documented but
 overly-broad scope cut - real Ansible's own default, editing a live
 user crontab, is what `certbot`'s own renewal-cron task needs). See
-KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.268`),
+KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.270`),
 the `ansible-vault` and `prometheus`/`grafana` rounds before that
 (`0.9.198`-`0.9.224`), and the `geerlingguy.*`/`range(...)` rounds
 before that.

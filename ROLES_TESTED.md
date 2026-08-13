@@ -77,6 +77,7 @@ or already-clean roles as if they were new.
 | geerlingguy.daemonize | ✅ Clean (idempotent, correct version functionally verified; needs `build-essential` as a pre-task prerequisite on a bare image — real ansible-playbook needs it too) |
 | geerlingguy.svn | ✅ Clean (after fixing `creates=`/`chdir=` extraction absorbing a second param's value; idempotent, repository created, `svnserve`/`apache2` verified live) |
 | geerlingguy.blackfire | ✅ Clean (after fixing `apt_key:`'s idempotency for `url:`/`data:` with no `id:`, the common real-world shape; idempotent, packages + apache verified live) |
+| geerlingguy.glusterfs | ✅ Clean, incl. a real 3-node cluster (own legacy `include:` patched locally to `include_tasks:`, and `glusterfs_ppa_version` overridden to `"9"` - the role's own default `"7"` has no jammy PPA release; both external, not crystal-ansible). Single-instance install clean on the first try. The 3-node cluster (real `ansible-playbook` orchestrating one cluster, `crystal-ansible` a separate one, both via real SSH, forming genuine replicated GlusterFS volumes) found two real engine bugs: `hostvars[<name>]` was entirely unimplemented, and `'x' not in y.stdout` mis-split when the literal itself contained the word "in". Both fixed; final state idempotent on both clusters, `gluster peer status`/`volume status` all green, cross-node file replication functionally verified through the mounted volume. |
 
 **Legend:** ✅ Clean = engine matches real `ansible-playbook` (idempotent,
 healthy services, config parity) as of the last time it was run. ⚠️ = engine

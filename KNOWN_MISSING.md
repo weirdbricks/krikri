@@ -8,9 +8,51 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.268`.**
+**Currently at `0.9.270`.**
 
 ---
+
+`0.9.269`-`0.9.270` (a seventeenth real-host round, at the user's
+explicit request: `geerlingguy.glusterfs`, single-instance first, then
+a genuine 3-node cluster - real `ansible-playbook` orchestrating one
+cluster, `crystal-ansible` orchestrating a separate one, both via real
+SSH to 3 real nodes each, both forming actual replicated GlusterFS
+volumes rather than just installing the daemon). Single-instance
+install passed clean on the first try. Two external blockers hit and
+patched locally (not crystal-ansible bugs, confirmed by reproducing on
+real ansible-playbook too): the role's own tasks/main.yml uses the
+legacy `include:` directive, removed from current ansible-core -
+patched to `include_tasks:` (same failure mode already documented for
+`geerlingguy.phpmyadmin`/`geerlingguy.gogs`); and `glusterfs_ppa_
+version`'s own default ("7") has no PPA release for Ubuntu jammy -
+overridden to "9".
+
+The 3-node cluster phase (a hand-written peer-probe + volume-create/
+start play, not part of the role itself - the standard shape every
+real multi-node Ansible playbook uses) found two real engine bugs.
+`hostvars[<name>]`, Ansible's magic variable for looking up any
+OTHER inventory host's own vars, was entirely unimplemented - any
+`hostvars['node2'].ansible_host` lookup silently resolved "undefined",
+so `gluster peer probe {{ hostvars['node2'].ansible_host }}` probed a
+bogus hostname instead of the real peer's IP, breaking cluster
+formation outright. Implemented, sourced from the whole inventory (not
+just the current play's own target hosts, since the peer-probe play
+here only targets node1 but needs node2/node3's hostvars too).
+Separately, `evaluate_in`'s own naive string split on " in " wasn't
+quote-aware, so a quoted literal that itself contains the word "in" as
+its own word (`'already in peer list' not in probe2.stdout` - `gluster
+peer probe`'s own real idempotency-check message for an
+already-connected peer) split at the "in" INSIDE the quotes instead of
+the real operator, evaluating `changed_when` as true on every single
+run regardless of the actual output - a real idempotency bug for any
+multi-node cluster playbook. Fixed by reusing the same quote/paren-
+depth-aware splitter already used for and/or in the same file.
+
+Final state, re-verified after both fixes: both 3-node clusters fully
+idempotent on rerun (`changed=0`), `gluster peer status`/`volume
+status gv0` all green on both, and cross-node file replication
+functionally verified (a file written through the mount on node1 reads
+back correctly from node2).
 
 `0.9.267`-`0.9.268` (a sixteenth real-host round: `geerlingguy.hdparm`,
 `geerlingguy.daemonize`, `geerlingguy.svn`, `geerlingguy.blackfire` -
