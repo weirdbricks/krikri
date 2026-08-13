@@ -26,6 +26,8 @@ require "../../src/crystal_play/crinja_ternary_expr_ext"
 require "../../src/crystal_play/crinja_logic_ext"
 require "../../src/crystal_play/crinja_in_operator_ext"
 require "../../src/crystal_play/crinja_undefined_filter_ext"
+require "../../src/crystal_play/crinja_namespace_ext"
+require "../../src/crystal_play/crinja_string_escape_ext"
 
 def shared_env : Crinja
   env = Crinja.new

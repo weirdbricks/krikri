@@ -30,6 +30,15 @@ crystal run scripts/crinja_corpus/oracle_crinja.cr
 python3 scripts/crinja_corpus/diff.py
 ```
 
+`bench_evaluators.cr` is a separate, standalone tool in this same
+directory - not part of the corpus/diff pipeline above. It measures the
+hand-rolled `ExpressionEvaluator` against raw Crinja (both uncached and
+with a source-keyed `Template` parse cache) for a handful of
+representative expression shapes, informing CRINJA.md's step-5
+performance question. Run with `crystal run --release
+scripts/crinja_corpus/bench_evaluators.cr` (release build matters, it's a
+perf measurement).
+
 Requires `python3 -c "import jinja2"` to work (`pip install jinja2` if
 not). Re-run step 1 whenever a new benchmark round leaves scratch trees
 behind, to widen the corpus.

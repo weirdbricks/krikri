@@ -11,6 +11,7 @@ require "./crinja_logic_ext"
 require "./crinja_in_operator_ext"
 require "./crinja_undefined_filter_ext"
 require "./crinja_namespace_ext"
+require "./crinja_string_escape_ext"
 
 # Custom Jinja2 filters that real Ansible's Jinja2 provides but Crinja
 # doesn't ship, registered into the global Crinja default library so they're
@@ -477,6 +478,119 @@ module CrystalPlay
       opts |= Regex::Options::MULTILINE if arguments.kwargs["multiline"]?.try(&.truthy?)
       !!(target.to_s =~ Regex.new(pattern, opts))
     end
+
+    # `basename`/`dirname` - Python's `os.path.basename`/`os.path.dirname`,
+    # real Ansible filters (not standard Jinja2). Ported from this
+    # codebase's own hand-rolled `FilterEngine` (found missing there via
+    # geerlingguy.mysql's `mysql_log_error | dirname` - see that file's
+    # own comment for the exact failure mode) to close the same gap in
+    # Crinja, as prep for CRINJA.md's step-5 evaluator convergence -
+    # Crinja had neither registered at all.
+    Crinja.filter(:basename) { File.basename(target.to_s) }
+    Crinja.filter(:dirname) { File.dirname(target.to_s) }
+
+    # `combine(*others)` - shallow dict merge, later argument wins on key
+    # collisions. Real Ansible's own filter (not standard Jinja2).
+    # Ported from `FilterEngine#combine_hash` (same shallow, non-
+    # recursive semantics - `recursive=`/`list_merge=` kwargs real
+    # Ansible also supports are not implemented here, matching the
+    # hand-rolled version's own scope).
+    Crinja.filter(:combine) do
+      varargs = arguments.varargs
+      base = target.raw
+
+      if base.is_a?(Hash)
+        merged = base.dup
+        varargs.each do |other|
+          other_raw = other.raw
+          other_raw.each { |key, value| merged[key] = value } if other_raw.is_a?(Hash)
+        end
+        Crinja::Value.new(merged)
+      else
+        target
+      end
+    end
+
+    # `intersect(other)` - elements of *target* that also appear in
+    # *other*, deduplicated, order taken from *target*. Real Ansible's
+    # own filter (not standard Jinja2). Ported from `FilterEngine`'s own
+    # version (found missing there via konstruktoid-hardening's
+    # `ansible_facts.packages.keys() | intersect(packages_blocklist)` -
+    # see that file's own comment for the correctness+hang impact of
+    # this filter silently no-op'ing).
+    Crinja.filter(:intersect) do
+      other_set = (arguments.varargs[0]?.try(&.each.to_a) || [] of Crinja::Value).to_set
+      seen = Set(Crinja::Value).new
+      target.each.to_a.select { |item| other_set.includes?(item) && seen.add?(item) }
+    end
+
+    # `max`/`min` - real Jinja2 core filters, absent from Crinja
+    # entirely. Compares elements with `Value`'s own `<=>` (Comparable),
+    # matching real Jinja2's general (not numeric-only) comparison -
+    # unlike `FilterEngine`'s own numeric-only version (`numeric(v)`,
+    # used because that evaluator has no generic value-comparison
+    # already available); Crinja's `Value` already implements
+    # `Comparable`, so there is no reason to narrow it here.
+    Crinja.filter(:max) { target.each.to_a.max?.try(&.raw) }
+    Crinja.filter(:min) { target.each.to_a.min?.try(&.raw) }
+
+    # `regex_search(pattern, group_ref='')` - real Ansible's own filter
+    # (not standard Jinja2): searches *pattern* anywhere in the target
+    # (Python `re.search`, not a full match), and with a backreference-
+    # style second argument (`'\\1'`) returns that captured group's text
+    # instead of the whole match. No match resolves to Undefined -
+    # ported from `FilterEngine`'s own version (see that file's own
+    # comment on why Undefined rather than an empty string: a caller
+    # chaining `| first` needs a real miss, not a silently-succeeding
+    # empty match). Found missing there via konstruktoid-hardening's own
+    # `sshd_version.stderr_lines | regex_search('OpenSSH_(...)', '\\1')
+    # | first`.
+    Crinja.filter({pattern: Crinja::UNDEFINED, group_ref: ""}, :regex_search) do
+      pattern = arguments["pattern"].to_s
+      group_ref = arguments["group_ref"].to_s
+      match = target.to_s.match(Regex.new(pattern))
+      if match
+        if group_ref.empty?
+          match[0]
+        else
+          index = group_ref.gsub(/\D/, "").to_i?
+          index ? match[index]? : nil
+        end
+      end || Crinja::UNDEFINED
+    end
+
+    # `match`/`search` Jinja tests - real Ansible tests
+    # (ansible.builtin.match/search), not standard Jinja2. `match`
+    # anchors at the start of the string (Python `re.match`), `search`
+    # matches anywhere (Python `re.search`) - same distinction as the
+    # `regex` test above, which defaults to search-anywhere. Missing
+    # from Crinja's core test registry entirely (confirmed via the
+    # differential harness, scripts/crinja_corpus/ - `[x] | reject('match',
+    # ...)` failed with "no test with name \"match\" registered"; select/
+    # reject's filter-form dispatches through `env.tests`, so registering
+    # these as TESTS fixes both the `is match(...)` test form and the
+    # `select('match', ...)`/`reject('match', ...)` filter form for free).
+    Crinja.test(:match) do
+      pattern = arguments.varargs[0]?.try(&.to_s) || ""
+      !!(target.to_s =~ Regex.new("^(?:#{pattern})"))
+    end
+
+    Crinja.test(:search) do
+      pattern = arguments.varargs[0]?.try(&.to_s) || ""
+      !!(target.to_s =~ Regex.new(pattern))
+    end
+
+    # `ne` - real Jinja2 core test (not equal), absent from Crinja
+    # entirely (only `equalto`/`eq` was registered).
+    Crinja.test({other: Crinja::UNDEFINED}, :ne) do
+      target != arguments["other"]
+    end
+
+    # `truthy` - real Jinja2 2.11+ core test (Python `bool(value)`),
+    # absent from Crinja's test registry. `Value#truthy?` itself is
+    # already fixed centrally (`crinja_truthy_ext.cr`), so this is a
+    # thin wrapper, not a new behavior.
+    Crinja.test(:truthy) { target.truthy? }
 
     # Splits a version string into its numeric components (`"8.9p1"` ->
     # `[8, 9, 1]`, ignoring the non-digit "p" separator), then compares

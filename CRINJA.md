@@ -565,6 +565,100 @@ each individually rarer than #1-#5 and/or needing deeper parser surgery:
    steps 1 and 2 exist - without the harness there is no way to tell a
    convergence regression from a pre-existing bug.
 
+   **Prep work done 2026-08-13, the swap itself NOT started** - both of
+   this step's own gates are now resolved, and the actual dispatch
+   rewiring (routing `VarSubstitutor#substitute`'s `evaluator.evaluate`
+   calls through Crinja instead of the hand-rolled `ExpressionEvaluator`)
+   deliberately was not attempted this session - see why at the end of
+   this note.
+
+   - **Performance gate: resolved, in favor of convergence.** Built
+     `scripts/crinja_corpus/bench_evaluators.cr` (200k iterations,
+     `--release`, 6 representative expression shapes). Even WITHOUT
+     caching, raw Crinja (re-parsing via `from_string` every call) was
+     already faster than the hand-rolled evaluator for 5 of 6 shapes.
+     Implemented the source-keyed parse cache CRINJA.md's own text named
+     as the fix (`CrinjaRenderer#cached_template`, a process-wide
+     `Hash(String, Crinja::Template)` - same `@@`-class-var-safe-under-
+     single-fiber-scheduling reasoning as `@@env` right above it in that
+     file; bounded by distinct task-param template strings in a
+     playbook, not per-host/per-iteration, so no eviction needed) - it
+     turned out this did NOT need the fork at all, `Crinja#from_string`/
+     `Template#render` were already a public, externally-cacheable API.
+     With the cache, Crinja is **2-9x faster** than the hand-rolled
+     evaluator across every tested shape (e.g. `flag and foo ==
+     'bar'`: 727ns vs 5806ns/call). Wired into the real `#render` path
+     (used for block-tag-containing task params today), verified via
+     full `crystal spec` (1050 examples) + `./build.sh`. **This flips
+     the framing**: performance was never actually a reason to hesitate
+     on convergence - the hand-rolled evaluator, being a heavyweight
+     string-dispatch machine rather than a real parser, is the SLOWER
+     path today.
+   - **Gap-size gate: already resolved by step 1** (16 remaining
+     divergences after the step-1 fix pass - a long tail, not a wall).
+     Extended it with a **filter/test parity audit**: diffed the hand-
+     rolled `FilterEngine`'s ~55 `when "..."` branches against every
+     filter/test Crinja + `jinja_filters.cr` register. Found 11 real
+     gaps (present in hand-rolled, absent everywhere in Crinja):
+     `basename`, `dirname`, `combine`, `intersect`, `max`, `min` (the
+     last two are standard Jinja2 CORE filters, surprising to find
+     missing), the `regex_search` filter, and the `match`/`search`/`ne`/
+     `truthy` tests (`match`/`search`/`truthy` also close the
+     corresponding corpus divergences from "Step 1 results" above -
+     `select`/`reject('match', ...)` dispatches through `env.tests`, so
+     registering the TEST form fixes the filter form for free). Ported
+     all of these into `jinja_filters.cr` (matching real Ansible/Python
+     semantics, not reinvented) - EXCEPT `to_datetime`, deliberately
+     deferred (the hand-rolled version represents a datetime as a tagged-
+     JSON epoch-seconds hack purely because `FilterEngine` has no native
+     datetime type; Crinja's own `Value` already has a real `Time` raw
+     type, so a faithful port wants `-`/`.days` arithmetic support on
+     Crinja `Time` values first, which doesn't exist yet - worth doing
+     properly rather than reintroducing the same hack in a codebase that
+     doesn't need it). Verified each ported filter/test by hand against
+     real semantics (dirname/basename via `File.dirname`/`File.basename`,
+     combine as shallow-merge-later-wins matching `FilterEngine#combine_
+     hash` exactly, etc.) - not yet turned into permanent regression
+     specs, per this doc's own "worth doing opportunistically" note
+     below.
+   - **Bonus find while testing `regex_search`'s backreference argument**:
+     Crinja's string lexer (`BaseLexer#consume_string`,
+     `lib/crinja/src/parser/base_lexer.cr`) drops BOTH the backslash AND
+     the following character for any unrecognized escape sequence -
+     `{{ '\1' }}` rendered `""`, not `"\1"`, breaking real Ansible's
+     `regex_search(pattern, '\1')` backreference syntax (a literal
+     backslash-digit, straight from Python's `re` module convention)
+     outright. Fixed via `crinja_string_escape_ext.cr` (full replacement
+     of `consume_string`, same shape as `crinja_trim_blocks_ext.cr`'s
+     `self.trim_text` override) - unrecognized escapes now pass through
+     literally, matching real Python/Jinja2. Unrelated to the dispatch-
+     swap question itself, just found along the way.
+   - **Why the actual swap didn't happen this session**: it is real
+     behavior-changing surgery across the single highest-traffic code
+     path in the whole engine (`substitute` runs 2-4x per task per
+     host, for every playbook this tool has ever run) - the 1050-example
+     spec suite covers a lot of the hand-rolled evaluator's behavior, but
+     not certainly all of it, and `FilterEngine`'s own 1388 lines almost
+     certainly still has functionality beyond the 11-item gap this
+     session's audit found time to check (the audit compared filter/test
+     NAMES, not argument signatures or edge-case semantics - e.g.
+     `default`'s several real-Ansible calling conventions, or
+     `to_datetime`'s deliberately-deferred datetime-arithmetic gap
+     already found). Attempting the swap in the same sitting as finding
+     it was newly *possible* felt like exactly the kind of rushed,
+     hard-to-fully-verify change this plan's own step-5 framing warns
+     against ("Do not start it before steps 1 and 2 exist - without the
+     harness there is no way to tell a convergence regression from a
+     pre-existing bug" - true of the harness, and just as true of rushing
+     the swap itself). Recommend, when this is picked back up: start with
+     ONE narrow, well-understood construct (the `boolean_logic?`
+     branch - `or`/`and`/`is` - is the highest-bug-density part of
+     `ExpressionEvaluator#evaluate` historically, per round 15/19/21's
+     `git log`), swap ONLY that branch to delegate to Crinja, run full
+     `crystal spec` + the step-1 harness + a real-host benchmark round
+     before trusting it, then move to the next construct. Do not attempt
+     a single wholesale swap of the whole dispatch.
+
 Also worth doing opportunistically, per this doc's own earlier note: write
 each fixed Crinja bug up as a regression spec **against Crinja's own
 `Crinja.new` / `env.from_string(...).render` API**, bypassing

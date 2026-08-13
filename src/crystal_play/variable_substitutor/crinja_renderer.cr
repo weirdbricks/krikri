@@ -8,6 +8,7 @@ require "../crinja_logic_ext"
 require "../crinja_in_operator_ext"
 require "../crinja_undefined_filter_ext"
 require "../crinja_namespace_ext"
+require "../crinja_string_escape_ext"
 require "../variable_substitutor"
 
 module CrystalPlay
@@ -51,6 +52,46 @@ module CrystalPlay
         env.config.trim_blocks = true
         env.config.lstrip_blocks = false
         @@env = env
+      end
+
+      # Crinja parses eagerly in `Template.new` (see `Crinja#from_string`
+      # -> `Template#initialize`'s `run_parser` default) - #render
+      # previously called `shared_env.from_string(...)` fresh on every
+      # single call, re-lexing and re-parsing the SAME task-param Jinja
+      # source every time that param got substituted (2-4x per task per
+      # host, per this class's own `@template_vars` caching comment
+      # above - the exact same "once per renderer, not once per render"
+      # motivation applies here). `Template` is documented as immutable
+      # once built and `#render(bindings)` takes fresh bindings each
+      # call, so a template parsed once is safe to reuse for every
+      # subsequent render with different `@vars` - including across
+      # different `VarSubstitutor`/`CrinjaRenderer` instances, hence
+      # process-wide like `@@env` above (same instances, same input, same
+      # renderer output - not re-templated dependent on host-specific
+      # data at this layer, so a template built for one host applies
+      # unchanged to any other). Bounded in practice by the number of
+      # DISTINCT task-param template strings in a playbook (this receives
+      # the raw, not-yet-substituted param text - typically dozens to a
+      # few hundred across a whole run), not per-host or per-loop-
+      # iteration, so no eviction needed.
+      #
+      # Measured via `scripts/crinja_corpus/bench_evaluators.cr`: even
+      # WITHOUT this cache, raw Crinja already renders faster than this
+      # codebase's hand-rolled `ExpressionEvaluator` for most tested
+      # expression shapes; with it, Crinja is 2-9x faster across the
+      # board (e.g. `flag and foo == 'bar'`: 727ns vs 5806ns/call) -
+      # see CRINJA.md's "Decision 3" section for what this means for the
+      # dual-evaluator convergence question.
+      #
+      # Same single-fiber-at-a-time safety argument as `@@env` above
+      # applies to this `||=` read-check-write: Crinja's render path
+      # never yields the fiber, so under Crystal's cooperative
+      # scheduling no two `--forks` hosts can ever interleave a
+      # read/write race on this Hash.
+      @@template_cache = Hash(String, Crinja::Template).new
+
+      private def cached_template(source : String) : Crinja::Template
+        @@template_cache[source] ||= shared_env.from_string(source)
       end
 
       # The vendored Crinja shard's expression-lexer mistokenizes a
@@ -156,7 +197,7 @@ module CrystalPlay
         # more than once.
         template_vars = (@template_vars ||= prepare_crinja_vars)
 
-        template = shared_env.from_string(normalize_expression_trim_markers(text))
+        template = cached_template(normalize_expression_trim_markers(text))
         template.render(template_vars)
       rescue
         # Return original text on failure
