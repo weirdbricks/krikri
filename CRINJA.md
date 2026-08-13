@@ -338,6 +338,72 @@ differential harness - IDENTICAL bucket counts to before the migration
 (A=0, B=0, C=7 same items, D=200, E=1370) confirming behavioral
 equivalence, not just "it compiles." `./build.sh` clean. 0.9.323.
 
+### Step 5, first construct: the boolean_logic? branch (0.9.324)
+
+Step 2 and the fork migration above were prerequisites, not the payload.
+This is the actual first slice of "Then, and only then, start
+incrementally routing hand-rolled paths through Crinja, one construct at
+a time" - the item this doc had explicitly deferred (see the earlier
+"why the actual swap didn't happen this session" note) until performance
+and gap-size were both resolved. `ExpressionEvaluator#evaluate`'s
+`boolean_logic?` branch (`or`/`and`/`is` as a `{{ }}` span's entire
+content) was picked first because CRINJA.md's own history already
+identifies it as the highest-bug-density part of the hand-rolled
+evaluator (this very branch's own doc comment above it recounts one; a
+real Jinja2 recursive-descent parser gets `or`/`and`/`is` precedence
+right BY CONSTRUCTION, unlike this class's string-heuristic dispatch).
+
+**Two real blockers found and fixed before the swap was safe** - both
+would have been silent regressions otherwise, exactly the kind of thing
+this doc's own risk framing worried about:
+
+- `is failed`/`changed`/`skipped`/`succeeded`/`success` (real Ansible
+  register-result introspection tests, `{{ some_result is failed }}`)
+  were only ever implemented in the hand-rolled `ConditionalEvaluator`,
+  never registered as Crinja tests. Ported to `jinja_filters.cr`
+  (Ansible-specific, stays there, not migrated to the fork) before doing
+  anything else.
+- The `omit` magic variable (`user.groups | default([]) | join(',') or
+  omit`, real Ansible's own robertdebock.users bug this class's own doc
+  comment cites) is a bare identifier reference the hand-rolled
+  evaluator special-cases directly - Crinja had no way to know about it
+  at all, so `or omit` would have silently rendered as the literal empty
+  string (`omit` resolving to Undefined) instead of dropping the param
+  via `CrystalPlay::OMIT_SENTINEL` the way `#substitute_task_params`
+  expects. Fixed by binding `vars["omit"]` to that exact same sentinel
+  in `CrinjaRenderer#prepare_crinja_vars`, so an expression routed
+  through Crinja produces the identical sentinel string.
+
+Implementation: `CrinjaRenderer#render` (which swallows any exception and
+returns the ORIGINAL UNRENDERED TEXT - correct for its usual block-tag
+caller, actively wrong for a caller that needs a real value) split into
+a new raising `#render!` plus `#render` calling it with the same old
+rescue-and-return-text behavior unchanged. The `boolean_logic?` branch
+now tries `crinja_renderer.render!("{{ \#{expr} }}")` first and falls
+back to the EXACT PREVIOUS hand-rolled code (`evaluate_value_or_and` /
+`ConditionalEvaluator.evaluate`) on any failure - a construct Crinja
+doesn't yet support degrades to today's existing behavior, not a
+regression.
+
+Verified: full `crystal spec` (1050 examples, unchanged pass count);
+direct targeted tests reproducing the exact two historical bug reports
+this branch's own doc comment cites (ansible-community.ansible-vault's
+`is failed or ...`, robertdebock.users' `... or omit`) plus plain
+`or`/`and` value-semantics cases - all match expected output exactly;
+differential harness re-run, no new divergences (D grew by 1 from the
+new `failed` test's own corpus interaction, nothing else moved).
+`./build.sh` clean. 0.9.324.
+
+**Not done**: a live real-host verification round specifically for this
+swap, which this doc's own "Live re-verification" section already
+demonstrated finds bugs a spec suite and harness can't (control-flow
+interactions). This construct is narrow enough and the fallback safety
+net wide enough that the risk is low, but the plan's own repeated
+caution about not rushing this stands - worth a live round before
+trusting this further, and DEFINITELY before swapping a second, larger
+construct (the next candidate, unstarted: `#evaluate_expr`'s general
+comparison/filter dispatch, or ternary itself).
+
 ## Why this matters enough to write down
 
 > **Historical as of 0.9.323** - every `crinja_*_ext.cr` file this

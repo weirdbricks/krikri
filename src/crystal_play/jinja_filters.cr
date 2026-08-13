@@ -585,6 +585,37 @@ module CrystalPlay
     # even though Crystal's own `Bool`/`Int32`/`Int64` don't have that
     # ambiguity to begin with, so no special-casing needed there.
     Crinja.test(:boolean) { target.raw.is_a?(Bool) }
+
+    # `failed`/`changed`/`skipped`/`succeeded`/`success` - real Ansible's
+    # own register-result introspection tests (`{{ some_result is failed
+    # }}`), not standard Jinja2 at all. Reads the named field off a
+    # registered task result dict; "succeeded"/"success" aren't real
+    # result-dict keys (Ansible doesn't store a positive "it worked"
+    # flag, only "failed"), so both are the inverse of "failed" instead.
+    # A field genuinely absent defaults to false, matching real Ansible's
+    # own tests never raising for a missing field. Ported from
+    # `ConditionalEvaluator.result_field` (used for bare `when:`/
+    # `failed_when:` conditions) so the SAME test names work identically
+    # inside a real `{{ }}`/`.j2` expression routed through Crinja, not
+    # just a bare condition - needed before any hand-rolled-evaluator
+    # construct that might use these (like the `boolean_logic?` branch
+    # in expression_evaluator.cr) can safely delegate to Crinja instead.
+    def self.result_field(target : Crinja::Value, field : String) : Bool
+      case raw = target.raw
+      when Hash(String, Crinja::Value)
+        raw[field]?.try(&.truthy?) || false
+      when Hash(Crinja::Value, Crinja::Value)
+        raw[Crinja::Value.new(field)]?.try(&.truthy?) || false
+      else
+        false
+      end
+    end
+
+    Crinja.test(:failed) { JinjaFilters.result_field(target, "failed") }
+    Crinja.test(:changed) { JinjaFilters.result_field(target, "changed") }
+    Crinja.test(:skipped) { JinjaFilters.result_field(target, "skipped") }
+    Crinja.test(:succeeded) { !JinjaFilters.result_field(target, "failed") }
+    Crinja.test(:success) { !JinjaFilters.result_field(target, "failed") }
     Crinja.test(:integer) { target.raw.is_a?(Int32) || target.raw.is_a?(Int64) }
     Crinja.test(:float) { target.raw.is_a?(Float64) }
 

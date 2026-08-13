@@ -178,8 +178,14 @@ module CrystalPlay
         nil
       end
 
-      # Render a template containing Jinja2 control structures
-      def render(text : String) : String
+      # Render a template containing Jinja2 control structures, raising
+      # on any failure instead of swallowing it - for a caller (like
+      # `ExpressionEvaluator`'s own Crinja-delegation branches, see
+      # CRINJA.md's step-5 notes) that wants to fall back to a DIFFERENT
+      # rendering strategy on failure, rather than `#render`'s own
+      # "give back the original unrendered text" behavior, which would
+      # be actively wrong for a caller expecting a real evaluated value.
+      def render!(text : String) : String
         # @vars is fixed for the lifetime of a renderer (VarSubstitutor
         # #set_variable constructs a new renderer rather than mutating),
         # so the recursive JSON::Any -> Crinja::Value conversion of the
@@ -190,6 +196,11 @@ module CrystalPlay
 
         template = cached_template(normalize_expression_trim_markers(text))
         template.render(template_vars)
+      end
+
+      # Render a template containing Jinja2 control structures
+      def render(text : String) : String
+        render!(text)
       rescue
         # Return original text on failure
         text
@@ -235,6 +246,20 @@ module CrystalPlay
         # own "vars" key) is enough for every real lookup-by-computed-key
         # usage.
         vars["vars"] = Crinja::Value.new(vars.reduce(Crinja::Dictionary.new) { |dict, (key, value)| dict[Crinja::Value.new(key)] = value; dict })
+
+        # Real Ansible's `omit` magic variable - a bare identifier
+        # reference, not a filter/function call, so Crinja has no way to
+        # know about it unless it's bound in context like any other var.
+        # `CrystalPlay::OMIT_SENTINEL` is the same magic string
+        # `FilterEngine`'s own `default(omit)`/ternary-argument handling
+        # already produces for the hand-rolled evaluator - binding the
+        # SAME sentinel here means an expression routed through Crinja
+        # (e.g. `user.groups | default([]) | join(',') or omit`) drops
+        # its param the same way, via the same downstream `#substitute_
+        # task_params` sentinel-strip check, instead of silently
+        # rendering as the literal empty string (`omit` resolving to
+        # Undefined -> `""`) - a real, wrong value, not an omitted param.
+        vars["omit"] ||= Crinja::Value.new(CrystalPlay::OMIT_SENTINEL)
 
         vars
       end

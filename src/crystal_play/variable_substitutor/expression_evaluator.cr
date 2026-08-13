@@ -6,6 +6,7 @@ require "./comparison_evaluator"
 require "./filter_engine"
 require "./array_slicer"
 require "./variable_lookup"
+require "./crinja_renderer"
 require "../variable_substitutor"
 module CrystalPlay
   module VariableSubstitutor
@@ -17,12 +18,19 @@ module CrystalPlay
       @filter : FilterEngine
       @slicer : ArraySlicer
       @lookup : VariableLookup
-      
+      @crinja_renderer : VariableSubstitutor::CrinjaRenderer?
+
       def initialize(@vars : Hash(String, JSON::Any))
         @comparison = ComparisonEvaluator.new(@vars)
         @filter = FilterEngine.new(@vars)
         @slicer = ArraySlicer.new(@vars)
         @lookup = VariableLookup.new(@vars)
+      end
+
+      # Built lazily - most `{{ }}` spans never reach the boolean_logic?
+      # branch below, so most `ExpressionEvaluator`s never need this.
+      private def crinja_renderer : VariableSubstitutor::CrinjaRenderer
+        @crinja_renderer ||= VariableSubstitutor::CrinjaRenderer.new(@vars)
       end
       
       # Evaluate any expression and return string result. A thin guard in
@@ -76,7 +84,31 @@ module CrystalPlay
           # `or`, neither side looking like a real boolean condition)
           # and returns nil otherwise, leaving the boolean-coercion
           # fallback below untouched for genuine conditions.
-          evaluate_value_or_and(expr) || (ConditionalEvaluator.evaluate(expr, @vars) ? "True" : "False")
+          #
+          # CRINJA.md step 5 (converge the dual evaluators): this branch
+          # is the first, deliberately narrow, piece of that convergence
+          # - `or`/`and`/`is` is the highest historical bug density part
+          # of this file (this very comment documents one), and Crinja's
+          # real recursive-descent parser gets precedence right BY
+          # CONSTRUCTION, unlike the string-heuristic dispatch the rest
+          # of this class is built from. Tries Crinja first (`render!`,
+          # which raises instead of Crinja::CrinjaRenderer#render's own
+          # "give back the original text" failure mode - actively wrong
+          # here, since a caller of #evaluate always wants a real
+          # value); falls back to the ORIGINAL hand-rolled path on ANY
+          # failure, so a construct Crinja doesn't yet support degrades
+          # to exactly today's behavior rather than a regression.
+          # `is failed`/`changed`/`skipped`/`succeeded`/`success` (real
+          # Ansible register-result tests) and the `omit` magic variable
+          # both needed porting to Crinja's own registry/context first
+          # (see jinja_filters.cr's `result_field` tests and
+          # CrinjaRenderer#prepare_crinja_vars's own `omit` binding) -
+          # without those this swap would have silently regressed both.
+          begin
+            crinja_renderer.render!("{{ #{expr} }}")
+          rescue
+            evaluate_value_or_and(expr) || (ConditionalEvaluator.evaluate(expr, @vars) ? "True" : "False")
+          end
         else
           evaluate_expr(expr)
         end
