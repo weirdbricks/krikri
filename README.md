@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.288-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.290-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -288,7 +288,20 @@ production Ansible roles (dev-sec, konstruktoid, linux-system-roles,
 geerlingguy, openstack.ansible-hardening, wireguard, ansible-vault,
 cloudalchemy.prometheus, cloudalchemy.grafana, haproxy, certbot) - see
 `git log` for the full log of what's been found and fixed. Most
-recently, a nineteenth round (`robertdebock.nginx`/`mysql`/`docker_ce`/
+recently, a twentieth round (`weareinteractive.nginx`/`mysql`/`redis`/
+`users` plus `Stouts.iptables`/`timezone`) found 5 of 6 roles blocked
+externally (a stale nginx.org apt GPG key; four roles all sharing the
+same legacy `include:` directive, removed from current ansible-core,
+same failure mode already seen for `phpmyadmin`/`gogs` - all confirmed
+by reproducing on real `ansible-playbook` first). The one testable role,
+`weareinteractive.users`, found and fixed 2 more bugs: a Jinja2
+`~`-concatenation `default()` argument (`default(a ~ b ~ c)`) was
+unhandled - only `+`/`-` had the ExpressionEvaluator delegation - and
+`authorized_key:` wasn't idempotent for an empty `key:` value (a
+legitimate case - no keys configured for a user), reporting `changed:
+true` on every single run forever; real Ansible's own module treats an
+empty key as a true no-op and doesn't even create the file, matched
+exactly. Before that, a nineteenth round (`robertdebock.nginx`/`mysql`/`docker_ce`/
 `users`/`phpmyadmin` plus `Oefenweb.fail2ban`) found and fixed 9 more
 bugs: `community.general.ini_file` entirely unimplemented; `include_
 tasks:`/`include_role:` never resolving a scalar-template `loop:` at

@@ -24,6 +24,23 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     engine.apply(JSON::Any.new(nil), "default(0)").as_i.should eq(0)
   end
 
+  it "default(a ~ b ~ c) evaluates a Jinja2 `~`-concatenation argument, not just `+`/`-`" do
+    # Real bug found benchmarking weareinteractive.users' own `user.home
+    # | default(users_home ~ '/' ~ user.username)` (building a user's
+    # home path from two variables). The existing `+`/`-`-concatenation
+    # default() delegation to ExpressionEvaluator never checked for `~`
+    # (Jinja2's own distinct string-concat operator), so a `~`-only
+    # default argument fell through to a plain #resolve_expression call
+    # with no `~` concept at all, resolving to nil - the whole home path
+    # collapsed to an empty string.
+    vars = Hash(String, JSON::Any).new
+    vars["users_home"] = JSON::Any.new("/home")
+    vars["username"] = JSON::Any.new("alice")
+    scoped_engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(vars)
+
+    scoped_engine.apply(JSON::Any.new(nil), %(default(users_home ~ '/' ~ username))).as_s.should eq("/home/alice")
+  end
+
   it "default(fallback, true) also replaces a real, defined-but-falsy value" do
     # Real bug found benchmarking geerlingguy.php: `pm.max_requests = {{
     # item.pool_pm_max_requests | default(500, true) }}` where the real

@@ -93,6 +93,13 @@ or already-clean roles as if they were new.
 | robertdebock.phpmyadmin | ✅ Clean (after fixing 3 real engine bugs: `type_debug` filter entirely missing, `unarchive:`'s `extra_opts:` silently dropped - breaking `--strip-components=1`, the standard way to unpack a GitHub-release tarball - and the resulting tar-based idempotency check trusting `tar --compare`'s raw exit code instead of parsing its output the way real Ansible's own `TgzArchive#is_unarchived` does; idempotent, `curl` 200 on phpmyadmin's own `index.php` verified live) |
 | Oefenweb.fail2ban | ✅ Clean (after implementing Python's `SEP.join(iterable)` string-method-call syntax, entirely missing - the reverse argument order of the `join` Jinja filter - plus one more recursive-re-templating copy in per-element list rendering; idempotent, `fail2ban-client status` showing the sshd jail verified live) |
 
+| weareinteractive.nginx | ❌ Not testable - the role's own nginx.org apt-key setup fetches a now-invalid/stale GPG key (`NO_PUBKEY`, apt refuses the unsigned repo; reproduces on real ansible-playbook too) |
+| weareinteractive.mysql | ❌ Not testable - role's own `tasks/main.yml` uses the legacy `include:` directive, removed entirely from current ansible-core (real `ansible-playbook` refuses to parse the role at all; same failure mode as `phpmyadmin`/`gogs`) |
+| weareinteractive.redis | ❌ Not testable - same (legacy `include:`) |
+| weareinteractive.users | ✅ Clean (after fixing 2 real engine bugs: `default(a ~ b ~ c)`, a Jinja2 `~`-concatenation `default()` argument, was unhandled - only `+`/`-` had the ExpressionEvaluator delegation - and `authorized_key:` wasn't idempotent for an empty `key:` value, a legitimate real-world case (no keys configured for a user); real Ansible's own module treats an empty key as a true no-op and doesn't even create the file, matched exactly. Also needed `ANSIBLE_ALLOW_BROKEN_CONDITIONALS=true` to get past a real ansible-core 2.19 strictness change unrelated to crystal-ansible, the role's own aging non-boolean `when:`. Idempotent, `id`-verified live) |
+| Stouts.iptables | ❌ Not testable - same legacy `include:` issue as weareinteractive.mysql/redis (real ansible-playbook refuses to parse) |
+| Stouts.timezone | ❌ Not testable - same |
+
 **Legend:** ✅ Clean = engine matches real `ansible-playbook` (idempotent,
 healthy services, config parity) as of the last time it was run. ⚠️ = engine
 itself is fine, but the role hit an external/environmental blocker partway

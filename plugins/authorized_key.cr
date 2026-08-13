@@ -22,6 +22,21 @@ module CrystalPlay
       key = @params["key"]?
       return missing_param("key") unless key
 
+      if key.strip.empty?
+        # A real Ansible playbook can legitimately compute an empty key
+        # value at render time (weareinteractive.users' own `key: "{{
+        # user.authorized_keys | default([]) | join('\n') }}"`, empty
+        # whenever authorized_keys isn't set for that user) - real
+        # Ansible's own module treats that as a true no-op (doesn't even
+        # create the file), not "add a blank line". Without this,
+        # AuthorizedKeysFile#ensure both added a blank line AND could
+        # never recognize it as already-present on a rerun (an empty
+        # key's signature is nil, and blank lines are filtered out of
+        # the "existing lines" list before the signature comparison even
+        # runs) - non-idempotent forever, `changed: true` on every run.
+        return PluginResult.new(changed: false, failed: false, msg: "No key provided, nothing to do")
+      end
+
       path = resolve_path
       return PluginResult.new(changed: false, failed: true, msg: "Could not determine authorized_keys path: provide 'path' or a valid 'user'") unless path
 

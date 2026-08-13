@@ -990,6 +990,15 @@ module CrystalPlay
       # nesting - used only to decide whether resolve_default_arg needs to
       # hand off to the full ExpressionEvaluator instead of this class's
       # own (ternary-or-filter-chain-only) resolve_expression.
+      # Also checks for a top-level `~` - Jinja2's own string-concat
+      # operator, distinct from `+` - not just "+"/"-". Found via
+      # weareinteractive.users' own `user.home | default(users_home ~
+      # '/' ~ user.username)` (building a user's home path from two
+      # variables): a `~`-only default argument previously fell through
+      # to #resolve_expression below, which has no `~` concept either,
+      # so the whole default() argument resolved to nil, collapsing the
+      # home path to an empty string ("File does not exist: . Use
+      # state=touch to create it.").
       private def top_level_plus_or_minus?(expr : String) : Bool
         depth = 0
         quote : Char? = nil
@@ -1002,7 +1011,7 @@ module CrystalPlay
             depth += 1
           elsif "])}".includes?(char)
             depth -= 1
-          elsif depth == 0 && (char == '+' || char == '-')
+          elsif depth == 0 && (char == '+' || char == '-' || char == '~')
             return true
           end
         end

@@ -8,7 +8,53 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.288`.**
+**Currently at `0.9.290`.**
+
+---
+
+`0.9.289`-`0.9.290` (a twentieth real-host round: `weareinteractive.nginx`/
+`mysql`/`redis`/`users` and `Stouts.iptables`/`timezone`, two more new
+authors, all 6 role names confirmed to exist via the GitHub API up front.
+5 of the 6 turned out to be external blockers, confirmed by reproducing
+each one on real `ansible-playbook` before treating it as such: `nginx`'s
+own nginx.org apt-key setup fetches a now-invalid/stale GPG key
+(`NO_PUBKEY`, apt refuses the unsigned repo); `mysql`/`redis`/`iptables`/
+`timezone` all share the exact same `tasks/main.yml` template using the
+legacy `include:` directive, removed entirely from current ansible-core
+(same failure mode already documented repeatedly for `phpmyadmin`/`gogs`/
+pre-patch `glusterfs`) - real `ansible-playbook` refuses to even parse any
+of the four. `users` was also initially blocked by a related but distinct
+issue - real ansible-core 2.19's own stricter conditional-result
+enforcement rejects the role's aging `when: users_group is defined and
+users_group` pattern (a non-boolean `when:` result) outright; routed
+around via the documented `ANSIBLE_ALLOW_BROKEN_CONDITIONALS=true` escape
+hatch rather than skipping the role, since it's a real ansible-core knob
+for exactly this scenario, not a workaround specific to this benchmark.
+
+`weareinteractive.users` found and fixed 2 real bugs:
+
+- `default(a ~ b ~ c)` - a Jinja2 `~`-concatenation expression as the
+  `default()` filter's own argument - was unhandled; only `+`/`-`-
+  concatenation defaults had already been fixed to delegate to the full
+  ExpressionEvaluator. Hit by the role's own `user.home | default(
+  users_home ~ '/' ~ user.username)` (computing a user's home path) -
+  the whole default argument resolved to nil, collapsing the home path
+  to an empty string and failing the next task outright ("File does not
+  exist: .").
+- `authorized_key:` wasn't idempotent for an empty `key:` value (a
+  legitimate real-world case: the role's own `key: "{{ user.
+  authorized_keys | default([]) | join('\n') }}"` renders empty for any
+  user with no keys configured) - an empty key's signature is nil, and
+  blank lines get filtered out of the existing-lines comparison list
+  before the signature check runs, so it could never recognize its own
+  previous no-op write and reported `changed: true` on every single run
+  forever. Real Ansible's own module treats an empty key as a true
+  no-op and doesn't even create the file - verified live, fixed to
+  match exactly.
+
+Verified live: idempotent (`changed: 0` on rerun, matching real
+ansible-playbook exactly), `id alice`/`id bob` confirming real user/group
+state. Full `crystal spec` suite (1025 examples) passes clean throughout.
 
 ---
 
