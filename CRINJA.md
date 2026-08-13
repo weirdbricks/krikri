@@ -141,7 +141,7 @@ Crinja tag contexts beyond plain `{{ }}` output, though the parser-level
 fix should apply universally since `parse_expression` is the single shared
 entry point every context uses.
 
-### 3. `namespace()` builtin - NOT fixed, found but not investigated
+### 3. `namespace()` builtin - FIXED 2026-08-13
 
 The actual remaining blocker that ended the round. Real Jinja2's
 `namespace()` function creates a mutable-attribute object that - unlike a
@@ -177,8 +177,29 @@ Jinja2's normal `{% set %}` only ever supports a bare name target, not a
 dotted attribute path, and namespace objects are specifically the one
 exception to that rule).
 
-Not investigated further this round - stopped here per user direction to
+Not investigated further round 21 - stopped there per user direction to
 consolidate notes instead of continuing indefinitely deeper into Crinja.
+
+**Fixed 2026-08-13** (CRINJA.md plan step 4) via
+`src/crystal_play/crinja_namespace_ext.cr`: confirmed it was exactly the
+two features guessed above, both missing. Added a `Crinja::Namespace`
+class (`include Crinja::Object`, mutable `Hash(String, Value)` backing
+store, `crinja_attribute` for reads) plus `Crinja.function(:namespace)`
+registering the constructor (kwargs become initial attributes). For the
+`{% set ns.attr = ... %}` syntax, rather than widening
+`parse_keyword_list` (shared with filter/function keyword-argument
+parsing generally - too big a blast radius for one tag), fully replaced
+`Tag::Set#interpret` to special-case an `IDENTIFIER "." IDENTIFIER "="`
+target shape: resolves the target identifier to a `Namespace` instance
+and mutates its backing Hash in place, WITHOUT touching
+`env.context[target_name]` - the mutation-not-rebinding is what makes it
+visible outside the current `{% for %}` iteration, since every loop-body
+read of `ns` still resolves to the same object reference set once before
+the loop. Verified directly against the exact real-world blocker
+template shape from round 21 (reproduced above) plus an
+accumulator-across-loop-iterations variant (`ns.count = ns.count + x`) -
+both render correctly. Full `crystal spec` (1050 examples) and
+`./build.sh` clean. 0.9.315.
 
 ### 4. Regex `match`/`search` Jinja tests - NOT a Crinja bug (documented for contrast)
 
@@ -528,10 +549,16 @@ each individually rarer than #1-#5 and/or needing deeper parser surgery:
    (`crinja_ternary_expr_ext.cr`), `Value#truthy?` (a genuine
    Python-semantics bug, not a preference), and `.split()` with no
    arguments. Anything upstream accepts is a patch we stop maintaining.
-4. **Fix `namespace()`** in the fork, where it belongs. Remember it is
-   likely *two* features: the `namespace()` runtime object, and the
-   `{% set ns.attr = ... %}` dotted-target parser rule (see bug #3 above).
-   Confirm with `{{ namespace() }}` in isolation before scoping.
+4. **Fix `namespace()`. DONE 2026-08-13** - see bug #3's own "Fixed
+   2026-08-13" note above for the full writeup. Confirmed both guessed
+   features were missing. Fixed via a new
+   `src/crystal_play/crinja_namespace_ext.cr` monkey-patch in THIS repo,
+   same as the step-1 fixes - **not** migrated into the fork's real
+   source ("in the fork, where it belongs" was this plan step's original
+   framing; per step 2's own "migrate on next touch, don't big-bang port"
+   instruction, that migration didn't happen here either. The fork's
+   `PATCHES.md` should get a line added for this one too next time
+   someone's in there).
 5. **Then, and only then**, start incrementally routing hand-rolled paths
    through Crinja, one construct at a time, with the step-1 harness as the
    regression gate. This is the multi-week item. Do not start it before
