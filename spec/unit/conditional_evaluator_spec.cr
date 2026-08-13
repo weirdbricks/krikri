@@ -154,6 +154,24 @@ describe CrystalPlay::ConditionalEvaluator do
       CrystalPlay::ConditionalEvaluator.evaluate(%('change_user' not in os_security_users_allow), v).should be_false
     end
 
+    it "handles a quoted literal that itself contains the word 'in' as its own word" do
+      # Real bug found benchmarking a real geerlingguy.glusterfs 3-node
+      # cluster: a hand-written peer-probe task's own idempotency check
+      # is `changed_when: "'already in peer list' not in probe2.stdout"`
+      # (gluster peer probe prints exactly that phrase for an already-
+      # probed peer). evaluate_in's own naive `condition.split(" in ",
+      # 2)` isn't quote-aware, so it split at the FIRST " in " it found
+      # - the one INSIDE the quoted literal ("already[ in ]peer list") -
+      # instead of the real `in` operator further along, producing a
+      # nonsensical item/container pair and evaluating changed_when as
+      # true on every single run regardless of the actual stdout,
+      # breaking idempotency outright for a real multi-node cluster
+      # playbook.
+      v = Hash(String, JSON::Any).new
+      v["probe2"] = JSON.parse(%({"stdout": "already in peer list"}))
+      CrystalPlay::ConditionalEvaluator.evaluate(%('already in peer list' not in probe2.stdout), v).should be_false
+    end
+
     it "checks membership in a literal numeric list against a real int item" do
       # Real bug found benchmarking openstack.ansible-hardening's own
       # kdump-service check: `failed_when: result.rc not in [0, 3, 4]`.

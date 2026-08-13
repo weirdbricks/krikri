@@ -526,11 +526,22 @@ module CrystalPlay
     end
 
     private def self.evaluate_in(condition : String, vars : Hash(String, JSON::Any)) : Bool
-      parts = condition.split(" in ", 2)
-      return false if parts.size != 2
+      # #split_by_operator (already used above for and/or) is quote- and
+      # paren-depth-aware; a plain `condition.split(" in ", 2)` is not,
+      # so a quoted literal that happens to contain the word "in" as
+      # its own word - `'already in peer list' not in probe2.stdout`,
+      # a real geerlingguy.glusterfs-cluster peer-probe idempotency
+      # check (`gluster peer probe` prints exactly that phrase for an
+      # already-probed peer) - split at the FIRST " in " it found,
+      # which was the one INSIDE the quoted string ("already[ in ]peer
+      # list"), not the real `in` operator - producing a nonsensical
+      # item/container pair and silently evaluating changed_when as
+      # true on every single run, never converging.
+      parts = split_by_operator(condition, " in ")
+      return false if parts.size < 2
 
       item = evaluate_value(parts[0].strip, vars)
-      container = evaluate_value(parts[1].strip, vars)
+      container = evaluate_value(parts[1..].join(" in ").strip, vars)
 
       # Check if item is in container (string or array). Every array
       # value this evaluator ever produces - whether from a literal
