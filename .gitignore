@@ -15,3 +15,9 @@
 # missing it entirely).
 /inventory.ini
 /spec/tmp/
+
+# crinja differential-harness generated output (scripts/crinja_corpus/README.md)
+scripts/crinja_corpus/corpus.jsonl
+scripts/crinja_corpus/oracle_python.jsonl
+scripts/crinja_corpus/oracle_crinja.jsonl
+scripts/crinja_corpus/divergence_report.md

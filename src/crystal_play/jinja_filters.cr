@@ -7,6 +7,9 @@ require "./crinja_truthy_ext"
 require "./crinja_string_ext"
 require "./crinja_trim_blocks_ext"
 require "./crinja_ternary_expr_ext"
+require "./crinja_logic_ext"
+require "./crinja_in_operator_ext"
+require "./crinja_undefined_filter_ext"
 
 # Custom Jinja2 filters that real Ansible's Jinja2 provides but Crinja
 # doesn't ship, registered into the global Crinja default library so they're

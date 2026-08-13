@@ -4,6 +4,9 @@ require "../crinja_hash_ext"
 require "../crinja_string_ext"
 require "../crinja_trim_blocks_ext"
 require "../crinja_ternary_expr_ext"
+require "../crinja_logic_ext"
+require "../crinja_in_operator_ext"
+require "../crinja_undefined_filter_ext"
 require "../variable_substitutor"
 
 module CrystalPlay
