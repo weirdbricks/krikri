@@ -59,6 +59,21 @@ module CrystalPlay
       tmp_path = "/tmp/.crystal-ansible-apt-key-#{Random.rand(100000..999999)}"
       begin
         File.write(tmp_path, content)
+
+        # Real Ansible's apt_key: is idempotent even when only url:/data:
+        # is given (no id:) - it derives the key's own fingerprint from
+        # the fetched key material itself before deciding whether to
+        # import. Previously only the id: param triggered a #key_present?
+        # check at all - url:/data: (the overwhelmingly common real-world
+        # shape, per this file's own doc comment above) always re-ran
+        # `apt-key add` and reported changed: true on every single run,
+        # never converging. Found benchmarking geerlingguy.blackfire's
+        # own "Add packagecloud apt key." task (url: only, no id:).
+        fingerprints = key_fingerprints(tmp_path)
+        if fingerprints.any? { |fp| key_present?(fp) }
+          return PluginResult.new(changed: false, failed: false, msg: "Key already present")
+        end
+
         result = remote_exec("apt-key add #{tmp_path}")
         unless result[:exit_code] == 0
           return PluginResult.new(changed: false, failed: true, msg: "apt-key add failed: #{result[:stderr]}")
@@ -68,6 +83,20 @@ module CrystalPlay
       end
 
       PluginResult.new(changed: true, failed: false, msg: "Key added")
+    end
+
+    # Parses every key fingerprint out of the ASCII-armored/binary key
+    # material at *path* without importing it into any keyring (`gpg
+    # --import-options show-only` is a pure dry-run parse) - a key file
+    # commonly bundles more than one key (a primary key plus one or more
+    # subkeys), so this returns all of them; #add_key treats any one
+    # already being present as the whole set already having been added.
+    private def key_fingerprints(path : String) : Array(String)
+      result = remote_exec("gpg --with-colons --import-options show-only --import #{path} 2>/dev/null")
+      result[:stdout].each_line.compact_map do |line|
+        fields = line.split(':')
+        fields[9] if fields[0]? == "fpr" && fields.size > 9 && !fields[9].empty?
+      end.to_a
     end
 
     private def remove_key : PluginResult
