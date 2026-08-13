@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.278-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.288-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -288,7 +288,24 @@ production Ansible roles (dev-sec, konstruktoid, linux-system-roles,
 geerlingguy, openstack.ansible-hardening, wireguard, ansible-vault,
 cloudalchemy.prometheus, cloudalchemy.grafana, haproxy, certbot) - see
 `git log` for the full log of what's been found and fixed. Most
-recently, a `robertdebock.*` round (a different, prolific role author -
+recently, a nineteenth round (`robertdebock.nginx`/`mysql`/`docker_ce`/
+`users`/`phpmyadmin` plus `Oefenweb.fail2ban`) found and fixed 9 more
+bugs: `community.general.ini_file` entirely unimplemented; `include_
+tasks:`/`include_role:` never resolving a scalar-template `loop:` at
+all (a custom `loop_var` stayed "undefined"); plain-`{{ }}` `or`/`and`
+always coercing to literal "True"/"False" instead of real Jinja2
+value-selector semantics; `getent:` never failing a missing single-key
+lookup, breaking a role's own `rescue:` block; the `password_hash`
+filter entirely unimplemented, silently storing plaintext into
+`/etc/shadow`; `type_debug` entirely unimplemented; `unarchive:`'s
+`extra_opts:` silently dropped, breaking `--strip-components=1`; the
+resulting tar-based idempotency check trusting `tar --compare`'s raw
+exit code instead of parsing its output like real Ansible's own
+`TgzArchive#is_unarchived` does; and Python's `SEP.join(iterable)`
+string-method-call syntax (the reverse argument order of the `join`
+filter) entirely unimplemented, plus one more recursive-re-templating
+copy found fixing it. Before that, a `robertdebock.*` round (a
+different, prolific role author -
 `zabbix_server`/`zabbix_agent`, pulling in 8 more robertdebock roles as
 real dependencies) found and fixed 8 bugs: several missing Jinja2 type
 tests (`is boolean`/`is number`/`is string`/`is integer`/`is float`/

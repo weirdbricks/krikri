@@ -192,4 +192,59 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     result.should_not be_nil
     result.not_nil!.as_a.map(&.as_s).should eq(["hello", "world"])
   end
+
+  it "resolves Python's `SEP.join(iterable)` method-call syntax on a quoted-literal separator" do
+    # Real bug found benchmarking Oefenweb.fail2ban's own `name: "{{ '
+    # '.join(fail2ban_dependencies).split() }}"` (building apt's package
+    # list) - the receiver of .join() here is a quoted string LITERAL,
+    # not a variable name, unlike every other dotted-path base this
+    # resolver otherwise handles (a plain @vars[parts[0]]? lookup always
+    # missed, since "' '" isn't a real variable). The whole expression
+    # collapsed to nil/"undefined", used directly as apt's own name:
+    # param.
+    v = Hash(String, JSON::Any).new
+    v["fail2ban_dependencies"] = JSON.parse(%(["fail2ban", "iptables"]))
+    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+
+    result = lookup.resolve("' '.join(fail2ban_dependencies)")
+    result.should_not be_nil
+    result.not_nil!.as_s.should eq("fail2ban iptables")
+  end
+
+  it "round-trips `SEP.join(iterable).split()` back to a list, the actual real-world idiom" do
+    v = Hash(String, JSON::Any).new
+    v["fail2ban_dependencies"] = JSON.parse(%(["fail2ban", "iptables"]))
+    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+
+    result = lookup.resolve("' '.join(fail2ban_dependencies).split()")
+    result.should_not be_nil
+    result.not_nil!.as_a.map(&.as_s).should eq(["fail2ban", "iptables"])
+  end
+
+  it "re-renders each element of a .join() list argument, another recursive-re-templating copy" do
+    # Real bug found in the same round: Oefenweb.fail2ban's own real
+    # fail2ban_dependencies has a templated 2nd element (a ternary
+    # choosing a package name or an empty string), stored raw/unrendered
+    # in @vars - joining without re-rendering each element first glued
+    # the literal "{{ ... }}" text straight into the package name,
+    # producing garbage that then failed to install.
+    v = Hash(String, JSON::Any).new
+    v["fail2ban_backend"] = JSON::Any.new("systemd")
+    v["fail2ban_dependencies"] = JSON.parse(%(["fail2ban", "{{ (fail2ban_backend == 'systemd') | ternary('python3-systemd', '') }}"]))
+    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+
+    result = lookup.resolve("' '.join(fail2ban_dependencies).split()")
+    result.should_not be_nil
+    result.not_nil!.as_a.map(&.as_s).should eq(["fail2ban", "python3-systemd"])
+  end
+
+  it "drops an empty-string element after the join+split round-trip, matching Python's whitespace split" do
+    v = Hash(String, JSON::Any).new
+    v["fail2ban_dependencies"] = JSON.parse(%(["fail2ban", ""]))
+    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+
+    result = lookup.resolve("' '.join(fail2ban_dependencies).split()")
+    result.should_not be_nil
+    result.not_nil!.as_a.map(&.as_s).should eq(["fail2ban"])
+  end
 end

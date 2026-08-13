@@ -11,6 +11,13 @@ Spec.before_suite do
   File.write(File.join(TMP_DIR, "src", "sub", "b.txt"), "nested")
   `tar czf #{File.join(TMP_DIR, "archive.tar.gz")} -C #{File.join(TMP_DIR, "src")} .`
   `cd #{TMP_DIR} && zip -qr archive.zip src`
+
+  # A GitHub-release-shaped archive: everything nested one level down
+  # inside a single top-level directory (`myproject-1.0/...`), the shape
+  # extra_opts: ['--strip-components=1'] exists to flatten.
+  Dir.mkdir_p(File.join(TMP_DIR, "wrapped", "myproject-1.0"))
+  File.write(File.join(TMP_DIR, "wrapped", "myproject-1.0", "index.php"), "<?php")
+  `tar czf #{File.join(TMP_DIR, "wrapped.tar.gz")} -C #{File.join(TMP_DIR, "wrapped")} myproject-1.0`
 end
 
 # A tiny local HTTP server serving the tar.gz built above, plus a
@@ -63,10 +70,60 @@ describe "unarchive plugin" do
     result["changed"].as_bool.should be_false
   end
 
+  it "honors extra_opts: ['--strip-components=1'] to flatten a wrapped archive" do
+    # Real bug found benchmarking robertdebock.phpmyadmin: extra_opts was
+    # entirely unimplemented (silently dropped), so a role unpacking a
+    # GitHub-release-style tarball (single top-level wrapper dir) got
+    # that wrapper dir preserved instead of stripped - every file the
+    # role expected directly under dest/ was actually one level deeper
+    # and effectively missing (e.g. dest/index.php never existed).
+    dest = fresh_dest("tar-strip-components")
+    result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "wrapped.tar.gz"), "dest" => dest, "extra_opts" => "--strip-components=1"})
+
+    result["changed"].as_bool.should be_true
+    File.exists?(File.join(dest, "myproject-1.0")).should be_false
+    File.read(File.join(dest, "index.php")).should eq("<?php")
+  end
+
+  it "is idempotent on a --strip-components=1 rerun despite tar --compare's own benign warning" do
+    # Real bug found benchmarking robertdebock.phpmyadmin: GNU tar
+    # --compare always emits a bogus "Cannot stat: No such file or
+    # directory" warning (exit code 1) for the stripped-away top-level
+    # path whenever --strip-components is used, even when nothing
+    # actually differs - a raw exit-code check treats that as "changed"
+    # forever. Real ansible-playbook stays changed: false on an
+    # identical rerun (confirmed live) because its own is_unarchived()
+    # parses tar's output and explicitly ignores this exact warning
+    # pattern.
+    dest = fresh_dest("tar-strip-components-idempotent")
+    PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "wrapped.tar.gz"), "dest" => dest, "extra_opts" => "--strip-components=1"})
+
+    result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "wrapped.tar.gz"), "dest" => dest, "extra_opts" => "--strip-components=1"})
+
+    result["changed"].as_bool.should be_false
+  end
+
+  it "still detects a real content change under --strip-components=1" do
+    dest = fresh_dest("tar-strip-components-changed")
+    PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "wrapped.tar.gz"), "dest" => dest, "extra_opts" => "--strip-components=1"})
+    File.write(File.join(dest, "index.php"), "<?php /* tampered */")
+    File.utime(Time.utc - 1.hour, Time.utc - 1.hour, File.join(dest, "index.php"))
+
+    result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "wrapped.tar.gz"), "dest" => dest, "extra_opts" => "--strip-components=1"})
+
+    result["changed"].as_bool.should be_true
+  end
+
   it "reports changed: true when an extracted file is modified since the last extraction" do
     dest = fresh_dest("tar-changed")
     PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.tar.gz"), "dest" => dest})
     File.write(File.join(dest, "a.txt"), "tampered")
+    # tar --compare only flags a real content change via its own "Mod
+    # time differs" line - force a >1s mtime skew so the change reliably
+    # crosses tar's one-second mtime granularity, matching real
+    # ansible-playbook's own TgzArchive#is_unarchived, which has the
+    # identical granularity limit (no separate "size differs" signal).
+    File.utime(Time.utc - 1.hour, Time.utc - 1.hour, File.join(dest, "a.txt"))
 
     result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.tar.gz"), "dest" => dest})
 

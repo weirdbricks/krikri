@@ -329,6 +329,38 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("result is failed or a != b").should eq("True")
   end
 
+  it "treats a plain-value `or`/`and` as a value-selector, not a boolean coercion" do
+    # Real bug found benchmarking robertdebock.users: `groups: "{{
+    # user.groups | default([]) | join(',') or omit }}"` - since neither
+    # operand is a boolean condition (no comparison/is-test), real
+    # Jinja2's `or` must return the joined string itself when truthy,
+    # not the literal text "True". The fix above only added boolean
+    # coercion for genuine conditions; a plain "X or Y" previously still
+    # rendered "True"/"False" regardless of X/Y's actual values -
+    # `useradd: group 'True' does not exist` was the resulting failure.
+    v = Hash(String, JSON::Any).new
+    v["groups"] = JSON.parse(%(["ops", "sudo"]))
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("groups | join(',') or omit").should eq("ops,sudo")
+
+    v["groups"] = JSON.parse(%([]))
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("groups | join(',') or omit").should eq(CrystalPlay::OMIT_SENTINEL)
+
+    v2 = Hash(String, JSON::Any).new
+    evaluator2 = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v2)
+    evaluator2.evaluate("'ops,sudo' or 'fallback'").should eq("ops,sudo")
+    evaluator2.evaluate("'' or 'fallback'").should eq("fallback")
+    evaluator2.evaluate("5 or 'fallback'").should eq("5")
+  end
+
+  it "treats a plain-value `and` as a value-selector too" do
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("'first' and 'second'").should eq("second")
+    evaluator.evaluate("'' and 'second'").should eq("")
+  end
+
   it "compares a dotted operand against a `~`-concatenated one, full ansible-vault expression" do
     # End-to-end regression for the exact expression benchmarked from
     # ansible-community.ansible-vault's own "Compute if installation is

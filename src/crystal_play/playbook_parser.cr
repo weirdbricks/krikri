@@ -384,6 +384,7 @@ module CrystalPlay
       "community.general.modprobe",
       "community.general.pamd",
       "community.general.htpasswd",
+      "community.general.ini_file",
       "ansible.builtin.service_facts",
       "ansible.builtin.set_fact",
       "ansible.builtin.get_url",
@@ -1235,7 +1236,17 @@ module CrystalPlay
       # with_nested/etc set a normal task gets - a reasonable scope
       # limit given how rarely those combine with include_tasks in
       # practice.
-      if loop_yaml = task_hash["loop"]?.try(&.as_a?)
+      if template_loop = find_loop_template(task_hash)
+        # The scalar-template form (`loop: "{{ users_groups }}"`) - by far
+        # the more common real-world shape (robertdebock.users' own "Loop
+        # over users_groups"/"Loop over users") than a literal YAML list.
+        # Previously unhandled here entirely: task.loop_items stayed nil,
+        # the include ran exactly once with no item bound, and any custom
+        # loop_var (`group`/`user`) resolved as "undefined" throughout the
+        # included file.
+        task.loop_template_kind = template_loop[0]
+        task.loop_template = template_loop[1]
+      elsif loop_yaml = task_hash["loop"]?.try(&.as_a?)
         task.loop_items = loop_yaml.map { |item| JSON.parse(item.to_json) }
       elsif with_items = task_hash["with_items"]?.try(&.as_a?)
         task.loop_items = with_items.map { |item| JSON.parse(item.to_json) }
@@ -1288,10 +1299,17 @@ module CrystalPlay
         task.tags = tags_yaml.map(&.as_s)
       end
 
-      if loop_yaml = task_hash["loop"]?.try(&.as_a?)
+      if template_loop = find_loop_template(task_hash)
+        task.loop_template_kind = template_loop[0]
+        task.loop_template = template_loop[1]
+      elsif loop_yaml = task_hash["loop"]?.try(&.as_a?)
         task.loop_items = loop_yaml.map { |item| JSON.parse(item.to_json) }
       elsif with_items = task_hash["with_items"]?.try(&.as_a?)
         task.loop_items = with_items.map { |item| JSON.parse(item.to_json) }
+      end
+
+      if loop_control = task_hash["loop_control"]?.try(&.as_h?)
+        task.loop_var = loop_control["loop_var"]?.try(&.as_s?)
       end
 
       task

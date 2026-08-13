@@ -113,7 +113,23 @@ module CrystalPlay
 
       private def resolve_nested(expr : String) : JSON::Any?
         parts = split_dotted_parts(expr)
-        current = @vars[parts[0]]?
+        # Python's `str.join(iterable)` method-call syntax (`' '.join(my_
+        # list)`) - the receiver is a QUOTED STRING LITERAL, not a
+        # variable name, unlike every other dotted-path base this method
+        # otherwise handles. split_dotted_parts already splits it
+        # correctly (parts[0] == "' '", parts[1] == "join(my_list)") -
+        # only the base-value resolution below was missing a literal
+        # case, so parts[0] always failed the @vars lookup and the whole
+        # expression resolved to nil/"undefined". Found via Oefenweb.
+        # fail2ban's own `' '.join(fail2ban_dependencies).split()`
+        # (building the apt package list) - the whole expression
+        # collapsed to the literal text "undefined", used directly as
+        # apt's own `name:` param.
+        current = if literal = quoted_literal(parts[0])
+                    JSON::Any.new(literal)
+                  else
+                    @vars[parts[0]]?
+                  end
         return nil unless current
         current = rerender_if_templated(current)
 
@@ -226,7 +242,40 @@ module CrystalPlay
           return JSON::Any.new((index ? index : -1).to_i64)
         end
 
+        if match = part.match(/^join\(\s*(.+?)\s*\)$/)
+          # `SEP.join(iterable)` - `current` is the separator (already
+          # resolved above, since this is a method call ON the literal
+          # base); the argument is a variable reference to the list
+          # being joined, the reverse of the Jinja `list | join(sep)`
+          # filter's own argument order.
+          arg = match[1]
+          items = if literal = quoted_literal(arg)
+                    [JSON::Any.new(literal)]
+                  else
+                    @vars[arg]?.try(&.as_a?)
+                  end
+          return nil unless items
+          # Each list element is re-rendered before joining - real
+          # Ansible's recursive re-templating applies per-element too, not
+          # just to the list variable itself. Oefenweb.fail2ban's own
+          # fail2ban_dependencies has a templated 2nd element (a ternary
+          # choosing a package name or ''), stored raw/unrendered in
+          # @vars the same way every other lazily-evaluated default is.
+          rendered = items.map { |item| rerender_if_templated(item) }
+          return JSON::Any.new(rendered.map(&.as_s).join(current.as_s))
+        end
+
         nil
+      end
+
+      # A whole-string quoted literal (`'sep'`, `"sep"`) - nil for
+      # anything else, including a bare variable name or a literal with
+      # extra text around it.
+      private def quoted_literal(expr : String) : String?
+        stripped = expr.strip
+        return nil if stripped.size < 2
+        return nil unless (stripped[0] == '\'' && stripped[-1] == '\'') || (stripped[0] == '"' && stripped[-1] == '"')
+        stripped[1..-2]
       end
 
       # Jinja2/Python dict method-call syntax (`.keys()`, `.values()`,

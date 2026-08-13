@@ -8,7 +8,88 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.278`.**
+**Currently at `0.9.288`.**
+
+---
+
+`0.9.279`-`0.9.288` (a nineteenth real-host round, back on `robertdebock.*`
+plus one new author: `nginx`, `mysql`, `docker_ce`, `users`, `phpmyadmin`,
+and `Oefenweb.fail2ban` - this time every role name was confirmed to exist
+via the GitHub API up front, avoiding round 18's 4 Galaxy-404 misses. Real
+`ansible-playbook` was the correctness baseline throughout, run on a
+separate host from crystal-ansible via the same terraform pair pattern.
+`nginx`/`docker_ce` came back clean with zero engine bugs (nginx's first
+run hit a false-alarm apt 404 purely from uneven apt-cache freshness
+between the two benchmark hosts, not a real divergence). The other four
+roles found 9 real bugs:
+
+- `community.general.ini_file` was entirely unimplemented (`mysql`) -
+  hit by robertdebock.mysql's own `Configure mysql server`/`Configure
+  mysql client` tasks, which silently skipped (warning, not failure),
+  cascading into a missed `Restart mysql server` handler notification
+  since the task that would have notified it never ran at all.
+- `include_tasks:`/`include_role:` with a scalar-template `loop: "{{
+  var }}"` (as opposed to a literal YAML list) never resolved at all
+  (`users`) - the include ran exactly once with no item bound, so a
+  custom `loop_control.loop_var` (`group`/`user`) resolved as
+  "undefined" throughout the included file. The general per-task
+  execution path already had the full loop-template fallback chain;
+  `execute_include_tasks`/`execute_include_role` (and their own
+  parser-side loop parsing) never did.
+- `or`/`and` inside a plain `{{ }}` span always coerced to the literal
+  text "True"/"False" regardless of operand type (`users`) - correct
+  only when every operand is itself a boolean condition (comparisons/
+  is-tests), but real Jinja2's `or`/`and` are value-selectors: `X or Y`
+  returns X itself when truthy, not the word "True". Hit by
+  robertdebock.users' own `groups: "{{ user.groups | default([]) |
+  join(',') or omit }}"` - `useradd: group 'True' does not exist`.
+- `getent:` never failed a single-key lookup that isn't in the database
+  (`users`) - real Ansible's own default (`fail_key: true`) fails
+  outright, which robertdebock.users' own `block:`/`rescue:` (falling
+  back to `/home` for a to-be-removed user) depends on to trigger its
+  rescue path at all.
+- `password_hash` filter was entirely unimplemented in both evaluators
+  (`users`) - `password: "{{ plaintext | password_hash('sha512') }}"`
+  (the standard way any role sets a user's password) silently passed
+  the plaintext straight through, landing verbatim in `/etc/shadow`.
+- `type_debug` filter was entirely unimplemented in both evaluators
+  (`phpmyadmin`, via its `robertdebock.httpd` dependency) - failed
+  `httpd_additionnal_modules | type_debug == "list"`'s own sanity
+  assert regardless of the variable's actual (correct) type.
+- `unarchive:`'s `extra_opts:` param was documented as unimplemented and
+  silently dropped (`phpmyadmin`) - `extra_opts:
+  ['--strip-components=1']` (the standard way to unpack a GitHub-
+  release-style tarball with one wrapping top-level directory) had no
+  effect, so `dest/index.php` was actually one level deeper and
+  missing entirely.
+- Implementing `extra_opts` then exposed a second, independent bug:
+  the tar-based idempotency check used `tar --compare`'s raw exit code,
+  which GNU tar always makes nonzero under `--strip-components` (a
+  benign "Cannot stat: No such file or directory" warning for the
+  now-empty stripped root path) - every rerun re-extracted and reported
+  `changed: true` forever. Real Ansible's own `TgzArchive#is_unarchived`
+  never trusts the raw exit code either; it parses `--compare`'s output
+  line by line against a specific regex allowlist (owner/group/mode/
+  mod-time/missing-file/symlink diffs) and explicitly ignores this
+  exact warning pattern - reimplemented the same way, verified
+  byte-for-byte against the real module's own source.
+- Python's `SEP.join(iterable)` STRING-METHOD-CALL syntax (the reverse
+  argument order of the `list | join(sep)` Jinja FILTER) was entirely
+  unimplemented (`fail2ban`) - `' '.join(fail2ban_dependencies).split()`
+  (building an apt package list) resolved to nil/"undefined" outright,
+  since the receiver of `.join()` here is a quoted string LITERAL, not
+  a variable name, and the existing dotted-path resolver only ever
+  looked up `parts[0]` as a variable. Fixing this exposed one more
+  independent recursive-re-templating copy: each list element handed to
+  `.join()` needed its own re-render before joining (fail2ban_
+  dependencies' 2nd element is itself a ternary-computed template), not
+  just the list variable as a whole.
+
+All fixes verified live: mysql/users/phpmyadmin/fail2ban all ended
+idempotent (`changed: 0` on rerun) with real service health confirmed
+(`systemctl is-active`, `mysql -u root -p... -e 'select 1'`, `curl` 200 on
+phpmyadmin's own index.php, `fail2ban-client status` showing the sshd
+jail). Full `crystal spec` suite (1023 examples) passes clean throughout.
 
 ---
 

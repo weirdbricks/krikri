@@ -37,4 +37,22 @@ describe "getent plugin" do
     entry = result["ansible_facts"]["getent_passwd"].as_a.map(&.as_s)
     entry[1].to_i.should eq(0)
   end
+
+  it "fails a single-key lookup when the key isn't in the database" do
+    # Real bug found benchmarking robertdebock.users: a getent lookup for
+    # a user being removed (who doesn't exist yet/anymore) previously
+    # always succeeded by silently falling back to the whole passwd
+    # dict, so a role's own `block:`/`rescue:` gated on this exact
+    # failure (falling back to /home when the user isn't found) never
+    # triggered its rescue path.
+    result = PluginSpecHelper.run("getent", {"database" => "passwd", "key" => "definitely-not-a-real-user-xyz"})
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should contain("could not be found")
+  end
+
+  it "does not fail a missing key when fail_key is false" do
+    result = PluginSpecHelper.run("getent", {"database" => "passwd", "key" => "definitely-not-a-real-user-xyz", "fail_key" => "false"})
+    result["failed"].as_bool.should be_false
+    result["ansible_facts"]["getent_passwd"].as_a.size.should eq(0)
+  end
 end

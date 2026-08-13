@@ -125,6 +125,34 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     engine.apply(s("mysecret"), %(hash('md5'))).as_s.should eq("06c219e5bc8378f3a8a3f83b4b7e4649")
   end
 
+  it "password_hash produces a real crypt(3) hash, not the plaintext passthrough" do
+    # Real bug found benchmarking robertdebock.users: `password: "{{
+    # 'secret' | password_hash('sha512') }}"` (the standard way any
+    # role sets a user's password) was entirely unimplemented - the
+    # plaintext string passed straight through unfiltered and landed
+    # verbatim in /etc/shadow instead of a salted hash.
+    result = engine.apply(s("AlicePass123!"), %(password_hash('sha512'))).as_s
+    result.should start_with("$6$")
+    result.should_not contain("AlicePass123!")
+    result.split('$').size.should eq(4)
+  end
+
+  it "password_hash defaults to sha512 with no argument" do
+    result = engine.apply(s("secret"), "password_hash").as_s
+    result.should start_with("$6$")
+  end
+
+  it "password_hash honors an explicit salt for reproducible output" do
+    result = engine.apply(s("secret"), %(password_hash('sha512', 'fixedsalt'))).as_s
+    result.should eq("$6$fixedsalt$" + result.split('$').last)
+    engine.apply(s("secret"), %(password_hash('sha512', 'fixedsalt'))).as_s.should eq(result)
+  end
+
+  it "password_hash supports sha256 and md5" do
+    engine.apply(s("secret"), %(password_hash('sha256'))).as_s.should start_with("$5$")
+    engine.apply(s("secret"), %(password_hash('md5'))).as_s.should start_with("$1$")
+  end
+
   it "to_json uses Python's own ', '/': ' separators, matching json.dumps" do
     result = engine.apply(JSON.parse(%(["a", "b"])), "to_json")
     result.as_s.should eq(%(["a", "b"]))

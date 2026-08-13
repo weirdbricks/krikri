@@ -58,9 +58,29 @@ module CrystalPlay
       key = @params["key"]?
       facts = Hash(String, JSON::Any).new
 
-      if key && (value = entries[key]?)
-        # Single-key lookup returns just that entry's field list.
-        facts["getent_#{database}"] = JSON::Any.new(value.map { |field| JSON::Any.new(field) })
+      fail_key = @params["fail_key"]? ? is_true?(@params["fail_key"]) : true
+
+      if key
+        value = entries[key]?
+        if !value && fail_key
+          # Real Ansible's getent module fails outright when a specific
+          # key isn't found (fail_key: true is its own default) - a
+          # single-key lookup on a nonexistent entry previously
+          # succeeded here by silently falling back to the whole
+          # dict, so a role's own `rescue:` block gated on this
+          # exact failure (robertdebock.users' "Get or set the home
+          # directory", used to fall back to /home for a to-be-removed
+          # user) never triggered.
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "One or more supplied key could not be found in the database."
+          )
+        end
+        # Single-key lookup returns just that entry's field list (empty
+        # when not found and fail_key: false suppressed the failure
+        # above).
+        facts["getent_#{database}"] = JSON::Any.new((value || [] of String).map { |field| JSON::Any.new(field) })
       else
         dict = Hash(String, JSON::Any).new
         entries.each { |k, v| dict[k] = JSON::Any.new(v.map { |field| JSON::Any.new(field) }) }

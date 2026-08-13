@@ -211,4 +211,27 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     renderer.render(%({{ {"b": 1, "a": 2} | to_nice_yaml }})).should eq("a: 2\nb: 1")
     renderer.render(%({{ {"b": 1, "a": 2} | to_nice_yaml(sort_keys=False) }})).should eq("b: 1\na: 2")
   end
+
+  it "type_debug returns Python's own type name" do
+    # Real bug found benchmarking robertdebock.httpd's own assert.yml:
+    # `httpd_additionnal_modules | type_debug == "list"` - entirely
+    # unimplemented, so the assert failed outright regardless of the
+    # variable's actual (correct) type.
+    v = Hash(String, JSON::Any).new
+    v["mylist"] = JSON.parse(%(["a", "b"]))
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render("{{ mylist | type_debug }}").should eq("list")
+    renderer.render(%({{ "x" | type_debug }})).should eq("str")
+    renderer.render("{{ 5 | type_debug }}").should eq("int")
+  end
+
+  it "password_hash produces a real crypt(3) hash" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    result = renderer.render(%({{ "secret" | password_hash('sha512') }}))
+    result.should start_with("$6$")
+    result.should_not contain("secret")
+  end
 end

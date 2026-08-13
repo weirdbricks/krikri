@@ -446,6 +446,58 @@ module CrystalPlay
           digest = OpenSSL::Digest.new(openssl_name)
           digest.update(as_string(value))
           JSON::Any.new(digest.final.hexstring)
+        when "password_hash"
+          # password_hash(hashtype='sha512', salt=None, rounds=None) -
+          # real Ansible's own filter (passlib-backed), a salted crypt(3)
+          # hash suitable for /etc/shadow, NOT a plain digest like
+          # `hash` above. Entirely unimplemented - a `password: "{{
+          # plaintext | password_hash('sha512') }}"` (the standard way
+          # any role sets a user's password, e.g. robertdebock.users)
+          # silently passed the plaintext string straight through
+          # unfiltered, landing verbatim in /etc/shadow. Covers the
+          # three crypt(3) schemes `openssl passwd` itself supports
+          # (sha512/sha256/md5, matching /etc/shadow's own $6$/$5$/$1$)
+          # - passlib-only schemes like bcrypt aren't available without
+          # a real passlib port, same scope limit already documented for
+          # the htpasswd plugin's own crypt_scheme handling.
+          args = split_top_level_args(filter_args)
+          hashtype = (args[0]?.try { |arg| as_string(resolve_expression(arg)) } || "sha512").downcase
+          openssl_flag = case hashtype
+                         when "md5"    then "-1"
+                         when "sha256" then "-5"
+                         when "sha512" then "-6"
+                         else
+                           raise "password_hash: unsupported hashtype '#{hashtype}' (supported: md5, sha256, sha512)"
+                         end
+          explicit_salt = args[1]?.try { |arg| as_string(resolve_expression(arg)) }
+          salt = explicit_salt.presence || Random::Secure.hex(8)
+
+          output = IO::Memory.new
+          status = Process.run("openssl", ["passwd", openssl_flag, "-salt", salt, "-stdin"],
+            input: IO::Memory.new(as_string(value)), output: output)
+          raise "password_hash: openssl passwd failed" unless status.success?
+          JSON::Any.new(output.to_s.strip)
+        when "type_debug"
+          # type_debug - real Ansible/Jinja2's own filter, returns
+          # Python's type name for the value (matching `type(x).
+          # __name__`) - used almost exclusively in role assert.yml
+          # sanity checks (`my_list | type_debug == "list"`). Entirely
+          # unimplemented - fell through to the unknown-filter
+          # passthrough, returning the value's own rendered string
+          # instead of a type name, so every one of these asserts failed
+          # outright regardless of the actual (correct) variable type.
+          # Found via robertdebock.httpd's own assert.yml (round 19).
+          type_name = case value.raw
+                      when Array  then "list"
+                      when Hash   then "dict"
+                      when String then "str"
+                      when Int64  then "int"
+                      when Float64 then "float"
+                      when Bool   then "bool"
+                      when Nil    then "NoneType"
+                      else "str"
+                      end
+          JSON::Any.new(type_name)
         when "to_json"
           # to_json(**kwargs) - real Ansible's own filter, wraps Python's
           # json.dumps() (default ", "/": " item/key separators, not

@@ -2206,7 +2206,19 @@ module CrystalPlay
     # included task individually.
     private def execute_include_tasks(task : Task, host : Host)
       base_vars_context = build_vars_context(task, host)
-      loop_items = task.loop_items || resolve_first_found(task, host, base_vars_context)
+      # Must mirror the general task path's fallback chain (see the
+      # equivalent block above execute_looped_task) - a bare `loop: "{{
+      # var }}"` scalar-template loop on an include_tasks: (robertdebock.
+      # users' own "Loop over users_groups"/"Loop over users") only ever
+      # populated task.loop_items when the loop was written as a literal
+      # YAML list. The template form fell through to the single-run
+      # `else` branch below with no item bound at all, so a custom
+      # loop_var like `group`/`user` resolved as "undefined" instead of
+      # looping once per list entry.
+      loop_items = task.loop_items || resolve_first_found(task, host, base_vars_context) ||
+        resolve_loop_template(task, base_vars_context) ||
+        resolve_loop_flattened(task, base_vars_context, host.name) ||
+        resolve_loop_subelements(task, base_vars_context)
 
       if loop_items
         # with_first_found:'s own no-candidate-matched, skip: true case -
@@ -2377,7 +2389,11 @@ module CrystalPlay
 
     private def execute_include_role(task : Task, host : Host)
       base_vars_context = build_vars_context(task, host)
-      loop_items = task.loop_items
+      # Same scalar-template loop gap as execute_include_tasks above.
+      loop_items = task.loop_items ||
+        resolve_loop_template(task, base_vars_context) ||
+        resolve_loop_flattened(task, base_vars_context, host.name) ||
+        resolve_loop_subelements(task, base_vars_context)
 
       if loop_items
         loop_var = task.loop_var

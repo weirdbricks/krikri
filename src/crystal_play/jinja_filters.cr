@@ -284,6 +284,51 @@ module CrystalPlay
       Crinja::Value.new(digest.final.hexstring)
     end
 
+    # `password_hash(hashtype='sha512', salt=None)` - real Ansible's own
+    # filter (passlib-backed), a salted crypt(3) hash suitable for
+    # /etc/shadow. See the identical FilterEngine copy (filter_engine.cr)
+    # for the full rationale - checked in both evaluators per the usual
+    # rule since a `.j2` template could set a password field this way
+    # too (real ansible-vault/user-management templates commonly do).
+    Crinja.filter(:password_hash) do
+      hashtype = (arguments.varargs[0]?.try(&.to_s) || "sha512").downcase
+      openssl_flag = case hashtype
+                     when "md5"    then "-1"
+                     when "sha256" then "-5"
+                     when "sha512" then "-6"
+                     else
+                       raise "password_hash: unsupported hashtype '#{hashtype}' (supported: md5, sha256, sha512)"
+                     end
+      explicit_salt = arguments.varargs[1]?.try(&.to_s)
+      salt = explicit_salt.presence || Random::Secure.hex(8)
+
+      output = IO::Memory.new
+      status = Process.run("openssl", ["passwd", openssl_flag, "-salt", salt, "-stdin"],
+        input: IO::Memory.new(target.to_s), output: output)
+      raise "password_hash: openssl passwd failed" unless status.success?
+      Crinja::Value.new(output.to_s.strip)
+    end
+
+    # `type_debug` - real Ansible/Jinja2's own filter, Python's type
+    # name for the value (`type(x).__name__`) - used almost exclusively
+    # in role assert.yml sanity checks (`my_list | type_debug ==
+    # "list"`). See the identical FilterEngine copy for the full
+    # rationale; found via robertdebock.httpd's own assert.yml (round
+    # 19).
+    Crinja.filter(:type_debug) do
+      type_name = case target.raw
+                  when Array  then "list"
+                  when Hash   then "dict"
+                  when String then "str"
+                  when Int64, Int32 then "int"
+                  when Float64 then "float"
+                  when Bool   then "bool"
+                  when Nil    then "NoneType"
+                  else "str"
+                  end
+      Crinja::Value.new(type_name)
+    end
+
     # `to_json(**kwargs)` - real Ansible's own filter (ansible.plugins.
     # filter.core), a thin wrapper around Python's `json.dumps()`. Found
     # via geerlingguy.logstash's own 30-elasticsearch-output.conf.j2:

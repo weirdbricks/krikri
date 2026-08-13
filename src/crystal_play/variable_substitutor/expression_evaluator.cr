@@ -60,7 +60,23 @@ module CrystalPlay
           # nearby - a non-empty string is truthy) regardless of the
           # real installed version, forcing every run to redundantly
           # reinstall the package.
-          ConditionalEvaluator.evaluate(expr, @vars) ? "True" : "False"
+          #
+          # BUT: real Jinja2's `or`/`and` are value-selectors, not pure
+          # boolean operators - `X or Y` evaluates to X itself (not
+          # "True") when X is truthy, only falling through to Y when X
+          # isn't. `ConditionalEvaluator.evaluate(...) ? "True" :
+          # "False"` is only correct when every operand is ALREADY a
+          # boolean condition (comparisons/is-tests, as in the vault
+          # example above) - it's wrong the moment an operand is a plain
+          # value expression, e.g. robertdebock.users' own `groups: "{{
+          # user.groups | default([]) | join(',') or omit }}"`, which
+          # must resolve to the joined string (or the omit sentinel),
+          # not the literal text "True"/"False". #evaluate_value_or_and
+          # only engages for that plain-value shape (single top-level
+          # `or`, neither side looking like a real boolean condition)
+          # and returns nil otherwise, leaving the boolean-coercion
+          # fallback below untouched for genuine conditions.
+          evaluate_value_or_and(expr) || (ConditionalEvaluator.evaluate(expr, @vars) ? "True" : "False")
         else
           evaluate_expr(expr)
         end
@@ -79,6 +95,67 @@ module CrystalPlay
         !top_level_keyword_index(expr, " or ").nil? ||
           !top_level_keyword_index(expr, " and ").nil? ||
           !top_level_keyword_index(expr, " is ").nil?
+      end
+
+      # Tokens whose presence on one side of a top-level `or`/`and` mean
+      # that side is a genuine boolean condition (comparison, is-test,
+      # negation, or another nested or/and) rather than a plain value -
+      # in that case the whole expression must keep going through
+      # ConditionalEvaluator's boolean coercion instead of #evaluate_
+      # value_or_and's value-passthrough semantics.
+      BOOLEAN_CONDITION_TOKENS = [" is ", " in ", " not ", "==", "!=", "<=", ">=", " and ", " or "]
+
+      private def looks_like_condition?(expr : String) : Bool
+        stripped = expr.strip
+        BOOLEAN_CONDITION_TOKENS.any? { |tok| stripped.includes?(tok) } || stripped.starts_with?("not ")
+      end
+
+      # Real Python/Jinja2 truthiness of an already-rendered string
+      # value (this evaluator's #evaluate always returns String) - only
+      # an empty string, "false"/"False", "none"/"None", "0", "[]", "{}",
+      # or the omit sentinel are falsy; everything else (including "0.0"
+      # rendered forms aren't reachable here since numeric literals
+      # render via VariableLookup#format_value, matching Python) is
+      # truthy.
+      private def truthy_string?(value : String) : Bool
+        return false if value.empty?
+        !{"false", "False", "none", "None", "0", "[]", "{}", OMIT_SENTINEL}.includes?(value)
+      end
+
+      # Value-selector `or`/`and` (`X or Y` returns X itself when X is
+      # truthy, not the literal text "True") - only engages for the
+      # single-top-level-operator, no-nested-condition shape; returns
+      # nil for anything else so the caller falls back to full boolean
+      # coercion via ConditionalEvaluator.
+      private def evaluate_value_or_and(expr : String) : String?
+        if idx = top_level_keyword_index(expr, " or ")
+          return nil if top_level_keyword_index(expr, " and ") || top_level_keyword_index(expr, " is ")
+          left = expr[0...idx].strip
+          right = expr[(idx + 4)..].strip
+          return nil if looks_like_condition?(left) || looks_like_condition?(right)
+
+          left_val = evaluate_operand(left)
+          return left_val if truthy_string?(left_val)
+          evaluate_operand(right)
+        elsif idx = top_level_keyword_index(expr, " and ")
+          return nil if top_level_keyword_index(expr, " is ")
+          left = expr[0...idx].strip
+          right = expr[(idx + 5)..].strip
+          return nil if looks_like_condition?(left) || looks_like_condition?(right)
+
+          left_val = evaluate_operand(left)
+          return left_val unless truthy_string?(left_val)
+          evaluate_operand(right)
+        end
+      end
+
+      # `omit` isn't a real variable - it's a magic bareword sentinel
+      # (real Ansible's own way to conditionally drop a module param
+      # entirely), only ever meaningful as an operand here, never
+      # resolvable via a normal variable lookup.
+      private def evaluate_operand(expr : String) : String
+        return OMIT_SENTINEL if expr == "omit"
+        evaluate_expr(expr)
       end
 
       private def evaluate_expr(expr : String) : String

@@ -86,6 +86,13 @@ or already-clean roles as if they were new.
 | robertdebock.bind | ❌ Not testable - same (no Galaxy or GitHub role under this name; robertdebock does publish `dns`/`dnsmasq`, but no `bind`) |
 | robertdebock.postgresql | ❌ Not testable - same (no Galaxy or GitHub role under this exact name; robertdebock's closest role is `postgres`, a different name than requested) |
 
+| robertdebock.nginx | ✅ Clean (zero engine bugs; idempotent, `curl` verified live) |
+| robertdebock.mysql | ✅ Clean (after implementing `community.general.ini_file`, entirely missing, whose absence had also been silently swallowing robertdebock.mysql's own `Configure mysql server`/`client` tasks and cascading into a missed `Restart mysql server` handler; idempotent, `mysql -u root -p... -e 'select 1'` verified live) |
+| robertdebock.docker_ce | ✅ Clean (zero engine bugs; idempotent, a real `docker run hello-world` verified live) |
+| robertdebock.users | ✅ Clean (after fixing 3 real engine bugs: `include_tasks:`/`include_role:` with a scalar-template `loop:` never resolving at all - custom `loop_var` stayed "undefined" - plain-`{{ }}` `or`/`and` always coercing to literal "True"/"False" instead of real Jinja2 value-selector semantics, `getent:` never failing a missing single-key lookup - breaking a role's own `rescue:` block - and `password_hash` entirely unimplemented, silently storing plaintext into `/etc/shadow`; idempotent modulo `password_hash()`'s own real non-deterministic-salt property, confirmed identical on real ansible-playbook too) |
+| robertdebock.phpmyadmin | ✅ Clean (after fixing 3 real engine bugs: `type_debug` filter entirely missing, `unarchive:`'s `extra_opts:` silently dropped - breaking `--strip-components=1`, the standard way to unpack a GitHub-release tarball - and the resulting tar-based idempotency check trusting `tar --compare`'s raw exit code instead of parsing its output the way real Ansible's own `TgzArchive#is_unarchived` does; idempotent, `curl` 200 on phpmyadmin's own `index.php` verified live) |
+| Oefenweb.fail2ban | ✅ Clean (after implementing Python's `SEP.join(iterable)` string-method-call syntax, entirely missing - the reverse argument order of the `join` Jinja filter - plus one more recursive-re-templating copy in per-element list rendering; idempotent, `fail2ban-client status` showing the sshd jail verified live) |
+
 **Legend:** ✅ Clean = engine matches real `ansible-playbook` (idempotent,
 healthy services, config parity) as of the last time it was run. ⚠️ = engine
 itself is fine, but the role hit an external/environmental blocker partway

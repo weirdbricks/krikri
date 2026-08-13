@@ -53,10 +53,16 @@ module CrystalPlay
   # replicating real Ansible's much more involved zipinfo/permission-based
   # check - an approximation, documented as such.
   #
+  # - extra_opts: raw flags passed straight through to `tar` (e.g.
+  #   `--strip-components=1`) - NOT forwarded to `unzip` for zip archives
+  #   (real Ansible's own extra_opts only ever documents tar-oriented
+  #   flags in practice; zip's own flag syntax is different enough that
+  #   passing the same list through would usually just error).
+  #
   # Not implemented: `copy` (crystal-ansible has no separate
   # controller-vs-target concept the way `copy: false` implies for a
   # locally-executed run - `src` is always read from wherever the task
-  # executes, whether that's local or over SSH), `extra_opts`,
+  # executes, whether that's local or over SSH),
   # `io_buffer_size`, `validate_certs`, `decrypt` (vault auto-decryption -
   # `src` isn't read through `Vault.maybe_decrypt` here), SELinux options,
   # `unsafe_writes`, `attributes`.
@@ -155,16 +161,26 @@ module CrystalPlay
       include_files = (@params["include"]? || "").split(",").map(&.strip).reject(&.empty?)
       keep_newer = is_true?(@params["keep_newer"]?, default: false)
       list_files = is_true?(@params["list_files"]?, default: false)
+      # extra_opts - passed straight through to `tar`, real Ansible's own
+      # documented behavior (raw flags like `--strip-components=1`, the
+      # standard way to unpack a GitHub-release-style tarball whose
+      # single top-level directory shouldn't be preserved). Previously
+      # entirely unimplemented (silently dropped) - a role using it
+      # unpacked WITH the top-level directory still present, so every
+      # path the role expected directly under dest/ (robertdebock.
+      # phpmyadmin's own dest/index.php) was actually one level deeper
+      # and missing.
+      extra_opts = (@params["extra_opts"]? || "").split(",").map(&.strip).reject(&.empty?)
 
       handler = detect_handler(src)
       unless handler
         return PluginResult.new(changed: false, failed: true, msg: "Unsupported archive format for #{src}")
       end
 
-      changed = handler == :tar ? tar_changed?(src, dest, exclude, include_files, keep_newer) : zip_changed?(src, dest, exclude, include_files)
+      changed = handler == :tar ? tar_changed?(src, dest, exclude, include_files, keep_newer, extra_opts) : zip_changed?(src, dest, exclude, include_files)
 
       if changed
-        result = handler == :tar ? extract_tar(src, dest, exclude, include_files, keep_newer) : extract_zip(src, dest, exclude, include_files, keep_newer)
+        result = handler == :tar ? extract_tar(src, dest, exclude, include_files, keep_newer, extra_opts) : extract_zip(src, dest, exclude, include_files, keep_newer)
         unless result
           return PluginResult.new(changed: false, failed: true, msg: "failed to extract #{src}")
         end
@@ -198,21 +214,48 @@ module CrystalPlay
       remote_exec(cmd)[:stdout].split("\n").map(&.strip).reject(&.empty?)
     end
 
-    private def tar_flags(exclude : Array(String), include_files : Array(String), keep_newer : Bool) : String
+    private def tar_flags(exclude : Array(String), include_files : Array(String), keep_newer : Bool, extra_opts : Array(String) = [] of String) : String
       String.build do |str|
         str << " --keep-newer-files" if keep_newer
+        extra_opts.each { |opt| str << " #{opt}" }
         exclude.each { |pattern| str << " --exclude=\"#{pattern}\"" }
         str << " " << include_files.map { |path| "\"#{path}\"" }.join(" ") unless include_files.empty?
       end
     end
 
-    private def tar_changed?(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool) : Bool
-      cmd = "tar --compare -C #{dest} -f #{src}#{tar_flags(exclude, include_files, keep_newer)}"
-      remote_exec(cmd)[:exit_code] != 0
+    # A meaningful-difference line from `tar --compare`'s own output -
+    # matches real Ansible's TgzArchive#is_unarchived exactly (down to
+    # the regex set), NOT a raw exit-code check. GNU tar's own exit code
+    # from --compare is nonzero for CATEGORIES of output crystal-ansible
+    # must NOT treat as "changed": most notably the bogus "Cannot stat:
+    # No such file or directory" warning `--strip-components` itself
+    # always emits for the now-empty top-level path it stripped away -
+    # real bug found benchmarking robertdebock.phpmyadmin's own
+    # extra_opts: ['--strip-components=1'] unpack, previously always
+    # non-idempotent (every rerun re-extracted and reported changed:
+    # true) purely because of that one benign warning line, verified via
+    # real ansible-playbook staying changed: false on the identical
+    # rerun.
+    MEANINGFUL_DIFF_PATTERNS = [
+      /: Uid differs$/, /: Gid differs$/, /: Mode differs$/, /: Mod time differs$/,
+      /: Invalid owner/, /: Invalid group/, /: Symlink differs$/,
+    ]
+    EMPTY_FILE_WARNING = /: : Warning: Cannot stat: No such file or directory$/
+    MISSING_FILE_WARNING = /: Warning: Cannot stat: No such file or directory$/
+
+    private def tar_changed?(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool, extra_opts : Array(String) = [] of String) : Bool
+      cmd = "tar --compare -C #{dest} -f #{src}#{tar_flags(exclude, include_files, keep_newer, extra_opts)}"
+      result = remote_exec(cmd)
+      lines = (result[:stdout].split("\n") + result[:stderr].split("\n"))
+
+      lines.any? do |line|
+        next false if EMPTY_FILE_WARNING.matches?(line)
+        MEANINGFUL_DIFF_PATTERNS.any? { |pattern| pattern.matches?(line) } || MISSING_FILE_WARNING.matches?(line)
+      end
     end
 
-    private def extract_tar(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool) : Bool
-      cmd = "tar --extract -C #{dest} -f #{src}#{tar_flags(exclude, include_files, keep_newer)}"
+    private def extract_tar(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool, extra_opts : Array(String) = [] of String) : Bool
+      cmd = "tar --extract -C #{dest} -f #{src}#{tar_flags(exclude, include_files, keep_newer, extra_opts)}"
       remote_exec(cmd)[:exit_code] == 0
     end
 
