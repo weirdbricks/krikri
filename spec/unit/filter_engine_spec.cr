@@ -41,6 +41,19 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     engine.apply(JSON::Any.new(0_i64), "default(500)").as_i.should eq(0)
   end
 
+  it "treats the engine's own internal \"undefined\" sentinel text as undefined for default()" do
+    # Real bug found benchmarking robertdebock.bootstrap (round 18):
+    # `_bootstrap_packages[key] | default(_bootstrap_packages[other_key])
+    # | default(_bootstrap_packages[os_family])` - a missing dict key
+    # resolves (via VariableLookup and several ExpressionEvaluator call
+    # sites) to the literal string "undefined" rather than a real
+    # Undefined type, but `undefined?` only ever recognized nil/empty
+    # string, so a non-empty "undefined" string sailed straight through
+    # default() unreplaced - the whole chain resolved to the literal
+    # package name "undefined", which then failed to install.
+    engine.apply(s("undefined"), %(default('fallback'))).as_s.should eq("fallback")
+  end
+
   it "uppercases with upper" do
     engine.apply(s("hello"), "upper").as_s.should eq("HELLO")
   end

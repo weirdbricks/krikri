@@ -433,6 +433,50 @@ describe CrystalPlay::ConditionalEvaluator do
       CrystalPlay::ConditionalEvaluator.evaluate("a_string is not sequence", v).should be_true
     end
 
+    it "evaluates 'is boolean' / 'is number' / 'is string' / 'is integer' / 'is float' / 'is iterable', the rest of Jinja2's own type tests" do
+      # Real bug found benchmarking robertdebock.bootstrap's own defaults-
+      # sanity assert: `bootstrap_wait_for_host is defined and
+      # bootstrap_wait_for_host is boolean`. Entirely unimplemented before,
+      # same failure mode 'is mapping'/'is sequence' originally had -
+      # fell through to #evaluate_truthiness, always false, failing the
+      # assert on a real, correctly-typed default (`false`).
+      v = Hash(String, JSON::Any).new
+      v["a_bool"] = JSON::Any.new(false)
+      v["an_int"] = JSON::Any.new(3_i64)
+      v["a_float"] = JSON::Any.new(3.5)
+      v["a_string"] = JSON::Any.new("hello")
+      v["a_list"] = JSON.parse(%([1, 2, 3]))
+
+      CrystalPlay::ConditionalEvaluator.evaluate("a_bool is boolean", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("an_int is boolean", v).should be_false
+      CrystalPlay::ConditionalEvaluator.evaluate("an_int is number", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("a_float is number", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("an_int is integer", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("a_float is integer", v).should be_false
+      CrystalPlay::ConditionalEvaluator.evaluate("a_float is float", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("a_string is string", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("an_int is string", v).should be_false
+      CrystalPlay::ConditionalEvaluator.evaluate("a_list is iterable", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("a_string is iterable", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("an_int is not iterable", v).should be_true
+    end
+
+    it "evaluates 'is none', real Jinja2's None/null test" do
+      # Real bug found benchmarking robertdebock.mysql's own defaults-
+      # sanity assert: `mysql_bind_address is defined and
+      # mysql_bind_address is string and mysql_bind_address is not none`
+      # (round 18). Entirely unimplemented before - fell through to
+      # #evaluate_truthiness, always false, so `is not none` failed the
+      # assert even for a real, correctly-set string default.
+      v = Hash(String, JSON::Any).new
+      v["a_string"] = JSON::Any.new("127.0.0.1")
+      v["a_null"] = JSON::Any.new(nil)
+
+      CrystalPlay::ConditionalEvaluator.evaluate("a_string is none", v).should be_false
+      CrystalPlay::ConditionalEvaluator.evaluate("a_string is not none", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("a_null is none", v).should be_true
+    end
+
     it "evaluates 'is match(...)' / 'is search(...)' (plus negations), real Jinja2 regex tests" do
       # Real bug found benchmarking geerlingguy.node_exporter's own
       # `when: node_exporter_version is match("latest") or

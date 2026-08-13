@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.270-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.278-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -288,7 +288,17 @@ production Ansible roles (dev-sec, konstruktoid, linux-system-roles,
 geerlingguy, openstack.ansible-hardening, wireguard, ansible-vault,
 cloudalchemy.prometheus, cloudalchemy.grafana, haproxy, certbot) - see
 `git log` for the full log of what's been found and fixed. Most
-recently, a `geerlingguy.glusterfs` round (single instance, then a
+recently, a `robertdebock.*` round (a different, prolific role author -
+`zabbix_server`/`zabbix_agent`, pulling in 8 more robertdebock roles as
+real dependencies) found and fixed 8 bugs: several missing Jinja2 type
+tests (`is boolean`/`is number`/`is string`/`is integer`/`is float`/
+`is iterable`/`is none`), a no-argument `.split()` gap plus another
+recursive-re-templating copy, `systemd:`'s `daemon_reexec:` and `apt:`'s
+`deb:` param both entirely unimplemented, `meta: flush_handlers`
+implemented for real (not cosmetic - a role relies on its ordering for
+correct package installation), a crash it exposed for any `meta:` task
+against a genuine remote host, and a `mysql_user` idempotency bug.
+Before that, a `geerlingguy.glusterfs` round (single instance, then a
 genuine 3-node cluster - real `ansible-playbook` orchestrating one
 cluster, `crystal-ansible` a separate one, both via real SSH, both
 forming actual replicated GlusterFS volumes) found single-instance

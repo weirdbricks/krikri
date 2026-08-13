@@ -1117,23 +1117,33 @@ module CrystalPlay
     # acts on the executor's own state rather than running a plugin on a
     # target.
     #
-    # Only `clear_facts` is supported. Real Ansible's meta: also has
-    # flush_handlers/end_play/end_host/refresh_inventory/clear_host_errors
-    # /noop; those act on execution-flow machinery this engine models
-    # differently, so they're rejected outright rather than silently
-    # accepted and ignored - a playbook whose `meta: end_play` quietly did
-    # nothing would be far worse than one that fails to parse. A
-    # documented scope cut: `meta:` was previously not supported at all,
-    # so this is strictly additive.
+    # `clear_facts` and `flush_handlers` are supported. `flush_handlers`
+    # added in round 18 - found via robertdebock's own roles, several of
+    # which (mysql, selinux, zabbix_repository, zabbix_server,
+    # core_dependencies) use `ansible.builtin.meta: flush_handlers`
+    # deliberately mid-role (e.g. flushing a "Update cache" handler
+    # BEFORE a later task that needs the freshly-added repo's package
+    # list) - skipping the task entirely, the previous behavior, isn't
+    # just a display-order cosmetic gap here: it caused a genuine
+    # functional divergence from real ansible-playbook (a package
+    # install failing "Unable to locate package" because the apt cache
+    # update handler ran at the very end of the play instead of
+    # mid-role). Real Ansible's own end_play/end_host/refresh_inventory/
+    # clear_host_errors/noop still act on execution-flow machinery this
+    # engine models differently, so they're rejected outright rather than
+    # silently accepted and ignored - a playbook whose `meta: end_play`
+    # quietly did nothing would be far worse than one that fails to
+    # parse. A documented scope cut: `meta:` was previously not supported
+    # at all, so this is strictly additive.
     private def self.parse_meta_task(name : String, meta_yaml : YAML::Any) : Task
       action = meta_yaml.as_s?.try(&.strip)
 
       if action.nil? || action.empty?
-        raise "meta: requires a string action (only 'clear_facts' is supported)"
+        raise "meta: requires a string action (only 'clear_facts'/'flush_handlers' are supported)"
       end
 
-      unless action == "clear_facts"
-        raise "meta: #{action} is not supported (only 'clear_facts' is)"
+      unless action == "clear_facts" || action == "flush_handlers"
+        raise "meta: #{action} is not supported (only 'clear_facts'/'flush_handlers' are)"
       end
 
       task = Task.new(name, "_meta")

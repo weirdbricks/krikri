@@ -12,6 +12,7 @@ module CrystalPlay
   #   enabled (optional): yes/no - enable on boot
   #   masked (optional): yes/no - mask/unmask the unit
   #   daemon_reload (optional): yes/no - run `systemctl daemon-reload`
+  #   daemon_reexec (optional): yes/no - run `systemctl daemon-reexec`
   #   check_mode (optional): Dry-run mode
   #
   # Matches the ansible.builtin.systemd module's semantics for the
@@ -40,15 +41,24 @@ module CrystalPlay
       enabled = @params["enabled"]?
       masked = @params["masked"]?
       daemon_reload = is_true?(@params["daemon_reload"]?)
+      # daemon_reexec: yes/no - `systemctl daemon-reexec`, re-executing
+      # systemd itself (distinct from daemon-reload). Entirely
+      # unimplemented before - fell into the "no action" guard below,
+      # found via robertdebock.mysql's own "Systemctl daemon-reexec"
+      # handler (`ansible.builtin.systemd: {daemon_reexec: true}`, no
+      # other params at all - round 18), which failed outright instead
+      # of running the reexec real ansible-playbook performs.
+      daemon_reexec = is_true?(@params["daemon_reexec"]?)
 
       # Must have at least one action. Unlike `service`, name is optional
-      # (a task may only want daemon_reload), so the "no action" guard
-      # covers every meaningful request rather than the name itself.
-      unless name || state || enabled || masked || daemon_reload
+      # (a task may only want daemon_reload/daemon_reexec), so the "no
+      # action" guard covers every meaningful request rather than the
+      # name itself.
+      unless name || state || enabled || masked || daemon_reload || daemon_reexec
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Must specify at least one of 'name', 'state', 'enabled', 'masked', or 'daemon_reload'"
+          msg: "Must specify at least one of 'name', 'state', 'enabled', 'masked', 'daemon_reload', or 'daemon_reexec'"
         )
       end
 
@@ -89,6 +99,25 @@ module CrystalPlay
               changed: false,
               failed: true,
               msg: "Failed to reload systemd daemon: #{reload_result[:stderr]}"
+            )
+          end
+        end
+      end
+
+      # daemon_reexec: same "no reliable changed signal" reasoning as
+      # daemon_reload above - always actually runs it, never sets changed.
+      if daemon_reexec
+        if @check_mode
+          messages << "Would re-execute systemd daemon"
+        else
+          reexec_result = remote_exec("systemctl daemon-reexec")
+          if reexec_result[:exit_code] == 0
+            messages << "Systemd daemon re-executed"
+          else
+            return PluginResult.new(
+              changed: false,
+              failed: true,
+              msg: "Failed to re-execute systemd daemon: #{reexec_result[:stderr]}"
             )
           end
         end

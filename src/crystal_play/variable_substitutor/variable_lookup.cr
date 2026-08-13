@@ -87,10 +87,35 @@ module CrystalPlay
         @vars[name.strip]?
       end
 
+      # Real Ansible's recursive re-templating, applied to a dotted-access
+      # BASE variable before walking `.method()`/`.attr` off of it - one
+      # more independent copy of the same bug class this engine has fixed
+      # repeatedly elsewhere (ExpressionEvaluator's bare-lookup fallback,
+      # ConditionalEvaluator's bare when:, FilterEngine's default()
+      # argument, ComparisonEvaluator's bare operand): a role var computed
+      # from another var/dict lookup (`bootstrap_facts_packages: "{{
+      # _bootstrap_packages[...] | default(...) }}"`, robertdebock.
+      # bootstrap's own vars/main.yml) is stored in @vars still as its OWN
+      # unrendered `{{ }}` text rather than eagerly resolved at role-load
+      # time. `resolve_nested` previously fetched that raw templated
+      # string as-is and called `.split()` directly on the LITERAL text
+      # "{{ _bootstrap_packages[...] }}" instead of its real rendered
+      # value (round 18) - only the bare-lookup and filter-chain-head call
+      # sites had this guard before, not the dotted-access base fetch.
+      private def rerender_if_templated(value : JSON::Any) : JSON::Any
+        return value unless (raw = value.raw).is_a?(String) && raw.includes?("{{")
+
+        inner = raw.strip
+        inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
+        rendered = ExpressionEvaluator.new(@vars).evaluate(inner)
+        (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+      end
+
       private def resolve_nested(expr : String) : JSON::Any?
         parts = split_dotted_parts(expr)
         current = @vars[parts[0]]?
         return nil unless current
+        current = rerender_if_templated(current)
 
         parts[1..-1].each do |part|
           dict_method = hash_method_call(current, part)
@@ -172,6 +197,23 @@ module CrystalPlay
       # the caller one level up) picks the first component.
       private def string_method_call(current : JSON::Any, part : String) : JSON::Any?
         return nil unless current.raw.is_a?(String)
+
+        if part == "split()"
+          # No-argument `.split()` - real Python's own `str.split()` (no
+          # separator) splits on any whitespace RUN, not individual
+          # characters, and drops leading/trailing whitespace/empty
+          # pieces - the same semantics the `| split` FILTER was already
+          # fixed for (found via geerlingguy.nfs). This is the METHOD-call
+          # syntax instead, a separate code path with its own copy of the
+          # same gap: only `split('sep')` (a quoted argument) matched the
+          # regex below, so the bare no-arg form fell through entirely,
+          # resolving to nil/"undefined". Found via robertdebock.bootstrap's
+          # own `bootstrap_facts_packages.split()` (round 18) - the whole
+          # `{{ }}` collapsed to the literal text "undefined", used
+          # directly as a `loop:` value, so `package:` tried (and failed)
+          # to install a package literally named "undefined".
+          return JSON::Any.new(current.as_s.split.map { |piece| JSON::Any.new(piece) })
+        end
 
         if match = part.match(/^split\(\s*(['"])(.*)\1\s*\)$/)
           sep = match[2]

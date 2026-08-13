@@ -417,6 +417,36 @@ describe "crystal-ansible CLI (--check mode)" do
       output.should match(/ok=4\b/)
     end
 
+    it "meta: flush_handlers runs pending handlers immediately, not just at end-of-play" do
+      # Real bug found benchmarking robertdebock's own roles (round 18):
+      # `ansible.builtin.meta: flush_handlers` was rejected at parse time
+      # entirely (a documented scope cut) - several real roles
+      # (mysql, selinux, zabbix_repository, zabbix_server,
+      # core_dependencies) use it deliberately mid-role so a later task
+      # can rely on a handler's side effect (e.g. an apt cache refresh)
+      # having already happened - skipping it silently deferred every
+      # notified handler to the very end of the play instead, which for
+      # zabbix_server caused a genuine functional divergence from real
+      # ansible-playbook: a package install task failed "Unable to
+      # locate package" because the repo-add handler's own cache refresh
+      # hadn't run yet.
+      status, output = run_playbook("test-meta-flush-handlers-quick.yml", [] of String)
+
+      status.success?.should be_true
+      task_order = output.lines.select { |line| line.starts_with?("TASK [") || line.starts_with?("HANDLER [") }
+      handler_index = task_order.index(&.includes?("HANDLER [my flush handler]"))
+      after_index = task_order.index(&.includes?("TASK [after the flush]"))
+      handler_index.should_not be_nil
+      after_index.should_not be_nil
+      handler_index.as(Int32).should be < after_index.as(Int32)
+
+      # The handler fired exactly once - the mid-play flush picked it up,
+      # and the implicit end-of-play flush must not re-run it a second
+      # time (real ansible-playbook's own flush_handlers semantics: only
+      # handlers notified SINCE the last flush are pending).
+      output.scan("HANDLER [my flush handler]").size.should eq(1)
+    end
+
     it "reports an unsupported meta action instead of treating it as a no-op" do
       # A meta action this engine does not model is rejected at parse time
       # with a named error, rather than being accepted and silently doing

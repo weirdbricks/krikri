@@ -2354,9 +2354,25 @@ module CrystalPlay
     # prints with no `ok:` beneath it, and the meta task is absent from
     # the play recap's ok= total.
     private def execute_meta(task : Task, host : Host)
-      # Only clear_facts parses (see PlaybookParser.parse_meta_task), so
-      # there is no other action to dispatch on here.
-      @facts[host.name].clear
+      case task.meta_action
+      when "flush_handlers"
+        # Called once per host by the outer per-task host loop in #run,
+        # but @tasks.each is sequential across tasks - every active host
+        # has already finished every task BEFORE this one by the time any
+        # of them reaches it, so running the full (cross-host)
+        # HandlerRunner#run here is correct regardless of which host
+        # triggers it first. Subsequent per-host calls for this same
+        # meta task are harmless no-ops: HandlerRunner#run clears each
+        # host's notified set after running, so any_notified? is false
+        # for the 2nd..Nth host and #run returns immediately without
+        # re-printing anything.
+        run_handlers
+      else
+        # Only clear_facts/flush_handlers parse (see
+        # PlaybookParser.parse_meta_task), so clear_facts is the only
+        # other action to dispatch on here.
+        @facts[host.name].clear
+      end
     end
 
     private def execute_include_role(task : Task, host : Host)

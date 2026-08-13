@@ -8,7 +8,118 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.270`.**
+**Currently at `0.9.278`.**
+
+---
+
+`0.9.271`-`0.9.278` (an eighteenth real-host round: `robertdebock.*`, a
+different, prolific role author than every prior round - chosen
+specifically to exercise different code idioms. Of the 6 roles on the
+shortlist, 4 (`grafana`, `minio`, `bind`, `postgresql`) turned out not to
+exist on Galaxy or GitHub at all under those names - confirmed via both
+the Galaxy API and a full listing of robertdebock's ~300 GitHub repos,
+not just a single lookup miss. The remaining 2, `zabbix_server` and
+`zabbix_agent`, pulled in 8 more robertdebock roles as real dependencies
+(`bootstrap`, `selinux`, `container_docs`, `mysql`, `ca_certificates`,
+`zabbix_repository`, `core_dependencies`) per the roles' own
+`molecule/default/prepare.yml`, all installed and orchestrated together
+in one playbook - real `ansible-playbook` ran the whole chain clean and
+idempotent from the start, used as the correctness baseline throughout.
+crystal-ansible found and fixed 8 real bugs getting there, several of
+real functional consequence, not just cosmetic:
+
+Jinja2's own type tests (`is boolean`/`is number`/`is string`/`is
+integer`/`is float`/`is iterable`/`is none`) were entirely unimplemented
+- only `is mapping`/`is sequence` existed before (from an earlier
+round). Failed multiple roles' own defaults-sanity `assert:` blocks
+(`bootstrap_wait_for_host is boolean`, `mysql_bind_address is not
+none`), a pattern robertdebock's roles use pervasively that no prior
+round's author happened to exercise.
+
+The engine's own internal "undefined" sentinel string (used pervasively
+as this codebase's stand-in for a real Undefined type, per many prior
+fixes in this file) wasn't recognized by the `default()` filter's own
+undefined-check, so a chained dict-lookup miss (`_bootstrap_packages[key]
+| default(...) | default(...)`) resolved to the literal text "undefined"
+instead of falling through to the real default - `bootstrap_facts_
+packages` ended up as the single string "undefined", used directly as a
+`loop:` value, so `package:` tried (and failed) to install a package
+literally named "undefined".
+
+Python-style `.split()` with NO arguments (whitespace-run split) wasn't
+handled at all in the string-method-call code path (only the quoted-arg
+form, `.split('x')`, was - fixed in an earlier round for a different
+role). And a dotted-access BASE variable that's itself still-unrendered
+`{{ }}` text (a role var computed from another var/dict lookup) wasn't
+re-rendered before `.split()`/`.attr` walked off of it - one more
+independent copy of the "recursive re-templating" bug class this file
+has documented repeatedly, this time at the dotted-access base-fetch
+call site specifically (every other call site already had this guard;
+this one didn't).
+
+`ansible.builtin.systemd`'s `daemon_reexec: true` param (distinct from
+`daemon_reload`) wasn't recognized at all, failing outright instead of
+running `systemctl daemon-reexec` - robertdebock.mysql's own handler
+uses exactly this, with no other params.
+
+`apt:`'s `deb:` parameter (install a local/URL .deb file directly,
+distinct from `name:`) was entirely unimplemented - this closes out a
+"looks unimplemented, unverified" flag left in `ROLES_TESTED.md` since
+an earlier round (puppet/munin-node/phpmyadmin/adminer), now confirmed
+real via robertdebock.zabbix_repository's own repo-install task.
+Implemented: downloads a URL if given one, reads the .deb's own name/
+version via `dpkg-deb -f` for idempotency, installs via `apt-get
+install` (not a bare `dpkg -i`) so apt resolves the .deb's own
+dependencies too.
+
+`ansible.builtin.meta: flush_handlers` was rejected at parse time
+entirely (a previously-documented scope cut - only `clear_facts`
+parsed). Implemented for real, and NOT just a display-order cosmetic
+fix here: several robertdebock roles (mysql, selinux,
+zabbix_repository, zabbix_server, core_dependencies) use it
+deliberately mid-role - flushing an apt-cache-update handler BEFORE a
+later task that needs the freshly-added repo's package list, in
+particular. Skipping it silently deferred every notified handler to the
+very end of the play instead, which caused a genuine functional
+divergence from real ansible-playbook for zabbix_server specifically: a
+package install task failed "Unable to locate package" because the
+repo-add handler's own cache refresh hadn't run yet by the time it was
+needed.
+
+Implementing flush_handlers immediately exposed a second, separate
+latent crash: `meta:` tasks (both `clear_facts` and the new
+`flush_handlers`) were never excluded from the plugin pre-upload path,
+so any playbook using `meta:` against a genuine remote SSH host
+crashed the whole process outright trying to look up a nonexistent
+"_meta" plugin binary. Every prior use of `meta:` in this engine's own
+specs ran against `localhost` only, which skips that whole pre-upload
+path entirely - this bug could only ever be found by a real multi-host
+SSH round exercising `meta:`, exactly what this one is.
+
+Finally, an idempotency bug in `mysql_user`'s `update_password: always`
+(real Ansible's own default, which the role leaves unset): previously
+issued `ALTER USER ... IDENTIFIED BY` unconditionally on every run and
+reported `changed: true` even when the password already matched - a
+real divergence from real ansible-playbook, which stayed fully
+idempotent (`changed=0` on rerun) throughout. Fixed by comparing
+password hashes entirely server-side
+(`authentication_string = PASSWORD(?)`, a boolean 0/1) rather than
+pulling the raw hash value back through the driver - discovered
+mid-fix that the vendored `crystal-mysql` driver's type table has no
+`read` implementation at all for the LONGTEXT wire type that column
+actually is (`MySql::Type::LongBlob`), so a first attempt at reading it
+directly always raised and silently fell back to "assume it needs
+updating," defeating the fix before the server-side-comparison rewrite.
+
+Final state, re-verified end to end on a completely fresh host pair
+(not the one used for the debugging iterations above): full playbook
+run succeeds, rerun reports `changed=0` (fully idempotent),
+`zabbix-server`/`zabbix-agent`/`mysql` all `systemctl is-active` =
+active, ports 10050/10051 both listening. One apt-mirror 404 hit during
+verification (a stale Ubuntu archive snapshot for an old mysql-8.0
+`libmysqlclient21` build) - confirmed external/transient via `apt-get
+update` + retry, the same failure mode already documented elsewhere in
+this file, not a crystal-ansible issue.
 
 ---
 

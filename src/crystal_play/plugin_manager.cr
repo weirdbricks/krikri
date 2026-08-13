@@ -213,7 +213,18 @@ module CrystalPlay
           next
         end
 
-        next if task.include_tasks? || task.include_role? || task.include_vars? || task.validate_argument_spec?
+        # meta: (task.meta?) is another pseudo-module ("_meta", no
+        # corresponding plugin binary) alongside the others already
+        # excluded here - real crash found benchmarking robertdebock's
+        # own roles over a genuine remote SSH host (round 18): every
+        # prior use of `meta: clear_facts` in this engine's own specs
+        # ran against `localhost`, which skips this whole pre-upload
+        # path entirely (remote_hosts stays empty), so "_meta" being
+        # added to required_plugins here never actually got looked up
+        # as a real plugin binary until a real remote host exercised it -
+        # `get_local_plugin_path("_meta")` then raised outright, crashing
+        # the whole run before a single task executed.
+        next if task.include_tasks? || task.include_role? || task.include_vars? || task.validate_argument_spec? || task.meta?
 
         simple_name = task.module_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community\.(general|docker|mysql|postgresql|crypto))\./, "")
         required.add(simple_name)

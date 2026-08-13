@@ -31,13 +31,15 @@ module CrystalPlay
   #   computing a minimal add/remove delta - simpler, and idempotent
   #   either way, just not the smallest possible set of statements.
   # - update_password: "always" (default, matching real Ansible) or
-  #   "on_create". "always" is NOT truly idempotent here: unlike real
-  #   Ansible (which can compare password hashes for
-  #   mysql_native_password accounts specifically), this always reissues
-  #   ALTER USER ... IDENTIFIED BY and reports changed: true whenever a
-  #   password: is given for an existing user - a documented
-  #   simplification, not an oversight. Use update_password: on_create to
-  #   avoid this if password drift-detection isn't needed.
+  #   "on_create". "always" compares the account's current password hash
+  #   (mysql.user.authentication_string) against what the given password
+  #   would hash to via `SELECT PASSWORD(...)` before deciding whether an
+  #   ALTER is even needed - matching real Ansible's own idempotent
+  #   behavior for mysql_native_password/MariaDB accounts (round 18; was
+  #   previously an unconditional ALTER + changed: true on every run).
+  #   Falls back to the previous always-alter behavior if that comparison
+  #   itself fails for any reason (e.g. a caching_sha2_password account on
+  #   real MySQL 8, where PASSWORD() doesn't apply the same way).
   # - login_host/login_port/login_user/login_password/login_unix_socket
   # - check_mode
   # - host_all: operate on every existing host row for name: instead of
@@ -132,10 +134,51 @@ module CrystalPlay
       end
 
       return {nil, false} unless update_password == "always" && password
+
+      # Real bug found benchmarking robertdebock.mysql's own "Create
+      # users" task (round 18): update_password: always (the default,
+      # matching real Ansible - the role leaves it unset) previously
+      # reissued ALTER USER ... IDENTIFIED BY unconditionally on every
+      # run, reporting changed: true even when the password was already
+      # exactly what was requested - a genuine idempotency divergence
+      # from real ansible-playbook, which compares the account's current
+      # password hash (mysql.user.authentication_string, the
+      # mysql_native_password/MariaDB format) against what the given
+      # password WOULD hash to (`SELECT PASSWORD(...)`) before deciding
+      # whether an ALTER is even needed. Falls back to the previous
+      # always-alter behavior if the hash comparison itself fails for any
+      # reason (e.g. a caching_sha2_password account on real MySQL 8,
+      # where PASSWORD() doesn't apply the same way) - safe either way,
+      # just not idempotent in that narrower case, same as before.
+      if password_already_matches?(db, name, host, password)
+        return {nil, false}
+      end
+
       return {PluginResult.new(changed: true, failed: false, msg: "User #{name}@#{host}'s password would be updated"), false} if check_mode
 
       db.exec "ALTER USER #{quote_str(name)}@#{quote_str(host)} IDENTIFIED BY #{quote_str(password)}"
       {nil, true}
+    end
+
+    private def password_already_matches?(db : DB::Database, name : String, host : String, password : String) : Bool
+      # Does the comparison entirely server-side (`authentication_string =
+      # PASSWORD(...)`, a boolean 0/1) rather than pulling
+      # mysql.user.authentication_string back through the driver as a
+      # value - that column is LONGTEXT on the wire, a MySQL protocol
+      # type this vendored driver's type table has no `read` for at all
+      # (`MySql::Type::LongBlob` has no override, only the base `raise
+      # "not supported read"`), so fetching it directly always raised and
+      # fell into the "assume it needs updating" rescue below, defeating
+      # the whole point of this check. An integer result is a type every
+      # driver here already reads fine (ordinary registered-result/fact
+      # queries do this constantly).
+      matches = db.query_all(
+        "SELECT authentication_string = PASSWORD(?) FROM mysql.user WHERE User = ? AND Host = ?",
+        password, name, host, as: Int32
+      ).first?
+      matches == 1
+    rescue
+      false
     end
 
     # Applies priv: (if given) when it differs from the account's

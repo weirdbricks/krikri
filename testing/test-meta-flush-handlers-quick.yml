@@ -1,0 +1,29 @@
+# meta: flush_handlers - runs any handlers notified SO FAR immediately,
+# instead of waiting for the implicit end-of-play flush. Real robertdebock
+# roles (mysql, selinux, zabbix_repository, zabbix_server, core_dependencies)
+# rely on this mid-role, e.g. flushing an "update apt cache" handler BEFORE
+# a later task that needs the freshly-refreshed package list - round 18.
+# Safe under --check and for real runs: debug only, nothing touches disk.
+- name: meta flush_handlers smoke test
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: trigger the handler
+      ansible.builtin.debug:
+        msg: "triggering"
+      changed_when: true
+      notify: my flush handler
+
+    - name: flush now, mid-play
+      ansible.builtin.meta: flush_handlers
+
+    - name: after the flush
+      ansible.builtin.debug:
+        msg: "after flush task ran"
+
+  handlers:
+    - name: my flush handler
+      ansible.builtin.debug:
+        msg: "handler ran"

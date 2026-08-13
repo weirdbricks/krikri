@@ -32,6 +32,17 @@ module CrystalPlay
       def any_notified? : Bool
         @notified_handlers.values.any?(&.size.> 0)
       end
+
+      # Clears every host's notified-handler set, so a subsequent #run
+      # call (from a later `meta: flush_handlers`, or the final end-of-
+      # play flush) only picks up handlers notified SINCE the last flush,
+      # not ones already run. Real Ansible's own flush_handlers has this
+      # same "only runs what's still pending" semantics - a handler
+      # already flushed once doesn't run a second time just because the
+      # end-of-play flush also fires.
+      def clear_notified!
+        @hosts.each { |host| @notified_handlers[host.name].clear }
+      end
       
       # Run all notified handlers
       # Handlers run in the order they are defined, not the order they were notified
@@ -98,6 +109,8 @@ module CrystalPlay
 
           puts "" if handler_triggered
         end
+
+        clear_notified!
       end
       
       # Check if a handler should run for a host

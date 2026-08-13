@@ -530,7 +530,22 @@ module CrystalPlay
         when Nil
           true
         when String
-          value.as_s.empty?
+          # Empty string, and also this evaluator's own internal sentinel
+          # for "lookup failed" (see VariableLookup#resolve_indexed and
+          # many other call sites throughout expression_evaluator.cr) -
+          # every one of them renders an unresolved value as the literal
+          # text "undefined" rather than a real Undefined type, so a
+          # chained dict lookup that misses (`_bootstrap_packages[key] |
+          # default(...)`) must treat that literal text the same as a
+          # true miss. Found via robertdebock.bootstrap's own
+          # `_bootstrap_packages[bootstrap_distribution ~'_'~
+          # bootstrap_distribution_major_version] | default(...) |
+          # default(...)` (round 18): "Ubuntu_22" isn't a real key, so the
+          # first indexing missed and rendered "undefined" - a non-empty
+          # string previously - so `default()` never replaced it and the
+          # whole chain resolved to the literal package name "undefined",
+          # which then failed to install.
+          value.as_s.empty? || value.as_s == "undefined"
         else
           false
         end

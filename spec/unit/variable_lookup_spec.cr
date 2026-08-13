@@ -154,4 +154,42 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     # Indexing alone (no trailing suffix) still resolves the item itself.
     lookup.indexed("aide_conf.results[0].item").should eq("/etc/aide.conf")
   end
+
+  it "resolves a no-argument .split() method call, splitting on whitespace runs like real Python" do
+    # Real bug found benchmarking robertdebock.bootstrap's own `loop: "{{
+    # bootstrap_facts_packages.split() }}"` (round 18). Only the quoted-
+    # separator form (`.split('sep')`, fixed above for geerlingguy.
+    # postgresql) matched string_method_call's regex - the bare no-arg
+    # form fell through entirely (current stays a String, not a Hash,
+    # so the dotted-access fallthrough returns nil/undefined), turning a
+    # 4-package loop into a single bogus "undefined" item that then
+    # failed to install as a real package name.
+    v = Hash(String, JSON::Any).new
+    v["pkgs"] = JSON::Any.new("python3 sudo gnupg python3-apt")
+    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    result = lookup.resolve("pkgs.split()")
+    result.should_not be_nil
+    result.not_nil!.as_a.map(&.as_s).should eq(["python3", "sudo", "gnupg", "python3-apt"])
+  end
+
+  it "re-renders a dotted-access BASE variable that is itself still-unrendered {{ }} text before walking .method()/.attr off of it" do
+    # Real Ansible's recursive re-templating - one more independent copy
+    # of this bug class (already fixed at several OTHER call sites: the
+    # bare-lookup fallback, the filter-chain head, default()'s own
+    # argument, a bare comparison operand), this time for the dotted-
+    # access BASE fetch specifically. Found via robertdebock.bootstrap's
+    # own `bootstrap_facts_packages: "{{ _bootstrap_packages[...] |
+    # default(...) }}"` (vars/main.yml, round 18): the var is stored in
+    # @vars still as its own raw `{{ }}` text (lazy evaluation), and
+    # resolve_nested previously fetched that literal text as-is and
+    # called `.split()` directly on it instead of on its real rendered
+    # value.
+    v = Hash(String, JSON::Any).new
+    v["inner"] = JSON::Any.new("hello world")
+    v["outer"] = JSON::Any.new("{{ inner }}")
+    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    result = lookup.resolve("outer.split()")
+    result.should_not be_nil
+    result.not_nil!.as_a.map(&.as_s).should eq(["hello", "world"])
+  end
 end

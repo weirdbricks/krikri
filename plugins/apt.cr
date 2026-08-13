@@ -8,6 +8,7 @@ module CrystalPlay
   #
   # Parameters:
   #   name (optional): Package name or list of packages
+  #   deb (optional): Path or URL to a local .deb file to install
   #   state (optional): present, absent, latest (default: present)
   #   update_cache (optional): Update apt cache before operation
   #   cache_valid_time (optional): Cache is valid for this many seconds
@@ -147,6 +148,22 @@ module CrystalPlay
         end
       end
 
+      # `deb:` - install a local .deb file (or a URL, downloaded first),
+      # distinct from `name:` (a repository package name/version). Real
+      # Ansible's apt module derives the package's own name+version from
+      # the .deb's control metadata (`dpkg-deb -f`) to decide idempotency,
+      # then installs via `apt-get install` (not a bare `dpkg -i`) so apt
+      # resolves any of the .deb's own dependencies too. Entirely
+      # unimplemented before - found via robertdebock.zabbix_repository's
+      # own "Install (apt) repository" task (`apt: {deb: "{{
+      # zabbix_repository_package }}"}`, round 18) - fell straight through
+      # to the "no name: given" branch below and failed outright even
+      # though a real install target (`deb:`) was given.
+      deb_param = @params["deb"]?
+      if deb_param
+        return handle_deb(deb_param, messages, changed)
+      end
+
       # If no package name provided, just return cache update result
       unless name_param
         if update_cache || autoremove || autoclean || clean || upgrade
@@ -258,6 +275,76 @@ module CrystalPlay
       match = stdout.match(/(\d+) upgraded, (\d+) newly installed/)
       return false unless match
       match[1] == "0" && match[2] == "0"
+    end
+
+    # Handle `deb:` - install a local .deb file or a URL (downloaded to a
+    # temp path first). Idempotency mirrors real Ansible's own apt module:
+    # read the package's own name+version out of the .deb's control
+    # metadata via `dpkg-deb -f`, and skip the install if that exact
+    # name/version is already installed.
+    private def handle_deb(deb_source : String, messages : Array(String), changed : Bool) : PluginResult
+      path = deb_source
+
+      if deb_source.starts_with?("http://") || deb_source.starts_with?("https://")
+        path = "/tmp/#{File.basename(deb_source).split('?').first}"
+
+        if @check_mode
+          messages << "Would download #{deb_source} to #{path}"
+        else
+          download_result = remote_exec("curl -fsSL -o #{path} #{deb_source}")
+          if download_result[:exit_code] != 0
+            return PluginResult.new(
+              changed: false,
+              failed: true,
+              msg: "Failed to download #{deb_source}: #{download_result[:stderr]}"
+            )
+          end
+        end
+      end
+
+      # Read the .deb's own control metadata to find its real package
+      # name/version, the same identity real Ansible's apt module checks
+      # against dpkg's installed-package database for idempotency.
+      info_result = remote_exec("dpkg-deb -f #{path} Package Version")
+      if info_result[:exit_code] != 0
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Failed to read package metadata from #{path}: #{info_result[:stderr]}"
+        )
+      end
+
+      pkg_name = nil
+      pkg_version = nil
+      info_result[:stdout].each_line do |line|
+        if line.starts_with?("Package:")
+          pkg_name = line.sub("Package:", "").strip
+        elsif line.starts_with?("Version:")
+          pkg_version = line.sub("Version:", "").strip
+        end
+      end
+
+      if pkg_name && pkg_version
+        check_result = remote_exec("dpkg -l #{pkg_name} 2>/dev/null | grep '^ii'")
+        if check_result[:exit_code] == 0 && installed_version(check_result[:stdout]) == pkg_version
+          return PluginResult.new(changed: false, failed: false, msg: "#{pkg_name} already at version #{pkg_version}")
+        end
+      end
+
+      if @check_mode
+        return PluginResult.new(changed: true, failed: false, msg: "Would install #{path}")
+      end
+
+      install_result = remote_exec("apt-get -y install #{path}")
+      if install_result[:exit_code] != 0
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Failed to install #{path}: #{install_result[:stderr]}"
+        )
+      end
+
+      PluginResult.new(changed: true, failed: false, msg: "Installed #{pkg_name || path}", stdout: install_result[:stdout])
     end
 
     # Handle installing packages

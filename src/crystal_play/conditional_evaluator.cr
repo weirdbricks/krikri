@@ -169,7 +169,15 @@ module CrystalPlay
       # real playbook using this pattern means "is this a list", and
       # matching String too would make `is not sequence` wrongly reject
       # ordinary string variables).
-      {"mapping", "sequence"}.each do |test_name|
+      # 'boolean'/'number'/'string'/'integer'/'float'/'iterable' - the rest
+      # of Jinja2's own type tests, alongside mapping/sequence above.
+      # Found via robertdebock.bootstrap's own `bootstrap_wait_for_host is
+      # boolean` assert (round 18) - entirely unimplemented before, same
+      # failure mode as mapping/sequence originally were: fell through to
+      # #evaluate_truthiness and always evaluated false, failing the
+      # assert on every role that uses this idiom regardless of the
+      # variable's real type.
+      {"mapping", "sequence", "boolean", "number", "string", "integer", "float", "iterable", "none"}.each do |test_name|
         if condition.includes?(" is not #{test_name}")
           var_name = condition.gsub(" is not #{test_name}", "").strip
           return !matches_type_test?(vars, var_name, test_name)
@@ -467,6 +475,34 @@ module CrystalPlay
         value.raw.is_a?(Hash)
       when "sequence"
         value.raw.is_a?(Array)
+      when "boolean"
+        value.raw.is_a?(Bool)
+      when "number", "integer", "float"
+        # Jinja2's own `number` matches both int and float; `integer`/
+        # `float` are narrower Jinja2 tests for just one or the other.
+        # JSON::Any stores whole numbers as Int64 and fractional ones as
+        # Float64, matching Ansible's own YAML/JSON type inference.
+        case test_name
+        when "integer"
+          value.raw.is_a?(Int64)
+        when "float"
+          value.raw.is_a?(Float64)
+        else
+          value.raw.is_a?(Int64) || value.raw.is_a?(Float64)
+        end
+      when "string"
+        value.raw.is_a?(String)
+      when "iterable"
+        value.raw.is_a?(Array) || value.raw.is_a?(Hash) || value.raw.is_a?(String)
+      when "none"
+        # Jinja2's `none`/`null` test - real Python `None`/YAML `null`,
+        # distinct from "undefined" (a key that isn't present at all).
+        # Found via robertdebock.mysql's own `mysql_bind_address is not
+        # none` assert (round 18) - entirely unimplemented before, same
+        # failure mode every other type test here originally had: fell
+        # through to #evaluate_truthiness, always false, so `is not none`
+        # on a real, correctly-set string default failed the assert.
+        value.raw.is_a?(Nil)
       else
         false
       end
