@@ -1,0 +1,11 @@
+---
+- name: Guard against direct invocation
+  ansible.builtin.assert:
+    that:
+      - ansible_parent_role_names is defined
+      - ansible_parent_role_names | length > 0
+    fail_msg: "inner_role must be invoked from within another role"
+
+- name: SUCCESS
+  ansible.builtin.debug:
+    msg: "nested role chain complete! parent={{ ansible_parent_role_names | first }}"

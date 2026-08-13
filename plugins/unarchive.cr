@@ -59,10 +59,19 @@ module CrystalPlay
   #   flags in practice; zip's own flag syntax is different enough that
   #   passing the same list through would usually just error).
   #
-  # Not implemented: `copy` (crystal-ansible has no separate
-  # controller-vs-target concept the way `copy: false` implies for a
-  # locally-executed run - `src` is always read from wherever the task
-  # executes, whether that's local or over SSH),
+  # remote_src (default false, real Ansible's own default too) - a
+  # controller-side src: path is transparently SCP'd to a remote scratch
+  # path before this plugin ever runs (see TaskExecutor#stage_unarchive_
+  # remote_src, the same mechanism copy: uses); this plugin itself always
+  # just reads src: from wherever it's actually executing, same as
+  # real Ansible's module does once the action-plugin layer has already
+  # staged the file.
+  #
+  # Not implemented: `copy` (the module-level `copy:` param, distinct
+  # from remote_src: above - real Ansible's own `copy: false` on
+  # unarchive means something different again, "don't copy files that
+  # already exist unmodified inside dest", not the controller-vs-target
+  # concept),
   # `io_buffer_size`, `validate_certs`, `decrypt` (vault auto-decryption -
   # `src` isn't read through `Vault.maybe_decrypt` here), SELinux options,
   # `unsafe_writes`, `attributes`.
@@ -119,6 +128,14 @@ module CrystalPlay
         run(src, dest)
       ensure
         File.delete(tmp_download_path) if tmp_download_path && File.exists?(tmp_download_path)
+        # __cleanup_after_unarchive - set by TaskExecutor#stage_unarchive_
+        # remote_src when src: named a controller-side path (unarchive's
+        # own real Ansible default, remote_src: false) that had to be
+        # SCP'd to a remote scratch path first, same reasoning as copy:'s
+        # own __cleanup_after_copy. Best-effort.
+        if @params["__cleanup_after_unarchive"]? == "true"
+          File.delete(src) rescue nil
+        end
       end
     end
 

@@ -425,7 +425,23 @@ module CrystalPlay
       # through to the plain `.`/simple-lookup checks instead.
       private def evaluate_bracket_or_dict_expr(expr : String) : String?
         return evaluate_dict_literal(expr) if literal_dict_expr?(expr)
-        return evaluate_bracket_expr(expr) if expr.includes?("[")
+
+        # A `[` anywhere in the string (even deep inside a method call's
+        # own ARGUMENT, e.g. `{...}.get(ansible_facts['architecture'],
+        # ...)` - a dict-literal `.get()` call whose argument happens to
+        # contain `[...]` indexing) previously always routed to indexed-
+        # access handling regardless of nesting - same class of bug as
+        # VariableLookup#resolve's own identical fix, see there for the
+        # full rationale (prometheus.prometheus.node_exporter's own
+        # `_node_exporter_go_ansible_arch`). Only a top-level `[` that
+        # comes BEFORE any top-level `(` means "this whole expression is
+        # itself indexed" - a `(` appearing first means a method/filter
+        # call starts before any real indexing.
+        if bracket_idx = top_level_keyword_index(expr, "[")
+          paren_idx = top_level_keyword_index(expr, "(")
+          return evaluate_bracket_expr(expr) if !paren_idx || bracket_idx < paren_idx
+        end
+
         nil
       end
 
@@ -508,12 +524,18 @@ module CrystalPlay
             quote = nil if char == q
           elsif char == '\'' || char == '"'
             quote = char
+          elsif depth == 0 && expr[i, keyword.size]? == keyword
+            # Checked BEFORE the generic bracket-depth adjustment below -
+            # a *keyword* that is itself one of "[({"/"])}" (a single
+            # bracket char, not a multi-char operator keyword) would
+            # otherwise always be intercepted by the depth-adjustment
+            # branch first, incrementing depth without ever reporting
+            # "found at top level".
+            return i
           elsif "[({".includes?(char)
             depth += 1
           elsif "])}".includes?(char)
             depth -= 1
-          elsif depth == 0 && expr[i, keyword.size]? == keyword
-            return i
           end
           i += 1
         end
@@ -796,6 +818,15 @@ module CrystalPlay
         # plain-lookup fallback for a bare `+`/`~` operand returned the
         # raw, unrendered template text, so the "in" check against every
         # real checksum-file line always came back false.
+        if resolved && (raw = resolved.raw).is_a?(String) && (raw.includes?("{%") || raw.includes?("{#"))
+          # Block tags need the full Crinja renderer, not this plain
+          # `{{ }}`-only evaluator - see variable_lookup.cr's identical
+          # fix for the full rationale (found via prometheus.prometheus's
+          # own _common role's `_common_dependencies` default).
+          rendered = CrinjaRenderer.new(@vars).render(raw)
+          return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
+        end
+
         if resolved && (raw = resolved.raw).is_a?(String) && raw.includes?("{{")
           inner = raw.strip
           inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
@@ -1488,7 +1519,10 @@ module CrystalPlay
                   # counterpart, since `{{ vault_tls_gossip }}` alone (no
                   # filter) already got a re-render pass elsewhere but a
                   # filter chain's own head resolution here didn't.
-                  if resolved && (raw = resolved.raw).is_a?(String) && raw.includes?("{{")
+                  if resolved && (raw = resolved.raw).is_a?(String) && (raw.includes?("{%") || raw.includes?("{#"))
+                    rendered = CrinjaRenderer.new(@vars).render(raw)
+                    JSON.parse(rendered) rescue JSON::Any.new(rendered)
+                  elsif resolved && (raw = resolved.raw).is_a?(String) && raw.includes?("{{")
                     inner = raw.strip
                     inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
                     rendered = evaluate(inner)

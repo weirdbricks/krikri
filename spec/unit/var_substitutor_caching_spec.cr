@@ -157,4 +157,34 @@ describe CrystalPlay::VarSubstitutor do
       result.starts_with?("grafana").should be_true
     end
   end
+
+  describe "block-tag-only task params (no {{ }} anywhere)" do
+    it "renders {% %} block tags even when the whole span has no {{ }} at all" do
+      # Real bug found benchmarking prometheus.prometheus._common's own
+      # vars/main.yml: `_common_dependencies: "{% if (...) %}{{ (...)
+      # }}{% else %}{% endif %}"` - substitute()'s own top-level guard
+      # only ever checked for "{{" before doing ANY work, so a value
+      # that's pure block-tag Jinja with the {{ }} interpolation nested
+      # inside (only reachable via a variable lookup returning this raw
+      # text, not visible at the outer text's own top level) short-
+      # circuited immediately, never reaching Crinja at all.
+      subject = CrystalPlay::VarSubstitutor.new(vars: vars_of({"pkg_mgr" => "apt"}), host_name: "h")
+
+      subject.substitute("x={% if pkg_mgr == 'apt' %}YES{% else %}NO{% endif %}").should eq("x=YES")
+    end
+  end
+
+  describe "expression-tag whitespace-trim markers" do
+    it "strips a trailing '-' trim marker instead of corrupting the expression into a dangling operator" do
+      # Real bug: `{{ 'x' -}}` (no surrounding {% %} block tags, so this
+      # goes through the plain mustache-span scanner, not Crinja) passed
+      # the trim marker straight into the expression body as literal
+      # text ("'x'-"), which then evaluated as a dangling arithmetic
+      # minus operator, rendering "undefined" instead of "x".
+      subject = CrystalPlay::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h")
+
+      subject.substitute("a{{ 'x' -}}b").should eq("axb")
+      subject.substitute("a{{- 'x' }}b").should eq("axb")
+    end
+  end
 end

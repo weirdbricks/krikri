@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.290-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.311-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -287,8 +287,23 @@ and closed on an ongoing basis via real-host benchmark rounds against
 production Ansible roles (dev-sec, konstruktoid, linux-system-roles,
 geerlingguy, openstack.ansible-hardening, wireguard, ansible-vault,
 cloudalchemy.prometheus, cloudalchemy.grafana, haproxy, certbot) - see
-`git log` for the full log of what's been found and fixed. Most
-recently, a twentieth round (`weareinteractive.nginx`/`mysql`/`redis`/
+`git log` for the full log of what's been found and fixed. Most recently, a
+twenty-first round tested a real Ansible **Collection** for the first
+time (`prometheus.prometheus.node_exporter`, not a plain Galaxy role) and
+found 16 real bugs, several of them entirely new engine features rather
+than fixes: collection-role `namespace.collection.role` FQCN resolution,
+`include_role: tasks_from:`, the `ansible_parent_role_names`/`ansible_
+collection_name` magic variables, parent-role template/file search, and
+`unarchive:`'s `remote_src: false` controller-to-target file staging were
+all entirely unimplemented before this round. It also found and fixed
+several gaps in the vendored Crinja shard itself: a native inline
+ternary expression (`X if COND else Y`) was entirely missing from its
+parser, an expression-tag whitespace-trim marker (`{{ x -}}`)
+mistokenized into a dangling arithmetic operator, and `select`/`reject`
+filters were entirely unimplemented. The role ended the round not fully
+clean - blocked at the very end by Jinja2's `namespace()` builtin,
+likely a further Crinja gap not investigated this round (see
+`KNOWN_MISSING.md`). Before that, a twentieth round (`weareinteractive.nginx`/`mysql`/`redis`/
 `users` plus `Stouts.iptables`/`timezone`) found 5 of 6 roles blocked
 externally (a stale nginx.org apt GPG key; four roles all sharing the
 same legacy `include:` directive, removed from current ansible-core,

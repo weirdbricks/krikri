@@ -119,7 +119,17 @@ module CrystalPlay
     end
     
     def substitute(text : String) : String
-      return text unless text.includes?("{{")
+      # A task param whose ENTIRE value is block-tag Jinja with no `{{
+      # }}` interpolation anywhere at all (`{% if x %}a{% else %}b{%
+      # endif %}`, no braces-braces span) - real, valid Ansible/Jinja2
+      # syntax (prometheus.prometheus._common's own `_common_dependencies`
+      # default, a role var computed entirely from `{% if %}`/`{% else
+      # %}`/`{% endif %}` block tags) - previously short-circuited here
+      # before ever reaching the "{%"/"{#" branch below, since this guard
+      # only ever checked for "{{". The whole param stayed completely
+      # unrendered, its literal block-tag text passed straight to a
+      # shell command as a package name.
+      return text unless text.includes?("{{") || text.includes?("{%") || text.includes?("{#")
 
       if text.includes?("{%") || text.includes?("{#")
         return text if @@block_tag_escalation_depth >= MAX_BLOCK_TAG_ESCALATION_DEPTH
@@ -196,7 +206,21 @@ module CrystalPlay
         if i + 1 < n && text[i] == '{' && text[i + 1] == '{'
           close_at = find_mustache_close(text, i + 2)
           if close_at
-            result << yield text[(i + 2)...close_at]
+            inner = text[(i + 2)...close_at]
+            # A `{{ expr -}}`/`{{- expr }}` whitespace-trim marker (real,
+            # valid Jinja2 syntax on an expression tag, not just a block
+            # tag) - this plain mustache-only scanner has no concept of
+            # trim markers at all, so a leading/trailing "-" was passed
+            # straight into the expression body (`'x'-` instead of
+            # `'x'`), corrupting it into a dangling arithmetic operator
+            # that resolved to "undefined". Only the WHITESPACE-trimming
+            # effect is dropped here (this scanner doesn't do block-
+            # level whitespace control to begin with); stripping the
+            # marker character itself is what fixes the corrupted
+            # expression.
+            inner = inner.lstrip.lchop('-') if inner.lstrip.starts_with?('-')
+            inner = inner.rstrip.rchop('-') if inner.rstrip.ends_with?('-')
+            result << yield inner
             i = close_at + 2
             next
           end

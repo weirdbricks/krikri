@@ -2,6 +2,7 @@ require "json"
 require "./variable_substitutor/filter_engine"
 require "./variable_substitutor/variable_lookup"
 require "./variable_substitutor/expression_evaluator"
+require "./variable_substitutor/crinja_renderer"
 
 module CrystalPlay
   # ConditionalEvaluator - Evaluates Ansible when: conditions
@@ -444,7 +445,15 @@ module CrystalPlay
     # here - narrowly, per call site, not via a bigger refactor).
     private def self.rerender_if_templated(vars : Hash(String, JSON::Any), value : JSON::Any?) : JSON::Any?
       return value unless value
-      return value unless (raw = value.raw).is_a?(String) && raw.includes?("{{")
+      return value unless (raw = value.raw).is_a?(String) && (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#"))
+
+      # Same "{%"/"{#" block-tag gap as VariableLookup's own identical
+      # copy of this helper (variable_lookup.cr) - see there for the
+      # full rationale.
+      if raw.includes?("{%") || raw.includes?("{#")
+        rendered = VariableSubstitutor::CrinjaRenderer.new(vars).render(raw)
+        return (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+      end
 
       inner = raw.strip
       inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")

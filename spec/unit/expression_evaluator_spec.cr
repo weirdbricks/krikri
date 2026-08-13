@@ -361,6 +361,22 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("'' and 'second'").should eq("")
   end
 
+  it "resolves a dict.get() call whose key argument itself contains indexing" do
+    # Real bug found benchmarking prometheus.prometheus.node_exporter's
+    # own `_node_exporter_go_ansible_arch` default: `{'x86_64': 'amd64',
+    # ...}.get(ansible_facts['architecture'], ansible_facts
+    # ['architecture'])`. evaluate_bracket_or_dict_expr's own
+    # `expr.includes?("[")` was a blunt any-position check - the `[`
+    # nested inside .get()'s own argument wrongly routed the WHOLE
+    # expression to indexed-access handling instead of the dotted
+    # method-call dispatch its own top-level structure actually needs.
+    v = Hash(String, JSON::Any).new
+    v["ansible_facts"] = JSON.parse(%({"architecture": "x86_64"}))
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    evaluator.evaluate(%({'x86_64': 'amd64'}.get(ansible_facts['architecture'], ansible_facts['architecture']))).should eq("amd64")
+  end
+
   it "compares a dotted operand against a `~`-concatenated one, full ansible-vault expression" do
     # End-to-end regression for the exact expression benchmarked from
     # ansible-community.ansible-vault's own "Compute if installation is

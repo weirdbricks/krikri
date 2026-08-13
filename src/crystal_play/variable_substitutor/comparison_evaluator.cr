@@ -1,5 +1,6 @@
 require "json"
 require "./filter_engine"
+require "./crinja_renderer"
 
 module CrystalPlay
   module VariableSubstitutor
@@ -21,7 +22,15 @@ module CrystalPlay
       # "strip one {{ }} layer and re-run through ExpressionEvaluator"
       # logic at each call site in this class.
       private def rerender_if_templated(value : JSON::Any) : JSON::Any
-        return value unless (raw = value.raw).is_a?(String) && raw.includes?("{{")
+        return value unless (raw = value.raw).is_a?(String) && (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#"))
+
+        # Same "{%"/"{#" block-tag gap as every other independent copy of
+        # this helper (VariableLookup, ConditionalEvaluator) - see
+        # variable_lookup.cr for the full rationale.
+        if raw.includes?("{%") || raw.includes?("{#")
+          rendered = CrinjaRenderer.new(@vars).render(raw)
+          return (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+        end
 
         inner = raw.strip
         inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
@@ -206,6 +215,10 @@ module CrystalPlay
             # VarSubstitutor#substitute's own re-templating pass -
             # already handled it), but this plain-lookup fallback for a
             # bare comparison operand didn't.
+            if raw.includes?("{%") || raw.includes?("{#")
+              rendered = CrinjaRenderer.new(@vars).render(raw)
+              return rendered.to_i64? || rendered
+            end
             if raw.includes?("{{")
               inner = raw.strip
               inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")

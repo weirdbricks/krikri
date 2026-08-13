@@ -1,5 +1,6 @@
 require "json"
 require "./expression_evaluator"
+require "./crinja_renderer"
 
 module CrystalPlay
   module VariableSubstitutor
@@ -37,13 +38,69 @@ module CrystalPlay
       # of collapsing to a string after every single filter.
       def resolve(expr : String) : JSON::Any?
         expr = expr.strip
-        if expr.includes?("[")
+        top_level_bracket = top_level_char_index(expr, '[')
+        top_level_paren = top_level_char_index(expr, '(')
+        top_level_dot = top_level_char_index(expr, '.')
+
+        # A `[` anywhere in the string (even deep inside a method call's
+        # own ARGUMENT, not a genuine top-level index on the base at
+        # all) previously always routed here - resolve_indexed's own
+        # `expr.index('[')` then found that same nested bracket and cut
+        # the "base" off mid-expression at a meaningless point. Real bug
+        # found via prometheus.prometheus.node_exporter's own
+        # `{'x86_64': 'amd64', ...}.get(ansible_facts['architecture'],
+        # ansible_facts['architecture'])` (a dict-literal `.get()` call
+        # whose ARGUMENT happens to contain `[...]` indexing, at DEPTH 1
+        # inside the call's own parens - top_level_char_index correctly
+        # finds no top-level `[` at all here).
+        #
+        # A genuine top-level `[` that comes BEFORE any top-level `(`
+        # (`ansible_facts.getent_passwd[item][4]`, `mylist[0]`) still
+        # must route to resolve_indexed - it already correctly delegates
+        # a dotted PREFIX to resolve_nested internally (`base_expr.
+        # includes?('.') ? resolve_nested(base_expr) : ...`) before
+        # walking the bracket suffix; resolve_nested's own parts loop has
+        # no notion of a trailing `[...]` suffix on a dotted part at all.
+        if top_level_bracket && (!top_level_paren || top_level_bracket < top_level_paren)
           resolve_indexed(expr)
-        elsif expr.includes?(".")
+        elsif top_level_dot
           resolve_nested(expr)
         else
           resolve_simple(expr)
         end
+      end
+
+      # Depth-aware search for the first TOP-LEVEL occurrence of *char*
+      # (outside quotes and outside `(`/`[`/`{` nesting) - used to decide
+      # whether the whole expression is itself indexed/dotted at its own
+      # top level, as opposed to a nested occurrence buried inside a
+      # method call's own argument or a dict/list literal's own content.
+      private def top_level_char_index(expr : String, char : Char) : Int32?
+        depth = 0
+        quote : Char? = nil
+
+        expr.each_char.with_index do |c, i|
+          if q = quote
+            quote = nil if c == q
+          elsif c == '\'' || c == '"'
+            quote = c
+          elsif depth == 0 && c == char
+            # Checked BEFORE the generic bracket-depth adjustment below -
+            # when *char* is itself one of "([{"/")]}" (searching for a
+            # literal '[' or '(', not just using them for nesting), the
+            # depth-adjustment branch would otherwise always intercept it
+            # first, incrementing depth without ever reporting "found at
+            # top level" - a genuine top-level '[' or '(' would never be
+            # returned at all.
+            return i
+          elsif "([{".includes?(c)
+            depth += 1
+          elsif ")]}".includes?(c)
+            depth -= 1
+          end
+        end
+
+        nil
       end
 
       # Walks a dotted/indexed suffix (`.stat.exists`, "[0].name",
@@ -103,7 +160,28 @@ module CrystalPlay
       # value (round 18) - only the bare-lookup and filter-chain-head call
       # sites had this guard before, not the dotted-access base fetch.
       private def rerender_if_templated(value : JSON::Any) : JSON::Any
-        return value unless (raw = value.raw).is_a?(String) && raw.includes?("{{")
+        return value unless (raw = value.raw).is_a?(String) && (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#"))
+
+        # A raw value containing `{%`/`{#` (block tags/comments, not just
+        # a plain `{{ }}` expression) needs the FULL Crinja renderer -
+        # ExpressionEvaluator has no concept of block tags at all. Real
+        # bug found benchmarking prometheus.prometheus._common's own
+        # vars/main.yml: `_common_dependencies: "{% if (...) %}{{ (...)
+        # -}}{% else %}{% endif %}"` (a role default, real Ansible-
+        # written Jinja - block tags ARE valid anywhere a template
+        # string is processed, not just in .j2 template FILES) - handing
+        # this whole raw text to ExpressionEvaluator (which only knows
+        # `{{ }}` spans) returned it completely unrendered, and that
+        # literal block-tag text became a package name passed straight
+        # to apt-get, a bash syntax error. The OUTER VarSubstitutor#
+        # substitute already had this same "{{" vs "{%"/"{#"" branch for
+        # its own top-level re-templating pass; this INNER helper (the
+        # one plain variable/dotted lookups actually go through) never
+        # got the same fix.
+        if raw.includes?("{%") || raw.includes?("{#")
+          rendered = CrinjaRenderer.new(@vars).render(raw)
+          return (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+        end
 
         inner = raw.strip
         inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
@@ -127,6 +205,22 @@ module CrystalPlay
         # apt's own `name:` param.
         current = if literal = quoted_literal(parts[0])
                     JSON::Any.new(literal)
+                  elsif hash_literal_expr?(parts[0])
+                    # A literal Jinja dict as the dotted-path base
+                    # (`{'x86_64': 'amd64', ...}.get(key, default)`) -
+                    # same reasoning as the quoted-literal case just
+                    # above: the base is a LITERAL, not a variable name,
+                    # so the plain @vars lookup below always missed.
+                    # ExpressionEvaluator already has a full dict-literal
+                    # parser (used for a bare `{{ {...} }}` span); reused
+                    # here rather than duplicating it. Found via
+                    # prometheus.prometheus.node_exporter's own
+                    # `_node_exporter_go_ansible_arch` (an architecture-
+                    # name lookup table for its GitHub release download
+                    # URL) - resolved to nil/"undefined" before, silently
+                    # corrupting the download URL into a 404.
+                    rendered = ExpressionEvaluator.new(@vars).evaluate(parts[0])
+                    (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
                   else
                     @vars[parts[0]]?
                   end
@@ -278,6 +372,14 @@ module CrystalPlay
         stripped[1..-2]
       end
 
+      # A whole-string literal Jinja dict (`{'a': 1}`) - depth-aware only
+      # to the extent of checking the outer braces; the actual parsing is
+      # delegated to ExpressionEvaluator's own dict-literal support.
+      private def hash_literal_expr?(expr : String) : Bool
+        stripped = expr.strip
+        stripped.starts_with?('{') && stripped.ends_with?('}')
+      end
+
       # Jinja2/Python dict method-call syntax (`.keys()`, `.values()`,
       # `.items()`) on a Hash - dev-sec os_hardening's own
       # `ansible_facts.getent_passwd.keys() | list` (building the
@@ -297,7 +399,75 @@ module CrystalPlay
           JSON::Any.new(hash.values)
         when "items()"
           JSON::Any.new(hash.map { |key, value| JSON::Any.new([JSON::Any.new(key), value]) })
+        else
+          if match = part.match(/^get\(\s*(.+)\s*\)$/)
+            dict_get(hash, match[1])
+          end
         end
+      end
+
+      # Python's `dict.get(key, default=None)` method-call syntax -
+      # dev-sec/prometheus-community-style role vars commonly build a
+      # lookup table this way: `{'x86_64': 'amd64', ...}.get(ansible_
+      # facts['architecture'], ansible_facts['architecture'])` (falling
+      # back to the raw architecture name when it's not in the map).
+      # Entirely unimplemented before - fell through to the generic
+      # dotted-access fallthrough below, which only understands a plain
+      # `dict[key]` literal hash lookup, not a method call - resolved to
+      # nil/"undefined" regardless of whether the key was actually
+      # present. Found via prometheus.prometheus.node_exporter's own
+      # `_node_exporter_go_ansible_arch` (architecture-name mapping for
+      # its GitHub release download URL) - the corrupted "undefined" arch
+      # segment made the whole binary download URL 404.
+      private def dict_get(hash : Hash(String, JSON::Any), args : String) : JSON::Any?
+        parts = split_top_level_comma(args)
+        return nil if parts.empty?
+
+        key = resolve_get_arg(parts[0])
+        return nil unless key
+
+        key_str = key.as_s? || key.raw.to_s
+        hash[key_str]? || (parts[1]? ? resolve_get_arg(parts[1]) : nil)
+      end
+
+      private def split_top_level_comma(args : String) : Array(String)
+        parts = [] of String
+        current = String::Builder.new
+        depth = 0
+        quote : Char? = nil
+
+        args.each_char do |char|
+          if q = quote
+            current << char
+            quote = nil if char == q
+          elsif char == '\'' || char == '"'
+            quote = char
+            current << char
+          elsif "[({".includes?(char)
+            depth += 1
+            current << char
+          elsif "])}".includes?(char)
+            depth -= 1
+            current << char
+          elsif char == ',' && depth == 0
+            parts << current.to_s.strip
+            current = String::Builder.new
+          else
+            current << char
+          end
+        end
+        parts << current.to_s.strip
+        parts.reject(&.empty?)
+      end
+
+      private def resolve_get_arg(expr : String) : JSON::Any?
+        stripped = expr.strip
+        if (stripped.starts_with?('\'') && stripped.ends_with?('\'')) ||
+           (stripped.starts_with?('"') && stripped.ends_with?('"'))
+          return JSON::Any.new(stripped[1..-2])
+        end
+
+        resolve(stripped)
       end
 
       # Handles a base expression (a bare name or a dotted path) followed

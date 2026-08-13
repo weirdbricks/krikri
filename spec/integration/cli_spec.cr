@@ -170,6 +170,24 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("include_role smoke test complete!")
   end
 
+  it "propagates ansible_parent_role_names through a role's own include_tasks: -> include_role: chain" do
+    # Real bug found benchmarking prometheus.prometheus.node_exporter (a
+    # real Ansible Collection): its own tasks/main.yml reaches a nested
+    # include_role: (with tasks_from:) via an intermediate include_tasks:
+    # call, not directly. ansible_parent_role_names previously only got
+    # set on tasks loaded straight from RoleLoader - propagate_role_context
+    # (which threads role context through include_tasks:) never carried
+    # role_name/role_parent_names at all, so the nested include_role:
+    # call had no enclosing-role context to extend, and the target role's
+    # own "don't invoke me directly" guard assert failed regardless of
+    # the real (indirect) invocation path.
+    status, output = run_playbook("test-nested-role-parent-chain-quick.yml")
+
+    status.success?.should be_true
+    output.should contain("nested role chain complete! parent=outer_role")
+    output.should contain("nested role parent-chain smoke test complete!")
+  end
+
   it "continues the play past a failed task when ignore_errors: yes, and does not fail the process" do
     status, output = run_playbook("test-error-handling-quick.yml", [] of String)
 

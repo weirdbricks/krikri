@@ -548,6 +548,12 @@ module CrystalPlay
       if role_name = task.role_name
         vars_context["ansible_role_name"] = JSON::Any.new(role_name)
       end
+      if parent_names = task.role_parent_names
+        vars_context["ansible_parent_role_names"] = JSON::Any.new(parent_names.map { |n| JSON::Any.new(n) })
+      end
+      if collection_name = task.ansible_collection_name
+        vars_context["ansible_collection_name"] = JSON::Any.new(collection_name)
+      end
       if role_path = task.role_path
         vars_context["role_path"] = JSON::Any.new(role_path)
       end
@@ -1473,6 +1479,7 @@ module CrystalPlay
       substituted_params = substitute_task_params(task.params, substitutor)
       substituted_params = resolve_role_relative_src(task, substituted_params)
       substituted_params = inline_copy_source_content(task, substituted_params, host, vars_context)
+      substituted_params = stage_unarchive_remote_src(task, substituted_params, host, vars_context)
       substituted_become_user = task.become_user.try { |raw_user| substitutor.substitute(raw_user) }
 
       if ActionPluginManager.has_action_plugin?(task.module_name)
@@ -1544,6 +1551,7 @@ module CrystalPlay
       substituted_params = substitute_task_params(task.params, substitutor)
       substituted_params = resolve_role_relative_src(task, substituted_params)
       substituted_params = inline_copy_source_content(task, substituted_params, exec_host, vars_context)
+      substituted_params = stage_unarchive_remote_src(task, substituted_params, exec_host, vars_context)
       # become_user: goes through the same {{ }} substitution as any
       # params: value (e.g. become_user: "{{ service_user }}", a common
       # real-playbook pattern) - task.become_user itself is never mutated
@@ -2163,6 +2171,32 @@ module CrystalPlay
         nested_task.role_templates_dir = enclosing.role_templates_dir
         nested_task.role_vars_dir = enclosing.role_vars_dir
         nested_task.role_path = enclosing.role_path
+        nested_task.role_name = enclosing.role_name
+        # Same reasoning as role_loader.cr's own include_role_dir fix -
+        # a nested include_role: reached via this include_tasks: must
+        # still search from the playbook root, not this included file's
+        # own directory (already wrongly baked into nested_task.
+        # include_role_dir by the initial parse_task call).
+        if include_role_dir = enclosing.include_role_dir
+          nested_task.include_role_dir = include_role_dir
+        end
+        # ansible_parent_role_names - an include_tasks: inside a role
+        # doesn't itself change the parent-role chain (only include_role:
+        # pushes a new entry, in execute_include_role); a task reached
+        # via include_tasks still belongs to the SAME role as its
+        # enclosing task, so it inherits that role's own parent chain
+        # unchanged. Without this, prometheus.prometheus's own
+        # node_exporter role (whose own "Preflight" step is an
+        # include_tasks:, not include_role:) lost its role_name/
+        # role_parent_names for every task inside preflight.yml -
+        # including the include_role: call to `_common` nested one level
+        # further in, which then had no enclosing role context at all to
+        # extend, so `_common`'s own direct-invocation guard assert
+        # failed regardless of the real (indirect, via node_exporter)
+        # invocation path.
+        nested_task.role_parent_names = enclosing.role_parent_names
+        nested_task.role_parent_paths = enclosing.role_parent_paths
+        nested_task.ansible_collection_name = enclosing.ansible_collection_name
 
         # A block's own `vars:` is inherited by every task nested inside it
         # (real Ansible scoping) - found via linux-system-roles/logging's
@@ -2429,13 +2463,24 @@ module CrystalPlay
       inherited.become = task.become
       inherited.become_user = task.become_user
 
+      # ansible_parent_role_names: the ancestor role-name chain leading to
+      # THIS include_role: call - if this include_role task itself
+      # belongs to another role's tasks (task.role_name set), the loaded
+      # role's own parent chain is that enclosing role's own parent
+      # chain plus the enclosing role's own name.
+      child_parent_names = (task.role_parent_names || [] of String) + (task.role_name ? [task.role_name.as(String)] : [] of String)
+      child_parent_paths = (task.role_parent_paths || [] of String) + (task.role_path ? [task.role_path.as(String)] : [] of String)
+
       begin
         included_tasks, included_handlers = RoleLoader.load_single_role(
           role_name,
           render_include_role_vars(task.include_role_vars, vars_context, host.name),
           task.tags,
           inherited,
-          task.include_role_dir.as(String)
+          task.include_role_dir.as(String),
+          task.include_role_tasks_from,
+          child_parent_names,
+          child_parent_paths
         )
       rescue ex
         fail_include(task, host, "Failed to load role '#{role_name}': #{ex.message}")
@@ -2581,6 +2626,13 @@ module CrystalPlay
       src = params["src"]?
       return params if src.nil? || src.starts_with?('/')
 
+      subdir = case task.module_name
+               when "ansible.builtin.copy"     then "files"
+               when "ansible.builtin.template" then "templates"
+               else                                  nil
+               end
+      return params unless subdir
+
       role_dir = case task.module_name
                  when "ansible.builtin.copy"     then task.role_files_dir
                  when "ansible.builtin.template"  then task.role_templates_dir
@@ -2588,8 +2640,34 @@ module CrystalPlay
                  end
       return params unless role_dir
 
+      # Real Ansible searches a role task's ENTIRE parent-role chain for
+      # a relative src:, not just the currently-executing role's own
+      # files:/templates: dir - a shared/generic role commonly relies on
+      # this to let each CALLING role supply its own asset under the
+      # same relative name (prometheus.prometheus's own `_common` role,
+      # invoked by every exporter role: `src: "{{ _common_service_name
+      # }}.service.j2"` resolves to `node_exporter/templates/node_
+      # exporter.service.j2` when invoked FROM node_exporter, not to
+      # any file inside _common's own templates/ dir at all). Checked
+      # nearest-parent-first (role_parent_paths is root-first, so
+      # reversed here), falling back to the current role's own dir
+      # unchanged (even if the file doesn't exist there either) so the
+      # existing "not found" error still names the expected location.
+      candidate = File.join(role_dir, src)
+      unless File.exists?(candidate)
+        if parent_paths = task.role_parent_paths
+          parent_paths.reverse_each do |parent_path|
+            parent_candidate = File.join(parent_path, subdir, src)
+            if File.exists?(parent_candidate)
+              candidate = parent_candidate
+              break
+            end
+          end
+        end
+      end
+
       resolved = params.dup
-      resolved["src"] = File.join(role_dir, src)
+      resolved["src"] = candidate
       resolved
     end
 
@@ -2735,6 +2813,61 @@ module CrystalPlay
       # contents land directly in dest or as a dest/<basename> subdir.
       resolved["src"] = src.ends_with?('/') ? "#{remote_tmp}/" : remote_tmp
       resolved["__cleanup_after_copy_dir"] = "true"
+      resolved
+    end
+
+    # unarchive:'s own real Ansible default (remote_src: false, not
+    # documented as such in this codebase before) means `src:` names a
+    # file on the CONTROLLER, not the target - same category of gap
+    # inline_copy_source_content/stage_large_copy_source already solve
+    # for copy:, mirrored here via the same SCP-staging approach (an
+    # archive is arbitrary binary data, so the "embed as content:"
+    # shortcut copy: uses for small files doesn't apply; always stages
+    # via SCP regardless of size, matching stage_large_copy_source's own
+    # unconditional approach for a directory/big-file copy).
+    #
+    # unarchive.cr itself always runs its tar/unzip commands against
+    # whatever filesystem it's actually executing on (the remote target,
+    # once uploaded and run there like every other plugin) - previously
+    # had no notion at all that `src:` might still be sitting on the
+    # controller, so `remote_file_exists?(src)` always failed once a
+    # play used a genuinely remote host and a controller-side src: path.
+    # Found via prometheus.prometheus.node_exporter's own "Unpack binary
+    # archive" task: the binary was downloaded to a `delegate_to:
+    # localhost` cache dir (a real, common pattern for a role that
+    # downloads once and extracts per-target), and the following
+    # unarchive: task (no delegate_to, running on the real target) never
+    # had that file transferred to it at all - "Source ... failed to
+    # transfer" regardless of the file genuinely existing, just on the
+    # wrong host.
+    private def stage_unarchive_remote_src(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String)
+      return params unless task.module_name == "ansible.builtin.unarchive"
+      return params if ["true", "yes", "1", "on"].includes?(params["remote_src"]?.try(&.downcase))
+      return params if PluginManager.is_local_connection?(host, vars_context)
+
+      src = params["src"]?
+      return params unless src && src.starts_with?('/') && File.exists?(src)
+
+      connection_host = PluginManager.get_connection_host(host, vars_context)
+      remote_tmp = "/tmp/.crystal-ansible-unarchive-src-#{Random::Secure.hex(8)}-#{File.basename(src)}"
+
+      begin
+        SSHManager.upload(
+          connection_host,
+          host.user || "root",
+          src,
+          remote_tmp,
+          host.port,
+          identity_file: vars_context["ansible_ssh_private_key_file"]?.try(&.as_s?)
+        )
+      rescue
+        return params
+      end
+
+      resolved = params.dup
+      resolved["src"] = remote_tmp
+      resolved["remote_src"] = "true"
+      resolved["__cleanup_after_unarchive"] = "true"
       resolved
     end
 

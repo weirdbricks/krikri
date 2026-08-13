@@ -1,0 +1,21 @@
+# Nested-role parent-chain smoke test - safe under --check (debug/assert
+# only). Exercises: a roles: entry whose own tasks/main.yml uses
+# include_tasks:, which in turn uses include_role: with tasks_from: - the
+# exact real-world chain prometheus.prometheus.node_exporter's own
+# preflight->_common invocation uses. ansible_parent_role_names must
+# propagate through BOTH hops so inner_role can tell it wasn't invoked
+# directly.
+
+- name: Nested role parent-chain smoke test
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - outer_role
+
+- name: SUCCESS play
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "nested role parent-chain smoke test complete!"

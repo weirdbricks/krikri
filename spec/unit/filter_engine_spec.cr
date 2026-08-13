@@ -118,6 +118,25 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     result.as_s.should eq("1.12.1")
   end
 
+  it "evaluates a `~`-concatenated regex_replace pattern argument, not just a literal one" do
+    # Real bug found benchmarking prometheus.prometheus._common's own
+    # `regex_replace(ansible_collection_name ~ '.', '')` (stripping a
+    # role's own collection-namespace prefix off its FQCN) -
+    # resolve_expression (the general filter-ARGUMENT resolver) never
+    # had the same `~`-concatenation delegation resolve_default_arg
+    # already has for default()'s own argument, so the pattern stayed
+    # the literal unparsed text "ansible_collection_name ~ '.'" instead
+    # of the real computed "prometheus.prometheus." - nothing ever
+    # matched, and the full FQCN was used verbatim as a systemd service
+    # name/template filename that doesn't exist under that name.
+    vars = Hash(String, JSON::Any).new
+    vars["ansible_collection_name"] = JSON::Any.new("prometheus.prometheus")
+    scoped_engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(vars)
+
+    result = scoped_engine.apply(s("prometheus.prometheus.node_exporter"), %(regex_replace(ansible_collection_name ~ '.', '')))
+    result.as_s.should eq("node_exporter")
+  end
+
   it "regex_replace replaces every match, not just the first" do
     result = engine.apply(s("a1 b2 c3"), %(regex_replace('[a-z](\\d)', 'X\\1')))
     result.as_s.should eq("X1 X2 X3")
@@ -331,6 +350,43 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
 
     result = engine_with_vars.apply(value, %(selectattr('state', 'equalto', 'present')))
     result.as_a.size.should eq(1)
+  end
+
+  it "unescapes a real Python/Jinja2 string literal's own backslash escapes when used as a filter argument" do
+    # Real bug found benchmarking prometheus.prometheus._common's own
+    # preflight.yml: `reject('match', '.+:\d+$')`, written inside a
+    # YAML `>-` folded scalar (not a double-quoted YAML string, so YAML
+    # itself does no backslash processing at all) - the regex pattern
+    # arrived as the two RAW characters `\\d` instead of the single
+    # escaped backslash + digit-class `\d` a real Python/Jinja string
+    # literal's own unescaping produces, so the regex matched a literal
+    # "\d" substring instead of a digit run and never matched real
+    # host:port text.
+    engine.apply(JSON.parse(%(["0.0.0.0:9100"])), %(reject('match', '.+:\\\\d+$'))).as_a.should be_empty
+  end
+
+  it "select()/reject() test bare list elements directly, entirely unimplemented before" do
+    # Real bug found benchmarking prometheus.prometheus._common's own
+    # preflight.yml: `[_common_web_listen_address] | flatten | reject(
+    # 'match', '.+:\d+$') | list | length == 0` (asserting a listen
+    # address is host:port shaped) - select/reject (as opposed to
+    # selectattr/rejectattr, which already existed) were entirely
+    # unrecognized filter names, falling through to the unknown-filter
+    # passthrough and silently returning the list UNCHANGED regardless
+    # of the test - reject never actually rejected anything.
+    engine.apply(JSON.parse(%(["0.0.0.0:9100"])), %(reject('match', '.+:\\d+$'))).as_a.should be_empty
+    engine.apply(JSON.parse(%([":9100"])), %(reject('match', '.+:\\d+$'))).as_a.should eq([JSON::Any.new(":9100")])
+    engine.apply(JSON.parse(%(["0.0.0.0:9100"])), %(select('match', '.+:\\d+$'))).as_a.should eq([JSON::Any.new("0.0.0.0:9100")])
+  end
+
+  it "select()/reject() default to real Jinja2 truthiness when no test name is given" do
+    engine.apply(JSON.parse(%([true, false, 1, 0, "", "x"])), "select").as_a.should eq(
+      [JSON::Any.new(true), JSON::Any.new(1_i64), JSON::Any.new("x")]
+    )
+  end
+
+  it "select()/reject() support the 'equalto' test on bare items too" do
+    engine.apply(JSON.parse(%([1, 2, 3])), %(reject('equalto', 2))).as_a.should eq([JSON::Any.new(1_i64), JSON::Any.new(3_i64)])
   end
 
   it "sums a selected list's own attribute values (list concatenation, not just numeric addition)" do

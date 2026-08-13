@@ -1,0 +1,5 @@
+---
+- name: Include the tasks_from-targeted role
+  ansible.builtin.include_role:
+    name: inner_role
+    tasks_from: alt.yml

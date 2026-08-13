@@ -75,6 +75,29 @@ describe CrystalPlay::PlaybookParser do
       task.tags.should eq(["demo"])
     end
 
+    it "recognizes listen: as a task keyword on a handler, not a module name" do
+      # Real bug found benchmarking prometheus.prometheus.node_exporter's
+      # own handlers/main.yml: `listen:` wasn't in the special_keys
+      # exclusion list module detection scans, so a handler whose YAML
+      # happened to list `listen:` before its real module key (`listen:
+      # "restart node_exporter"` above `ansible.builtin.systemd: ...`)
+      # got "listen" itself picked as the module name - "Plugin not
+      # available: listen" - instead of the real ansible.builtin.systemd
+      # module underneath it.
+      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML)
+        - hosts: all
+          handlers:
+            - name: Restart thing
+              listen: "restart thing"
+              ansible.builtin.debug:
+                msg: restarted
+        YAML
+
+      handler = playbook.plays[0].handlers[0]
+      handler.module_name.should eq("ansible.builtin.debug")
+      handler.listen.should eq("restart thing")
+    end
+
     it "merges args: (a sibling keyword) into a free-form module's params" do
       # Real bug found benchmarking githubixx.ansible_role_wireguard's
       # own public-key derivation: `command: "wg pubkey" / args: {stdin:

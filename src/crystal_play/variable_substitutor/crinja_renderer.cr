@@ -3,6 +3,7 @@ require "crinja"
 require "../crinja_hash_ext"
 require "../crinja_string_ext"
 require "../crinja_trim_blocks_ext"
+require "../crinja_ternary_expr_ext"
 require "../variable_substitutor"
 
 module CrystalPlay
@@ -48,6 +49,99 @@ module CrystalPlay
         @@env = env
       end
 
+      # The vendored Crinja shard's expression-lexer mistokenizes a
+      # whitespace-trim marker on an OUTPUT tag specifically (`{{- expr
+      # }}`/`{{ expr -}}`) - real, valid Jinja2 syntax, and the trim-
+      # marker-on-a-BLOCK-tag form (`{%- if x -%}`) works fine, but the
+      # expression-tag form gets tokenized as if the `-` were a literal
+      # minus OPERATOR followed by a separate `}}` end token, corrupting
+      # the whole expression (`'x' -}}` parses as `'x' - <undefined>`,
+      # rendering "undefined" instead of "x"). Found via prometheus.
+      # prometheus._common's own vars/main.yml: `_common_dependencies:
+      # "{% if (...) %}{{ (...) -}}{% else %}{% endif %}"` - real
+      # Ansible-written Jinja using `-}}` to suppress the trailing
+      # newline the multi-line YAML `\`-folded string otherwise
+      # introduces.
+      #
+      # Worked around here rather than in the vendored shard's own
+      # tokenizer (which would need a real lexer-level fix): the trim
+      # marker only ever controls surrounding WHITESPACE, never what the
+      # expression itself evaluates to, so it's equivalent to physically
+      # removing the adjacent template-source whitespace (real Jinja's
+      # own lstrip_blocks/trim_blocks mechanism does exactly this at
+      # parse time) and handing Crinja a plain, un-trimmed `{{ expr }}`
+      # it already tokenizes correctly.
+      private def normalize_expression_trim_markers(text : String) : String
+        result = String::Builder.new
+        i = 0
+        n = text.size
+
+        while i < n
+          if text[i] == '{' && i + 1 < n && text[i + 1] == '{'
+            close = find_expr_close(text, i + 2)
+            unless close
+              result << text[i]
+              i += 1
+              next
+            end
+
+            inner = text[(i + 2)...close]
+            left_trim = inner.starts_with?('-')
+            right_trim = inner.ends_with?('-')
+            inner = inner[1..].lstrip if left_trim
+            inner = inner[0..-2].rstrip if right_trim
+
+            if left_trim
+              current = result.to_s
+              result = String::Builder.new
+              result << current.rstrip
+            end
+            result << "{{" << inner << "}}"
+
+            i = close + 2
+            # Skip forward past any whitespace immediately following the
+            # tag when right-trimmed, physically removing it from the
+            # source the same way Jinja's own trim would.
+            if right_trim
+              while i < n && text[i].whitespace?
+                i += 1
+              end
+            end
+            next
+          end
+
+          result << text[i]
+          i += 1
+        end
+
+        result.to_s
+      end
+
+      # Finds the `}}` that closes an expression tag opened at *start*
+      # (just past the `{{`), quote-aware (a literal `}` inside a
+      # quoted string doesn't count) - mirrors VarSubstitutor's own
+      # find_mustache_close, kept as an independent copy since that one
+      # is private to a different class.
+      private def find_expr_close(text : String, start : Int32) : Int32?
+        i = start
+        n = text.size
+        quote : Char? = nil
+
+        while i < n
+          char = text[i]
+          if q = quote
+            quote = nil if char == q
+          elsif char == '\'' || char == '"'
+            quote = char
+          elsif quote.nil? && char == '}' && i + 1 < n && text[i + 1] == '}'
+            return i
+          end
+          i += 1
+        end
+
+        nil
+      end
+
       # Render a template containing Jinja2 control structures
       def render(text : String) : String
         # @vars is fixed for the lifetime of a renderer (VarSubstitutor
@@ -58,7 +152,7 @@ module CrystalPlay
         # more than once.
         template_vars = (@template_vars ||= prepare_crinja_vars)
 
-        template = shared_env.from_string(text)
+        template = shared_env.from_string(normalize_expression_trim_markers(text))
         template.render(template_vars)
       rescue
         # Return original text on failure

@@ -234,4 +234,61 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     result.should start_with("$6$")
     result.should_not contain("secret")
   end
+
+  it "renders a whitespace-trim marker on an expression tag (not just a block tag)" do
+    # Real bug found benchmarking prometheus.prometheus._common's own
+    # vars/main.yml: `{{ (...) -}}` (a `-}}` trim marker directly on a
+    # `{{ }}` output tag) - the vendored Crinja shard's own expression
+    # lexer mistokenized the trailing "-" as a literal minus OPERATOR
+    # rather than a trim marker, corrupting `'x' -}}` into `'x' -
+    # <undefined>`, rendering the literal text "undefined" instead of
+    # "x". The block-tag form (`{%- if x -%}`) already worked correctly;
+    # only the expression-tag form was broken.
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render(%(a{{ 'x' -}}b)).should eq("axb")
+    renderer.render(%(a{{- 'x' }}b)).should eq("axb")
+  end
+
+  it "supports Jinja2's native inline ternary (`X if COND else Y`), entirely unimplemented before" do
+    # Real bug found benchmarking prometheus.prometheus._common's own
+    # vars/main.yml: the vendored Crinja shard's parser had NO grammar
+    # rule for Jinja2/Python's inline conditional expression at all -
+    # `{{ 'a' if x else 'b' }}` failed outright ("expression was not
+    # fully parsed"), and the parenthesized form `{{ ('a' if x else 'b')
+    # }}` failed differently ("Expected RIGHT_PAREN, got IDENTIFIER").
+    # Note: unrelated to the separate `| ternary(...)` FILTER this
+    # codebase already implements (jinja_filters.cr) - that's Ansible's
+    # own filter syntax, a different construct from Jinja2's native
+    # inline `if`/`else` expression fixed here.
+    v = Hash(String, JSON::Any).new
+    v["x"] = JSON::Any.new(true)
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render(%({{ 'a' if x else 'b' }})).should eq("a")
+    renderer.render(%({{ ('a' if x else 'b') }})).should eq("a")
+
+    v["x"] = JSON::Any.new(false)
+    renderer2 = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer2.render(%({{ 'a' if x else 'b' }})).should eq("b")
+  end
+
+  it "renders the exact real-world block-tag + parenthesized-ternary + is-test combination" do
+    v = Hash(String, JSON::Any).new
+    v["pkg_mgr"] = JSON::Any.new("apt")
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    result = renderer.render(%({% if pkg_mgr == 'apt' %}{{ ('python-apt' if (1 is number) else 'python3-apt') -}}{% else %}{% endif %}))
+    result.should eq("python-apt")
+  end
+
+  it "still renders correctly when the trim-marker fix runs alongside real {% %} block tags" do
+    v = Hash(String, JSON::Any).new
+    v["pkg_mgr"] = JSON::Any.new("apt")
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    result = renderer.render(%({% if pkg_mgr == 'apt' %}{{ 'python3-apt' -}}{% else %}{% endif %}))
+    result.should eq("python3-apt")
+  end
 end

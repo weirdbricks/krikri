@@ -1,0 +1,4 @@
+---
+- name: Delegate to inner include_tasks
+  ansible.builtin.include_tasks:
+    file: inner.yml

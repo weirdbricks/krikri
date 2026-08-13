@@ -140,6 +140,38 @@ module CrystalPlay
     # name: "{{ role_path }}/roles/rsyslog"`, a common pattern for a role to
     # reference one of its own private subroles by absolute path).
     property role_path : String?
+    # The chain of ancestor role names (root-first, NOT including this
+    # role's own name) that led to this role being invoked via
+    # include_role: from within another role's own tasks - exposed as
+    # the `ansible_parent_role_names` magic var. Empty/nil for a role
+    # listed directly under a play's own `roles:` (not nested inside any
+    # other role). Several real collections (prometheus.prometheus's own
+    # `_common` shared-logic role, invoked by every exporter role) guard
+    # against direct invocation with `ansible_parent_role_names is
+    # defined and ansible_parent_role_names | length > 0`.
+    property role_parent_names : Array(String)?
+    # The `role_path` (filesystem root) of each ancestor role, same
+    # ordering/population rules as role_parent_names above - real
+    # Ansible searches a role task's ENTIRE parent-role chain (not just
+    # the currently-executing role's own templates/files dir) for a
+    # relative template:/copy: src:. Found via prometheus.prometheus._
+    # common's own "Create systemd service unit" task: `src: "{{
+    # _common_service_name }}.service.j2"` lives in the CALLING role's
+    # own templates/ dir (node_exporter/templates/node_exporter.
+    # service.j2), not _common's - a shared/generic role deliberately
+    # relying on this real Ansible search-path behavior to let each
+    # exporter role supply its own service unit template.
+    property role_parent_paths : Array(String)?
+    # The `namespace.collection` this task's own role belongs to -
+    # exposed as the `ansible_collection_name` magic var, only ever set
+    # for a role invoked via its full `namespace.collection.role` FQCN
+    # (a collection-shipped role, as opposed to a plain Galaxy role
+    # install). Several real collections use it to strip their own
+    # namespace prefix back off `ansible_parent_role_names` (prometheus.
+    # prometheus._common's own `regex_replace(ansible_collection_name ~
+    # '.', '')`, computing a short service/tag name from the invoking
+    # role's FQCN).
+    property ansible_collection_name : String?
     # include_tasks: - only set when module_name == "_include_tasks".
     # Unlike import_tasks (resolved at parse time), the file path may be
     # templated ({{ vars }}) and isn't resolved until this task actually
@@ -170,6 +202,12 @@ module CrystalPlay
     property include_role_name : String?
     property include_role_vars : Hash(String, JSON::Any)?
     property include_role_dir : String?
+    # tasks_from: - loads tasks/<name>.yml instead of tasks/main.yml.
+    # Common in collection-shipped "shared logic" roles (e.g.
+    # prometheus.prometheus's own _common role, invoked repeatedly by
+    # every exporter role with a different tasks_from: per call - one
+    # role directory, several distinct task-file entry points).
+    property include_role_tasks_from : String?
     # Synthesized by RoleLoader when a role has meta/argument_specs.yml -
     # only set when module_name == "_validate_argument_spec". Real Ansible
     # auto-inserts this as the role's first task ("Validating arguments
@@ -221,6 +259,9 @@ module CrystalPlay
       @role_templates_dir = nil
       @role_vars_dir = nil
       @role_name = nil
+      @role_parent_names = nil
+      @role_parent_paths = nil
+      @ansible_collection_name = nil
       @role_path = nil
       @include_file = nil
       @include_file_dir = nil
@@ -230,6 +271,7 @@ module CrystalPlay
       @include_role_name = nil
       @include_role_vars = nil
       @include_role_dir = nil
+      @include_role_tasks_from = nil
       @validate_argument_spec_options = nil
     end
 
@@ -799,7 +841,7 @@ module CrystalPlay
 
       # Find the module (first key that's not a special keyword)
       special_keys = ["name", "when", "register", "ignore_errors", "check_mode",
-                      "diff", "become", "become_user", "tags", "args", "with_items", "loop",
+                      "diff", "become", "become_user", "tags", "args", "listen", "with_items", "loop",
                       "with_dict", "with_fileglob", "with_first_found", "with_nested", "with_sequence",
                       "with_flattened", "with_community.general.flattened", "with_subelements", "with_indexed_items", "until", "retries", "delay",
                       "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "run_once",
@@ -1282,6 +1324,7 @@ module CrystalPlay
       task = Task.new(name, "_include_role")
       task.include_role_name = role_name
       task.include_role_dir = file_dir
+      task.include_role_tasks_from = include_role_yaml["tasks_from"]?.try(&.as_s)
 
       if vars_yaml = task_hash["vars"]?.try(&.as_h?)
         vars = Hash(String, JSON::Any).new

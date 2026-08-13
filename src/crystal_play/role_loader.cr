@@ -40,12 +40,12 @@ module CrystalPlay
     # deduplicated the way a role listed twice under roles: would be. An
     # explicit allow_duplicates: false isn't honored (dedup only happens
     # within a single call's own meta dependency chain).
-    def self.load_single_role(name : String, invocation_vars : Hash(String, JSON::Any), invocation_tags : Array(String), play : Play, playbook_dir : String) : {Array(Task), Array(Task)}
+    def self.load_single_role(name : String, invocation_vars : Hash(String, JSON::Any), invocation_tags : Array(String), play : Play, playbook_dir : String, tasks_from : String? = nil, parent_names : Array(String) = [] of String, parent_paths : Array(String) = [] of String) : {Array(Task), Array(Task)}
       seen = Set(String).new
       tasks = [] of Task
       handlers = [] of Task
 
-      load_role(name, invocation_vars, invocation_tags, play, playbook_dir, seen, tasks, handlers)
+      load_role(name, invocation_vars, invocation_tags, play, playbook_dir, seen, tasks, handlers, tasks_from, parent_names, parent_paths)
 
       {tasks, handlers}
     end
@@ -88,6 +88,9 @@ module CrystalPlay
       seen : Set(String),
       tasks : Array(Task),
       handlers : Array(Task),
+      tasks_from : String? = nil,
+      parent_names : Array(String) = [] of String,
+      parent_paths : Array(String) = [] of String,
     )
       return if seen.includes?(name)
       seen.add(name)
@@ -97,8 +100,18 @@ module CrystalPlay
         raise "Role not found: #{name} (looked under #{File.join(playbook_dir, "roles", name)} and #{File.join("roles", name)})"
       end
 
-      # meta/main.yml dependencies run BEFORE this role's own tasks.
-      load_meta_dependencies(role_dir, play, playbook_dir, seen, tasks, handlers)
+      # ansible_collection_name - only set when this role was actually
+      # invoked via its full `namespace.collection.role` FQCN (a real
+      # collection role, not merely a bare role name that happens to
+      # contain 2+ dots - vanishingly rare in practice).
+      collection_name = (parts = name.split('.')).size >= 3 ? "#{parts[0]}.#{parts[1]}" : nil
+
+      # meta/main.yml dependencies run BEFORE this role's own tasks - they
+      # get the SAME parent_names as the declaring role itself (not
+      # extended further), matching real Ansible: a dependency isn't
+      # "nested inside" the declaring role's own tasks the way an
+      # include_role: call is.
+      load_meta_dependencies(role_dir, play, playbook_dir, seen, tasks, handlers, parent_names, parent_paths)
 
       defaults = load_vars_file(File.join(role_dir, "defaults", "main.yml"))
       role_vars = load_vars_file(File.join(role_dir, "vars", "main.yml"))
@@ -113,10 +126,26 @@ module CrystalPlay
       # (see try_parse_import_tasks in playbook_parser.cr). role_vars
       # wins over defaults, matching normal precedence.
       known_vars = defaults.merge(role_vars)
-      role_tasks = load_tasks_file(File.join(role_dir, "tasks", "main.yml"), play, known_vars)
+      # tasks_from: loads tasks/<name>.yml instead of tasks/main.yml -
+      # handlers/defaults/vars still always come from their normal
+      # main.yml locations regardless (matching real Ansible: only the
+      # entry-point TASKS file changes).
+      # Real Ansible accepts tasks_from: with OR without the extension
+      # (prometheus.prometheus's own roles write it both ways across
+      # different calls - `tasks_from: install.yml` as well as bare
+      # names elsewhere) - append .yml only when it's not already there.
+      tasks_filename = if tasks_from
+                         (tasks_from.ends_with?(".yml") || tasks_from.ends_with?(".yaml")) ? tasks_from : "#{tasks_from}.yml"
+                       else
+                         "main.yml"
+                       end
+      role_tasks = load_tasks_file(File.join(role_dir, "tasks", tasks_filename), play, known_vars)
       role_handlers = load_tasks_file(File.join(role_dir, "handlers", "main.yml"), play, known_vars)
 
-      if validation_task = load_argument_spec_validation_task(role_dir)
+      # The argument-spec "Validating arguments..." task only applies to
+      # the role's own default ("main") entry point, not an arbitrary
+      # tasks_from: file.
+      if !tasks_from && (validation_task = load_argument_spec_validation_task(role_dir))
         role_tasks.unshift(validation_task)
       end
 
@@ -126,8 +155,27 @@ module CrystalPlay
         task.role_files_dir = files_dir
         task.role_templates_dir = templates_dir
         task.role_vars_dir = vars_dir
+        # include_role_dir must stay anchored to the ORIGINAL playbook's
+        # own directory - real Ansible's role search paths are always
+        # relative to the playbook root (or configured roles_path), never
+        # to whatever tasks file happens to be currently executing.
+        # parse_task sets it from the file_dir of the tasks/main.yml file
+        # actually being parsed here (this role's own tasks dir, e.g.
+        # roles/outer_role/tasks) - correct for include_tasks:'s OWN
+        # relative file: resolution, but wrong for a nested include_role:
+        # task's role lookup, which then searched roles/outer_role/tasks/
+        # roles/<name> instead of the real <playbook_dir>/roles/<name>.
+        # Any include_role: called directly from within a role's own
+        # tasks/main.yml hit this (not just role-file text loaded further
+        # via include_tasks) - previously unexercised by any existing
+        # test, since the only prior include_role: coverage called it
+        # from a PLAY's own tasks: list, never from inside a role.
+        task.include_role_dir = playbook_dir
         task.role_name = name
         task.role_path = role_dir
+        task.role_parent_names = parent_names
+        task.role_parent_paths = parent_paths
+        task.ansible_collection_name = collection_name
         task.tags = (task.tags + invocation_tags).uniq
       end
 
@@ -135,7 +183,7 @@ module CrystalPlay
       handlers.concat(role_handlers)
     end
 
-    private def self.load_meta_dependencies(role_dir : String, play : Play, playbook_dir : String, seen : Set(String), tasks : Array(Task), handlers : Array(Task))
+    private def self.load_meta_dependencies(role_dir : String, play : Play, playbook_dir : String, seen : Set(String), tasks : Array(Task), handlers : Array(Task), parent_names : Array(String) = [] of String, parent_paths : Array(String) = [] of String)
       meta_path = File.join(role_dir, "meta", "main.yml")
       return unless File.exists?(meta_path)
 
@@ -145,7 +193,7 @@ module CrystalPlay
 
       deps.each do |dep|
         dep_name, dep_vars, dep_tags = parse_role_entry(dep)
-        load_role(dep_name, dep_vars, dep_tags, play, playbook_dir, seen, tasks, handlers)
+        load_role(dep_name, dep_vars, dep_tags, play, playbook_dir, seen, tasks, handlers, nil, parent_names, parent_paths)
       end
     end
 
@@ -160,7 +208,60 @@ module CrystalPlay
         return nil
       end
 
+      if collection_dir = resolve_collection_role_dir(name, playbook_dir)
+        return collection_dir
+      end
+
       [File.join(playbook_dir, "roles", name), File.join("roles", name)].find { |dir| Dir.exists?(dir) }
+    end
+
+    # A `namespace.collection.role_name` FQCN roles: entry (e.g.
+    # `prometheus.prometheus.node_exporter`, `ansible-galaxy collection
+    # install`'s own way of shipping roles, distinct from a plain Galaxy
+    # role install) - entirely unimplemented before: resolve_role_dir only
+    # ever looked under a playbook's own roles:/ directory, so any
+    # collection-shipped role failed outright ("Role not found"). Real
+    # Ansible resolves this by searching each configured collections path
+    # for `ansible_collections/<namespace>/<collection>/roles/<role>` -
+    # mirrored here against the same locations real Ansible checks:
+    # ANSIBLE_COLLECTIONS_PATH (colon-separated, like ANSIBLE_ROLES_PATH),
+    # a playbook-adjacent collections/ dir, ./collections relative to cwd,
+    # and the two real default install locations (~/.ansible/collections,
+    # /usr/share/ansible/collections).
+    #
+    # A bare 2-dot name is required (namespace.collection.role) - fewer
+    # dots is an ordinary bare/short role name, which must fall through to
+    # the plain roles:/ search below unchanged.
+    private def self.resolve_collection_role_dir(name : String, playbook_dir : String) : String?
+      parts = name.split('.')
+      return nil if parts.size < 3
+
+      namespace = parts[0]
+      collection = parts[1]
+      role_name = parts[2..].join('.')
+      relative = File.join("ansible_collections", namespace, collection, "roles", role_name)
+
+      collections_paths(playbook_dir).each do |base|
+        candidate = File.join(base, relative)
+        return candidate if Dir.exists?(candidate)
+      end
+
+      nil
+    end
+
+    private def self.collections_paths(playbook_dir : String) : Array(String)
+      paths = [] of String
+
+      if env_path = ENV["ANSIBLE_COLLECTIONS_PATH"]? || ENV["ANSIBLE_COLLECTIONS_PATHS"]?
+        paths.concat(env_path.split(':').reject(&.empty?))
+      end
+
+      paths << File.join(playbook_dir, "collections")
+      paths << "collections"
+      paths << File.expand_path("~/.ansible/collections")
+      paths << "/usr/share/ansible/collections"
+
+      paths
     end
 
     private def self.existing_dir(path : String) : String?

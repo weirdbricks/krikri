@@ -225,4 +225,116 @@ describe CrystalPlay::RoleLoader do
 
     tasks[0].tags.should eq(["deploy"])
   end
+
+  it "resolves a namespace.collection.role FQCN via ANSIBLE_COLLECTIONS_PATH" do
+    # Real bug found benchmarking prometheus.prometheus.node_exporter (a
+    # real Ansible Collection, distinct from a plain Galaxy role install)
+    # - resolve_role_dir only ever looked under a playbook's own roles:/
+    # directory, so any collection-shipped role failed outright ("Role
+    # not found"), entirely missing functionality.
+    collections_root = File.join(ROLES_ROOT, "my_collections")
+    role_dir = File.join(collections_root, "ansible_collections", "acme", "widgets", "roles", "installer")
+    Dir.mkdir_p(File.join(role_dir, "tasks"))
+    File.write(File.join(role_dir, "tasks", "main.yml"), <<-YAML)
+      - name: from collection
+        ansible.builtin.debug:
+          msg: hi
+      YAML
+
+    ENV["ANSIBLE_COLLECTIONS_PATH"] = collections_root
+    begin
+      tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- acme.widgets.installer"), fresh_play, ROLES_ROOT)
+      tasks.map(&.name).should eq(["from collection"])
+    ensure
+      ENV.delete("ANSIBLE_COLLECTIONS_PATH")
+    end
+  end
+
+  it "tasks_from: loads tasks/<name>.yml instead of tasks/main.yml" do
+    build_role("multi_entry") do |role|
+      role.tasks(<<-YAML)
+        - name: main entry
+          ansible.builtin.debug:
+            msg: main
+        YAML
+      write(File.join(ROLES_ROOT, "roles", "multi_entry", "tasks", "install.yml"), <<-YAML)
+        - name: install entry
+          ansible.builtin.debug:
+            msg: install
+        YAML
+    end
+
+    tasks, _ = CrystalPlay::RoleLoader.load_single_role(
+      "multi_entry", Hash(String, JSON::Any).new, [] of String, fresh_play, ROLES_ROOT, "install.yml"
+    )
+
+    tasks.map(&.name).should eq(["install entry"])
+  end
+
+  it "tasks_from: accepts a bare name without the .yml extension too" do
+    build_role("multi_entry2") do |role|
+      role.tasks("- name: main\n  ansible.builtin.debug:\n    msg: hi\n")
+      write(File.join(ROLES_ROOT, "roles", "multi_entry2", "tasks", "install.yml"), <<-YAML)
+        - name: install entry
+          ansible.builtin.debug:
+            msg: install
+        YAML
+    end
+
+    tasks, _ = CrystalPlay::RoleLoader.load_single_role(
+      "multi_entry2", Hash(String, JSON::Any).new, [] of String, fresh_play, ROLES_ROOT, "install"
+    )
+
+    tasks.map(&.name).should eq(["install entry"])
+  end
+
+  it "sets role_parent_names from load_single_role's own parent_names argument" do
+    # ansible_parent_role_names - the ancestor role-name chain leading to
+    # an include_role: call. Several real collections (prometheus.
+    # prometheus's own `_common` shared-logic role) guard against direct
+    # invocation with `ansible_parent_role_names is defined and
+    # ansible_parent_role_names | length > 0`.
+    build_role("nested") { |role| role.tasks("- name: t\n  ansible.builtin.debug:\n    msg: hi\n") }
+
+    tasks, _ = CrystalPlay::RoleLoader.load_single_role(
+      "nested", Hash(String, JSON::Any).new, [] of String, fresh_play, ROLES_ROOT, nil, ["outer", "inner"]
+    )
+
+    tasks[0].role_parent_names.should eq(["outer", "inner"])
+  end
+
+  it "a plain roles: entry gets an empty (not nil) role_parent_names" do
+    build_role("toplevel") { |role| role.tasks("- name: t\n  ansible.builtin.debug:\n    msg: hi\n") }
+
+    tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- toplevel"), fresh_play, ROLES_ROOT)
+
+    tasks[0].role_parent_names.should eq([] of String)
+  end
+
+  it "sets ansible_collection_name only when the role was invoked via its namespace.collection.role FQCN" do
+    # Real bug found benchmarking prometheus.prometheus.node_exporter:
+    # ansible_collection_name (the invoking role's own `namespace.
+    # collection`) was entirely unimplemented - several real collections
+    # use it to strip their own namespace prefix back off ansible_
+    # parent_role_names (prometheus.prometheus._common's own
+    # `regex_replace(ansible_collection_name ~ '.', '')`, computing a
+    # short service name from the FQCN). Undefined for a plain bare-name
+    # role, since that isn't a real collection role at all.
+    collections_root = File.join(ROLES_ROOT, "my_collections")
+    role_dir = File.join(collections_root, "ansible_collections", "acme", "widgets", "roles", "installer")
+    Dir.mkdir_p(File.join(role_dir, "tasks"))
+    File.write(File.join(role_dir, "tasks", "main.yml"), "- name: t\n  ansible.builtin.debug:\n    msg: hi\n")
+
+    ENV["ANSIBLE_COLLECTIONS_PATH"] = collections_root
+    begin
+      tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- acme.widgets.installer"), fresh_play, ROLES_ROOT)
+      tasks[0].ansible_collection_name.should eq("acme.widgets")
+    ensure
+      ENV.delete("ANSIBLE_COLLECTIONS_PATH")
+    end
+
+    build_role("bare_role") { |role| role.tasks("- name: t\n  ansible.builtin.debug:\n    msg: hi\n") }
+    bare_tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- bare_role"), fresh_play, ROLES_ROOT)
+    bare_tasks[0].ansible_collection_name.should be_nil
+  end
 end

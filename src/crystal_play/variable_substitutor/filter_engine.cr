@@ -37,7 +37,12 @@ module CrystalPlay
       private def rerender_if_templated(value : JSON::Any) : JSON::Any
         vars = @vars
         return value unless vars
-        return value unless (raw = value.raw).is_a?(String) && raw.includes?("{{")
+        return value unless (raw = value.raw).is_a?(String) && (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#"))
+
+        if raw.includes?("{%") || raw.includes?("{#")
+          rendered = CrinjaRenderer.new(vars).render(raw)
+          return (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+        end
 
         inner = raw.strip
         inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
@@ -308,6 +313,10 @@ module CrystalPlay
           else
             value
           end
+        when "select"
+          apply_select(value, filter_args, false)
+        when "reject"
+          apply_select(value, filter_args, true)
         when "selectattr"
           # selectattr('mount', 'equalto', mount.path) - dev-sec
           # os_hardening's own way of picking a single ansible_facts.mounts
@@ -525,7 +534,7 @@ module CrystalPlay
           if chosen == "omit"
             JSON::Any.new(OMIT_SENTINEL)
           elsif quoted_literal?(chosen)
-            JSON::Any.new(chosen[1..-2])
+            JSON::Any.new(unescape_string_literal(chosen[1..-2]))
           else
             resolve_expression(chosen)
           end
@@ -659,6 +668,51 @@ module CrystalPlay
         resolve_expression(first_arg)
       end
 
+      # select(test, *args) / reject(test, *args) - real Jinja2's own
+      # filters, testing each bare LIST ELEMENT directly against a named
+      # test (as opposed to selectattr/rejectattr, which test a dict
+      # element's given attribute). Entirely unimplemented - neither
+      # filter name was recognized at all, so both fell through to the
+      # unknown-filter passthrough, silently returning the list
+      # unchanged regardless of the test. Found via prometheus.
+      # prometheus._common's own preflight.yml: `[_common_web_listen_
+      # address] | flatten | reject('match', '.+:\d+$') | list | length
+      # == 0` (asserting the listen address is host:port shaped, not
+      # bare-port) - reject's passthrough meant the list was never
+      # actually filtered, so the assert failed regardless of whether
+      # the address was valid.
+      private def apply_select(value : JSON::Any, args : String, invert : Bool) : JSON::Any
+        parts = split_top_level_args(args)
+        test = parts[0]?.try { |part| resolve_default_expression(part) }.try(&.as_s?) || "truthy"
+        compare_value = parts[1]?.try { |part| resolve_default_expression(part) }
+
+        filtered = as_array(value).select { |item| item_matches_test?(item, test, compare_value) != invert }
+        JSON::Any.new(filtered)
+      end
+
+      private def item_matches_test?(item : JSON::Any, test : String, compare_value : JSON::Any?) : Bool
+        case test
+        when "match", "search"
+          str = item.as_s?
+          pattern = compare_value.try(&.as_s?)
+          return false unless str && pattern
+          regex = Regex.new(test == "match" ? "^(?:#{pattern})" : pattern)
+          !!(str =~ regex)
+        when "in"
+          compare_value.try(&.raw.as?(Array)).try(&.includes?(item)) || false
+        when "truthy"
+          # select()/reject() with no test name given at all defaults to
+          # real Jinja2's own bare truthiness check on the item itself
+          # (`select()` alone = "keep every truthy item") - distinct
+          # from selectattr's own default ("defined"), since select
+          # operates on the item's actual value, not an attribute
+          # presence check.
+          truthy?(item)
+        else
+          selectattr_matches?(JSON::Any.new({"_item" => item} of String => JSON::Any), "_item", test, compare_value)
+        end
+      end
+
       private def apply_selectattr(value : JSON::Any, args : String) : JSON::Any
         parts = split_top_level_args(args)
         attr = parts[0]?.try { |part| resolve_default_expression(part) }.try(&.as_s?)
@@ -691,7 +745,8 @@ module CrystalPlay
         # templating pass over the *whole rendered expression string* -
         # not available to a mid-filter-chain JSON::Any comparison like
         # this one, which needs the same rendering done explicitly here.
-        if (vars = @vars) && (raw_string = attr_value.try(&.raw.as?(String))) && raw_string.includes?("{{")
+        if (vars = @vars) && (raw_string = attr_value.try(&.raw.as?(String))) &&
+           (raw_string.includes?("{{") || raw_string.includes?("{%") || raw_string.includes?("{#"))
           attr_value = JSON::Any.new(VarSubstitutor.new(vars: vars).substitute(raw_string))
         end
 
@@ -748,7 +803,7 @@ module CrystalPlay
           return resolve_default_expression(condition_true ? true_expr : false_expr)
         end
 
-        return JSON::Any.new(expr[1..-2]) if quoted_literal?(expr)
+        return JSON::Any.new(unescape_string_literal(expr[1..-2])) if quoted_literal?(expr)
         return JSON::Any.new(nil) if expr == "None"
 
         # A literal array/dict (`start=[]`, sum()'s own list-accumulator
@@ -837,6 +892,26 @@ module CrystalPlay
           return resolve_expression(condition_true ? true_expr : false_expr)
         end
 
+        # Same `+`/`-`/`~`-concatenation delegation resolve_default_arg
+        # already has for default()'s own argument - resolve_expression
+        # is the more general filter-ARGUMENT resolver (regex_replace's
+        # pattern/replacement, selectattr's compare_value, etc.) and
+        # never got the same fix, so a `~`-built argument fell straight
+        # through to resolve_base_expression, which has no `~` concept
+        # at all and returned the literal unparsed text as a bare
+        # (always-undefined) variable-name lookup. Found via prometheus.
+        # prometheus._common's own `regex_replace(ansible_collection_name
+        # ~ '.', '')` (stripping a role's own collection-namespace
+        # prefix off its FQCN) - the pattern arg stayed the literal text
+        # "ansible_collection_name ~ '.'" instead of the real computed
+        # "prometheus.prometheus.", so nothing ever matched and the full
+        # FQCN was used verbatim as a systemd service name/template
+        # filename, which don't exist under that name.
+        if top_level_plus_or_minus?(expr)
+          rendered = ExpressionEvaluator.new(@vars || Hash(String, JSON::Any).new).evaluate(expr)
+          return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
+        end
+
         parts = self.class.split_chain(expr)
         return JSON::Any.new(nil) if parts.empty?
         parts[1..].reduce(resolve_base_expression(parts[0])) { |acc, filter_expr| apply(acc, filter_expr) }
@@ -845,7 +920,7 @@ module CrystalPlay
       private def resolve_base_expression(expr : String) : JSON::Any
         expr = expr.strip
 
-        return JSON::Any.new(expr[1..-2]) if quoted_literal?(expr)
+        return JSON::Any.new(unescape_string_literal(expr[1..-2])) if quoted_literal?(expr)
         return JSON::Any.new(nil) if expr == "None"
         # Bare boolean literal (`true`/`false`, not a quoted string) -
         # same class of bug as ExpressionEvaluator's own identical fix:
@@ -1143,6 +1218,44 @@ module CrystalPlay
           value.as_f
         else
           as_string(value).to_f64? || 0.0
+        end
+      end
+
+      # Unescapes the common backslash escape sequences a real Python/
+      # Jinja2 single- or double-quoted string LITERAL supports (`\\` ->
+      # `\`, `\'`/`\"` -> the literal quote, `\n`/`\t` -> real newline/
+      # tab) - quoted_literal? extraction elsewhere in this file just
+      # strips the surrounding quote characters, with no unescaping at
+      # all. Found via prometheus.prometheus._common's own preflight.yml:
+      # `reject('match', '.+:\\d+$')`, written inside a YAML `>-` folded
+      # scalar (not a double-quoted YAML string, so YAML itself does no
+      # backslash processing) - the regex pattern arrived as the two RAW
+      # characters `\\d` (backslash, backslash, d) instead of the single
+      # escaped backslash + digit-class `\d` real Python/Jinja string-
+      # literal unescaping produces, so the regex matched a literal
+      # "\d" substring instead of a digit run, and never matched real
+      # host:port text like "0.0.0.0:9100" - `reject(...)` silently
+      # rejected nothing.
+      private def unescape_string_literal(text : String) : String
+        String.build do |io|
+          i = 0
+          while i < text.size
+            if text[i] == '\\' && i + 1 < text.size
+              case text[i + 1]
+              when '\\' then io << '\\'
+              when '\'' then io << '\''
+              when '"'  then io << '"'
+              when 'n'  then io << '\n'
+              when 't'  then io << '\t'
+              else
+                io << text[i] << text[i + 1]
+              end
+              i += 2
+            else
+              io << text[i]
+              i += 1
+            end
+          end
         end
       end
 

@@ -8,7 +8,134 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.290`.**
+**Currently at `0.9.311`.**
+
+---
+
+`0.9.291`-`0.9.311` (a twenty-first real-host round, and the first ever to
+exercise a real Ansible **Collection** rather than a plain Galaxy role
+install: `prometheus.prometheus`, specifically its `node_exporter` role and
+the shared internal `_common` role every exporter role in that collection
+delegates its actual install/configure logic to. This turned into by far
+the deepest single-role investigation of any round so far - 16 distinct real
+engine bugs found and fixed, several of them entirely new engine features,
+not just bug fixes, because collection-role invocation had never been
+exercised at all before this round:
+
+- Collection-role `namespace.collection.role` FQCN resolution was entirely
+  unimplemented - `resolve_role_dir` only ever searched a playbook's own
+  `roles:/` directory. Implemented against the real locations `ansible-
+  galaxy collection install` and real Ansible itself search:
+  `ANSIBLE_COLLECTIONS_PATH`, a playbook-adjacent `collections/` dir, and
+  the two real default install locations.
+- `include_role:`'s `tasks_from:` param (loading `tasks/<name>.yml` instead
+  of `tasks/main.yml` - the standard way a collection's shared/generic role
+  exposes several distinct entry points from one role directory) was
+  entirely unimplemented.
+- `ansible_parent_role_names` (the ancestor role-name chain leading to an
+  `include_role:` call - several real collections guard a shared role
+  against direct invocation with it) was entirely unimplemented, and once
+  added, needed fixing at TWO separate layers: `execute_include_tasks`
+  never propagated `role_name`/`role_parent_names` onto tasks loaded via a
+  role's own `include_tasks:` step (so a role reaching `include_role:`
+  indirectly, through an intermediate `include_tasks:`, lost its own parent
+  chain entirely), and a related pre-existing bug where `include_role_dir`
+  itself got anchored to whatever tasks file was currently being parsed
+  instead of staying anchored to the original playbook root - any
+  `include_role:` called directly from within a role's own `tasks/main.yml`
+  (not just reached via a further `include_tasks:`) was already silently
+  broken by this before this round, just never previously exercised by any
+  role tested in 20 prior rounds.
+- `ansible_collection_name` (the invoking role's own `namespace.collection`
+  - used by several real collections to strip their own namespace prefix
+  back off `ansible_parent_role_names`) was entirely unimplemented.
+- Real Ansible searches a role task's ENTIRE parent-role chain (not just
+  the currently-executing role's own `files:`/`templates:` dir) for a
+  relative `copy:`/`template:` `src:` - entirely unimplemented, needed for
+  `_common`'s own shared service-unit template task, whose `src:` resolves
+  to a file in the CALLING role's own `templates/` dir, not `_common`'s own.
+- The `listen:` handler keyword (declaring a topic a handler responds to)
+  wasn't in the task-keyword exclusion list the parser scans when picking a
+  task's module name - a handler whose YAML happened to list `listen:`
+  before its real module key had "listen" itself picked as the module name
+  ("Plugin not available: listen").
+- `unarchive:`'s real Ansible default (`remote_src: false` - `src:` names a
+  file on the CONTROLLER, transferred to the target before extraction) was
+  entirely unimplemented; this plugin always just read `src:` from wherever
+  it was actually executing. Fixed the same way `copy:`'s identical gap was
+  already solved (SCP-staging a controller-side `src:` to a remote scratch
+  path before the plugin ever runs), not by touching the plugin itself.
+- Jinja2's native inline ternary (`X if COND else Y`, distinct from
+  Ansible's own `| ternary(...)` FILTER, which already worked) was entirely
+  unimplemented in the vendored Crinja shard's own parser - fixed by
+  reopening `Crinja::Parser::ExpressionParser`/`Crinja::AST`/`Crinja::
+  Evaluator` from this codebase (the sanctioned way to extend vendored
+  Crinja without editing the gitignored, shards-managed `lib/crinja`
+  directly) to add a real `parse_condexpr` grammar layer.
+- A `-`/`{{-`/`-}}` whitespace-trim marker on an EXPRESSION tag (as opposed
+  to a `{% %}` block tag, which already worked) mistokenized inside
+  Crinja's own parser, corrupting the expression into a dangling arithmetic
+  minus operator (`'x' -}}` parsed as `'x' - <undefined>`, rendering the
+  literal text "undefined"). Worked around via template-text preprocessing
+  in `CrinjaRenderer` (stripping the marker and its adjacent whitespace
+  before Crinja ever parses it) rather than a real lexer fix; the same
+  narrower gap existed independently in this codebase's own hand-rolled
+  `{{ }}` mustache-span scanner too (fixed there directly, simpler since
+  that scanner never did real whitespace-control to begin with).
+- `select`/`reject` (testing bare list elements directly against a named
+  test, as opposed to `selectattr`/`rejectattr`, which already existed)
+  were entirely unimplemented - fell through to the unknown-filter
+  passthrough, silently returning the list completely unchanged regardless
+  of the test.
+- Real Python/Jinja2 string LITERAL backslash-escaping (`\\` -> `\`, the
+  standard way a regex pattern like `\d+` gets written as a string literal
+  `'\\d+'` when the surrounding YAML itself does no escaping of its own,
+  e.g. inside a `>-` folded scalar) was never applied when extracting a
+  quoted filter argument - a `reject('match', '.+:\\d+$')` pattern arrived
+  as the two raw characters `\\d` instead of the real escaped-backslash-
+  plus-digit-class `\d`, so the regex only ever matched a literal `\d`
+  substring, never a real digit run.
+- Python's `dict.get(key, default)` method-call syntax on a literal dict
+  base (`{'x86_64': 'amd64', ...}.get(key, default)`, a common architecture-
+  name-mapping idiom) was entirely unimplemented, and needed fixing at TWO
+  separate layers once implemented: `VariableLookup#resolve`'s own
+  top-level dispatch checked `expr.includes?("[")` for the WHOLE
+  expression before checking for a `.` - a `[` anywhere (even nested
+  inside the `.get()` call's own key ARGUMENT, e.g. `ansible_facts
+  ['architecture']`) always routed the whole expression to indexed-access
+  handling instead of the dotted method-call dispatch its own top-level
+  structure actually needed; the identical bug existed independently one
+  layer up in `ExpressionEvaluator#evaluate_bracket_or_dict_expr` too (same
+  blunt any-position `[` check, fixed the same way: only a top-level `[`
+  that comes BEFORE any top-level `(` means "this whole expression is
+  itself indexed"). A downstream consequence: this exact bug corrupted a
+  GitHub release binary's download URL into a 404 (wrong architecture
+  segment), so it was found and fixed before the `dict.get()` feature
+  itself could even be verified working end-to-end.
+- `regex_replace`'s pattern/replacement arguments never got the same
+  `~`-concatenation delegation `default()`'s own argument already had -
+  `regex_replace(ansible_collection_name ~ '.', '')` (stripping a role's
+  own collection-namespace prefix off its FQCN, used to compute a short
+  systemd service name) left the pattern as the literal unparsed text
+  "ansible_collection_name ~ '.'" instead of the real computed
+  "prometheus.prometheus.", so nothing ever matched.
+
+`node_exporter` ended the round NOT fully clean: it got all the way through
+role resolution, the full binary download/checksum-verify/unpack/install
+pipeline, and correctly locating its own service-unit template in the
+CALLING role's `templates/` dir - but the template itself uses Jinja2's
+`namespace()` builtin (mutable state that survives across `{% for %}` loop
+iterations, computing a systemd `ProtectHome=` setting from whether any
+mount is under `/home`), which is likely entirely unimplemented in Crinja
+and wasn't investigated further this round. See `CRINJA.md` (not committed,
+a handoff document of Crinja-specific findings from this round) for full
+detail on this and the other Crinja-specific bugs above.
+
+Full `crystal spec` suite (1050 examples) passes clean throughout. All
+fixes short of the final `namespace()` blocker verified live against a real
+Atlantic.net host pair, real ansible-playbook as the correctness baseline
+throughout (confirmed clean/idempotent on the real py host before treating
+any divergence as a crystal-ansible bug).
 
 ---
 

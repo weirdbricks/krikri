@@ -247,4 +247,66 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     result.should_not be_nil
     result.not_nil!.as_a.map(&.as_s).should eq(["fail2ban"])
   end
+
+  it "resolves dict.get() even when its key argument is itself an indexed expression" do
+    # Real bug found immediately after fixing dict.get() itself:
+    # resolve()'s own top-level dispatch checked `expr.includes?("[")`
+    # for the WHOLE expression before checking for a "." - a `[`
+    # anywhere (even nested inside the .get() call's own ARGUMENT, e.g.
+    # `ansible_facts['architecture']`) wrongly routed the whole
+    # expression to resolve_indexed, which then cut the "base" off
+    # mid-expression at that nested bracket instead of delegating to
+    # resolve_nested (and its own hash_method_call dict.get() support)
+    # the way the whole-expression's own TOP-LEVEL structure (a dotted
+    # method call) actually requires.
+    v = Hash(String, JSON::Any).new
+    v["ansible_facts"] = JSON.parse(%({"architecture": "x86_64"}))
+    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+
+    result = lookup.resolve(%({'x86_64': 'amd64'}.get(ansible_facts['architecture'], ansible_facts['architecture'])))
+    result.should_not be_nil
+    result.not_nil!.as_s.should eq("amd64")
+  end
+
+  it "still routes a genuine top-level indexed+dotted expression to resolve_indexed (no regression)" do
+    # ansible_facts.getent_passwd[item][4] - resolve_indexed already
+    # correctly delegates the dotted PREFIX to resolve_nested
+    # internally before walking the bracket suffix; resolve_nested's
+    # own parts loop has no notion of a trailing `[...]` at all, so this
+    # must keep routing through resolve_indexed, not resolve_nested.
+    v = Hash(String, JSON::Any).new
+    v["ansible_facts"] = JSON.parse(%({"getent_passwd": {"root": ["x", "0", "0", "root", "/root", "/bin/bash"]}}))
+    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+
+    result = lookup.resolve("ansible_facts.getent_passwd['root'][4]")
+    result.should_not be_nil
+    result.not_nil!.as_s.should eq("/root")
+  end
+
+  it "resolves Python's dict.get(key, default) method-call syntax on a literal dict base" do
+    # Real bug found benchmarking prometheus.prometheus.node_exporter's
+    # own `_node_exporter_go_ansible_arch` default: `{'i386': '386',
+    # 'x86_64': 'amd64', ...}.get(ansible_facts['architecture'],
+    # ansible_facts['architecture'])` (an architecture-name lookup table
+    # feeding its GitHub release download URL) - entirely unimplemented,
+    # resolved to nil/"undefined" regardless of a real key match,
+    # silently corrupting the download URL into a 404.
+    v = Hash(String, JSON::Any).new
+    v["my_arch"] = JSON::Any.new("x86_64")
+    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+
+    result = lookup.resolve(%({'i386': '386', 'x86_64': 'amd64', 'aarch64': 'arm64'}.get(my_arch, my_arch)))
+    result.should_not be_nil
+    result.not_nil!.as_s.should eq("amd64")
+  end
+
+  it "dict.get() falls back to its default argument when the key isn't present" do
+    v = Hash(String, JSON::Any).new
+    v["my_arch"] = JSON::Any.new("riscv64")
+    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+
+    result = lookup.resolve(%({'x86_64': 'amd64'}.get(my_arch, my_arch)))
+    result.should_not be_nil
+    result.not_nil!.as_s.should eq("riscv64")
+  end
 end

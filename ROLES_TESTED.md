@@ -100,6 +100,8 @@ or already-clean roles as if they were new.
 | Stouts.iptables | ❌ Not testable - same legacy `include:` issue as weareinteractive.mysql/redis (real ansible-playbook refuses to parse) |
 | Stouts.timezone | ❌ Not testable - same |
 
+| prometheus.prometheus.node_exporter | ⚠️ Not fully clean - the first-ever real Ansible Collection tested (not a plain Galaxy role); found and fixed 16 real engine bugs across collection-role FQCN resolution (entirely new), `include_role: tasks_from:` (entirely new), `ansible_parent_role_names`/`ansible_collection_name` magic vars (entirely new, needed fixes at multiple propagation layers), parent-role template/file search (entirely new), the `listen:` handler keyword, `unarchive:`'s `remote_src: false` controller-to-target staging (entirely new), and several Crinja gaps (native inline ternary entirely missing, an expression-tag whitespace-trim-marker mistokenization, `select`/`reject` filters entirely missing, string-literal backslash-unescaping, `dict.get()` method-call syntax, `regex_replace`'s `~`-concatenated argument). Got all the way through role resolution, the full binary download/checksum/unpack/install pipeline, and correctly locating its own service-unit template - blocked at the very end by Jinja2's `namespace()` builtin (mutable for-loop state), likely unimplemented in the vendored Crinja shard and not investigated further this round. See `KNOWN_MISSING.md` and `CRINJA.md` (uncommitted handoff notes) for full detail. |
+
 **Legend:** ✅ Clean = engine matches real `ansible-playbook` (idempotent,
 healthy services, config parity) as of the last time it was run. ⚠️ = engine
 itself is fine, but the role hit an external/environmental blocker partway
