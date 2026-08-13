@@ -73,6 +73,10 @@ or already-clean roles as if they were new.
 | geerlingguy.containerd | ✅ Clean (idempotent, byte-identical `config.toml`, service verified live via `systemctl`/`ctr version`) |
 | geerlingguy.helm | ✅ Clean (after fixing `not a or b` evaluating as `not(a or b)` instead of `(not a) or b` — real operator-precedence bug in the hand-rolled `when:` evaluator; idempotent, `helm version` functionally verified) |
 | geerlingguy.gogs | ❌ Not testable — role version 1.4.3 uses the legacy `include:` directive, removed entirely from current ansible-core (real `ansible-playbook` refuses to parse the role at all), same failure mode as `geerlingguy.phpmyadmin` |
+| geerlingguy.hdparm | ✅ Clean (idempotent, byte-identical `hdparm.conf`) |
+| geerlingguy.daemonize | ✅ Clean (idempotent, correct version functionally verified; needs `build-essential` as a pre-task prerequisite on a bare image — real ansible-playbook needs it too) |
+| geerlingguy.svn | ✅ Clean (after fixing `creates=`/`chdir=` extraction absorbing a second param's value; idempotent, repository created, `svnserve`/`apache2` verified live) |
+| geerlingguy.blackfire | ✅ Clean (after fixing `apt_key:`'s idempotency for `url:`/`data:` with no `id:`, the common real-world shape; idempotent, packages + apache verified live) |
 
 **Legend:** ✅ Clean = engine matches real `ansible-playbook` (idempotent,
 healthy services, config parity) as of the last time it was run. ⚠️ = engine

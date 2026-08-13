@@ -8,9 +8,47 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.266`.**
+**Currently at `0.9.268`.**
 
 ---
+
+`0.9.267`-`0.9.268` (a sixteenth real-host round: `geerlingguy.hdparm`,
+`geerlingguy.daemonize`, `geerlingguy.svn`, `geerlingguy.blackfire` -
+all new). `hdparm` passed clean on the first try (byte-identical
+`hdparm.conf`). `daemonize` needed `build-essential` as a pre-task
+prerequisite on a bare image (real ansible-playbook needs it too -
+not a role or engine bug, an environment gap this benchmark harness's
+throwaway hosts don't come with).
+
+`svn` found a THIRD bug in `extract_command_special_params`, this time
+over-matching rather than under-matching: with two separate `key={{
+x }}`-shaped trailing params on the same command (`chdir={{
+svn_repository_home }} creates={{ svn_repository_home }}/testrepo/
+README.txt`), the lazy `\{\{.*?\}\}` alternative could backtrack
+straight through the entire second param - including the space and
+braces separating it from the first - to reach ITS closing `}}`,
+silently absorbing it into the first param's value. Two independent
+regex-based attempts at this extraction (0.9.261, this file's own
+0.9.259-0.9.265 entry) each had a real bug in opposite directions for
+the same underlying reason: a bare `\{\{.*?\}\}` can't be trusted to
+stop at a single template block's boundary when backtracking is
+involved. Replaced the whole regex-matching loop with a proper
+brace-depth-tracking tokenizer, reusing the same scanner
+`parse_inline_kv_params` already uses for free-form `key=value` args -
+splitting on whitespace *outside* any template span gets every param
+boundary right regardless of how many `{{ }}` blocks appear anywhere
+else in the string, with no backtracking ambiguity to get wrong in
+either direction.
+
+`blackfire` found `apt_key:`'s idempotency check only ever ran when an
+explicit `id:` param was given - `url:`/`data:` (the overwhelmingly
+common real-world shape) always re-ran `apt-key add` and reported
+`changed: true` on every single run, never converging. Real Ansible's
+apt_key: derives the key's own fingerprint from the fetched key
+material itself even without `id:`. Fixed by parsing every fingerprint
+out of the fetched key file via a pure dry-run `gpg --import-options
+show-only --import` (never touches any real keyring) before deciding
+whether to import.
 
 `0.9.266` (a fifteenth real-host round: `geerlingguy.java`,
 `geerlingguy.containerd`, `geerlingguy.helm`, `geerlingguy.gogs` -

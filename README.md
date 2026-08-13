@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.266-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.268-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -288,8 +288,26 @@ production Ansible roles (dev-sec, konstruktoid, linux-system-roles,
 geerlingguy, openstack.ansible-hardening, wireguard, ansible-vault,
 cloudalchemy.prometheus, cloudalchemy.grafana, haproxy, certbot) - see
 `git log` for the full log of what's been found and fixed. Most
-recently, a `geerlingguy.java`/`geerlingguy.containerd`/`geerlingguy.
-helm`/`geerlingguy.gogs` round found `java` and `containerd` both
+recently, a `geerlingguy.hdparm`/`geerlingguy.daemonize`/`geerlingguy.
+svn`/`geerlingguy.blackfire` round found `hdparm` clean on the first
+try, and two more bugs. `svn` found a THIRD bug in the same trailing
+`creates=`/`removes=`/`chdir=` extraction logic two earlier rounds had
+already fixed twice (each time in the opposite direction) - a bare
+`\{\{.*?\}\}` regex alternative can't be trusted to stop at a single
+template block's boundary when backtracking is involved, so with two
+separate `key={{ x }}`-shaped params on the same command, the first
+param's value could absorb the entire second param (space, braces, and
+all) by backtracking into the second block's own closing `}}`.
+Replaced the whole regex-matching loop with a proper brace-depth-
+tracking tokenizer instead of trying to patch the regex a third time.
+`blackfire` found `apt_key:`'s idempotency check only ever ran when an
+explicit `id:` was given - `url:`/`data:` (the overwhelmingly common
+real-world shape) always reported `changed: true`, never converging;
+fixed by deriving the key's own fingerprint from the fetched key
+material via a dry-run `gpg --import-options show-only` parse, matching
+real Ansible's own behavior. Before that, a `geerlingguy.java`/
+`geerlingguy.containerd`/`geerlingguy.helm`/`geerlingguy.gogs` round
+found `java` and `containerd` both
 clean on the first try, and one high-value bug in `helm`: the
 hand-rolled `when:` evaluator checked a leading `not ` prefix BEFORE
 splitting on any top-level `and`/`or` at all, so `not X or Y` negated
@@ -477,7 +495,7 @@ whose one templated element resolves to a scalar silently producing no
 loop items at all, and `cron:` required `cron_file:` (a documented but
 overly-broad scope cut - real Ansible's own default, editing a live
 user crontab, is what `certbot`'s own renewal-cron task needs). See
-KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.266`),
+KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.268`),
 the `ansible-vault` and `prometheus`/`grafana` rounds before that
 (`0.9.198`-`0.9.224`), and the `geerlingguy.*`/`range(...)` rounds
 before that.
