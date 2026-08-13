@@ -216,14 +216,17 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     # plain variable lookup on that literal identifier, always
     # "undefined" - which `| bool` downstream then treated as truthy
     # regardless of the actual condition.
+    # Real Python/Jinja2 stringifies a bare boolean as "True"/"False"
+    # (capitalized), not Crystal's lowercase "true"/"false" - verified
+    # directly against real Python's own jinja2.Environment.
     v = Hash(String, JSON::Any).new
     v["vault_install_hashi_repo"] = JSON::Any.new(false)
     evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
-    evaluator.evaluate("false if vault_install_hashi_repo else true").should eq("true")
+    evaluator.evaluate("false if vault_install_hashi_repo else true").should eq("True")
 
     v["vault_install_hashi_repo"] = JSON::Any.new(true)
     evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
-    evaluator.evaluate("false if vault_install_hashi_repo else true").should eq("false")
+    evaluator.evaluate("false if vault_install_hashi_repo else true").should eq("False")
   end
 
   it "re-templates a filter chain's own head variable when its raw value is still unrendered Jinja" do

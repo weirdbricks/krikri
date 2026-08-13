@@ -46,9 +46,31 @@ module CrystalPlay
       # instead of being (wrongly) evaluated against the whole expression.
       def evaluate(expr : String) : String
         if ternary = split_ternary(expr)
-          evaluate_ternary(ternary)
+          # CRINJA.md step 5, second construct after boolean_logic?
+          # below: real Jinja2's inline ternary is right-associative
+          # (`a if b else c if d else e` chains) and its condition can
+          # itself be any expression, including one this hand-rolled
+          # evaluator's OWN #split_ternary/#evaluate_ternary don't fully
+          # agree on (they recurse back into #evaluate for the chosen
+          # branch, which happens to make simple right-associative
+          # chaining work, but the split is still a string heuristic,
+          # not a real parse). `omit` and the `is failed`/etc.
+          # register-result tests - the two things that had to be ported
+          # to Crinja before the FIRST construct (boolean_logic? below)
+          # could safely swap - are already available here for free,
+          # since they're bound in `CrinjaRenderer`'s own shared vars
+          # context, not specific to that branch.
+          begin
+            crinja_renderer.render!("{{ #{expr} }}")
+          rescue
+            evaluate_ternary(ternary)
+          end
         elsif ternary_no_else = split_ternary_no_else(expr)
-          evaluate_ternary_no_else(ternary_no_else)
+          begin
+            crinja_renderer.render!("{{ #{expr} }}")
+          rescue
+            evaluate_ternary_no_else(ternary_no_else)
+          end
         elsif boolean_logic?(expr)
           # A full boolean expression (`X is failed or Y != Z`, `A and
           # B`) as a `{{ }}` span's entire content, most commonly a

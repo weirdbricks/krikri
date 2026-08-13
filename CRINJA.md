@@ -400,9 +400,50 @@ demonstrated finds bugs a spec suite and harness can't (control-flow
 interactions). This construct is narrow enough and the fallback safety
 net wide enough that the risk is low, but the plan's own repeated
 caution about not rushing this stands - worth a live round before
-trusting this further, and DEFINITELY before swapping a second, larger
-construct (the next candidate, unstarted: `#evaluate_expr`'s general
-comparison/filter dispatch, or ternary itself).
+trusting this further.
+
+### Step 5, second construct: the ternary branches (0.9.325)
+
+Same session, user explicitly asked to keep converging constructs rather
+than stop at one. Next target: `#split_ternary`/`#evaluate_ternary` and
+their else-less sibling (`X if COND else Y`, `X if COND`) - both
+identified as candidates in this doc's own prior note. Same shape as the
+`boolean_logic?` swap: try `crinja_renderer.render!("{{ #{expr} }}")`
+first, fall back to the exact previous hand-rolled code
+(`evaluate_ternary`/`evaluate_ternary_no_else`) on any failure.
+
+No NEW blockers needed porting this time - `omit` and the `is failed`/
+etc. register-result tests are bound in `CrinjaRenderer`'s own shared
+vars context (not re-derived per branch), so a ternary branch containing
+either (`'value' if flag else omit`, a real, common Ansible idiom for
+conditionally dropping a param) already works correctly for free.
+
+**One real spec assertion was WRONG, not the code** -
+`spec/unit/expression_evaluator_spec.cr`'s "resolves a ternary whose
+branches are bare boolean literals" test asserted lowercase `"true"`/
+`"false"` for a bare-boolean-literal ternary branch
+(`false if vault_install_hashi_repo else true`) - verified directly
+against real Python jinja2 that the correct output is capitalized
+`"True"`/`"False"`, matching this session's own broader bool-parity
+work (the fork's `Finalizer` fix, etc.) rather than the OLD, inconsistent
+hand-rolled behavior the spec had captured. Updated the spec's own
+expected values rather than treating this as a swap failure to revert -
+the swap surfaced a genuine, pre-existing inconsistency in the hand-rolled
+path (this exact construct rendered the technically-wrong casing before
+today), not a new bug.
+
+Verified: full `crystal spec` (1050 examples, one assertion corrected as
+above); direct targeted tests for the specific risk areas of THIS
+construct (chained/nested ternary at 2 and 3 levels, `omit` in a branch,
+an `is`-test inside the condition, the else-less form) - all match
+expected output exactly; differential harness re-run, no new
+divergences. `./build.sh` clean. 0.9.325.
+
+Same "not done" caveat as the first construct applies here too - no live
+real-host round yet for either swap. Next candidate, still unstarted:
+`#evaluate_expr`'s general comparison/filter dispatch (the largest,
+riskiest remaining piece - deserves its own dedicated pass, not a quick
+add-on to this one).
 
 ## Why this matters enough to write down
 
