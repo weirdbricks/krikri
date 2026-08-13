@@ -1,21 +1,6 @@
 require "crinja"
 require "yaml"
 require "openssl/digest"
-require "./crinja_hash_ext"
-require "./crinja_bool_ext"
-require "./crinja_truthy_ext"
-require "./crinja_string_ext"
-require "./crinja_trim_blocks_ext"
-require "./crinja_ternary_expr_ext"
-require "./crinja_logic_ext"
-require "./crinja_in_operator_ext"
-require "./crinja_undefined_filter_ext"
-require "./crinja_namespace_ext"
-require "./crinja_paren_postfix_ext"
-require "./crinja_string_escape_ext"
-require "./crinja_evaluator_errors_ext"
-require "./crinja_no_parens_call_ext"
-require "./crinja_slice_ext"
 
 # Custom Jinja2 filters that real Ansible's Jinja2 provides but Crinja
 # doesn't ship, registered into the global Crinja default library so they're
@@ -528,15 +513,9 @@ module CrystalPlay
       target.each.to_a.select { |item| other_set.includes?(item) && seen.add?(item) }
     end
 
-    # `max`/`min` - real Jinja2 core filters, absent from Crinja
-    # entirely. Compares elements with `Value`'s own `<=>` (Comparable),
-    # matching real Jinja2's general (not numeric-only) comparison -
-    # unlike `FilterEngine`'s own numeric-only version (`numeric(v)`,
-    # used because that evaluator has no generic value-comparison
-    # already available); Crinja's `Value` already implements
-    # `Comparable`, so there is no reason to narrow it here.
-    Crinja.filter(:max) { target.each.to_a.max?.try(&.raw) }
-    Crinja.filter(:min) { target.each.to_a.min?.try(&.raw) }
+    # `max`/`min` - real Jinja2 core filters, not Ansible-specific - now
+    # registered directly in the fork (weirdbricks/crinja,
+    # src/lib/filter/collections.cr), not here.
 
     # `regex_search(pattern, group_ref='')` - real Ansible's own filter
     # (not standard Jinja2): searches *pattern* anywhere in the target
@@ -584,17 +563,9 @@ module CrystalPlay
       !!(target.to_s =~ Regex.new(pattern))
     end
 
-    # `ne` - real Jinja2 core test (not equal), absent from Crinja
-    # entirely (only `equalto`/`eq` was registered).
-    Crinja.test({other: Crinja::UNDEFINED}, :ne) do
-      target != arguments["other"]
-    end
-
-    # `truthy` - real Jinja2 2.11+ core test (Python `bool(value)`),
-    # absent from Crinja's test registry. `Value#truthy?` itself is
-    # already fixed centrally (`crinja_truthy_ext.cr`), so this is a
-    # thin wrapper, not a new behavior.
-    Crinja.test(:truthy) { target.truthy? }
+    # `ne`/`truthy` - real Jinja2 core tests, not Ansible-specific - now
+    # registered directly in the fork (weirdbricks/crinja,
+    # src/lib/test/tests.cr), not here.
 
     # `boolean`/`integer`/`float` - real Ansible's own type tests
     # (ansible.plugins.test.core), not standard Jinja2. Crinja's core
