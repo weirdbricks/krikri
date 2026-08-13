@@ -16,10 +16,22 @@ renderable template). `kind=condition` entries need a synthetic wrapper
 (`{% if expr %}TRUE{% else %}FALSE{% endif %}`) added by the oracle
 scripts, since a bare `{% if %}` is not renderable alone.
 
-Deliberately NOT extracted: `{% for x in EXPR %}` iterables, `{% set %}`
-targets/values, raw block tags. Output + condition expressions cover the
-large majority of real bug reports in CRINJA.md; broaden later if the
-harness proves useful and cheap to extend.
+`kind=for_block` entries are COMPLETE `{% for %}...{% endfor %}` blocks,
+verbatim from the source file (nesting-aware - an inner `{% for %}` inside
+the block doesn't prematurely match the outer block's own `{% endfor %}`),
+used as-is same as `output`. Added 2026-08-13 after a live real-host
+verification round found a real bug (a ternary-parser/for-loop `if`-clause
+parsing collision) that this harness's original `{{ }}`/`{% if %}`-only
+corpus structurally could never have caught - it only manifests when a
+real `{% for %}` block, with its own body, actually executes. The harness
+sizes DIVERGENCES; a corpus of ISOLATED expressions can only ever size
+divergences in isolated expressions, not construct INTERACTIONS - see
+CRINJA.md's "Live re-verification" section for the fuller argument.
+Deliberately NOT (yet) extracted: `{% set %}...{% endset %}` block-assign
+bodies, `{% block %}`/`{% macro %}` bodies, whole-file rendering - for_block
+is the one control-flow construct a real live bug was actually traced to;
+broaden further only if another live round finds another construct-
+interaction class the corpus still misses.
 """
 import json
 import re
@@ -31,6 +43,31 @@ SKIP_DIR_PARTS = {".terraform", ".git", "molecule", ".reuse"}
 
 OUTPUT_RE = re.compile(r"\{\{(.*?)\}\}", re.DOTALL)
 IF_RE = re.compile(r"\{%-?\s*(?:if|elif)\s+(.*?)-?%\}", re.DOTALL)
+TAG_RE = re.compile(r"\{%-?\s*(\w+)")
+
+
+def extract_for_blocks(text):
+    """Nesting-aware extraction of complete {% for %}...{% endfor %} spans.
+
+    Walks every {% %} tag in source order, tracking a stack of open `for`
+    tags' start offsets. A `for` pushes its start position; an `endfor`
+    pops the innermost open `for` and yields the full span from that
+    start through the end of this `endfor` tag (inclusive) - so a block
+    containing a NESTED `{% for %}` yields both the outer block (once,
+    spanning the whole nested structure) and the inner block (once,
+    on its own), never a truncated/mismatched pairing.
+    """
+    stack = []
+    for m in re.finditer(r"\{%-?.*?-?%\}", text, re.DOTALL):
+        tag_match = TAG_RE.match(m.group(0))
+        if not tag_match:
+            continue
+        name = tag_match.group(1)
+        if name == "for":
+            stack.append(m.start())
+        elif name == "endfor" and stack:
+            start = stack.pop()
+            yield text[start:m.end()]
 
 
 def iter_files(roots):
@@ -76,6 +113,13 @@ def main():
             if not expr:
                 continue
             key = ("condition", expr)
+            seen.setdefault(key, set()).add(str(path))
+
+        for block in extract_for_blocks(text):
+            block = block.strip()
+            if not block:
+                continue
+            key = ("for_block", block)
             seen.setdefault(key, set()).add(str(path))
 
     out_path = Path(__file__).parent / "corpus.jsonl"

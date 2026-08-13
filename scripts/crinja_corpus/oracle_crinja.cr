@@ -64,6 +64,8 @@ File.open(out_path, "w") do |outf|
             "{{ " + expr + " }}"
           when "condition"
             "{% if " + expr + " %}TRUE{% else %}FALSE{% endif %}"
+          when "for_block"
+            expr
           else
             raise "unknown kind #{kind}"
           end

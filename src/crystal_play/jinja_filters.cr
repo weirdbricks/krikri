@@ -15,6 +15,7 @@ require "./crinja_paren_postfix_ext"
 require "./crinja_string_escape_ext"
 require "./crinja_evaluator_errors_ext"
 require "./crinja_no_parens_call_ext"
+require "./crinja_slice_ext"
 
 # Custom Jinja2 filters that real Ansible's Jinja2 provides but Crinja
 # doesn't ship, registered into the global Crinja default library so they're
@@ -615,6 +616,65 @@ module CrystalPlay
     Crinja.test(:boolean) { target.raw.is_a?(Bool) }
     Crinja.test(:integer) { target.raw.is_a?(Int32) || target.raw.is_a?(Int64) }
     Crinja.test(:float) { target.raw.is_a?(Float64) }
+
+    # `flatten(levels=none, skip_nulls=true)` - real Ansible's own filter
+    # (not standard Jinja2): flattens nested lists, by default completely
+    # (`levels:` bounds the depth instead) and dropping `None`/`nil`
+    # entries by default (`skip_nulls: false` keeps them). Found via
+    # ansible-gitlab-runner's own `[gitlab_runner.get('docker_pull_
+    # policy', [])] | flatten` (building a `--docker-pull-policy` CLI arg
+    # list that may itself already be a list, hence wrapping in `[...]`
+    # first and flattening back down) - entirely unimplemented before,
+    # caught only once the differential harness's corpus was widened to
+    # scrape whole `{% for %}` blocks (see `scrape_corpus.py`).
+    Crinja.filter({levels: nil, skip_nulls: true}, :flatten) do
+      levels_arg = arguments["levels"]
+      max_depth = levels_arg.raw.nil? ? nil : levels_arg.to_i
+      skip_nulls = arguments["skip_nulls"].truthy?
+
+      JinjaFilters.flatten_array(target.each.to_a, max_depth, skip_nulls)
+    end
+
+    # :nodoc:
+    def self.flatten_array(items : Array(Crinja::Value), max_depth : Int32?, skip_nulls : Bool, depth : Int32 = 0) : Array(Crinja::Value)
+      result = [] of Crinja::Value
+      items.each do |item|
+        raw = item.raw
+        if raw.is_a?(Array(Crinja::Value)) && (max_depth.nil? || depth < max_depth)
+          result.concat(flatten_array(raw, max_depth, skip_nulls, depth + 1))
+        elsif skip_nulls && raw.nil?
+          # dropped
+        else
+          result << item
+        end
+      end
+      result
+    end
+
+    # `shuffle(seed=none)` - real Ansible's own filter
+    # (ansible.builtin.shuffle, not standard Jinja2): a random permutation
+    # of the target list, deterministic when `seed:` is given (real
+    # Ansible seeds Python's own `random.Random`, most commonly with
+    # `inventory_hostname` - so the same host always gets the same
+    # permutation across idempotent reruns, e.g. dev-sec os_hardening's
+    # own bcrypt-password generation:
+    # `('...alphabet...' | shuffle(seed=inventory_hostname) | join)[:22]`).
+    # Deliberately does NOT attempt to replicate Python's own Mersenne-
+    # Twister-based `random.Random(seed).shuffle()` permutation bit-for-
+    # bit - a different language's PRNG producing a different (but still
+    # valid, still deterministic-per-seed) permutation is fine for what
+    # this filter is actually used for in practice (idempotent random
+    # password/order generation), the same way this codebase doesn't
+    # attempt to replicate CPython's exact float-rounding behavior
+    # elsewhere either. Seeds Crystal's own `Random` from the given
+    # seed's own string content so the SAME seed always reproduces the
+    # SAME permutation within crystal-ansible itself, across runs.
+    Crinja.filter({seed: nil}, :shuffle) do
+      seed_arg = arguments["seed"]
+      items = target.each.to_a
+      rng = seed_arg.raw.nil? ? Random.new : Random.new(seed_arg.to_s.hash)
+      items.shuffle(random: rng)
+    end
 
     # Splits a version string into its numeric components (`"8.9p1"` ->
     # `[8, 9, 1]`, ignoring the non-digit "p" separator), then compares

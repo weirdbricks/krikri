@@ -200,6 +200,71 @@ in real Python (arguably more useful behavior, not a bug). Deliberately
 left unfixed, same reasoning as before. 0.9.321. Full `crystal spec` (1050
 examples) and `./build.sh` clean.
 
+### Corpus widened to `for_block`, 3 more real bugs found (0.9.322)
+
+Acted on this doc's own "Live re-verification" observation - the harness
+sizes divergences in ISOLATED expressions, not construct INTERACTIONS -
+by widening `scrape_corpus.py` to also extract complete, nesting-aware
+`{% for %}...{% endfor %}` blocks verbatim (new `kind=for_block`,
+rendered as-is, no synthetic wrapper needed) alongside the existing
+`output`/`condition` spans. 1476 files -> 3833 distinct corpus entries
+(up from 3666), ~167 of them `for_block`.
+
+Re-running immediately confirmed the earlier for-loop/ternary-collision
+fix holds for real for-loop bodies at scale (buckets A/B stayed at 0,
+no new divergences from the ~167 new entries) - but a spot-check of
+bucket E's "both sides error, different type" pile (expected to be
+Ansible-only-filter noise, per the bucket's own established pattern)
+turned up two more real, previously-unknown gaps anyway, both only
+reachable from inside a real `{% for %}` body:
+
+- **Python slice syntax** (`expr[start:stop]`, `expr[start:stop:step]`,
+  any component optional - `expr[:22]`, `expr[2:]`, `expr[::-1]`) was
+  entirely unsupported - the `:` inside `[...]` lexed as `DICT_ASSIGN`
+  (the same token dict-literal `key: value` pairs use), failing with a
+  raw "Unexpected DICT_ASSIGN". Found via dev-sec os_hardening's own
+  bcrypt-password generation idiom (`(alphabet | shuffle(seed=...) |
+  join)[:22]`) - a common enough real-world pattern, not a contrived
+  edge case. New `crinja_slice_ext.cr`: a `SliceExpression` AST node,
+  a full `parse_variable_expression` override recognizing the
+  slice-vs-single-index ambiguity, a matching update to
+  `crinja_paren_postfix_ext.cr`'s own postfix-trailer loop (slicing a
+  PARENTHESIZED expression's result needed the identical fix in a
+  second place), and an `Evaluator` visit implementing Python's slice
+  algorithm (own helper, not reusing Crystal's `Range`-based indexing,
+  which has no arbitrary-step support) against `Array(Value)`, `String`,
+  and `SafeString` (a `| join`-filtered string specifically comes back
+  as `SafeString`, not plain `String` - needed its own case). Does NOT
+  attempt exact negative-index/out-of-range edge-case parity with
+  Python's own `slice.indices()` clamping algorithm - close enough for
+  every real construct found so far.
+- **`flatten(levels=none, skip_nulls=true)`** (real Ansible filter, not
+  standard Jinja2) - entirely unregistered. Added to `jinja_filters.cr`
+  with a small recursive helper.
+- **`shuffle(seed=none)`** (real Ansible filter) - entirely unregistered,
+  and the one that actually unblocked the bcrypt-password example above
+  end-to-end (the whole chain needs `shuffle` before slicing its `| join`
+  result). Deliberately does NOT attempt to replicate Python's own
+  Mersenne-Twister `random.Random(seed).shuffle()` permutation bit-for-
+  bit - seeds Crystal's own `Random` from the seed argument's string
+  content instead, so the same seed reproduces the same permutation
+  WITHIN crystal-ansible (what idempotent per-host password generation
+  actually needs), even though the literal permutation differs from what
+  real Ansible would produce for the same seed. Same category of
+  deliberate non-bit-parity as this codebase's existing float-rounding
+  behavior elsewhere.
+
+The bcrypt-password example's full chain now runs end-to-end up to (but
+not including) `password_hash`'s own `bcrypt` hashtype, which was already
+a known, separate, pre-existing gap (only `md5`/`sha256`/`sha512`
+supported) - unrelated to Crinja, not addressed here.
+
+Re-ran the full pipeline after all three fixes: buckets A and B both
+still 0, bucket C unchanged (still the same 7 explainable items), bucket
+D grew (more real Ansible filters now resolve where Python's bare jinja2
+still can't, expected). Full `crystal spec` (1050 examples) and
+`./build.sh` clean. 0.9.322.
+
 ## Why this matters enough to write down
 
 `lib/crinja` is `.gitignore`d (`/lib/` in `.gitignore`) - it's fetched fresh

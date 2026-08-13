@@ -1,4 +1,5 @@
 require "crinja"
+require "./crinja_slice_ext"
 
 # Real Jinja2/Python allow a postfix trailer - `[index]`, `.attr`, or
 # `(call)` - directly after a PARENTHESIZED subexpression, not just after
@@ -49,12 +50,34 @@ class Crinja::Parser::ExpressionParser
           next_token
           expression = parse_call_expression(expression)
         when Kind::LEFT_BRACKET
+          # Mirrors `crinja_slice_ext.cr`'s own `parse_variable_expression`
+          # override - same slice-vs-index disambiguation (a `:` right
+          # after `[`, or right after the first index expression, means
+          # this is a Python slice, not a single index) - needed here too
+          # since a parenthesized expression's postfix `[...]` goes
+          # through THIS loop, not that one.
           next_token
-          arg = parse_expression
 
-          index_end_location = current_token.location
-          expect Kind::RIGHT_BRACKET
-          expression = AST::IndexExpression.new(expression, arg).at(expression.location_start, index_end_location)
+          slice_start = current_token.kind == Kind::DICT_ASSIGN ? nil : parse_expression
+
+          if current_token.kind == Kind::DICT_ASSIGN
+            next_token
+            slice_stop = (current_token.kind == Kind::DICT_ASSIGN || current_token.kind == Kind::RIGHT_BRACKET) ? nil : parse_expression
+
+            slice_step = nil
+            if current_token.kind == Kind::DICT_ASSIGN
+              next_token
+              slice_step = current_token.kind == Kind::RIGHT_BRACKET ? nil : parse_expression
+            end
+
+            index_end_location = current_token.location
+            expect Kind::RIGHT_BRACKET
+            expression = AST::SliceExpression.new(expression, slice_start, slice_stop, slice_step).at(expression.location_start, index_end_location)
+          else
+            index_end_location = current_token.location
+            expect Kind::RIGHT_BRACKET
+            expression = AST::IndexExpression.new(expression, slice_start.not_nil!).at(expression.location_start, index_end_location)
+          end
         when Kind::POINT
           next_token
           member = AST::Empty.new

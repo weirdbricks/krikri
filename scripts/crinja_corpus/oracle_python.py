@@ -29,6 +29,11 @@ def render(kind, expr):
         src = "{{ " + expr + " }}"
     elif kind == "condition":
         src = "{% if " + expr + " %}TRUE{% else %}FALSE{% endif %}"
+    elif kind == "for_block":
+        # Already a complete, self-contained {% for %}...{% endfor %}
+        # span scraped verbatim from real source - no wrapper needed,
+        # unlike output/condition which are bare expressions.
+        src = expr
     else:
         raise ValueError(kind)
 
