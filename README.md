@@ -314,9 +314,10 @@ entry point, and a missing `round` filter in the hand-rolled
 `dict()`'s positional-iterable form (Crinja's own `dict()` silently
 mishandles it) remain intentionally unconverged. Verified via `crystal
 spec` (1063 examples, 0 failures) and `./build.sh` after every step -
-**not yet live-host verified**, which is the top item in CRINJA.md's own
-next-steps given the scope of what changed. See `CRINJA.md` and
-KNOWN_MISSING.md's `0.9.333`-`0.9.338` entries for full detail.
+**since then live-host verified** (0.9.339, see the next paragraph and
+KNOWN_MISSING.md's `0.9.339` entry) given the scope of what changed. See
+`CRINJA.md` and KNOWN_MISSING.md's `0.9.333`-`0.9.338` entries for full
+detail.
 
 `0.9.339` started that live-host verification of the step-5 convergence
 against `dev-sec.os_hardening` on a real 2-node Atlantic.net pair, and
@@ -324,16 +325,23 @@ immediately found two real mode-integrity bugs the unit specs had never
 surfaced. Both stem from the same root: a mode value that has been
 converted to a native `Int64` loses its original octal spelling, and the
 engine then either mis-parses or mis-reformats it. Live-confirmed on a
-real host (find-bound but not yet part of a clean full re-verify):
-`set_fact:`'s `coerce` was decimal-parsing a leading-zero octal-style
-*string* like `"0755"` into int `755` (dropping the leading zero), so a
-downstream `file: mode:` applied `01363` instead of `0755`; and
-`TaskExecutor`'s mode reformatting was re-expressing via `to_s(8)` an int
-whose own decimal digits already looked like a valid octal mode
+real host: `set_fact:`'s `coerce` was decimal-parsing a leading-zero
+octal-style *string* like `"0755"` into int `755` (dropping the leading
+zero), so a downstream `file: mode:` applied `01363` instead of `0755`;
+and `TaskExecutor`'s mode reformatting was re-expressing via `to_s(8)`
+an int whose own decimal digits already looked like a valid octal mode
 (`"1777"` -> `"3361"`), corrupting `/dev/shm`/`/tmp`/`/var/tmp` on a
-live host to mode `3361`. Both fixed with regression specs. See
-KNOWN_MISSING.md's `0.9.339` entry. The full clean re-verify of the
-step-5 convergence is still the open next step.
+live host to mode `3361`. Both fixed with regression specs. Then closed
+out with a **clean fresh-host re-verify** (new 2-node pair, cold run on
+both engines + warm pass): crystal cold ok=101/changed=35/failed=0 vs
+python ok=102/changed=36/failed=0, crystal warm `changed=0` (fully
+idempotent), config/service parity byte-identical, and every residual
+cold diff traced to documented non-engine causes (the `/var/log`
+systemd-tmpfiles 755<->775 environmental flake - both engines apply mode
+`"0775"` identically in a controlled test - plus the loop-hash
+iteration-order display artifact). **CRINJA.md step 5's
+`ExpressionEvaluator` convergence is now live-verified end to end.**
+See KNOWN_MISSING.md's `0.9.339` entry.
 
 Before that, a twentieth round (`weareinteractive.nginx`/`mysql`/`redis`/
 `users` plus `Stouts.iptables`/`timezone`) found 5 of 6 roles blocked

@@ -52,10 +52,25 @@ kind unit specs alone never surface):
   tested nothing (dir left at default mode 775). Rewritten to reproduce the
   decimal-coercion directly with a plain `set_fact: my_mode: "1777"`.
 - Verified: full `crystal spec` (1065 examples, 0 failures), `./build.sh`.
-  **Remaining**: the clean, end-to-end re-verification of the step-5
-  convergence on a fresh host pair (the mode-corrupted host was used to
-  find these; a fresh cold-vs-cold comparison + idempotency pass is still
-  the open item from CRINJA.md).
+  **Then closed out with the clean fresh-host re-verify**: a NEW 2-node
+  Atlantic.net pair (same plan/OS), full `dev-sec.os_hardening` cold run
+  on both engines and a warm idempotency pass. Cold recap crystal
+  ok=101/changed=35/failed=0 vs python ok=102/changed=36/failed=0; the
+  pre-fix "changed=43" inflated mount-dir count is gone. Warm pass:
+  crystal `changed=0` (fully idempotent), python `changed=1`. Every
+  remaining cold-run diff was traced to a documented non-engine cause:
+  the `Harden permissions for directory of mount /var/log` status flip
+  is the known systemd-tmpfiles 755<->775 environmental flake (verified:
+  both engines apply `mode="0775"` byte-identically in a controlled
+  standalone test; python's OWN warm run re-flipped its `/var/log` back
+  to 755 mid-run after a manual `chmod 0775`, live proof it's not the
+  engine) and the two account-loop diffs (`Extract root account(s)`/
+  `Lock passwords`) are the known loop-hash iteration-order display
+  artifact. Service/config parity verified byte-identical: auditd active
+  on both, ASLR=2, suid_dumpable=0, same password-aging policy, and
+  `/etc/sysctl.d/90-dev-sec.conf` / audit rules / limits.conf identical
+  content. **CRINJA.md step 5's live-host verification is now DONE** for
+  os_hardening.
 
 ---
 

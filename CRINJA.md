@@ -32,8 +32,17 @@
 # two real mode-octal-integrity bugs (set_fact: decimal-parsing "0755"
 # -> int 755; executor's to_s(8) reformat corrupting "1777" -> "3361",
 # live-confirmed as mode 3361 on /tmp /dev/shm /var/tmp) - both fixed +
-# spec'd. A CLEAN cold-vs-cold + idempotency re-verify on a fresh host
-# pair is still the open item before this round counts as done.)
+# spec'd. THEN COMPLETED 2026-08-14 with a clean fresh-host pair re-verify:
+# cold os_hardening ok=101/changed=35/failed=0 vs python ok=102/changed=36/
+# failed=0, crystal warm changed=0 (idempotent), all residual cold diffs
+# traced to documented non-engine causes (the /var/log systemd-tmpfiles
+# 755<->775 flake - both engines apply mode "0775" identically in a
+# controlled test and python's own run re-flipped it - plus the loop-hash
+# iteration-order display artifact), and config/service parity byte-identical.
+# STEP 5'S EXPRESSIONEVALUATOR CONVERGENCE IS NOW LIVE-VERIFIED (constructs
+# 1-9, both prior sub-rounds plus this one); remaining step-5 follow-ups are
+# the two deliberately-unconverged leaves (lookup() bare-calls, dict()
+# positional form) and the optional fork-side to_datetime/Time arithmetic.)
 
 ## Current status / next steps (2026-08-13, 0.9.336)
 
@@ -489,15 +498,23 @@ the "why", not required reading to know what to do next.
      positional-iterable form (Crinja's own `dict()` silently produces
      an empty dict instead of raising - needs a fork-side fix first, see
      `0.9.337`'s entry for detail). Neither blocks anything else.
-4a. **Live-host verification of constructs 4-9 (0.9.333-0.9.338)** - NOT
-    YET DONE, and now the single most important next step, ahead of
-    everything else in this file. Mirrors round 22's own live
-    verification of constructs 1-3 (`0.9.327`-`0.9.332`, which found 7
-    more bugs unit specs/the harness alone never would have) - the same
-    kind of gap is plausible here given the sheer surface area that
-    changed in one sitting (the entire `#evaluate_expr` dispatch, plus a
-    new `CrinjaRenderer#evaluate_value!` code path nothing has exercised
-    against a real multi-role playbook yet).
+4a. **Live-host verification of constructs 4-9 (0.9.333-0.9.338)** - ~~NOT
+    YET DONE~~ **DONE 2026-08-14 (0.9.339)**: ran `dev-sec.os_hardening`
+    on two fresh 2-node Atlantic.net pairs. The first pair immediately
+    surfaced two real mode-octal-integrity bugs (see KNOWN_MISSING.md's
+    `0.9.339` entry) - `set_fact:`'s `coerce` decimal-parsing a
+    leading-zero octal-style string `"0755"` into int 755, and the
+    executor's `to_s(8)` reformat corrupting a decimal-coerced `"1777"`
+    into `"3361"` (live-corrupted `/tmp`/`/dev/shm`/`/var/tmp` to 3361).
+    Fixed + spec'd, then a second fresh pair confirmed clean: cold
+    crystal ok=101/changed=35/failed=0 vs python ok=102/changed=36/
+    failed=0, warm crystal `changed=0` (idempotent), all residual cold
+    diffs traced to documented non-engine causes (the `/var/log`
+    systemd-tmpfiles 755<->775 flake - both engines apply mode "0775"
+    byte-identically - plus the loop-hash iteration-order display
+    artifact), config/service parity byte-identical. Constructs 1-3 had
+    already been verified in round 22, so **step 5's ExpressionEvaluator
+    convergence is now live-verified end to end**.
 5. Upstreaming (step 3) - deferred, pick up whenever.
 
 > **If you are a model picking this up cold**, the section above is
