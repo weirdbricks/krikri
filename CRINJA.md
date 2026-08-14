@@ -16,8 +16,10 @@
 # operator) converged 2026-08-13, 0.9.335 - found+fixed another real
 # fork bug (~/+ string-fallback bypassing Finalizer, crystal-play-0.9.3);
 # step 5's sixth construct (*//// arithmetic) converged 2026-08-13,
-# 0.9.336 - found+fixed a real pre-existing crash (10 // 0 overflow) -
-# see "Current status" below and KNOWN_MISSING.md/ROLES_TESTED.md)
+# 0.9.336 - found+fixed a real pre-existing crash (10 // 0 overflow);
+# investigated the general filter-chain dispatch (literal array/dict,
+# variable lookups) same day - found a real ARCHITECTURAL blocker, not
+# converged, no code change - see "Current status" below)
 
 ## Current status / next steps (2026-08-13, 0.9.336)
 
@@ -181,6 +183,78 @@ dispatch (variable lookups, `|`-filter chains, bracket/dict literals,
 leading-paren wrapping - everything else remaining in `#evaluate_expr`)
 is now the sole remaining sub-piece, and its scope still includes the
 `format_value` Python-repr-parity fix noted above.**
+
+**Update (same day, later still): attempted the general filter-chain
+dispatch sub-piece, starting with the smallest slice (literal array/dict
+expressions) - found a real ARCHITECTURAL blocker, backed the code change
+out, nothing converged, no version bump.** Tried the `format_value`
+Python-repr fix flagged above as a prerequisite (`VariableLookup#
+format_value`'s `Array`/`Hash` case, `.to_json` -> a Python-repr
+stringifier matching `Crinja::Finalizer`, mirroring the fork's own
+`Hash`-stringify fix from `crystal-play-0.9.2`). `crystal spec` immediately
+found 11 failures - not cosmetic ones. Root cause: this codebase's
+internal data flow uses **"render a sub-expression to a String via
+`format_value`, then `JSON.parse` that string back into structured
+`JSON::Any` data"** as its type-preservation mechanism between chained
+evaluation steps - roughly 19 call sites across `expression_evaluator.cr`/
+`comparison_evaluator.cr`/`filter_engine.cr`/`variable_lookup.cr` all do
+this exact round trip (grep `JSON.parse(rendered)` /
+`JSON.parse(lookup_rendered)`). Python-repr text (`{'a': 1}`, single
+quotes, no valid-JSON-key-quoting) is not valid JSON, so `JSON.parse`
+started failing on every such round trip whenever the intermediate value
+was an Array/Hash, silently falling through to treating the whole
+container as an opaque STRING instead of structured data (concretely:
+`{'x86_64': 'amd64'}.get(ansible_facts['architecture'], ...)` broke,
+because the base dict literal's own re-parse-from-rendered-text step now
+failed and produced a String, not a Hash, so `.get()` had nothing to call
+into and the whole expression resolved to `"undefined"`). Reverted the
+`format_value` change entirely (`git checkout --`) - `crystal spec` back
+to 0 failures.
+
+Separately (found probing whether bare variable lookups - `{{ var }}`,
+`{{ var.attr }}` - were safe to converge to Crinja-first, since they
+don't LOOK like they'd need `format_value` touched at all): Crinja
+renders a genuinely undefined variable as `""` (empty string) where this
+codebase's own convention deliberately renders the literal text
+`"undefined"` (a sentinel checked by `FilterEngine#undefined?` - though
+that check already treats `""` and `"undefined"` as equivalent, so this
+part turned out NOT to be a live functional blocker on its own, just
+worth flagging: only one real code path does a strict string-equality
+check against `"undefined"` anywhere in `src/`/`plugins/`, everything
+else that mentions the word in a grep is either a comment or a
+*producer*, not a consumer, of the sentinel). This alone wouldn't have
+blocked variable-lookup convergence - but ANY container-valued (Array/
+Hash) variable lookup hits the exact same `format_value`-round-trip
+problem as literal array/dict did, for the identical reason, so variable
+lookups are blocked by the SAME root cause, not a second independent one.
+
+**What an actual fix looks like** (not attempted - a bigger change than
+appropriate to push through without confirming first): Crinja exposes a
+way to evaluate an expression and get back its raw, structured
+`Crinja::Value` WITHOUT going through `Crinja::Finalizer#stringify` at
+all - `Crinja::Environment#evaluate(ast_node, bindings) : Value` (see
+`lib/crinja/src/environment.cr:100-108`), reachable by parsing the raw
+expression text with `Crinja::Parser::ExpressionLexer`/
+`ExpressionParser` directly instead of going through `Template#render`
+(what `CrinjaRenderer#render!` currently calls, which always produces a
+STRING - there's no way to get a raw `Value` out of the `Template`-level
+API `render!` uses today). The real fix converts that raw `Crinja::Value`
+back to `JSON::Any` (a converter would need writing - `prepare_crinja_vars`
+already does the REVERSE direction, `JSON::Any -> Crinja::Value`, worth
+checking for reusable pieces) and hands it to THIS codebase's own
+`format_value` for final stringification, instead of trusting Crinja's
+own `Finalizer` output directly. This keeps the internal
+render-then-`JSON.parse`-back round trip intact (still JSON-compatible
+text, unchanged from today) while still using Crinja for what it's
+actually good at - correct evaluation semantics (precedence, undefined
+handling, filter dispatch) - rather than for final text formatting.
+**This is a bigger change than "one more sub-piece": done properly, it
+also means revisiting constructs 1-6 (already converged, already
+shipped, using `render_via_crinja`'s direct-String return today) for
+consistency, not just the remaining ones** - worth a real go/no-go
+decision with the user before starting, not something to charge into
+mid-session. Not started. Nothing in this update touched shipped code;
+`crystal spec` is unchanged at 1062 examples, 0 failures throughout.
 
 ## Original current-status snapshot (2026-08-13, 0.9.326, superseded by the update above)
 
