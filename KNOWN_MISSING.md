@@ -8,7 +8,47 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.333`.**
+**Currently at `0.9.334`.**
+
+---
+
+`0.9.334` (investigated converging `#evaluate_expr`'s `lookup()`/
+`range()`/`dict()` bare-call branches - CRINJA.md step 5's next planned
+sub-piece after bare literals - found a real fork bug along the way,
+fixed it, but decided NOT to converge these three constructs themselves;
+see CRINJA.md for full reasoning):
+
+- **Real bug found and fixed in the `weirdbricks/crinja` fork** (not
+  crystal-ansible itself): `Finalizer#stringify(Hash)` rendered
+  `{'a' => 1}` (Crystal's own `Hash#to_s` separator) instead of real
+  Python/Jinja2's dict repr `{'a': 1}`. Already live and reachable
+  through every PREVIOUSLY converged construct (`or`/`and`/`is`, the
+  ternary, comparisons) whenever the selected/returned value happens to
+  be a dict - not a hypothetical gap tied to this investigation. Fixed
+  in the fork (`crystal-play-0.9.2`), `shard.yml` repinned; two of the
+  fork's own vendor specs had pinned the wrong `=>` output and are now
+  corrected (net effect: 2 fewer fork spec failures, not more).
+- **Decision: `lookup()`, `range()`, and `dict()`'s bare (unfiltered)
+  call forms are NOT converged to try-Crinja-first.** `lookup()` is
+  entirely Ansible-specific (`first_found`/`env`/`url` lookup types) with
+  no Crinja-side equivalent at all - trying Crinja first would just cost
+  a guaranteed-to-fail render+rescue on every call for zero benefit.
+  `range()`/`dict()` return array/hash VALUES that Crinja's own (now
+  correctly Python-repr-matching) stringification renders with `, `/`: `
+  spacing (`[0, 1, 2]`, `{'a': 1}`), while this codebase's own
+  `VariableLookup#format_value` - used for EVERY array/hash-valued
+  expression elsewhere in the hand-rolled evaluator, not just these two -
+  renders the JSON-compact form instead (`[0,1,2]`, `{"a":1}`), which
+  itself diverges from real Ansible/Jinja2 output. Converging just these
+  two bare-call forms would create a one-off inconsistency (spaced
+  output only for `range()`/`dict()`, unspaced everywhere else) rather
+  than fix anything - the real fix is a codebase-wide `format_value`
+  correction, which is squarely the highest-risk, "general filter-chain
+  dispatch" final sub-piece of the `#evaluate_expr` swap already flagged
+  in CRINJA.md, not a quick win here. No spec today pins the current
+  compact array/hash-to-string format (checked), so the blast radius of
+  eventually fixing this is smaller than it might look, but it's still
+  deferred rather than done opportunistically.
 
 ---
 

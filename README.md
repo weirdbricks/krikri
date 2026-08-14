@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.333-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.334-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -282,15 +282,29 @@ harness covers and how it works.
 See [KNOWN_MISSING.md](KNOWN_MISSING.md) for the live tracking of what is
 not yet implemented.
 
-**No known cross-cutting engine gap is currently open.** Most recently
-(`0.9.333`), CRINJA.md's step-5 dual-evaluator convergence gained a
-fourth construct: `#evaluate_expr`'s bare literals (boolean, numeric,
-quoted-string) now try Crinja first too, same fallback-on-failure
-pattern - caught (and fixed for free) a latent inconsistency where the
-old fallback-only bare-boolean path returned lowercase `"true"`/`"false"`
-instead of the capitalized `"True"`/`"False"` every other boolean path in
-this codebase produces, never observed in practice since Crinja was
-always available. Before that (`0.9.327`-`0.9.332`), a live real-host
+**One known cross-cutting engine gap is currently open** (found, not yet
+fixed - see KNOWN_MISSING.md's `0.9.334` entry): array/hash values
+rendered as a bare string (`{{ some_list }}` with no further filter)
+print in a JSON-compact form (`[1,2,3]`, `{"a":1}`) instead of real
+Ansible/Jinja2's Python-repr form (`[1, 2, 3]`, `{'a': 1}`) - no spec
+currently pins the wrong format, and the fix is scoped into the next
+CRINJA.md step-5 sub-piece (the general filter-chain dispatch swap) as
+part of `VariableLookup#format_value`, not done in isolation to avoid
+a worse, self-inconsistent interim state. Most recently (`0.9.334`),
+investigating whether to converge `#evaluate_expr`'s `lookup()`/`range()`/
+`dict()` bare-call forms surfaced (and fixed, in the `weirdbricks/crinja`
+fork itself) a related live bug: `Hash` values rendered through Crinja
+used Crystal's own `{'a' => 1}` separator instead of real Python's
+`{'a': 1}` - already reachable through every previously-converged
+construct whenever the selected value was a dict. Before that (`0.9.333`),
+CRINJA.md's step-5 dual-evaluator convergence gained a fourth construct:
+`#evaluate_expr`'s bare literals (boolean, numeric, quoted-string) now
+try Crinja first too, same fallback-on-failure pattern - caught (and
+fixed for free) a latent inconsistency where the old fallback-only
+bare-boolean path returned lowercase `"true"`/`"false"` instead of the
+capitalized `"True"`/`"False"` every other boolean path in this codebase
+produces, never observed in practice since Crinja was always available.
+Before that (`0.9.327`-`0.9.332`), a live real-host
 re-verification of the first three converged constructs (`or`/`and`/
 `is`, the inline ternary, and comparisons) found 7 more real bugs
 re-running `prometheus.prometheus.node_exporter` - including a genuine

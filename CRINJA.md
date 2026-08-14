@@ -9,10 +9,13 @@
 # step-5 next-steps #2 (FilterEngine-vs-Crinja filter audit) and #3
 # (datetime/timedelta decision) both done 2026-08-13, no code change;
 # step 5's fourth construct (evaluate_expr's bare literals, the first
-# evaluate_expr sub-piece) converged 2026-08-13, 0.9.333 - see "Current
-# status" below and KNOWN_MISSING.md/ROLES_TESTED.md)
+# evaluate_expr sub-piece) converged 2026-08-13, 0.9.333; lookup()/
+# range()/dict() sub-piece investigated 2026-08-13, 0.9.334 - decided NOT
+# to converge, found+fixed a real Hash-stringify bug in the crinja fork
+# along the way (crystal-play-0.9.2) - see "Current status" below and
+# KNOWN_MISSING.md/ROLES_TESTED.md)
 
-## Current status / next steps (2026-08-13, 0.9.333)
+## Current status / next steps (2026-08-13, 0.9.334)
 
 **Update (same day): step-5 next-step #1 (live real-host verification of
 the three converged constructs) is now DONE.** Re-ran `prometheus.
@@ -79,6 +82,53 @@ sub-pieces per next-step #4's own ordering - `lookup()`/`range()` next,
 the general filter-chain dispatch last - each with the same spec+harness
 rigor, live-host-verified per next-step #1's pattern once a meaningful
 chunk has landed.**
+
+**Update (same day, later still): investigated the `lookup()`/`range()`
+sub-piece (0.9.334) - decided NOT to converge it, but found and fixed a
+real bug in the `weirdbricks/crinja` fork along the way.** Empirically
+probed all three bare-call constructs this sub-piece was meant to cover
+(`lookup()`, `range()`, and `dict()`, grouped together since all three
+share the same `bare_call?(expr, "...(")` dispatch shape in
+`#evaluate_expr`):
+
+- `lookup()` is entirely Ansible-specific (real Ansible's own
+  `first_found`/`env`/`url` lookup plugins) - Crinja has no equivalent
+  function at all, so trying it first would only ever cost a
+  guaranteed-to-fail render+rescue round trip for zero payoff. Not
+  converged; not worth converging.
+- `range()`/`dict()` return array/hash VALUES, and probing surfaced a
+  real, already-shipped bug: Crinja's own `Finalizer#stringify(Hash)`
+  used Crystal's `Hash#to_s` separator (`{'a' => 1}`) instead of real
+  Python/Jinja2's dict repr (`{'a': 1}`) - live and reachable through
+  every ALREADY-converged construct (`or`/`and`/`is`, ternary,
+  comparisons) whenever the selected value happens to be a dict, not
+  hypothetical. **Fixed in the fork** (`crystal-play-0.9.2`, commit
+  `fbbd54f7`, see the fork's own `PATCHES.md`) and `shard.yml` repinned
+  in the same round (0.9.334) - two of the fork's own vendor specs had
+  pinned the wrong `=>` output and are now corrected, net 2 fewer fork
+  spec failures.
+- With that fixed, `range()`/`dict()`'s bare-call forms were STILL not
+  converged: Crinja's (now-correct) array/hash stringification uses
+  Python-repr spacing (`[0, 1, 2]`, `{'a': 1}`), while this codebase's
+  own `VariableLookup#format_value` - used for every array/hash-valued
+  expression EVERYWHERE ELSE in the hand-rolled evaluator, not just
+  these two constructs - renders the JSON-compact form instead
+  (`[0,1,2]`, `{"a":1}`). Converging just `range()`/`dict()`'s bare forms
+  would create a one-off inconsistency (spaced output only here,
+  unspaced everywhere else), not fix anything. The real fix -
+  `format_value` itself producing real Python-repr-style array/hash
+  strings everywhere - is exactly the highest-risk "general filter-chain
+  dispatch" final sub-piece next-step #4 already calls out, not a quick
+  win to grab opportunistically here. No spec today pins the current
+  compact format (checked directly), so the eventual blast radius looks
+  smaller than it might, but that fix stays deferred to when the general
+  dispatch sub-piece is actually tackled. Full detail: KNOWN_MISSING.md's
+  own `0.9.334` entry. **Next up unchanged in spirit: the general
+  filter-chain dispatch is now effectively next in line for
+  `#evaluate_expr`'s remaining sub-pieces, since `lookup()`/`range()`
+  turned out to have nothing safe to converge on their own - and it
+  should now also carry the `format_value` Python-repr-parity fix as
+  part of its scope, not as an afterthought.**
 
 ## Original current-status snapshot (2026-08-13, 0.9.326, superseded by the update above)
 
@@ -168,11 +218,24 @@ the "why", not required reading to know what to do next.
    chained with other Crinja-native pieces - render through Crinja in
    one pass instead of falling back for the whole expression), but it is
    no longer a blocker for step 4.
-4. Once 2 and 3 exist: swap `#evaluate_expr` itself, almost certainly in
-   sub-pieces (bare literals first - trivial and safe - lookup()/range()
-   next, the general filter-chain dispatch last), each verified with the
+4. Swap `#evaluate_expr` itself, in sub-pieces, each verified with the
    same spec+harness+targeted-test rigor as constructs 1-3, each ideally
-   with its own live-host check per point 1.
+   with its own live-host check per point 1:
+   - ~~Bare literals (boolean/numeric/quoted-string)~~ - DONE, 0.9.333.
+   - ~~`lookup()`/`range()`~~ - INVESTIGATED, 0.9.334, decided not to
+     converge (see the "Update" section above for the fork-bug fix and
+     the `format_value` spacing-inconsistency reasoning); nothing left
+     to do here specifically.
+   - **The general filter-chain dispatch** - now effectively the only
+     remaining sub-piece, and by far the largest/riskiest. Its scope
+     should now also include making `VariableLookup#format_value`
+     produce real Python-repr-style array/hash strings (`[0, 1, 2]`,
+     `{'a': 1}` - spaced, single-quoted keys) instead of the current
+     JSON-compact form (`[0,1,2]`, `{"a":1}`), a genuine divergence from
+     real Ansible/Jinja2 output surfaced investigating the point above -
+     not done opportunistically there since no single bare-call
+     construct could fix it in isolation without creating a worse,
+     inconsistent-within-itself state.
 5. Upstreaming (step 3) - deferred, pick up whenever.
 
 > **If you are a model picking this up cold**, the section above is
