@@ -434,21 +434,22 @@ module CrystalPlay
         # cr's own lib/function/dict.cr), reached only once escalated
         # to the full Crinja renderer.
         if bare_call?(expr, "dict(")
-          # Still NOT converged, unlike range() above (re-investigated
-          # for CRINJA.md step 5's general filter-chain dispatch
-          # sub-piece, now that the format-mismatch blocker that
-          # previously stopped BOTH is fixed via #render_via_crinja_
-          # value): Crinja's own `dict()` function
-          # (`lib/crinja/src/lib/function/dict.cr`) reads ONLY kwargs,
-          # silently ignoring a positional argument entirely -
-          # `dict([['a',1],['b',2]])` (the one form this codebase's own
-          # `evaluate_dict_call` implements) succeeds with an EMPTY dict
-          # instead of raising, which the render-then-rescue-fallback
-          # pattern can't safely catch (a clean success with a silently
-          # wrong value looks identical to a correct render). Needs a
-          # fork-side fix to `dict()` (positional-iterable support,
-          # mirroring `evaluate_dict_call`) before this can converge.
-          return @lookup.format_value(evaluate_dict_call(expr[5..-2]))
+          # CRINJA.md step 5: converged 2026-08-14 (0.9.340). The blocker
+          # documented below (Crinja's own `dict()` reading only kwargs
+          # and silently producing an EMPTY dict for a positional arg)
+          # is fixed fork-side (`weirdbricks/crinja` `crystal-play-0.9.4`,
+          # `src/lib/function/dict.cr`): the single positional-iterable
+          # form (mapping, or list/tuple of 2-element pairs) now builds a
+          # real dict and raises a clean `Arguments::Error` for anything
+          # else - the same `render_via_crinja_value`/rescue pattern as
+          # `range()` above, `evaluate_dict_call` unchanged as the
+          # fallback.
+          return begin
+            value = render_via_crinja_value(expr)
+            value ? @lookup.format_value(value) : "undefined"
+          rescue
+            @lookup.format_value(evaluate_dict_call(expr[5..-2]))
+          end
         end
 
         # Check for comparison operators FIRST (before filters)

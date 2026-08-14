@@ -395,6 +395,19 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate(%({'x86_64': 'amd64'}.get(ansible_facts['architecture'], ansible_facts['architecture']))).should eq("amd64")
   end
 
+  it "converges dict(iterable) positional form (0.9.340)" do
+    # prometheus.prometheus.node_exporter's `dict(raw.splitlines() |
+    # map(...) | map('flatten') | map('reverse'))` builds a checksum
+    # lookup from a positional iterable of [key,value] pairs. Previously
+    # this routed through hand-rolled evaluate_dict_call. Now try-Crinja
+    # first (fork crystal-play-0.9.4 fixed dict()'s kernel-args-only
+    # empty-dict bug); the fallback is identical if anything raises.
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(%(dict([['a', 1], ['b', 2]]))).should eq(%({"a":1,"b":2}))
+    evaluator.evaluate(%(dict({'x': 'y'}))).should eq(%({"x":"y"}))
+  end
+
   it "compares a dotted operand against a `~`-concatenated one, full ansible-vault expression" do
     # End-to-end regression for the exact expression benchmarked from
     # ansible-community.ansible-vault's own "Compute if installation is
