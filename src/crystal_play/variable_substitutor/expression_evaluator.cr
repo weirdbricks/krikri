@@ -64,7 +64,41 @@ module CrystalPlay
           @@crinja_delegation_depth -= 1
         end
       end
-      
+
+      # Same delegation-depth guard as #render_via_crinja, but returns
+      # Crinja's RAW structured result (nil for undefined) instead of a
+      # pre-stringified String - see `CrinjaRenderer#evaluate_value!`'s
+      # own comment for the full "why" (this codebase's internal
+      # render-then-`JSON.parse`-back round trip breaks if a container-
+      # valued Crinja result is stringified via Crinja's own Python-repr
+      # `Finalizer` instead of this codebase's JSON-compact
+      # `VariableLookup#format_value`). Any construct whose result might
+      # be an Array/Hash (not just a scalar) must go through this, not
+      # #render_via_crinja directly - constructs 1-6 (boolean/and/or/is,
+      # ternary, comparisons, bare literals, `~`, `*`/`/`/`//`) don't
+      # need it, since every one of them is provably scalar-only
+      # (verified via extensive empirical probing during their own
+      # convergence - none produce a container result).
+      private def render_via_crinja_value(expr : String) : JSON::Any?
+        raise "crinja delegation depth exceeded" if @@crinja_delegation_depth >= MAX_CRINJA_DELEGATION_DEPTH
+        @@crinja_delegation_depth += 1
+        begin
+          crinja_renderer.evaluate_value!(expr)
+        ensure
+          @@crinja_delegation_depth -= 1
+        end
+      end
+
+      # #render_via_crinja_value, formatted through this codebase's own
+      # `VariableLookup#format_value` (not Crinja's `Finalizer`) - the
+      # convenience form for a call site that ultimately wants a String
+      # (matching #render_via_crinja's signature) without losing the
+      # format-consistency fix that method exists for.
+      private def render_via_crinja_string(expr : String) : String
+        value = render_via_crinja_value(expr)
+        value ? @lookup.format_value(value) : "undefined"
+      end
+
       # Evaluate any expression and return string result. A thin guard in
       # front of #evaluate_expr for the inline ternary `TRUTHY if COND else
       # FALSY` (real Jinja2/Ansible syntax, used directly in default vars
@@ -370,7 +404,18 @@ module CrystalPlay
         # top_level_pipe? routes any expression with a `|` straight past
         # this method into evaluate_with_filter before this line runs.
         if bare_call?(expr, "range(")
-          return @lookup.format_value(evaluate_range(expr[6..-2]))
+          # CRINJA.md step 5, seventh construct (continued): unlike
+          # `dict()` just below, `range()`'s raw-value output matches
+          # the hand-rolled path exactly (probed across positive/
+          # negative step, variable arguments) - safe via the same
+          # #render_via_crinja_value pattern as the literal array/dict
+          # cases above.
+          return begin
+            value = render_via_crinja_value(expr)
+            value ? @lookup.format_value(value) : "undefined"
+          rescue
+            @lookup.format_value(evaluate_range(expr[6..-2]))
+          end
         end
 
         # `dict(iterable)` - real Ansible's Templar exposes actual
@@ -389,6 +434,20 @@ module CrystalPlay
         # cr's own lib/function/dict.cr), reached only once escalated
         # to the full Crinja renderer.
         if bare_call?(expr, "dict(")
+          # Still NOT converged, unlike range() above (re-investigated
+          # for CRINJA.md step 5's general filter-chain dispatch
+          # sub-piece, now that the format-mismatch blocker that
+          # previously stopped BOTH is fixed via #render_via_crinja_
+          # value): Crinja's own `dict()` function
+          # (`lib/crinja/src/lib/function/dict.cr`) reads ONLY kwargs,
+          # silently ignoring a positional argument entirely -
+          # `dict([['a',1],['b',2]])` (the one form this codebase's own
+          # `evaluate_dict_call` implements) succeeds with an EMPTY dict
+          # instead of raising, which the render-then-rescue-fallback
+          # pattern can't safely catch (a clean success with a silently
+          # wrong value looks identical to a correct render). Needs a
+          # fork-side fix to `dict()` (positional-iterable support,
+          # mirroring `evaluate_dict_call`) before this can converge.
           return @lookup.format_value(evaluate_dict_call(expr[5..-2]))
         end
 
@@ -579,11 +638,28 @@ module CrystalPlay
 
         # Check for nested access (.)
         if expr.includes?(".")
-          return @lookup.nested(expr)
+          # CRINJA.md step 5, seventh construct (continued): dotted
+          # variable/attribute access - try Crinja first via the
+          # raw-value path, same pattern and rationale as the literal
+          # array/dict and range() cases above. Probed extensively
+          # (nested dict/array traversal, `.get(key, default)`, Python
+          # string methods, `hostvars[...]`, a missing key/attribute) -
+          # all matched `@lookup.nested`'s own output exactly.
+          return begin
+            value = render_via_crinja_value(expr)
+            value ? @lookup.format_value(value) : "undefined"
+          rescue
+            @lookup.nested(expr)
+          end
         end
 
         # Simple variable lookup
-        @lookup.simple(expr)
+        begin
+          value = render_via_crinja_value(expr)
+          value ? @lookup.format_value(value) : "undefined"
+        rescue
+          @lookup.simple(expr)
+        end
       end
 
       # Dispatches every `[`-bearing expr that isn't already a top-level
@@ -602,16 +678,74 @@ module CrystalPlay
       # `list[0:2]` always start with the variable name instead, so this
       # can't misfire on real indexing/slicing.
       private def evaluate_bracket_expr(expr : String) : String
-        return @lookup.format_value(parse_literal_array(expr)) if literal_array_expr?(expr)
-        return @slicer.slice(expr) if expr.includes?("[:") || expr.includes?(":]")
-        @lookup.indexed(expr)
+        if literal_array_expr?(expr)
+          # CRINJA.md step 5, seventh construct (general filter-chain
+          # dispatch sub-piece: literal array/dict expressions) - try
+          # Crinja first via the raw-value path (#render_via_crinja_
+          # value), which preserves this codebase's own JSON-compact
+          # `format_value` output instead of Crinja's Python-repr
+          # `Finalizer` style - see that method's own comment for why
+          # the plain String-returning #render_via_crinja can't be used
+          # here (it would break the render-then-reparse round trip
+          # other call sites depend on). Falls back to the original
+          # hand-rolled `parse_literal_array` on any failure.
+          return begin
+            value = render_via_crinja_value(expr)
+            value ? @lookup.format_value(value) : "undefined"
+          rescue
+            @lookup.format_value(parse_literal_array(expr))
+          end
+        end
+        # Real bug found probing whether this branch was safe to converge
+        # to Crinja-first (CRINJA.md step 5's general filter-chain
+        # dispatch sub-piece): `expr.includes?("[:") || expr.includes?
+        # (":]")` only catches a slice with an EMPTY start or end
+        # (`items[:3]`, `items[2:]`) - a slice with BOTH bounds present
+        # (`items[1:3]`) has neither literal substring (there's a digit
+        # between the `[`/`:` and between the `:`/`]`), so it fell
+        # through to `@lookup.indexed` below, which has no slice
+        # handling at all, always resolving to "undefined". Broadened to
+        # the same top-level-bracket-contains-a-colon check
+        # `ArraySlicer#slice` itself already implicitly requires via its
+        # own `/^([^\[]+)\[([^:]*):([^\]]*)\]/` regex.
+        if expr.matches?(/\[[^\[\]]*:[^\[\]]*\]/)
+          # CRINJA.md step 5, seventh construct (continued): Python slice
+          # syntax - the fork already has real support for it
+          # (`PATCHES.md`'s "Python slice syntax" entry), verified
+          # matching `ArraySlicer#slice`'s own output across both-bounds/
+          # single-bound/negative-index slices via the raw-value path.
+          return begin
+            value = render_via_crinja_value(expr)
+            value ? @lookup.format_value(value) : "undefined"
+          rescue
+            @slicer.slice(expr)
+          end
+        end
+
+        # CRINJA.md step 5, seventh construct (continued): general
+        # indexed access (`var[key]`, `var[0]`, `var[-1]`) - same
+        # pattern as the dotted-access/simple-lookup cases above.
+        begin
+          value = render_via_crinja_value(expr)
+          value ? @lookup.format_value(value) : "undefined"
+        rescue
+          @lookup.indexed(expr)
+        end
       end
 
       # Returns nil (not a String) when *expr* is neither a dict literal
       # nor `[`-bearing at all, so evaluate_expr's caller knows to fall
       # through to the plain `.`/simple-lookup checks instead.
       private def evaluate_bracket_or_dict_expr(expr : String) : String?
-        return evaluate_dict_literal(expr) if literal_dict_expr?(expr)
+        if literal_dict_expr?(expr)
+          # Same rationale and pattern as the literal-array case above.
+          return begin
+            value = render_via_crinja_value(expr)
+            value ? @lookup.format_value(value) : "undefined"
+          rescue
+            evaluate_dict_literal(expr)
+          end
+        end
 
         # A `[` anywhere in the string (even deep inside a method call's
         # own ARGUMENT, e.g. `{...}.get(ansible_facts['architecture'],

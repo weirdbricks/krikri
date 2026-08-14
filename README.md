@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.336-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.337-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -287,21 +287,29 @@ fixed - see KNOWN_MISSING.md's `0.9.334` entry): array/hash values
 rendered as a bare string (`{{ some_list }}` with no further filter)
 print in a JSON-compact form (`[1,2,3]`, `{"a":1}`) instead of real
 Ansible/Jinja2's Python-repr form (`[1, 2, 3]`, `{'a': 1}`) - no spec
-currently pins the wrong format, and the fix is scoped into the next
-CRINJA.md step-5 sub-piece (the general filter-chain dispatch swap) as
-part of `VariableLookup#format_value`, not done in isolation to avoid
-a worse, self-inconsistent interim state. Most recently (`0.9.336`),
-CRINJA.md's step-5 dual-evaluator convergence gained a sixth construct:
-`#evaluate_expr`'s `*`/`/`/`//` arithmetic now tries Crinja first too,
-converged at the single shared `#evaluate_mult_div` implementation so
-both its call sites benefit. Probing it surfaced a real, pre-existing
-crash bug unrelated to the convergence itself: `10 // 0` raised an
-uncaught `OverflowError` (flooring `Float64::INFINITY` and converting to
-`Int64` overflows) - fixed to match `/`'s own existing lenient-on-zero
-behavior instead of crashing. The general filter-chain dispatch (variable
-lookups, `|`-filter chains, bracket/dict literals, leading-paren
-wrapping) is now the sole remaining `#evaluate_expr` sub-piece. Before
-that (`0.9.335`), CRINJA.md's step-5 dual-evaluator convergence gained a
+currently pins the wrong format. This no longer blocks further CRINJA.md
+step-5 convergence work, though: `0.9.337` solved that separately, by
+extracting Crinja's raw evaluated value instead of trusting its own
+Python-repr stringification, and feeding it through this codebase's
+existing (unchanged, still JSON-compact) `VariableLookup#format_value` -
+so the display-format gap itself is still open, but the architectural
+reason it was blocking convergence isn't anymore. That same update
+converged literal array/dict expressions, `range()`, dotted/simple/
+indexed variable lookups, and Python slice syntax - finding and fixing a
+real, unrelated pre-existing bug along the way (`items[1:3]`-style
+both-bounds slicing never worked at all through the plain `evaluate()`
+entry point). Filter chains (`evaluate_with_filter`, backed by the
+~1400-line `FilterEngine`) are now the sole remaining `#evaluate_expr`
+sub-piece. Before that (`0.9.336`), CRINJA.md's step-5 dual-evaluator
+convergence gained a sixth construct: `#evaluate_expr`'s `*`/`/`/`//`
+arithmetic now tries Crinja first too, converged at the single shared
+`#evaluate_mult_div` implementation so both its call sites benefit.
+Probing it surfaced a real, pre-existing crash bug unrelated to the
+convergence itself: `10 // 0` raised an uncaught `OverflowError`
+(flooring `Float64::INFINITY` and converting to `Int64` overflows) -
+fixed to match `/`'s own existing lenient-on-zero behavior instead of
+crashing. Before that (`0.9.335`), CRINJA.md's step-5 dual-evaluator
+convergence gained a
 fifth construct:
 `#evaluate_expr`'s `~` string-concatenation operator now tries Crinja
 first too. Probing it before trusting the swap surfaced (and fixed, in

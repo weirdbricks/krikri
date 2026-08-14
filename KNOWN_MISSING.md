@@ -8,7 +8,51 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.336`.**
+**Currently at `0.9.337`.**
+
+---
+
+`0.9.337` (CRINJA.md step 5, seventh construct: solved the general
+filter-chain dispatch's architectural blocker from the previous entry,
+then converged literal array/dict expressions, `range()`, dotted/simple/
+indexed variable lookups, and Python slice syntax to Crinja-first - only
+filter chains themselves remain unconverged):
+
+- **The architectural fix**: added `CrinjaRenderer#evaluate_value!`,
+  which evaluates a bare expression and returns Crinja's RAW structured
+  result as `JSON::Any?` (parsing directly via `Crinja::Parser::
+  ExpressionLexer`/`ExpressionParser` and `Crinja::Environment#evaluate
+  (ast_node, bindings) : Value`, bypassing `Template#render`'s
+  always-a-String output entirely) instead of a pre-stringified String.
+  Feeding that through `VariableLookup#format_value` (unchanged, still
+  JSON-compact) instead of trusting Crinja's own `Finalizer` (Python-repr
+  style) keeps the internal render-then-`JSON.parse`-back round trip
+  intact for every existing call site, while still using Crinja for the
+  actual evaluation. `ExpressionEvaluator` gained `#render_via_crinja_value`/
+  `#render_via_crinja_string` wrapping it with the same delegation-depth
+  guard `#render_via_crinja` already has.
+- Converged (all via the new raw-value path): literal array/dict
+  expressions, `range()` (bare-call form), dotted/simple/indexed variable
+  lookups, and Python slice syntax. `dict()`'s single positional-iterable
+  form and `lookup()` remain unconverged - `dict()` because Crinja's own
+  `dict()` function silently ignores a positional argument and succeeds
+  with an EMPTY dict (a silent-wrong-value risk the fallback pattern
+  can't catch, unlike a clean raise); `lookup()` because Crinja has no
+  equivalent function at all.
+- **Real bug found and fixed along the way, independent of the
+  convergence itself**: `var[1:3]`-style slicing (BOTH bounds present)
+  never worked through the plain `evaluate()` entry point at all -
+  `expr.includes?("[:") || expr.includes?(":]")` only matches an empty
+  start or end (`items[:3]`, `items[2:]`), not a slice with digits on
+  both sides of the colon, so it fell through to indexed-access handling
+  (no slice support) and always resolved to `"undefined"` even though
+  `ArraySlicer#slice` itself handled the same input correctly when called
+  directly. Broadened the trigger check to match what `ArraySlicer`
+  itself actually requires.
+- Verified: `crystal spec` (1063 examples, 0 failures), `./build.sh`, and
+  extensive empirical probing (nested dict/array traversal, `.get(key,
+  default)`, Python string methods, `hostvars[...]`, missing keys/
+  attributes, negative indices).
 
 ---
 

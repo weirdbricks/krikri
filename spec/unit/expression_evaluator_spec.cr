@@ -441,4 +441,22 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate(%('https://example.com/v' + prometheus_version + '/sums.txt')).should eq("https://example.com/v2.27.0/sums.txt")
   end
+
+  it "routes a slice with both bounds present to ArraySlicer, not just an empty-bound slice" do
+    # Real bug found probing whether the `[`-dispatch branch was safe to
+    # converge to Crinja-first (CRINJA.md step 5): the slice-detection
+    # check was `expr.includes?("[:") || expr.includes?(":]")`, which
+    # only matches an EMPTY start or end (`items[:3]`, `items[2:]`) -
+    # `items[1:3]` (both bounds present) has neither literal substring
+    # (a digit sits between `[`/`:` and between `:`/`]`), so it fell
+    # through to `@lookup.indexed`, which has no slice handling at all,
+    # always resolving to "undefined" even though `ArraySlicer#slice`
+    # itself handles this exact input correctly when called directly.
+    v = Hash(String, JSON::Any).new
+    v["items"] = JSON.parse(%(["a", "b", "c", "d"]))
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("items[1:3]").should eq(%(["b","c"]))
+    evaluator.evaluate("items[:2]").should eq(%(["a","b"]))
+    evaluator.evaluate("items[2:]").should eq(%(["c","d"]))
+  end
 end

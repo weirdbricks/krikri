@@ -19,7 +19,10 @@
 # 0.9.336 - found+fixed a real pre-existing crash (10 // 0 overflow);
 # investigated the general filter-chain dispatch (literal array/dict,
 # variable lookups) same day - found a real ARCHITECTURAL blocker, not
-# converged, no code change - see "Current status" below)
+# converged, no code change; SOLVED that blocker and converged literal
+# array/dict, range(), dotted/simple/indexed lookups, and slicing
+# 2026-08-13, 0.9.337 - only filter chains remain - see "Current status"
+# below)
 
 ## Current status / next steps (2026-08-13, 0.9.336)
 
@@ -256,6 +259,59 @@ decision with the user before starting, not something to charge into
 mid-session. Not started. Nothing in this update touched shipped code;
 `crystal spec` is unchanged at 1062 examples, 0 failures throughout.
 
+**Update (same day, later still): user chose to do the real
+architectural fix. DONE, 0.9.337.** Turned out smaller than the estimate
+above once actually built: constructs 1-6 did NOT need revisiting after
+all - every one of them is provably scalar-only (already established via
+their own convergence probing), and the format mismatch this whole fix
+exists for only bites on Array/Hash results, so `#render_via_crinja`'s
+existing direct-String return stays correct and untouched for all six.
+
+Built `CrinjaRenderer#evaluate_value!(expr) : JSON::Any?` - parses a bare
+expression via `Crinja::Parser::ExpressionLexer`/`ExpressionParser`
+directly (mirrors the fork's own `spec_helper.cr#evaluate_expression_raw`
+test helper) and calls `Crinja::Environment#evaluate(ast_node, bindings)
+: Value` (`lib/crinja/src/environment.cr:106-108`), the overload that
+returns the raw `Value` instead of going through `Template#render`'s
+always-a-String path. Added `CrinjaRenderer.crinja_value_to_json_any`
+(the reverse of the existing `.json_any_to_crinja_value`) to convert the
+result back to `JSON::Any`, nil for Crinja's own `Undefined` (matching
+the nilable-return convention `VariableLookup#resolve`/`#resolve_simple`/
+etc. already use). `ExpressionEvaluator` gained `#render_via_crinja_value`/
+`#render_via_crinja_string`, the same delegation-depth-guarded wrappers
+as `#render_via_crinja` but returning/formatting the raw value through
+THIS codebase's own `format_value` instead of Crinja's `Finalizer`.
+
+With that in place, converged (each empirically probed first, same
+rigor as constructs 1-6): literal array/dict expressions
+(`evaluate_bracket_expr`'s `literal_array_expr?` case,
+`evaluate_bracket_or_dict_expr`'s `literal_dict_expr?` case), `range()`'s
+bare-call form, dotted access (`@lookup.nested`), simple lookup
+(`@lookup.simple`), indexed access (`@lookup.indexed`), and Python slice
+syntax (`@slicer.slice`). Two things investigated but deliberately left
+UNconverged: `dict()`'s single positional-iterable form - Crinja's own
+`dict()` (`lib/crinja/src/lib/function/dict.cr`) reads only kwargs,
+silently ignoring a positional arg and succeeding with an EMPTY dict
+instead of raising, which the render-then-rescue pattern can't safely
+catch (needs a fork-side fix first, not attempted); and `lookup()` -
+still no Crinja equivalent at all, unchanged from the earlier
+investigation.
+
+Found and fixed one real, pre-existing bug along the way, independent of
+the convergence itself: `items[1:3]`-style slicing (both bounds present)
+never worked through the plain `evaluate()` entry point - the
+slice-detection check only matched an EMPTY bound (`items[:3]`/
+`items[2:]`), so a fully-bounded slice fell through to indexed-access
+handling (no slice support) and always resolved to `"undefined"`, even
+though `ArraySlicer#slice` itself handled the identical input correctly
+when called directly. Broadened the trigger check.
+
+Verified: `crystal spec` (1063 examples, 0 failures), `./build.sh`.
+**Filter chains (`evaluate_with_filter`, backed by the ~1400-line
+`FilterEngine`) are now the ONLY remaining `#evaluate_expr` sub-piece -
+the biggest and most filter-shape-diverse one, but no longer carrying the
+architectural risk the rest of this update resolved.**
+
 ## Original current-status snapshot (2026-08-13, 0.9.326, superseded by the update above)
 
 Read this section first - it's the up-to-date summary. Everything below
@@ -361,29 +417,27 @@ the "why", not required reading to know what to do next.
      benefit). Found+fixed a real pre-existing crash (`10 // 0` -
      `OverflowError`, unrelated to convergence itself) - see the
      "Update" section above.
-   - **The general filter-chain dispatch** - now the ONLY remaining
-     sub-piece, and by far the largest/riskiest: variable lookups
-     (`@lookup.simple`/`.nested`/`.walk`), `|`-filter chains
-     (`evaluate_with_filter`, backed by the ~1400-line `FilterEngine`),
-     bracket/dict literals (`evaluate_bracket_or_dict_expr`), and the
-     leading-paren wrapper (`evaluate_leading_paren`). Its scope should
-     now also include making `VariableLookup#format_value` produce real
-     Python-repr-style array/hash strings (`[0, 1, 2]`, `{'a': 1}` -
-     spaced, single-quoted keys) instead of the current JSON-compact
-     form (`[0,1,2]`, `{"a":1}`), a genuine divergence from real
-     Ansible/Jinja2 output surfaced investigating the `lookup()`/
-     `range()` point above - not done opportunistically there since no
-     single bare-call construct could fix it in isolation without
-     creating a worse, inconsistent-within-itself state. Given the size,
-     this almost certainly needs breaking down FURTHER before attempting
-     it in one sitting - candidate finer-grained slices, roughly in
-     order of apparent risk: literal array/dict expressions first
-     (self-contained, no @vars-dependent lookup semantics), then simple/
-     nested variable lookup (@vars-dependent, needs the undefined/
-     recursive-re-templating conventions this codebase relies on
-     preserved exactly), filter chains last (the biggest, since it
-     depends on the filter-coverage audit already done in next-step #2
-     staying valid AND the `format_value` fix above).
+   - ~~The `format_value`/internal-round-trip architectural blocker~~ -
+     SOLVED, 0.9.337. `CrinjaRenderer#evaluate_value!` + `#render_via_
+     crinja_value`/`_string` extract Crinja's raw structured result
+     instead of trusting its own `Finalizer` stringification - see the
+     "Update" section above for the full design.
+   - ~~Literal array/dict expressions, `range()`, dotted/simple/indexed
+     variable lookups, Python slicing~~ - DONE, 0.9.337 (same update).
+     Found+fixed a real pre-existing bug along the way (`items[1:3]`-
+     style both-bounds slicing never worked at all through `evaluate()`).
+   - **Filter chains** (`evaluate_with_filter`, backed by the
+     ~1400-line `FilterEngine`) - now the ONLY remaining sub-piece.
+     Largest and most filter-shape-diverse, but no longer carrying the
+     architectural risk the rest of this step resolved - the filter-
+     coverage audit from next-step #2 already established every
+     `FilterEngine` filter/test has a Crinja/`jinja_filters.cr`
+     equivalent (bar the known `to_datetime` gap), so this is mostly
+     "converge and empirically verify each filter shape/combination",
+     not "discover missing filters." The leading-paren wrapper
+     (`evaluate_leading_paren`) is a smaller, related piece worth folding
+     in alongside it (it recurses into `#evaluate` and walks the result,
+     similar shape to the filter-chain base-value resolution).
 5. Upstreaming (step 3) - deferred, pick up whenever.
 
 > **If you are a model picking this up cold**, the section above is

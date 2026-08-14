@@ -206,6 +206,89 @@ module CrystalPlay
         text
       end
 
+      # Evaluates *expr* (bare Jinja expression text, no surrounding
+      # `{{ }}`) and returns its RAW structured result as `JSON::Any`
+      # (nil for a genuinely undefined result - the same nilable
+      # convention `VariableLookup#resolve`/`#resolve_simple`/etc.
+      # already use) instead of `#render!`'s always-a-String output.
+      #
+      # `#render!` goes through `Template#render`, which always produces
+      # a String via `Crinja::Finalizer#stringify` - fine for a FINAL
+      # `{{ }}` substitution, but wrong for a caller (like
+      # `ExpressionEvaluator`'s Crinja-delegation branches) that needs to
+      # hand the result to something else expecting structured data
+      # (another filter, a `.get()` call, a nested nested expression) or
+      # that wants to format an Array/Hash result through THIS
+      # codebase's own `VariableLookup#format_value` (its JSON-compact
+      # style, not Crinja's Python-repr `Finalizer` style) so the
+      # existing internal "render sub-expression to a String, `JSON.
+      # parse` it back into structured data" round trip used throughout
+      # `expression_evaluator.cr`/`filter_engine.cr`/`comparison_
+      # evaluator.cr`/`variable_lookup.cr` keeps working unchanged - see
+      # CRINJA.md's step-5 "general filter-chain dispatch" notes for the
+      # full investigation that found this was necessary (a naive
+      # `format_value` Python-repr rewrite broke that round trip outright
+      # since Python-repr text isn't valid JSON).
+      #
+      # Parses via `Crinja::Parser::ExpressionLexer`/`ExpressionParser`
+      # directly (bypassing `Template`/`from_string` entirely - there is
+      # no template TAG here, just a bare expression) and
+      # `Crinja::Environment#evaluate(ast_node, bindings) : Value`
+      # (`lib/crinja/src/environment.cr:106-108`), the overload that
+      # returns the raw `Value` rather than a stringified result -
+      # mirrors the fork's own `spec_helper.cr#evaluate_expression_raw`
+      # test helper, which uses the identical parse-then-evaluate
+      # sequence for the same reason (getting at the raw value, not
+      # Crinja's own stringified rendering of it).
+      def evaluate_value!(expr : String) : JSON::Any?
+        template_vars = (@template_vars ||= prepare_crinja_vars)
+        ast = cached_expression(expr)
+        value = shared_env.evaluate(ast, template_vars)
+        return nil if value.undefined?
+
+        CrinjaRenderer.crinja_value_to_json_any(value)
+      end
+
+      @@expression_cache = Hash(String, Crinja::AST::ExpressionNode).new
+
+      private def cached_expression(expr : String) : Crinja::AST::ExpressionNode
+        @@expression_cache[expr] ||= begin
+          lexer = Crinja::Parser::ExpressionLexer.new(shared_env.config, expr)
+          parser = Crinja::Parser::ExpressionParser.new(lexer)
+          parser.parse
+        end
+      end
+
+      # Convert Crinja::Value to JSON::Any - the reverse direction of
+      # #json_any_to_crinja_value below. Exposed as a class method for
+      # the same reason that one is (shareable with any other Crinja
+      # environment this codebase spins up).
+      def self.crinja_value_to_json_any(value : Crinja::Value) : JSON::Any
+        case raw = value.raw
+        when Int32, Int64
+          JSON::Any.new(raw.to_i64)
+        when Float64
+          JSON::Any.new(raw)
+        when String, Crinja::SafeString
+          JSON::Any.new(raw.to_s)
+        when Bool
+          JSON::Any.new(raw)
+        when Nil
+          JSON::Any.new(nil)
+        when Crinja::Dictionary
+          hash = Hash(String, JSON::Any).new
+          raw.each { |k, v| hash[k.to_s] = crinja_value_to_json_any(v) }
+          JSON::Any.new(hash)
+        when Array(Crinja::Value)
+          JSON::Any.new(raw.map { |item| crinja_value_to_json_any(item) })
+        else
+          # Time/Crinja::Object/Callable/Iterator - none of this
+          # codebase's own converged constructs produce these; falls
+          # back to Crinja's own stringification rather than crashing.
+          JSON::Any.new(Crinja::Finalizer.stringify(raw))
+        end
+      end
+
       # Prepare variables for Crinja rendering
       #
       # Real Ansible recursively re-templates every variable's value when
