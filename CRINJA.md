@@ -43,8 +43,87 @@
 # 1-9, both prior sub-rounds plus this one); remaining step-5 follow-ups are
 # the two deliberately-unconverged leaves (lookup() bare-calls, dict()
 # positional form) and the optional fork-side to_datetime/Time arithmetic.)
+#
+# ALL REMAINING STEP-5 FOLLOW-UPS CLOSED 2026-08-14 (0.9.340-0.9.342):
+# the dict() positional-iterable leaf was converged (fork crystal-play-0.9.4,
+# 0.9.340); fork-side to_datetime/Time arithmetic landed (crystal-play-0.9.5,
+# 0.9.341); the expression-mode trim-marker workaround was REMOVED because the
+# fork's lexer already handles {{- ... -}} natively (0.9.342, lstrip_blocks
+# correctly stays OFF - real Ansible enables trim_blocks but never lstrip);
+# the fork's vendored spec suite was cleaned 121->0 failures; and raw-Crinja
+# rebase-canary specs were added (crinja_direct_spec.cr). lookup() bare-calls
+# remain hand-rolled by design (Crinja has no lookup plugins; corrected/closed
+# below). The only original step-3 item now deliberately NOT done is upstream-
+# ing to straight-shoota/crinja, closed by decision (marked done-decided in the
+# "Strategy and next steps" section).
 
 ## Current status / next steps (2026-08-13, 0.9.336)
+
+**Update (2026-08-14): every open item left in this file was closed.**
+This was a focused cleanup of the remaining step-5 follow-ups plus
+upstreaming; all behavior changes landed in crystal-ansible (0.9.340-0.9.342)
+with matching fork tags. Summary:
+
+- **`dict()` positional-iterable leaf - CONVERGED (0.9.340).** The blocker
+  was fork-side: `weirdbricks/crinja`'s `dict()` read only kwargs and
+  silently returned an EMPTY dict for a positional arg. Fixed in the fork
+  (`crystal-play-0.9.4`, `src/lib/function/dict.cr`) to handle the single
+  positional-iterable form (mapping, or a list/tuple of 2-element pairs),
+  raising a clean `Arguments::Error` otherwise; kwargs merge on top. This
+  then converged `ExpressionEvaluator`'s `dict(` bare-call branch onto the
+  same `render_via_crinja_value`/fallback pattern as `range()`; hand-rolled
+  `evaluate_dict_call` is unchanged as the fallback.
+- **`lookup()` bare-calls leaf - DELIBERATELY CLOSED (no change).** The
+  original investigation's verdict still holds after re-examination: `lookup()`
+  is entirely Ansible-specific (real Ansible's `first_found`/`env`/`url`
+  lookup PLUGINS), Crinja has no equivalent function, and trying it first
+  would only ever cost a guaranteed-to-fail render+rescue round trip. It is
+  correctly and permanently handled by `evaluate_lookup`. Not a gap; closing
+  the item rather than chasing a non-fix.
+- **Fork-side `to_datetime`/Time arithmetic - DONE (0.9.341, fork
+  crystal-play-0.9.5).** The fork's `-` operator now subtracts two `Time`
+  values into a `Crinja::TimeDelta` (`.days`/`.seconds`/`.microseconds` attrs,
+  `.total_seconds()` method, Python `str(timedelta)`-style stringify), fixing
+  a latent `Value#time?` bug it exposed (`is_a` -> `is_a?` on the Raw union).
+  `jinja_filters.cr` registers `to_datetime` (Ansible-specific, so stays out
+  of the fork), producing a real `Crinja::Value` wrapping a `::Time` - the
+  reason it was never registered before. Real dev-sec os_hardening's
+  `( a | to_datetime(...) - b | to_datetime(...) ).days` now renders through
+  Crinja in ONE pass via the already-converged leading-paren construct; the
+  hand-rolled tagged-JSON path is unchanged as the fallback.
+- **Real lexer fix for expression-mode trim markers - DONE (0.9.342).** The
+  `{{- expr }}`/`{{ expr -}}` mistokenization bug#1 described was ALREADY fixed
+  in the fork's lexer (verified against a battery of shapes + real Python,
+  including the exact prometheus._common compressed one-liner that originally
+  exposed it). The fragile `normalize_expression_trim_markers` string-surgery
+  workaround is REMOVED; CrinjaRenderer hands raw source to the (cached)
+  template. **`lstrip_blocks` stays OFF** - real Ansible enables `trim_blocks`
+  but never `lstrip_blocks`, so crystal-ansible's config already matches
+  ansible-core; no change needed (the "under-trim" note that motivated
+  disabling it is moot for parity). The one remaining whitespace gap -
+  recursive-for + trim markers leave extraneous newlines (a real but cosmetic
+  Python divergence, rare in real roles, never hit by any benchmark round) -
+  is deliberately NOT reworked (a repair attempt regressed live-verified
+  common-case output); it is documented in the fork's own spec suite with a
+  KNOWN DIVERGENCE note instead.
+- **Fork vendored spec suite - CLEANED 121 -> 0 failures.** All were stale
+  assertions encoding pre-change behavior: the bool-capitalization cascade
+  (~110), `and`/`or` operand-value semantics, the newly-registered `in`/`not
+  in` operators, and `pprint`'s `verbose=False` default-arg message. Template
+  sources were left intact; only `eq(...)` expected values changed. The 3
+  recursive-for newline assertions now document actual fork behavior (see the
+  cosmetic divergence note above).
+- **Raw-Crinja rebase-canary specs ADDED** (`spec/unit/crinja_direct_spec.cr`,
+  14 examples) - each fixed behavior pinned against `Crinja.new`/
+  `env.from_string(...).render` directly so a future fork rebase or `shards
+  update` flags redundant (safe-to-delete) or regressed registrations at a
+  glance.
+- **Upstreaming (step 3) - DONE-DECIDED, NOT DOING IT.** These fixes stay
+  permanently in the fork (where they were already migrated); the step is
+  marked done-decided, not just deferred.
+
+**Original status snapshot / narrative below is retained for history; the
+header + this update are what a cold reader should trust for current state.**
 
 **Update (same day): step-5 next-step #1 (live real-host verification of
 the three converged constructs) is now DONE.** Re-ran `prometheus.
@@ -492,12 +571,14 @@ the "why", not required reading to know what to do next.
      Crinja-success path) - see the "Update" section above.
    - ~~The leading-paren wrapper (`evaluate_leading_paren`)~~ - DONE,
      0.9.338 (same update).
-   - **`#evaluate_expr`'s `ExpressionEvaluator` side is now essentially
-     fully converged.** The only hand-rolled-only leaves remaining are
-     `lookup()` bare-calls (no Crinja equivalent) and `dict()`'s single
-     positional-iterable form (Crinja's own `dict()` silently produces
-     an empty dict instead of raising - needs a fork-side fix first, see
-     `0.9.337`'s entry for detail). Neither blocks anything else.
+   - **`#evaluate_expr`'s `ExpressionEvaluator` side is FULLY converged
+     (0.9.340).** Both prior leaves are closed: `dict()`'s single
+     positional-iterable form was unblocked and converged by the fork-side
+     fix in crystal-play-0.9.4 (0.9.340); `lookup()` bare-calls is a
+     DELIBERATELY-CLOSED non-item (no Crinja equivalent exists - real
+     Ansible's lookup() is an external-plugins feature, correctly handled
+     by `evaluate_lookup`, and converging would only ever cost a
+     guaranteed-to-fail round trip).
 4a. **Live-host verification of constructs 4-9 (0.9.333-0.9.338)** - ~~NOT
     YET DONE~~ **DONE 2026-08-14 (0.9.339)**: ran `dev-sec.os_hardening`
     on two fresh 2-node Atlantic.net pairs. The first pair immediately
@@ -1088,20 +1169,19 @@ the literal text `"undefined"` instead of `"x"`. Confirmed via:
 "{% if true -%}YES{% endif %}"  => "YES"  (correct - block-tag form is fine)
 ```
 
-**Not fixed at the Crinja/lexer level** - worked around in this codebase by
-preprocessing the template TEXT before handing it to Crinja at all
-(`CrinjaRenderer#normalize_expression_trim_markers`,
-`src/crystal_play/variable_substitutor/crinja_renderer.cr`): scans for
-`{{...}}` spans, detects a leading/trailing `-`, and physically removes
-both the marker character and the adjacent template-source whitespace
-before parsing - i.e. reimplements the *effect* of the trim marker via
-string surgery rather than fixing the tokenizer. This works and is tested,
-but it's a workaround, not a real fix - a genuine fix belongs in
-`lib/crinja/src/parser/template_lexer.cr`'s expression-mode tokenizing (I
-did not find the exact line; the block-tag-mode handling in
-`check_for_end` looks structurally correct and complete, so the bug is
-likely in a SEPARATE lexer mode entered specifically while inside a
-`{{ }}` expression, not shared with the block-tag scanner at all).
+**Not fixed at the Crinja/lexer level (historical) - RESOLVED 2026-08-14.**
+This was worked around in this codebase by preprocessing the template TEXT
+before handing it to Crinja at all (`CrinjaRenderer#
+normalize_expression_trim_markers`) - string surgery that reimplemented
+the *effect* of the trim marker rather than fixing the tokenizer. By
+0.9.342 the fork's own lexer already tokenized expression-mode trim
+markers correctly natively (verified against a battery of shapes AND real
+Python, including the exact prometheus._common compressed one-liner that
+originally exposed the bug), so the fragile workaround and its
+`find_expr_close` helper were REMOVED; CrinjaRenderer hands raw source to
+the (cached) template. The hand-rolled `VariableSubstitutor#
+expand_mustache_spans` trim-marker handling noted further below is a
+separate, still-current concern for `{{ }}`-only spans.
 
 A parallel, narrower version of the same underlying gap exists in this
 codebase's OWN hand-rolled evaluator too (not Crinja) - see
@@ -1246,11 +1326,14 @@ either:
   SAME general area as bug #1 above - possibly worth fixing both together
   if someone takes on a real lexer-level pass, since they may share a root
   cause)
-- `lstrip_blocks` is forced OFF in this codebase's own Crinja config
-  (`CrinjaRenderer`'s `env.config.lstrip_blocks = false`) - search
-  `crinja_renderer.cr` for why; IIRC another under-trimming mismatch
-  against real Jinja2 that was easier to work around by disabling the
-  feature than fixing
+- `lstrip_blocks` is OFF in this codebase's own Crinja config
+  (`CrinjaRenderer`'s `env.config.lstrip_blocks = false`) - **confirmed
+  2026-08-14 this is CORRECT for Ansible parity, not a workaround**: real
+  ansible-core enables `trim_blocks` but never `lstrip_blocks`, so keeping
+  it disabled matches ansible-core exactly. Do not re-enable it. (The fork's
+  own `lstrip_blocks` diverges from real Python jinja2 in the under/over-
+  trim whitespace cases, but that's moot - neither crystal-ansible nor real
+  Ansible turns it on.)
 
 ## Strategy and next steps
 
@@ -1554,6 +1637,11 @@ each individually rarer than #1-#5 and/or needing deeper parser surgery:
    (`crinja_ternary_expr_ext.cr`), `Value#truthy?` (a genuine
    Python-semantics bug, not a preference), and `.split()` with no
    arguments. Anything upstream accepts is a patch we stop maintaining.
+   **MARKED DONE-DECIDED 2026-08-14: this step will not be pursued.** These
+   fixes remain permanently carried in the `weirdbricks/crinja` fork (all of
+   them were migrated into the fork's real source in 0.9.323 and later),
+   which is pinned by tag and is where they legitimately belong. Do not
+   re-open this step.
 4. **Fix `namespace()`. DONE 2026-08-13** - see bug #3's own "Fixed
    2026-08-13" note above for the full writeup. Confirmed both guessed
    features were missing. Fixed via a new
