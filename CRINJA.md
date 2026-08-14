@@ -14,10 +14,12 @@
 # to converge, found+fixed a real Hash-stringify bug in the crinja fork
 # along the way (crystal-play-0.9.2); step 5's fifth construct (the `~`
 # operator) converged 2026-08-13, 0.9.335 - found+fixed another real
-# fork bug (~/+ string-fallback bypassing Finalizer, crystal-play-0.9.3)
-# - see "Current status" below and KNOWN_MISSING.md/ROLES_TESTED.md)
+# fork bug (~/+ string-fallback bypassing Finalizer, crystal-play-0.9.3);
+# step 5's sixth construct (*//// arithmetic) converged 2026-08-13,
+# 0.9.336 - found+fixed a real pre-existing crash (10 // 0 overflow) -
+# see "Current status" below and KNOWN_MISSING.md/ROLES_TESTED.md)
 
-## Current status / next steps (2026-08-13, 0.9.335)
+## Current status / next steps (2026-08-13, 0.9.336)
 
 **Update (same day): step-5 next-step #1 (live real-host verification of
 the three converged constructs) is now DONE.** Re-ran `prometheus.
@@ -154,6 +156,32 @@ chains, arithmetic, bracket/dict literals - everything else in
 `#evaluate_expr`) remains the sole remaining sub-piece, and its scope
 still includes the `format_value` Python-repr-parity fix noted above.**
 
+**Update (same day, later still): step-5's sixth construct is now DONE
+(0.9.336) - `*`/`/`/`//` arithmetic.** Like `~`, this was safe to
+converge without an array/hash-format complication (arithmetic always
+produces a scalar). Converged at the single shared
+`#evaluate_mult_div` implementation (now taking the original `expr` text
+alongside the already-split `parts`/`ops`) rather than at each of its
+two call sites (the bare top-level case in `#evaluate_expr` and the
+nested case inside a `+`/`-` operand in `#resolve_plus_operand`), so
+both benefit from one `render_via_crinja`/rescue wrapper instead of
+duplicating it. Empirical probing (int/float mixes, chained `*`, both
+directions of negative floor division, division by zero, mismatched
+operand types) matched the hand-rolled fallback in every case Crinja
+didn't cleanly raise - except one, which turned out to be a real,
+**pre-existing crash bug unrelated to whether this construct gets
+converged at all**: `10 // 0` raised an uncaught `OverflowError`
+(`(10.0 / 0.0).floor.to_i64` overflows `Int64`, since the floored value
+is `Float64::INFINITY`) - this would have crashed the process on that
+input whether or not `*`/`/`/`//` ever went through Crinja. Fixed
+directly in `#combine_mult_div` (now matches `/`'s own existing
+lenient-on-zero convention instead of crashing). Verified: `crystal spec`
+(1062 examples, 0 failures), `./build.sh`. **The general filter-chain
+dispatch (variable lookups, `|`-filter chains, bracket/dict literals,
+leading-paren wrapping - everything else remaining in `#evaluate_expr`)
+is now the sole remaining sub-piece, and its scope still includes the
+`format_value` Python-repr-parity fix noted above.**
+
 ## Original current-status snapshot (2026-08-13, 0.9.326, superseded by the update above)
 
 Read this section first - it's the up-to-date summary. Everything below
@@ -254,16 +282,34 @@ the "why", not required reading to know what to do next.
      a real fork bug along the way (`~`'s AND `+`'s string-fallback
      bypassing `Finalizer`, `crystal-play-0.9.3`) - see the "Update"
      section above.
-   - **The general filter-chain dispatch** - now effectively the only
-     remaining sub-piece, and by far the largest/riskiest. Its scope
-     should now also include making `VariableLookup#format_value`
-     produce real Python-repr-style array/hash strings (`[0, 1, 2]`,
-     `{'a': 1}` - spaced, single-quoted keys) instead of the current
-     JSON-compact form (`[0,1,2]`, `{"a":1}`), a genuine divergence from
-     real Ansible/Jinja2 output surfaced investigating the point above -
-     not done opportunistically there since no single bare-call
-     construct could fix it in isolation without creating a worse,
-     inconsistent-within-itself state.
+   - ~~`*`/`/`/`//` arithmetic~~ - DONE, 0.9.336. Converged at the
+     single shared `#evaluate_mult_div` implementation (both call sites
+     benefit). Found+fixed a real pre-existing crash (`10 // 0` -
+     `OverflowError`, unrelated to convergence itself) - see the
+     "Update" section above.
+   - **The general filter-chain dispatch** - now the ONLY remaining
+     sub-piece, and by far the largest/riskiest: variable lookups
+     (`@lookup.simple`/`.nested`/`.walk`), `|`-filter chains
+     (`evaluate_with_filter`, backed by the ~1400-line `FilterEngine`),
+     bracket/dict literals (`evaluate_bracket_or_dict_expr`), and the
+     leading-paren wrapper (`evaluate_leading_paren`). Its scope should
+     now also include making `VariableLookup#format_value` produce real
+     Python-repr-style array/hash strings (`[0, 1, 2]`, `{'a': 1}` -
+     spaced, single-quoted keys) instead of the current JSON-compact
+     form (`[0,1,2]`, `{"a":1}`), a genuine divergence from real
+     Ansible/Jinja2 output surfaced investigating the `lookup()`/
+     `range()` point above - not done opportunistically there since no
+     single bare-call construct could fix it in isolation without
+     creating a worse, inconsistent-within-itself state. Given the size,
+     this almost certainly needs breaking down FURTHER before attempting
+     it in one sitting - candidate finer-grained slices, roughly in
+     order of apparent risk: literal array/dict expressions first
+     (self-contained, no @vars-dependent lookup semantics), then simple/
+     nested variable lookup (@vars-dependent, needs the undefined/
+     recursive-re-templating conventions this codebase relies on
+     preserved exactly), filter chains last (the biggest, since it
+     depends on the filter-coverage audit already done in next-step #2
+     staying valid AND the `format_value` fix above).
 5. Upstreaming (step 3) - deferred, pick up whenever.
 
 > **If you are a model picking this up cold**, the section above is

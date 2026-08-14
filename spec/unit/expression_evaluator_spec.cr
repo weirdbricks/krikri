@@ -312,6 +312,18 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("n / 1024 / 1024").should eq("256.0")
   end
 
+  it "doesn't crash on integer floor division by zero" do
+    # `10 // 0` previously raised an uncaught OverflowError (`(10.0 /
+    # 0.0).floor` is Float64::INFINITY, and `Infinity.to_i64` overflows
+    # Int64) - found probing whether */,/// were safe to converge to
+    # Crinja-first for CRINJA.md step 5. `/`'s own by-zero case already
+    # degrades leniently to "Infinity" rather than raising; `//` now
+    # matches that convention (nil/"undefined") instead of crashing.
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("10 // 0").should eq("")
+  end
+
   it "evaluates a full boolean expression (is test, or, comparison) inside a plain {{ }} span" do
     # Real bug found benchmarking ansible-community.ansible-vault's own
     # `installation_required: "{{ vault_installation is failed or

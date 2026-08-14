@@ -8,7 +8,29 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.335`.**
+**Currently at `0.9.336`.**
+
+---
+
+`0.9.336` (CRINJA.md step 5, sixth construct: `#evaluate_expr`'s
+`*`/`/`/`//` arithmetic now tries Crinja first too, same pattern as
+constructs 1-5; converged at the single shared `#evaluate_mult_div`
+implementation so both call sites - the bare top-level case and the
+nested case inside a `+`/`-` operand - benefit uniformly):
+
+- **Real crash bug found and fixed**, independent of the convergence
+  itself (pre-existing, not a regression): `10 // 0` raised an uncaught
+  `OverflowError` crashing the whole process - `(10.0 / 0.0).floor` is
+  `Float64::INFINITY`, and converting that to `Int64` overflows. `/`'s
+  own division-by-zero case already degraded leniently to `"Infinity"`
+  rather than raising; `//` now matches that same convention (renders
+  empty/"undefined") instead of crashing.
+- Verified via `crystal spec` (1062 examples, 0 failures), `./build.sh`,
+  and empirical probes across int/float mixes, chained `*`, both
+  directions of negative floor division, and error cases (type
+  mismatches, division by zero) - Crinja either matched exactly or
+  raised cleanly (safely caught by the existing fallback), never a
+  silent misrender.
 
 ---
 

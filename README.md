@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.335-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.336-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -290,8 +290,19 @@ Ansible/Jinja2's Python-repr form (`[1, 2, 3]`, `{'a': 1}`) - no spec
 currently pins the wrong format, and the fix is scoped into the next
 CRINJA.md step-5 sub-piece (the general filter-chain dispatch swap) as
 part of `VariableLookup#format_value`, not done in isolation to avoid
-a worse, self-inconsistent interim state. Most recently (`0.9.335`),
-CRINJA.md's step-5 dual-evaluator convergence gained a fifth construct:
+a worse, self-inconsistent interim state. Most recently (`0.9.336`),
+CRINJA.md's step-5 dual-evaluator convergence gained a sixth construct:
+`#evaluate_expr`'s `*`/`/`/`//` arithmetic now tries Crinja first too,
+converged at the single shared `#evaluate_mult_div` implementation so
+both its call sites benefit. Probing it surfaced a real, pre-existing
+crash bug unrelated to the convergence itself: `10 // 0` raised an
+uncaught `OverflowError` (flooring `Float64::INFINITY` and converting to
+`Int64` overflows) - fixed to match `/`'s own existing lenient-on-zero
+behavior instead of crashing. The general filter-chain dispatch (variable
+lookups, `|`-filter chains, bracket/dict literals, leading-paren
+wrapping) is now the sole remaining `#evaluate_expr` sub-piece. Before
+that (`0.9.335`), CRINJA.md's step-5 dual-evaluator convergence gained a
+fifth construct:
 `#evaluate_expr`'s `~` string-concatenation operator now tries Crinja
 first too. Probing it before trusting the swap surfaced (and fixed, in
 the fork) another real bug: both `~`'s and `+`'s string-fallback

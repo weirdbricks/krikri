@@ -462,7 +462,7 @@ module CrystalPlay
         # checks further down.
         if mult_div = split_top_level_mult_div(expr)
           parts, ops = mult_div
-          return evaluate_mult_div(parts, ops)
+          return evaluate_mult_div(expr, parts, ops)
         end
 
         # Jinja2's `~` string-concatenation operator (distinct from `+`,
@@ -899,13 +899,29 @@ module CrystalPlay
       # Jinja2/Python's own arithmetic: `/` always produces a float
       # (true division, even for an evenly-divisible pair), `*`
       # preserves int when both operands are int, `//` floors to int.
-      private def evaluate_mult_div(parts : Array(String), ops : Array(String)) : String
-        values = parts.map { |p| resolve_plus_operand(p) }
-        result = values[0]
-        ops.each_with_index do |op, idx|
-          result = combine_mult_div(result, values[idx + 1], op)
+      private def evaluate_mult_div(expr : String, parts : Array(String), ops : Array(String)) : String
+        # CRINJA.md step 5, sixth construct (part of the general
+        # filter-chain-dispatch sub-piece of next-step #4): try-Crinja-
+        # first, same pattern as constructs 1-5. Probed extensively
+        # against the hand-rolled path below (int/float mixes, chained
+        # `*`, both directions of negative floor division, division by
+        # zero) - matched in every case Crinja itself didn't cleanly
+        # raise (mismatched-type operands, `//` by zero), which the
+        # fallback below already handles identically. One real crash bug
+        # found along the way (not a convergence regression, pre-existing
+        # and unrelated to whether this construct is converged or not):
+        # `10 // 0` overflowed converting `Float64::INFINITY.floor` to
+        # `Int64` - fixed directly in `#combine_mult_div` below.
+        return begin
+          render_via_crinja(expr)
+        rescue
+          values = parts.map { |p| resolve_plus_operand(p) }
+          result = values[0]
+          ops.each_with_index do |op, idx|
+            result = combine_mult_div(result, values[idx + 1], op)
+          end
+          @lookup.format_value(result)
         end
-        @lookup.format_value(result)
       end
 
       private def combine_mult_div(a : JSON::Any, b : JSON::Any, op : String) : JSON::Any
@@ -921,7 +937,18 @@ module CrystalPlay
         when "/"
           JSON::Any.new(af / bf)
         when "//"
-          JSON::Any.new((af / bf).floor.to_i64)
+          # `10 // 0` previously crashed the whole process with an
+          # uncaught `OverflowError` (`(10.0 / 0.0).floor` is
+          # `Float64::INFINITY`, and `Infinity.to_i64` overflows Int64) -
+          # found probing whether `*`/`/`/`//` were safe to converge to
+          # Crinja-first (CRINJA.md step 5's general-filter-chain-dispatch
+          # sub-piece); real Crinja raises a clean `DivisionByZeroError`
+          # for the same input instead of crashing, which is what exposed
+          # this. `/`'s own by-zero case already degrades leniently to
+          # `Infinity` rather than raising (line above) - matching that
+          # existing convention here (nil/"undefined", not a crash) is
+          # more consistent than introducing a hard failure only `//` has.
+          bf.zero? ? JSON::Any.new(nil) : JSON::Any.new((af / bf).floor.to_i64)
         else
           JSON::Any.new(nil)
         end
@@ -962,7 +989,7 @@ module CrystalPlay
         # segment out, matching real Jinja2 precedence.
         if mult_div = split_top_level_mult_div(expr)
           parts, ops = mult_div
-          rendered = evaluate_mult_div(parts, ops)
+          rendered = evaluate_mult_div(expr, parts, ops)
           return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
         end
 
