@@ -4,6 +4,7 @@ require "json"
 require "http/client"
 require "uri"
 require "../src/crystal_play/base_plugin"
+require "../src/crystal_play/plugin_helpers/http_download"
 
 module CrystalPlay
   # Deb822_repository plugin - adds/removes a DEB822-format (`.sources`)
@@ -37,23 +38,18 @@ module CrystalPlay
   # - suites (required): distro suite/codename(s)
   # - components: repo component(s), e.g. "main"
   # - signed_by: a path to an *already-local* keyring/armored-key file,
-  #   OR a URL - fetched (binary-safe, matching get_url.cr's own
-  #   response.body_io streaming rather than a UTF-8-decoding String
-  #   read), dearmored via `gpg --dearmor` if it's ASCII-armored text
-  #   (detected by its own "-----BEGIN PGP" leading bytes) or stored
-  #   as-is if already binary, into `/etc/apt/keyrings/<name>-archive-
-  #   keyring.gpg` (real Ansible's own exact naming convention) - the
-  #   *local* path is what actually lands in the rendered Signed-By:
-  #   field either way. Real gap found benchmarking geerlingguy.
-  #   rabbitmq's own "Add RabbitMQ repository" task, which gives a bare
-  #   `https://keys.openpgp.org/...` URL directly (unlike geerlingguy.
-  #   docker/nodejs, which both download the key separately via
-  #   get_url: first and pass a local path) - previously written
-  #   completely literally into Signed-By:, which apt rejects outright
-  #   ("not a fingerprint"). Inline ASCII-armored key text given
-  #   directly as signed_by: (not a URL, not an existing local path)
-  #   remains unimplemented - no real playbook seen yet writes it that
-  #   way.
+  #   OR a URL - fetched (binary-safe, redirect-aware, matching
+  #   get_url.cr's own response.body_io streaming rather than a UTF-8-
+  #   decoding String read), stored as `.asc` (ASCII-armored) or `.gpg`
+  #   (binary) under `/etc/apt/keyrings/<name>{.asc,.gpg}` (real Ansible's
+  #   own naming convention - no `gpg --dearmor` involved, the fork stores
+  #   armored keys verbatim) - the *local* path is what actually lands in
+  #   the rendered Signed-By: field after the key has been fetched and
+  #   stored. OR inline ASCII-armored GPG key text, detected by its
+  #   "-----BEGIN PGP" leading bytes and rendered as a Deb822 folded
+  #   multi-line value (indented continuation lines, matching real
+  #   Ansible's own format_multiline). OR a key fingerprint (40 hex chars),
+  #   space-normalized and emitted literally on one line.
   # - state: present (default) | absent
   # - mode: applied to the resulting file (default "0644", matching
   #   real Ansible's own module default)
@@ -85,7 +81,8 @@ module CrystalPlay
       add(target, check_mode)
     end
 
-    private def render_content : String
+    private def render_content(check_mode : Bool = false) : String
+      n = @params["name"]?.not_nil!
       lines = [] of String
       lines << "Types: #{(@params["types"]? || "deb").gsub(',', ' ')}"
       lines << "URIs: #{@params["uris"]?.to_s.gsub(',', ' ')}"
@@ -96,56 +93,111 @@ module CrystalPlay
       if architectures = @params["architectures"]?
         lines << "Architectures: #{architectures.gsub(',', ' ')}"
       end
-      if signed_by = resolve_signed_by
-        lines << "Signed-By: #{signed_by}"
+      lines << "X-Repolib-Name: #{n}"
+      if (sb = resolve_signed_by(check_mode)) && !sb.empty?
+        if sb.starts_with?('\n')
+          lines << "Signed-By:#{sb}"
+        else
+          lines << "Signed-By: #{sb}"
+        end
       end
       lines.join('\n') + '\n'
     end
 
-    private def resolve_signed_by : String?
+    private def resolve_signed_by(check_mode : Bool = false) : String?
       raw = @params["signed_by"]?
       return nil unless raw
-      return raw unless raw.starts_with?("http://") || raw.starts_with?("https://")
 
-      name = @params["name"]?.not_nil!
+      # 1. Local path — return unchanged (matches real Ansible's own
+      #    os.path.isfile(v) branch).
+      return raw if File.exists?(raw)
+
+      # 2. URL — fetch (redirect-aware), store as .asc (armored) or .gpg
+      #    (binary) under /etc/apt/keyrings/<name>{.asc,.gpg}, return the
+      #    local path for Signed-By:
+      if (scheme = URI.parse(raw).scheme) && %w[http https].includes?(scheme.downcase)
+        name = @params["name"]?.not_nil!
+        return resolve_url_signed_by(name, raw, check_mode)
+      end
+
+      # 3. Inline ASCII-armored GPG key text — render as Deb822 folded
+      #    multi-line value (indented with 4 spaces on each continuation
+      #    line, matching real Ansible's own format_multiline output).
+      if raw.lstrip.starts_with?("-----BEGIN PGP")
+        return format_inline_key(raw)
+      end
+
+      # 4. Key fingerprint(s) — space-normalize (commas → spaces, collapse
+      #    whitespace runs) and emit on one line.
+      raw.gsub(',', ' ').split.join(' ')
+    end
+
+    private def resolve_url_signed_by(name : String, url : String, check_mode : Bool) : String
       keyring_dir = "/etc/apt/keyrings"
-      keyring_path = File.join(keyring_dir, "#{name}-archive-keyring.gpg")
+      keyring_path_asc = File.join(keyring_dir, "#{name}.asc")
+      keyring_path_gpg = File.join(keyring_dir, "#{name}.gpg")
+
+      # In check mode, skip the network download entirely — just return
+      # the expected keyring path based on any existing file (default to
+      # .asc since we can't know whether the remote key is armored without
+      # fetching it). The content diff against a non-existent keyring will
+      # correctly show "changed=true".
+      if check_mode
+        return keyring_path_asc unless File.exists?(keyring_path_gpg)
+        return keyring_path_gpg
+      end
+
       Dir.mkdir_p(keyring_dir)
+      File.chmod(keyring_dir, 0o755) if File.exists?(keyring_dir)
 
-      tmp_path = "#{keyring_path}.#{Process.pid}.tmp"
-      download_binary(raw, tmp_path)
+      # Download to a temp file to detect armored vs binary content
+      tmp_path = "#{keyring_dir}/.#{name}.#{Process.pid}.tmp"
+      download_binary(url, tmp_path)
 
-      armored = File.open(tmp_path, "r") { |f| (f.gets(30) || "").starts_with?("-----BEGIN PGP") }
-      if armored
-        remote_exec("gpg --batch --yes --dearmor -o #{keyring_path} #{tmp_path}")
-        File.delete(tmp_path) if File.exists?(tmp_path)
-      else
+      # Detect ASCII-armored content by checking the first bytes
+      armored = File.open(tmp_path, "r") { |f| (f.gets(60) || "").starts_with?("-----BEGIN PGP") }
+
+      ext = armored ? ".asc" : ".gpg"
+      keyring_path = File.join(keyring_dir, "#{name}#{ext}")
+
+      # Check if the keyring content actually changed (idempotency) —
+      # avoids rewriting the keyring on every run when the key hasn't
+      # changed upstream.
+      changed = !File.exists?(keyring_path) || File.read(keyring_path) != File.read(tmp_path)
+      if changed
         File.rename(tmp_path, keyring_path)
+        File.chmod(keyring_path, 0o644)
+      else
+        File.delete(tmp_path) if File.exists?(tmp_path)
       end
 
       keyring_path
     end
 
-    # Binary-safe download - response.body_io streamed straight to disk,
-    # matching get_url.cr's own #download (a plain HTTP::Client#get with
-    # a String-returning body would UTF-8-decode and corrupt arbitrary
-    # binary GPG key bytes).
-    private def download_binary(url : String, dest : String)
-      uri = URI.parse(url)
-      client = HTTP::Client.new(uri)
-      client.connect_timeout = 10.seconds
-      client.read_timeout = 10.seconds
-
-      client.get(uri.request_target) do |response|
-        raise "server returned #{response.status_code}" unless response.status.success?
-        File.open(dest, "w") { |file| IO.copy(response.body_io, file) }
+    private def format_inline_key(raw : String) : String
+      # Real Ansible's own format_multiline: strips whitespace, replaces
+      # empty lines with '.', indents each line with 4 spaces, then
+      # prepends a leading newline so the whole block becomes a Deb822
+      # folded continuation value after "Signed-By:".
+      folded = raw.strip.lines.map do |line|
+        stripped = line.strip
+        "    #{(stripped.empty? ? "." : stripped)}"
       end
-    ensure
-      client.try(&.close)
+      "\n" + folded.join("\n")
+    end
+
+    # Binary-safe download with redirect following — response.body_io
+    # streamed straight to disk. Delegates to the shared HTTPDownload
+    # helper (also used by get_url.cr) so the two plugins share one
+    # redirect-tracking implementation and can't drift apart. Many real
+    # key URLs (keys.openpgp.org, packages.*) redirect at least once, and
+    # without redirect following every such key download silently fails.
+    private def download_binary(url : String, dest : String) : Nil
+      PluginHelpers::HTTPDownload.download(url, dest)
     end
 
     private def add(target : String, check_mode : Bool) : PluginResult
-      new_content = render_content
+      new_content = render_content(check_mode)
       existing = File.exists?(target) ? File.read(target) : nil
       changed = existing != new_content
 

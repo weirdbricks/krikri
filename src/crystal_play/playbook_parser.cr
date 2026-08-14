@@ -370,6 +370,7 @@ module CrystalPlay
       "ansible.builtin.replace",
       "ansible.builtin.service",
       "ansible.builtin.systemd",
+      "ansible.builtin.hostname",
       "ansible.builtin.shell",
       "ansible.builtin.apt",
       "ansible.builtin.dnf",

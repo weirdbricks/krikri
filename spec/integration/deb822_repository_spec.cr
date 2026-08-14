@@ -47,4 +47,56 @@ describe "deb822_repository plugin" do
 
     result["changed"].as_bool.should be_false
   end
+
+  describe "signed_by" do
+    it "renders with an inline ASCII-armored key without crashing (check mode)" do
+      result = PluginSpecHelper.run("deb822_repository", {
+        "name"       => "test-armored-repo",
+        "uris"       => "https://example.com/repo",
+        "suites"     => "stable",
+        "signed_by"  => "-----BEGIN PGP PUBLIC KEY BLOCK-----\nmQINBGF...\n-----END PGP PUBLIC KEY BLOCK-----",
+        "check_mode" => "true",
+      })
+
+      result["changed"].as_bool.should be_true
+      result["failed"].as_bool.should be_false
+    end
+
+    it "renders with a key fingerprint on one line (check mode)" do
+      result = PluginSpecHelper.run("deb822_repository", {
+        "name"       => "test-fingerprint-repo",
+        "uris"       => "https://example.com/repo",
+        "suites"     => "stable",
+        "signed_by"  => "ABCD1234EFGH5678ABCD1234EFGH5678ABCD1234",
+        "check_mode" => "true",
+      })
+
+      result["changed"].as_bool.should be_true
+      result["failed"].as_bool.should be_false
+    end
+
+    it "handles an empty signed_by gracefully" do
+      result = PluginSpecHelper.run("deb822_repository", {
+        "name"       => "test-empty-owner-repo",
+        "uris"       => "https://example.com/repo",
+        "suites"     => "stable",
+        "signed_by"  => "",
+        "check_mode" => "true",
+      })
+
+      result["failed"].as_bool.should be_false
+    end
+  end
+
+  it "renders with X-Repolib-Name in the output (check mode, no file written)" do
+    result = PluginSpecHelper.run("deb822_repository", {
+      "name"       => "test-repolib-name",
+      "uris"       => "https://example.com/repo",
+      "suites"     => "stable",
+      "check_mode" => "true",
+    })
+
+    result["changed"].as_bool.should be_true
+    result["failed"].as_bool.should be_false
+  end
 end

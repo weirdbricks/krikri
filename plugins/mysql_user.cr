@@ -40,6 +40,18 @@ module CrystalPlay
   #   Falls back to the previous always-alter behavior if that comparison
   #   itself fails for any reason (e.g. a caching_sha2_password account on
   #   real MySQL 8, where PASSWORD() doesn't apply the same way).
+  # - plugin/plugin_hash_string/plugin_auth_string: non-password
+  #   authentication, matching real Ansible's own mysql_user module
+  #   (verified against community.mysql's module_utils/user.py). Auth
+  #   clause precedence (highest first): password, then
+  #   plugin+plugin_hash_string (`IDENTIFIED WITH <p> AS <hash>`), then
+  #   plugin+plugin_auth_string (`IDENTIFIED WITH <p> BY <auth>`, with
+  #   MariaDB's pam->USING and ed25519->USING PASSWORD() special cases),
+  #   then bare plugin (`IDENTIFIED WITH <p>`). weaponized for creating
+  #   unix_socket/auth_socket accounts (the common MariaDB/Debian root
+  #   pattern): `plugin: unix_socket` -> `CREATE USER ... IDENTIFIED WITH
+  #   unix_socket`. The update path diffs current plugin+authentication_
+  #   string against the desired and only ALTERs on a real change.
   # - login_host/login_port/login_user/login_password/login_unix_socket
   # - check_mode
   # - host_all: operate on every existing host row for name: instead of
@@ -48,11 +60,9 @@ module CrystalPlay
   #   hardening's own two host_all: callers - root's password and
   #   removing anonymous users - never combine it with priv: either).
   #
-  # Not implemented: update_password: on_new_username, plugin:/
-  # plugin_hash_string:/plugin_auth_string: (non-password auth methods),
-  # append_privs:/subtract_privs: (this always does a full
-  # revoke-then-regrant instead), resource_limits:, locked:,
-  # config_file:.
+  # Not implemented: update_password: on_new_username, salt:, append_privs:/
+  # subtract_privs: (this always does a full revoke-then-regrant instead),
+  # resource_limits:, locked:, config_file:.
   class MysqlUserPlugin < BasePlugin
     def execute : PluginResult
       name = @params["name"]?
@@ -68,8 +78,24 @@ module CrystalPlay
       check_mode = is_true?(@params["check_mode"]?)
       host_all = is_true?(@params["host_all"]?)
 
+      plugin = @params["plugin"]?
+      plugin_hash_string = @params["plugin_hash_string"]?
+      plugin_auth_string = @params["plugin_auth_string"]?
+
       unless ["always", "on_create"].includes?(update_password)
         return PluginResult.new(changed: false, failed: true, msg: "update_password must be 'always' or 'on_create', got '#{update_password}'")
+      end
+
+      if password && plugin
+        return PluginResult.new(changed: false, failed: true, msg: "password and plugin are mutually exclusive")
+      end
+
+      if plugin_hash_string && plugin_auth_string
+        return PluginResult.new(changed: false, failed: true, msg: "plugin_hash_string and plugin_auth_string are mutually exclusive")
+      end
+
+      if (plugin_hash_string || plugin_auth_string) && !plugin
+        return PluginResult.new(changed: false, failed: true, msg: "plugin is required when plugin_hash_string or plugin_auth_string is given")
       end
 
       uri = PluginHelpers::MysqlConnection.build_uri(
@@ -86,7 +112,8 @@ module CrystalPlay
           if state == "absent"
             ensure_absent_all_hosts(connection, name, existing_hosts, check_mode)
           else
-            ensure_present_all_hosts(connection, name, existing_hosts, host, password, update_password, check_mode)
+            ensure_present_all_hosts(connection, name, existing_hosts, host, password, update_password,
+              plugin, plugin_hash_string, plugin_auth_string, check_mode)
           end
         else
           exists = user_exists?(connection, name, host)
@@ -94,7 +121,8 @@ module CrystalPlay
           if state == "absent"
             ensure_absent(connection, name, host, exists, check_mode)
           else
-            ensure_present(connection, name, host, exists, password, update_password, priv, check_mode)
+            ensure_present(connection, name, host, exists, password, update_password, priv,
+              plugin, plugin_hash_string, plugin_auth_string, check_mode)
           end
         end
       end
@@ -106,9 +134,11 @@ module CrystalPlay
 
     private def ensure_present(
       db : DB::Database, name : String, host : String, exists : Bool,
-      password : String?, update_password : String, priv : String?, check_mode : Bool,
+      password : String?, update_password : String, priv : String?,
+      plugin : String?, plugin_hash_string : String?, plugin_auth_string : String?, check_mode : Bool,
     ) : PluginResult
-      early, changed = create_or_update_account(db, name, host, exists, password, update_password, check_mode)
+      early, changed = create_or_update_account(db, name, host, exists, password, update_password,
+        plugin, plugin_hash_string, plugin_auth_string, check_mode)
       return early if early
 
       early, changed = apply_priv_if_needed(db, name, host, exists, changed, priv, check_mode)
@@ -123,18 +153,42 @@ module CrystalPlay
     # check-mode short-circuit, which the caller returns immediately.
     private def create_or_update_account(
       db : DB::Database, name : String, host : String, exists : Bool,
-      password : String?, update_password : String, check_mode : Bool,
+      password : String?, update_password : String,
+      plugin : String?, plugin_hash_string : String?, plugin_auth_string : String?, check_mode : Bool,
     ) : {PluginResult?, Bool}
       unless exists
         return {PluginResult.new(changed: true, failed: false, msg: "User #{name}@#{host} would be created"), false} if check_mode
 
-        clause = password ? " IDENTIFIED BY #{quote_str(password)}" : ""
+        clause = build_auth_clause(password, plugin, plugin_hash_string, plugin_auth_string)
         db.exec "CREATE USER #{quote_str(name)}@#{quote_str(host)}#{clause}"
         return {nil, true}
       end
 
-      return {nil, false} unless update_password == "always" && password
+      return {nil, false} unless update_password == "always"
+      return {nil, false} unless password || plugin
 
+      if password
+        return plugin_or_password_update(db, name, host, password, update_password, check_mode)
+      else
+        # Non-password auth: diff the account's current plugin (and, when a
+        # hash/auth string was given, its authentication_string) against the
+        # desired value, ALTERing only on a real change - matching real
+        # Ansible's own plugin idempotency. Bare `plugin: unix_socket`/`auth_socket`
+        # (the auth_socket account pattern) compares the plugin column only.
+        return {nil, false} if plugin_matches?(db, name, host, plugin.not_nil!, plugin_hash_string, plugin_auth_string)
+
+        return {PluginResult.new(changed: true, failed: false, msg: "User #{name}@#{host}'s authentication would be updated"), false} if check_mode
+
+        clause = build_auth_clause(nil, plugin, plugin_hash_string, plugin_auth_string)
+        db.exec "ALTER USER #{quote_str(name)}@#{quote_str(host)}#{clause}"
+        {nil, true}
+      end
+    end
+
+    private def plugin_or_password_update(
+      db : DB::Database, name : String, host : String, password : String,
+      update_password : String, check_mode : Bool,
+    ) : {PluginResult?, Bool}
       # Real bug found benchmarking robertdebock.mysql's own "Create
       # users" task (round 18): update_password: always (the default,
       # matching real Ansible - the role leaves it unset) previously
@@ -158,6 +212,70 @@ module CrystalPlay
 
       db.exec "ALTER USER #{quote_str(name)}@#{quote_str(host)} IDENTIFIED BY #{quote_str(password)}"
       {nil, true}
+    end
+
+    # Builds the CREATE/ALTER USER auth clause, matching real Ansible's
+    # mysql_user module precedence (community.mysql module_utils/user.py):
+    # password first, then plugin+hash (`IDENTIFIED WITH p AS hash`), then
+    # plugin+auth_string (`IDENTIFIED WITH p BY auth`, with MariaDB pam ->
+    # USING and ed25519 -> USING PASSWORD() special cases), then bare
+    # plugin (`IDENTIFIED WITH p`).
+    private def build_auth_clause(
+      password : String?, plugin : String?, plugin_hash_string : String?, plugin_auth_string : String?,
+    ) : String
+      if password
+        " IDENTIFIED BY #{quote_str(password)}"
+      elsif plugin && plugin_hash_string
+        " IDENTIFIED WITH #{plugin} AS #{quote_str(plugin_hash_string)}"
+      elsif plugin && plugin_auth_string
+        if plugin == "pam"
+          " IDENTIFIED WITH #{plugin} USING #{quote_str(plugin_auth_string)}"
+        elsif plugin == "ed25519"
+          " IDENTIFIED WITH #{plugin} USING PASSWORD(#{quote_str(plugin_auth_string)})"
+        else
+          " IDENTIFIED WITH #{plugin} BY #{quote_str(plugin_auth_string)}"
+        end
+      elsif plugin
+        " IDENTIFIED WITH #{plugin}"
+      else
+        ""
+      end
+    end
+
+    # True when the account's current plugin (and authentication_string,
+    # when a hash/auth string was desired) already matches what was asked,
+    # so no ALTER is needed.
+    private def plugin_matches?(
+      db : DB::Database, name : String, host : String, plugin : String,
+      plugin_hash_string : String?, plugin_auth_string : String?,
+    ) : Bool
+      # Does the comparison entirely server-side (a boolean 0/1), rather
+      # than pulling the raw column back through the driver as a value -
+      # mysql.user's plugin/authentication_string columns are types this
+      # vendored driver has no `read` for (the same "not supported read"
+      # limitation password_already_matches? documents for the LONGTEXT
+      # authentication_string). An integer result is a type every driver
+      # here already reads fine.
+      matches = db.query_all(
+        "SELECT plugin = ? FROM mysql.user WHERE User = ? AND Host = ?",
+        plugin, name, host, as: Int32
+      ).first?
+      return false unless matches == 1
+
+      # Bare plugin (auth_socket/unix_socket pattern): a matching plugin
+      # column is sufficient - no auth string to verify.
+      return true unless plugin_hash_string || plugin_auth_string
+
+      # With a hash/auth string, verify the account's authentication_string
+      # matches server-side as well.
+      want = plugin_hash_string || plugin_auth_string
+      auth_matches = db.query_all(
+        "SELECT authentication_string = ? FROM mysql.user WHERE User = ? AND Host = ?",
+        want, name, host, as: Int32
+      ).first?
+      auth_matches == 1
+    rescue
+      false
     end
 
     private def password_already_matches?(db : DB::Database, name : String, host : String, password : String) : Bool
@@ -226,16 +344,21 @@ module CrystalPlay
     # more than one new account out of nothing.
     private def ensure_present_all_hosts(
       db : DB::Database, name : String, existing_hosts : Array(String), fallback_host : String,
-      password : String?, update_password : String, check_mode : Bool,
+      password : String?, update_password : String,
+      plugin : String?, plugin_hash_string : String?, plugin_auth_string : String?, check_mode : Bool,
     ) : PluginResult
-      return ensure_present(db, name, fallback_host, false, password, update_password, nil, check_mode) if existing_hosts.empty?
+      if existing_hosts.empty?
+        return ensure_present(db, name, fallback_host, false, password, update_password, nil,
+          plugin, plugin_hash_string, plugin_auth_string, check_mode)
+      end
 
       changed = false
       existing_hosts.each do |host|
-        next unless update_password == "always" && password
-        return PluginResult.new(changed: true, failed: false, msg: "User #{name}'s password would be updated on all hosts") if check_mode
+        next unless update_password == "always" && (password || plugin)
+        return PluginResult.new(changed: true, failed: false, msg: "User #{name}'s #{password ? "password" : "authentication"} would be updated on all hosts") if check_mode
 
-        db.exec "ALTER USER #{quote_str(name)}@#{quote_str(host)} IDENTIFIED BY #{quote_str(password)}"
+        clause = build_auth_clause(password, plugin, plugin_hash_string, plugin_auth_string)
+        db.exec "ALTER USER #{quote_str(name)}@#{quote_str(host)}#{clause}"
         changed = true
       end
 

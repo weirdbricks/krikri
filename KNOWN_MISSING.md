@@ -8,7 +8,84 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.339`.**
+**Currently at `0.9.345`.**
+
+---
+
+`0.9.345` (hostname module completion):
+
+- **`hostname` module** (`plugins/hostname.cr`) - implements
+  `ansible.builtin.hostname`. Sets the system hostname persistently via
+  systemd's `hostnamectl set-hostname`, falling back to writing
+  `/etc/hostname` + running `hostname(1)` on non-systemd hosts. Idempotent:
+  compares `System.hostname` against the desired `name` before acting, and
+  re-reads afterward to report the actual resulting hostname (hostnamectl may
+  normalize it). `--check` reports would-change without touching the system.
+  Returns `ansible_facts` (`ansible_hostname`, `ansible_nodename`,
+  `ansible_fqdn`, `ansible_domain`) at the result top level, mirroring the
+  facts plugin's `gather_hostname` fact shape (FQDN taken live from
+  `hostname -f`, falling back to the short name when that fails). Registered
+  in `build.sh`'s PLUGINS array and `playbook_parser.cr`'s
+  AVAILABLE_PLUGINS (so both bare `hostname` and
+  `ansible.builtin.hostname` resolve). Integration spec in
+  `spec/integration/hostname_spec.cr` (4 examples, read-only + check-mode
+  only so it never mutates the live hostname).
+  Previous (pre-existing) work on this file compiled only with `Socket`,
+  which Crystal stdlib doesn't expose - switched to `System.hostname`; added
+  the missing `check_mode` property + private `capture` helper; `failed: false`
+  is now present on every success result (PluginResult requires it). Also
+  fixed the hostnamectl -> legacy-fallback logic: the previous version relied
+  on `capture` raising to trigger the fallback, but `capture` swallows errors
+  and returns `""` - added an explicit `run_succeeds?` status check so a
+  failed/missing `hostnamectl` actually falls back to `/etc/hostname` +
+  `hostname(1)` (`set_hostname` is never exercised by the spec, which is
+  read-only + check-mode only, but the fallback must be correct for real
+  use).
+
+`0.9.343`-`0.9.344` (deferred-item follow-up on the auth_socket / signed_by
+work from the previous round, all closure of the gaps that round explicitly
+left open):
+
+- **mysql_user `plugin:`/`plugin_hash_string:`/`plugin_auth_string:` params**
+  now implemented in `plugins/mysql_user.cr` - account creation/update with
+  non-password auth. Auth clause precedence matches real Ansible's own
+  community.mysql `module_utils/user.py` exactly: password, then
+  plugin+hash (`IDENTIFIED WITH p AS hash`), then plugin+auth_string
+  (`IDENTIFIED WITH p BY auth`, with MariaDB pam->USING and ed25519->USING
+  PASSWORD() special cases), then bare plugin (`IDENTIFIED WITH p`).
+  `plugin: unix_socket` -> `CREATE USER ... IDENTIFIED WITH unix_socket`,
+  the auth_socket account pattern. The update path is idempotent: it diffs
+  the account's current plugin (and authentication_string when a hash/auth
+  string was given) *server-side* (`SELECT plugin = ? FROM mysql.user ...`
+  as an Int32 0/1), because the vendored crystal-mysql driver has no `read`
+  for the `plugin`/`authentication_string` columns - the same
+  "not supported read" limitation `password_already_matches?` already
+  documents for LONGTEXT. Validation rejects password+plugin together,
+  hash+auth_string together, and hash/auth_string without a plugin.
+- **Shared `http_download` helper** - factored the redirect-following,
+  binary-safe download loop out of `get_url.cr` and `deb822_repository.cr`
+  into `src/crystal_play/plugin_helpers/http_download.cr`
+  (`PluginHelpers::HTTPDownload.download`), so the two plugins (which both
+  hand-rolled near-identical copies) share one implementation. get_url.cr
+  maps its extra knobs (timeout, validate_certs, basic auth, custom
+  headers) onto the helper's `Options`; deb822 keeps the plain default.
+  No behavior change - both compiled through `./build.sh`, `crystal spec`
+  (1091 examples, 0 failures) still green.
+- **End-to-end auth_socket container verification** - added
+  `testing/test-mysql-auth-socket.sh`: spins up a throwaway MariaDB
+  container, connects all four `mysql_*` plugins over the Unix socket as
+  OS root with NO login_password (the previously-broken auth_socket
+  shape), and asserts each step's PASS/FAIL, including mysql_user
+  `plugin: unix_socket` account creation + idempotent rerun + removal.
+  All PASS. Doesn't touch the shared `ca-mysql`/`ca-pg` test containers.
+
+`0.9.340`-`0.9.343` (crystal-mysql fork fix for auth_socket/unix_socket authentication, plus deb822_repository signed_by improvements — both long-standing scope cuts closed):
+
+`0.9.340`-`0.9.343` (crystal-mysql fork fix for auth_socket/unix_socket authentication, plus deb822_repository signed_by improvements — both long-standing scope cuts closed):
+
+- **crystal-mysql auth_socket/unix_socket**: The vendored crystal-mysql driver fork (`github.com/weirdbricks/crystal-mysql`, commit `a91a592`, tag `crystal-ansible-0.9.340`) now advertises `CLIENT_PLUGIN_AUTH` unconditionally in `HandshakeResponse41` (not gated by `@password`), writes the auth plugin name even when no password is given, and returns an empty auth response for `auth_socket`/`unix_socket`/`mysql_clear_password` plugin names. This allows roles connecting via `login_unix_socket:` with no `login_password:` to authenticate to servers where the account uses socket peer-credential auth (the common MariaDB/Debian-packaging pattern for root). See `lib/mysql/src/mysql/packets.cr`, `git log --oneline --grep="0\.9\.34[0-3]"`, and the fork's own `PATCHES.md` for the three changes made to `Auth.scramble`/`HandshakeResponse41`.
+
+- **deb822_repository `signed_by` improvements** (`plugins/deb822_repository.cr`): The `resolve_signed_by` method now implements real Ansible's full four-way branching: local path (`File.exists?`), URL (redirect-aware download, stored as `<name>.asc` or `<name>.gpg` matching real Ansible's naming convention with no `gpg --dearmor` step), inline ASCII-armored key text (Deb822 folded multi-line format with indented continuation lines), and key fingerprint (space-normalized). `check_mode` no longer triggers network I/O (key download guarded behind check_mode check). The rendered file now includes `X-Repolib-Name: <name>` matching real Ansible's output. Keyring files get explicit mode `0644`. `download_binary` follows HTTP redirects up to 5 hops (many real key URLs redirect). Verified via `crystal spec` (1085 examples, 0 failures) and `./build.sh`.
 
 ---
 
@@ -1540,24 +1617,34 @@ Narrow, deliberately-scoped items:
   status divergence from real Ansible. Seen repeatedly benchmarking
   `linux-system-roles`: `sr_fingerprint`, `timesync_provider`,
   `kernel_settings_get_config`, `blivet`.
-- **`crystal-mysql`'s wire-protocol driver has no `unix_socket`/
-  `auth_socket` auth support** - only `mysql_native_password`/
-  `caching_sha2_password`. A role connecting via `login_unix_socket:`
-  with no password (a common, real MariaDB/Debian-packaging pattern)
-  fails every `mysql_*` plugin call. Real low-level driver work (raw
-  socket fd access, plugin negotiation) - not fixed; see `git log --all
-  --grep=auth_socket` for the investigation.
+- **`crystal-mysql`'s wire-protocol driver** — `auth_socket`/`unix_socket`
+  authentication support was added to the `weirdbricks/crystal-mysql` fork
+  (tag `crystal-ansible-0.9.340`, commit `a91a592`): `CLIENT_PLUGIN_AUTH`
+  now advertised unconditionally, auth plugin name written even without a
+  password, and `Auth.scramble` returns an empty response for
+  `auth_socket`/`unix_socket`/`mysql_clear_password` plugin names. A role
+  connecting via `login_unix_socket:` with no password can now authenticate
+  using socket peer-credential auth. `mysql_user.cr` also now implements
+  the `plugin:`/`plugin_hash_string:`/`plugin_auth_string:` params for
+  *creating/updating* accounts with non-password auth (`IDENTIFIED WITH <p>
+  [AS <hash> | BY <auth>]`, matching real Ansible's module_utils/user.py
+  precedence; the `plugin: unix_socket`/`auth_socket` case for socket
+  accounts is fully idempotent, diffing the account's current plugin
+  server-side). Verified end-to-end by `testing/test-mysql-auth-socket.sh`
+  against a throwaway MariaDB container (all four mysql_* plugins connect
+  over a Unix socket as OS root with no login_password).
 - **`to_datetime()`/timedelta arithmetic beyond subtraction** stayed
   narrowly scoped to what real roles have needed so far - revisit if a
   role needs more.
-- **`ansible.builtin.deb822_repository`** (fixed `0.9.229`) now supports
-  the shape real playbooks actually write (types, uris, suites,
-  components, a *local-path* signed_by, state, mode) - `signed_by:` as
-  a URL to fetch-and-dearmor, or inline ASCII-armored key text written
-  directly into the field, remain unimplemented (every real playbook
-  seen so far, `geerlingguy.docker` and `geerlingguy.nodejs` both,
-  downloads the key separately via `get_url:` first and passes the
-  local path).
+- **`ansible.builtin.deb822_repository`** (fixed `0.9.229`, URL `signed_by:`
+  fixed `0.9.232`, inline key/fingerprint/redirects/check_mode `0.9.343`)
+  now supports the full four-way `signed_by:` branching matching real
+  Ansible's own module: local path (`os.path.isfile`), URL (redirect-
+  aware download, stored as `<name>.asc` or `<name>.gpg`), inline
+  ASCII-armored GPG key text (Deb822 folded multi-line format), and
+  key fingerprint (space-normalized on one line). `check_mode` no longer
+  triggers network I/O. Rendered content includes `X-Repolib-Name:`
+  matching real Ansible's output.
 
 `postgresql_privs` is the one per-plugin scope-cut list this project
 originally tracked that reached **zero open items** (`0.9.84`) - every

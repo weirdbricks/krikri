@@ -16,7 +16,7 @@ dependencies:
     branch: master
   mysql:
     github: weirdbricks/crystal-mysql
-    branch: master
+    tag: crystal-ansible-0.9.340
   pg:
     github: will/crystal-pg
   crystar:

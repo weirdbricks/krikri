@@ -235,6 +235,7 @@ PLUGINS=(
     "postgresql_db"
     "postgresql_user"
     "postgresql_privs"
+    "hostname"
 )
 
 PLUGIN_COUNT=0

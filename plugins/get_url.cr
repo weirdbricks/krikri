@@ -4,6 +4,7 @@ require "json"
 require "http/client"
 require "uri"
 require "../src/crystal_play/base_plugin"
+require "../src/crystal_play/plugin_helpers/http_download"
 
 module CrystalPlay
   # get_url plugin (ansible.builtin.get_url) - downloads a URL to a file.
@@ -122,46 +123,26 @@ module CrystalPlay
       {algorithm.downcase, value.downcase}
     end
 
-    private def download(url : String, tmp_path : String, redirects_left : Int32 = MAX_REDIRECTS)
-      raise "too many redirects" if redirects_left < 0
-
-      uri = URI.parse(url)
-      client = build_client(uri)
-
-      client.get(uri.request_target, headers: request_headers) do |response|
-        if response.status.redirection? && (location = response.headers["Location"]?)
-          client.close
-          return download(resolve_redirect(uri, location), tmp_path, redirects_left - 1)
-        end
-
-        unless response.status.success?
-          raise "server returned #{response.status_code} #{response.status.description}"
-        end
-
-        File.open(tmp_path, "w") do |file|
-          IO.copy(response.body_io, file)
-        end
-      end
-    ensure
-      client.try(&.close)
+    private def download(url : String, tmp_path : String) : Nil
+      # Delegates to the shared HTTPDownload helper (also used by
+      # deb822_repository.cr) so both plugins share one redirect-following,
+      # binary-safe download implementation. get_url's own extra knobs
+      # (timeout, validate_certs, basic auth, custom headers) map onto the
+      # helper's Options.
+      options = PluginHelpers::HTTPDownload::Options.new(
+        max_redirects: MAX_REDIRECTS,
+        connect_timeout: timeout_span,
+        read_timeout: timeout_span,
+        headers: request_headers,
+        verify_tls: is_true?(@params["validate_certs"]?, default: true),
+        username: @params["url_username"]?,
+        password: @params["url_password"]?,
+      )
+      PluginHelpers::HTTPDownload.download(url, tmp_path, options)
     end
 
-    private def build_client(uri : URI) : HTTP::Client
-      client = HTTP::Client.new(uri)
-
-      timeout = (@params["timeout"]? || "10").to_i.seconds
-      client.connect_timeout = timeout
-      client.read_timeout = timeout
-
-      if !is_true?(@params["validate_certs"]?, default: true) && (tls = client.tls?)
-        tls.verify_mode = OpenSSL::SSL::VerifyMode::NONE
-      end
-
-      if (username = @params["url_username"]?) && (password = @params["url_password"]?)
-        client.basic_auth(username, password)
-      end
-
-      client
+    private def timeout_span : Time::Span
+      (@params["timeout"]? || "10").to_i.seconds
     end
 
     private def request_headers : HTTP::Headers
@@ -176,10 +157,6 @@ module CrystalPlay
       end
 
       headers
-    end
-
-    private def resolve_redirect(base : URI, location : String) : String
-      URI.parse(location).absolute? ? location : base.resolve(location).to_s
     end
   end
 end

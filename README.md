@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.339-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.345-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -17,9 +17,9 @@ compiled binary plus a directory of plugin binaries. It supports:
 - **Ansible-syntax playbooks** - roles, imports/includes, blocks, loops,
   handlers, vault, `become:`, Jinja2 templating - not just a handful of
   modules bolted onto a task runner
-- **64 built-in plugins** covering package/service/file management, users
+- **66 built-in plugins** covering package/service/file management, users
   and groups, Docker, MySQL/MariaDB, PostgreSQL, firewalls, archives,
-  SELinux/PAM, and more (see below)
+  SELinux/PAM, hostname management and more (see below)
 - **Single binary deployment** - no dependencies, no Python required on
   either the controller or the target
 - **Verified compatibility, not assumed compatibility** - every plugin's
@@ -129,7 +129,7 @@ crystal-ansible/
 ├── crystal-play.cr              # CLI entry point
 ├── src/crystal_play/            # Engine: parser, task executor, SSH,
 │                                 # inventory, roles, loops, vault, facts
-├── plugins/                     # One binary per Ansible module (64 total)
+├── plugins/                     # One binary per Ansible module (66 total)
 ├── spec/                        # crystal spec unit + integration tests
 ├── compat/                      # Docker-based real-ansible-playbook
 │                                 # compatibility harness
