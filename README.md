@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.337-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.338-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -287,103 +287,38 @@ fixed - see KNOWN_MISSING.md's `0.9.334` entry): array/hash values
 rendered as a bare string (`{{ some_list }}` with no further filter)
 print in a JSON-compact form (`[1,2,3]`, `{"a":1}`) instead of real
 Ansible/Jinja2's Python-repr form (`[1, 2, 3]`, `{'a': 1}`) - no spec
-currently pins the wrong format. This no longer blocks further CRINJA.md
-step-5 convergence work, though: `0.9.337` solved that separately, by
-extracting Crinja's raw evaluated value instead of trusting its own
-Python-repr stringification, and feeding it through this codebase's
-existing (unchanged, still JSON-compact) `VariableLookup#format_value` -
-so the display-format gap itself is still open, but the architectural
-reason it was blocking convergence isn't anymore. That same update
-converged literal array/dict expressions, `range()`, dotted/simple/
-indexed variable lookups, and Python slice syntax - finding and fixing a
-real, unrelated pre-existing bug along the way (`items[1:3]`-style
-both-bounds slicing never worked at all through the plain `evaluate()`
-entry point). Filter chains (`evaluate_with_filter`, backed by the
-~1400-line `FilterEngine`) are now the sole remaining `#evaluate_expr`
-sub-piece. Before that (`0.9.336`), CRINJA.md's step-5 dual-evaluator
-convergence gained a sixth construct: `#evaluate_expr`'s `*`/`/`/`//`
-arithmetic now tries Crinja first too, converged at the single shared
-`#evaluate_mult_div` implementation so both its call sites benefit.
-Probing it surfaced a real, pre-existing crash bug unrelated to the
-convergence itself: `10 // 0` raised an uncaught `OverflowError`
-(flooring `Float64::INFINITY` and converting to `Int64` overflows) -
-fixed to match `/`'s own existing lenient-on-zero behavior instead of
-crashing. Before that (`0.9.335`), CRINJA.md's step-5 dual-evaluator
-convergence gained a
-fifth construct:
-`#evaluate_expr`'s `~` string-concatenation operator now tries Crinja
-first too. Probing it before trusting the swap surfaced (and fixed, in
-the fork) another real bug: both `~`'s and `+`'s string-fallback
-stringified operands via raw `Value#to_s` instead of going through
-`Finalizer`, so a Bool operand rendered lowercase `"true"`/`"false"` and
-an Array/Hash operand leaked its raw `Crinja::Value<...>` inspect text
-instead of a real stringified list/dict (`crystal-play-0.9.3`). Before
-that (`0.9.334`), investigating whether to converge `#evaluate_expr`'s
-`lookup()`/`range()`/
-`dict()` bare-call forms surfaced (and fixed, in the `weirdbricks/crinja`
-fork itself) a related live bug: `Hash` values rendered through Crinja
-used Crystal's own `{'a' => 1}` separator instead of real Python's
-`{'a': 1}` - already reachable through every previously-converged
-construct whenever the selected value was a dict. Before that (`0.9.333`),
-CRINJA.md's step-5 dual-evaluator convergence gained a fourth construct:
-`#evaluate_expr`'s bare literals (boolean, numeric, quoted-string) now
-try Crinja first too, same fallback-on-failure pattern - caught (and
-fixed for free) a latent inconsistency where the old fallback-only
-bare-boolean path returned lowercase `"true"`/`"false"` instead of the
-capitalized `"True"`/`"False"` every other boolean path in this codebase
-produces, never observed in practice since Crinja was always available.
-Before that (`0.9.327`-`0.9.332`), a live real-host
-re-verification of the first three converged constructs (`or`/`and`/
-`is`, the inline ternary, and comparisons) found 7 more real bugs
-re-running `prometheus.prometheus.node_exporter` - including a genuine
-CPU-pegging infinite-recursion hang in Crinja's own variable-re-templating
-(bounded recursion DEPTH isn't the same as bounded WORK, when each level
-re-walks the whole variable context), `ansible.builtin.uri`'s `dest:`
-file-writing being entirely unimplemented, several missing filters/
-methods (`.splitlines()`, `flatten`, `regex_findall`, `dict(iterable)`),
-a quote-stripping bug in `map('filtername', 'arg')`, and a bare-identifier
-index-key re-templating gap present independently in three different
-evaluator copies. The role runs clean end-to-end again (idempotent,
-service verified live). These get found and closed on an ongoing basis
-via real-host benchmark rounds against
-production Ansible roles (dev-sec, konstruktoid, linux-system-roles,
-geerlingguy, openstack.ansible-hardening, wireguard, ansible-vault,
-cloudalchemy.prometheus, cloudalchemy.grafana, haproxy, certbot) - see
-`git log` for the full log of what's been found and fixed. Most recently,
-a Crinja-focused pass (`0.9.312`-`0.9.320`) built a differential test
-harness comparing the vendored Crinja shard against real Python jinja2
-across ~3700 real-world Ansible-authored expressions (see `CRINJA.md`),
-forked Crinja (`github.com/weirdbricks/crinja`, `shard.yml` now pinned to
-a tag instead of upstream's `branch: master`), and fixed a chain of real
-bugs: `and`/`or` returning a stringified bool instead of the actual
-operand, `in`/`not in` entirely absent from the grammar outside `{% for
-%}`, several filters/tests silently unregistered (`unique`, `max`/`min` -
-standard Jinja2 core filters - `basename`/`dirname`/`combine`/
-`intersect`/`regex_search`, `match`/`search`/`ne`/`truthy`), and -
-finally closing out round 21's own blocker - the `namespace()` builtin
-plus `{% set ns.attr = ... %}` dotted-target assignment. A live real-host
-re-verification of round 21's `prometheus.prometheus.node_exporter` then
-found 6 MORE bugs a standalone-expression harness couldn't have caught -
-control-flow interactions (a ternary-patch/for-loop `if`-clause parsing
-collision; role defaults not crossing an `include_role:` boundary, a
-real executor bug rather than Crinja; `{% set a, b = expr %}` tuple-
-target assignment; postfix indexing after a parenthesized expression;
-`not X is Y` precedence) plus two missing string methods
-(`.startswith()`/`.endswith()`). That role now runs clean end-to-end,
-idempotent, service verified live. Before that, a twenty-first round
-tested a real Ansible **Collection** for the first
-time (`prometheus.prometheus.node_exporter`, not a plain Galaxy role) and
-found 16 real bugs, several of them entirely new engine features rather
-than fixes: collection-role `namespace.collection.role` FQCN resolution,
-`include_role: tasks_from:`, the `ansible_parent_role_names`/`ansible_
-collection_name` magic variables, parent-role template/file search, and
-`unarchive:`'s `remote_src: false` controller-to-target file staging were
-all entirely unimplemented before this round. It also found and fixed
-several gaps in the vendored Crinja shard itself: a native inline
-ternary expression (`X if COND else Y`) was entirely missing from its
-parser, an expression-tag whitespace-trim marker (`{{ x -}}`)
-mistokenized into a dangling arithmetic operator, and `select`/`reject`
-filters were entirely unimplemented. Before that, a twentieth round (`weareinteractive.nginx`/`mysql`/`redis`/
+currently pins the wrong format, and it no longer blocks CRINJA.md
+step-5 work (see below).
+
+Most recently (`0.9.333`-`0.9.338`, all in one session), CRINJA.md's
+step-5 dual-evaluator convergence went from 3 converged constructs to
+essentially the ENTIRE `#evaluate_expr` dispatch: bare literals, the `~`
+operator, `*`/`/`/`//` arithmetic, literal array/dict expressions,
+`range()`, dotted/simple/indexed variable lookups, Python slicing,
+`|`-filter chains, and the leading-paren wrapper all now try Crinja
+first, falling back to the original hand-rolled code on any failure.
+The key enabler was solving an architectural blocker along the way:
+`CrinjaRenderer#evaluate_value!` extracts Crinja's raw evaluated result
+directly (bypassing its own Python-repr `Finalizer` stringification)
+so it can be fed through this codebase's own JSON-compact
+`format_value` instead - keeping the internal render-then-`JSON.parse`-
+back round trip other call sites depend on intact. Along the way this
+found and fixed several real, independent bugs: two in the
+`weirdbricks/crinja` fork itself (`Hash` finalization using Crystal's
+`{'a' => 1}` separator instead of Python's `{'a': 1}`; `~`/`+`'s
+string-fallback bypassing `Finalizer` entirely), a process-crashing
+`OverflowError` on `10 // 0`, a slicing dispatch bug where `items[1:3]`
+(both bounds present) never worked at all through the plain `evaluate()`
+entry point, and a missing `round` filter in the hand-rolled
+`FilterEngine`. Only `lookup()` bare-calls (no Crinja equivalent) and
+`dict()`'s positional-iterable form (Crinja's own `dict()` silently
+mishandles it) remain intentionally unconverged. Verified via `crystal
+spec` (1063 examples, 0 failures) and `./build.sh` after every step -
+**not yet live-host verified**, which is the top item in CRINJA.md's own
+next-steps given the scope of what changed. See `CRINJA.md` and
+KNOWN_MISSING.md's `0.9.333`-`0.9.338` entries for full detail.
+
+Before that, a twentieth round (`weareinteractive.nginx`/`mysql`/`redis`/
 `users` plus `Stouts.iptables`/`timezone`) found 5 of 6 roles blocked
 externally (a stale nginx.org apt GPG key; four roles all sharing the
 same legacy `include:` directive, removed from current ansible-core,

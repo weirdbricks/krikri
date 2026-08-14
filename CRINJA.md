@@ -21,8 +21,12 @@
 # variable lookups) same day - found a real ARCHITECTURAL blocker, not
 # converged, no code change; SOLVED that blocker and converged literal
 # array/dict, range(), dotted/simple/indexed lookups, and slicing
-# 2026-08-13, 0.9.337 - only filter chains remain - see "Current status"
-# below)
+# 2026-08-13, 0.9.337; converged filter chains and the leading-paren
+# wrapper 2026-08-13, 0.9.338 - step 5's ExpressionEvaluator side is now
+# ESSENTIALLY COMPLETE (only lookup()/dict() positional-form remain
+# hand-rolled, both for good reason) - live-host verification of this
+# whole round still needed before calling it fully done - see "Current
+# status" below)
 
 ## Current status / next steps (2026-08-13, 0.9.336)
 
@@ -312,6 +316,46 @@ Verified: `crystal spec` (1063 examples, 0 failures), `./build.sh`.
 the biggest and most filter-shape-diverse one, but no longer carrying the
 architectural risk the rest of this update resolved.**
 
+**Update (same day, later still): filter chains and the leading-paren
+wrapper both converged, 0.9.338 - CRINJA.md step 5's `ExpressionEvaluator`
+side is now ESSENTIALLY COMPLETE.** `evaluate_with_filter` now tries
+Crinja first via the raw-value path on the WHOLE `|`-chain expression at
+once (base-value resolution + every filter in the chain, not
+filter-by-filter), falling back to the exact previous logic (renamed
+`#evaluate_with_filter_fallback`) on any failure. Probed extensively
+across real chain shapes this codebase's own comment history documents:
+`combine`, `selectattr` + `list` + `first`, parenthesized/`range()`/
+`lookup()`-headed chains, `default()`, `to_json`, `regex_replace`/
+`regex_search`, `hash`/`password_hash`, register-result tests (`is
+changed`), recursive re-templating (a variable whose value is itself
+unrendered `{{`/`{%` text) - every one matched, once a probe-script gap
+was found and fixed (an early false-positive run of "every filter is
+missing" was a probe-script bug - `jinja_filters.cr` is only
+`require`d by `template_action_plugin.cr` in the real app, and the
+probe script hadn't pulled it in, so Crinja's own default filter
+library genuinely had nothing registered - not a real gap once fixed).
+Found one more real, pre-existing bug along the way (not a regression -
+Crinja is MORE correct): `FilterEngine` has no `round` filter at all
+(silently passes the value through unchanged instead of rounding) - now
+fixed for free on the Crinja-success path, unchanged (still wrong) on
+the fallback path. `evaluate_leading_paren` converged the same way at
+its `#evaluate_expr` call site.
+
+**Net result of this entire session's work (constructs 4 through 9,
+0.9.333-0.9.338): every dispatch branch in `#evaluate_expr` tries Crinja
+first now, with two narrow, deliberate, well-justified exceptions -
+`lookup()` bare-calls (no Crinja equivalent exists) and `dict()`'s single
+positional-iterable form (Crinja's own `dict()` silently ignores a
+positional arg and succeeds with an empty dict instead of raising, an
+unsafe-to-fallback-from silent-wrong-value case).** Verified throughout
+via `crystal spec` (1063 examples, 0 failures) and `./build.sh` after
+every single construct. **NOT yet live-host verified** - given the scope
+of what changed in this round, a dedicated live-host pass (mirroring
+round 22's own `0.9.327`-`0.9.332` verification of constructs 1-3, which
+found 7 more bugs unit specs/the harness alone never would have) is
+strongly recommended before treating this as fully done. That is the
+single most important next step, ahead of anything else in this file.
+
 ## Original current-status snapshot (2026-08-13, 0.9.326, superseded by the update above)
 
 Read this section first - it's the up-to-date summary. Everything below
@@ -426,18 +470,27 @@ the "why", not required reading to know what to do next.
      variable lookups, Python slicing~~ - DONE, 0.9.337 (same update).
      Found+fixed a real pre-existing bug along the way (`items[1:3]`-
      style both-bounds slicing never worked at all through `evaluate()`).
-   - **Filter chains** (`evaluate_with_filter`, backed by the
-     ~1400-line `FilterEngine`) - now the ONLY remaining sub-piece.
-     Largest and most filter-shape-diverse, but no longer carrying the
-     architectural risk the rest of this step resolved - the filter-
-     coverage audit from next-step #2 already established every
-     `FilterEngine` filter/test has a Crinja/`jinja_filters.cr`
-     equivalent (bar the known `to_datetime` gap), so this is mostly
-     "converge and empirically verify each filter shape/combination",
-     not "discover missing filters." The leading-paren wrapper
-     (`evaluate_leading_paren`) is a smaller, related piece worth folding
-     in alongside it (it recurses into `#evaluate` and walks the result,
-     similar shape to the filter-chain base-value resolution).
+   - ~~Filter chains (`evaluate_with_filter`)~~ - DONE, 0.9.338. Found a
+     real pre-existing gap along the way (`round` filter entirely
+     missing from `FilterEngine`, now fixed for free on the
+     Crinja-success path) - see the "Update" section above.
+   - ~~The leading-paren wrapper (`evaluate_leading_paren`)~~ - DONE,
+     0.9.338 (same update).
+   - **`#evaluate_expr`'s `ExpressionEvaluator` side is now essentially
+     fully converged.** The only hand-rolled-only leaves remaining are
+     `lookup()` bare-calls (no Crinja equivalent) and `dict()`'s single
+     positional-iterable form (Crinja's own `dict()` silently produces
+     an empty dict instead of raising - needs a fork-side fix first, see
+     `0.9.337`'s entry for detail). Neither blocks anything else.
+4a. **Live-host verification of constructs 4-9 (0.9.333-0.9.338)** - NOT
+    YET DONE, and now the single most important next step, ahead of
+    everything else in this file. Mirrors round 22's own live
+    verification of constructs 1-3 (`0.9.327`-`0.9.332`, which found 7
+    more bugs unit specs/the harness alone never would have) - the same
+    kind of gap is plausible here given the sheer surface area that
+    changed in one sitting (the entire `#evaluate_expr` dispatch, plus a
+    new `CrinjaRenderer#evaluate_value!` code path nothing has exercised
+    against a real multi-role playbook yet).
 5. Upstreaming (step 3) - deferred, pick up whenever.
 
 > **If you are a model picking this up cold**, the section above is

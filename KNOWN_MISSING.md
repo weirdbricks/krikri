@@ -8,7 +8,44 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.337`.**
+**Currently at `0.9.338`.**
+
+---
+
+`0.9.338` (CRINJA.md step 5, eighth and ninth constructs: `|`-filter
+chains and the leading-paren wrapper - the last two pieces of
+`#evaluate_expr`, both now converged. **Step 5's `ExpressionEvaluator`
+side is essentially complete**: every dispatch branch in
+`#evaluate_expr`/`#evaluate` tries Crinja first except `lookup()`
+bare-calls, which have no Crinja equivalent, and `dict()`'s single
+positional-iterable form, which Crinja's own `dict()` silently mishandles
+(see `0.9.337`'s entry)):
+
+- `evaluate_with_filter` (the ~1400-line `FilterEngine`'s entry point)
+  now tries Crinja first via the raw-value path, falling back to the
+  exact previous logic (renamed to `#evaluate_with_filter_fallback`) on
+  any failure. Verified via extensive probing across real chain shapes
+  from this codebase's own history: `combine`, `selectattr` + `list` +
+  `first`, parenthesized/`range()`/`lookup()`-headed chains, `default()`,
+  `to_json`, `regex_replace`/`regex_search`, `hash`/`password_hash`,
+  register-result tests (`is changed`), and recursive re-templating
+  (a variable whose value is itself unrendered `{{`/`{%` text) - all
+  matched. Found one more real, pre-existing gap along the way (not a
+  regression - Crinja is MORE correct): the hand-rolled `FilterEngine`
+  has no `round` filter at all (silently passes the value through
+  unchanged) - now fixed for free on the Crinja-success path.
+- `evaluate_leading_paren` (`(expr).attr[idx] | filter`) converged the
+  same way, at its call site in `#evaluate_expr` rather than the method
+  itself - the fallback path still recurses through `#evaluate`, so it
+  keeps benefiting from every other converged construct even when Crinja
+  itself fails on the outer wrapper.
+- Verified: `crystal spec` (1063 examples, 0 failures), `./build.sh`.
+  Not yet live-host verified - given the scope of everything converged
+  in this round (constructs 4-9, essentially the entire `#evaluate_expr`
+  dispatch), a dedicated live-host round is recommended before treating
+  this as done the way constructs 1-3 got their own (round 22,
+  `0.9.327`-`0.9.332`, which found 7 more bugs unit specs/the harness
+  alone never would have).
 
 ---
 

@@ -584,7 +584,21 @@ module CrystalPlay
         # operator at all still reaches this unchanged, since split_top_
         # level_plus/minus return nil for those and fall through here.
         if paren = split_leading_paren(expr)
-          return evaluate_leading_paren(paren)
+          # CRINJA.md step 5, ninth (and final) construct: leading-paren
+          # wrapper (`(expr).attr[idx] | filter`) - try Crinja first on
+          # the FULL original expr text via the raw-value path, same
+          # pattern as the rest of `#evaluate_expr`. Probed matching
+          # exactly across arithmetic/filter/dotted/indexed suffix
+          # combinations. Falls back to the existing
+          # `#evaluate_leading_paren` (which itself already recurses
+          # through `#evaluate`, so still benefits from every other
+          # converged construct even on the fallback path).
+          return begin
+            value = render_via_crinja_value(expr)
+            value ? @lookup.format_value(value) : "undefined"
+          rescue
+            evaluate_leading_paren(paren)
+          end
         end
 
         # Check for filters (|) - depth-aware: a `|` nested inside a
@@ -1791,6 +1805,37 @@ module CrystalPlay
       # into `join`, not a JSON-encoded string `sort` had no choice but to
       # return before.
       private def evaluate_with_filter(expr : String) : String
+        # CRINJA.md step 5, eighth (final) construct: `|`-filter chains -
+        # try Crinja first via the raw-value path, same pattern as the
+        # rest of #evaluate_expr's now-converged constructs. Safe because
+        # of (a) the filter-coverage audit (CRINJA.md step-5 next-step
+        # #2) already established every `FilterEngine` filter/test has a
+        # Crinja/`jinja_filters.cr` equivalent bar `to_datetime`, and
+        # (b) extensive empirical probing across real chain shapes used
+        # throughout this codebase's own history (`combine`, `selectattr`
+        # + `list` + `first`, nested `(...)` heads, `default()`,
+        # `to_json`, `regex_replace`/`regex_search`, `hash`/
+        # `password_hash`, register-result tests like `is changed`,
+        # recursive re-templating via a `{{`/`{%`-containing head value) -
+        # all matched exactly. `lookup(...)`-headed chains correctly fall
+        # back (Crinja has no `lookup()` equivalent, so it raises
+        # cleanly rather than silently misrendering); a `to_datetime`
+        # head falls back the same way. Also found (not a regression -
+        # Crinja is MORE correct here): the hand-rolled `FilterEngine`
+        # has no `round` filter at all (silently passes the value through
+        # unchanged rather than rounding) - a real, pre-existing gap this
+        # convergence fixes for free on the Crinja-success path, and
+        # leaves exactly as broken as before on the (should-be-rare)
+        # fallback path.
+        return begin
+          value = render_via_crinja_value(expr)
+          value ? @lookup.format_value(value) : "undefined"
+        rescue
+          evaluate_with_filter_fallback(expr)
+        end
+      end
+
+      private def evaluate_with_filter_fallback(expr : String) : String
         segments = FilterEngine.split_chain(expr)
         var_expr = segments[0]
 
