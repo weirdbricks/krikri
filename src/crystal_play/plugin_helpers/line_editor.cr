@@ -51,7 +51,17 @@ module CrystalPlay
 
         if regexp
           pattern = regexp
-          found_index = new_lines.index { |existing| matches_regexp?(existing, pattern) }
+          # Real Ansible's lineinfile (state=present) replaces only the LAST
+          # line matching the regexp, not the first. Found live benchmarking
+          # geerlingguy.phpmyadmin: its `Add default username and password`
+          # lineinfile tasks (regexp `^.+\[['"]host['"]\].+$`) target lines
+          # that appear BOTH in the package's populated server block
+          # (`...['host'] = $dbserver;`) and as a commented template near
+          # EOF (`// ...['host'] = 'localhost';`). Real ansible rewrites the
+          # final (commented) occurrence, leaving the active one alone;
+          # crystal previously replaced the FIRST, leaving the template
+          # commented and diverging config.inc.php byte-for-byte.
+          found_index = new_lines.rindex { |existing| matches_regexp?(existing, pattern) }
         end
 
         if found_index && pattern

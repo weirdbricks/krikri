@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.345-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.346-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -289,6 +289,25 @@ print in a JSON-compact form (`[1,2,3]`, `{"a":1}`) instead of real
 Ansible/Jinja2's Python-repr form (`[1, 2, 3]`, `{'a': 1}`) - no spec
 currently pins the wrong format, and it no longer blocks CRINJA.md
 step-5 work (see below).
+
+A twenty-third round (`geerlingguy.phpmyadmin`, with its dependency
+chain `geerlingguy.mysql`/`php`/`apache`/`php-mysql`) took a role that
+was previously ❌ `Not testable` to ✅ **clean**, fixing two real engine
+bugs it surfaced. Because the role's `mysql_db`/`mysql_user` tasks pass
+*no* login params (relying on the `~/.my.cnf` the role itself writes),
+crystal's `MysqlConnection.build_uri` had to learn the same implicit
+option-file fallback real Ansible's community.mysql modules get for free
+from their `config_file: ~/.my.cnf` argument-spec default - it now parses
+the `[client]` user/password/socket and merges them under explicit
+login_* params. And `lineinfile` (state=present) was replacing only the
+**first** regexp match; real Ansible replaces the **last**, which is what
+makes a `$cfg['Servers'][$i]['host'] = $dbserver;` template (an active
+PHP-variable line *and* a commented copy near EOF) converge. Verified on
+a fresh 2-node pair: cold crystal ok=80/changed=31/failed=0 vs baseline
+ok=96/changed=30/failed=0, warm `changed=1` on **both** (the same
+`mysql_user` `update_password: always` re-assert, matching real Ansible
+exactly), byte-identical `config.inc.php`, both serving phpmyadmin HTTP
+200 on port 8080. See KNOWN_MISSING.md's `0.9.346` entry.
 
 Most recently (`0.9.333`-`0.9.338`, all in one session), CRINJA.md's
 step-5 dual-evaluator convergence went from 3 converged constructs to

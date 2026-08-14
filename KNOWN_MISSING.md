@@ -8,7 +8,61 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.345`.**
+**Currently at `0.9.346`.**
+
+---
+
+`0.9.346` (round 23 - `geerlingguy.phpmyadmin` goes from ❌ Not testable to
+✅ Clean; two real engine bugs fixed live):
+
+- **`~/.my.cnf` option-file fallback in `MysqlConnection.build_uri`**
+  (`src/crystal_play/plugin_helpers/mysql_connection.cr`) - the shared
+  `mysql://` URI builder now parses the `[client]` section of a MySQL
+  option file (`config_file`, default `~/.my.cnf`) for `user`/`password`/
+  `socket`, and merges them under explicit `login_*` params (explicit wins,
+  matching community.mysql's `mysql_connect`). This was a hard requirement
+  for the geerlingguy role family and any real playbook whose `mysql_db`/
+  `mysql_user`/`mysql_info`/`mysql_query` tasks pass NO login params and
+  rely on the option file the role itself writes. Before, crystal connected
+  with an empty password and every such task failed `Access denied for user
+  'root'@'localhost' (using password: NO)`. `mysql_db.cr`/`mysql_user.cr`/
+  `mysql_info.cr`/`mysql_query.cr` now pass `config_file:
+  \@params["config_file"]? || "~/.my.cnf"`. Two subtleties worth keeping:
+  (a) Crystal's `File.expand_path` does NOT expand a leading `~` (it treats
+  `~` as a literal relative component), so `~/.my.cnf` is resolved by an
+  explicit `resolve_option_file_path` that expands `~`/`~user` exactly like
+  `BasePlugin#expand_tilde` (via `ENV["HOME"]`/`System::User`); (b)
+  `login_host`/`login_port` are deliberately NOT taken from the option file
+  (upstream keeps `localhost:3306` unless `config_overrides_defaults: true`
+  is set) - only user/password, plus socket as a fallback when no
+  `login_host` was given. Unit specs in `spec/unit/mysql_connection_spec.cr`.
+- **`lineinfile` (state=present) last-match semantics**
+  (`src/crystal_play/plugin_helpers/line_editor.cr`) - `ensure_present`
+  found the FIRST line matching `regexp`; real Ansible's lineinfile replaces
+  only the LAST matching line. Switched `lines.index` -> `lines.rindex`.
+  Live divergence that surfaced it: geerlingguy.phpmyadmin's "Add default
+  username and password for MySQL connection." tasks regex `^.+\[['"]host
+  ['"]\].+$` matches BOTH the package's active `...['host'] = $dbserver;`
+  line and a commented template `// ...['host'] = 'localhost';` near EOF;
+  real ansible rewrites the final (commented) occurrence and leaves the
+  active one alone, crystal rewrote the first, producing a byte-divergent
+  `config.inc.php`. Regression spec in
+  `spec/unit/line_editor_spec.cr`.
+- **Live verification** on a fresh 2-node `G3.2GB` Atlantic.net pair
+  (`geerlingguy.mysql` + `geerlingguy.phpmyadmin`, pulled through the local
+  `roles/` copy whose `geerlingguy.phpmyadmin` had the legacy `include:`
+  directive patched to `include_tasks:` so current ansible-core parses it;
+  that patch was synced to the baseline host so BOTH engines ran the SAME
+  role). Cold: crystal ok=80/changed=31/failed=0 vs baseline
+  (ansible-core 2.17.14 + community.mysql 3.10.0) ok=96/changed=30/
+  failed=0. Warm (idempotency): crystal changed=1 and baseline changed=1,
+  the SAME single task (`Ensure MySQL users are present.` - the role's
+  `update_password: always` re-asserts the user password every run; real
+  Ansible behaves identically, so this is role-side, not a divergence).
+  `config.inc.php` byte-identical between the two hosts; both run apache2 +
+  mysql active and serve phpmyadmin HTTP 200 on port 8080. The residual
+  cold ok-count gap (80 vs 96) is the include_tasks/`included:` accounting
+  difference in display, not a functional divergence (changed counts match).
 
 ---
 

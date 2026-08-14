@@ -45,6 +45,7 @@ module CrystalPlay
         user: @params["login_user"]?,
         password: @params["login_password"]?,
         unix_socket: @params["login_unix_socket"]?,
+        config_file: @params["config_file"]? || "~/.my.cnf",
       )
 
       result = PluginResult.new(changed: false, failed: false, msg: "")

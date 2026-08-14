@@ -43,6 +43,29 @@ describe LineEditor do
       changed.should be_true
     end
 
+    it "replaces the LAST line matching the regexp, not the first (matches real Ansible's lineinfile)" do
+      # Found live benchmarking geerlingguy.phpmyadmin: its "Add default
+      # username and password for MySQL connection." lineinfile tasks use
+      # regexp `^.+\[['"]host['"]\].+$`, which matches BOTH the package's
+      # populated `['host'] = $dbserver;` line and the commented
+      # `// ...['host'] = 'localhost';` template near EOF. Real ansible
+      # only rewrites the last matching line; crystal previously rewrote
+      # the first, producing a config.inc.php that diverged byte-for-byte.
+      lines = [
+        "$cfg['Servers'][$i]['host'] = $dbserver;",
+        "// $cfg['Servers'][$i]['host'] = 'localhost';",
+      ]
+      out, changed = LineEditor.ensure_present(
+        lines,
+        "$cfg['Servers'][$i]['host'] = '127.0.0.1';",
+        "^.+\\[['\"]host['\"]\\].+$",
+        false, nil, nil
+      )
+      out[0].should eq("$cfg['Servers'][$i]['host'] = $dbserver;")
+      out[1].should eq("$cfg['Servers'][$i]['host'] = '127.0.0.1';")
+      changed.should be_true
+    end
+
     it "leaves the file untouched when the regexp match already equals the desired line" do
       lines, changed = LineEditor.ensure_present(["port=22"], "port=22", "^port=", false, nil, nil)
       lines.should eq(["port=22"])
