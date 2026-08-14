@@ -1,5 +1,9 @@
 require "../spec_helper"
 require "../../src/crystal_play/variable_substitutor/expression_evaluator"
+# Pull in the real Ansible-specific Crinja filter registrations (to_datetime
+# etc.), as template_action_plugin.cr does for every real template-rendering
+# binary - without this the ExpressionEvaluator's Crinja env has none of them.
+require "../../src/crystal_play/jinja_filters"
 
 describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
   it "dispatches simple lookups" do
@@ -406,6 +410,20 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate(%(dict([['a', 1], ['b', 2]]))).should eq(%({"a":1,"b":2}))
     evaluator.evaluate(%(dict({'x': 'y'}))).should eq(%({"x":"y"}))
+  end
+
+  it "renders to_datetime(...) - to_datetime(...) .days through Crinja (0.9.341)" do
+    # dev-sec os_hardening's password-ageing assert: `( a | to_datetime -
+    # b | to_datetime ).days`. The leading-paren construct routes the WHOLE
+    # expression to Crinja first; fork Time arithmetic (crystal-play-0.9.5)
+    # + jinja_filters.cr's to_datetime (Ansible-specific) make it succeed
+    # in one pass instead of falling back to the hand-rolled tagged-JSON
+    # path. Either way the answer is the same - this pins it.
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(
+      %(( 'Jan 02, 2024' | to_datetime('%b %d, %Y') - 'Jan 01, 2024' | to_datetime('%b %d, %Y') ).days)
+    ).should eq("1")
   end
 
   it "compares a dotted operand against a `~`-concatenated one, full ansible-vault expression" do

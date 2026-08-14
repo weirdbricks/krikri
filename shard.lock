@@ -10,7 +10,7 @@ shards:
 
   crinja:
     git: https://github.com/weirdbricks/crinja.git
-    version: 0.9.0+git.commit.e8197960cc2154f7d2f52219c54b59bd20609f9c
+    version: 0.9.0+git.commit.36a4b0fa551a8cd08781a4ae114fc091e6c0860e
 
   crystar:
     git: https://github.com/naqvis/crystar.git

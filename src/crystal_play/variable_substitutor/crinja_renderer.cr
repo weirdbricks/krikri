@@ -281,6 +281,18 @@ module CrystalPlay
           JSON::Any.new(hash)
         when Array(Crinja::Value)
           JSON::Any.new(raw.map { |item| crinja_value_to_json_any(item) })
+        when Crinja::TimeDelta
+          # A bare `to_datetime(...) - to_datetime(...)` timedelta
+          # result (not followed by `.days`/.total_seconds() in the same
+          # expression) - mirror the hand-rolled timedelta()'s structured
+          # shape so a downstream hand-rolled `.days`/`.seconds` Hash-key
+          # member access on it still works.
+          JSON::Any.new({
+            "days"          => JSON::Any.new(raw.days),
+            "seconds"       => JSON::Any.new(raw.seconds % 86_400),
+            "microseconds"  => JSON::Any.new(0_i64),
+            "total_seconds" => JSON::Any.new(raw.total_seconds),
+          })
         else
           # Time/Crinja::Object/Callable/Iterator - none of this
           # codebase's own converged constructs produce these; falls

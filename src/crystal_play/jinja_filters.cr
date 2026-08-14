@@ -709,6 +709,27 @@ module CrystalPlay
       items.shuffle(random: rng)
     end
 
+    # `to_datetime(format='%Y-%m-%d %H:%M:%S')` - real Ansible's own
+    # filter (ansible.plugins.filter.core), parses a string into a
+    # datetime object that real Ansible's Jinja2 can then do arithmetic
+    # on. dev-sec os_hardening's own password-ageing verification parses
+    # `chage -l`'s date output this way, then subtracts two of them for a
+    # day-count assert: `( a | to_datetime(...) - b | to_datetime(...)
+    # ).days`. Not shipped in the general-purpose fork (Ansible-specific);
+    # registered here, producing a real `Crinja::Value` wrapping a
+    # `::Time` - the "Crinja-side Time type" this file previously had no
+    # way to produce (CRINJA.md's documented reason it was never
+    # registered). Subtraction between two such values works via the
+    # fork's `-`/TimeDelta support (crystal-play-0.9.5); the hand-rolled
+    # FilterEngine#parse_to_datetime tagged-JSON path is unchanged and
+    # remains the fallback. On an unparseable string, raising routes the
+    # whole expression to that fallback (which yields nil, matching prior
+    # behavior) rather than crashing.
+    Crinja.filter({format: "%Y-%m-%d %H:%M:%S"}, :to_datetime) do
+      format = arguments["format"].to_s
+      Crinja::Value.new(Time.parse(target.to_s, format, Time::Location::UTC))
+    end
+
     # Splits a version string into its numeric components (`"8.9p1"` ->
     # `[8, 9, 1]`, ignoring the non-digit "p" separator), then compares
     # two such component lists lexicographically, treating a missing
