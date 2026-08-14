@@ -6,8 +6,10 @@
 # step 5 constructs 1-3 converged 2026-08-13, 0.9.324-0.9.326;
 # live re-verification of that convergence done 2026-08-13, 0.9.327-0.9.332,
 # see "Current status" below and KNOWN_MISSING.md/ROLES_TESTED.md;
-# step-5 next-step #2, the FilterEngine-vs-Crinja filter audit, done
-# 2026-08-13, no code change - see "Not done / next steps" item 2)
+# step-5 next-steps #2 (FilterEngine-vs-Crinja filter audit) and #3
+# (datetime/timedelta decision) both done 2026-08-13, no code change,
+# no more blockers before step 4 (the evaluate_expr swap itself) -
+# see "Not done / next steps" items 2-3)
 
 ## Current status / next steps (2026-08-13, 0.9.332)
 
@@ -37,6 +39,15 @@ the already-known `to_datetime`/timedelta gap, so the `#evaluate_expr`
 swap (next-step #4) is no longer blocked on filter coverage - next-step
 #3 (the datetime/timedelta representation decision) is now the only
 remaining blocker before that swap can start.
+
+**Update (same day, later still): step-5 next-step #3 is now DONE too** -
+again no code change, full detail in "Not done / next steps" item 3 below.
+Verdict: the datetime/timedelta gap doesn't actually block the swap either
+- `to_datetime`/timedelta expressions already raise cleanly (verified
+empirically) through Crinja's own "unknown filter" error path, which the
+existing render-then-fallback pattern (constructs 1-3) already handles
+safely. **Next-step #4, the `#evaluate_expr` swap itself, has no more
+prep-work blockers and is the next thing to pick up.**
 
 ## Original current-status snapshot (2026-08-13, 0.9.326, superseded by the update above)
 
@@ -98,13 +109,34 @@ the "why", not required reading to know what to do next.
    any benchmark round so far. Conclusion: next-step #4 (the actual
    `evaluate_expr` swap) is no longer blocked on filter coverage - only
    next-step #3 (datetime) remains before it can start.
-3. **A datetime/timedelta representation decision** - `evaluate_expr`'s
-   datetime-subtraction handling (`to_datetime(...) - to_datetime(...)`,
-   producing a tagged-JSON pseudo-timedelta `.days` can read) has no
-   Crinja equivalent; CRINJA.md's own earlier note on `to_datetime`
-   (see "Step 5, first construct" era notes above) already flagged this
-   as needing "real `Time` arithmetic support in Crinja first" for a
-   non-hacky port. Not started.
+3. ~~A datetime/timedelta representation decision~~ - DONE (2026-08-13, no
+   code change). Earlier notes in this file assumed this needed "real
+   `Time` arithmetic support in Crinja first" before the `evaluate_expr`
+   swap could proceed - re-examined and that assumption doesn't hold.
+   `to_datetime` is not registered as a Crinja/`jinja_filters.cr` filter
+   at all (confirmed by the filter audit above), and `jinja_filters.cr`
+   doesn't register it because there's no Crinja-side `Time` type for it
+   to produce - `FilterEngine`'s own `to_datetime`/timedelta handling
+   uses a hand-rolled tagged-JSON convention instead (`DATETIME_TAG`/
+   `TIMEDELTA_TAG` hash keys, see `filter_engine.cr:648-655` and
+   `expression_evaluator.cr#combine_minus`/`#timedelta`), entirely
+   outside Crinja. Verified empirically (spec probe, since deleted) that
+   `CrinjaRenderer#render!("{{ to_datetime(...) }}")` raises
+   `Crinja::TypeError` cleanly through `Crinja::FeatureLibrary`'s
+   "no filter... registered" path, not a silent misrender - which is
+   exactly the failure mode constructs 1-3's existing `render_via_crinja
+   rescue fall-back-to-hand-rolled` pattern (`expression_evaluator.cr`'s
+   `#evaluate`, e.g. lines 95-99) is already built to catch safely, at
+   whole-expression granularity. So: **no representation decision is
+   needed before the `evaluate_expr` swap** - `to_datetime`/timedelta
+   expressions will keep raising-and-falling-back through the same
+   mechanism already proven safe for constructs 1-3, indefinitely, with
+   zero new code. Porting real `Time` arithmetic into the Crinja fork
+   remains a legitimate FUTURE nice-to-have (it would let more of a
+   mixed expression - e.g. `to_datetime(...) - to_datetime(...) | int`
+   chained with other Crinja-native pieces - render through Crinja in
+   one pass instead of falling back for the whole expression), but it is
+   no longer a blocker for step 4.
 4. Once 2 and 3 exist: swap `#evaluate_expr` itself, almost certainly in
    sub-pieces (bare literals first - trivial and safe - lookup()/range()
    next, the general filter-chain dispatch last), each verified with the
