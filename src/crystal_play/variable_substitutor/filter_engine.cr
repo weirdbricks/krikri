@@ -183,6 +183,27 @@ module CrystalPlay
         when "unique"
           seen = Set(String).new
           JSON::Any.new(as_array(value).select { |item| seen.add?(item.to_json) })
+        when "flatten"
+          # flatten(levels=none, skip_nulls=true) - real Ansible's own
+          # filter (not standard Jinja2): flattens nested lists, by
+          # default completely (levels=none), skipping null items by
+          # default. Only implemented in Crinja's own registry before
+          # (jinja_filters.cr's JinjaFilters.flatten_array), reached
+          # only via `{%`/`{#` block-tag escalation - a bare `{{ }}`
+          # filter-name `map('flatten')` chain (this codebase's own
+          # map() reuses #apply, not Crinja) fell through to the
+          # unknown-filter passthrough, returning each item completely
+          # unflattened. Real bug found live-verifying prometheus.
+          # prometheus.node_exporter: its own _common role's checksum-
+          # file parsing (`... | map('regex_findall', ...) | map(
+          # 'flatten') | map('reverse')`) needs this to collapse each
+          # line's single `[[checksum, filename]]` match-list down to
+          # a flat `[checksum, filename]` pair before `reverse` swaps
+          # it into `[filename, checksum]` for `dict()`.
+          levels = parse_kwarg(filter_args, "levels").try { |arg| resolve_expression(arg).as_i? }
+          skip_nulls = parse_kwarg(filter_args, "skip_nulls").try { |arg| truthy?(resolve_expression(arg)) }
+          skip_nulls = true if skip_nulls.nil?
+          JSON::Any.new(flatten_array(as_array(value), levels, skip_nulls))
         when "reverse"
           case value.raw
           when Array
@@ -304,10 +325,26 @@ module CrystalPlay
           # parse_filter_args already strips the surrounding quotes off
           # a filter-name form's first argument ('split' -> "split"),
           # the same as any other quoted filter argument.
+          #
+          # The REST of the inner args (any actual filter arguments
+          # beyond the filter name itself, e.g. the pattern in
+          # `map('regex_findall', '^(...)$')`) must come from
+          # split_top_level_args, not parse_filter_args - that one
+          # preserves the original quote characters verbatim, where
+          # parse_filter_args destructively strips them (needed for a
+          # bare value, wrong here since inner_expr gets RE-PARSED by
+          # #apply below, and an unquoted regex pattern full of its own
+          # parens/`+`/`.` got misread as a bare expression instead of
+          # a string literal). Real bug found live-verifying
+          # prometheus.prometheus.node_exporter: `map('regex_findall',
+          # '^([a-fA-F0-9]+)\\s+(.+)$')` silently became `regex_findall`
+          # called with an effectively empty pattern, matching the
+          # empty string at every position instead of the real
+          # checksum/filename pairs.
           if attr = parse_kwarg(filter_args, "attribute")
             JSON::Any.new(as_array(value).map { |item| item.raw.is_a?(Hash) ? (item[attr]? || JSON::Any.new(nil)) : JSON::Any.new(nil) })
           elsif (inner_name = parse_filter_args(filter_args)[0]?)
-            inner_args = parse_filter_args(filter_args)[1..].join(", ")
+            inner_args = split_top_level_args(filter_args)[1..].join(", ")
             inner_expr = inner_args.empty? ? inner_name : "#{inner_name}(#{inner_args})"
             JSON::Any.new(as_array(value).map { |item| apply(item, inner_expr) })
           else
@@ -407,6 +444,38 @@ module CrystalPlay
           else
             JSON::Any.new("undefined")
           end
+        when "regex_findall"
+          # regex_findall(pattern, multiline=False, ignorecase=False) -
+          # real Ansible's own filter (Python re.findall): every non-
+          # overlapping match. No capture groups -> each match is the
+          # whole matched substring; with capture groups -> each match
+          # is a list of that match's group strings. Same shape as the
+          # Crinja-side `Crinja.filter(:regex_findall)` (jinja_filters.
+          # cr) - needed here too since a bare `{{ }}` filter-name
+          # `map('regex_findall', ...)` chain goes through THIS plain
+          # evaluator, not Crinja (only `{%`/`{#` block-tag escalation
+          # reaches Crinja's filters). Real bug found live-verifying
+          # prometheus.prometheus.node_exporter: its own _common role's
+          # checksum-file parsing (`raw.splitlines() | map('regex_
+          # findall', '^([a-fA-F0-9]+)\\s+(.+)$') | ...`) silently no-
+          # op'd (each line passed through unchanged instead of being
+          # split into [checksum, filename]) - the whole checksum dict
+          # ended up empty, failing every download's checksum check.
+          args = split_top_level_args(filter_args)
+          pattern = args[0]?.try { |arg| as_string(resolve_expression(arg)) } || ""
+          options = Regex::Options::None
+          options |= Regex::Options::MULTILINE if args[1]?.try { |arg| truthy?(resolve_expression(arg)) }
+          options |= Regex::Options::IGNORE_CASE if args[2]?.try { |arg| truthy?(resolve_expression(arg)) }
+          regex = Regex.new(pattern, options)
+
+          matches = as_string(value).scan(regex).map do |match|
+            if match.size > 1
+              JSON::Any.new((1...match.size).map { |i| JSON::Any.new(match[i]? || "") })
+            else
+              JSON::Any.new(match[0])
+            end
+          end
+          JSON::Any.new(matches)
         when "regex_replace"
           # regex_replace(pattern, replacement='') - real Ansible's own
           # filter: replaces every match of *pattern* in value with
@@ -1146,6 +1215,24 @@ module CrystalPlay
 
       private def as_array(value : JSON::Any) : Array(JSON::Any)
         value.as_a? || [] of JSON::Any
+      end
+
+      # Same shape as JinjaFilters.flatten_array (jinja_filters.cr,
+      # Crinja's own registry) - see the "flatten" filter case above
+      # for why this hand-rolled evaluator needs its own copy.
+      private def flatten_array(items : Array(JSON::Any), max_depth : Int32?, skip_nulls : Bool, depth : Int32 = 0) : Array(JSON::Any)
+        result = [] of JSON::Any
+        items.each do |item|
+          raw = item.raw
+          if raw.is_a?(Array(JSON::Any)) && (max_depth.nil? || depth < max_depth)
+            result.concat(flatten_array(raw, max_depth, skip_nulls, depth + 1))
+          elsif skip_nulls && raw.nil?
+            # dropped
+          else
+            result << item
+          end
+        end
+        result
       end
 
       # Stringifies a JSON::Any the way Ansible/Jinja2 would when a filter

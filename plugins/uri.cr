@@ -17,9 +17,12 @@ module CrystalPlay
   # not support check mode.", verified against a real ansible-playbook
   # --check run, not assumed) - so this doesn't special-case GET/HEAD the
   # way an initial reading of the docs might suggest; every method skips.
-  # `changed:` is always false too (verified against the real module's
-  # source - it isn't a stateful/idempotency-checking module, `dest:` file
-  # writing aside, which isn't implemented here).
+  # `changed:` is always false, EXCEPT for the one stateful case real
+  # Ansible's own module has: `dest:` file writing, which compares the
+  # response body against any existing file content (real Ansible uses
+  # a checksum comparison via `AnsibleModule.check_dest_dir/actual
+  # module.set_file_attributes_if_different` for uri.py's `dest:`) and
+  # only writes (`changed: true`) when the content actually differs.
   class UriPlugin < BasePlugin
     MAX_REDIRECTS = 10
 
@@ -43,9 +46,27 @@ module CrystalPlay
       failed = !status_codes.includes?(status)
       msg = failed ? "Status code was #{status} and not #{status_codes}" : "OK (#{body.bytesize} bytes)"
 
-      result = PluginResult.new(changed: false, failed: failed, msg: msg, url: url, status: status)
+      changed = false
+      if !failed && (dest = @params["dest"]?)
+        changed = write_dest(dest, body)
+        msg = "OK (#{body.bytesize} bytes)" + (changed ? "" : ", didn't change")
+      end
+
+      result = PluginResult.new(changed: changed, failed: failed, msg: msg, url: url, status: status)
       apply_response_extras(result, headers, body, redirected)
       result
+    end
+
+    # Writes the response body to `dest:` unless the file already
+    # contains identical content - matches real Ansible's own uri
+    # module (a plain string-content overwrite check, no separate
+    # checksum file), avoiding an unconditional `changed: true` on
+    # every re-run of an otherwise-idempotent download.
+    private def write_dest(dest : String, body : String) : Bool
+      return false if File.exists?(dest) && File.read(dest) == body
+
+      File.write(dest, body)
+      true
     end
 
     private def apply_response_extras(result : PluginResult, headers : HTTP::Headers, body : String, redirected : Bool)

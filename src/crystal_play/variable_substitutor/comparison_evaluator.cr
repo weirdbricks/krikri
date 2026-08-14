@@ -120,7 +120,28 @@ module CrystalPlay
         # `|` and doesn't start with `(`, so it fell through everywhere
         # below to a plain variable lookup on the whole literal operand
         # text, always undefined/never equal.
-        if expr.includes?("|") || expr.starts_with?('(') || expr.includes?("~")
+        # `[` - a bracket-indexed comparison operand (`checksums[some_
+        # var]`, prometheus.prometheus._common's own checksum-
+        # verification assert) - this class has its own completely
+        # separate operand-resolution logic (lookup_simple_variable/
+        # lookup_nested_variable below), which had no concept of `[...]`
+        # indexing at all: an expr like `checksums[basename]` has no
+        # `.`, so it fell all the way through to lookup_simple_variable,
+        # which looked for a variable LITERALLY NAMED
+        # "checksums[basename]" (via `@vars.has_key?`) - never present,
+        # so the comparison silently treated a real value as nil/
+        # undefined. Delegates to the SAME ExpressionEvaluator already
+        # used for `|`/`(`/`~` above rather than duplicating VariableLookup#
+        # resolve_indexed's bracket-parsing (and its own re-templating
+        # guard for a still-templated index-key variable) a fourth time.
+        # Real bug found live-verifying prometheus.prometheus.
+        # node_exporter: every download's checksum verification failed
+        # this way even after VariableLookup's own copy of the bug (a
+        # bare `{{ }}` `dict[var]` lookup) was fixed - this is a
+        # THIRD independent evaluator with its own copy of the same
+        # root cause, exactly the "found and fixed independently,
+        # repeatedly" pattern this codebase's own CLAUDE.md warns about.
+        if expr.includes?("|") || expr.starts_with?('(') || expr.includes?("~") || expr.includes?("[")
           rendered = ExpressionEvaluator.new(@vars).evaluate(expr)
           parsed = (JSON.parse(rendered) rescue nil)
           return json_any_to_value(parsed || JSON::Any.new(rendered))

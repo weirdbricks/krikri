@@ -172,6 +172,59 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     result.not_nil!.as_a.map(&.as_s).should eq(["python3", "sudo", "gnupg", "python3-apt"])
   end
 
+  it "resolves a no-argument .splitlines() method call with real Python semantics, not Crystal's plain split(\"\\n\")" do
+    # Real bug found live-verifying prometheus.prometheus.node_exporter
+    # (round 22): its own _common role's checksum-file parsing starts
+    # with `raw.splitlines()` on a plain `{{ }}` set_fact value (not
+    # inside `{%`/`{#` block tags, so only the hand-rolled evaluator -
+    # not Crinja's own python_string_methods.cr copy - ever sees it) -
+    # entirely unrecognized here before, resolving the whole expression
+    # to undefined and cascading into an always-empty checksum dict.
+    # Same Python-vs-Crystal split semantics as .split() above: empty
+    # input -> [], one trailing newline -> no spurious final empty
+    # element.
+    v = Hash(String, JSON::Any).new
+    v["text"] = JSON::Any.new("line1\nline2\nline3\n")
+    v["empty"] = JSON::Any.new("")
+    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup.resolve("text.splitlines()").not_nil!.as_a.map(&.as_s).should eq(["line1", "line2", "line3"])
+    lookup.resolve("empty.splitlines()").not_nil!.as_a.should eq([] of JSON::Any)
+  end
+
+  it "resolves bare {{ }} .startswith()/.endswith() method calls, not just inside a {% if %} escalation" do
+    v = Hash(String, JSON::Any).new
+    v["s"] = JSON::Any.new("node_exporter-1.8.2.linux-amd64.tar.gz")
+    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup.resolve("s.startswith('node_exporter')").not_nil!.as_bool.should eq(true)
+    lookup.resolve("s.endswith('.tar.gz')").not_nil!.as_bool.should eq(true)
+    lookup.resolve("s.startswith('other')").not_nil!.as_bool.should eq(false)
+  end
+
+  it "re-renders a bare-identifier INDEX KEY (dict[some_var]) that is itself still-unrendered {{ }} text" do
+    # Real bug found live-verifying prometheus.prometheus.node_exporter
+    # (round 22): its own _common role's checksum verification does
+    # `checksums[__common_binary_basename]` where `__common_binary_
+    # basename` is itself a role var computed from another template
+    # (`"{{ _common_binary_url | urlsplit('path') | basename }}"`, not
+    # yet eagerly resolved at role-load time - stored raw in @vars, the
+    # same shape this codebase has fixed at several OTHER bare-lookup
+    # call sites (the plain bare-lookup fallback, the filter-chain
+    # head, default()'s own argument, a bare comparison operand,
+    # dotted-access base fetch) but not yet this one: resolve_index_key
+    # fetched @vars[name] completely raw and used the LITERAL "{{ ... }}"
+    # text as the dict key - a key that obviously doesn't exist, so
+    # `checksums[__common_binary_basename]` silently returned undefined
+    # even though a bare `{{ __common_binary_basename }}` substituted
+    # correctly everywhere else in the same task. Every download's
+    # checksum verification failed this way.
+    v = Hash(String, JSON::Any).new
+    v["binary_url"] = JSON::Any.new("https://example.com/path/to/foo.txt")
+    v["binary_basename"] = JSON::Any.new(%({{ binary_url | urlsplit('path') | basename }}))
+    v["mydict"] = JSON.parse(%({"foo.txt": "checksum1", "bar.txt": "checksum2"}))
+    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup.resolve("mydict[binary_basename]").not_nil!.as_s.should eq("checksum1")
+  end
+
   it "re-renders a dotted-access BASE variable that is itself still-unrendered {{ }} text before walking .method()/.attr off of it" do
     # Real Ansible's recursive re-templating - one more independent copy
     # of this bug class (already fixed at several OTHER call sites: the

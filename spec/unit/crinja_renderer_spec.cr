@@ -291,4 +291,56 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     result = renderer.render(%({% if pkg_mgr == 'apt' %}{{ 'python3-apt' -}}{% else %}{% endif %}))
     result.should eq("python3-apt")
   end
+
+  it "does not blow up combinatorially when a {% %}-block-tag var sits alongside a large nested-facts-shaped var context" do
+    # Real bug found live-verifying round 22 (the Crinja step-5
+    # convergence work): prometheus.prometheus.node_exporter, going
+    # through _common role's own vars/main.yml, has one var -
+    # `_common_dependencies` - whose value is pure `{% if %}...{%
+    # endif %}` block tags (no `{{ }}`). Re-templating it re-entered
+    # `#prepare_crinja_vars`, which re-walks ALL of `@vars` (including
+    # deeply nested `ansible_facts`, via `rerender_nested_templates`'s
+    # own Array/Hash recursion, added for the geerlingguy.postgresql
+    # nested-list bug) - and since `@vars` never changes, found the
+    # SAME block-tag var still raw and recursed again.
+    # `@@block_tag_escalation_depth`'s cap of 50 bounds the RECURSION
+    # DEPTH, but each of those 50 levels re-walks the entire nested
+    # var context from scratch, so real-world `ansible_facts` (hundreds
+    # of nested leaf strings from a live `setup` module gather) turned
+    # a cheap single re-template into 50x that walk - pegged a CPU
+    # core indefinitely in practice (observed >30s with zero progress)
+    # long before the depth cap was reached. This spec mirrors that
+    # shape (one block-tag var + a facts-sized nested var context) and
+    # must complete promptly, not hang.
+    # Mirrors prometheus.prometheus._common's own real vars/main.yml
+    # (trimmed to the entries that matter for this shape) - other
+    # {{ }}-templated vars in the same scope, referencing filters/
+    # lookups of their own, are what turned the bounded recursion
+    # depth into real wall-clock cost.
+    v = Hash(String, JSON::Any).new
+    v["ansible_facts"] = JSON.parse(%({"pkg_mgr":"apt","python_version":"3.10"}))
+    v["ansible_parent_role_names"] = JSON.parse(%(["prometheus.prometheus.node_exporter"]))
+    v["ansible_collection_name"] = JSON::Any.new("prometheus.prometheus")
+    v["_common_dependencies"] = JSON::Any.new(
+      %({% if (ansible_facts['pkg_mgr'] == 'apt') %}{{ ('python-apt' if ansible_facts['python_version'] is version('3', '<') else 'python3-apt') -}}{% else %}{% endif %})
+    )
+    v["_common_binary_name"] = JSON::Any.new(%({{ __common_binary_basename }}))
+    v["_common_service_name"] = JSON::Any.new(%({{ __common_parent_role_short_name }}))
+    v["_common_binary_url"] = JSON::Any.new("")
+    v["__common_binary_basename"] = JSON::Any.new(%({{ _common_binary_url | urlsplit('path') | basename }}))
+    v["__common_parent_role_short_name"] = JSON::Any.new(
+      %({{ ansible_parent_role_names | first | regex_replace(ansible_collection_name ~ '.', '') }})
+    )
+    v["__common_github_api_headers"] = JSON::Any.new(
+      %({{ {'GITHUB_TOKEN': lookup('ansible.builtin.env', 'GITHUB_TOKEN')} if (lookup('ansible.builtin.env', 'GITHUB_TOKEN')) else {} }})
+    )
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    started = Time.instant
+    result = renderer.render("{{ _common_dependencies }}")
+    elapsed = Time.instant - started
+
+    result.should eq("python3-apt")
+    elapsed.should be < 3.seconds
+  end
 end

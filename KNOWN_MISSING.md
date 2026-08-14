@@ -8,7 +8,75 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.320`.**
+**Currently at `0.9.332`.**
+
+---
+
+`0.9.327`-`0.9.332` (live real-host re-verification of the CRINJA.md
+step-5 dual-evaluator convergence work - the three constructs converged
+in `0.9.324`-`0.9.326` - `or`/`and`/`is`, the inline ternary, and
+`==`/`!=`/`<`/`>`/`<=`/`>=` comparisons - had only been checked against
+`crystal spec` and the differential harness, never a real host. Re-ran
+`prometheus.prometheus.node_exporter` again on a fresh 2-node Atlantic.net
+pair; found 7 more real bugs, one of them a genuine hang):
+
+- **Real infinite-recursion hang, not just a wrong value.** `_common_
+  dependencies`'s own vars/main.yml default is pure `{% if %}...{% endif
+  %}` block-tag Jinja (no `{{ }}`). Re-templating it re-entered
+  `CrinjaRenderer#prepare_crinja_vars`, which re-walks ALL of `@vars` -
+  including deeply nested `ansible_facts` - and since `@vars` never
+  changes, found the same block-tag var still raw and recursed again.
+  The existing `@@block_tag_escalation_depth` guard (cap 50) bounded the
+  RECURSION DEPTH but not the WORK PER LEVEL (a full var-context re-walk
+  each time), pegging a CPU core indefinitely in practice - observed
+  >30s with zero progress, well before the depth cap was ever reached.
+  Fixed with a second, much tighter depth guard (cap 3) specifically on
+  `prepare_crinja_vars` re-entrancy.
+- `ansible.builtin.uri`'s `dest:` file-writing was entirely unimplemented
+  (the plugin's own doc comment said so) - `_common`'s own binary
+  download task uses `uri:` with `dest:`, not `get_url:`; it reported
+  "OK (N bytes)" and `changed: false` while silently never writing
+  anything.
+- No-argument `.splitlines()` Python string method - entirely missing
+  from the plain `{{ }}` hand-rolled evaluator (Crinja's own copy in the
+  forked shard already had it, but only reachable via `{%`/`{#`
+  block-tag escalation, not a bare `{{ }}` expression).
+- `flatten` and `regex_findall` filters were entirely missing from the
+  hand-rolled `FilterEngine` (Crinja-only before) - `map('regex_findall',
+  ...)` and `map('flatten')` both silently passed items through
+  unchanged.
+- `map('filtername', 'string arg')`'s own reconstruction of the inner
+  filter call destructively stripped quote characters from string
+  arguments (needed for a bare variable reference, wrong for a string
+  literal that gets RE-PARSED as an expression) - a regex pattern
+  argument with its own parens/`+`/`.` was misread as a bare expression
+  instead of a literal, degrading to an effectively empty pattern.
+- `dict(iterable_of_pairs)` - real Ansible's Templar exposes actual
+  Python's `dict` builtin (not Jinja2's own `**kwargs`-only `dict`
+  global), which also accepts a single positional argument. Entirely
+  unhandled in both the Crinja fork and the hand-rolled evaluator.
+- A bare-identifier INDEX KEY (`dict[some_var]`) had no recursive
+  re-templating guard in `VariableLookup#resolve_index_key` - a role var
+  computed from another template (`__common_binary_basename`) used as an
+  index key resolved to the literal unrendered `"{{ ... }}"` text instead
+  of its real value. A THIRD independent copy of the same gap existed in
+  `ComparisonEvaluator#evaluate_simple_value` (no `[` branch at all, so a
+  bracket-indexed comparison operand fell through to a literal-name
+  lookup that could never match).
+- `unarchive:`'s `extra_opts:` parsing only understood the comma-joined
+  text a LITERAL YAML list produces at parse time - a `{{ }}`-templated
+  expression that resolves to an array at runtime instead renders as a
+  JSON-array string (`VariableLookup#format_value`'s own `Array ->
+  value.to_json` convention), a completely different, unhandled text
+  shape. Splitting that on `,` produced one garbage element still
+  wrapped in brackets/quotes, corrupting the `tar` command line so badly
+  that `tar --compare` silently reported no changes and extraction never
+  ran - the archive downloaded and passed its checksum check, but
+  nothing was ever unpacked.
+
+`prometheus.prometheus.node_exporter` runs clean end-to-end again
+(idempotent, `changed=0` on rerun, service verified live via `systemctl`/
+`curl :9100/metrics`) - see `ROLES_TESTED.md`.
 
 ---
 

@@ -336,6 +336,35 @@ module CrystalPlay
           return JSON::Any.new((index ? index : -1).to_i64)
         end
 
+        if part == "splitlines()"
+          # Real bug found live-verifying prometheus.prometheus.
+          # node_exporter (round 22): its own _common role's checksum-
+          # file parsing (`raw.splitlines() | map(...) | ...`) is a
+          # PLAIN `{{ }}` expression (a set_fact value), not inside a
+          # `{% %}` block - only escalation to the full Crinja renderer
+          # (see python_string_methods.cr) ever reached `.splitlines()`
+          # before, so this bare-`{{ }}` code path (the one a set_fact's
+          # own value actually goes through) resolved the whole
+          # expression to "undefined" instead of raising or falling
+          # back - the checksum dict ended up empty, and every download
+          # failed its checksum verification. Same Python semantics as
+          # TaskExecutor#ansible_splitlines (empty input -> `[]`, one
+          # trailing newline doesn't produce a spurious final empty
+          # element) - not Crystal's plain `String#split("\n")`.
+          text = current.as_s
+          lines = text.empty? ? [] of String : text.split("\n")
+          lines.pop if lines.last?.try(&.empty?)
+          return JSON::Any.new(lines.map { |line| JSON::Any.new(line) })
+        end
+
+        if match = part.match(/^startswith\(\s*(['"])(.*)\1\s*\)$/)
+          return JSON::Any.new(current.as_s.starts_with?(match[2]))
+        end
+
+        if match = part.match(/^endswith\(\s*(['"])(.*)\1\s*\)$/)
+          return JSON::Any.new(current.as_s.ends_with?(match[2]))
+        end
+
         if match = part.match(/^join\(\s*(.+?)\s*\)$/)
           # `SEP.join(iterable)` - `current` is the separator (already
           # resolved above, since this is a method call ON the literal
@@ -525,7 +554,25 @@ module CrystalPlay
           return rendered.to_i? || rendered
         end
 
-        resolved = resolve_simple(index_expr) || resolve_nested(index_expr)
+        # A bare-identifier index key (`dict[some_var]`) needs the same
+        # recursive re-templating guard as every other bare-lookup call
+        # site in this codebase (see `rerender_if_templated`'s own
+        # comment) - `resolve_simple` returns `@vars[name]` completely
+        # raw, and a role var computed from another template
+        # (prometheus.prometheus._common's own `__common_binary_
+        # basename: "{{ _common_binary_url | urlsplit('path') |
+        # basename }}"`) had NOT been eagerly resolved at role-load
+        # time. Without this, `checksums[__common_binary_basename]`
+        # looked up the literal unrendered text "{{ _common_binary_url
+        # | ... }}" as the dict key instead of the real filename it
+        # renders to - a key that obviously doesn't exist, so the
+        # lookup silently returned undefined even though the SAME
+        # variable substituted correctly everywhere else (a bare `{{
+        # __common_binary_basename }}` task-name/param does go through
+        # this guard already). Real bug found live-verifying
+        # prometheus.prometheus.node_exporter: every download's
+        # checksum verification failed this way.
+        resolved = (resolve_simple(index_expr) || resolve_nested(index_expr)).try { |value| rerender_if_templated(value) }
         case raw = resolved.try(&.raw)
         when String      then raw
         when Int64, Int32 then raw.to_i

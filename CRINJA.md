@@ -3,9 +3,32 @@
 # live re-verification round 2026-08-13, see "Live re-verification" below;
 # divergence-harness cleanup pass 2026-08-13, see that section below;
 # every patch migrated into the fork's real source 2026-08-13, 0.9.323;
-# step 5 constructs 1-3 converged 2026-08-13, 0.9.324-0.9.326)
+# step 5 constructs 1-3 converged 2026-08-13, 0.9.324-0.9.326;
+# live re-verification of that convergence done 2026-08-13, 0.9.327-0.9.332,
+# see "Current status" below and KNOWN_MISSING.md/ROLES_TESTED.md)
 
-## Current status / next steps (2026-08-13, 0.9.326)
+## Current status / next steps (2026-08-13, 0.9.332)
+
+**Update (same day): step-5 next-step #1 (live real-host verification of
+the three converged constructs) is now DONE.** Re-ran `prometheus.
+prometheus.node_exporter` on a fresh 2-node Atlantic.net pair. Found and
+fixed 7 more real bugs (0.9.327-0.9.332) - full detail in KNOWN_MISSING.md's
+own `0.9.327`-`0.9.332` entry and ROLES_TESTED.md, not duplicated here.
+Headline finding: a genuine CPU-pegging infinite-recursion hang in
+`CrinjaRenderer#prepare_crinja_vars` re-entrancy (bounded recursion DEPTH
+via the pre-existing `@@block_tag_escalation_depth` guard isn't the same
+as bounded WORK, when each recursion level re-walks the whole variable
+context) - fixed with a second, tighter depth guard (cap 3) specific to
+`prepare_crinja_vars`. The other 6 were pre-existing gaps the hang had
+been masking progress past (uri: dest:, .splitlines()/flatten/
+regex_findall/dict(iterable), map()'s quote-stripping, and a bare-
+identifier index-key re-templating gap present independently in THREE
+evaluator copies - VariableLookup, ComparisonEvaluator, and by extension
+anything delegating to either). Role is clean end-to-end again: idempotent,
+service verified live. Step-5 next-step #2 (FilterEngine-vs-Crinja filter
+audit, prep for the `#evaluate_expr` swap) is next, still not started.
+
+## Original current-status snapshot (2026-08-13, 0.9.326, superseded by the update above)
 
 Read this section first - it's the up-to-date summary. Everything below
 it is the dated, narrative history that produced this state; useful for
@@ -34,12 +57,9 @@ the "why", not required reading to know what to do next.
    deferred by user choice - not declined, just not started.
 
 **Not done / next steps, roughly in order of what's needed first:**
-1. **A live real-host verification round** for the three converged
-   constructs. Not yet done for any of them - this doc's own "Live
-   re-verification" section already demonstrated that a spec suite and
-   the harness both miss real bugs a live round catches (control-flow
-   interactions). Explicitly flagged by the user as worth doing before
-   converging a fourth construct.
+1. ~~A live real-host verification round for the three converged
+   constructs~~ - DONE, see the "Update" section at the top of this file
+   (0.9.327-0.9.332, 7 more bugs found and fixed).
 2. **A `FilterEngine`-vs-Crinja filter-coverage audit** - prep work for
    the next (and by far largest/riskiest) construct,
    `#evaluate_expr`'s general filter/lookup/literal dispatch. Not started.

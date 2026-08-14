@@ -85,6 +85,30 @@ describe "unarchive plugin" do
     File.read(File.join(dest, "index.php")).should eq("<?php")
   end
 
+  it "honors extra_opts: when it arrives as a JSON-array-encoded string, not just the comma-joined literal-list form" do
+    # Real bug found live-verifying prometheus.prometheus.node_exporter
+    # (round 22): `extra_opts:` in that role's own task is a `{{ }}`-
+    # TEMPLATED expression (`"{{ _common_binary_unarchive_opts |
+    # default(omit, true) }}"`), not a literal YAML list - a literal
+    # list gets comma-joined by playbook_parser.cr's own #stringify_
+    # value at parse time (the shape every other test in this file
+    # passes), but a templated expression that resolves to an array at
+    # RUNTIME instead goes through VariableLookup#format_value, which
+    # renders an Array as `value.to_json` - a JSON-array string
+    # (`["--strip-components=1"]`), a completely different, unhandled
+    # text convention. Splitting THAT on "," left one garbage element
+    # still wrapped in brackets/quotes, corrupting the `tar` command
+    # line so badly that `tar --compare` silently reported no changes
+    # and extraction never ran at all - the archive downloaded and
+    # passed its checksum check, but nothing was ever unpacked.
+    dest = fresh_dest("tar-strip-components-json-array")
+    result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "wrapped.tar.gz"), "dest" => dest, "extra_opts" => %(["--strip-components=1"])})
+
+    result["changed"].as_bool.should be_true
+    File.exists?(File.join(dest, "myproject-1.0")).should be_false
+    File.read(File.join(dest, "index.php")).should eq("<?php")
+  end
+
   it "is idempotent on a --strip-components=1 rerun despite tar --compare's own benign warning" do
     # Real bug found benchmarking robertdebock.phpmyadmin: GNU tar
     # --compare always emits a bogus "Cannot stat: No such file or

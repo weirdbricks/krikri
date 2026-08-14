@@ -121,4 +121,35 @@ describe "uri plugin" do
     result["changed"].as_bool.should be_false
     result["skipped"].as_bool.should be_true
   end
+
+  it "writes the response body to dest: and reports changed, real bug found live-verifying prometheus.prometheus.node_exporter" do
+    # `dest:` writing was entirely unimplemented (the plugin's own doc
+    # comment said so outright) - prometheus.prometheus._common's own
+    # "Download {{ __common_binary_basename }}" task uses `uri:` with
+    # `dest:` (not `get_url:`) to fetch the release tarball; the module
+    # reported "OK (N bytes)" and `changed: false` while silently never
+    # writing anything, so the very next task (`unarchive:`) failed with
+    # "Source ... failed to transfer" against a file that never existed.
+    path = File.tempname("uri_dest_spec")
+    begin
+      result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/text", "dest" => path})
+      result["failed"].as_bool.should be_false
+      result["changed"].as_bool.should be_true
+      File.read(path).should eq("plain text body")
+    ensure
+      File.delete(path) if File.exists?(path)
+    end
+  end
+
+  it "reports changed: false on a dest: rerun when the content hasn't changed" do
+    path = File.tempname("uri_dest_spec")
+    begin
+      File.write(path, "plain text body")
+      result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/text", "dest" => path})
+      result["failed"].as_bool.should be_false
+      result["changed"].as_bool.should be_false
+    ensure
+      File.delete(path) if File.exists?(path)
+    end
+  end
 end

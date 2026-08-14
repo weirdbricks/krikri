@@ -542,6 +542,37 @@ module CrystalPlay
       end || Crinja::UNDEFINED
     end
 
+    # `regex_findall(pattern, multiline=False, ignorecase=False)` - real
+    # Ansible's own filter (Python `re.findall`): returns every non-
+    # overlapping match. With no capture groups, each match is the
+    # whole matched substring; with capture groups, each match is a
+    # list of that match's group strings (Python returns a tuple, but
+    # this codebase already represents everything JSON-compatible, so
+    # a list, matching how ExpressionEvaluator/FilterEngine already
+    # render tuple-shaped values elsewhere). Entirely unimplemented
+    # before - real bug found live-verifying prometheus.prometheus.
+    # node_exporter: its own _common role builds a checksum-filename
+    # lookup with `raw.splitlines() | map('regex_findall', '^([a-fA-
+    # F0-9]+)\\s+(.+)$') | ...` - silently a no-op (each line passed
+    # through unchanged instead of being split into [checksum,
+    # filename]), so the whole checksum dict ended up empty and every
+    # download failed its checksum verification.
+    Crinja.filter({pattern: Crinja::UNDEFINED, multiline: false, ignorecase: false}, :regex_findall) do
+      pattern = arguments["pattern"].to_s
+      options = Regex::Options::None
+      options |= Regex::Options::MULTILINE if arguments["multiline"].truthy?
+      options |= Regex::Options::IGNORE_CASE if arguments["ignorecase"].truthy?
+      regex = Regex.new(pattern, options)
+
+      target.to_s.scan(regex).map do |match|
+        if match.size > 1
+          (1...match.size).map { |i| match[i]? || "" }
+        else
+          match[0]
+        end
+      end
+    end
+
     # `match`/`search` Jinja tests - real Ansible tests
     # (ansible.builtin.match/search), not standard Jinja2. `match`
     # anchors at the start of the string (Python `re.match`), `search`

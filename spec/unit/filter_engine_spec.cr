@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "../../src/crystal_play/variable_substitutor/filter_engine"
+require "../../src/crystal_play/variable_substitutor/expression_evaluator"
 
 private def s(value : String) : JSON::Any
   JSON::Any.new(value)
@@ -446,5 +447,48 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     v["real_val"] = JSON::Any.new("resolved")
     engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(v)
     engine.apply(JSON::Any.new(nil), "default(fallback_var)").as_s.should eq("resolved")
+  end
+
+  it "regex_findall extracts every non-overlapping match, groups as a nested list" do
+    engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
+    result = engine.apply(s("abc123  file1.tar.gz"), %(regex_findall('^([a-fA-F0-9]+)\\s+(.+)$'))).as_a
+    result.size.should eq(1)
+    result[0].as_a.map(&.as_s).should eq(["abc123", "file1.tar.gz"])
+  end
+
+  it "flatten collapses nested lists by default, skipping nulls" do
+    v = JSON::Any.new([JSON.parse(%([1, [2, 3]])), JSON::Any.new(nil), JSON.parse("4")])
+    engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
+    engine.apply(v, "flatten").as_a.map(&.as_i64).should eq([1_i64, 2_i64, 3_i64, 4_i64])
+  end
+
+  it "map('regex_findall', pattern) preserves the pattern's quoting instead of mangling it into an empty match, real bug found live-verifying prometheus.prometheus.node_exporter" do
+    # prometheus.prometheus._common's own checksum-file parsing chain -
+    # `raw.splitlines() | map('regex_findall', '^([a-fA-F0-9]+)\\s+
+    # (.+)$') | map('flatten') | map('reverse')` - is exactly this
+    # shape: map()'s filter-name form previously rebuilt its inner
+    # filter call via parse_filter_args, which destructively strips
+    # quote characters (needed for a BARE value like a variable name,
+    # wrong for a string-literal argument that gets RE-PARSED as an
+    # expression) - an unquoted regex pattern full of its own parens
+    # was misread as a bare expression instead of a string literal,
+    # silently degrading to an effectively empty pattern that matched
+    # the empty string at every position instead of the real groups.
+    v = JSON::Any.new(["abc123  file1.tar.gz", "def456  file2.tar.gz"].map { |s| JSON::Any.new(s) })
+    engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
+    result = engine.apply(v, %(map('regex_findall', '^([a-fA-F0-9]+)\\s+(.+)$'))).as_a
+    result.map { |m| m.as_a[0].as_a.map(&.as_s) }.should eq([["abc123", "file1.tar.gz"], ["def456", "file2.tar.gz"]])
+  end
+
+  it "dict(iterable_of_pairs) builds a dict from a positional iterable, not just kwargs" do
+    # Real Ansible's Templar exposes actual Python's `dict` builtin
+    # (not Jinja2's own `**kwargs`-only `dict` global) - the full
+    # real-world shape (splitlines/regex_findall/flatten/reverse
+    # chained into dict()) is covered end-to-end by expression_
+    # evaluator_spec.cr; this is the narrower dict()-only case.
+    vars = Hash(String, JSON::Any).new
+    vars["pairs"] = JSON.parse(%([["a", 1], ["b", 2]]))
+    result = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate("dict(pairs)")
+    (JSON.parse(result) rescue nil).should eq(JSON.parse(%({"a": 1, "b": 2})))
   end
 end

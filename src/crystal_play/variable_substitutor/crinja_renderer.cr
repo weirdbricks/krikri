@@ -225,13 +225,56 @@ module CrystalPlay
       # multi-pass loop - reused here (a plain, non-Crinja
       # VarSubstitutor pass, so no risk of this recursing back into this
       # same render) rather than duplicating that logic.
+      # Guards against a genuine infinite-recursion trap distinct from
+      # `VarSubstitutor`'s own `@@block_tag_escalation_depth`: that guard
+      # bounds the RECURSION DEPTH of `substitute`/`render` calls, but
+      # each `prepare_crinja_vars` call at every depth level re-walks
+      # ALL of `@vars` (not just the one variable that triggered the
+      # recursion), and any OTHER still-templated `{% %}` variable found
+      # along the way recurses again the same way - so the total work is
+      # exponential in (templated-var count) ^ (escalation depth), not
+      # linear. Real bug found benchmarking prometheus.prometheus.
+      # node_exporter (round 22): `_common_dependencies`'s own vars/
+      # main.yml default is `{% if ... %}{{ ... }}{% else %}{% endif
+      # %}` (block tags, no surrounding `{{ }}`) - rendering it re-
+      # entered `prepare_crinja_vars`, which re-walked the SAME raw
+      # `@vars` hash (unchanged - this is a read-only re-templating
+      # pass) and found the SAME `_common_dependencies` still raw,
+      # recursing again - with `@@block_tag_escalation_depth`'s cap of
+      # 50 and ~20 templated vars in that role's vars/main.yml, this
+      # pegged a CPU core indefinitely (observed >30s with zero
+      # progress) well before ever reaching the depth-50 exit. A much
+      # tighter cap here (re-templating a variable's value more than a
+      # couple of levels deep from within another variable's own re-
+      # templating pass is already a sign it won't converge) keeps the
+      # existing depth-50 guard as the outer safety net while making
+      # the common case (one or two levels of indirection) cheap.
+      @@prepare_crinja_vars_depth = 0
+      MAX_PREPARE_CRINJA_VARS_DEPTH = 3
+
       private def prepare_crinja_vars : Hash(String, Crinja::Value)
         vars = Hash(String, Crinja::Value).new
+
+        if @@prepare_crinja_vars_depth >= MAX_PREPARE_CRINJA_VARS_DEPTH
+          @vars.each { |key, value| vars[key] = json_any_to_crinja_value(value) }
+          return finish_crinja_vars(vars)
+        end
+
         substitutor = VarSubstitutor.new(vars: @vars)
 
-        @vars.each do |key, value|
-          vars[key] = json_any_to_crinja_value(rerender_nested_templates(value, substitutor))
+        @@prepare_crinja_vars_depth += 1
+        begin
+          @vars.each do |key, value|
+            vars[key] = json_any_to_crinja_value(rerender_nested_templates(value, substitutor))
+          end
+        ensure
+          @@prepare_crinja_vars_depth -= 1
         end
+
+        finish_crinja_vars(vars)
+      end
+
+      private def finish_crinja_vars(vars : Hash(String, Crinja::Value)) : Hash(String, Crinja::Value)
 
         # `vars` - real Ansible's own magic variable exposing the whole
         # current variable scope as a dict, letting a template look up a

@@ -328,6 +328,25 @@ module CrystalPlay
           return @lookup.format_value(evaluate_range(expr[6..-2]))
         end
 
+        # `dict(iterable)` - real Ansible's Templar exposes actual
+        # Python's `dict` builtin (not Jinja2's own `**kwargs`-only
+        # `dict` global), which also accepts a single positional
+        # argument: an iterable of [key, value] pairs. Real bug found
+        # live-verifying prometheus.prometheus.node_exporter: its own
+        # _common role builds a checksum-filename lookup with `dict(raw
+        # .splitlines() | map('regex_findall', ...) | map('flatten') |
+        # map('reverse'))` - a positional iterable, not keyword args -
+        # entirely unhandled here before (fell through to a plain
+        # variable lookup on the literal text "dict(...)", always
+        # undefined). Only the single-positional-arg form is
+        # implemented, the only one any real role seen so far uses;
+        # `dict(a=1, b=2)` keyword form is Crinja-only (jinja_filters.
+        # cr's own lib/function/dict.cr), reached only once escalated
+        # to the full Crinja renderer.
+        if bare_call?(expr, "dict(")
+          return @lookup.format_value(evaluate_dict_call(expr[5..-2]))
+        end
+
         # Check for comparison operators FIRST (before filters)
         if has_comparison?(expr)
           # CRINJA.md step 5, third construct: same try-Crinja-first,
@@ -1272,6 +1291,23 @@ module CrystalPlay
           end
         end
         JSON::Any.new(values)
+      end
+
+      # `dict(iterable)` - see the `bare_call?(expr, "dict(")` call site
+      # above for the full rationale. *args* is the single positional
+      # argument's raw text (a filter chain or bare variable), resolved
+      # to an array of 2-element [key, value] arrays/pairs.
+      private def evaluate_dict_call(args : String) : JSON::Any
+        pairs = resolve_plus_operand(args)
+        return JSON::Any.new(Hash(String, JSON::Any).new) unless raw = pairs.as_a?
+
+        result = Hash(String, JSON::Any).new
+        raw.each do |pair|
+          items = pair.as_a?
+          next unless items && items.size == 2
+          result[items[0].as_s? || items[0].to_json] = items[1]
+        end
+        JSON::Any.new(result)
       end
 
       # A literal Jinja dict (`{item.name: new_value}`, `{"a": 1}`) - each

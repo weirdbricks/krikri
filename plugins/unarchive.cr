@@ -173,9 +173,36 @@ module CrystalPlay
       nil
     end
 
+    # A list-typed param arrives in one of two shapes depending on how
+    # the task wrote it: a LITERAL YAML list (`extra_opts:
+    # ['--strip-components=1']`) is comma-joined by playbook_parser.cr's
+    # own #stringify_value at parse time (the convention every plugin's
+    # list params already expected) - but a `{{ }}`-TEMPLATED expression
+    # that resolves to an array at runtime (`extra_opts: "{{
+    # _common_binary_unarchive_opts | default(omit, true) }}"`,
+    # prometheus.prometheus._common's own real-world shape) instead goes
+    # through VariableLookup#format_value, which renders an Array as
+    # `value.to_json` - a JSON-array STRING (`["--strip-components=1"]`),
+    # a completely different, unrelated text convention. Splitting THAT
+    # on "," produced one garbage element still wrapped in `["..."]`,
+    # which `tar_flags` then appended verbatim to the `tar --compare`/
+    # `--extract` command lines - a syntactically broken command whose
+    # stderr didn't match any of tar_changed?'s known warning patterns,
+    # so extraction was silently treated as already up to date and never
+    # ran at all. Real bug found live-verifying prometheus.prometheus.
+    # node_exporter: the archive downloaded and passed its checksum
+    # check, but nothing was ever actually unpacked.
+    private def parse_list_param(raw : String?) : Array(String)
+      return [] of String unless raw
+      if raw.starts_with?('[')
+        (Array(String).from_json(raw) rescue nil).try { |parsed| return parsed }
+      end
+      raw.split(",").map(&.strip).reject(&.empty?)
+    end
+
     private def run(src : String, dest : String) : PluginResult
-      exclude = (@params["exclude"]? || "").split(",").map(&.strip).reject(&.empty?)
-      include_files = (@params["include"]? || "").split(",").map(&.strip).reject(&.empty?)
+      exclude = parse_list_param(@params["exclude"]?)
+      include_files = parse_list_param(@params["include"]?)
       keep_newer = is_true?(@params["keep_newer"]?, default: false)
       list_files = is_true?(@params["list_files"]?, default: false)
       # extra_opts - passed straight through to `tar`, real Ansible's own
@@ -187,7 +214,7 @@ module CrystalPlay
       # path the role expected directly under dest/ (robertdebock.
       # phpmyadmin's own dest/index.php) was actually one level deeper
       # and missing.
-      extra_opts = (@params["extra_opts"]? || "").split(",").map(&.strip).reject(&.empty?)
+      extra_opts = parse_list_param(@params["extra_opts"]?)
 
       handler = detect_handler(src)
       unless handler
