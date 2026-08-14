@@ -26,7 +26,14 @@
 # ESSENTIALLY COMPLETE (only lookup()/dict() positional-form remain
 # hand-rolled, both for good reason) - live-host verification of this
 # whole round still needed before calling it fully done - see "Current
-# status" below)
+# status" below;
+# step-5 live verification STARTED 2026-08-14 (0.9.339): ran dev-sec
+# os_hardening on a real 2-node Atlantic.net pair and immediately found
+# two real mode-octal-integrity bugs (set_fact: decimal-parsing "0755"
+# -> int 755; executor's to_s(8) reformat corrupting "1777" -> "3361",
+# live-confirmed as mode 3361 on /tmp /dev/shm /var/tmp) - both fixed +
+# spec'd. A CLEAN cold-vs-cold + idempotency re-verify on a fresh host
+# pair is still the open item before this round counts as done.)
 
 ## Current status / next steps (2026-08-13, 0.9.336)
 

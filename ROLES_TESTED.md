@@ -8,7 +8,7 @@ or already-clean roles as if they were new.
 
 | Role | Status |
 |---|---|
-| dev-sec.os_hardening | ✅ Clean (re-verified 0.9.253, after fixing `with_flattened:` alias unrecognized, literal/filter-chain loop sources dropped, and `in` against a dotted-path container) |
+| dev-sec.os_hardening | ✅ Clean (re-verified 0.9.253, after fixing `with_flattened:` alias unrecognized, literal/filter-chain loop sources dropped, and `in` against a dotted-path container; also the host CRINJA.md step-5's convergence live-verification used in 0.9.339, where it surfaced two real mode-octal-integrity bugs - `set_fact:` decimal-parsing a leading-zero string `"0755"`-\>int 755, and the executor's `to_s(8)` reformat corrupting `"1777"`-\>`"3361"` on `/tmp`/`/dev/shm`/`/var/tmp` - both fixed, see KNOWN_MISSING.md's `0.9.339` entry) |
 | konstruktoid.hardening | ⚠️ Not re-verified this round — locked itself out of SSH mid-run on the real-ansible-playbook baseline host (port 22 closed, ICMP still responding); confirmed not crystal-ansible-side (only the python host was affected), not chased further |
 | linux-system-roles (various) | ✅ Clean |
 | geerlingguy.docker | ✅ Clean |

@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.338-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.339-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -317,6 +317,23 @@ spec` (1063 examples, 0 failures) and `./build.sh` after every step -
 **not yet live-host verified**, which is the top item in CRINJA.md's own
 next-steps given the scope of what changed. See `CRINJA.md` and
 KNOWN_MISSING.md's `0.9.333`-`0.9.338` entries for full detail.
+
+`0.9.339` started that live-host verification of the step-5 convergence
+against `dev-sec.os_hardening` on a real 2-node Atlantic.net pair, and
+immediately found two real mode-integrity bugs the unit specs had never
+surfaced. Both stem from the same root: a mode value that has been
+converted to a native `Int64` loses its original octal spelling, and the
+engine then either mis-parses or mis-reformats it. Live-confirmed on a
+real host (find-bound but not yet part of a clean full re-verify):
+`set_fact:`'s `coerce` was decimal-parsing a leading-zero octal-style
+*string* like `"0755"` into int `755` (dropping the leading zero), so a
+downstream `file: mode:` applied `01363` instead of `0755`; and
+`TaskExecutor`'s mode reformatting was re-expressing via `to_s(8)` an int
+whose own decimal digits already looked like a valid octal mode
+(`"1777"` -> `"3361"`), corrupting `/dev/shm`/`/tmp`/`/var/tmp` on a
+live host to mode `3361`. Both fixed with regression specs. See
+KNOWN_MISSING.md's `0.9.339` entry. The full clean re-verify of the
+step-5 convergence is still the open next step.
 
 Before that, a twentieth round (`weareinteractive.nginx`/`mysql`/`redis`/
 `users` plus `Stouts.iptables`/`timezone`) found 5 of 6 roles blocked

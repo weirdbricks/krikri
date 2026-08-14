@@ -50,7 +50,30 @@ module CrystalPlay
       when "false", "False", "no"
         JSON::Any.new(false)
       else
-        if int_value = value.to_i64?
+        if leading_zero_number?(value)
+          # Real bug found live-verifying CRINJA.md step 5's templating
+          # convergence against dev-sec os_hardening: `.to_i64?` happily
+          # parses "0755" as decimal 755 - Crystal's decimal integer
+          # parsing simply ignores leading zeros, the same way `"0755".
+          # to_i` does in most languages. os_hardening's own dynamic
+          # `set_fact: "{{ item.key }}": "{{ item.value }}"` (see the
+          # comment on the JSON branch below) round-trips EVERY
+          # os_mnt_*_dir_mode/os_*_perms value through this coercion,
+          # silently turning the octal-style mode STRING "0755" into the
+          # int 755 - which downstream (`file: mode: "{{ ... }}"`, fed
+          # straight to a chmod syscall expecting octal bits) applied as
+          # mode 01363 instead of 0755 (755 read as octal digits, not
+          # decimal), corrupting real directory permissions on
+          # `/dev`/`/run`/`/var`/`/home`/`/tmp`/`/dev/shm`/`/var/tmp` on
+          # a live host. A leading zero followed by more digits is never
+          # a genuine decimal integer literal (Python 3 itself rejects
+          # `0755` as invalid int syntax) - always either a deliberate
+          # octal-style string (this codebase's own file-mode convention)
+          # or otherwise never meant to lose that leading zero, so it's
+          # excluded from int coercion entirely and falls through to the
+          # plain-string case below.
+          JSON::Any.new(value)
+        elsif int_value = value.to_i64?
           JSON::Any.new(int_value)
         elsif float_value = value.to_f64?
           JSON::Any.new(float_value)
@@ -73,6 +96,13 @@ module CrystalPlay
       JSON.parse(value)
     rescue JSON::ParseException
       nil
+    end
+
+    # "0", "0.5" - real numbers, fine to coerce. "0755", "0007" - a
+    # leading zero followed by MORE digits, never a genuine decimal
+    # integer/float literal (see the call site's own comment).
+    private def leading_zero_number?(value : String) : Bool
+      value.size > 1 && value[0] == '0' && value[1].ascii_number?
     end
   end
 end

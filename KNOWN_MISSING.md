@@ -8,7 +8,54 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.338`.**
+**Currently at `0.9.339`.**
+
+---
+
+`0.9.339` (first slice of CRINJA.md step-5's live-host verification of
+constructs 4-9 - the whole `#evaluate_expr` dispatch now routes through
+Crinja first - run against `dev-sec.os_hardening` on a real 2-node
+Atlantic.net pair. Found LIVE and fixed two real mode-integrity bugs, the
+kind unit specs alone never surface):
+
+- `plugins/set_fact.cr`'s `coerce` was decimal-parsing a leading-zero
+  octal-style *string* (`"0755"`) into the int `755` via `.to_i64?` -
+  Crystal's decimal int parsing ignores leading zeros. os_hardening's own
+  dynamic `set_fact: "{{ item.key }}": "{{ item.value }}"` (with_dict over
+  `os_vars`) decimal-parses every `os_mnt_*_dir_mode`/`os_*_perms` STRING
+  this way, and a downstream `file: mode:` fed the int straight to a chmod
+  syscall applied it as octal `01363` instead of `0755`, corrupting real
+  directory permissions on `/dev`/`/run`/`/var`/`/home`/`/tmp`/`/dev/shm`/
+  `/var/tmp`. Fix: a leading `0` followed by more digits is never a genuine
+  decimal literal (Python 3 itself rejects `0755`), so exclude it from int
+  coercion and fall through to the plain-string case. `"0"` and a real
+  float like `"0.5"` still coerce normally (regression spec in
+  `spec/integration/set_fact_spec.cr`).
+- `src/crystal_play/task_executor/executor.cr`'s mode reformatting - the
+  `{{ var }}`-whole-span-to-`Int64` path in `substitute_task_params` - was
+  re-expressing the int via `"0" + raw.to_s(8)`, under the assumption the
+  int was always a YAML-octal-derived DECIMAL (like `02770` -> decimal
+  1528, whose digits contain an `8` and so never look octal-valid). But a
+  value decimal-coerced from an already-octal-style STRING (`"1777"` -> int
+  1777, the set_fact case above) has decimal digits that ALREADY look like
+  a valid octal mode - reformatting treated 1777's decimal value as needing
+  re-expression in octal and produced `"3361"`. Live-confirmed: `/dev/shm`,
+  `/tmp`, `/var/tmp` all ended up mode `3361` instead of `1777` on the
+  crystal host. Fix: if the int's plain decimal digits already match
+  `\A[0-7]{3,4}\z` (the same regex `file.cr`'s mode parser uses), use them
+  as-is; otherwise reformat via `to_s(8)` as before (regression spec in
+  `spec/integration/mode_octal_via_variable_spec.cr`).
+- The second regression spec originally reproduced os_hardening's exact
+  `loop: "{{ os_vars | dict2items }}"` shape, but `dict2items` is itself
+  still unimplemented in `FilterEngine` (it passes the dict through
+  unchanged), so the loop never actually set the fact and the spec silently
+  tested nothing (dir left at default mode 775). Rewritten to reproduce the
+  decimal-coercion directly with a plain `set_fact: my_mode: "1777"`.
+- Verified: full `crystal spec` (1065 examples, 0 failures), `./build.sh`.
+  **Remaining**: the clean, end-to-end re-verification of the step-5
+  convergence on a fresh host pair (the mode-corrupted host was used to
+  find these; a fresh cold-vs-cold comparison + idempotency pass is still
+  the open item from CRINJA.md).
 
 ---
 

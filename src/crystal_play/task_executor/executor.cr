@@ -2609,7 +2609,39 @@ module CrystalPlay
           if stripped.starts_with?("{{") && stripped.ends_with?("}}") && stripped.scan("{{").size == 1
             native = VariableSubstitutor::VariableLookup.new(substitutor.vars).resolve(stripped[2..-3].strip)
             if native && (raw = native.raw).is_a?(Int64)
-              substituted_value = "0" + raw.to_s(8)
+              # Only reformat via to_s(8) when the int's own PLAIN
+              # decimal digits do NOT already look like a valid octal
+              # mode (`\A[0-7]{3,4}\z`, matching `parse_numeric_mode`'s
+              # own regex in plugins/file.cr). Real bug found live-
+              # verifying CRINJA.md step 5 against dev-sec os_hardening:
+              # this reformatting assumes every Int64-typed mode value
+              # came from Crystal's YAML parser octal-converting an
+              # UNQUOTED literal (`redis_conf_dir_mode: 02770` -> decimal
+              # 1528, whose own digit string "1528" contains an '8' and
+              # so never looks octal-valid itself - reformatting recovers
+              # "02770") - but os_hardening's own dynamic `set_fact: "{{
+              # item.key }}": "{{ item.value }}"` produces an Int64 a
+              # COMPLETELY different way: plugins/set_fact.cr's `coerce`
+              # decimal-parses an already-octal-style STRING like "1777"
+              # into the int 1777 directly (no YAML octal parsing
+              # involved at all) - and for THAT kind of int, reformatting
+              # via to_s(8) treats 1777's decimal VALUE as needing
+              # re-expression in octal, giving "3361" instead of the
+              # original "1777", silently corrupting real chmod calls
+              # (found via corrupted directory permissions on a live
+              # host: /dev/shm, /tmp, /var/tmp all ended up mode 3361
+              # instead of 1777). Since a genuine octal-YAML-derived int's
+              # own decimal digits essentially never coincidentally look
+              # like a valid octal mode already (verified against both
+              # real cases above), checking that first disambiguates
+              # correctly without needing to track how the int
+              # originated.
+              plain = raw.to_s
+              substituted_value = if plain.matches?(/\A[0-7]{3,4}\z/)
+                                     plain
+                                   else
+                                     "0" + raw.to_s(8)
+                                   end
             end
           end
         end
