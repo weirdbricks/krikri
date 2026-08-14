@@ -5,7 +5,9 @@
 # every patch migrated into the fork's real source 2026-08-13, 0.9.323;
 # step 5 constructs 1-3 converged 2026-08-13, 0.9.324-0.9.326;
 # live re-verification of that convergence done 2026-08-13, 0.9.327-0.9.332,
-# see "Current status" below and KNOWN_MISSING.md/ROLES_TESTED.md)
+# see "Current status" below and KNOWN_MISSING.md/ROLES_TESTED.md;
+# step-5 next-step #2, the FilterEngine-vs-Crinja filter audit, done
+# 2026-08-13, no code change - see "Not done / next steps" item 2)
 
 ## Current status / next steps (2026-08-13, 0.9.332)
 
@@ -27,6 +29,14 @@ evaluator copies - VariableLookup, ComparisonEvaluator, and by extension
 anything delegating to either). Role is clean end-to-end again: idempotent,
 service verified live. Step-5 next-step #2 (FilterEngine-vs-Crinja filter
 audit, prep for the `#evaluate_expr` swap) is next, still not started.
+
+**Update (same day, later): step-5 next-step #2 is now DONE too** - audit
+only, no code change, full detail in the "Not done / next steps" section's
+own item 2 below. Verdict: filter coverage was already complete except for
+the already-known `to_datetime`/timedelta gap, so the `#evaluate_expr`
+swap (next-step #4) is no longer blocked on filter coverage - next-step
+#3 (the datetime/timedelta representation decision) is now the only
+remaining blocker before that swap can start.
 
 ## Original current-status snapshot (2026-08-13, 0.9.326, superseded by the update above)
 
@@ -60,16 +70,34 @@ the "why", not required reading to know what to do next.
 1. ~~A live real-host verification round for the three converged
    constructs~~ - DONE, see the "Update" section at the top of this file
    (0.9.327-0.9.332, 7 more bugs found and fixed).
-2. **A `FilterEngine`-vs-Crinja filter-coverage audit** - prep work for
-   the next (and by far largest/riskiest) construct,
-   `#evaluate_expr`'s general filter/lookup/literal dispatch. Not started.
-   `FilterEngine` is ~1388 lines; nobody has mapped which of its filters
-   still have no Crinja/`jinja_filters.cr` equivalent. Needed before that
-   construct can be swapped at all, since an unported filter would
-   silently regress (fall through to Crinja's "unknown filter" error,
-   caught by the fallback - so not a crash, but a correctness gap the
-   fallback masks rather than one this doc can currently promise doesn't
-   exist).
+2. ~~A `FilterEngine`-vs-Crinja filter-coverage audit~~ - DONE (2026-08-13,
+   no code change, audit only). Every `when` branch in `FilterEngine#apply`
+   (70 filter/test names incl. aliases, confirmed exhaustive - no second
+   `case` block later in the file) was cross-referenced against Crinja's
+   own core filters (`lib/crinja/src/lib/filter/*.cr`) plus everything
+   `jinja_filters.cr` registers on top. Result: **full coverage, one
+   already-known gap.** Every `FilterEngine` filter/test has a same-name
+   Crinja or `jinja_filters.cr` equivalent - including ones that looked
+   missing on a naive grep pass but weren't (`abs`, `list`, `count` as
+   alias of `length`, `d`/`e` aliases - these use the no-parens
+   `Crinja.filter :name do` form or `Filter::Library.alias`, not the
+   `Crinja.filter(:name)` form a narrower grep misses). The one
+   substantive gap is `to_datetime`/timedelta arithmetic - already
+   tracked as next-step #3 below, not a new finding. `strip` (FilterEngine
+   aliases it to `trim`) has no Crinja-side alias, but `strip` isn't a
+   real Jinja2/Ansible filter name to begin with, so nothing to port -
+   noted rather than fixed since it's dead-code-shaped, not a gap.
+   Out of scope for this audit (tracked as a pre-existing, separate gap,
+   not blocking the `evaluate_expr` swap since it affects both evaluators
+   equally): several real Ansible filters absent from FilterEngine
+   itself, not just Crinja - `dict2items`/`items2dict`, `zip`/`product`,
+   `b64encode`/`b64decode`, `to_yaml`/`from_yaml`/`from_json`,
+   `regex_escape`, `path_join`, `extract`, `subelements` - these were
+   never in the "which of FilterEngine's filters lack a Crinja copy"
+   question this audit was scoped to answer, and none has been hit by
+   any benchmark round so far. Conclusion: next-step #4 (the actual
+   `evaluate_expr` swap) is no longer blocked on filter coverage - only
+   next-step #3 (datetime) remains before it can start.
 3. **A datetime/timedelta representation decision** - `evaluate_expr`'s
    datetime-subtraction handling (`to_datetime(...) - to_datetime(...)`,
    producing a tagged-JSON pseudo-timedelta `.days` can read) has no
