@@ -477,7 +477,26 @@ module CrystalPlay
         # (re-)install was needed regardless of what was actually
         # installed.
         if segments = split_top_level_tilde(expr)
-          return evaluate_tilde(segments)
+          # CRINJA.md step 5, fifth construct (part of the general
+          # filter-chain-dispatch sub-piece of next-step #4): try-Crinja-
+          # first, same pattern as constructs 1-4. Crinja natively
+          # supports `~` (`src/lib/operator/tilde.cr`); probing it
+          # against this hand-rolled path first (empirically, across
+          # strings/numbers/undefined/multi-segment chains, all
+          # matching) surfaced a REAL bug in the fork itself before this
+          # swap could be trusted: `~`'s (and `+`'s identical fallback
+          # branch's) string-fallback used `Value#to_s`, bypassing
+          # `Finalizer` - a Bool operand rendered lowercase "true"/
+          # "false" instead of Python-parity "True"/"False", and an
+          # Array/Hash operand leaked its raw `Crinja::Value<...>`
+          # wrapper inspect text instead of a real stringified list/dict.
+          # Fixed in the fork (`crystal-play-0.9.3`) before converging
+          # this construct, not worked around here.
+          return begin
+            render_via_crinja(expr)
+          rescue
+            evaluate_tilde(segments)
+          end
         end
 
         # A leading parenthesized sub-expression, optionally followed by

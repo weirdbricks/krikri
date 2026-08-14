@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.334-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.335-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -290,8 +290,17 @@ Ansible/Jinja2's Python-repr form (`[1, 2, 3]`, `{'a': 1}`) - no spec
 currently pins the wrong format, and the fix is scoped into the next
 CRINJA.md step-5 sub-piece (the general filter-chain dispatch swap) as
 part of `VariableLookup#format_value`, not done in isolation to avoid
-a worse, self-inconsistent interim state. Most recently (`0.9.334`),
-investigating whether to converge `#evaluate_expr`'s `lookup()`/`range()`/
+a worse, self-inconsistent interim state. Most recently (`0.9.335`),
+CRINJA.md's step-5 dual-evaluator convergence gained a fifth construct:
+`#evaluate_expr`'s `~` string-concatenation operator now tries Crinja
+first too. Probing it before trusting the swap surfaced (and fixed, in
+the fork) another real bug: both `~`'s and `+`'s string-fallback
+stringified operands via raw `Value#to_s` instead of going through
+`Finalizer`, so a Bool operand rendered lowercase `"true"`/`"false"` and
+an Array/Hash operand leaked its raw `Crinja::Value<...>` inspect text
+instead of a real stringified list/dict (`crystal-play-0.9.3`). Before
+that (`0.9.334`), investigating whether to converge `#evaluate_expr`'s
+`lookup()`/`range()`/
 `dict()` bare-call forms surfaced (and fixed, in the `weirdbricks/crinja`
 fork itself) a related live bug: `Hash` values rendered through Crinja
 used Crystal's own `{'a' => 1}` separator instead of real Python's

@@ -8,7 +8,29 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.334`.**
+**Currently at `0.9.335`.**
+
+---
+
+`0.9.335` (CRINJA.md step 5, fifth construct: `#evaluate_expr`'s `~`
+string-concatenation operator now tries Crinja first too, same pattern
+as constructs 1-4):
+
+- **Real bug found and fixed in the `weirdbricks/crinja` fork** before
+  trusting this convergence: both `~`'s and `+`'s non-numeric fallback
+  branch stringified operands via raw `Value#to_s`, bypassing
+  `Finalizer` entirely - a Bool operand rendered lowercase `"true"`/
+  `"false"` instead of Python-parity `"True"`/`"False"`, and an
+  Array/Hash operand leaked its raw `Crinja::Value<...>` wrapper inspect
+  text (`"[Crinja::Value<1>, Crinja::Value<2>]"`) instead of a real
+  stringified list. `~` is already used directly in real Ansible role
+  templates (version-string concatenation); `+`'s identical bug isn't
+  yet reachable from any converged construct but is fixed too. Fixed in
+  the fork (`crystal-play-0.9.3`), `shard.yml`/`shard.lock` repinned.
+- Verified via `crystal spec` (1061 examples, 0 failures), `./build.sh`,
+  and empirical probes across strings/numbers/booleans/arrays/undefined/
+  multi-segment `~` chains, all matching the hand-rolled fallback
+  post-fix.
 
 ---
 

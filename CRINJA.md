@@ -12,10 +12,12 @@
 # evaluate_expr sub-piece) converged 2026-08-13, 0.9.333; lookup()/
 # range()/dict() sub-piece investigated 2026-08-13, 0.9.334 - decided NOT
 # to converge, found+fixed a real Hash-stringify bug in the crinja fork
-# along the way (crystal-play-0.9.2) - see "Current status" below and
-# KNOWN_MISSING.md/ROLES_TESTED.md)
+# along the way (crystal-play-0.9.2); step 5's fifth construct (the `~`
+# operator) converged 2026-08-13, 0.9.335 - found+fixed another real
+# fork bug (~/+ string-fallback bypassing Finalizer, crystal-play-0.9.3)
+# - see "Current status" below and KNOWN_MISSING.md/ROLES_TESTED.md)
 
-## Current status / next steps (2026-08-13, 0.9.334)
+## Current status / next steps (2026-08-13, 0.9.335)
 
 **Update (same day): step-5 next-step #1 (live real-host verification of
 the three converged constructs) is now DONE.** Re-ran `prometheus.
@@ -130,6 +132,28 @@ share the same `bare_call?(expr, "...(")` dispatch shape in
   should now also carry the `format_value` Python-repr-parity fix as
   part of its scope, not as an afterthought.**
 
+**Update (same day, later still): step-5's fifth construct is now DONE
+(0.9.335) - the `~` string-concatenation operator.** Unlike `lookup()`/
+`range()`/`dict()`, `~` was safe to converge on its own: it always
+stringifies both operands (no array/hash-VALUE output format question
+the way `range()`/`dict()` had), and Crinja natively supports it
+(`src/lib/operator/tilde.cr`). Empirical probing across strings, numbers,
+undefined variables, and multi-segment `~` chains matched the hand-rolled
+fallback exactly - EXCEPT two cases that surfaced a real, already-live
+bug in the fork itself before this could be trusted: `~`'s (and `+`'s
+identical fallback branch's) non-numeric string-fallback used raw
+`Value#to_s`, bypassing `Finalizer` - a Bool operand rendered lowercase
+`"true"`/`"false"` instead of Python-parity `"True"`/`"False"`, and an
+Array/Hash operand leaked its raw `Crinja::Value<...>` wrapper inspect
+text instead of a real stringified list/dict. Fixed in the fork
+(`crystal-play-0.9.3`, both operators, with regression specs), THEN
+converged via the same `render_via_crinja`/rescue pattern as constructs
+1-4. Verified: `crystal spec` (1061 examples, 0 failures), `./build.sh`.
+**The general filter-chain dispatch (variable lookups, `|`-filter
+chains, arithmetic, bracket/dict literals - everything else in
+`#evaluate_expr`) remains the sole remaining sub-piece, and its scope
+still includes the `format_value` Python-repr-parity fix noted above.**
+
 ## Original current-status snapshot (2026-08-13, 0.9.326, superseded by the update above)
 
 Read this section first - it's the up-to-date summary. Everything below
@@ -226,6 +250,10 @@ the "why", not required reading to know what to do next.
      converge (see the "Update" section above for the fork-bug fix and
      the `format_value` spacing-inconsistency reasoning); nothing left
      to do here specifically.
+   - ~~`~` string-concatenation operator~~ - DONE, 0.9.335. Found+fixed
+     a real fork bug along the way (`~`'s AND `+`'s string-fallback
+     bypassing `Finalizer`, `crystal-play-0.9.3`) - see the "Update"
+     section above.
    - **The general filter-chain dispatch** - now effectively the only
      remaining sub-piece, and by far the largest/riskiest. Its scope
      should now also include making `VariableLookup#format_value`
