@@ -2,17 +2,75 @@
 # step-1 harness built and run 2026-08-13, see "Step 1 results" below;
 # live re-verification round 2026-08-13, see "Live re-verification" below;
 # divergence-harness cleanup pass 2026-08-13, see that section below;
-# every patch migrated into the fork's real source 2026-08-13, 0.9.323)
+# every patch migrated into the fork's real source 2026-08-13, 0.9.323;
+# step 5 constructs 1-3 converged 2026-08-13, 0.9.324-0.9.326)
 
-> **If you are a model picking this up cold, read "Every patch migrated
-> into the fork's real source" (near the top) first - it's the current
-> state: there are no more `crinja_*_ext.cr` monkey-patch files, every
-> fix lives in `weirdbricks/crinja`'s own source now.** Then "Divergence-
-> harness cleanup pass", "Step 1 results", "Strategy and next steps",
-> then "Live re-verification" (further down) - they supersede the older,
-> vaguer "Recommendation for a more serious pass" thinking and tell you
-> what to actually do next and in what order. The bug sections in the
-> middle are reference material for when you get there, and "Why this
+## Current status / next steps (2026-08-13, 0.9.326)
+
+Read this section first - it's the up-to-date summary. Everything below
+it is the dated, narrative history that produced this state; useful for
+the "why", not required reading to know what to do next.
+
+**Done:**
+1. Differential test harness built (`scripts/crinja_corpus/`), corpus
+   widened to include whole `{% for %}` blocks, not just isolated
+   expressions.
+2. Crinja forked to `weirdbricks/crinja`; `shard.yml` pinned to a tag,
+   not upstream `branch: master`.
+3. Every `crinja_*_ext.cr` monkey-patch (15 files) migrated into the
+   fork's real source. crystal-ansible carries zero Crinja patches now -
+   `jinja_filters.cr` only holds genuinely Ansible-specific filters/tests.
+4. All fixable harness divergences closed (buckets A and B both 0;
+   remaining bucket C is 7 deliberately-unfixed cosmetic/CPython-quirk
+   items, see "Divergence-harness cleanup pass" below for which and why).
+5. Step 5 (converge the dual evaluators) started: 3 of `ExpressionEvaluator`'s
+   constructs now delegate to Crinja first, falling back to the original
+   hand-rolled code on any failure - `boolean_logic?` (`or`/`and`/`is`),
+   the ternary branches (`X if COND else Y`), and `has_comparison?`
+   (`==`/`!=`/`<`/`>`/`<=`/`>=`). One real infinite-recursion bug found
+   and fixed along the way (see "Step 5, third construct" below) with a
+   shared depth guard now protecting all three.
+6. Step 3 (upstreaming clean fixes to `straight-shoota/crinja`) explicitly
+   deferred by user choice - not declined, just not started.
+
+**Not done / next steps, roughly in order of what's needed first:**
+1. **A live real-host verification round** for the three converged
+   constructs. Not yet done for any of them - this doc's own "Live
+   re-verification" section already demonstrated that a spec suite and
+   the harness both miss real bugs a live round catches (control-flow
+   interactions). Explicitly flagged by the user as worth doing before
+   converging a fourth construct.
+2. **A `FilterEngine`-vs-Crinja filter-coverage audit** - prep work for
+   the next (and by far largest/riskiest) construct,
+   `#evaluate_expr`'s general filter/lookup/literal dispatch. Not started.
+   `FilterEngine` is ~1388 lines; nobody has mapped which of its filters
+   still have no Crinja/`jinja_filters.cr` equivalent. Needed before that
+   construct can be swapped at all, since an unported filter would
+   silently regress (fall through to Crinja's "unknown filter" error,
+   caught by the fallback - so not a crash, but a correctness gap the
+   fallback masks rather than one this doc can currently promise doesn't
+   exist).
+3. **A datetime/timedelta representation decision** - `evaluate_expr`'s
+   datetime-subtraction handling (`to_datetime(...) - to_datetime(...)`,
+   producing a tagged-JSON pseudo-timedelta `.days` can read) has no
+   Crinja equivalent; CRINJA.md's own earlier note on `to_datetime`
+   (see "Step 5, first construct" era notes above) already flagged this
+   as needing "real `Time` arithmetic support in Crinja first" for a
+   non-hacky port. Not started.
+4. Once 2 and 3 exist: swap `#evaluate_expr` itself, almost certainly in
+   sub-pieces (bare literals first - trivial and safe - lookup()/range()
+   next, the general filter-chain dispatch last), each verified with the
+   same spec+harness+targeted-test rigor as constructs 1-3, each ideally
+   with its own live-host check per point 1.
+5. Upstreaming (step 3) - deferred, pick up whenever.
+
+> **If you are a model picking this up cold**, the section above is
+> sufficient to know what to do next. Everything below is historical
+> narrative: "Every patch migrated into the fork's real source" and the
+> three "Step 5, Nth construct" sections nearest the top are the most
+> recent; "Divergence-harness cleanup pass", "Step 1 results", "Strategy
+> and next steps", then "Live re-verification" (further down) come next.
+> The bug sections in the middle are reference material, and "Why this
 > matters enough to write down" is now historical (read its own updated
 > intro note before assuming its monkey-patch instructions are current).
 
