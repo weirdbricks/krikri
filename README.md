@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.332-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.333-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -283,21 +283,27 @@ See [KNOWN_MISSING.md](KNOWN_MISSING.md) for the live tracking of what is
 not yet implemented.
 
 **No known cross-cutting engine gap is currently open.** Most recently
-(`0.9.327`-`0.9.332`), a live real-host re-verification of the CRINJA.md
-step-5 dual-evaluator convergence (`or`/`and`/`is`, the inline ternary,
-and comparisons now routing through Crinja first, with a fallback to the
-original hand-rolled code) found 7 more real bugs re-running `prometheus.
-prometheus.node_exporter` - including a genuine CPU-pegging infinite-
-recursion hang in Crinja's own variable-re-templating (bounded recursion
-DEPTH isn't the same as bounded WORK, when each level re-walks the whole
-variable context), `ansible.builtin.uri`'s `dest:` file-writing being
-entirely unimplemented, several missing filters/methods (`.splitlines()`,
-`flatten`, `regex_findall`, `dict(iterable)`), a quote-stripping bug in
-`map('filtername', 'arg')`, and a bare-identifier index-key re-templating
-gap present independently in three different evaluator copies. The role
-runs clean end-to-end again (idempotent, service verified live). These
-get found and closed on an ongoing basis via real-host benchmark rounds
-against
+(`0.9.333`), CRINJA.md's step-5 dual-evaluator convergence gained a
+fourth construct: `#evaluate_expr`'s bare literals (boolean, numeric,
+quoted-string) now try Crinja first too, same fallback-on-failure
+pattern - caught (and fixed for free) a latent inconsistency where the
+old fallback-only bare-boolean path returned lowercase `"true"`/`"false"`
+instead of the capitalized `"True"`/`"False"` every other boolean path in
+this codebase produces, never observed in practice since Crinja was
+always available. Before that (`0.9.327`-`0.9.332`), a live real-host
+re-verification of the first three converged constructs (`or`/`and`/
+`is`, the inline ternary, and comparisons) found 7 more real bugs
+re-running `prometheus.prometheus.node_exporter` - including a genuine
+CPU-pegging infinite-recursion hang in Crinja's own variable-re-templating
+(bounded recursion DEPTH isn't the same as bounded WORK, when each level
+re-walks the whole variable context), `ansible.builtin.uri`'s `dest:`
+file-writing being entirely unimplemented, several missing filters/
+methods (`.splitlines()`, `flatten`, `regex_findall`, `dict(iterable)`),
+a quote-stripping bug in `map('filtername', 'arg')`, and a bare-identifier
+index-key re-templating gap present independently in three different
+evaluator copies. The role runs clean end-to-end again (idempotent,
+service verified live). These get found and closed on an ongoing basis
+via real-host benchmark rounds against
 production Ansible roles (dev-sec, konstruktoid, linux-system-roles,
 geerlingguy, openstack.ansible-hardening, wireguard, ansible-vault,
 cloudalchemy.prometheus, cloudalchemy.grafana, haproxy, certbot) - see

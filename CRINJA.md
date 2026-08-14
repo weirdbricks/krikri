@@ -7,11 +7,12 @@
 # live re-verification of that convergence done 2026-08-13, 0.9.327-0.9.332,
 # see "Current status" below and KNOWN_MISSING.md/ROLES_TESTED.md;
 # step-5 next-steps #2 (FilterEngine-vs-Crinja filter audit) and #3
-# (datetime/timedelta decision) both done 2026-08-13, no code change,
-# no more blockers before step 4 (the evaluate_expr swap itself) -
-# see "Not done / next steps" items 2-3)
+# (datetime/timedelta decision) both done 2026-08-13, no code change;
+# step 5's fourth construct (evaluate_expr's bare literals, the first
+# evaluate_expr sub-piece) converged 2026-08-13, 0.9.333 - see "Current
+# status" below and KNOWN_MISSING.md/ROLES_TESTED.md)
 
-## Current status / next steps (2026-08-13, 0.9.332)
+## Current status / next steps (2026-08-13, 0.9.333)
 
 **Update (same day): step-5 next-step #1 (live real-host verification of
 the three converged constructs) is now DONE.** Re-ran `prometheus.
@@ -48,6 +49,36 @@ empirically) through Crinja's own "unknown filter" error path, which the
 existing render-then-fallback pattern (constructs 1-3) already handles
 safely. **Next-step #4, the `#evaluate_expr` swap itself, has no more
 prep-work blockers and is the next thing to pick up.**
+
+**Update (same day, later still): step-5's fourth construct is now DONE
+(0.9.333) - the FIRST sub-piece of next-step #4.** Per the sub-piece
+ordering next-step #4 itself lays out ("bare literals first - trivial and
+safe"), `#evaluate_expr`'s three bare-literal branches (boolean literal,
+numeric literal, sole quoted-string literal) now try Crinja first via the
+same `render_via_crinja`/rescue pattern as constructs 1-3, falling back to
+the original hand-rolled code unchanged on any failure. Caught one real
+latent inconsistency along the way (not a live bug - never reachable in
+practice while Crinja was available): the old bare-boolean fallback
+returned lowercase `"true"`/`"false"` via an unconditional `.downcase`, at
+odds with every other boolean-producing path in this codebase (real
+Python/Jinja2 convention is capitalized `"True"`/`"False"`) - fixed for
+free by routing through Crinja, whose own bare-literal rendering already
+matches that convention; the old (buggy) behavior is kept only as the
+fallback for if Crinja itself somehow becomes unavailable. Also: the
+quoted-string-literal fallback never unescapes (`'quote\'s here'` keeps
+its backslash) where Crinja's real parser does - same treatment, Crinja
+success is strictly more correct, not just equivalent. Verified via
+`crystal spec` (1061 examples, 0 failures), `./build.sh`, and empirical
+probes (see KNOWN_MISSING.md's own `0.9.333` entry) confirming Crinja's
+stricter number-literal grammar (rejects `1e10`/`1_000`/`0x1F`, forms the
+hand-rolled path's looser `to_i64?`/`to_f64?` accepts) fails with a hard
+`Crinja::TemplateSyntaxError`, not a silent misrender - exactly the
+signal the fallback needs to engage safely, so those forms keep working
+identically to before. **Next up: the remaining `#evaluate_expr`
+sub-pieces per next-step #4's own ordering - `lookup()`/`range()` next,
+the general filter-chain dispatch last - each with the same spec+harness
+rigor, live-host-verified per next-step #1's pattern once a meaningful
+chunk has landed.**
 
 ## Original current-status snapshot (2026-08-13, 0.9.326, superseded by the update above)
 

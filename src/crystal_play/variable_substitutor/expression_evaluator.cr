@@ -257,7 +257,28 @@ module CrystalPlay
         # previously always came back "undefined" (a non-empty string,
         # so `| bool` downstream treated it as truthy regardless of the
         # actual condition).
-        return expr.downcase if expr == "true" || expr == "false" || expr == "True" || expr == "False"
+        #
+        # CRINJA.md step 5, fourth construct (first #evaluate_expr
+        # sub-piece, "bare literals"): tries Crinja first, same
+        # render_via_crinja/rescue pattern as constructs 1-3. Found a
+        # latent inconsistency doing this: the old unconditional
+        # `expr.downcase` returned lowercase "true"/"false" here, at odds
+        # with every other boolean-producing path in this codebase
+        # (ConditionalEvaluator, ComparisonEvaluator's own construct-3
+        # convergence, VariableLookup) which all produce capitalized
+        # "True"/"False" (real Python/Jinja2 `str(bool)` convention) -
+        # this branch was simply never reached with Crinja unavailable
+        # for a bare literal, since Crinja renders `{{ true }}`/
+        # `{{ false }}` as "True"/"False" like real Ansible does, so the
+        # divergence never showed up in practice. Kept as the fallback
+        # (unchanged) for the case Crinja itself is ever unavailable.
+        if expr == "true" || expr == "false" || expr == "True" || expr == "False"
+          return begin
+            render_via_crinja(expr)
+          rescue
+            expr.downcase
+          end
+        end
 
         # A bare numeric literal as the WHOLE expression (`{{ 5 }}`,
         # `{{ 5.7 }}`) or a leading-paren-wrapped one that recurses back
@@ -272,7 +293,19 @@ module CrystalPlay
         # piped straight into a filter with no variable or arithmetic
         # involved at all (`{{ 256.0 | int }}`) hit this same gap.
         if literal = numeric_literal(expr)
-          return @lookup.format_value(literal)
+          # CRINJA.md step 5, fourth construct: try-Crinja-first, same
+          # pattern as above. Crinja's own number-literal grammar is
+          # stricter than Crystal's `to_i64?`/`to_f64?` (rejects
+          # scientific notation like `1e10`, underscore separators like
+          # `1_000`, hex like `0x1F` - all of which Crystal's own parse
+          # happily accepts) - a hard `Crinja::TemplateSyntaxError`, not
+          # a silent misrender, so those forms safely fall back to the
+          # exact previous behavior via the rescue below.
+          return begin
+            render_via_crinja(expr)
+          rescue
+            @lookup.format_value(literal)
+          end
         end
 
         # A bare quoted string literal (`{{ 'some.url/with.dots' }}`,
@@ -298,7 +331,19 @@ module CrystalPlay
         # `lookup('url', 'https://...v' + prometheus_version + '/...',
         # wantlist=True)` - the URL argument is built exactly this way.
         if literal = sole_quoted_literal?(expr)
-          return literal
+          # CRINJA.md step 5, fourth construct: try-Crinja-first, same
+          # pattern as above. `sole_quoted_literal?` itself never
+          # unescapes anything (a literal `\'` inside the string comes
+          # back with the backslash still attached) - Crinja's real
+          # string-literal parsing does unescape, so a successful Crinja
+          # render is MORE correct than the fallback here, not just
+          # equivalent; the fallback (this method's own raw extraction)
+          # only engages if Crinja itself fails on the literal.
+          return begin
+            render_via_crinja(expr)
+          rescue
+            literal
+          end
         end
 
         # `lookup('first_found', ffparams)` - real Ansible's lookup()

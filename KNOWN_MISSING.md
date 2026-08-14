@@ -8,7 +8,36 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.332`.**
+**Currently at `0.9.333`.**
+
+---
+
+`0.9.333` (CRINJA.md step 5, fourth construct: `#evaluate_expr`'s bare
+literals - boolean, numeric, quoted-string - now try Crinja first, same
+render-then-fallback pattern as constructs 1-3; audit-only, no-code-change
+work done first, see CRINJA.md's own next-steps #2/#3 write-ups):
+
+- Found (not a live bug, a latent inconsistency caught auditing the
+  swap): the old bare-boolean-literal branch unconditionally returned
+  `expr.downcase` - lowercase `"true"`/`"false"` - at odds with every
+  other boolean-producing path in this codebase (comparisons,
+  `is`-tests, `ConditionalEvaluator`), which all produce capitalized
+  `"True"`/`"False"` (real Python/Jinja2 convention). Never observed in
+  practice because Crinja was always available and already produced the
+  correctly-capitalized form for a bare `{{ true }}`/`{{ false }}` - the
+  buggy fallback path was simply never exercised. Fixed for free by the
+  convergence; the old (buggy) behavior is kept only as the fallback for
+  if Crinja itself is ever unavailable.
+- Also found: the bare quoted-string-literal path never unescaped
+  anything (`'quote\'s here'` came back with the backslash still
+  attached); Crinja's real string-literal parser does unescape, so a
+  successful Crinja render is strictly more correct, not just
+  equivalent - same fallback-only-on-failure treatment.
+- Verified via `crystal spec` (1061 examples, 0 failures) and empirical
+  probes confirming Crinja rejects (raises `Crinja::TemplateSyntaxError`,
+  not a silent misrender) numeric forms the hand-rolled path currently
+  accepts more loosely (`1e10`, `1_000`, `0x1F`) - those safely fall back
+  to unchanged prior behavior.
 
 ---
 
