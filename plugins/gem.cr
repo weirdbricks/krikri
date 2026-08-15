@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/crystal_play/base_plugin"
+require "../src/crystal_play/plugin_helpers/gem_command"
 
 module CrystalPlay
   # Gem plugin - manages Ruby gems via the `gem` CLI. Compatible with (a
@@ -42,8 +43,23 @@ module CrystalPlay
   # than pip.cr's own state: latest handling, revisit if a real
   # playbook needs it).
   #
-  # Not implemented: `repository:`, `include_dependencies:`, `norc:`,
-  # `pre_release:`, `gem_source:` (local .gem file installs), `force:`.
+  # - repository: `--source <repository>`
+  # - include_dependencies: default true (matching real Ansible's own
+  #   default exactly - NOT false) - only ever adds a flag
+  #   (`--ignore-dependencies`) when explicitly set false; true adds
+  #   nothing (modern rubygems installs dependencies by default with no
+  #   flag needed)
+  # - norc: `--norc` - real Ansible gates this on the installed rubygems
+  #   version being >= 2.5.2; not replicated here (a rubygems that old
+  #   predates any real playbook this project has benchmarked against by
+  #   a decade-plus) - always added when requested
+  #
+  # Verified against real community.general gem.py's own `install`/
+  # `uninstall`/`common_opts` source directly (flag order included), via
+  # a new pure `PluginHelpers::GemCommand`.
+  #
+  # Not implemented: `pre_release:`, `gem_source:` (local .gem file
+  # installs), `force:`.
   class GemPlugin < BasePlugin
     def execute : PluginResult
       name = @params["name"]?
@@ -76,14 +92,12 @@ module CrystalPlay
 
       user_install = @params["user_install"]?.nil? || is_true?(@params["user_install"]?)
       bindir = @params["bindir"]?
+      include_dependencies = @params["include_dependencies"]?.nil? || is_true?(@params["include_dependencies"]?)
 
-      cmd = String.build do |io|
-        io << executable << " install " << name
-        io << " -v \"" << version << "\"" if version
-        io << (user_install ? " --user-install" : " --no-user-install")
-        io << " --bindir \"" << bindir << "\"" if bindir
-        io << " --no-document"
-      end
+      cmd = PluginHelpers::GemCommand.install_command(
+        executable, name, version, user_install, bindir,
+        @params["repository"]?, include_dependencies, is_true?(@params["norc"]?)
+      )
 
       result = remote_exec(cmd)
       unless result[:exit_code] == 0
@@ -96,9 +110,7 @@ module CrystalPlay
     private def remove(executable : String, name : String, version : String?) : PluginResult
       return PluginResult.new(changed: false, failed: false, msg: "Gem already absent") unless installed?(executable, name, version)
 
-      cmd = "#{executable} uninstall #{name} --executables --force"
-      cmd += " -v \"#{version}\"" if version
-      result = remote_exec(cmd)
+      result = remote_exec(PluginHelpers::GemCommand.uninstall_command(executable, name, version, is_true?(@params["norc"]?)))
 
       unless result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true, msg: "Failed to uninstall gem: #{result[:stderr]}")

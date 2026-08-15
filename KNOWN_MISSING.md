@@ -8,7 +8,29 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.370`.**
+**Currently at `0.9.371`.**
+
+---
+
+`0.9.371` (part 3 of the scope-cut pass) - `archive:`'s `attributes:`
+(chattr(1) flags, unconditional, fails on a real chattr error - verified
+against real AnsibleModule's own `set_attributes_if_different` source)
+and `seuser:`/`serole:`/`setype:`/`selevel:` (SELinux context via
+`chcon`, verified against real AnsibleModule's own `selinux_enabled()`/
+`set_context_if_different` source to correctly no-op entirely when
+SELinux isn't enabled on the target at all, matching real Ansible's own
+confirmed behavior - checked here via `/sys/fs/selinux/enforce`'s
+existence; the chcon-invocation shape itself on an actually-SELinux-
+enabled host is implemented per `chcon(1)`'s documented flags but not
+live-verified, no such host available in this project's usual Ubuntu/
+Debian benchmark environment). `gem:`'s `repository:` (`--source`),
+`include_dependencies:` (default **true**, not false - only ever adds a
+flag when explicitly set false) and `norc:` (`--norc`) - verified
+against real community.general gem.py's own `install`/`uninstall`/
+`common_opts` source directly, including flag order, via a new pure
+`PluginHelpers::GemCommand` (gem isn't installed on the dev machine
+either, so this one is command-construction-verified via unit specs
+against the real source, not live-executed).
 
 ---
 

@@ -1,5 +1,5 @@
 module CrystalPlay
-  VERSION = "0.9.370"
+  VERSION = "0.9.371"
   
   def self.version_info
     String.build do |str|

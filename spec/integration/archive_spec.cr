@@ -167,6 +167,48 @@ describe "archive plugin" do
     Dir.exists?(source_dir).should be_false
   end
 
+  describe "attributes: (chattr)" do
+    # Real bug found via a proactive scope-cut audit: attributes: was
+    # entirely unimplemented. Verified against real AnsibleModule's own
+    # set_attributes_if_different source: unconditional (no filesystem-
+    # support gate), fails the task with a clear message on a real
+    # chattr error. This spec sandbox has no CAP_LINUX_IMMUTABLE (not
+    # root), so a real `chattr +i` genuinely fails here - confirmed
+    # directly against the real chattr binary before writing this -
+    # which is exactly what's being verified: the failure propagates as
+    # a real task failure instead of being silently swallowed.
+    it "fails the task when the real chattr command fails" do
+      dest = dest_path("attributes-fail.gz")
+      result = PluginSpecHelper.run("archive", {
+        "path" => File.join(TMP_DIR, "src", "a.txt"), "dest" => dest, "attributes" => "+i",
+      })
+
+      result["failed"].as_bool.should be_true
+      result["msg"].as_s.should contain("chattr failed")
+    end
+  end
+
+  describe "seuser:/serole:/setype:/selevel: (SELinux context)" do
+    # Real bug found via the same audit: these were entirely
+    # unimplemented. Verified against real AnsibleModule's own
+    # selinux_enabled()/set_context_if_different source: real Ansible
+    # skips this ENTIRELY (no chcon attempt at all) when SELinux isn't
+    # enabled on the target - this dev sandbox has no /sys/fs/selinux at
+    # all, so this confirms the archive itself still succeeds cleanly
+    # (a true no-op, matching real Ansible's own verified behavior)
+    # rather than attempting (and failing) a chcon call regardless.
+    it "does not fail the archive when SELinux isn't enabled on the target (a true no-op, matching real Ansible)" do
+      dest = dest_path("selinux-noop.gz")
+      result = PluginSpecHelper.run("archive", {
+        "path" => File.join(TMP_DIR, "src", "a.txt"), "dest" => dest,
+        "seuser" => "system_u", "setype" => "etc_t",
+      })
+
+      result["failed"].as_bool.should be_false
+      result["changed"].as_bool.should be_true
+    end
+  end
+
   it "fails with a clear message when path or dest is missing" do
     result = PluginSpecHelper.run("archive", {"dest" => dest_path("x.tar.gz")})
 

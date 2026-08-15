@@ -46,8 +46,19 @@ module CrystalPlay
   #   own observed output.
   # - mode / owner / group: applied to the resulting dest file
   #
-  # Not implemented: attributes/selevel/serole/setype/seuser (SELinux),
-  # unsafe_writes.
+  # - attributes: a chattr(1) flag string (e.g. "+i") applied to dest -
+  #   verified against real AnsibleModule's own
+  #   `set_attributes_if_different` source, unconditional (no filesystem-
+  #   support gate), fails the task on a real chattr error.
+  # - seuser / serole / setype / selevel: SELinux file context, applied
+  #   via chcon - matches real Ansible's own confirmed no-op-when-
+  #   SELinux-isn't-enabled behavior (`AnsibleModule.selinux_enabled()`,
+  #   checked here via `/sys/fs/selinux/enforce`'s own existence, the
+  #   same file `selinuxenabled(8)` tests) - see `#apply_selinux_context`
+  #   for the one part of this NOT live-verified (the chcon-invocation
+  #   shape on an actually-SELinux-enabled host).
+  #
+  # Not implemented: unsafe_writes.
   #
   # All five formats are now built and read natively: Crystar for tar,
   # Compress::Gzip/Compress::Zip from Crystal's own standard library,
@@ -248,6 +259,12 @@ module CrystalPlay
 
       dest_state = missing.empty? ? (single_compress ? "compress" : "archive") : "incomplete"
       apply_dest_attributes(dest)
+      if error = apply_attributes(dest)
+        return error
+      end
+      if error = apply_selinux_context(dest)
+        return error
+      end
 
       archived = single_compress ? found_paths : members
       stat_fields = dest_stat_fields(dest)
@@ -511,6 +528,61 @@ module CrystalPlay
       # A chmod/chown failure (e.g. not running as root/owner) shouldn't
       # fail the whole task - matches the previous shell implementation's
       # behavior of not checking these commands' exit codes either.
+    end
+
+    # `attributes:` - a chattr(1) flag string (e.g. "+i" for immutable),
+    # applied to *dest* - verified against real AnsibleModule's own
+    # `set_attributes_if_different` source: unconditional (no filesystem-
+    # support gate the way SELinux context has), fails the task with
+    # "chattr failed" if the chattr command itself errors, matched
+    # exactly rather than silently swallowed the way chmod/chown above
+    # are (that swallowing is this module's OWN documented convention,
+    # not something real Ansible does for chattr).
+    private def apply_attributes(dest : String) : PluginResult?
+      attributes = @params["attributes"]?
+      return nil unless attributes && !attributes.empty?
+
+      mod = attributes[0].in?('+', '-') ? attributes[0] : '='
+      flags = attributes[0].in?('+', '-') ? attributes[1..] : attributes
+
+      result = remote_exec("chattr #{mod}#{flags} #{dest}")
+      if result[:exit_code] != 0 || !result[:stderr].empty?
+        return PluginResult.new(changed: false, failed: true, msg: "chattr failed: #{result[:stdout]}#{result[:stderr]}")
+      end
+
+      nil
+    end
+
+    # `seuser:`/`serole:`/`setype:`/`selevel:` - SELinux file context,
+    # applied to *dest* via `chcon`. Verified against real AnsibleModule's
+    # own `set_context_if_different`/`selinux_enabled` source: real
+    # Ansible skips this ENTIRELY (not even attempting it) when SELinux
+    # isn't enabled on the target at all (`if not self.selinux_enabled():
+    # return changed`) - matched here via the standard `/sys/fs/selinux/
+    # enforce` selinuxfs check, the same file `selinuxenabled(8)` itself
+    # tests. On any non-SELinux host (the overwhelming majority of real-
+    # world targets this project has ever benchmarked against) this is a
+    # verified, confirmed no-op, identical to real Ansible's own behavior
+    # - the chcon-invocation shape itself for an actually-SELinux-enabled
+    # host is implemented per `chcon(1)`'s documented flags but NOT
+    # live-verified against a real SELinux-enabled target (none available
+    # in this project's usual Ubuntu/Debian benchmark environment).
+    private def apply_selinux_context(dest : String) : PluginResult?
+      return nil unless File.exists?("/sys/fs/selinux/enforce")
+
+      flags = [] of String
+      flags << "-u #{@params["seuser"]}" if @params["seuser"]?
+      flags << "-r #{@params["serole"]}" if @params["serole"]?
+      flags << "-t #{@params["setype"]}" if @params["setype"]?
+      flags << "-l #{@params["selevel"]}" if @params["selevel"]?
+      return nil if flags.empty?
+
+      result = remote_exec("chcon #{flags.join(" ")} #{dest}")
+      if result[:exit_code] != 0
+        return PluginResult.new(changed: false, failed: true, msg: "invalid selinux context: #{result[:stderr]}")
+      end
+
+      nil
     end
 
     private def dest_stat_fields(dest : String) : NamedTuple(size: Int64, uid: Int64, gid: Int64, owner: String, group: String, mode: String, state: String)
