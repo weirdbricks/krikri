@@ -8,9 +8,80 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.355`.**
+**Currently at `0.9.356`.**
 
 ---
+
+`0.9.356` (round 28 - `prometheus.prometheus.pushgateway`, first new
+role tested since round 27; also closes a real gap in 0.9.353's own
+task-name-rendering fix):
+
+- **0.9.353's task-name-rendering fix had a real interaction gap with
+  round 26's own EARLIER (eager) task-name fix**, found live via this
+  role's own `_common`-sourced "Create systemd service unit
+  {{ _common_service_name }}" task banner still showing literally
+  "undefined" even after 0.9.353 shipped. Root cause:
+  `run_include_role_once`'s eager task-name substitution (added in
+  round 26, only runs when an `include_role:` call has its own
+  `vars:`) uses a narrower vars_context than the task ever actually
+  executes with - missing the newly-loaded child role's own
+  `vars/main.yml` entries and its `ansible_parent_role_names`/
+  `ansible_collection_name` magic vars, neither available until the
+  task actually runs. For a task name referencing only an
+  explicitly-passed `include_role: vars:` entry (round 26's original
+  case) this narrower context was enough; for one referencing
+  anything else (`_common_service_name`, computed internally by
+  `_common`'s own `vars/main.yml`, never passed as an include_role
+  var at all) the eager substitution rendered the missing-var sentinel
+  `"undefined"` and PERMANENTLY BAKED THAT INTO `task.name` - since
+  0.9.353's lazy `render_task_name_for_display` only re-renders a name
+  that still contains `{{`, and "undefined" has none, the later,
+  correct, full-context render never got a chance to run at all.
+  Reproduced by inserting a probe task immediately before the
+  offending one: the probe's own body correctly resolved
+  `_common_service_name` to `"pushgateway"` via the exact same
+  vars_context machinery, proving the value was never actually
+  unavailable - only the eager, narrower pre-render had gotten there
+  first and gotten it wrong. Fix: removed the eager substitution block
+  entirely - it's now fully redundant with 0.9.353's lazy render
+  (which has a strictly more complete context) for every case it used
+  to handle correctly, and no longer actively harmful for the cases it
+  didn't. Also fixed "Download binary undefined" (same root cause, a
+  separate `_common` task referencing an internally-computed var) as a
+  side effect.
+- **One more real gap found live while investigating, NOT fixed this
+  round**: `_common`'s own generic cross-role handler notification
+  (`notify: "{{ ansible_parent_role_names | first }} : Restart
+  {{ _common_service_name }}"`, matched against a handler named
+  `"Restart {{ _common_service_name }}"` with a role-name-prefixed
+  notify convention) never actually fires - `task.notify` is set once
+  at parse time from raw YAML strings and is never re-substituted
+  anywhere before being compared against the loaded handler's own
+  name. This is a pre-existing gap, not a regression from this
+  round's fix or from 0.9.353 - confirmed by checking why round 27's
+  own handler DID fire successfully: `blackbox_exporter` defines its
+  own PLAIN-STRING handlers with `listen:` topics (`"restart
+  blackbox_exporter"`, no Jinja at all), an entirely separate,
+  simpler mechanism from `_common`'s generic templated one. The
+  service still comes up correctly on a cold pass (the role's own
+  direct "enabled on boot" task starts it regardless), so this only
+  matters for a warm rerun where ONLY a config change occurs and no
+  other task would otherwise trigger a restart - deferred to a future
+  round; needs both `notify:` list substitution and role-namespaced
+  handler-name matching, a distinct, more involved piece of work than
+  a single-round fix.
+- **Verified live** on a fresh 2-node `G3.2GB` Atlantic.net pair: cold
+  pass `ok=28 changed=6 failed=0 skipped=8` vs python's
+  `ok=31 changed=10 failed=0 skipped=9` (the differences are the known
+  fact-cache `ok` artifact plus the one un-fired handler noted above -
+  every other task's status matched 1:1 in sequence). `failed=0` on
+  both; service verified `active` and answering `curl :9091` with
+  `200`.
+- Full `crystal spec` suite: 1121 examples, 0 failures (unchanged
+  count - this was a targeted removal of dead/harmful code plus a
+  live-reproduced fix, not a new isolated code path suited to a fresh
+  spec; verified via the existing round-26 repro plus a new live-host
+  probe instead).
 
 `0.9.355` (proactive audit for the "same bug lives in multiple
 independent copies" pattern - round 27 found this exact bug class in

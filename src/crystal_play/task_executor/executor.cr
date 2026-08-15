@@ -2598,26 +2598,38 @@ module CrystalPlay
         return
       end
 
-      # Re-render each loaded task's own `name:` against the include_role's
-      # `vars:`, same as execute_include_tasks already does for a plain
-      # include_tasks:'s include_vars (line ~2421 above). Without this, a
-      # role's tasks/main.yml `name: "Create group {{ _child_group }}"`
-      # where `_child_group` is set only via include_role: vars: (not a
-      # role default/vars file, which get baked in earlier during
-      # RoleLoader.load_single_role and so already render correctly)
-      # stayed literal in the "TASK [...]" banner even though the task's
-      # own body (msg:/when:) rendered `_child_group` correctly - task
-      # execution rebuilds its own vars_context from role
-      # defaults/vars/task.vars per task, but the printed banner text is
-      # whatever task.name already was BEFORE that per-task context
-      # exists. Found via prometheus.prometheus.alertmanager's own
-      # `_common` role include (`_common_system_group: "{{
-      # alertmanager_system_group }}"` passed as include_role vars:).
-      unless rendered_include_vars.empty?
-        name_context = vars_context.merge(rendered_include_vars)
-        name_substitutor = VarSubstitutor.new(vars: name_context, host_name: host.name)
-        included_tasks.each { |t| t.name = name_substitutor.substitute(t.name) }
-      end
+      # Round 26 originally had an eager re-render of each loaded task's
+      # `name:` here (against just the include_role: `vars:` passed in) to
+      # fix a role's tasks/main.yml `name: "Create group {{ _child_group
+      # }}"` staying literal in the "TASK [...]" banner - found via
+      # prometheus.prometheus.alertmanager's own `_common` role include
+      # (`_common_system_group: "{{ alertmanager_system_group }}"` passed
+      # as include_role vars:). That eager pass is now not just redundant
+      # but actively harmful: `render_task_name_for_display` (0.9.353)
+      # already re-renders every task name lazily, right before print,
+      # against the task's own FULL vars_context (role defaults/vars +
+      # magic vars + include_role vars - everything, not just what this
+      # one include_role: call happened to pass). This eager pass's own
+      # context was always a strict subset of that (missing the newly-
+      # loaded role's own vars/main.yml entries and its
+      # ansible_parent_role_names/ansible_collection_name magic vars,
+      # neither available until the task actually executes) - fine for a
+      # name referencing ONLY an explicitly-passed include_role var (round
+      # 26's case), but for a name referencing anything else (round 28's
+      # `_common_service_name`, computed internally by _common's own
+      # vars/main.yml from `ansible_parent_role_names`/
+      # `ansible_collection_name` - never passed as an include_role var at
+      # all) the substitution failed to "undefined" and PERMANENTLY BAKED
+      # THAT WRONG VALUE into `t.name`, since `render_task_name_for_display`
+      # only re-renders a name that still contains `{{` - "undefined" has
+      # none, so the later, correct, full-context render never got a
+      # chance to run. Found live via prometheus.prometheus.pushgateway's
+      # own "Create systemd service unit {{ _common_service_name }}" task
+      # (round 28) - reproduced by inserting a probe task right before it:
+      # the probe's own BODY correctly resolved `_common_service_name` to
+      # "pushgateway" via the exact same vars_context machinery, proving
+      # the value was never actually unavailable - only this eager,
+      # narrower pre-render had gotten there first and gotten it wrong.
 
       if item = vars_context["item"]?
         (included_tasks + included_handlers).each do |included_task|
