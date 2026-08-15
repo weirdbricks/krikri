@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.365-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.366-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,17 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.366` - proactive audit pass** (not a live round), prompted
+  directly by round 33's `apt_repository.cr` finding: searched the rest
+  of the plugin set for the same "a real command's failure silently
+  swallowed instead of failing the task" shape. Found and fixed the same
+  bug in `sysctl.cr` (`sysctl -w` failures ignored) and in `unarchive.cr`'s
+  own round-32 `chown -R`/`chgrp -R`/`chmod -R` fix (which had the exact
+  same gap one layer down). Also ported the round-32 virtual/Provides-
+  satisfied-package idempotency fix to `dnf.cr` (not live-verified - no
+  RPM host available this pass). `mount.cr`'s own identical gap is left
+  as-is - already an explicitly documented, deliberate scope cut, not an
+  oversight this audit needed to re-litigate.
 - **`0.9.363`-`0.9.365` (round 33) - `robertdebock.nomad` +
   `robertdebock.hashicorp`, first new role tested since round 32's
   nextcloud.** Three real bugs found and fixed live: `conditional_

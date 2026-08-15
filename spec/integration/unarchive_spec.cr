@@ -86,6 +86,26 @@ describe "unarchive plugin" do
     (File.info(File.join(dest, "sub", "b.txt")).permissions.value & 0o777).should eq(0o700)
   end
 
+  it "fails the task when owner: can't actually be applied, instead of silently succeeding" do
+    # Proactive audit fix (same "real command failure silently
+    # discarded" shape as apt_repository.cr's own update_cache bug and
+    # sysctl.cr's own apply_kernel_value bug found this round):
+    # apply_dest_attributes used to discard chown/chgrp/chmod's exit
+    # code entirely - a bogus owner: name (a real, common typo/stale-
+    # variable mistake) silently "succeeded" instead of failing the
+    # task, matching real Ansible's own AnsibleModule.set_owner_if_
+    # different behavior of failing on a real chown error.
+    dest = fresh_dest("tar-bad-owner")
+    result = PluginSpecHelper.run("unarchive", {
+      "src"   => File.join(TMP_DIR, "archive.tar.gz"),
+      "dest"  => dest,
+      "owner" => "crystal_ansible_spec_nonexistent_user",
+    })
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should contain("owner")
+  end
+
   it "reports changed: false on an idempotent rerun (tar --compare based)" do
     dest = fresh_dest("tar-idempotent")
     PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.tar.gz"), "dest" => dest})

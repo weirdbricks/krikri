@@ -238,7 +238,9 @@ module CrystalPlay
         end
       end
 
-      apply_dest_attributes(dest)
+      if attr_error = apply_dest_attributes(dest)
+        return attr_error
+      end
       stat_fields = dest_stat_fields(dest)
 
       files = list_files ? members(handler, src) : nil
@@ -343,30 +345,43 @@ module CrystalPlay
       remote_exec(cmd)[:exit_code] == 0
     end
 
-    private def apply_dest_attributes(dest : String)
-      # Applied RECURSIVELY over dest, not just to dest itself - real
-      # Ansible's unarchive module does a final os.walk()-based pass
-      # over every extracted path when owner:/group:/mode: is given.
-      # Verified live: robertdebock.nextcloud's `Install nextcloud`
-      # task (`owner: www-data, group: www-data`) left the ENTIRE
-      # extracted tree www-data:www-data on real ansible-playbook
-      # (dest itself, every subdirectory, every file down to AUTHORS)
-      # - crystal-ansible's own previous `chown #{owner} #{dest}` (no
-      # `-R`) left everything but dest itself still root:root, which
-      # then broke the role's own downstream `occ` commands ("Cannot
-      # write into 'apps' directory") since the role's own permissions
-      # pass only explicitly re-chowns config.php/config/data, relying
-      # on unarchive's owner: for everything else (apps/, 3rdparty/,
-      # etc).
+    # Returns a failed PluginResult if any of owner:/group:/mode: fails
+    # to apply, nil otherwise. Proactive-audit fix (same "real command
+    # failure silently discarded" shape as apt_repository.cr's own
+    # update_cache bug and sysctl.cr's own apply_kernel_value bug found
+    # this round): applied RECURSIVELY over dest, not just to dest
+    # itself - real Ansible's unarchive module does a final
+    # os.walk()-based pass over every extracted path when owner:/group:/
+    # mode: is given. Verified live: robertdebock.nextcloud's `Install
+    # nextcloud` task (`owner: www-data, group: www-data`) left the
+    # ENTIRE extracted tree www-data:www-data on real ansible-playbook
+    # (dest itself, every subdirectory, every file down to AUTHORS) -
+    # crystal-ansible's own previous `chown #{owner} #{dest}` (no `-R`)
+    # left everything but dest itself still root:root, which then broke
+    # the role's own downstream `occ` commands ("Cannot write into
+    # 'apps' directory") since the role's own permissions pass only
+    # explicitly re-chowns config.php/config/data, relying on
+    # unarchive's owner: for everything else (apps/, 3rdparty/, etc).
+    private def apply_dest_attributes(dest : String) : PluginResult?
       if owner = @params["owner"]?
-        remote_exec("chown -R #{owner} #{dest}")
+        result = remote_exec("chown -R #{owner} #{dest}")
+        if result[:exit_code] != 0
+          return PluginResult.new(changed: true, failed: true, msg: "Failed to set owner on #{dest}: #{result[:stderr]}")
+        end
       end
       if group = @params["group"]?
-        remote_exec("chgrp -R #{group} #{dest}")
+        result = remote_exec("chgrp -R #{group} #{dest}")
+        if result[:exit_code] != 0
+          return PluginResult.new(changed: true, failed: true, msg: "Failed to set group on #{dest}: #{result[:stderr]}")
+        end
       end
       if mode = @params["mode"]?
-        remote_exec("chmod -R #{mode} #{dest}")
+        result = remote_exec("chmod -R #{mode} #{dest}")
+        if result[:exit_code] != 0
+          return PluginResult.new(changed: true, failed: true, msg: "Failed to set mode on #{dest}: #{result[:stderr]}")
+        end
       end
+      nil
     end
 
     private def dest_stat_fields(dest : String) : NamedTuple(size: Int64, uid: Int64, gid: Int64, owner: String, group: String, mode: String)

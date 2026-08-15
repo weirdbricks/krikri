@@ -65,7 +65,29 @@ module CrystalPlay
 
       unless check_mode
         write_lines(sysctl_file, new_lines) if changed
-        apply_kernel_value(name, value) if state == "present" && is_true?(@params["sysctl_set"]?)
+
+        if state == "present" && is_true?(@params["sysctl_set"]?)
+          # Real ansible.posix.sysctl fails the task when `sysctl -w`
+          # itself fails (an invalid/read-only kernel parameter name,
+          # for instance) - unless ignoreerrors: is set, which is
+          # forwarded to sysctl's own `-e` flag for exactly this. This
+          # used to discard apply_kernel_value's result entirely and
+          # unconditionally return failed: false regardless - the same
+          # "real command failure silently swallowed" shape as
+          # apt_repository.cr's own update_cache bug found this round,
+          # just in a different plugin.
+          kernel_result = apply_kernel_value(name, value)
+          if kernel_result[:exit_code] != 0 && !is_true?(@params["ignoreerrors"]?)
+            return PluginResult.new(
+              changed: changed,
+              failed: true,
+              msg: "Failed to set sysctl #{name}: #{kernel_result[:stderr]}",
+              name: name,
+              sysctl_file: sysctl_file
+            )
+          end
+        end
+
         reload_sysctl(sysctl_file) if changed && is_true?(@params["reload"]?, default: true)
       end
 

@@ -268,10 +268,27 @@ module CrystalPlay
         
         result = remote_exec(cmd)
         all_output << result[:stdout]
-        
+
         if result[:exit_code] == 0
-          changed = true
-          messages << "Installed: #{to_install.join(", ")}"
+          # A requested name can be a virtual package already satisfied
+          # by something else installed - `package_installed?`'s own
+          # `dnf list installed <name>` pre-check only ever looks up the
+          # literal requested name, which a purely virtual/Provides:-
+          # satisfied name never has its own `dnf list installed` entry
+          # for, so it always fell through to "needs install" here. dnf
+          # itself prints a literal "Nothing to do." and still exits 0
+          # for that case (a genuine no-op), so trusting exit_code alone
+          # always reported changed: true even when nothing happened -
+          # same bug class already fixed in apt.cr/package.cr's own
+          # apt-get install handling (apt_summary_had_no_effect?), which
+          # this handler never got ported to since it's a separate
+          # RPM-based code path.
+          if result[:stdout].includes?("Nothing to do")
+            messages << "Package#{to_install.size > 1 ? "s" : ""} #{to_install.join(", ")} already satisfied"
+          else
+            changed = true
+            messages << "Installed: #{to_install.join(", ")}"
+          end
         else
           return PluginResult.new(
             changed: false,
@@ -283,7 +300,7 @@ module CrystalPlay
           )
         end
       end
-      
+
       # Update packages (if update_only mode)
       unless to_update.empty?
         pkg_list = to_update.map { |p| quote_package(p) }.join(" ")

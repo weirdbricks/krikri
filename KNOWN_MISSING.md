@@ -8,7 +8,64 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.365`.**
+**Currently at `0.9.366`.**
+
+---
+
+`0.9.366` - proactive audit pass, prompted directly by round 33's
+`apt_repository.cr` findings (a real command's failure silently swallowed
+instead of failing the task). Searched the rest of the plugin set for the
+same shape - `remote_exec(...)` results whose exit code is never checked
+by the caller - and for `dnf.cr`'s own copy of the round-32 virtual/
+Provides:-satisfied-package idempotency bug. No new host round; fixes
+verified via local specs (or documented as unverified where a live host
+of the right OS family isn't available).
+
+- **`dnf.cr`'s `handle_install` never got the virtual/Provides:-satisfied
+  package fix `apt.cr` (round 15/0.9.258, the ruby round) and `package.cr`
+  (round 32/0.9.362) already have.** `package_installed?`'s own `dnf list
+  installed <name>` pre-check only ever looks up the literal requested
+  name, which a purely virtual/Provides:-satisfied name never has its own
+  entry for - so it always fell through to "needs install", and since dnf
+  itself prints a literal `"Nothing to do."` and still exits 0 for that
+  case (a genuine no-op), trusting exit_code alone always reported
+  `changed: true` even when nothing happened. Fixed the same way as the
+  other two copies: check for dnf's own no-op message. **Not live-
+  verified this round** - no RPM-family host available; flagged the same
+  way round 32 flagged this exact gap without fixing it. No spec added
+  (dnf isn't installed on the dev machine either).
+- **`sysctl.cr`'s `apply_kernel_value` (the `sysctl_set: true` live
+  `sysctl -w` call) discarded its result entirely - `execute()`
+  unconditionally returned `failed: false` regardless of whether the
+  live kernel-parameter set actually succeeded.** Real
+  `ansible.posix.sysctl` fails the task when this fails, unless
+  `ignoreerrors:` is set (forwarded to `sysctl`'s own `-e` flag).
+  Fixed to check the exit code and fail (respecting `ignoreerrors:`).
+  Regression specs added to `spec/integration/sysctl_spec.cr` using a
+  deliberately bogus dotted name - real `sysctl -w` genuinely fails for
+  any name with no matching `/proc/sys/` path on any Linux host,
+  verified directly against the real binary, not assumed; no real kernel
+  parameter is touched either way.
+- **`unarchive.cr`'s `apply_dest_attributes` (the round-32
+  `chown -R`/`chgrp -R`/`chmod -R` fix itself) discarded ITS OWN result
+  too** - a bogus `owner:`/`group:` name would silently "succeed"
+  instead of failing the task, the same shape one layer down from the
+  bug that introduced it. Fixed to check each command's exit code and
+  fail with a clear message; regression spec added to
+  `spec/integration/unarchive_spec.cr` using a nonexistent owner name
+  (no real chown of anything the spec doesn't own).
+- **Explicitly NOT changed**: `mount.cr`'s own `ensure_mounted`/
+  `ensure_unmounted`/`state: remounted` helpers are ALSO exit-code-blind
+  by the same shape, but this is already a deliberate, explicitly
+  documented scope cut from a prior round (see the class-level doc
+  comment in `mount.cr` itself) - not something this audit re-litigated.
+  Also checked and found clean (already correctly re-templates/
+  propagates failures, no action needed): every other
+  `VariableLookup.new(vars).resolve(...)` call site across the codebase
+  (recursive re-templating - the audit pass from 2026-08-11 already
+  covers all of them), and `apt_repository.cr`'s own PPA-key-fetch paths
+  (`ensure_ppa_key`/`import_via_gpg`, already verify success via the
+  resulting keyfile's existence/size, not just a discarded exit code).
 
 ---
 
