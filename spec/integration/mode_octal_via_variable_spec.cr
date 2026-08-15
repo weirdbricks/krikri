@@ -79,41 +79,70 @@ describe "mode: piped through a variable that's itself an unquoted-octal YAML li
     # its own (all digits 0-7, 3-4 of them), it must be used as-is, not
     # reformatted.
     #
-    # NOTE: originally this spec reproduced os_hardening's exact shape
-    # via `set_fact: "{{ item.key }}": "{{ item.value }}"` + `loop: "{{
-    # os_vars | dict2items }}"`, but `dict2items` is itself still
-    # unimplemented in crystal-ansible's FilterEngine (it passes the dict
-    # through unchanged), so that loop never actually set `my_mode` and
-    # the spec silently tested nothing. Reproduce the decimal-coercion
-    # directly instead: a plain `set_fact: my_mode: "1777"` routes the
-    # string through set_fact's own `coerce`, which decimal-parses it to
-    # the int 1777 - the exact value the fix must not re-reformat.
+    # Reproduces os_hardening's own real shape:
+    #   `os_hardening_set_os_variables.yml` walks `os_vars` via
+    #   `with_dict` (which binds the loop item to the dict's own
+    #   {key, value} pair, the `dict2items` representation), then
+    #   `set_fact: "{{ item.key }}": "{{ item.value }}"` per item.
+    #   `dict2items` is now implemented in `FilterEngine` (was a
+    #   passthrough before, which made this exact shape silently
+    #   test-nothing in the spec - see KNOWN_MISSING.md's 0.9.339 entry
+    #   and the `0.9.346` round-24 open-scope-cuts note in README.md
+    #   for the history).
     dir = File.tempname("mode-decimal-coerced-octal")
     playbook = File.tempname("mode-decimal-coerced-octal", ".yml")
     File.write(playbook, <<-YAML)
       - name: repro
         hosts: localhost
         gather_facts: false
+        vars:
+          os_vars:
+            dir_a: "1777"
+            dir_b: "0755"
         tasks:
-          - name: set_fact decimal-coerces the octal-style string
+          - name: set_fact decimal-coerces each os_vars value via the os_hardening shape
             ansible.builtin.set_fact:
-              my_mode: "1777"
-          - name: make dir
+              "{{ item.key }}": "{{ item.value }}"
+            loop: "{{ os_vars | dict2items }}"
+          - name: make dir_a
             ansible.builtin.file:
-              path: #{dir}
+              path: #{dir}_a
               state: directory
-              mode: "{{ my_mode }}"
+              mode: "{{ dir_a }}"
+          - name: make dir_b
+            ansible.builtin.file:
+              path: #{dir}_b
+              state: directory
+              mode: "{{ dir_b }}"
       YAML
 
     output1 = IO::Memory.new
     status1 = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output1, error: output1)
     status1.success?.should be_true
 
+    # dir_a: the decimal-coerced-from-string case (the actual bug) -
+    # "1777" must stay "1777", not be re-reformatted to "3361".
     stat_output = IO::Memory.new
-    Process.run("stat", ["-c", "%a", dir], output: stat_output)
+    Process.run("stat", ["-c", "%a", "#{dir}_a"], output: stat_output)
     stat_output.to_s.strip.should eq("1777")
 
-    # Idempotency: the already-correctly-set directory must not be
+    # dir_b: a value that LOOKS like a leading-zero octal after
+    # decimal-coercion too - "0755" -> int 755. The mode-octal fix in
+    # TaskExecutor (KNOWN_MISSING.md's 0.9.339 entry) checks whether
+    # the int's plain decimal digits already match `\\A0?[0-7]{3,4}\\z`
+    # (the same regex file.cr's mode parser uses); if so, use as-is.
+    # 755 is exactly 3 valid octal digits, so the executor uses it
+    # unchanged - mode 0755, the correct value. (My initial spec
+    # comment assumed the reformatting would apply and produce "1363"
+    # via to_s(8); the live behavior is the BETTER outcome where
+    # the bug fix already handles "0755" through the same path as
+    # "1777".) This dir_b assertion just confirms the dir_a fix
+    # didn't regress the leading-zero decimal-coercion case.
+    stat_output2 = IO::Memory.new
+    Process.run("stat", ["-c", "%a", "#{dir}_b"], output: stat_output2)
+    stat_output2.to_s.strip.should eq("755")
+
+    # Idempotency: the already-correctly-set directories must not be
     # re-formatted/re-chmod'd on a second run.
     output2 = IO::Memory.new
     status2 = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output2, error: output2)
@@ -121,6 +150,9 @@ describe "mode: piped through a variable that's itself an unquoted-octal YAML li
     output2.to_s.should_not contain("changed=1")
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
-    Dir.delete(dir) if dir && Dir.exists?(dir)
+    if dir
+      Dir.delete("#{dir}_a") if Dir.exists?("#{dir}_a")
+      Dir.delete("#{dir}_b") if Dir.exists?("#{dir}_b")
+    end
   end
 end

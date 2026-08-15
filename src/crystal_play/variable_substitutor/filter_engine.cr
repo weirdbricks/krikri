@@ -413,6 +413,51 @@ module CrystalPlay
           # (fell through to the `else` passthrough below), silently
           # discarding every merge-in argument.
           split_top_level_args(filter_args).reduce(value) { |acc, arg_expr| combine_hash(acc, resolve_expression(arg_expr)) }
+        when "dict2items"
+          # dict2items(key_name='key', value_name='value') - real Ansible's
+          # own filter (NOT standard Jinja2; the Crinja corpus confirms
+          # Python/Jinja2 reject it as "No filter named 'dict2items'"),
+          # converts a dict to a list of {key: k, value: v} items so
+          # `loop: "{{ my_dict | dict2items }}"` can iterate. dev-sec
+          # os_hardening's own `os_hardening_set_os_variables.yml` uses
+          # exactly this shape (`with_dict` semantics) to walk a flat
+          # `{mount_point: {mode: ..., owner: ...}}` config; before this
+          # was implemented, the passthrough meant `FilterEngine` returned
+          # the dict unchanged, `with_dict`'s loop binding produced a
+          # single `item` that's the whole dict, and every downstream
+          # `item.key`/`item.value` template was undefined - a regression
+          # spec for the related mode bug had to be rewritten with a
+          # `set_fact: my_mode: "1777"` shape to avoid the loop never
+          # actually setting the fact. Now resolves to a real list of
+          # `{key_name, value_name}` dicts in the same insertion order
+          # Ansible's CPython 3.7+ preserves (Crystal Hash insertion
+          # order is the same). The two kwarg names default to
+          # `key`/`value`; os_hardening uses defaults. Real Ansible's
+          # `dict2items` also accepts a `wantlist=True` form that returns
+          # a list of [k, v] pairs (no dict wrapping) - not seen in any
+          # role yet, deliberately not implemented.
+          key_name = parse_kwarg(filter_args, "key_name") || "key"
+          value_name = parse_kwarg(filter_args, "value_name") || "value"
+          JSON::Any.new(dict_to_items(as_hash(value), key_name, value_name))
+        when "items2dict"
+          # items2dict(key_name='key', value_name='value') - the inverse
+          # of dict2items: takes a list of dicts (each having a `key_name`
+          # field and a `value_name` field) and produces a single dict
+          # mapping key_name -> value_name. Real Ansible's own filter,
+          # same Python-ansible-only status. Not yet seen in any
+          # benchmarked role's playbook (the Crinja corpus has it once,
+          # inside a `postgresql_global_config_options` evaluation that's
+          # only reachable through `community.general`'s collection form),
+          # but the corpus report classifies it as a clean
+          # `[ansible-filter-only]` divergence rather than a real engine
+          # bug, so implementing it here is a natural follow-up to
+          # dict2items. Same kwarg API; a list element that's not a dict
+          # or is missing the key_name field is silently skipped (the
+          # inverse: a partial dict would otherwise crash the whole
+          # filter on a single malformed element).
+          key_name = parse_kwarg(filter_args, "key_name") || "key"
+          value_name = parse_kwarg(filter_args, "value_name") || "value"
+          JSON::Any.new(items_to_dict(as_array(value), key_name, value_name))
         when "regex_search"
           # regex_search(pattern, group_ref='') - real Ansible's own
           # filter (not standard Jinja2): searches *pattern* anywhere in
@@ -1215,6 +1260,51 @@ module CrystalPlay
 
       private def as_array(value : JSON::Any) : Array(JSON::Any)
         value.as_a? || [] of JSON::Any
+      end
+
+      # Same shape as as_array above - if value is already a JSON Hash,
+      # return it; otherwise return an empty Hash (the only sensible
+      # "absent" value for a filter that needs a dict to read from,
+      # matching how as_array returns an empty Array for a non-Array
+      # input). Used by dict2items to be tolerant of undefined / nil /
+      # non-dict inputs the way Ansible itself is.
+      private def as_hash(value : JSON::Any) : Hash(String, JSON::Any)
+        value.as_h? || {} of String => JSON::Any
+      end
+
+      # dict2items' transformation core. Walks a Hash in its native
+      # insertion order (Crystal Hash is insertion-ordered since 0.34,
+      # matching CPython 3.7+ dict semantics) and emits a list of
+      # `{key_name => k, value_name => v}` Hashes. The key and value
+      # names default to "key"/"value" at the apply() call site.
+      private def dict_to_items(hash : Hash(String, JSON::Any), key_name : String, value_name : String) : Array(JSON::Any)
+        hash.map do |k, v|
+          JSON::Any.new({
+            key_name   => JSON::Any.new(k),
+            value_name => v,
+          })
+        end
+      end
+
+      # items2dict' transformation core. Inverse of dict_to_items:
+      # takes a list of `{key_name, value_name, ...}` dicts and produces
+      # a single dict mapping key_name -> value_name. Elements that
+      # aren't dicts, or that don't carry the named key field, are
+      # silently dropped (matches real Ansible's tolerance: malformed
+      # list elements don't fail the whole filter, they just contribute
+      # nothing to the output). On a key collision later in the list
+      # wins (same precedence as a `combine` chain).
+      private def items_to_dict(items : Array(JSON::Any), key_name : String, value_name : String) : Hash(String, JSON::Any)
+        result = {} of String => JSON::Any
+        items.each do |item|
+          next unless item.as_h?
+          h = item.as_h
+          k = h[key_name]?.try(&.as_s?)
+          next unless k
+          v = h[value_name]?
+          result[k] = v if v
+        end
+        result
       end
 
       # Same shape as JinjaFilters.flatten_array (jinja_filters.cr,

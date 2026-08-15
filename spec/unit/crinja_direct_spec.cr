@@ -70,6 +70,33 @@ describe "raw Crinja (rebase canary)" do
     crinja_render("{{ {'a': 1, 'b': 2} | combine({'b': 3, 'c': 4}) }}").should eq("{'a': 1, 'b': 3, 'c': 4}")
   end
 
+  # dict2items / items2dict - real Ansible's own filters (NOT standard
+  # Jinja2; Python/Jinja2 reject them as "No filter named ..."), mirrored
+  # here in jinja_filters.cr so a `.j2` template's `{% for %}` block-tag
+  # chain can use them. The hand-rolled FilterEngine has the same pair
+  # for the plain `{{ }}` filter chain (spec/unit/filter_engine_spec.cr) -
+  # this is the Crinja-side dual registration the project's CRINJA.md
+  # warns is the bug class that historically lived independently in both
+  # evaluators.
+  it "registers dict2items (default key_name='key', value_name='value')" do
+    crinja_render("{{ {'a': 1, 'b': 2} | dict2items | length }}").should eq("2")
+    crinja_render("{{ {'a': 1} | dict2items | first | type_debug }}").should eq("dict")
+    crinja_render("{{ {'a': 1} | dict2items | first }}").should eq("{'key': 'a', 'value': 1}")
+  end
+
+  it "registers dict2items with custom key_name and value_name kwargs" do
+    crinja_render("{{ {'x': 'foo'} | dict2items(key_name='name', value_name='data') | first }}").should eq("{'name': 'x', 'data': 'foo'}")
+  end
+
+  it "registers items2dict (inverse of dict2items, later-wins on key collision)" do
+    crinja_render("{{ [{'key': 'a', 'value': 1}, {'key': 'b', 'value': 2}] | items2dict }}").should eq("{'a': 1, 'b': 2}")
+    crinja_render("{{ [{'key': 'a', 'value': 1}, {'key': 'a', 'value': 2}] | items2dict }}").should eq("{'a': 2}")
+  end
+
+  it "registers items2dict with custom key_name and value_name kwargs" do
+    crinja_render("{{ [{'name': 'x', 'data': 'foo'}] | items2dict(key_name='name', value_name='data') }}").should eq("{'x': 'foo'}")
+  end
+
   it "registers intersect and flatten" do
     crinja_render("{{ [1, 2, 3] | intersect([2, 3, 4]) | sort | join(',') }}").should eq("2,3")
     crinja_render("{{ [1, [2, 3], 4] | flatten | join(',') }}").should eq("1,2,3,4")

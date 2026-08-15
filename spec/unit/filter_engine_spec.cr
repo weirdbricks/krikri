@@ -491,4 +491,102 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     result = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate("dict(pairs)")
     (JSON.parse(result) rescue nil).should eq(JSON.parse(%({"a": 1, "b": 2})))
   end
+
+  it "dict2items converts a flat dict to a list of {key, value} dicts in insertion order, defaults to key_name='key' value_name='value'" do
+    # Real Ansible's own filter (NOT standard Jinja2; the Crinja corpus
+    # confirms Python/Jinja2 reject it as "No filter named
+    # 'dict2items'"). dev-sec os_hardening's own
+    # os_hardening_set_os_variables.yml uses `with_dict` over an
+    # os_vars mapping to apply per-mount config; the with_dict loop
+    # binding is what the role's `loop: "{{ os_vars | dict2items }}"`
+    # equivalent resolves to. Before this implementation, the
+    # passthrough meant with_dict bound the WHOLE dict to a single
+    # item, every downstream `item.key`/`item.value` was undefined,
+    # and a regression spec for the related mode bug had to be
+    # rewritten as a plain `set_fact: my_mode: "1777"` (see
+    # spec/integration/mode_octal_via_variable_spec.cr, which is now
+    # able to use the real os_hardening shape).
+    input = JSON.parse(%({"a": 1, "b": 2, "c": 3}))
+    result = engine.apply(input, "dict2items").as_a
+    result.size.should eq(3)
+    result.map(&.as_h).map { |h| {h["key"].as_s => h["value"].as_i} }.should eq([{"a" => 1_i64}, {"b" => 2_i64}, {"c" => 3_i64}])
+  end
+
+  it "dict2items honors custom key_name and value_name kwargs" do
+    # Real Ansible accepts `dict2items(key_name='k', value_name='v')`
+    # for callers that want the field names to be something other
+    # than the defaults (prometheus's _common role uses a
+    # 'label'/'value' pair elsewhere; the kwarg name itself is the
+    # caller's choice, not hardcoded).
+    input = JSON.parse(%({"x": "foo", "y": "bar"}))
+    result = engine.apply(input, %(dict2items(key_name='name', value_name='data'))).as_a
+    result.size.should eq(2)
+    result[0].as_h.keys.sort!.should eq(["data", "name"])
+    result[0].as_h["name"].as_s.should eq("x")
+    result[0].as_h["data"].as_s.should eq("foo")
+  end
+
+  it "dict2items returns an empty list for an empty dict input" do
+    engine.apply(JSON.parse(%({})), "dict2items").as_a.should eq([] of JSON::Any)
+  end
+
+  it "dict2items tolerates non-dict input (returns empty list, matching real Ansible's tolerance)" do
+    # Real Ansible's filter returns an empty list for undefined / nil
+    # / scalar input rather than raising - the same tolerance the
+    # as_array helper provides for list-input filters. This matters
+    # in practice for the os_hardening shape: a role that uses
+    # `{{ some_dict | default({}) | dict2items }}` always gets a dict
+    # in, but a more defensive `{{ some_dict | dict2items | ... }}`
+    # without the default() should also work on a missing var.
+    engine.apply(JSON::Any.new(nil), "dict2items").as_a.should eq([] of JSON::Any)
+    engine.apply(s("not a dict"), "dict2items").as_a.should eq([] of JSON::Any)
+  end
+
+  it "items2dict is the inverse of dict2items and produces the original dict for a clean round-trip" do
+    # Same Ansible-extension status as dict2items. The Crinja corpus
+    # has one usage (postgresql_global_config_options evaluation in
+    # community.general's collection form) classified as
+    # `[ansible-filter-only]` rather than as a real engine bug, so
+    # implementing it here is a natural follow-up to dict2items.
+    original = JSON.parse(%({"a": 1, "b": 2, "c": 3}))
+    items = engine.apply(original, "dict2items").as_a
+    roundtrip = engine.apply(JSON::Any.new(items), "items2dict").as_h
+    roundtrip.should eq(original.as_h)
+  end
+
+  it "items2dict honors custom key_name and value_name kwargs matching dict2items" do
+    input = JSON.parse(%([{"name": "x", "data": "foo"}, {"name": "y", "data": "bar"}]))
+    result = engine.apply(input, %(items2dict(key_name='name', value_name='data'))).as_h
+    result["x"].as_s.should eq("foo")
+    result["y"].as_s.should eq("bar")
+  end
+
+  it "items2dict on later-list-wins semantics for key collisions (matches combine()'s precedence)" do
+    # Real Ansible's items2dict uses the same later-wins precedence
+    # as combine() - if two list elements claim the same key_name, the
+    # later one overwrites the earlier. Found this by reading the
+    # ansible-core source; a role that depends on first-wins would be
+    # a real bug to flag.
+    input = JSON.parse(%([{"key": "a", "value": 1}, {"key": "a", "value": 2}]))
+    result = engine.apply(input, "items2dict").as_h
+    result["a"].as_i.should eq(2)
+  end
+
+  it "items2dict silently skips list elements that are not dicts or missing the key_name field" do
+    # Real Ansible's filter doesn't crash on a malformed list element;
+    # it just contributes nothing. A list mixing dicts, scalars, and
+    # partial dicts is a real shape for an os_hardening-style role
+    # that composes data from multiple sources before the dict2items
+    # / items2dict round-trip.
+    input = JSON.parse(%([
+      {"key": "a", "value": 1},
+      "not a dict",
+      {"only_one_field": true},
+      {"key": "b", "value": 2}
+    ]))
+    result = engine.apply(input, "items2dict").as_h
+    result.keys.sort!.should eq(["a", "b"])
+    result["a"].as_i.should eq(1)
+    result["b"].as_i.should eq(2)
+  end
 end

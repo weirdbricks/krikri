@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.346-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.347-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,25 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.347` (doc-only round 24 cleanup + filter implementation)** -
+  two unrelated things landed in this release: a small follow-up to
+  the round-24 `konstruktoid.hardening` investigation (replacing the
+  vague "⚠️ ... not chased further" entry in `ROLES_TESTED.md` with
+  a precise "❌ Not testable — role-side UFW lockout, reproduced in
+  round 24" + the full root-cause analysis, including the fact that
+  both engines hit the role's own UFW activation-order bug
+  identically), and the `dict2items`/`items2dict` filter pair
+  (Ansible-specific extensions, NOT standard Jinja2 - the Crinja
+  corpus confirms Python/Jinja2 reject them as "No filter named ...").
+  Implemented on both sides per the project's established
+  dual-evaluator pattern: `FilterEngine` for plain `{{ }}` chains
+  (dev-sec os_hardening's `loop: "{{ os_vars | dict2items }}"` shape,
+  the regression spec for the related mode bug is rewritten to use
+  the real role shape now that the loop actually runs) and
+  `jinja_filters.cr` for `.j2` template `{% for %}` block-tag
+  chains. Closes one of the three narrow open scope cuts the round-24
+  status report flagged. No new live-host bugs found in this commit -
+  it's a filter addition, not a bug fix.
 - **`0.9.346` (round 23) - `geerlingguy.phpmyadmin`** went from
   ❌ `Not testable` to ✅ **clean** (its `include:` -> `include_tasks:`
   patch synced to the baseline host so both engines ran the same role).
@@ -362,13 +381,6 @@ static pre-planned list (see `KNOWN_MISSING.md`'s own intro).
   `refresh_inventory` and friends act on execution-flow machinery this
   engine models differently, and are rejected at parse time rather than
   silently ignored.
-- **`dict2items` / `items2dict` filters** - `FilterEngine` passes the
-  dict through unchanged instead of producing the `[{"key": k, "value":
-  v}, ...]` (or inverse) list real Ansible's filters produce. Hit live
-  benchmarking `dev-sec.os_hardening`'s `loop: "{{ os_vars |
-  dict2items }}"` shape (a regression spec for the related mode bug had
-  to be rewritten because the dict2items passthrough made the loop never
-  actually run).
 - **Crinja's `namespace()` builtin** is unimplemented - the Jinja2
   mutable-state-across-`{% for %}`-iterations construct. Hit
   benchmarking `prometheus.prometheus.node_exporter`'s systemd
@@ -416,6 +428,22 @@ static pre-planned list (see `KNOWN_MISSING.md`'s own intro).
 - **`postgresql_privs`** is complete as of `0.9.84` - every `type:`
   real Ansible's module supports is implemented, including
   `function`/`procedure` signatures and `default_privs`.
+- **`dict2items` / `items2dict` filters** - real Ansible's own
+  filters (NOT standard Jinja2; the Crinja corpus confirms
+  Python/Jinja2 reject them as "No filter named ..."), now
+  implemented on both sides: `FilterEngine` for the plain `{{ }}`
+  filter chain (dev-sec os_hardening's `loop: "{{ os_vars |
+  dict2items }}"` shape - the regression spec for the related mode
+  bug is rewritten to use the real os_hardening shape now that
+  the filter actually runs the loop), and `jinja_filters.cr` for
+  the Crinja pipeline so `.j2` template `{% for %}` block-tag
+  chains can use them too. Both accept the
+  `key_name=`/`value_name=` kwargs and default to `key`/`value`
+  matching real Ansible. Unit specs in
+  `spec/unit/filter_engine_spec.cr` (8 new), Crinja canary in
+  `spec/unit/crinja_direct_spec.cr` (4 new), and the
+  `spec/integration/mode_octal_via_variable_spec.cr` regression
+  spec is back to its real os_hardening shape.
 ---
 
 ## 🤝 Contributing

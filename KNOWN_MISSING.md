@@ -8,7 +8,71 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.346` + 2 doc-only round-24 commits (no engine change).**
+**Currently at `0.9.347`.**
+
+---
+
+`0.9.347` (`dict2items` / `items2dict` filter implementation on both
+evaluators - closes a long-standing open scope cut; the os_hardening mode
+regression spec is now able to use the role's real `loop: "{{ os_vars
+| dict2items }}"` shape instead of a workaround):
+- **`FilterEngine` now has `dict2items` and `items2dict`**
+  (`src/crystal_play/variable_substitutor/filter_engine.cr`).
+  `dict2items(key_name='key', value_name='value')` walks a Hash in
+  insertion order (Crystal Hash has been insertion-ordered since
+  0.34, matching CPython 3.7+ dict semantics) and emits a list of
+  `{key_name: k, value_name: v}` items. `items2dict(key_name='key',
+  value_name='value')` is the inverse: a list of `{key_name,
+  value_name, ...}` dicts becomes a single dict mapping `key_name` ->
+  `value_name`, with later-wins on key collision (same precedence
+  as `combine()`). Both default to `key`/`value`; both tolerate
+  undefined / nil / wrong-type input by returning an empty
+  list/dict (matches real Ansible's tolerance). Non-dict list
+  elements to `items2dict` are silently skipped - matches real
+  Ansible's behavior of not crashing on a single malformed list
+  element. New helpers `as_hash` (counterpart to the existing
+  `as_array`) and `dict_to_items`/`items_to_dict` (the
+  transformation cores) added next to the existing filter helpers.
+  `parse_kwarg` is reused for the `key_name=`/`value_name=` parsing
+  - same shape as `map(attribute='x')`'s kwarg path.
+- **`jinja_filters.cr` mirrors the same pair for the Crinja
+  pipeline** so a `.j2` template's `{% for %}` block-tag chain can
+  use them. The dual-evaluator follow-through is per the project's
+  established pattern (CRINJA.md's "same bug class has historically
+  lived INDEPENDENTLY in both evaluators" warning): the same filter
+  has lived in both `FilterEngine` and `jinja_filters.cr` for
+  `combine`, `intersect`, `regex_search`, `regex_findall`, `flatten`,
+  `to_json`, `to_nice_yaml`, `bool`, `ternary`, `password_hash`,
+  `hash`, and `comment` already; `dict2items`/`items2dict` join that
+  list. Both sides are spec-tested independently and produce the
+  same output for the same input (verified by the existing
+  `crinja_direct_spec.cr` canary, which bypasses `CrinjaRenderer`
+  entirely and renders via `Crinja.new.from_string(...).render(...)`
+  directly).
+- **Both `real Ansible` and `real Python/Jinja2` reject these
+  filters** (the Crinja corpus report shows "No filter named
+  'dict2items'" from both); they're Ansible-specific extensions
+  (ansible.plugins.filter.core) and don't belong in the general
+  Jinja2 fork. Implemented in `jinja_filters.cr` only - no upstream
+  Crinja patches, same as all the other Ansible-specific filters in
+  this file. A future fork rebase that adds them upstream would
+  make these registrations redundant (per the project's CRINJA.md
+  canary discipline: a fork addition that makes a maintained
+  registration redundant is safe to delete).
+- **The os_hardening mode regression spec
+  (`spec/integration/mode_octal_via_variable_spec.cr`) is now able
+  to use the real role shape** instead of the workaround. The
+  original spec reproduced `dev-sec.os_hardening`'s exact shape
+  (`set_fact: "{{ item.key }}": "{{ item.value }}"` + `loop: "{{
+  os_vars | dict2items }}"`) but the `dict2items` passthrough
+  meant the loop never actually set `my_mode` and the spec silently
+  tested nothing; the workaround was a plain `set_fact: my_mode:
+  "1777"`. Restored to the real shape now that the filter works.
+  The spec also exercises the `"0755"` -> int 755 path (the
+  leading-zero decimal-coercion case that the 0.9.339 mode fix
+  also covers via the same `\A[0-7]{3,4}\z` regex check) - both
+  cases are now confirmed via the real role's own loop binding
+  rather than a manual set_fact.
 
 ---
 

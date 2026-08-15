@@ -500,6 +500,61 @@ module CrystalPlay
       end
     end
 
+    # `dict2items(key_name='key', value_name='value')` - real Ansible's
+    # own filter (NOT standard Jinja2; the Crinja corpus confirms
+    # Python/Jinja2 reject it as "No filter named 'dict2items'"),
+    # converts a dict to a list of `{key_name: k, value_name: v}` items
+    # so `{% for item in my_dict | dict2items %}` can iterate. The Crinja
+    # side is needed alongside the hand-rolled FilterEngine version
+    # because a `.j2` template's `{% for %}` block tag chain routes
+    # through Crinja's own filter pipeline, not FilterEngine. dev-sec
+    # os_hardening's `loop: "{{ os_vars | dict2items }}"` shape hits
+    # FilterEngine (plain `{{ }}`), but a hypothetical
+    # `{% for item in my_dict | dict2items %}` would hit THIS filter,
+    # and a real-world role using a `.j2` template with a dict-iterating
+    # for-loop needs both sides wired. Same defaults / kwarg shape as
+    # FilterEngine's version (defaults to `key`/`value`; the kwarg
+    # override path matches FilterEngine exactly so a role that
+    # switches between `{{ }}` and `{% %}` usage gets the same output).
+    # Ordered Hash iteration in Crystal preserves insertion order, which
+    # matches CPython 3.7+ dict semantics and the implicit ordering
+    # Ansible users have come to depend on.
+    Crinja.filter({key_name: "key", value_name: "value"}, :dict2items) do
+      key_name = arguments["key_name"].to_s
+      value_name = arguments["value_name"].to_s
+      base = target.raw
+
+      if base.is_a?(Hash)
+        Crinja::Value.new(base.map { |k, v| {key_name => k, value_name => v} })
+      else
+        Crinja::Value.new([] of Crinja::Value)
+      end
+    end
+
+    # `items2dict(key_name='key', value_name='value')` - the inverse of
+    # dict2items: takes a list of dicts (each carrying a `key_name`
+    # field and a `value_name` field) and produces a single dict mapping
+    # key_name -> value_name. Real Ansible's own filter, same
+    # Python-ansible-only status as dict2items. Mirrors FilterEngine's
+    # implementation: elements that aren't dicts or that don't carry
+    # the named key field are silently dropped; on a key collision
+    # later in the list wins (matches `combine`'s own later-wins
+    # precedence). Same kwarg API as FilterEngine.
+    Crinja.filter({key_name: "key", value_name: "value"}, :items2dict) do
+      key_name = arguments["key_name"].to_s
+      value_name = arguments["value_name"].to_s
+      result = {} of Crinja::Value => Crinja::Value
+      target.each do |item|
+        next unless item.raw.is_a?(Hash)
+        h = item.raw.as(Hash)
+        k = h[key_name]?
+        next unless k
+        v = h[value_name]?
+        result[k] = v if v
+      end
+      Crinja::Value.new(result)
+    end
+
     # `intersect(other)` - elements of *target* that also appear in
     # *other*, deduplicated, order taken from *target*. Real Ansible's
     # own filter (not standard Jinja2). Ported from `FilterEngine`'s own
