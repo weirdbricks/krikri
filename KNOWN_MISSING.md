@@ -8,7 +8,45 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.379`.**
+**Currently at `0.9.380`.**
+
+---
+
+`0.9.380` - `docker_container:`'s resource-limit params, on request
+("keep working on docker_container"): `memory:`/`memory_reservation:`/
+`memory_swap:` (human-readable byte-size strings, ported from real
+Ansible's own `human_to_bytes` - binary/1024-based K/M/G/T/P units,
+`memory_swap: "unlimited"`/`"-1"` for unlimited swap), `cpus:` (float,
+converted to Docker's own `NanoCpus` via `cpus * 1e9` rounded, matching
+`_preprocess_cpus` exactly), `memory_swappiness:`/`cpu_shares:`/
+`oom_score_adj:`/`pids_limit:` (int), `cpuset_cpus:`/`cpuset_mems:`
+(string), `oom_kill_disable:` (bool) - both built at container-create
+time and compared for idempotency (all default `strict`, matching real
+Ansible's own scalar-option default). New `PluginHelpers::DockerResources`
+helper for the byte-size/nanocpus parsing, unit-spec-covered. Required
+adding 10 new fields to the `docr` fork's own `HostConfig` type first
+(`weirdbricks/docr@c90ea8d`) - none of Memory/MemoryReservation/
+MemorySwap/MemorySwappiness/NanoCpus/CpuShares/CpusetCpus/CpusetMems/
+OomKillDisable/PidsLimit existed there before.
+
+`memory:`/`cpus:`/`cpu_shares:`/`pids_limit:` live-verified end to end
+(create/idempotent-rerun/drift-triggers-recreate) against a real
+Docker-API-compatible daemon (Podman 5.4.2). `cpuset_cpus:`/
+`oom_kill_disable:`/`oom_score_adj:`/`memory_swap: "unlimited"` are
+command-construction-verified (matching real Ansible's own algorithm
+exactly) but could not be functionally live-verified beyond that on this
+dev machine - rootless Podman here has no `cpuset` cgroup controller
+delegated at all, `crun` refuses to disable the OOM killer under
+cgroups v2 regardless of engine, and `oom_score_adj`/`memory_swap:
+"unlimited"` both came back from `docker inspect` transformed in ways
+inconsistent with the literal requested value (`oom_score_adj: 100` read
+back as `200`; `"unlimited"` read back as `0` alone or `2x memory` when
+combined with `memory:`) - the same class of rootless-Podman-specific
+runtime quirk as `env:`'s extra injected vars (0.9.376) and `HostIp`'s
+empty-string difference (0.9.378), not confirmed as real Docker Engine
+behavior. `device_requests:`/`container_default_behavior:` remain a
+real, deliberate scope cut (unrelated to resource limits, larger
+features of their own).
 
 ---
 

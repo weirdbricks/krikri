@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.379-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.380-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,18 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.380` - `docker_container:`'s resource-limit params** -
+  `memory:`/`memory_reservation:`/`memory_swap:`/`memory_swappiness:`/
+  `cpus:`/`cpu_shares:`/`cpuset_cpus:`/`cpuset_mems:`/`oom_kill_disable:`/
+  `oom_score_adj:`/`pids_limit:`, built and compared for idempotency.
+  Required adding 10 new fields to the `docr` fork's `HostConfig` type
+  first. `memory:`/`cpus:`/`cpu_shares:`/`pids_limit:` live-verified end
+  to end; the rest command-construction-verified only - this dev
+  machine's rootless Podman lacks `cpuset` delegation and can't disable
+  the OOM killer under cgroups v2 at all, and showed a couple of
+  transformed-value quirks on the remaining fields consistent with
+  rootless-Podman-specific behavior (same class as prior Podman-only
+  caveats), not confirmed against real Docker Engine.
 - **`0.9.379` - `firewalld:`'s `state: present`/`absent` leniency gap**,
   noticed incidentally during the round-34 host round. Real
   `ansible.posix.firewalld` only accepts `present`/`absent` for

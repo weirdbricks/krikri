@@ -22,7 +22,7 @@ shards:
 
   docr:
     git: https://github.com/weirdbricks/docr.git
-    version: 0.1.4+git.commit.93dbbb82f102a8825c78ea7b46a2917b0ca14fd6
+    version: 0.1.4+git.commit.c90ea8d6a0c5eb9f842ac0da098a1718ecca66ca
 
   mysql:
     git: https://github.com/weirdbricks/crystal-mysql.git

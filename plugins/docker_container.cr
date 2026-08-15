@@ -7,6 +7,7 @@ require "../src/crystal_play/plugin_helpers/docker_ref"
 require "../src/crystal_play/plugin_helpers/docker_ports"
 require "../src/crystal_play/plugin_helpers/docker_client"
 require "../src/crystal_play/plugin_helpers/docker_healthcheck"
+require "../src/crystal_play/plugin_helpers/docker_resources"
 
 module CrystalPlay
   # Docker container plugin - creates/starts/stops/removes a container.
@@ -36,6 +37,38 @@ module CrystalPlay
   # - restart_policy: "no" (default)/"always"/"on-failure"/"unless-stopped"
   # - network_mode: string
   # - privileged / auto_remove: bool
+  # - memory / memory_reservation / memory_swap: human-readable byte-size
+  #   strings ("512M", "1G", ...) - see PluginHelpers::DockerResources's
+  #   own doc comment, ported from real Ansible's own `human_to_bytes`
+  #   (binary/1024-based units despite the non-"i" K/M/G/T/P spelling).
+  #   `memory_swap: "unlimited"` (or the literal string `"-1"`) is real
+  #   Ansible's own documented unlimited-swap convention.
+  # - memory_swappiness / cpu_shares / oom_score_adj / pids_limit: int
+  # - cpus: float number of CPUs, converted to Docker's own `NanoCpus`
+  #   (`cpus * 1e9`, rounded) - matches real Ansible's own
+  #   `_preprocess_cpus` exactly.
+  # - cpuset_cpus / cpuset_mems: string (e.g. "0-3", "0,2")
+  # - oom_kill_disable: bool
+  #
+  # memory/cpus/cpu_shares/pids_limit live-verified end to end (create,
+  # idempotent rerun, drift-triggers-recreate) against a real
+  # Docker-API-compatible daemon (Podman 5.4.2). cpuset_cpus/
+  # oom_kill_disable/oom_score_adj/`memory_swap: "unlimited"` build and
+  # send correctly (command-construction-verified, matching real
+  # Ansible's own algorithm exactly) but could NOT be functionally
+  # live-verified beyond that on this specific dev machine: rootless
+  # Podman here has no `cpuset` cgroup controller delegated at all
+  # (`crun: controller 'cpuset' is not available`), `crun` refuses to
+  # disable the OOM killer under cgroups v2 entirely regardless of
+  # engine, and `oom_score_adj`/`memory_swap: "unlimited"` both came back
+  # from `docker inspect` transformed in ways inconsistent with the
+  # literal requested value (`oom_score_adj: 100` read back as `200`;
+  # `memory_swap: "unlimited"` read back as `0` alone or `2x memory` when
+  # combined with `memory:`) - the same class of rootless-Podman-specific
+  # runtime quirk as `env:`'s own extra injected vars (0.9.376) and
+  # `HostIp`'s empty-string difference (0.9.378), not confirmed as real
+  # Docker Engine behavior and not something either engine's comparison
+  # logic could account for even if it were.
   # - pull: bool, default true - pull image: if not already present locally
   # - recreate: bool, default false - force recreate even if image/command
   #   already match
@@ -67,33 +100,38 @@ module CrystalPlay
   #
   # Idempotency compares image (leniently, see DockerRef.same?), command,
   # entrypoint, env, labels, volumes, restart_policy, network_mode,
-  # privileged, auto_remove, ports, and healthcheck against the existing
+  # privileged, auto_remove, ports, healthcheck, and every resource-limit
+  # param above (memory/memory_reservation/memory_swap/
+  # memory_swappiness/cpus/cpu_shares/cpuset_cpus/cpuset_mems/
+  # oom_kill_disable/oom_score_adj/pids_limit) against the existing
   # container - each only for whichever of those params was actually
   # given, matching real Ansible's own "only compare what you told me
   # about" behavior for any option not mentioned at all. The per-field
   # default comparison mode is NOT uniformly strict - verified against
   # real Ansible's own module_utils source (`Option.__init__`): scalar
-  # options (restart_policy, network_mode, privileged, auto_remove) and
-  # the plain ordered entrypoint list default to `strict` (exact
-  # equality), but every set/dict-typed option (env, labels, volumes,
-  # ports, healthcheck) defaults to `allow_more_present` instead - a
-  # subset match where the task's own requested keys/values must be
-  # present and equal, but extra keys/values already on the real
-  # container (an image's inherited env/labels, Docker's own
-  # default-filled healthcheck timeout/retries, ports the task didn't
-  # mention) are NOT treated as drift. See comparison_mode's own doc
-  # comment - this distinction is load-bearing, not cosmetic: an earlier
-  # version of this comparison system defaulted everything to strict and
-  # it caused healthcheck: (and, under Podman specifically, env: too) to
-  # falsely recreate the container on every single rerun with zero actual
-  # drift. ports: compares both published_ports (host<->container
-  # bindings, HostIp defaulted to "0.0.0.0" the same way real
-  # Docker/Ansible do when a request left it nil) and exposed_ports
-  # (folding in the image's own declared ExposedPorts, same image-merge
-  # pattern as env: below) - see ports_match?'s own doc comment. resource
-  # limits (memory/cpu) and every other field of real Ansible's own
-  # ~40-field comparison system remain NOT detected and won't trigger a
-  # recreate on their own unless recreate: true is passed - a documented,
+  # options (restart_policy, network_mode, privileged, auto_remove, and
+  # every resource-limit param above - all `int`/`str`/`bool`-typed, real
+  # Ansible's own "value" comparison_type) and the plain ordered
+  # entrypoint list default to `strict` (exact equality), but every
+  # set/dict-typed option (env, labels, volumes, ports, healthcheck)
+  # defaults to `allow_more_present` instead - a subset match where the
+  # task's own requested keys/values must be present and equal, but extra
+  # keys/values already on the real container (an image's inherited
+  # env/labels, Docker's own default-filled healthcheck timeout/retries,
+  # ports the task didn't mention) are NOT treated as drift. See
+  # comparison_mode's own doc comment - this distinction is load-bearing,
+  # not cosmetic: an earlier version of this comparison system defaulted
+  # everything to strict and it caused healthcheck: (and, under Podman
+  # specifically, env: too) to falsely recreate the container on every
+  # single rerun with zero actual drift. ports: compares both
+  # published_ports (host<->container bindings, HostIp defaulted to
+  # "0.0.0.0" the same way real Docker/Ansible do when a request left it
+  # nil) and exposed_ports (folding in the image's own declared
+  # ExposedPorts, same image-merge pattern as env: below) - see
+  # ports_match?'s own doc comment. Every other field of real Ansible's
+  # own ~40-field comparison system (device_requests:, healthcheck's own
+  # start_interval:, etc) remains NOT detected and won't trigger a
+  # recreate on its own unless recreate: true is passed - a documented,
   # deliberate scope cut given the size of that remaining surface, not an
   # oversight. networks: is a separate exception from all of the above -
   # it's diffed and applied even when nothing else changed, since
@@ -105,7 +143,7 @@ module CrystalPlay
   #   out of comparison entirely; `strict`/`allow_more_present` override
   #   a field's own default mode (see above) in either direction, for
   #   every field this plugin actually tracks/syncs (the list above,
-  #   including ports/healthcheck, plus networks). `comparisons:
+  #   including ports/healthcheck/resource limits, plus networks). `comparisons:
   #   {networks: strict}` disconnects the container from any network NOT
   #   in networks: - verified against real Ansible's own documented
   #   behavior ("To remove a container from one or more networks, use
@@ -118,9 +156,9 @@ module CrystalPlay
   # whatever network_mode:/Docker's own default produced alone and only
   # ever *adds* the requested networks on top); `mac_address:` on a
   # per-network endpoint (only ipv4_address:/ipv6_address:/aliases:/
-  # links: per network); `healthcheck.start_interval:`, resource limits
-  # (memory/cpu), device_requests:, container_default_behavior:,
-  # `api_version:` (see PluginHelpers::DockerClient).
+  # links: per network); `healthcheck.start_interval:`, `device_requests:`,
+  # `container_default_behavior:`, `api_version:` (see
+  # PluginHelpers::DockerClient).
   class DockerContainerPlugin < BasePlugin
     record RequestedNetwork,
       name : String,
@@ -319,7 +357,9 @@ module CrystalPlay
       extra_fields_match?(api, api.containers.inspect(existing.id), image_ref)
     end
 
-    EXTRA_COMPARISON_FIELDS = %w[entrypoint env labels volumes restart_policy network_mode privileged auto_remove ports healthcheck]
+    EXTRA_COMPARISON_FIELDS = %w[entrypoint env labels volumes restart_policy network_mode privileged auto_remove ports healthcheck
+                                  memory memory_reservation memory_swap memory_swappiness cpus cpu_shares cpuset_cpus cpuset_mems
+                                  oom_kill_disable oom_score_adj pids_limit]
 
     private def extra_fields_given? : Bool
       EXTRA_COMPARISON_FIELDS.any? { |field| @params[field]? }
@@ -416,6 +456,50 @@ module CrystalPlay
       if healthcheck_json = @params["healthcheck"]?
         mode = comparison_mode("healthcheck", "allow_more_present")
         return false unless mode == "ignore" || healthcheck_matches?(config.healthcheck, healthcheck_json, strict: mode == "strict")
+      end
+
+      if (memory = @params["memory"]?) && comparison_mode("memory", "strict") != "ignore"
+        return false unless host_config.memory == PluginHelpers::DockerResources.human_to_bytes(memory)
+      end
+
+      if (memory_reservation = @params["memory_reservation"]?) && comparison_mode("memory_reservation", "strict") != "ignore"
+        return false unless host_config.memory_reservation == PluginHelpers::DockerResources.human_to_bytes(memory_reservation)
+      end
+
+      if (memory_swap = @params["memory_swap"]?) && comparison_mode("memory_swap", "strict") != "ignore"
+        return false unless host_config.memory_swap == PluginHelpers::DockerResources.memory_swap_to_bytes(memory_swap)
+      end
+
+      if (memory_swappiness = @params["memory_swappiness"]?) && comparison_mode("memory_swappiness", "strict") != "ignore"
+        return false unless host_config.memory_swappiness == memory_swappiness.to_i64
+      end
+
+      if (cpus = @params["cpus"]?) && comparison_mode("cpus", "strict") != "ignore"
+        return false unless host_config.nano_cpus == PluginHelpers::DockerResources.cpus_to_nano_cpus(cpus.to_f)
+      end
+
+      if (cpu_shares = @params["cpu_shares"]?) && comparison_mode("cpu_shares", "strict") != "ignore"
+        return false unless host_config.cpu_shares == cpu_shares.to_i64
+      end
+
+      if (cpuset_cpus = @params["cpuset_cpus"]?) && comparison_mode("cpuset_cpus", "strict") != "ignore"
+        return false unless host_config.cpuset_cpus == cpuset_cpus
+      end
+
+      if (cpuset_mems = @params["cpuset_mems"]?) && comparison_mode("cpuset_mems", "strict") != "ignore"
+        return false unless host_config.cpuset_mems == cpuset_mems
+      end
+
+      if @params["oom_kill_disable"]? && comparison_mode("oom_kill_disable", "strict") != "ignore"
+        return false unless !!host_config.oom_kill_disable == is_true?(@params["oom_kill_disable"]?)
+      end
+
+      if (oom_score_adj = @params["oom_score_adj"]?) && comparison_mode("oom_score_adj", "strict") != "ignore"
+        return false unless host_config.oom_score_adj == oom_score_adj.to_i64
+      end
+
+      if (pids_limit = @params["pids_limit"]?) && comparison_mode("pids_limit", "strict") != "ignore"
+        return false unless host_config.pids_limit == pids_limit.to_i64
       end
 
       true
@@ -657,6 +741,17 @@ module CrystalPlay
         network_mode: @params["network_mode"]?,
         privileged: is_true?(@params["privileged"]?),
         auto_remove: is_true?(@params["auto_remove"]?),
+        memory: @params["memory"]?.try { |v| PluginHelpers::DockerResources.human_to_bytes(v) },
+        memory_reservation: @params["memory_reservation"]?.try { |v| PluginHelpers::DockerResources.human_to_bytes(v) },
+        memory_swap: @params["memory_swap"]?.try { |v| PluginHelpers::DockerResources.memory_swap_to_bytes(v) },
+        memory_swappiness: @params["memory_swappiness"]?.try(&.to_i64),
+        nano_cpus: @params["cpus"]?.try { |v| PluginHelpers::DockerResources.cpus_to_nano_cpus(v.to_f) },
+        cpu_shares: @params["cpu_shares"]?.try(&.to_i64),
+        cpuset_cpus: @params["cpuset_cpus"]?,
+        cpuset_mems: @params["cpuset_mems"]?,
+        oom_kill_disable: @params["oom_kill_disable"]? ? is_true?(@params["oom_kill_disable"]?) : nil,
+        oom_score_adj: @params["oom_score_adj"]?.try(&.to_i64),
+        pids_limit: @params["pids_limit"]?.try(&.to_i64),
       )
 
       Docr::Types::CreateContainerConfig.new(
