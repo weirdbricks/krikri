@@ -92,6 +92,17 @@ module CrystalPlay
       # Apply a single filter to a value.
       # Example: myvar | default('value')
       def apply(value : JSON::Any, filter_expr : String) : JSON::Any
+        # `ansible.builtin.`-prefixed filter names (a real, if uncommon,
+        # spelling - real Ansible's own core filters are all reachable
+        # via this FQCN too, not just the bare name) never matched any
+        # `case filter_name` branch below at all, silently falling to
+        # the unknown-filter passthrough - found live via
+        # prometheus.prometheus.prometheus's own `map('ansible.builtin.
+        # fileglob') | flatten | map('ansible.builtin.realpath')` chain
+        # (round 30). Stripped once here so every filter branch below
+        # matches either spelling.
+        filter_expr = filter_expr.lchop("ansible.builtin.") if filter_expr.starts_with?("ansible.builtin.")
+
         if match = filter_expr.match(/^(\w+)\s*\((.*)\)$/m)
           filter_name = match[1]
           filter_args = match[2]
@@ -101,6 +112,18 @@ module CrystalPlay
         end
 
         case filter_name
+        when "fileglob"
+          # Real Ansible's ansible.builtin.fileglob LOOKUP plugin, usable
+          # as a filter via `map('ansible.builtin.fileglob')` (distinct
+          # from the separate `with_fileglob:` loop keyword, which
+          # TaskExecutor#resolve_fileglob already handles). Real Ansible
+          # returns the empty list for a pattern matching no files (not
+          # an error) - without this, an unrecognized filter name fell
+          # to the passthrough below, leaving the RAW glob pattern
+          # string as if it were already a real, matched file path.
+          JSON::Any.new(Dir.glob(as_string(value)).sort!.map { |p| JSON::Any.new(p) })
+        when "realpath"
+          JSON::Any.new(File.realpath(as_string(value)))
         when "default", "d"
           # "d" is Jinja2/Ansible's extremely common shorthand alias for
           # "default" (linux-system-roles uses it pervasively - 268

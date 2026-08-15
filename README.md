@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.357-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.358-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,17 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.358` (round 30) - `prometheus.prometheus.prometheus`, first
+  new role tested since round 28's pushgateway follow-up.** Two real
+  bugs found and fixed live: `fileglob`/`realpath` Jinja filters
+  entirely missing from both evaluators (broke the role's own
+  alert-rules-file-copy loop), and a Crinja fork parser bug where
+  multi-arg parenthesized `is name(a, b)` TEST calls never split their
+  arguments - broke the role's own `is version('2.7.0', '>=')`
+  flag-selection guard, causing real prometheus to crash-loop on a
+  deprecated CLI flag. Fixed upstream in the `weirdbricks/crinja` fork
+  itself (tag `crystal-play-0.9.7`), the first fork-level parser fix
+  this project has needed. Idempotent, service verified live.
 - **`0.9.352` (round 27) - `prometheus.prometheus.blackbox_exporter`,
   first new role tested since round 26.** Two real gaps found and
   fixed live: `package.cr`'s `name:` parsing had the same Python-repr

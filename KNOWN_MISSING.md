@@ -8,7 +8,55 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.357`.**
+**Currently at `0.9.358`.**
+
+---
+
+`0.9.358` (round 30 - `prometheus.prometheus.prometheus`, first new role
+tested since round 28's pushgateway follow-up): 2 real bugs found and
+fixed on a fresh `G3.2GB` Atlantic.net pair.
+
+- **`fileglob`/`realpath` Jinja filters entirely missing from both
+  evaluators.** The role's `Copy custom alerting rule files` task
+  uses `loop: "{{ prometheus_alert_rules_files | map('ansible.builtin.fileglob')
+  | flatten | map('ansible.builtin.realpath') }}"`. Neither filter was
+  registered anywhere, so the raw glob-pattern strings passed through
+  unchanged as if already-resolved paths, and the task failed with
+  `Source file not found: prometheus/rules/*.yml`. Fixed by adding
+  `fileglob`/`realpath` to `jinja_filters.cr` (Crinja) and to the
+  hand-rolled `filter_engine.cr`'s `#apply` (which also needed a new
+  general `ansible.builtin.` FQCN-prefix-stripping step, since it had
+  none at all before this).
+- **Crinja fork parser bug: multi-arg parenthesized `is name(a, b)`
+  TEST calls never split their arguments.** The role's systemd unit
+  template guards the modern `--storage.tsdb.retention.time` flag
+  behind `{% if prometheus_version is version('2.7.0', '>=') %}`. This
+  always evaluated false regardless of the actual version (default
+  `3.13.0`), so the rendered unit used the deprecated
+  `--storage.tsdb.retention` flag and prometheus crash-looped
+  (`Error parsing command line arguments: unknown long flag
+  '--storage.tsdb.retention'`). Root cause was in the Crinja fork's own
+  `expression_parser.cr`: the filter/test-suffix parsing loop's
+  `with_parenthesis` guard was `!is_test && current_token.kind ==
+  Kind::LEFT_PAREN`, so a TEST call's opening `(` was never consumed -
+  `('2.7.0', '>=')` got re-parsed from scratch as a single
+  parenthesized tuple-literal expression, landing as ONE positional
+  argument instead of two, silently defaulting the second (`operator`)
+  keyword arg instead of raising. Fixed in the fork
+  (`weirdbricks/crinja`, tag `crystal-play-0.9.7`, commit `8ded6dc0`)
+  by dropping the `!is_test &&` guard entirely; regression spec added
+  to the fork's own `spec/lib/tests_spec.cr`. crystal-ansible's
+  `shard.yml` repinned to the new tag.
+- **Live-verified end to end**: cold pass `ok=38 changed=10 failed=0
+  skipped=14` vs python `ok=42 changed=14 failed=0 skipped=14` (count
+  diff is from pre-staging the prometheus/promtool binaries via scp to
+  skip a slow re-upload during investigation, not a real divergence -
+  task-by-task diff is cosmetic-only, role-name-prefix stripping in
+  crystal-ansible's own task-name display). `Copy custom alerting rule
+  files` now correctly `skipping`, the rendered unit now uses
+  `--storage.tsdb.retention.time=30d`, and `systemctl is-active
+  prometheus` + `curl :9090/-/healthy` (200) confirm the service is
+  actually healthy, not just exit-0.
 
 ---
 

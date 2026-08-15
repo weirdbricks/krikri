@@ -439,26 +439,25 @@ module CrystalPlay
     # output needs: "8.9p1" compares as [8, 9, 1]), matching Python's
     # LooseVersion behavior real Ansible's own `version` test delegates
     # to closely enough for every operator real playbooks use.
-    Crinja.test(:version) do
-      compare_to = arguments.varargs[0]?.try(&.to_s) || ""
-      operator = arguments.varargs[1]?.try(&.to_s) || "=="
-      cmp = JinjaFilters.compare_versions(target.to_s, compare_to)
-      case operator
-      when "==", "="
-        cmp == 0
-      when "!="
-        cmp != 0
-      when "<", "lt"
-        cmp < 0
-      when "<=", "le"
-        cmp <= 0
-      when ">", "gt"
-        cmp > 0
-      when ">=", "ge"
-        cmp >= 0
-      else
-        false
-      end
+    # Real bug found live benchmarking prometheus.prometheus.prometheus
+    # (round 30): `arguments.varargs` for a test registered via the
+    # plain `Crinja.test(:name) do ... end` block form (no declared
+    # keyword args) does NOT reliably split multiple positional test
+    # arguments (`is version('2.7.0', '>=')`) into separate varargs
+    # entries - confirmed by instrumenting this exact test: called with
+    # 2 positional args, `arguments.varargs` came back with size 1,
+    # its single element a Crinja::Value WRAPPING AN ARRAY of both
+    # arguments together, so `arguments.varargs[1]?` (the operator) was
+    # always nil and silently defaulted to "==" regardless of what was
+    # actually passed - `is version(X, '<')`/`'>'`/`'>='`/etc all
+    # silently behaved as `is version(X, '==')` instead. The DECLARED-
+    # keyword-args form (`Crinja.test({key: default}, :name) do ...
+    # end`, already used correctly elsewhere in this file for multi-arg
+    # filters like `regex_search`) doesn't have this bug - positional
+    # args bind correctly to the declared keyword names. Switched both
+    # `version` and `version_compare` to that form.
+    Crinja.test({compare_to: "", operator: "=="}, :version) do
+      JinjaFilters.version_test(target.to_s, arguments["compare_to"].to_s, arguments["operator"].to_s)
     end
 
     # `version_compare` - deprecated alias for `version` (identical
@@ -471,26 +470,8 @@ module CrystalPlay
     # entire render ("no test with name 'version_compare' registered" -
     # Crinja has no partial-render fallback). Found live benchmarking
     # prometheus.prometheus.alertmanager (round 26).
-    Crinja.test(:version_compare) do
-      compare_to = arguments.varargs[0]?.try(&.to_s) || ""
-      operator = arguments.varargs[1]?.try(&.to_s) || "=="
-      cmp = JinjaFilters.compare_versions(target.to_s, compare_to)
-      case operator
-      when "==", "="
-        cmp == 0
-      when "!="
-        cmp != 0
-      when "<", "lt"
-        cmp < 0
-      when "<=", "le"
-        cmp <= 0
-      when ">", "gt"
-        cmp > 0
-      when ">=", "ge"
-        cmp >= 0
-      else
-        false
-      end
+    Crinja.test({compare_to: "", operator: "=="}, :version_compare) do
+      JinjaFilters.version_test(target.to_s, arguments["compare_to"].to_s, arguments["operator"].to_s)
     end
 
     # `regex(pattern, ignorecase=False, multiline=False)` - Ansible's own
@@ -521,6 +502,34 @@ module CrystalPlay
     # Crinja had neither registered at all.
     Crinja.filter(:basename) { File.basename(target.to_s) }
     Crinja.filter(:dirname) { File.dirname(target.to_s) }
+
+    # `fileglob` - real Ansible's ansible.builtin.fileglob LOOKUP plugin,
+    # usable as a filter via `map('ansible.builtin.fileglob')` (as
+    # opposed to the separate `with_fileglob:` loop keyword, which
+    # #resolve_fileglob in task_executor/executor.cr already handles -
+    # this is the *filter* form, entirely unregistered before, so
+    # `map('ansible.builtin.fileglob')` silently passed each glob
+    # PATTERN STRING through unchanged instead of expanding it. Real
+    # Ansible's own lookup returns the empty list for a pattern matching
+    # no files (not an error) - `flatten` on the mapped results then
+    # correctly produces an empty overall list, and a `loop:` over that
+    # is skipped entirely, matching real Ansible. Without this, a
+    # pattern matching nothing was instead treated as ONE loop item -
+    # the literal, unexpanded glob string itself - which then failed
+    # downstream ("Source file not found: rules/*.yml"). Found live
+    # benchmarking prometheus.prometheus.prometheus (round 30)'s own
+    # "Copy custom alerting rule files" task, whose default
+    # `prometheus_alert_rules_files: [prometheus/rules/*.yml,
+    # prometheus/rules/*.yaml]` matches nothing on a fresh install and
+    # should skip cleanly, matching real Ansible's `skipping: [target]`.
+    Crinja.filter(:fileglob) { Crinja::Value.new(Dir.glob(target.to_s).sort!) }
+
+    # `realpath` - real Ansible's ansible.builtin.realpath filter,
+    # resolving a path to its canonical absolute form (symlinks
+    # resolved). Chained after `fileglob` in the same real-world idiom
+    # above (`... | map('ansible.builtin.fileglob') | flatten |
+    # map('ansible.builtin.realpath')`) - also entirely unregistered.
+    Crinja.filter(:realpath) { File.realpath(target.to_s) }
 
     # `combine(*others)` - shallow dict merge, later argument wins on key
     # collisions. Real Ansible's own filter (not standard Jinja2).
@@ -869,6 +878,27 @@ module CrystalPlay
         return cmp unless cmp == 0
       end
       0
+    end
+
+    # Shared by the `version`/`version_compare` Crinja tests above.
+    def self.version_test(target : String, compare_to : String, operator : String) : Bool
+      cmp = compare_versions(target, compare_to)
+      case operator
+      when "==", "="
+        cmp == 0
+      when "!="
+        cmp != 0
+      when "<", "lt"
+        cmp < 0
+      when "<=", "le"
+        cmp <= 0
+      when ">", "gt"
+        cmp > 0
+      when ">=", "ge"
+        cmp >= 0
+      else
+        false
+      end
     end
   end
 end
