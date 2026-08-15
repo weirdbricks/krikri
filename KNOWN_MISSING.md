@@ -8,7 +8,55 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.377`.**
+**Currently at `0.9.378`.**
+
+---
+
+`0.9.378` - live host round verifying `0.9.375`-`0.9.377` end to end
+(firewalld `port_forward:`, docker_container `ports:`/`healthcheck:`/
+comparison-default fix), on request. A real 2-node Atlantic.net pair
+(`G3.2GB`, Ubuntu 22.04) - one running real `ansible-playbook`
+(`ansible-core` 2.17.14, `community.docker` 5.2.2, `ansible.posix`
+2.2.2), the other the just-built `crystal-ansible` - both with `docker.io`
+(real Docker Engine **29.1.3**, API 1.52 - notably newer/different from
+the Podman 5.4.2 this whole feature set was originally verified against)
+and `firewalld` installed fresh, running the identical custom playbook
+(container create/idempotent-rerun/drift-recreate/`comparisons: ignore`
++ firewalld `port_forward` add/idempotent-rerun/remove, each asserted).
+
+Found and fixed 3 real bugs, all only reachable against a genuine Docker
+Engine daemon (never surfaced against the Podman testing used for
+`0.9.375`-`0.9.377`):
+
+1. **`docr` fork, `ContainerInspectResponse#graph_driver`** - Docker
+   Engine 29.1.3 omits `GraphDriver` from container inspect responses
+   entirely; the field was non-nullable, crashing JSON parsing outright
+   on any `inspect()` call, not just comparing wrong. Fixed upstream
+   (`weirdbricks/docr@49f65ee`, alongside `Health#log` having the same
+   gap for `Log: null` before a container's first health check runs -
+   found moments earlier in the same live session).
+2. **`docr` fork, `Image#graph_driver`** - same gap, image inspect
+   responses this time (hit via `expected_env`/`ports_match?`'s own
+   image-merge calls). Fixed upstream (`weirdbricks/docr@93dbbb8`).
+3. **`docker_container.cr`'s own `ports_match?`** - a real,
+   daemon-version-dependent behavior difference: a port bound without
+   an explicit host IP reports back `HostIp: "0.0.0.0"` under
+   `community.docker`'s own older, version-pinned API client (confirmed
+   by patching the installed collection's comparison code in place to
+   dump its actual/expected values live), but `HostIp: ""` (empty
+   string, not nil) under this plugin's own unversioned/latest-API
+   `docr` client - the same one the `docker` CLI itself uses by
+   default. The comparison only normalized a nil `HostIp` to
+   `"0.0.0.0"`, not an empty string, so every single rerun falsely
+   recreated the container despite zero actual drift. Fixed by
+   normalizing both nil and `""` to `"0.0.0.0"` (`String#presence`).
+
+Final result on both engines, byte-identical: `ok=20 changed=5 failed=0`
+- every assertion passed, confirming `port_forward`,
+`ports:`/`healthcheck:` comparison (including the `allow_more_present`
+default correction from `0.9.377`), and `comparisons: {field: ignore}`
+all behave identically to real `ansible-playbook` end to end, not just
+via direct plugin-binary invocation as the earlier rounds tested.
 
 ---
 

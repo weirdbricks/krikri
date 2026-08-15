@@ -457,10 +457,17 @@ module CrystalPlay
     # Matches real Ansible's own `_get_expected_values_ports`: each
     # `published_ports:` entry normalizes to a `{HostIp, HostPort}` pair
     # with `HostIp` defaulted to `"0.0.0.0"` when the task left it
-    # unspecified (verified live: a real Docker/Podman daemon always
-    # reports `HostIp: "0.0.0.0"` back on inspect for a port bound
-    # without one, never a nil/missing field) - comparing against a raw
-    # nil would falsely mismatch on every single run. `exposed_ports` is
+    # unspecified. This is genuinely daemon-version-dependent, found live
+    # comparing two different real hosts: Podman and an older-API-pinned
+    # client (real Ansible's own `community.docker`, capped well below
+    # the daemon's latest) both report back the literal string
+    # `HostIp: "0.0.0.0"`, but a real Docker Engine 29.1.3 queried via
+    # the *unversioned/latest* API (what this plugin's own `docr` client
+    # uses, same as the `docker` CLI's own default) reports back
+    # `HostIp: ""` instead - an empty string, not nil/missing either.
+    # Both nil and "" normalize to "0.0.0.0" here so the comparison
+    # matches real Ansible's own idempotent behavior regardless of which
+    # literal spelling the daemon happens to use. `exposed_ports` is
     # compared separately from `published_ports` (matching real Ansible's
     # own two-part model) and additionally folds in the image's own
     # declared `ExposedPorts` (Dockerfile `EXPOSE`), the same
@@ -475,10 +482,10 @@ module CrystalPlay
       exposed_ports, port_bindings = build_ports
 
       expected_published = port_bindings.transform_values do |bindings|
-        bindings.map { |b| "#{b.host_ip || "0.0.0.0"}:#{b.host_port}" }.to_set
+        bindings.map { |b| "#{b.host_ip.presence || "0.0.0.0"}:#{b.host_port}" }.to_set
       end
       actual_published = (host_config.port_bindings || Hash(String, Array(Docr::Types::PortBinding)).new).transform_values do |bindings|
-        bindings.map { |b| "#{b.host_ip || "0.0.0.0"}:#{b.host_port}" }.to_set
+        bindings.map { |b| "#{b.host_ip.presence || "0.0.0.0"}:#{b.host_port}" }.to_set
       end
       published_ok = strict ? actual_published == expected_published : dict_set_subset?(expected_published, actual_published)
       return false unless published_ok

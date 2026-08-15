@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.377-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.378-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,19 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.378` - real 2-node host round verifying `0.9.375`-`0.9.377`
+  end to end** (firewalld `port_forward:` + docker_container
+  `ports:`/`healthcheck:`/comparison defaults), real `ansible-playbook`
+  vs `crystal-ansible` on a genuine Docker Engine 29.1.3 daemon (not
+  just the Podman used to build the feature). Found and fixed 3 real
+  bugs only reachable against a real Docker Engine: two more `docr`
+  fork nullability crashes (`Image#graph_driver`, alongside the
+  container one found moments earlier) and a real daemon-version-
+  dependent `HostIp` difference (`""` under this plugin's unversioned/
+  latest-API client vs `"0.0.0.0"` under real Ansible's own older
+  pinned-API client) that was falsely recreating containers with
+  `ports:` set on every single rerun. Final result identical on both
+  engines: `ok=20 changed=5 failed=0`, every assertion passed.
 - **`0.9.377` - `docker_container:`'s `ports:`/`healthcheck:`, plus a
   real comparison-default correction.** `healthcheck:` was entirely
   unimplemented before this (new `PluginHelpers::DockerHealthcheck`
