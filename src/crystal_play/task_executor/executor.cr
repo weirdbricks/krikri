@@ -1,5 +1,6 @@
 require "json"
 require "colorize"
+require "digest/md5"
 require "../playbook_parser"
 require "../variable_substitutor"
 require "../plugin_manager"
@@ -2912,6 +2913,11 @@ module CrystalPlay
     # `__cleanup_after_copy` marker param).
     private def stage_large_copy_source(params : Hash(String, String), src : String, host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String)
       connection_host = PluginManager.get_connection_host(host, vars_context)
+
+      if match = precomputed_copy_match(params, src, host, vars_context)
+        return match
+      end
+
       remote_tmp = "/tmp/.crystal-ansible-copy-#{Random::Secure.hex(8)}"
 
       begin
@@ -2939,6 +2945,82 @@ module CrystalPlay
       # the staging path above, benchmarking the same ansible-vault role.
       resolved["__original_src_basename"] = File.basename(src)
       resolved
+    end
+
+    # Checksum-first skip for a large controller->remote `copy:` upload,
+    # matching real Ansible's own `copy:` behavior (it computes the
+    # source checksum locally and stats the destination remotely before
+    # ever transferring content, skipping the transfer entirely on a
+    # match). Previously #stage_large_copy_source unconditionally SCP'd
+    # *src* to a remote scratch path on every single run regardless of
+    # whether the destination already held identical content - fine for
+    # a one-time install, wasteful for a large binary (tens of MB) on
+    # every warm rerun of a role like prometheus.prometheus's own
+    # binary-propagation task (round 25/26/27's alertmanager/
+    # blackbox_exporter benchmark rounds all hit this).
+    #
+    # One remote round trip (not two): resolves the real destination
+    # path (appending the source's basename if `dest` is already an
+    # existing directory - copy.cr's own `handle_file_copy` does the
+    # same resolution once it actually runs, so this must match it
+    # exactly or a mismatch would silently skip a needed copy) and
+    # md5sums it in the same script, only if it exists.
+    #
+    # Returns the resolved params for the caller to use as-is (with
+    # `src` left pointing at the untouched local file - the plugin body
+    # never reads it in the match case) when the checksums match, or
+    # `nil` when they don't (or the match couldn't be determined),
+    # telling the caller to fall through to its normal unconditional
+    # upload path unchanged.
+    private def precomputed_copy_match(params : Hash(String, String), src : String, host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String)?
+      # force: false's own "dest exists at all -> unchanged, no
+      # checksum involved" short-circuit lives entirely in copy.cr and
+      # doesn't need src staged either way - simplest to just leave that
+      # case to the normal (always-safe) unconditional-upload path
+      # rather than teach this checksum-first optimization about it too.
+      return nil if ["false", "no", "0", "off"].includes?(params["force"]?.try(&.downcase))
+
+      dest = params["dest"]?
+      return nil unless dest
+
+      local_md5 = begin
+        Digest::MD5.new.file(src).hexfinal
+      rescue
+        return nil
+      end
+
+      basename = File.basename(src)
+      script = <<-SCRIPT
+        p=#{shell_single_quote(dest)}
+        [ -d "$p" ] && p="$p/#{basename.gsub("'", "'\\''")}"
+        if [ -f "$p" ]; then md5sum "$p" | cut -d' ' -f1; else echo NOFILE; fi
+        SCRIPT
+
+      connection_host = PluginManager.get_connection_host(host, vars_context)
+      result = SSHManager.exec_script(
+        connection_host,
+        host.user || "root",
+        script,
+        host.port,
+        identity_file: vars_context["ansible_ssh_private_key_file"]?.try(&.as_s?)
+      )
+      return nil unless result[:exit_code] == 0 && result[:stdout].strip == local_md5
+
+      resolved = params.dup
+      resolved["__precomputed_match"] = "true"
+      resolved["__precomputed_checksum"] = local_md5
+      resolved["__original_src_basename"] = basename
+      resolved
+    rescue
+      nil
+    end
+
+    # Single-quotes *str* for shell embedding, escaping any embedded
+    # single quote - same convention as BasePlugin/BatchScript/
+    # PluginManager's own copies of this helper (each kept separate
+    # rather than shared across unrelated classes).
+    private def shell_single_quote(str : String) : String
+      "'" + str.gsub("'", "'\\''") + "'"
     end
 
     # Directory counterpart to #stage_large_copy_source: SCPs the whole

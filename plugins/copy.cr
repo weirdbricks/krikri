@@ -192,6 +192,33 @@ module CrystalPlay
     
     # Copy file from src to dest
     private def handle_file_copy(src : String, dest : String) : PluginResult
+      # __precomputed_match - set by TaskExecutor#precomputed_copy_match
+      # when a checksum-first remote check (run BEFORE ever staging src
+      # to the remote host at all) already proved the destination holds
+      # identical content. `src` here is still the ORIGINAL, controller-
+      # only local path in this case (nothing was staged) - checked and
+      # returned first, before any of the `src`-dependent logic below
+      # ever runs, since evaluating `Dir.exists?(src)`/`File.exists?(src)`
+      # against a path that only exists on the controller, from a plugin
+      # process actually running on the remote host, would be meaningless
+      # at best. Mirrors the "content already identical" branch further
+      # down exactly (still applies file attributes - owner/group/mode
+      # can differ even when content matches).
+      if @params["__precomputed_match"]? == "true"
+        basename = @params["__original_src_basename"]?.presence || File.basename(src)
+        dest = File.join(dest, basename) if Dir.exists?(dest)
+        return PluginResult.new(changed: false, failed: false, msg: "File already identical (check mode)") if @check_mode
+
+        apply_file_attributes(dest)
+        return PluginResult.new(
+          changed: false,
+          failed: false,
+          msg: "File already exists with identical content",
+          dest: dest,
+          checksum: @params["__precomputed_checksum"]? || ""
+        )
+      end
+
       # Directory src - dispatched before any of the file-specific dest
       # resolution below, which doesn't apply to a directory copy (its
       # own trailing-"/" convention decides the dest layout instead).

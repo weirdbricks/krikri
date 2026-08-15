@@ -8,9 +8,48 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.353`.**
+**Currently at `0.9.354`.**
 
 ---
+
+`0.9.354` (`copy:` checksum-first upload skip, no live round - see
+0.9.353's note, same follow-up-work session):
+
+- **`copy:`'s controller->remote large-file upload path
+  (`TaskExecutor#stage_large_copy_source`) unconditionally SCP'd the
+  source to a remote scratch path on every single run**, even when the
+  destination already held byte-identical content - real Ansible's own
+  `copy:` computes the source checksum locally and stats the
+  destination remotely first, skipping the transfer entirely on a
+  match. Noted as a non-blocking inefficiency in rounds 25-27's
+  benchmark write-ups (a ~16-48MB binary re-uploaded on every warm
+  rerun of `prometheus.prometheus`'s own binary-propagation task).
+  Fix: new `precomputed_copy_match` - one remote round trip (not two)
+  that resolves the real destination path (appending the source's
+  basename if `dest` is already an existing directory, matching what
+  `copy.cr`'s own dest-resolution does once it actually runs) and
+  md5sums it in the same script, only if it exists. On a match, the
+  upload is skipped entirely and the plugin is told via a
+  `__precomputed_match` marker param to report `changed: false` and
+  still apply file attributes (owner/group/mode can differ even when
+  content matches) without ever touching `src` at all - `src` stays
+  the original controller-only path in this case, since nothing was
+  staged; `copy.cr` checks the marker before any `src`-dependent logic
+  runs at all, not after. Deliberately conservative: skipped entirely
+  when `force: false` (that case's own "dest exists at all ->
+  unchanged" short-circuit lives in `copy.cr` and doesn't interact with
+  a checksum at all) rather than teaching this optimization about it
+  too; any error resolving the pre-check (SSH failure, etc.) falls
+  through to the original unconditional-upload behavior unchanged.
+- Two new specs (`copy_precomputed_match_spec.cr`) cover the
+  plugin-side half of the contract - the executor-side remote checksum
+  round trip itself has no unit-test coverage (needs a real SSH
+  connection; `PluginSpecHelper` always runs the plugin binary
+  locally), verified by code review and cross-checked against
+  `copy.cr`'s own existing dest-resolution/idempotency logic instead of
+  a live host round trip, per explicit user instruction not to
+  provision new hosts for this contained change.
+- Full `crystal spec` suite: 1119 examples (was 1117), 0 failures.
 
 `0.9.353` (task-name display fix, no live round - the user asked to
 work through this and a `copy:` inefficiency after round 27, without
