@@ -51,18 +51,18 @@ module CrystalPlay
   # comparison). If `opts:` is given (and isn't the literal string
   # `"defaults"`) and the remount command itself fails, this fails with
   # real Ansible's own exact message rather than silently doing nothing -
-  # verified against the source, not paraphrased. One real behavior *not*
-  # implemented: when `opts:` is absent/`"defaults"` and the remount
-  # command fails (e.g. the mount point isn't actually in `fstab` yet,
-  # which `remounted` expects), real Ansible falls back to a full
-  # `umount` + `mount` cycle using the fstab entry; this plugin instead
-  # just reports `changed: true` regardless - a documented simplification
-  # for this one specific fallback path, not the general exit-code-blind
-  # convention `ensure_mounted`/`ensure_unmounted` used to have (fixed in
-  # the same proactive audit pass that found the identical gap in
-  # sysctl.cr/unarchive.cr/apt_repository.cr - every other `mount`/
-  # `umount` invocation in this file now propagates a real failure
-  # instead of silently reporting `changed: true` regardless).
+  # verified against the source, not paraphrased. When `opts:` is
+  # absent/`"defaults"` and the remount command fails instead (e.g. the
+  # mount point isn't actually in `fstab` yet, which `remounted` expects
+  # is exactly the common case where a fstab entry was just added in the
+  # same task/play), real Ansible falls back to a full `umount` + `mount`
+  # cycle using the fstab entry (a bare `mount <path>` with no `-t`/`-o`
+  # consults fstab for the matching line) - implemented here too now, and
+  # only fails for real if BOTH the remount attempt AND that fallback
+  # cycle fail. No path in this plugin is exit-code-blind anymore -
+  # every `mount`/`umount` invocation propagates a real command failure
+  # as a task failure with the command's own stdout/stderr, matching
+  # real ansible.posix.mount's verified `fail_json` behavior.
   #
   # state: ephemeral (`path`/`src`/`fstype` required, same as
   # `present`/`mounted` - verified against real Ansible's own
@@ -344,13 +344,57 @@ module CrystalPlay
       end
 
       result = remote_exec(cmd)
-      if result[:exit_code] != 0 && custom_opts
+      if result[:exit_code] != 0
+        if custom_opts
+          return PluginResult.new(
+            changed: false, failed: true,
+            msg: "Options were specified with remounted, but the remount command failed. " \
+                 "Failing in order to prevent an unexpected mount result. Try replacing this " \
+                 "command with a \"state: unmounted\" followed by a \"state: mounted\" using " \
+                 "the full desired mount options instead.",
+            name: path
+          )
+        end
+
+        # `opts:` absent/`"defaults"`: real ansible.posix mount.py's own
+        # `remount()` falls back to a full `umount` + `mount` cycle
+        # (both driven by the existing fstab entry - a bare `mount
+        # <path>` with no `-t`/`-o` consults fstab for the matching
+        # line's fstype/opts) rather than failing outright, since a bare
+        # `mount -o remount` can genuinely fail for a mount point that
+        # isn't actually in fstab yet (exactly the case `remounted` is
+        # commonly used for right after adding the fstab entry in the
+        # same task/play). Previously this whole fallback wasn't
+        # implemented at all - a failed opts-less remount always
+        # reported `changed: true, failed: false` regardless, matching
+        # neither real Ansible's fallback NOR a real failure.
+        return remount_via_umount_mount(path, fstab)
+      end
+
+      PluginResult.new(changed: true, failed: false, msg: "", name: path)
+    end
+
+    private def remount_via_umount_mount(path : String, fstab : String?) : PluginResult
+      umount_result = remote_exec("umount #{path}")
+      if umount_result[:exit_code] != 0
         return PluginResult.new(
           changed: false, failed: true,
-          msg: "Options were specified with remounted, but the remount command failed. " \
-               "Failing in order to prevent an unexpected mount result. Try replacing this " \
-               "command with a \"state: unmounted\" followed by a \"state: mounted\" using " \
-               "the full desired mount options instead.",
+          msg: "Error unmounting #{path}: #{umount_result[:stdout]}#{umount_result[:stderr]}",
+          name: path
+        )
+      end
+
+      mount_cmd = String.build do |cmd_builder|
+        cmd_builder << "mount"
+        cmd_builder << " -T #{fstab}" if fstab && fstab != DEFAULT_FSTAB
+        cmd_builder << " " << path
+      end
+
+      mount_result = remote_exec(mount_cmd)
+      if mount_result[:exit_code] != 0
+        return PluginResult.new(
+          changed: false, failed: true,
+          msg: "Error mounting #{path}: #{mount_result[:stdout]}#{mount_result[:stderr]}",
           name: path
         )
       end

@@ -8,7 +8,29 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.367`.**
+**Currently at `0.9.368`.**
+
+---
+
+`0.9.368` - closes the one remaining gap `0.9.367` explicitly left open:
+`state: remounted`'s own `opts:`-absent fallback. When `opts:` is
+absent/`"defaults"` and a bare `mount -o remount` fails (the common case
+right after adding a fstab entry in the same task/play, before the mount
+point is "really" mounted from fstab's point of view), real
+`ansible.posix.mount`'s own `remount()` doesn't fail outright - it falls
+back to a full `umount` + `mount <path>` cycle (the second bare `mount
+<path>`, no `-t`/`-o`, consults fstab for the matching line). This
+plugin previously had no fallback implemented at all for that case and
+just reported `changed: true` regardless, matching neither a real
+success nor a real failure. Implemented via a new
+`remount_via_umount_mount` helper; only fails for real now if BOTH the
+initial remount attempt AND the umount+mount fallback fail. Every
+`mount`/`umount` invocation in this plugin now propagates a real command
+failure - no exit-code-blind path left in the file at all. Regression
+specs added for both the `opts:`-given failure message and the
+`opts:`-absent fallback-then-real-failure path, using a real remount/
+umount/mount attempt against `/` guaranteed to fail in this sandbox (no
+`CAP_SYS_ADMIN`) - no actual filesystem is touched either way.
 
 ---
 

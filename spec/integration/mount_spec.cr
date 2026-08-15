@@ -185,4 +185,36 @@ describe "mount plugin" do
     result["changed"].as_bool.should be_true
     result["failed"].as_bool.should be_false
   end
+
+  it "fails with real Ansible's exact message when opts: is given and the remount command fails" do
+    result = PluginSpecHelper.run("mount", {
+      "path" => "/", "state" => "remounted", "opts" => "ro",
+    })
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should contain("Options were specified with remounted")
+  end
+
+  it "falls back to a real umount+mount cycle when opts: is absent and the remount command fails, matching real Ansible's own fallback" do
+    # Real bug this closes: when opts: is absent/"defaults" and a bare
+    # `mount -o remount` fails (the common case right after adding a
+    # fstab entry in the same task/play, before the mount point is
+    # "really" mounted from fstab's point of view), real
+    # ansible.posix.mount doesn't fail outright - it falls back to a
+    # full `umount` + `mount <path>` cycle (the second `mount` consults
+    # fstab for the matching line). This plugin used to have no fallback
+    # at all and just reported changed: true regardless, matching
+    # neither a real success nor a real failure. Exercised here against
+    # "/" (this sandbox has no privilege to remount/umount/mount it, so
+    # both the initial remount AND the umount+mount fallback genuinely
+    # fail) - no real mount state is touched either way, and the plugin
+    # should now report a REAL failure (umount's own error) instead of
+    # silently reporting changed: true.
+    result = PluginSpecHelper.run("mount", {
+      "path" => "/", "state" => "remounted",
+    })
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should contain("unmounting")
+  end
 end

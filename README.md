@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.367-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.368-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,13 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.368` - closes `mount.cr`'s last remaining gap** on direct
+  request: `state: remounted`'s `opts:`-absent fallback (a bare `mount
+  -o remount` failing right after a fstab entry was just added is the
+  common case here) now falls back to a real `umount` + `mount <path>`
+  cycle via fstab, matching real `ansible.posix.mount`'s own verified
+  behavior, instead of reporting `changed: true` regardless. No
+  exit-code-blind path left in this plugin at all.
 - **`0.9.367` - follow-up to the audit pass below**, on direct request:
   `mount.cr`'s own `ensure_mounted`/`ensure_unmounted`/`ensure_ephemeral`
   helpers had the identical "real command failure silently discarded"
