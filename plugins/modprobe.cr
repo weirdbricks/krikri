@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/crystal_play/base_plugin"
+require "../src/crystal_play/plugin_helpers/modprobe_command"
 
 module CrystalPlay
   # modprobe plugin - loads/unloads a kernel module. Compatible (for
@@ -17,11 +18,20 @@ module CrystalPlay
   # thing `lsmod` itself reads from) rather than shelling to `lsmod`
   # and grepping its output.
   #
-  # Not implemented: params: (extra modprobe arguments, e.g. "arg=val"
-  # passed straight to the module at load time) and persistent: present/
-  # absent (writing /etc/modules-load.d//etc/modprobe.d/ entries so the
-  # module survives a reboot) - konstruktoid/ansible-role-hardening's
-  # own only real caller (loading nf_conntrack for ufw) uses neither.
+  # - params: extra modprobe arguments (e.g. "numdummies=2") passed
+  #   straight to `modprobe <name> <params>` at load time - verified
+  #   against real community.general modprobe.py's own source: only
+  #   ever applied when the module ISN'T already loaded (`load_module`
+  #   is only called from `not modprobe.module_loaded()`), so on an
+  #   already-loaded module `params:` has zero effect and is never
+  #   re-checked against what's currently loaded - `state: present`
+  #   against an already-loaded module is a pure no-op regardless of
+  #   `params:`, matching that exactly.
+  #
+  # Not implemented: persistent: present/absent (writing
+  # /etc/modules-load.d//etc/modprobe.d/ entries so the module survives
+  # a reboot) - konstruktoid/ansible-role-hardening's own only real
+  # caller (loading nf_conntrack for ufw) doesn't use it.
   class ModprobePlugin < BasePlugin
     def execute : PluginResult
       name = @params["name"]?
@@ -53,7 +63,7 @@ module CrystalPlay
       return PluginResult.new(changed: false, failed: false, msg: "#{name} already loaded") if loaded
       return PluginResult.new(changed: true, failed: false, msg: "Would load #{name}") if check_mode
 
-      result = remote_exec("modprobe #{name}")
+      result = remote_exec(PluginHelpers::ModprobeCommand.load_command(name, @params["params"]?))
       unless result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true, msg: "Failed to load module #{name}", stderr: result[:stderr])
       end

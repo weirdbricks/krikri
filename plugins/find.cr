@@ -3,6 +3,7 @@
 require "json"
 require "../src/crystal_play/base_plugin"
 require "../src/crystal_play/plugin_helpers/stat_fields"
+require "../src/crystal_play/plugin_helpers/find_mode_filter"
 
 module CrystalPlay
   # Find plugin - recursively searches for files/directories matching
@@ -38,9 +39,24 @@ module CrystalPlay
   # - get_checksum / checksum_algorithm: as in the stat plugin (default:
   #   get_checksum false, matching real Ansible's find default)
   #
-  # Not implemented: encoding, mode, limit - all lower-value/rarer options
-  # than the core path+pattern+type+age+contains search that covers the
-  # overwhelming majority of real playbooks' `find:` usage.
+  # - mode / exact_mode: filters matched files by permission bits -
+  #   octal ("0644") or the `u=rw,g=r,o=r` symbolic assignment form -
+  #   see `PluginHelpers::FindModeFilter`'s own doc comment for exact
+  #   semantics (verified against real ansible/modules/find.py's own
+  #   `mode_filter` source, including its non-obvious non-exact "ANY
+  #   requested bit present" semantics) and its documented scope cut
+  #   (only `=` assignment, not the fuller chmod(1) `+`/`-`/`X`/`s`/`t`
+  #   grammar).
+  # - limit: stops once this many matches are found - this plugin's own
+  #   directory walk is already a top-down, pre-order traversal (a
+  #   parent directory's own direct matches are always found before
+  #   descending into any of its subdirectories), matching real
+  #   Ansible's own `os.walk()`-based "shallowest directory first"
+  #   ordering, so no walk-order change was needed to support this.
+  #
+  # Not implemented: encoding (used only for a `contains:` search's own
+  # file-reading encoding) - lower-value than the other two, and every
+  # real caller found so far reads plain UTF-8/ASCII text anyway.
   #
   # Directory walk via Dir.each_child + native lstat()/hashlib-equivalent
   # checksums (BasePlugin#native_stat/#native_checksum) rather than
@@ -72,7 +88,10 @@ module CrystalPlay
       read_whole_file : Bool,
       get_checksum : Bool,
       algorithm : String,
-      now : Int64
+      now : Int64,
+      mode : String?,
+      exact_mode : Bool,
+      limit : Int32?
 
     def execute : PluginResult
       paths_param = @params["paths"]?
@@ -97,6 +116,9 @@ module CrystalPlay
         get_checksum: is_true?(@params["get_checksum"]?, default: false),
         algorithm: @params["checksum_algorithm"]? || "sha1",
         now: Time.utc.to_unix,
+        mode: @params["mode"]?,
+        exact_mode: is_true?(@params["exact_mode"]?, default: true),
+        limit: @params["limit"]?.try(&.to_i?),
       )
 
       files = [] of JSON::Any
@@ -110,15 +132,19 @@ module CrystalPlay
         end
 
         entries = list_entries(search_path, options.recurse, options.depth)
-        examined += entries.size
 
         entries.each do |entry_path|
+          examined += 1
           next if !options.hidden && hidden_path?(entry_path, search_path)
 
           if stat_hash = match(entry_path, options)
             files << JSON::Any.new(stat_hash)
           end
+
+          break if (limit = options.limit) && files.size >= limit
         end
+
+        break if (limit = options.limit) && files.size >= limit
       end
 
       PluginResult.new(
@@ -145,6 +171,7 @@ module CrystalPlay
       return nil unless matches_size?(stat_hash, options.size_filter)
       return nil unless matches_age?(stat_hash, options.age_filter, options.age_stamp, options.now)
       return nil if options.file_type == "file" && !matches_contains?(entry_path, options.contains, options.read_whole_file)
+      return nil if options.mode && !PluginHelpers::FindModeFilter.matches?(stat_hash["mode"].as_s.to_i(8), options.mode.not_nil!, options.exact_mode)
 
       add_symlink_fields(stat_hash, entry_path) if stat_hash["islnk"].as_bool
       add_checksum(stat_hash, entry_path, options.algorithm) if options.get_checksum && stat_hash["isreg"].as_bool

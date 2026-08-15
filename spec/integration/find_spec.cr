@@ -167,4 +167,75 @@ describe "find plugin" do
       paths_of(result).should_not be_empty
     end
   end
+
+  describe "mode: / exact_mode:" do
+    # Real bug found via a proactive scope-cut audit: mode:/exact_mode:
+    # were entirely unimplemented. Verified end-to-end against real
+    # ansible-playbook against the exact same fixture shape (0644/0755/
+    # 0600) before writing these - see PluginHelpers::FindModeFilter's
+    # own spec for the underlying logic's unit coverage.
+    it "matches only files with the exact mode when exact_mode: true (the default)" do
+      exact_dir = File.join(TMP_DIR, "modes-exact")
+      Dir.mkdir_p(exact_dir)
+      a = File.join(exact_dir, "a.txt")
+      b = File.join(exact_dir, "b.txt")
+      File.write(a, "a")
+      File.write(b, "b")
+      File.chmod(a, 0o644)
+      File.chmod(b, 0o755)
+
+      result = PluginSpecHelper.run("find", {"paths" => exact_dir, "mode" => "0644"})
+
+      paths_of(result).should eq([a])
+    end
+
+    it "matches any file with at least one requested bit set when exact_mode: false" do
+      loose_dir = File.join(TMP_DIR, "modes-loose")
+      Dir.mkdir_p(loose_dir)
+      readable = File.join(loose_dir, "readable.txt")
+      private_file = File.join(loose_dir, "private.txt")
+      File.write(readable, "a")
+      File.write(private_file, "b")
+      File.chmod(readable, 0o644)
+      File.chmod(private_file, 0o600)
+
+      result = PluginSpecHelper.run("find", {"paths" => loose_dir, "mode" => "044", "exact_mode" => "false"})
+
+      paths_of(result).should eq([readable])
+    end
+
+    it "supports the symbolic u=,g=,o= assignment form" do
+      symbolic_dir = File.join(TMP_DIR, "modes-symbolic")
+      Dir.mkdir_p(symbolic_dir)
+      match = File.join(symbolic_dir, "match.txt")
+      File.write(match, "a")
+      File.chmod(match, 0o644)
+
+      result = PluginSpecHelper.run("find", {"paths" => symbolic_dir, "mode" => "u=rw,g=r,o=r"})
+
+      paths_of(result).should eq([match])
+    end
+  end
+
+  describe "limit:" do
+    it "stops after finding the requested number of matches" do
+      limit_dir = File.join(TMP_DIR, "limit-test")
+      Dir.mkdir_p(limit_dir)
+      3.times { |i| File.write(File.join(limit_dir, "f#{i}.txt"), "x") }
+
+      result = PluginSpecHelper.run("find", {"paths" => limit_dir, "patterns" => "*.txt", "limit" => "2"})
+
+      result["matched"].as_i64.should eq(2)
+    end
+
+    it "returns every match when limit: exceeds the real count" do
+      limit_dir = File.join(TMP_DIR, "limit-test-under")
+      Dir.mkdir_p(limit_dir)
+      2.times { |i| File.write(File.join(limit_dir, "f#{i}.txt"), "x") }
+
+      result = PluginSpecHelper.run("find", {"paths" => limit_dir, "patterns" => "*.txt", "limit" => "10"})
+
+      result["matched"].as_i64.should eq(2)
+    end
+  end
 end

@@ -81,6 +81,52 @@ describe "wait_for plugin" do
     File.delete(path) if path && File.exists?(path)
   end
 
+  describe "search_regex against an open socket (not just a file)" do
+    # Real bug found via a proactive scope-cut audit: search_regex was
+    # only ever matched against a file's content, never against data
+    # read from an open port - real ansible/modules/wait_for.py's own
+    # source connects, then reads (accumulating bytes) until the regex
+    # matches, the connection closes, or the overall timeout passes.
+    it "succeeds once the server sends data matching the regex" do
+      server = TCPServer.new("127.0.0.1", 0)
+      port = server.local_address.port
+      spawn do
+        client = server.accept
+        client.puts "starting up..."
+        sleep 50.milliseconds
+        client.puts "server ready OpenSSH_9.0"
+        client.flush
+      end
+
+      result = PluginSpecHelper.run("wait_for", {
+        "port" => port.to_s, "host" => "127.0.0.1", "search_regex" => "OpenSSH", "timeout" => "5",
+      })
+
+      result["failed"].as_bool.should be_false
+    ensure
+      server.try(&.close)
+    end
+
+    it "times out with real Ansible's own search-string message when the regex never appears" do
+      server = TCPServer.new("127.0.0.1", 0)
+      port = server.local_address.port
+      spawn do
+        client = server.accept
+        client.puts "nothing relevant here"
+        client.flush
+      end
+
+      result = PluginSpecHelper.run("wait_for", {
+        "port" => port.to_s, "host" => "127.0.0.1", "search_regex" => "NEVER_APPEARS_XYZ", "timeout" => "1",
+      })
+
+      result["failed"].as_bool.should be_true
+      result["msg"].as_s.should eq("Timeout when waiting for search string NEVER_APPEARS_XYZ in 127.0.0.1:#{port}")
+    ensure
+      server.try(&.close)
+    end
+  end
+
   it "never reports changed" do
     result = PluginSpecHelper.run("wait_for", {"timeout" => "0"})
     result["changed"].as_bool.should be_false

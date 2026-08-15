@@ -8,7 +8,32 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.368`.**
+**Currently at `0.9.369`.**
+
+---
+
+`0.9.369` (part 1 of a "fix every remaining narrow scope cut" pass, on
+direct request) - closes three: `modprobe:`'s `params:` (extra modprobe
+arguments, verified against real community.general modprobe.py's source
+to only ever apply at initial load time, never re-checked against an
+already-loaded module - split into a new pure `PluginHelpers::
+ModprobeCommand`, unit-spec-covered); `find:`'s `mode:`/`exact_mode:`
+(octal and the common `u=,g=,o=` symbolic assignment form, verified
+against real ansible/modules/find.py's own `mode_filter` source
+including its non-obvious non-exact "ANY requested bit present"
+semantics - not "every bit present" the docs' prose implies; a new
+`PluginHelpers::FindModeFilter`, unit + integration spec covered, and
+live-verified end-to-end against a real `ansible-playbook` run against
+the identical fixture files) and `limit:` (stops once N matches are
+found; the existing directory walk was already top-down/pre-order, so
+no walk-order change was needed); `wait_for:`'s `search_regex` matched
+against an open socket, not just a file (verified against real
+ansible/modules/wait_for.py's own source: connects, reads until match/
+close/timeout - also fixed the port-based timeout message to include
+the search string, which it was silently omitting even before this
+change, verified byte-for-byte identical against a real `ansible-
+playbook` run against the same fake TCP server). More to follow in
+subsequent commits under the same version.
 
 ---
 

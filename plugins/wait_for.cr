@@ -32,10 +32,16 @@ module CrystalPlay
   # `host:` to a literal, so this only matters if a hostname is passed
   # explicitly) - fails clearly rather than silently matching nothing.
   #
-  # Not implemented: `search_regex` matched against an open socket (only
-  # file-content matching is implemented, per this entry's own original
-  # scope) - lower-value than the core port/path/regex-in-file polling
-  # path.
+  # `search_regex` also works against an open socket, not just a file -
+  # verified against real ansible/modules/wait_for.py's own source:
+  # connects, then reads (accumulating bytes) until the regex matches,
+  # the connection closes, or the poll iteration's own remaining timeout
+  # budget passes - see `#check_port_regex`'s own doc comment for the
+  # exact behavior matched (and the one simplification: a single read
+  # loop per connection attempt bounded by the overall deadline, rather
+  # than replicating real Ansible's own `select()`-based remaining-time
+  # tracking byte-for-byte - functionally equivalent, reconnects via the
+  # same outer poll/sleep loop on any timeout/disconnect either way).
   class WaitForPlugin < BasePlugin
     def execute : PluginResult
       if is_true?(@params["check_mode"]?)
@@ -141,7 +147,7 @@ module CrystalPlay
       deadline = Time.monotonic + timeout.seconds
 
       loop do
-        satisfied, match = check_condition(port, path, up)
+        satisfied, match = check_condition(port, path, up, deadline)
         return success_result(path, match, started) if satisfied
 
         break if Time.monotonic >= deadline
@@ -166,7 +172,11 @@ module CrystalPlay
     private def timeout_message(port : Int32?, path : String?) : String
       if port
         host = @params["host"]? || "127.0.0.1"
-        "Timeout when waiting for #{host}:#{port}"
+        if regex = @params["search_regex"]?
+          "Timeout when waiting for search string #{regex} in #{host}:#{port}"
+        else
+          "Timeout when waiting for #{host}:#{port}"
+        end
       elsif path
         if regex = @params["search_regex"]?
           "Timeout when waiting for search string #{regex} in #{path}"
@@ -182,14 +192,60 @@ module CrystalPlay
     # search_regex hit (used to populate match_groups/match_groupdict).
     # Only called with a port or a path - the no-condition "just sleep"
     # case is handled directly in execute before this is ever reached.
-    private def check_condition(port : Int32?, path : String?, up : Bool) : {Bool, Regex::MatchData?}
+    private def check_condition(port : Int32?, path : String?, up : Bool, deadline : Time::Span) : {Bool, Regex::MatchData?}
       if port
-        {port_connectable?(port) == up, nil}
+        if up && (regex = @params["search_regex"]?)
+          check_port_regex(port, regex, deadline)
+        else
+          {port_connectable?(port) == up, nil}
+        end
       elsif path
         check_path(path, up)
       else
         raise "unreachable"
       end
+    end
+
+    # search_regex matched against data read from an open socket, not
+    # just a file - verified against real ansible/modules/wait_for.py's
+    # own source: connects, then reads (accumulating bytes) until the
+    # regex matches, the connection closes, or *deadline* (this poll
+    # iteration's own overall timeout budget, not a fresh per-call one)
+    # passes - matching real Ansible's own single-connection read loop
+    # bounded by its own remaining-time budget, not a fixed per-attempt
+    # timeout. A connection refused/reset, a read timeout, or a closed
+    # connection with no match all fall through to {false, nil} - the
+    # outer poll loop (already implemented) reconnects and retries after
+    # its own sleep: interval, same as real Ansible's outer while loop
+    # does on any not-yet-satisfied iteration.
+    private def check_port_regex(port : Int32, regex : String, deadline : Time::Span) : {Bool, Regex::MatchData?}
+      host = @params["host"]? || "127.0.0.1"
+      connect_timeout = (@params["connect_timeout"]? || "5").to_i.seconds
+      compiled = Regex.new(regex, Regex::CompileOptions::MULTILINE)
+
+      socket = TCPSocket.new(host, port, connect_timeout: connect_timeout)
+      begin
+        remaining = deadline - Time.monotonic
+        socket.read_timeout = remaining > Time::Span.zero ? remaining : 1.milliseconds
+
+        data = IO::Memory.new
+        buf = Bytes.new(4096)
+        loop do
+          bytes_read = socket.read(buf)
+          break {false, nil} if bytes_read == 0 # server closed, no match
+
+          data.write(buf[0, bytes_read])
+          if match = compiled.match(String.new(data.to_slice))
+            break {true, match}
+          end
+
+          break {false, nil} if Time.monotonic >= deadline
+        end
+      ensure
+        socket.close rescue nil
+      end
+    rescue
+      {false, nil}
     end
 
     private def port_connectable?(port : Int32) : Bool
