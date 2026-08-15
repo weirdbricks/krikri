@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.358-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.359-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,18 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.359` (round 31) - `devsec.hardening.ssh_hardening`, first new
+  role tested since round 30's prometheus.** One real bug found and
+  fixed live: `regex_replace`'s `\1`/`\2` backreference translation
+  was backwards - it rewrote Python-style backreferences to `$1`/`$2`
+  assuming Crystal's `gsub(Regex, String)` needed Ruby-style
+  `$`-backreferences, when Crystal actually already matches Python's
+  `\1` syntax directly, so the "translated" replacement string leaked
+  through completely literally. Broke the role's own `ssh -V`-output
+  version parsing, cascading into 3 undefined openssh-version-gated
+  `set_fact:` variables. Both hosts locked out of root SSH identically
+  post-play - the role's own `ssh_permit_root_login: "no"` default
+  correctly taking effect (expected, not an engine bug).
 - **`0.9.358` (round 30) - `prometheus.prometheus.prometheus`, first
   new role tested since round 28's pushgateway follow-up.** Two real
   bugs found and fixed live: `fileglob`/`realpath` Jinja filters

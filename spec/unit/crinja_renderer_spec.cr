@@ -190,6 +190,23 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     renderer.render(%({{ "mysecret" | hash('md5') }})).should eq("06c219e5bc8378f3a8a3f83b4b7e4649")
   end
 
+  it "honors \\1 backreferences in regex_replace's replacement string" do
+    # Real bug found benchmarking devsec.hardening.ssh_hardening's own
+    # `sshd_version_raw.stderr | regex_replace('.*_([0-9]*.[0-9]).*',
+    # '\1')` (parsing `ssh -V`'s stderr down to a bare version number).
+    # jinja_filters.cr used to rewrite `\1`/`\2` replacement
+    # backreferences to `$1`/`$2` on the mistaken assumption Crystal's
+    # String#gsub(Regex, String) used Ruby-style `$`-backreferences -
+    # it doesn't special-case `$1` at all, so the "translated"
+    # replacement was emitted completely literally ("$1" instead of
+    # the captured "8.9"), and every downstream `is version(...)` gate
+    # depending on the parsed value evaluated wrong as a result.
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new({} of String => JSON::Any)
+    renderer.render(
+      %({{ "OpenSSH_8.9p1 Ubuntu-3, OpenSSL 3.0.2 15 Mar 2022" | regex_replace('.*_([0-9]*.[0-9]).*', '\\1') }})
+    ).should eq("8.9")
+  end
+
   it "renders to_nice_yaml, real Ansible's own pretty-YAML filter" do
     # Real bug found benchmarking cloudalchemy.prometheus's own alerting-
     # rules template: `{{ prometheus_alert_rules | to_nice_yaml(indent=2,

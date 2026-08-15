@@ -245,13 +245,21 @@ module CrystalPlay
     # wrapping Python's `re.sub`. konstruktoid-hardening's
     # sysctl.ipv6.conf.j2 uses it to turn a VLAN interface name's dot
     # into the `/` sysctl's key-path syntax needs (`eth0.100` ->
-    # `eth0/100`); `\1`/`\2` group backreferences in *replacement*
-    # (Python's `re.sub` syntax) are translated to Crystal's `$1`/`$2`
-    # before use, since Crystal's own regex replacement syntax differs.
+    # `eth0/100`). `\1`/`\2` group backreferences in *replacement*
+    # (Python's `re.sub` syntax) need NO translation - Crystal's own
+    # `String#gsub(Regex, String)` already interprets `\1`/`\2` the
+    # same way. This used to rewrite them to `$1`/`$2` on the mistaken
+    # assumption that Crystal used Ruby-style `$`-backreferences;
+    # Crystal's gsub does not special-case `$1` at all, so the
+    # "translated" replacement string was emitted completely literally
+    # - devsec.hardening.ssh_hardening's own `sshd_version_raw.stderr |
+    # regex_replace('.*_([0-9]*.[0-9]).*', '\1')` (parsing `ssh -V`'s
+    # output down to a bare version number) produced the literal string
+    # "$1" instead of "8.9", which then failed every downstream `is
+    # version(...)` when: gate that depends on it.
     Crinja.filter(:regex_replace) do
       pattern = arguments.varargs[0]?.try(&.to_s) || ""
       replacement = arguments.varargs[1]?.try(&.to_s) || ""
-      replacement = replacement.gsub(/\\(\d)/) { "$#{$1}" }
       Crinja::Value.new(target.to_s.gsub(Regex.new(pattern), replacement))
     end
 

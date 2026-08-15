@@ -8,7 +8,53 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.358`.**
+**Currently at `0.9.359`.**
+
+---
+
+`0.9.359` (round 31 - `devsec.hardening.ssh_hardening`, first new role
+tested since round 30's prometheus): 1 real bug found and fixed on a
+fresh `G3.2GB` Atlantic.net pair.
+
+- **`regex_replace`'s `\1`/`\2` backreference translation was backwards
+  and actively broke every replacement using them.** The role's own
+  `sshd_version_raw.stderr | regex_replace('.*_([0-9]*.[0-9]).*',
+  '\1')` (parsing `ssh -V`'s stderr down to a bare version number, e.g.
+  `"OpenSSH_8.9p1 ..."` -> `"8.9"`) instead produced the literal string
+  `"$1"`. `jinja_filters.cr`'s `regex_replace` used to rewrite
+  Python-style `\1`/`\2` replacement backreferences to `$1`/`$2` on the
+  mistaken assumption that Crystal's `String#gsub(Regex, String)` used
+  Ruby-style `$`-backreferences. It doesn't - Crystal's own gsub
+  already interprets `\1`/`\2` identically to Python's `re.sub`, so no
+  translation was ever needed, and the "translated" `$1` replacement
+  was emitted completely literally (Crystal's gsub has no special
+  meaning for `$1` at all). Every downstream `when: ... is version(...)`
+  gate depending on the parsed value then evaluated against the literal
+  string `"$1"` instead of a real version - in this role, 3 separate
+  `set_fact:` tasks (openssh-version-gated host-key/macs/ciphers/kex
+  variable defaults) all silently kept their variables undefined,
+  crashing 3 tasks later on `loop: "{{ ssh_host_key_files }}"` (etc.)
+  with `item` = the literal string `"undefined"`. Fixed by removing the
+  `\1`->`$1` conversion entirely; regression spec added to
+  `spec/unit/crinja_renderer_spec.cr`.
+- **Live-verified**: cold pass `ok=34 changed=5 failed=0 skipped=5` vs
+  python `ok=41 changed=8 failed=0 skipped=4` (task-by-task diff is
+  cosmetic-only - role-name-prefix stripping in crystal-ansible's own
+  task-name display, plus the already-documented cosmetic
+  role-vars/main.yml-sourced task-name-rendering gap on one task's
+  name, `Check if for weak DH parameters in undefined` vs real
+  Ansible's `.../moduli` - both engines report the same `ok` status for
+  that task, no functional divergence). Both hosts became unreachable
+  via `root@` SSH immediately after the play, identically on BOTH the
+  python and crystal hosts - this is the role's own default
+  (`ssh_permit_root_login: "no"`) correctly taking effect, not a
+  crystal-ansible bug; we provisioned and ran the play as root, so this
+  was expected once `sshd_config` was rewritten and `sshd` restarted
+  (same pattern as round 24's konstruktoid.hardening UFW lockout
+  finding). No further live health check was possible past this point
+  without a non-root sudo user pre-provisioned; the task-by-task diff
+  above (both plays completing successfully, `failed=0` on both,
+  identical per-task status) is the verification available.
 
 ---
 
