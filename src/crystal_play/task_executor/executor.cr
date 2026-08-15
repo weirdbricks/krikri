@@ -2546,10 +2546,12 @@ module CrystalPlay
       # load_role's own comment on why this needs to happen at all.
       child_parent_defaults = task.role_defaults || Hash(String, JSON::Any).new
 
+      rendered_include_vars = render_include_role_vars(task.include_role_vars, vars_context, host.name)
+
       begin
         included_tasks, included_handlers = RoleLoader.load_single_role(
           role_name,
-          render_include_role_vars(task.include_role_vars, vars_context, host.name),
+          rendered_include_vars,
           task.tags,
           inherited,
           task.include_role_dir.as(String),
@@ -2561,6 +2563,27 @@ module CrystalPlay
       rescue ex
         fail_include(task, host, "Failed to load role '#{role_name}': #{ex.message}")
         return
+      end
+
+      # Re-render each loaded task's own `name:` against the include_role's
+      # `vars:`, same as execute_include_tasks already does for a plain
+      # include_tasks:'s include_vars (line ~2421 above). Without this, a
+      # role's tasks/main.yml `name: "Create group {{ _child_group }}"`
+      # where `_child_group` is set only via include_role: vars: (not a
+      # role default/vars file, which get baked in earlier during
+      # RoleLoader.load_single_role and so already render correctly)
+      # stayed literal in the "TASK [...]" banner even though the task's
+      # own body (msg:/when:) rendered `_child_group` correctly - task
+      # execution rebuilds its own vars_context from role
+      # defaults/vars/task.vars per task, but the printed banner text is
+      # whatever task.name already was BEFORE that per-task context
+      # exists. Found via prometheus.prometheus.alertmanager's own
+      # `_common` role include (`_common_system_group: "{{
+      # alertmanager_system_group }}"` passed as include_role vars:).
+      unless rendered_include_vars.empty?
+        name_context = vars_context.merge(rendered_include_vars)
+        name_substitutor = VarSubstitutor.new(vars: name_context, host_name: host.name)
+        included_tasks.each { |t| t.name = name_substitutor.substitute(t.name) }
       end
 
       if item = vars_context["item"]?

@@ -268,15 +268,19 @@ module CrystalPlay
         "#{user}@#{host}:#{remote_path}"
       ]
 
+      out_io = IO::Memory.new
+      err_io = IO::Memory.new
       result = Process.run(
         scp_cmd[0],
         scp_cmd[1..],
-        output: Process::Redirect::Pipe,
-        error: Process::Redirect::Pipe
+        output: out_io,
+        error: err_io
       )
 
       unless result.exit_code == 0
-        raise "Failed to upload #{local_path} to #{host}:#{remote_path}"
+        detail = (err_io.to_s + out_io.to_s).strip
+        detail = detail.empty? ? "no output" : detail
+        raise "Failed to upload #{local_path} to #{host}:#{remote_path}: #{detail}"
       end
 
       # Set permissions if different from default. Pass `mode: nil` to

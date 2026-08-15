@@ -8,9 +8,112 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.350`.**
+**Currently at `0.9.351`.**
 
 ---
+
+`0.9.351` (round 26 - `prometheus.prometheus.alertmanager`, first new role
+tested since round 25, 7 real engine bugs found and fixed):
+
+- **Dict-literal `== {}` comparison always evaluated false.** A `when:`
+  condition comparing a dict-valued variable to the literal `{}` (e.g.
+  `alertmanager_route == {}`, the role's own preflight "fail if no route
+  configured" check) always skipped instead of matching, because
+  `ConditionalEvaluator#evaluate_value`'s return type has no `Hash` case
+  at all - a dict variable's left side stringified via the `else` branch
+  to compact JSON (`"{}"`), but the literal `{}` on the right side fell
+  through every branch to "not a variable" -> `nil`, comparing a String
+  against `nil`. Fix: special-case the bare `{}` literal to return the
+  same `"{}"` string a Hash's own stringification produces.
+
+- **`include_role:`'s own `vars:` weren't re-rendering the loaded role's
+  task `name:` fields**, unlike `include_tasks:`'s equivalent
+  `include_vars:` handling. A task like `_common`'s own
+  `name: "Create system group {{ _common_system_group }}"` (with
+  `_common_system_group` set only via the parent role's
+  `include_role: vars:`) printed the literal unrendered template in the
+  `TASK [...]` banner - and in this specific case, the SAME unrendered
+  variable also fed a `when:` condition (`_common_system_group not in
+  ansible_facts.getent_group`), which then evaluated against garbage and
+  silently SKIPPED the group/user-creation task entirely. Fix: after
+  `RoleLoader.load_single_role` returns, re-render each loaded task's
+  `name:` against the include_role vars, mirroring the include_tasks
+  pattern already in place.
+
+- **`check_mode:`/`diff:` task keywords crashed on any non-literal-bool
+  (templated) value and silently dropped the ENTIRE containing task
+  file** - the most severe bug this round. Both used a bare `.as_bool`
+  (raises "Cast from String to Bool failed" on a String value), unlike
+  `ignore_errors:`/`become:`, which already tolerate a templated value.
+  The exception propagated out of task-file parsing entirely, dropping
+  every task in that file (both before AND after the offending one) -
+  live symptom: the role's `configure.yml` (`diff: "{{ not
+  alertmanager_mask_diff }}"` on its "Copy alertmanager config" task)
+  lost 4 of its 5 tasks outright, including the one that writes
+  alertmanager's actual config file. Fix: new
+  `parse_optional_bool_or_template` helper (mirroring
+  `parse_ignore_errors`'s pattern) returns `nil` (inherit the global
+  `--check`/`--diff` CLI flag) for a templated/unrecognized value
+  instead of raising.
+
+- **Four missing Jinja tests/filters**, each failing an entire template
+  render (Crinja has no partial-render fallback) the first time a real
+  role's `.j2` template used them:
+  - `version_compare` - deprecated alias of the already-registered
+    `version` test, still emitted by this role's own
+    `systemd.service.j2`.
+  - `any`/`all` - real Jinja2 3.0+ built-in tests (iterable-truthiness),
+    entirely unregistered in the fork.
+  - `eq`/`lt`/`le`/`gt`/`ge` - real Jinja2's short comparison-test
+    aliases (used almost exclusively as a `select()`/`reject()`
+    predicate name, e.g. `values() | select('gt', 0)`); the fork had
+    `equalto`/`lessthan`/`greaterthan`/`ne` but not these spellings.
+  - `quote` - Ansible's own filter (shlex.quote-equivalent), not part
+    of Jinja2 at all and not previously implemented; Crystal's
+    `Process.quote` matches Python's `shlex.quote` on every case
+    checked.
+
+- **Verified live** on a fresh 2-node `G3.2GB` Atlantic.net pair
+  (USEAST2, real `ansible-playbook` 2.19.4 vs crystal-ansible HEAD):
+  cold pass `ok=32 changed=8 failed=0 skipped=19` vs python's
+  `ok=35 changed=13 failed=0 skipped=20` (the count differences are
+  the known fact-cache `ok` artifact plus this environment's `copy:`
+  action re-uploading large binaries unconditionally rather than
+  skipping on a remote-checksum match - see the minor-inefficiency
+  note below, not a correctness issue). `failed=0` on both engines;
+  every task the role expects to run (systemd unit, config file,
+  amtool config) succeeded on crystal.
+
+- **One known cosmetic-only gap left open, not fixed**: a task `name:`
+  sourced from a role's `vars/main.yml` (as opposed to `include_role:
+  vars:`, fixed above) still stays unrendered in the `TASK [...]`
+  banner (e.g. `TASK [Download {{ __common_binary_basename }}]`) even
+  though the task body executes correctly - `__common_binary_basename`
+  is itself a templated `vars/main.yml` entry
+  (`"{{ _common_binary_url | urlsplit('path') | basename }}"`). This is
+  a distinct, deeper architectural gap (task names are rendered in
+  scattered early one-time passes per var-source, not at actual
+  per-task execution time) - display-only, not fixed this round.
+
+- **One unrelated environmental finding, not an engine bug**: the
+  role's rendered systemd unit (`-cluster.listen-address=` with an
+  empty value, matching the role's own default) crash-loops real
+  alertmanager 0.33.1 itself (`alertmanager: error: unknown short flag
+  '-c'`) - reproduced by invoking the installed binary directly by
+  hand, with no Ansible involved at all. A real role/software-version
+  incompatibility, identical on both engines since both render the
+  exact same systemd unit template.
+
+- **Minor inefficiency noted, not fixed**: the `copy:` action
+  re-uploads a large binary every run even when the remote file's
+  content already matches (real Ansible's `copy:` computes a
+  destination checksum first and skips the transfer on a match) -
+  cosmetic/performance only, doesn't affect correctness, and outside
+  this round's scope.
+
+- **Full crystal spec suite: 1117 examples, 0 failures**, all 7 fixes
+  individually repro-verified with a minimal playbook before the live
+  round confirmed them end-to-end.
 
 `0.9.350` (round 25 - live re-verification of `0.9.349`'s fixes on a
 fresh Atlantic.net `G3.2GB` pair, `devsec.hardening.mysql_hardening`):

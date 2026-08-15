@@ -262,6 +262,18 @@ module CrystalPlay
     # `password = {SHA}{{ supervisor_password|hash('sha1') }}` (a
     # standard `{SHA}`-prefixed base64-ish supervisord auth format built
     # on top of the raw hex digest this filter itself returns).
+    # `quote` - Ansible's own filter (ansible.builtin.quote), wraps a
+    # string in shell-safe quotes (shlex.quote equivalent), used to
+    # safely interpolate a value into a shell command or config file
+    # line. Crystal's `Process.quote` matches Python's `shlex.quote`
+    # byte-for-byte on every case checked (plain strings pass through
+    # unquoted, strings with spaces get single-quoted, embedded single
+    # quotes get the `'\''`-escape dance, empty string becomes `''`).
+    # Found live via prometheus.prometheus.alertmanager's own
+    # alertmanager.yml.j2: `resolve_timeout: {{
+    # alertmanager_resolve_timeout | quote }}`.
+    Crinja.filter(:quote) { Process.quote(target.to_s) }
+
     Crinja.filter(:hash) do
       algorithm = (arguments.varargs[0]?.try(&.to_s) || "sha1").downcase
       openssl_name = case algorithm
@@ -428,6 +440,38 @@ module CrystalPlay
     # LooseVersion behavior real Ansible's own `version` test delegates
     # to closely enough for every operator real playbooks use.
     Crinja.test(:version) do
+      compare_to = arguments.varargs[0]?.try(&.to_s) || ""
+      operator = arguments.varargs[1]?.try(&.to_s) || "=="
+      cmp = JinjaFilters.compare_versions(target.to_s, compare_to)
+      case operator
+      when "==", "="
+        cmp == 0
+      when "!="
+        cmp != 0
+      when "<", "lt"
+        cmp < 0
+      when "<=", "le"
+        cmp <= 0
+      when ">", "gt"
+        cmp > 0
+      when ">=", "ge"
+        cmp >= 0
+      else
+        false
+      end
+    end
+
+    # `version_compare` - deprecated alias for `version` (identical
+    # signature/semantics), still emitted by real Ansible collection
+    # templates (e.g. prometheus.prometheus's `systemd.service.j2`:
+    # `{%- if (alertmanager_version is version_compare('0.13.0', '>=')) %}`).
+    # Real Ansible's `version` test module registers both names for the
+    # exact same implementation; Crinja only had `version` registered
+    # here, so any template using the deprecated spelling failed its
+    # entire render ("no test with name 'version_compare' registered" -
+    # Crinja has no partial-render fallback). Found live benchmarking
+    # prometheus.prometheus.alertmanager (round 26).
+    Crinja.test(:version_compare) do
       compare_to = arguments.varargs[0]?.try(&.to_s) || ""
       operator = arguments.varargs[1]?.try(&.to_s) || "=="
       cmp = JinjaFilters.compare_versions(target.to_s, compare_to)
@@ -670,6 +714,32 @@ module CrystalPlay
     # real Python distinction that `bool` is a SEPARATE type from `int`
     # even though Crystal's own `Bool`/`Int32`/`Int64` don't have that
     # ambiguity to begin with, so no special-casing needed there.
+    # `is any`/`is all` - real Jinja2 (3.0+) built-in tests checking
+    # whether any/every item of an iterable is truthy (Python's
+    # `any()`/`all()` builtins applied to the sequence, not a Jinja
+    # test in vanilla Python but promoted to a test in Jinja2 itself).
+    # Neither was registered in the fork at all - found live via
+    # prometheus.prometheus.alertmanager's own `systemd.service.j2`:
+    # `{% if (alertmanager_web_config.values() | map('length') |
+    # select('gt', 0) | list is any) %}`.
+    Crinja.test(:any) { target.each.any? { |item| item.truthy? } }
+    Crinja.test(:all) { target.each.all? { |item| item.truthy? } }
+
+    # Real Jinja2's comparison-operator test aliases - used almost
+    # exclusively as a `select()`/`reject()`/`map(attribute=...)`
+    # predicate name (`values() | select('gt', 0)`), not written
+    # directly as `is gt(...)` in a template. The fork already
+    # registers `equalto`/`lessthan`/`greaterthan`/`ne` (see
+    # tests.cr) but not the short `eq`/`lt`/`le`/`gt`/`ge` spellings
+    # real Jinja2 registers as aliases of the same tests. Found live
+    # via prometheus.prometheus.alertmanager's own systemd.service.j2:
+    # `select('gt', 0)`.
+    Crinja.test({other: 0}, :eq) { target == arguments["other"] }
+    Crinja.test({other: 0}, :lt) { target.to_i < arguments["other"].to_i }
+    Crinja.test({other: 0}, :le) { target.to_i <= arguments["other"].to_i }
+    Crinja.test({other: 0}, :gt) { target.to_i > arguments["other"].to_i }
+    Crinja.test({other: 0}, :ge) { target.to_i >= arguments["other"].to_i }
+
     Crinja.test(:boolean) { target.raw.is_a?(Bool) }
 
     # `failed`/`changed`/`skipped`/`succeeded`/`success` - real Ansible's

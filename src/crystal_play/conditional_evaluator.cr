@@ -707,6 +707,24 @@ module CrystalPlay
         return json_any_to_value(parsed || JSON::Any.new(rendered))
       end
 
+      # Handle the empty-dict literal (`when: my_dict == {}`) - a dict
+      # variable's own left-hand resolution falls through to
+      # #json_any_to_value's `else: value.to_s` branch (this function's
+      # return type has no Hash case at all, so a Hash raw value is
+      # stringified to compact JSON, e.g. `"{}"` for an empty Hash - see
+      # the `check_json_any.cr` probe that verified `JSON::Any.new(Hash
+      # (String, JSON::Any).new).to_s == "{}"` exactly). Without this
+      # branch, the literal `{}` on the right side fell all the way
+      # through to "not a variable" -> nil, so `dict_var == {}` compared
+      # a String against nil and was always false - found via
+      # prometheus.prometheus.alertmanager's own preflight check `when:
+      # alertmanager_route == {}` (alertmanager_route defaults to `{}`),
+      # which should fail the play (no route configured) but instead
+      # silently skipped. Only the empty-literal shape is special-cased,
+      # not general dict-literal parsing (`{'a': 1}` in a `when:` is not
+      # a pattern seen in any role benchmarked so far).
+      return "{}" if expr == "{}"
+
       # Handle arrays (simple list syntax)
       if expr.starts_with?('[') && expr.ends_with?(']')
         items = expr[1..-2].split(',').map(&.strip)

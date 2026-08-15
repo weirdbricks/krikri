@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.350-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.351-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,23 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.351` (round 26) - `prometheus.prometheus.alertmanager`, first
+  new role tested since round 25.** 7 real engine bugs found and fixed
+  live on a fresh `G3.2GB` Atlantic.net pair: a dict-literal `== {}`
+  comparison always evaluating false, `include_role: vars:` not
+  re-rendering the loaded role's task names (which also caused a real
+  functional skip, not just a cosmetic display issue), and - the most
+  severe - `check_mode:`/`diff:` crashing on a templated value and
+  silently dropping an entire task file (lost the task that writes
+  alertmanager's own config). Also added 4 missing Jinja
+  tests/filters real role templates hit (`version_compare`, `any`/
+  `all`, the `eq`/`lt`/`le`/`gt`/`ge` comparison-test aliases, and
+  Ansible's `quote` filter). Cold pass `failed=0` on both engines,
+  every expected task succeeded on crystal. One cosmetic-only gap
+  (role-vars-sourced task names in banners) and one confirmed
+  non-engine issue (the role's own systemd unit crash-loops real
+  alertmanager 0.33.1 - reproduced independent of Ansible) both left
+  documented, not fixed.
 - **`0.9.350` (round 25) - live re-verification of 0.9.349 on a fresh
   Atlantic.net `G3.2GB` pair.** Confirmed all three bugs deferred in
   `0.9.348` and fixed in `0.9.349` hold up end-to-end: `Protect

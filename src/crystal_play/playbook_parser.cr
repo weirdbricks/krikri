@@ -907,8 +907,8 @@ module CrystalPlay
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.register = task_hash["register"]?.try { |v| safe_yaml_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
-      task.check_mode = task_hash["check_mode"]?.try(&.as_bool)
-      task.diff_mode = task_hash["diff"]?.try(&.as_bool)
+      task.check_mode = parse_optional_bool_or_template(task_hash["check_mode"]?)
+      task.diff_mode = parse_optional_bool_or_template(task_hash["diff"]?)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
@@ -1674,6 +1674,46 @@ module CrystalPlay
     # normally; anything else (a template) falls back to `false` - which
     # is also the semantically correct value for this exact idiom outside
     # check mode, since `ansible_check_mode` is false on a real run.
+    # `check_mode:`/`diff:` accept the same boolean-or-template shorthand
+    # as `ignore_errors:`/`become:` (e.g. prometheus.prometheus.
+    # alertmanager's own `configure.yml`: `diff: "{{ not
+    # alertmanager_mask_diff }}"`) but were still using a bare `.as_bool`
+    # call, which raises ("Cast from String to Bool failed") on anything
+    # that isn't a literal YAML boolean. Unlike `ignore_errors:`/
+    # `become:`, this exception wasn't just dropping the ONE task with
+    # the templated value - it propagated out of #parse_task entirely and
+    # aborted the REST of that task file's parsing too, silently dropping
+    # every task after (and, depending on where the per-file rescue sits,
+    # sometimes before) the offending one. Live symptom: the round-26
+    # alertmanager role's "Copy alertmanager config" task (the one that
+    # actually writes alertmanager's config file) and its neighbors in
+    # the same `configure.yml` never appeared in the task list at all,
+    # with only a generic parse-time warning far from the real cause.
+    # `Bool?` (not the `false`-default `ignore_errors:` uses) is the
+    # right fallback for a templated value here: `nil` means "not set,
+    # inherit the global `--check`/`--diff` CLI flag", which is a safe,
+    # neutral default that doesn't force either behavior on - closer to
+    # what a runtime-deferred evaluation would usually produce than
+    # guessing `true` or `false` outright.
+    private def self.parse_optional_bool_or_template(yaml : YAML::Any?) : Bool?
+      return nil unless yaml
+      case yaml.raw
+      when Bool
+        yaml.as_bool
+      when String
+        case yaml.as_s.strip.downcase
+        when "true", "yes", "on"
+          true
+        when "false", "no", "off"
+          false
+        else
+          nil
+        end
+      else
+        nil
+      end
+    end
+
     private def self.parse_ignore_errors(yaml : YAML::Any?) : Bool
       return false unless yaml
       case yaml.raw
