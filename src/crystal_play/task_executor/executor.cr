@@ -547,6 +547,35 @@ module CrystalPlay
       task.name
     end
 
+    # Substitutes each *notify_list* entry against *task*'s own
+    # vars_context before handing it to HandlerRunner - `task.notify` is
+    # set once at parse time from raw YAML strings and was never
+    # substituted anywhere before this, so a templated notify: (the
+    # `prometheus.prometheus` collection's own internal `_common` role
+    # idiom: `notify: "{{ ansible_parent_role_names | first }} : Restart
+    # {{ _common_service_name }}"`) never matched the handler it was
+    # meant to trigger at all - the handler simply never ran. Lazy, same
+    # pattern as #render_task_name_for_display: only builds a
+    # vars_context (not otherwise available at every one of this
+    # method's three call sites, which don't all already have one in
+    # scope) when at least one entry actually needs it. Found live
+    # investigating round 28's prometheus.prometheus.pushgateway.
+    private def notify_handlers(task : Task, host : Host, notify_list : Array(String))
+      return if notify_list.empty?
+
+      unless notify_list.any?(&.includes?("{{"))
+        notify_list.each { |handler_name| @handler_runner.notify(host, handler_name) }
+        return
+      end
+
+      vars_context = build_vars_context(task, host)
+      substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+      notify_list.each do |handler_name|
+        rendered = handler_name.includes?("{{") ? (substitutor.substitute(handler_name) rescue handler_name) : handler_name
+        @handler_runner.notify(host, rendered)
+      end
+    end
+
     # Build the base variable context (play/host/registered/task vars + facts)
     # shared by every execution path for a task.
     private def build_vars_context(task : Task, host : Host) : Hash(String, JSON::Any)
@@ -1851,7 +1880,7 @@ module CrystalPlay
       changed = result["changed"]?.try(&.as_bool) || false
       failed = result["failed"]?.try(&.as_bool) || false
       if changed && (notify_list = task.notify)
-        notify_list.each { |handler_name| @handler_runner.notify(host, handler_name) } unless notify_list.empty?
+        notify_handlers(task, host, notify_list)
       end
 
       ResultDisplay.display_result(host, result, @diff_mode)
@@ -2099,7 +2128,7 @@ module CrystalPlay
       end
 
       if any_changed && (notify_list = task.notify)
-        notify_list.each { |handler_name| @handler_runner.notify(host, handler_name) } unless notify_list.empty?
+        notify_handlers(task, host, notify_list)
       end
 
       if register_name = task.register
@@ -2159,7 +2188,7 @@ module CrystalPlay
       changed = result["changed"]?.try(&.as_bool) || false
       failed = result["failed"]?.try(&.as_bool) || false
       if changed && (notify_list = task.notify)
-        notify_list.each { |handler_name| @handler_runner.notify(host, handler_name) } unless notify_list.empty?
+        notify_handlers(task, host, notify_list)
       end
 
       ResultDisplay.display_result(host, result, @diff_mode)
@@ -3226,8 +3255,11 @@ module CrystalPlay
       execute_callback = ->(handler : Task, host : Host) : JSON::Any {
         execute_handler_internal(handler, host)
       }
-      
-      @handler_runner.run(execute_callback, @results, @diff_mode)
+      name_resolver = ->(handler : Task, host : Host) : String {
+        render_task_name_for_display(handler, host)
+      }
+
+      @handler_runner.run(execute_callback, @results, @diff_mode, name_resolver)
     end
     
     # Execute a handler (internal - called via callback)
@@ -3253,6 +3285,28 @@ module CrystalPlay
       # the handler tried to restart a service unit literally named
       # "undefined.service".
       @included_vars[host.name]?.try(&.each { |key, value| vars_context[key] = value })
+
+      # ansible_parent_role_names/ansible_collection_name/ansible_role_name
+      # (mirroring #build_vars_context, used for regular tasks) - a
+      # role-loaded handler's OWN name:/module params can reference these
+      # exactly like a regular task's can (`prometheus.prometheus`'s own
+      # `_common` role: `name: "Restart {{ _common_service_name }}"`,
+      # where `_common_service_name` derives from
+      # `ansible_parent_role_names | first`). Without this, any handler
+      # whose own vars ultimately depend on these magic vars resolved
+      # them as "undefined" - the handler could still be correctly
+      # MATCHED and triggered (a separate fix, notify_handlers/
+      # should_run_handler?'s role-qualified match), but its own body
+      # then acted on the wrong (undefined) value.
+      if role_name = handler.role_name
+        vars_context["ansible_role_name"] = JSON::Any.new(role_name)
+      end
+      if parent_names = handler.role_parent_names
+        vars_context["ansible_parent_role_names"] = JSON::Any.new(parent_names.map { |n| JSON::Any.new(n) })
+      end
+      if collection_name = handler.ansible_collection_name
+        vars_context["ansible_collection_name"] = JSON::Any.new(collection_name)
+      end
 
       # Add facts to context, both under their flat `ansible_xxx` spelling
       # and as one `ansible_facts` dict (mirroring #build_vars_context,

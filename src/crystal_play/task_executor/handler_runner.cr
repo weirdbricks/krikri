@@ -47,10 +47,21 @@ module CrystalPlay
       # Run all notified handlers
       # Handlers run in the order they are defined, not the order they were notified
       # This matches Ansible behavior
+      #
+      # *name_resolver* renders a handler's own `name:` against its real
+      # vars_context (mirrors TaskExecutor#render_task_name_for_display -
+      # HandlerRunner has no vars_context machinery of its own, so this is
+      # threaded in the same way *execute_callback* already is). Needed
+      # because a role-loaded handler's name is frequently itself a
+      # template (`prometheus.prometheus`'s own `_common` role:
+      # `name: "Restart {{ _common_service_name }}"`) - matching against
+      # the raw, unrendered `handler.name` (as this used to) never equals
+      # any real notify: string.
       def run(
         execute_callback : Proc(Task, Host, JSON::Any),
         results : Hash(String, Hash(String, Int32)),
-        diff_mode : Bool
+        diff_mode : Bool,
+        name_resolver : Proc(Task, Host, String)? = nil
       )
         return unless any_notified?
 
@@ -70,14 +81,15 @@ module CrystalPlay
           handler_triggered = false
 
           @hosts.each do |host|
-            next if already_ran[host.name].includes?(handler.name)
+            rendered_name = name_resolver.try(&.call(handler, host)) || handler.name
+            next if already_ran[host.name].includes?(rendered_name)
 
             # Check if handler should run for this host
-            if should_run_handler?(handler, host)
-              already_ran[host.name].add(handler.name)
+            if should_run_handler?(handler, host, rendered_name)
+              already_ran[host.name].add(rendered_name)
 
               unless handler_triggered
-                puts "HANDLER [#{handler.name}]".colorize(:cyan).bold
+                puts "HANDLER [#{rendered_name}]".colorize(:cyan).bold
                 handler_triggered = true
               end
 
@@ -114,17 +126,40 @@ module CrystalPlay
       end
       
       # Check if a handler should run for a host
-      # Handler runs if notified by name or by listen topic
-      private def should_run_handler?(handler : Task, host : Host) : Bool
-        # Check by handler name
-        return true if @notified_handlers[host.name].includes?(handler.name)
-        
+      # Handler runs if notified by name (rendered or raw) or by listen topic
+      private def should_run_handler?(handler : Task, host : Host, rendered_name : String) : Bool
+        notified = @notified_handlers[host.name]
+
+        # Check by handler name - both the rendered (real) name and the
+        # raw one (in case a caller notified using the literal template
+        # text, or name_resolver wasn't supplied at all).
+        return true if notified.includes?(rendered_name) || notified.includes?(handler.name)
+
         # Check by listen topic
         if listen_topic = handler.listen
-          return true if @notified_handlers[host.name].includes?(listen_topic)
+          return true if notified.includes?(listen_topic)
         end
-        
-        false
+
+        # Role-qualified notify: form ("<anything> : <handler name>") -
+        # real Ansible auto-namespaces a role-loaded handler with a
+        # qualifier (the FQCN of whichever role the handler's own
+        # inclusion chain traces back to - not always the role that
+        # literally defines handlers/main.yml, e.g. `prometheus.
+        # prometheus`'s own `_common` role's handlers get qualified with
+        # the CALLING role's name, not `_common`'s own) and matches on
+        # that exact computed qualifier. Replicating that formula exactly
+        # is real, non-trivial work; this instead matches ANY "X : name"
+        # shaped notify string against the handler's own bare rendered
+        # name, ignoring what X actually is - a handler name legitimately
+        # containing " : " as part of its own literal text is exceedingly
+        # rare, and this covers every qualifier value without needing to
+        # compute the one true correct one. Found live via
+        # prometheus.prometheus.pushgateway's own `_common`-defined
+        # handler (round 28's continuation) - notify: "{{
+        # ansible_parent_role_names | first }} : Restart {{
+        # _common_service_name }}" never matched "Restart pushgateway"
+        # (the handler's own bare rendered name) at all before this.
+        notified.any? { |n| (idx = n.rindex(" : ")) && n[(idx + 3)..] == rendered_name }
       end
   end
 end

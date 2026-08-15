@@ -8,9 +8,85 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.356`.**
+**Currently at `0.9.357`.**
 
 ---
+
+`0.9.357` (closes the `notify:` substitution gap 0.9.356 found and
+deferred - no new live round, verified via a repro matching the exact
+live-found structure/failure mode instead):
+
+- **`notify:` list entries were never re-substituted before being
+  compared against a handler's own name.** `task.notify` is parsed
+  once from raw YAML strings at parse time; all three call sites that
+  fire a notification passed that raw string straight to
+  `HandlerRunner#notify` with no templating step at all. A templated
+  `notify:` (`prometheus.prometheus`'s own `_common` role idiom:
+  `notify: "{{ ansible_parent_role_names | first }} : Restart
+  {{ _common_service_name }}"`) could never equal any real handler
+  name, so the notification silently never matched anything - the
+  handler just never ran. Fix: new `TaskExecutor#notify_handlers`
+  helper (mirrors `render_task_name_for_display`'s own lazy pattern -
+  only builds a vars_context, not otherwise in scope at all three call
+  sites, when at least one notify entry actually needs it) substitutes
+  each entry before handing it to `HandlerRunner#notify`.
+- **A role-loaded handler's own `name:` was also never re-rendered for
+  MATCHING purposes** (separate from display, which 0.9.353 already
+  fixed for regular tasks but not handlers) - `should_run_handler?`
+  compared the raw, unrendered `handler.name` against the (now-
+  substituted) notified set, so a templated handler name still never
+  matched even once its own notifier was fixed. Fix: `HandlerRunner
+  #run` now takes an optional `name_resolver` callback (same threading
+  pattern as its existing `execute_callback`) that
+  `TaskExecutor#run_handlers` supplies as
+  `render_task_name_for_display` itself - the handler's real,
+  rendered name is now used for banner display, `already_ran`
+  dedup-tracking, and matching alike.
+- **Real Ansible auto-namespaces a role-loaded handler with a
+  qualifier prefix that isn't always the role that literally defines
+  `handlers/main.yml`** - verified empirically against real
+  `ansible-playbook`'s own recap output on the round-28 live host
+  before it was destroyed: `_common`'s handlers (defined in `_common`'s
+  own `handlers/main.yml`, loaded via a NESTED `include_role:` from
+  `pushgateway`) got qualified as `"prometheus.prometheus.pushgateway
+  : Restart pushgateway"` - the CALLING role's own FQCN, not
+  `_common`'s. A role's own directly-defined handlers (e.g.
+  `blackbox_exporter`'s, round 27) get qualified with their OWN FQCN
+  instead. Replicating the exact qualifier-computation formula for
+  every case is real, non-trivial, separate work. Implemented
+  something simpler that covers the observed cases without needing
+  to: any `"X : name"`-shaped notify string now matches a handler by
+  its own bare rendered name, regardless of what `X` actually is - a
+  handler name legitimately containing literal `" : "` text is
+  exceedingly rare. The displayed handler banner text itself doesn't
+  reproduce real Ansible's exact qualifier prefix (shows the bare name
+  only) - a known, accepted cosmetic gap from this simplification.
+- **A THIRD related gap found and fixed in the same investigation**: a
+  role-loaded handler's own BODY execution (`TaskExecutor
+  #execute_handler_internal`, a separate, older vars_context-building
+  code path that predates and duplicates `#build_vars_context`) never
+  populated `ansible_parent_role_names`/`ansible_collection_name`/
+  `ansible_role_name` at all - so even once a handler correctly
+  MATCHED and ran, any of its own params/rendering depending on those
+  magic vars (exactly the `_common_service_name` chain again, now
+  inside the handler's own `name:`/`systemd: name:` params rather than
+  a task's) still resolved to `"undefined"`. Live symptom, reproduced
+  directly: a fixed-notify test handler ran but its own `msg:` showed
+  `"RESTARTED "` (the service-name variable resolving to empty/
+  undefined) instead of `"RESTARTED outer"`. Fixed by adding the same
+  three-line magic-var population `#build_vars_context` already has.
+- Two new regression specs (`handler_notify_templating_spec.cr`) cover
+  both the notify-templating fix and the role-qualified-prefix
+  matching, using the compiled binary against a real (not `--check`)
+  playbook - `TaskExecutor#notify_handlers`/`HandlerRunner
+  #should_run_handler?` are private and not otherwise reachable from a
+  unit spec. Verified end-to-end with a repro matching `_common`'s own
+  exact nested-`include_role:` / templated-name / role-qualified-
+  notify shape (not just the two isolated spec cases) - confirmed the
+  handler now both fires AND resolves its own body correctly
+  (`"RESTARTED outer"`, matching what real Ansible produces for the
+  equivalent live pushgateway case).
+- Full `crystal spec` suite: 1123 examples (was 1121), 0 failures.
 
 `0.9.356` (round 28 - `prometheus.prometheus.pushgateway`, first new
 role tested since round 27; also closes a real gap in 0.9.353's own
