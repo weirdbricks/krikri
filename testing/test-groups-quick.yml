@@ -1,0 +1,25 @@
+# groups[...] magic-variable smoke test. Targets "multilocal" (see
+# inventory-multi-local.ini, both hosts ansible_connection=local so no
+# real second machine is needed) - verifies groups['group_name'] resolves
+# to that group's member host names, and groups['all'] resolves to every
+# inventory host regardless of grouping.
+
+- name: groups smoke test
+  hosts: multilocal
+  gather_facts: false
+
+  tasks:
+    - name: look up this group's own members via groups[group_name]
+      ansible.builtin.debug:
+        msg: "multilocal_members={{ groups['multilocal'] }}"
+      run_once: true
+
+    - name: look up every inventory host via groups['all']
+      ansible.builtin.debug:
+        msg: "all_members={{ groups['all'] }}"
+      run_once: true
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "groups smoke test complete!"
+      run_once: true

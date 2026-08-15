@@ -92,6 +92,13 @@ module CrystalPlay
     # host. May be templated ({{ vars }}), so kept as a raw string and
     # resolved at execution time (same reasoning as include_file).
     property delegate_to : String?
+    # delegate_facts: - when true alongside delegate_to:, a module's
+    # returned ansible_facts (set_fact:, fact-gathering modules) attach to
+    # the delegate_to: target's own hostvars instead of the delegating
+    # host's - real Ansible's own documented meaning ("apply facts to a
+    # delegated host instead of the inventory_hostname"). register: is
+    # unaffected either way (always attaches to the delegating host).
+    property delegate_facts : Bool
     # run_once: - only actually execute this task for the first host in
     # the play; later hosts skip it outright (no output/stats), same as
     # real Ansible.
@@ -247,6 +254,7 @@ module CrystalPlay
       @changed_when = nil
       @failed_when = nil
       @delegate_to = nil
+      @delegate_facts = false
       @run_once = false
       @async_seconds = nil
       @poll_seconds = nil
@@ -846,7 +854,7 @@ module CrystalPlay
                       "diff", "become", "become_user", "tags", "args", "listen", "with_items", "loop",
                       "with_dict", "with_fileglob", "with_first_found", "with_nested", "with_sequence",
                       "with_flattened", "with_community.general.flattened", "with_subelements", "with_indexed_items", "until", "retries", "delay",
-                      "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "run_once",
+                      "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "delegate_facts", "run_once",
                       "async", "poll", "vars", "environment",
                       "block", "rescue", "always", "import_tasks", "include_tasks", "include_role",
                       "meta", "include_vars"]
@@ -1053,6 +1061,7 @@ module CrystalPlay
 
       # Parse delegate_to / run_once
       task.delegate_to = task_hash["delegate_to"]?.try { |v| safe_yaml_to_string(v) }
+      task.delegate_facts = task_hash["delegate_facts"]?.try(&.as_bool) || false
       task.run_once = task_hash["run_once"]?.try(&.as_bool) || false
 
       # Parse async / poll

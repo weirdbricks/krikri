@@ -1,0 +1,31 @@
+# delegate_to: templated directly on the loop variable itself (e.g.
+# geerlingguy.kubernetes' own "Set the kubeadm join command globally.":
+# `delegate_to: "{{ item }}"`, `loop: "{{ groups['all'] }}"`) - real bug
+# found in round 35: the delegate host used to be resolved once, before
+# the loop ever bound "item", so it always resolved against an unbound
+# "item" and crashed trying to SSH to a host literally named "undefined".
+# Targets the "multilocal" group (see inventory-multi-local.ini) so this
+# is safe to run for real without a second machine to SSH into - under
+# the generic empty inventory used by every other testing/*.yml fixture,
+# "multilocal" resolves to zero hosts and this play is skipped.
+
+- name: delegate_to templated on the loop variable test
+  hosts: multilocal
+  gather_facts: false
+
+  tasks:
+    - name: set a per-host marker via a delegated loop, delegate_to templated on item
+      ansible.builtin.set_fact:
+        loop_delegate_marker: "{{ inventory_hostname }}"
+      delegate_to: "{{ item }}"
+      delegate_facts: true
+      run_once: true
+      loop: "{{ groups['multilocal'] }}"
+
+    - name: verify every host received its own delegated fact, not "undefined"
+      ansible.builtin.debug:
+        msg: "host={{ inventory_hostname }} marker={{ hostvars[inventory_hostname]['loop_delegate_marker'] }}"
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "delegate_to templated on loop item smoke test complete!"

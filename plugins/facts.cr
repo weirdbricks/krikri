@@ -176,6 +176,20 @@ def gather_os_facts(facts)
   # (os_hardening's modprobe/sysctl tasks do exactly this).
   facts["ansible_virtualization_type"] = detect_virtualization
 
+  # apparmor.status - real Ansible's own ApparmorFactCollector just
+  # checks for /sys/kernel/security/apparmor's existence (not whether any
+  # profile is actually enforcing) - "enabled" if present, "disabled"
+  # otherwise, matched exactly (ansible/module_utils/facts/system/
+  # apparmor.py). Entirely missing before: found via robertdebock.vault's
+  # own `when: ansible_apparmor.status == "enabled"` guard on its
+  # `aa-enforce` hardening task, which real Ansible ran (real host has
+  # AppArmor active) and this engine always silently skipped instead,
+  # since the undefined fact made the `when:` false regardless of the
+  # host's real AppArmor state.
+  apparmor_facts = {} of String => String
+  apparmor_facts["status"] = Dir.exists?("/sys/kernel/security/apparmor") ? "enabled" : "disabled"
+  facts["ansible_apparmor"] = apparmor_facts
+
   utsname = uninitialized LibC::Utsname
   uname_ok = LibC.uname(pointerof(utsname)) == 0
 

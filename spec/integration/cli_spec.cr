@@ -239,6 +239,26 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("delegate_to / run_once smoke test complete!")
   end
 
+  it "re-resolves a templated delegate_to: per loop iteration instead of once before the loop binds item" do
+    status, output = run_playbook(
+      "test-delegate-loop-item-quick.yml",
+      [] of String,
+      inventory: File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-multi-local.ini")
+    )
+
+    status.success?.should be_true
+    # run_once: true picks web1 as the sole executor; its delegated loop
+    # (delegate_to: "{{ item }}") sets loop_delegate_marker="web1" onto
+    # BOTH web1 and web2 via delegate_facts - if delegate_to resolved
+    # against an unbound "item" (the bug), the task would have crashed
+    # trying to SSH to a host literally named "undefined" instead of
+    # ever reaching here.
+    output.should contain("host=web1 marker=web1")
+    output.should contain("host=web2 marker=web1")
+    output.should_not contain("marker=undefined")
+    output.should contain("delegate_to templated on loop item smoke test complete!")
+  end
+
   describe "include_vars: / with_first_found:" do
     testservers = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-testservers-local.ini")
 
@@ -713,6 +733,27 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("h2_via_dot=from_h2")
     output.should contain("h1_via_hostvars=from_h1")
     output.should contain("hostvars smoke test complete!")
+  end
+
+  it "resolves groups['group_name'] to that group's member host names, incl. the synthesized 'all'" do
+    # Real bug found benchmarking geerlingguy.kubernetes (round 35):
+    # `groups` was entirely unpopulated in the vars_context, so ANY
+    # `groups[...]` access resolved "undefined" - the role's own "Set
+    # the kubeadm join command globally." task (`loop: "{{ groups['all']
+    # }}", delegate_to: "{{ item }}"`) turned into a single-item loop
+    # whose one item was the literal string "undefined", and the
+    # templated delegate_to then tried to SSH to a host literally named
+    # "undefined" instead of broadcasting to every real inventory host.
+    status, output = run_playbook(
+      "test-groups-quick.yml",
+      [] of String,
+      inventory: File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-multi-local.ini")
+    )
+
+    status.success?.should be_true
+    output.should contain("multilocal_members=[\"web1\",\"web2\"]")
+    output.should contain("all_members=[\"web1\",\"web2\"]")
+    output.should contain("groups smoke test complete!")
   end
 
   it "recovers a failed block: via rescue:, always runs always:, and the play continues" do

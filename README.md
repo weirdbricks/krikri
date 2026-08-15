@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.381-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.382-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,22 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.382` - round 35, `robertdebock.vault` + `geerlingguy.kubernetes`**
+  (first new roles since round 33's nomad), real 2-vCPU/4GB Atlantic.net
+  pair. 3 real bugs, all surfaced by kubernetes' own "Set the kubeadm
+  join command globally." task (`loop: "{{ groups['all'] }}", delegate_to:
+  "{{ item }}", delegate_facts: true`): the `groups` magic variable was
+  entirely unpopulated (`groups['all']` always "undefined"); a templated
+  `delegate_to:` on a loop was resolved once before the loop ever bound
+  `item`, crashing outright trying to SSH to a host literally named
+  "undefined"; and `delegate_facts:` was entirely unimplemented, so a
+  delegated `set_fact:` silently stayed on the executing host instead of
+  the real target. Also added the previously-missing `ansible_apparmor`
+  fact (found via vault's own `aa-enforce` hardening task, silently
+  skipped on every run regardless of the host's real AppArmor state).
+  Final: real Kubernetes control-plane node `Ready`, every system pod
+  `Running`, Vault `active`, idempotent warm rerun matching task-for-task
+  on both engines identically.
 - **`0.9.381` - proactive audit: `~`-expansion for path-type params
   across 21 plugins**, not tied to a real host round. Real Ansible's
   `AnsibleModule` expands a leading `~`/`~user` for every `type: path`

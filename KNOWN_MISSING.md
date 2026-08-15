@@ -8,7 +8,96 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.381`.**
+**Currently at `0.9.382`.**
+
+---
+
+`0.9.382` - round 35, `robertdebock.vault` + `geerlingguy.kubernetes` (new
+roles, first round since round 33's nomad): 3 real bugs, found on a fresh
+`G3.4GB` Atlantic.net pair (resized up from `G3.2GB` mid-round - kubeadm's
+control-plane bootstrap needs 2 vCPUs, and 1.9GB RAM wasn't enough
+headroom either).
+
+1. **`groups` magic variable was entirely unpopulated** - any
+   `groups['group_name']` access (the standard way a task broadcasts to
+   every host in a group without hardcoding names) silently resolved
+   "undefined". geerlingguy.kubernetes' own "Set the kubeadm join command
+   globally." task (`loop: "{{ groups['all'] }}", delegate_to: "{{ item
+   }}"`, the idiom that pushes the join command onto every cluster node)
+   turned into a one-item loop whose sole item was the literal string
+   "undefined". Fixed by adding a `build_groups` helper (mirroring the
+   existing `build_hostvars` one) - `{group_name => [host names]}` for
+   every real inventory group, plus a synthesized `"all"` key sourced
+   from the whole inventory (not merely an explicit `[all]` block, which
+   may not exist), injected into both `build_vars_context` and the
+   handler-vars-context copy.
+2. **A templated `delegate_to:` on a looped task was resolved once,
+   before the loop ever bound `item`** - a second, independent bug in the
+   very same task above: even with `groups` now populated, `delegate_to:
+   "{{ item }}"` still crashed, because `resolve_delegate_host` was only
+   ever called once up front (before `execute_looped_task` starts
+   iterating), so it substituted against an unbound `item` and resolved
+   to a host literally named "undefined" - crashing outright trying to
+   SCP a plugin binary there (`ssh: Could not resolve hostname undefined`)
+   instead of gracefully failing the task. Fixed by re-resolving the
+   delegate host per iteration, inside the loop, once `item` is actually
+   bound.
+3. **`delegate_facts:` was entirely unimplemented** - not even parsed as
+   a task field. Real Ansible's `delegate_facts: true` (paired with
+   `delegate_to:`) redirects a `set_fact:`/fact-gathering module's
+   `ansible_facts` onto the *delegate target's* own hostvars instead of
+   the executing host's - exactly what the kubeadm-join task uses it for
+   (broadcast the join command onto every node's hostvars from the
+   control-plane host that computed it). Previously the fact silently
+   stayed attached to the executing host regardless, so every delegated
+   target except the executing host itself never actually received it.
+   Added `Task#delegate_facts` (parsed, and added to the task-keyword
+   whitelist - a plain unrecognized key gets misparsed as the module
+   name), plus a `fact_host` parameter threaded through both
+   `finish_single_task` and the looped-task path (`execute_looped_task`
+   now tracks a per-item fact-target array) so `merge_ansible_facts`
+   targets the delegate host instead of the executing one exactly when
+   `delegate_facts:`/`delegate_to:` are both set - `register:` stays
+   attached to the executing host either way, matching real Ansible.
+
+A 4th thing found in the same round wasn't a crystal-ansible bug but is
+worth recording since it cost real round time: this Atlantic.net image's
+`ansible_default_ipv4.address` fact is stale/wrong (same quirk already
+documented for round 33's nomad) - kubeadm/etcd picked a bind address
+that wasn't actually assigned to any interface on the host
+(`listen tcp <wrong-ip>:2380: bind: cannot assign requested address`,
+etcd crash-looping, apiserver never coming up), identically on both
+engines. Worked around the same way as round 33: pin
+`kubernetes_apiserver_advertise_address: "{{ ansible_host }}"` in the
+playbook rather than relying on the role's `ansible_default_ipv4`
+default.
+
+Also added the previously-entirely-missing `ansible_apparmor.status` fact
+(found via `robertdebock.vault`'s own `when: ansible_apparmor.status ==
+"enabled"` guard on its `aa-enforce` hardening task - real Ansible ran it,
+this engine always silently skipped it regardless of the host's real
+AppArmor state) - matches real Ansible's own `ApparmorFactCollector`
+exactly (`/sys/kernel/security/apparmor` existence check, "enabled" or
+"disabled", nothing more granular).
+
+Both roles verified end-to-end on the resized pair: real 2-vCPU/4GB
+Kubernetes control-plane node fully `Ready` with all system pods
+`Running` (etcd/apiserver/scheduler/controller-manager/coredns/
+kube-proxy/flannel) on both engines identically, Vault service `active`
+on both, idempotent warm rerun matching task-for-task (including the
+`aa-enforce` task's own hardcoded `changed_when: true` firing on every
+run, by design, on both engines equally once the fact fix let it run at
+all). Final: crystal `ok=55 changed=9 failed=0` cold / `ok=53 changed=1
+failed=0` warm vs python `ok=61 changed=8 failed=0` cold / `ok=59
+changed=1 failed=0` warm (count deltas are the known fact-cache /
+already-installed-vault artifact from reusing the host mid-round, not a
+real divergence - every task status matched 1:1). New regression specs:
+a `delegate_to:` re-resolved per loop iteration, and `groups['name']`/
+`groups['all']` resolution, both via the existing local-connection
+multi-host inventory fixture (no real second machine needed). The
+`ansible_apparmor` fact itself has no unit spec (a filesystem-state
+check, same category as the other OS-detection facts already
+un-spec'd by design) - verified live instead, as above.
 
 ---
 

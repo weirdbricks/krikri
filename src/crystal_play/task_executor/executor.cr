@@ -485,7 +485,8 @@ module CrystalPlay
       result = execute_task_once(task, host, vars_context, exec_host: exec_host, shared: shared_sub)
       return unless result
 
-      finish_single_task(task, host, result)
+      fact_host = (task.delegate_facts && task.delegate_to) ? exec_host : host
+      finish_single_task(task, host, result, fact_host)
     end
 
     # Resolve delegate_to: to the Host whose connection the module should
@@ -640,10 +641,39 @@ module CrystalPlay
       end
 
       vars_context["hostvars"] = JSON::Any.new(build_hostvars)
+      vars_context["groups"] = JSON::Any.new(build_groups)
 
       render_task_vars(task, vars_context, host.name)
 
       vars_context
+    end
+
+    # Real Ansible's `groups` magic variable - a dict of every inventory
+    # group name to the list of host names it contains (`groups['all']`,
+    # `groups['webservers']`, ...), the standard way a task broadcasts to
+    # or loops over every host in a group without hardcoding names
+    # (geerlingguy.kubernetes' own "Set the kubeadm join command
+    # globally.": `delegate_to: "{{ item }}", loop: "{{ groups['all'] }}"`
+    # to push the join command onto every node). Previously not populated
+    # at all, so ANY `groups[...]` access resolved "undefined" - a single-
+    # item loop whose one item literally was the string "undefined",
+    # which a templated `delegate_to: "{{ item }}"` then tried to SSH to.
+    #
+    # `groups['all']` is synthesized from the full inventory (not merely
+    # `@inventory.groups["all"]?`, which may not even exist as an
+    # explicit group) - matches real Ansible, where 'all' always means
+    # every host regardless of how the inventory file grouped things.
+    private def build_groups : Hash(String, JSON::Any)
+      result = Hash(String, JSON::Any).new
+      if inventory = @inventory
+        inventory.groups.each do |name, group|
+          result[name] = JSON::Any.new(group.hosts.keys.map { |hostname| JSON::Any.new(hostname) })
+        end
+        result["all"] = JSON::Any.new(inventory.hosts.keys.map { |hostname| JSON::Any.new(hostname) })
+      else
+        result["all"] = JSON::Any.new(@hosts.map { |other_host| JSON::Any.new(other_host.name) })
+      end
+      result
     end
 
     # Real Ansible's `hostvars[<name>]` magic variable - a dict of every
@@ -1870,8 +1900,13 @@ module CrystalPlay
     end
 
     # Register / notify / display / update stats for a (non-looped) task result.
-    private def finish_single_task(task : Task, host : Host, result : JSON::Any)
-      merge_ansible_facts(host, result)
+    # fact_host is where a set_fact:/fact-gathering module's ansible_facts
+    # attach - normally `host` itself, but the delegate_to:/delegate_facts:
+    # combination redirects it to the delegate target instead (real
+    # Ansible's own documented meaning); register:/display/stats always
+    # stay attributed to `host` regardless.
+    private def finish_single_task(task : Task, host : Host, result : JSON::Any, fact_host : Host = host)
+      merge_ansible_facts(fact_host, result)
 
       if register_name = task.register
         register_result(host, register_name, result) unless register_name.empty?
@@ -1919,6 +1954,11 @@ module CrystalPlay
       # item ran for real, on a bogus literal path.
       rendered_items = loop_items.map { |item| deep_render_item(item, base_vars_context, host.name) }
 
+      # Per-item fact target, for delegate_to:/delegate_facts: - only ever
+      # diverges from `host` in the non-batched branch below (batching is
+      # excluded outright for a delegate_to: task by loop_batch_eligible?).
+      fact_hosts = Array(Host).new(rendered_items.size, host)
+
       item_results = if loop_batch_eligible?(task, host, exec_host, base_vars_context)
                        execute_looped_task_batched(task, host, base_vars_context, rendered_items)
                      else
@@ -1933,7 +1973,7 @@ module CrystalPlay
                        # starting value every time.
                        running_vars_context = base_vars_context.dup
                        loop_var = task.loop_var
-                       rendered_items.map do |item|
+                       rendered_items.map_with_index do |item, idx|
                          vars_context = running_vars_context.dup
                          vars_context["item"] = item
                          vars_context[loop_var] = item if loop_var
@@ -1955,7 +1995,22 @@ module CrystalPlay
                          task.vars.each { |key, raw_value| vars_context[key] = raw_value }
                          render_task_vars(task, vars_context, host.name)
 
-                         result = execute_task_once(task, host, vars_context, item_label: item_display(item), exec_host: exec_host, defer_loop_stats: true)
+                         # delegate_to: templated against the loop variable
+                         # itself (geerlingguy.kubernetes' own "Set the
+                         # kubeadm join command globally.": `delegate_to:
+                         # "{{ item }}"`, `with_items: "{{ groups['all'] }}"`)
+                         # must be re-resolved per iteration, against THIS
+                         # item's own vars_context - the outer `exec_host`
+                         # passed into this method was resolved once, before
+                         # the loop ever bound "item", so a templated
+                         # delegate_to always saw it as undefined and
+                         # resolved to a host literally named "undefined"
+                         # (crashing the SSH connection outright, not just
+                         # producing a wrong result).
+                         item_exec_host = task.delegate_to ? resolve_delegate_host(task, host, vars_context) : exec_host
+                         fact_hosts[idx] = item_exec_host if task.delegate_facts && task.delegate_to
+
+                         result = execute_task_once(task, host, vars_context, item_label: item_display(item), exec_host: item_exec_host, defer_loop_stats: true)
                          if result && (facts = result["ansible_facts"]?) && (facts_hash = facts.as_h?)
                            facts_hash.each { |key, value| running_vars_context[key] = value }
                          end
@@ -1963,7 +2018,7 @@ module CrystalPlay
                        end
                      end
 
-      finish_looped_task(task, host, rendered_items, item_results)
+      finish_looped_task(task, host, rendered_items, item_results, fact_hosts)
     end
 
     # Whether execute_looped_task can send every surviving item through
@@ -2073,7 +2128,7 @@ module CrystalPlay
     # both the batched and one-at-a-time paths) so register:/notify:/
     # stats/halt bookkeeping stays byte-identical regardless of which
     # transport produced the results.
-    private def finish_looped_task(task : Task, host : Host, loop_items : Array(JSON::Any), item_results : Array(JSON::Any?))
+    private def finish_looped_task(task : Task, host : Host, loop_items : Array(JSON::Any), item_results : Array(JSON::Any?), fact_hosts : Array(Host)? = nil)
       results = [] of JSON::Any
       any_changed = false
       any_failed = false
@@ -2084,7 +2139,7 @@ module CrystalPlay
         next unless result
 
         executed_count += 1
-        merge_ansible_facts(host, result)
+        merge_ansible_facts(fact_hosts.try(&.[idx]) || host, result)
 
         changed = result["changed"]?.try(&.as_bool) || false
         failed = result["failed"]?.try(&.as_bool) || false
@@ -3329,6 +3384,7 @@ module CrystalPlay
       end
 
       vars_context["hostvars"] = JSON::Any.new(build_hostvars)
+      vars_context["groups"] = JSON::Any.new(build_groups)
 
       # Evaluate the handler's own when: - real Ansible skips a notified
       # handler whose condition is false (e.g. os_hardening's "Restart
