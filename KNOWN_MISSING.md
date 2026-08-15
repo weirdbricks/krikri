@@ -8,7 +8,38 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.371`.**
+**Currently at `0.9.372`.**
+
+---
+
+`0.9.372` (part 4 of the scope-cut pass) - `pip:`'s `editable:` (adds
+`-e` to `extra_args:`, deduplicated) and `umask:` (an octal string,
+applied via a `umask <value>;` shell prefix around the `pip` invocation
+- this codebase shells out per-command rather than forking like real
+Ansible's own `os.umask()` around the whole run, so a shell-level prefix
+is the equivalent for the single command either wraps; fails with real
+Ansible's own exact "umask must be an octal integer" message for an
+invalid value) - both live-verified (a real `pip install` into a fresh
+venv with `umask: "0022"` succeeds; the invalid-umask failure message
+matches exactly). `pip:`'s own `extra_args:`/`requirements:` check_mode
+short-circuit was NOT done - moot, this plugin doesn't implement
+check_mode at all yet, a separate and much larger pre-existing gap.
+
+`user:`'s `expires:` (account expiration, a Unix TIMESTAMP in seconds
+NOT days - verified against real ansible/modules/user.py's own source:
+converted to a `YYYY-MM-DD` UTC date via `-e` on useradd/usermod,
+matched byte-for-byte against real Python's own `time.strftime('%Y-%m-
+%d', time.gmtime(timestamp))` output; a negative value clears the
+expiration via `-e ''`, real Ansible's own documented "-1 to remove"
+convention). Idempotency compares whole days-since-epoch against
+`/etc/shadow`'s own expire field, matching real Ansible's own day-level
+(not full-timestamp) comparison - a value mapping to the same calendar
+day as what's already set is a no-op. No root access on the dev machine
+to create a real account, so this is command-construction-verified (the
+`useradd`/`usermod` invocation is reached and correctly built, confirmed
+via a real failed-for-privilege-only attempt) plus unit-spec-verified
+pure-logic conversion, not a full live end-to-end account-creation
+round-trip.
 
 ---
 

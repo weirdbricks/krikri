@@ -100,6 +100,44 @@ module CrystalPlay
         field.empty? ? nil : field
       end
 
+      # `/etc/shadow`'s own account-expiration field (the 8th
+      # colon-separated field, days since epoch) - nil if the account
+      # has no expiration set or no shadow entry at all.
+      def self.shadow_expire_days(shadow_content : String, name : String) : Int32?
+        shadow_content.each_line do |line|
+          fields = line.split(':')
+          next unless fields.size >= 8 && fields[0] == name
+          return fields[7].empty? ? nil : fields[7].to_i?
+        end
+        nil
+      end
+
+      # `expires:`'s own Unix-timestamp-to-useradd/usermod-`-e`-value
+      # conversion - verified against real ansible/modules/user.py's own
+      # source: `time.gmtime(timestamp)` then `strftime('%Y-%m-%d', ...)`
+      # (UTC, matching `time.gmtime`'s own UTC-not-local semantics) for a
+      # non-negative timestamp; a NEGATIVE timestamp (real Ansible's own
+      # documented "-1 to remove" convention) maps to the empty string,
+      # `useradd`/`usermod -e ''` being how those commands themselves
+      # clear an existing expiration date.
+      def self.expires_date(timestamp : Int64) : String
+        return "" if timestamp < 0
+        Time.unix(timestamp).to_utc.to_s("%Y-%m-%d")
+      end
+
+      # Real Ansible's own usermod-path idempotency check compares
+      # `/etc/shadow`'s own expire field (whole days since epoch) against
+      # the requested timestamp's own day-since-epoch, NOT a full-
+      # precision timestamp comparison - a `expires:` value that maps to
+      # the SAME calendar day as what's already set is treated as
+      # unchanged, matching `int(math.floor(expires)) // 86400` against
+      # `current_expires` (itself already whole days from `/etc/shadow`).
+      def self.expires_changed?(timestamp : Int64, current_days : Int32?) : Bool
+        wanted_days = timestamp < 0 ? -1 : (timestamp // 86400).to_i32
+        current = current_days || -1
+        wanted_days != current
+      end
+
       # `chage -m <min> -M <max> -W <warn> <name>` flags needed to
       # reconcile the account's current password-ageing fields with the
       # desired ones - only ever emitted for a param that was actually

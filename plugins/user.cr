@@ -40,11 +40,22 @@ module CrystalPlay
   #     combined with a real password change in the same run, matching
   #     real Ansible's own mutual-exclusion between `-p` and `-L`/`-U`)
   #
+  #   expires (optional): account expiration, a Unix TIMESTAMP (seconds,
+  #     NOT days) - verified against real ansible/modules/user.py's own
+  #     source: converted to a `YYYY-MM-DD` UTC date via `-e` on
+  #     useradd/usermod; a negative value (real Ansible's own documented
+  #     "-1 to remove" convention) clears the expiration (`-e ''`).
+  #     Idempotency compares whole days-since-epoch against `/etc/
+  #     shadow`'s own expire field (field 8), matching real Ansible's
+  #     own day-level (not full-timestamp) comparison exactly - a value
+  #     that maps to the same calendar day as what's already set is a
+  #     no-op.
+  #
   # Not implemented: any password-strength/format validation or warning
   # (real Ansible's own `check_password_encrypted` only ever warns, never
   # fails, on a value that doesn't look hashed - this plugin passes
-  # `password:` straight through either way), `expires`, `local`
-  # (lgroupmod/lchage `--local` handling for NIS/LDAP-joined systems).
+  # `password:` straight through either way), `local` (lgroupmod/lchage
+  # `--local` handling for NIS/LDAP-joined systems).
   class UserPlugin < BasePlugin
     def execute : PluginResult
       name = @params["name"]?
@@ -139,6 +150,11 @@ module CrystalPlay
         create_home
       ) + quote_password_flag(PluginHelpers::UserState.useradd_password_args(@params["password"]?, locked))
 
+      if expires = @params["expires"]?.try(&.to_i64?)
+        name_arg = args.pop
+        args << "-e" << "'#{PluginHelpers::UserState.expires_date(expires)}'" << name_arg
+      end
+
       result = remote_exec("useradd #{args.join(" ")}")
       return command_failure("create user", result) unless result[:exit_code] == 0
 
@@ -162,6 +178,12 @@ module CrystalPlay
         flags += quote_password_flag(
           PluginHelpers::UserState.password_update_flags(shadow_password(name), password, update_password, locked)
         )
+      end
+
+      if expires = @params["expires"]?.try(&.to_i64?)
+        if PluginHelpers::UserState.expires_changed?(expires, shadow_expire_days(name))
+          flags << "-e" << "'#{PluginHelpers::UserState.expires_date(expires)}'"
+        end
       end
 
       return PluginResult.new(changed: false, failed: false, msg: "User already up to date") if flags.empty?
@@ -201,6 +223,12 @@ module CrystalPlay
       result = remote_exec("cat /etc/shadow")
       return nil unless result[:exit_code] == 0
       PluginHelpers::UserState.shadow_password(result[:stdout], name)
+    end
+
+    private def shadow_expire_days(name : String) : Int32?
+      result = remote_exec("cat /etc/shadow")
+      return nil unless result[:exit_code] == 0
+      PluginHelpers::UserState.shadow_expire_days(result[:stdout], name)
     end
 
     # The hash value following a "-p" flag is shell-quoted here (not

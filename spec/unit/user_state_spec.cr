@@ -177,4 +177,41 @@ describe UserState do
       UserState.password_update_flags("$6$abc$hash", nil, "always", false).should eq([] of String)
     end
   end
+
+  describe ".expires_date" do
+    # Real bug found via a proactive scope-cut audit: expires: was
+    # entirely unimplemented. Verified against real python's own
+    # `time.strftime('%Y-%m-%d', time.gmtime(timestamp))` output
+    # directly for the same inputs, not assumed.
+    it "matches Python's own time.gmtime + strftime output exactly" do
+      UserState.expires_date(1422403387_i64).should eq("2015-01-28")
+      UserState.expires_date(0_i64).should eq("1970-01-01")
+    end
+
+    it "returns an empty string for a negative timestamp (real Ansible's own '-1 to remove' convention)" do
+      UserState.expires_date(-1_i64).should eq("")
+    end
+  end
+
+  describe ".expires_changed?" do
+    it "is false when the requested timestamp maps to the same calendar day already set" do
+      # 2015-01-28 00:00:00 UTC and 2015-01-28 23:59:59 UTC are the same
+      # day-since-epoch (16463) - real Ansible's own usermod-path
+      # comparison is day-level, not full-timestamp.
+      UserState.expires_changed?(1422403387_i64, 16463).should be_false
+    end
+
+    it "is true when the requested day differs from what's currently set" do
+      UserState.expires_changed?(1422403387_i64, 16000).should be_true
+    end
+
+    it "is true when nothing is currently set" do
+      UserState.expires_changed?(1422403387_i64, nil).should be_true
+    end
+
+    it "treats a negative (remove) timestamp as unchanged only when nothing is currently set" do
+      UserState.expires_changed?(-1_i64, nil).should be_false
+      UserState.expires_changed?(-1_i64, 16463).should be_true
+    end
+  end
 end

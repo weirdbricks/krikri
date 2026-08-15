@@ -41,9 +41,24 @@ module CrystalPlay
   # "Requirement already up-to-date" vs. an actual install/upgrade,
   # matching real Ansible's own PipModule.
   #
-  # Not implemented: `editable:`, `umask:`, `extra_args:` combined with
-  # `requirements:` validation, per-package `state: absent` version
-  # pinning (uninstall doesn't take a version).
+  # - editable: adds `-e` to extra_args (deduplicated if extra_args
+  #   already includes it) - verified against real ansible/modules/
+  #   pip.py's own source, `-e` is applied there too rather than as a
+  #   separate standalone flag
+  # - umask: an octal string, applied via a `umask <value>;` command
+  #   prefix (this codebase shells out per-command rather than forking
+  #   like real Ansible's own `os.umask()` around the whole run, so a
+  #   shell-level `umask` prefix is the equivalent for the single `pip`
+  #   invocation either wraps) - fails clearly on an invalid (non-octal)
+  #   value, matching real Ansible's own validation message
+  #
+  # Not implemented: `extra_args:`/`requirements:`'s own check_mode-
+  # specific idempotency short-circuit (real Ansible's check_mode always
+  # reports changed: true when either is given, rather than attempting
+  # an idempotency check it can't reliably make) - moot here, this
+  # plugin doesn't implement check_mode at all yet, a separate and much
+  # larger pre-existing gap not touched in this pass. Per-package
+  # `state: absent` version pinning (uninstall doesn't take a version).
   class PipPlugin < BasePlugin
     def execute : PluginResult
       state = @params["state"]? || "present"
@@ -57,6 +72,10 @@ module CrystalPlay
       pip_bin = resolve_pip_binary
       return pip_bin if pip_bin.is_a?(PluginResult)
 
+      if umask = @params["umask"]?
+        return PluginResult.new(changed: false, failed: true, msg: "umask must be an octal integer") unless umask =~ /\A0?[0-7]{1,4}\z/
+      end
+
       case state
       when "absent"
         remove(pip_bin, name.not_nil!)
@@ -65,6 +84,11 @@ module CrystalPlay
       else
         install(pip_bin, target_spec(name, @params["version"]?), upgrade: false, requirements: requirements)
       end
+    end
+
+    private def with_umask(command : String) : String
+      return command unless umask = @params["umask"]?
+      "umask #{umask}; #{command}"
     end
 
     private def target_spec(name : String?, version : String?) : String?
@@ -139,7 +163,10 @@ module CrystalPlay
       end
 
       extra = @params["extra_args"]? || ""
-      cmd = with_chdir("#{pip_bin} install #{upgrade ? "--upgrade " : ""}#{extra} #{target}".strip)
+      if is_true?(@params["editable"]?) && !extra.split(' ').includes?("-e")
+        extra = extra.empty? ? "-e" : "#{extra} -e"
+      end
+      cmd = with_umask(with_chdir("#{pip_bin} install #{upgrade ? "--upgrade " : ""}#{extra} #{target}".strip))
       result = remote_exec(cmd)
 
       unless result[:exit_code] == 0
@@ -162,7 +189,7 @@ module CrystalPlay
         return PluginResult.new(changed: false, failed: false, msg: "Package already absent")
       end
 
-      cmd = with_chdir("#{pip_bin} uninstall -y #{bare_name}")
+      cmd = with_umask(with_chdir("#{pip_bin} uninstall -y #{bare_name}"))
       result = remote_exec(cmd)
 
       unless result[:exit_code] == 0
