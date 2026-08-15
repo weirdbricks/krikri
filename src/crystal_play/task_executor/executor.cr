@@ -162,10 +162,15 @@ module CrystalPlay
       ensure_grouped(@tasks)
 
       @tasks.each do |task|
-        puts "TASK [#{task.name}]".colorize(:white).bold
-        puts "*" * 70
-
         active_hosts = @hosts.reject { |host| @halted_hosts.includes?(host.name) }
+
+        # The banner prints once per task, not per host - real Ansible's
+        # own convention - so a templated name is rendered against
+        # whichever host will actually run first (matches this file's
+        # existing `run_once`-style "first host" precedent elsewhere).
+        display_host = active_hosts.first? || @hosts.first
+        puts "TASK [#{render_task_name_for_display(task, display_host)}]".colorize(:white).bold
+        puts "*" * 70
 
         if @forks > 1 && task_forkable?(task) && active_hosts.size > 1
           run_task_for_hosts_in_parallel(task, active_hosts)
@@ -512,6 +517,33 @@ module CrystalPlay
       if value = @registered_vars[@hosts.first.name][register_name]?
         @registered_vars[host.name][register_name] = value
       end
+    end
+
+    # Render *task*'s `name:` for the "TASK [...]" banner, lazily - only
+    # builds a vars_context (the same expensive facts-merge #execute_task
+    # itself pays for separately) when the name actually needs it, so a
+    # literal (the overwhelming majority) task name costs nothing extra.
+    #
+    # Every banner print site used to print `task.name` raw, which only
+    # ever reflected whatever narrow, early, per-var-source pass had
+    # already substituted into it (include_tasks:'s include_vars:,
+    # include_role:'s vars:) - anything sourced from a role's own
+    # `vars/main.yml` (round 26/27's `__common_binary_basename`, itself a
+    # templated vars-file entry) or from `ansible_facts`/registered vars
+    # stayed literally `{{ ... }}` in the banner even though the task's
+    # own body rendered correctly, since the body gets a full vars_context
+    # at actual execution time and the banner never did. Rendering here,
+    # right before print, gives the banner the same full context the body
+    # itself is about to use - it's cosmetic-only (a mistake here can't
+    # affect what actually runs), so best-effort: on any substitution
+    # error, fall back to the raw unrendered name rather than raising.
+    private def render_task_name_for_display(task : Task, host : Host) : String
+      return task.name unless task.name.includes?("{{")
+
+      vars_context = build_vars_context(task, host)
+      VarSubstitutor.new(vars: vars_context, host_name: host.name).substitute(task.name)
+    rescue
+      task.name
     end
 
     # Build the base variable context (play/host/registered/task vars + facts)
@@ -2150,7 +2182,7 @@ module CrystalPlay
           next
         end
 
-        puts "TASK [#{nested_task.name}]".colorize(:white).bold
+        puts "TASK [#{render_task_name_for_display(nested_task, host)}]".colorize(:white).bold
         puts "*" * 70
         connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
         puts "skipping: [#{connection_host}]".colorize(:cyan)
@@ -2293,7 +2325,7 @@ module CrystalPlay
 
       tasks.each do |nested_task|
         break if @halted_hosts.includes?(host.name)
-        puts "TASK [#{nested_task.name}]".colorize(:white).bold
+        puts "TASK [#{render_task_name_for_display(nested_task, host)}]".colorize(:white).bold
         puts "*" * 70
         execute_task(nested_task, host)
         puts ""

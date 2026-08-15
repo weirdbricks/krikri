@@ -8,9 +8,40 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.352`.**
+**Currently at `0.9.353`.**
 
 ---
+
+`0.9.353` (task-name display fix, no live round - the user asked to
+work through this and a `copy:` inefficiency after round 27, without
+needing another host round for either):
+
+- **Fixed the cosmetic task-name-rendering gap** flagged in rounds 26
+  and 27: a task `name:` sourced from a role's own `vars/main.yml` (or
+  any other source not already covered by the narrow early-pass fixes
+  for `include_tasks:`'s `include_vars:` and `include_role:`'s
+  `vars:`) stayed unrendered in the `TASK [...]` banner even though the
+  task body executed correctly. Root cause: every banner print site
+  printed `task.name` raw, before that task's own vars_context existed
+  - the body gets a full context at actual execution time
+  (`execute_task` -> `build_vars_context`), but the banner never did.
+  Fix: new `render_task_name_for_display` helper - lazily builds the
+  vars_context and substitutes only when `task.name` actually contains
+  `{{` (a literal name, the overwhelming majority, pays zero extra
+  cost), with a best-effort `rescue` falling back to the raw name on
+  any substitution error (cosmetic-only, so a failure here must never
+  affect what actually runs). Applied at all four `"TASK [...]"` print
+  sites (`task_executor/executor.cr`): the top-level per-play loop, the
+  nested block/rescue/always task-list runner, and the block-skipped
+  task-list printer. For the top-level loop (which prints once before
+  iterating hosts), the multi-host case renders against whichever host
+  will run first - the same "first host" convention this file already
+  uses for `run_once:`.
+- Verified with two repros: the round-26 `include_role: vars:` case
+  (still renders correctly, no regression) and a new `vars/main.yml`-
+  sourced case matching `__common_binary_basename`'s exact shape -
+  both now show the fully-rendered name in the banner.
+- Full `crystal spec` suite: 1117 examples, 0 failures.
 
 `0.9.352` (round 27 - `prometheus.prometheus.blackbox_exporter`, first
 new role tested since round 26, 3 real gaps found and fixed):
