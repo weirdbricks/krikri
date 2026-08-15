@@ -188,6 +188,7 @@ PLUGINS=(
     "package_facts"
     "selinux"
     "pam_limits"
+    "capabilities"
     "set_fact"
     "get_url"
     "blockinfile"

@@ -8,9 +8,56 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.351`.**
+**Currently at `0.9.352`.**
 
 ---
+
+`0.9.352` (round 27 - `prometheus.prometheus.blackbox_exporter`, first
+new role tested since round 26, 3 real gaps found and fixed):
+
+- **`ansible.builtin.package:`'s `name:` param failed to parse a
+  Python-repr list string** (single-quoted, e.g. `"['python3-apt',
+  'libcap2-bin']"`), falling back to a naive comma-split that left
+  brackets/quotes stuck to the first/last package names
+  (`"[python3-apt,"`, `"libcap2-bin]"`), which apt then rejected
+  outright. This shape comes from the same `{% if %}...{{ [list_expr]
+  }}...{% endif %}` Jinja idiom already fixed for `apt.cr`'s own
+  `parse_package_names` in this same round (see below) - but
+  `package.cr` has a completely independent copy of this exact parsing
+  logic, and it's the one this role's own `_common_dependencies` task
+  actually goes through (`ansible.builtin.package:`, not `apt:`
+  directly). Both now have the same single-quote-to-double-quote JSON
+  fallback. Third time this specific "JSON-array-shaped string parsing
+  needs a Python-repr fallback" bug class has been found independently
+  in a different plugin - matches the project's long-documented pattern
+  of the same bug living in multiple unconnected copies.
+- **`community.general.capabilities` had no plugin implementation at
+  all** - any role using it (this one's own "Ensure blackbox exporter
+  binary has cap_net_raw capability" task, granting `CAP_NET_RAW` so
+  the exporter can send raw ICMP probes without running as root)
+  silently skipped with "Plugin not available". New `capabilities.cr`,
+  ported from the real Python module's own `getcap`/`setcap` output
+  parsing (including the older `/path = cap+ep` getcap form, the newer
+  `/path cap+ep` form, and comma-grouped caps sharing one op/flags
+  pair) and update semantics (`state: present`/`absent`, check-mode
+  support). Verified live: `getcap -v` on the installed binary shows
+  `cap_net_raw=ep` after the role runs, matching what real Ansible sets.
+- **Verified live** on a fresh 2-node `G3.2GB` Atlantic.net pair
+  (USEAST2): cold pass `ok=31 changed=9 failed=0 skipped=5` vs python's
+  `ok=34 changed=12 failed=0 skipped=7` (the count differences are the
+  same fact-cache `Gathering Facts` artifact documented in round 25/26,
+  not a real divergence - every task's `ok`/`changed`/`skipping` status
+  matched 1:1 in sequence between the two logs). `failed=0` on both;
+  the service came up `active` and answered `curl :9115` with `200`.
+- Same cosmetic-only gap from round 26 (role vars/main.yml-sourced task
+  names staying unrendered in `TASK [...]` banners, e.g. `TASK
+  [Download {{ __common_binary_basename }}]`) observed again here -
+  still not fixed, same architectural note applies.
+- Full `crystal spec` suite: 1117 examples, 0 failures throughout, both
+  fixes individually repro-verified (a standalone `crystal run` probe
+  for the parsing logic, and a direct plugin-binary invocation with
+  hand-built JSON stdin for the new `capabilities.cr`) before the live
+  round confirmed them end-to-end.
 
 `0.9.351` (round 26 - `prometheus.prometheus.alertmanager`, first new role
 tested since round 25, 7 real engine bugs found and fixed):

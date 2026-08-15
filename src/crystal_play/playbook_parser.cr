@@ -381,6 +381,7 @@ module CrystalPlay
       "ansible.builtin.package_facts",
       "ansible.posix.selinux",
       "community.general.pam_limits",
+      "community.general.capabilities",
       "ansible.builtin.user",
       "ansible.builtin.group",
       "ansible.builtin.git",

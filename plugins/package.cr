@@ -65,6 +65,19 @@ module CrystalPlay
         rescue
           nil
         end
+        # A Python-repr list (single-quoted strings) isn't valid JSON -
+        # same fallback as apt.cr's own parse_package_names (see there
+        # for the full rationale: a Jinja `{% if %}...{{ [list] }}...
+        # {% endif %}` template idiom renders as Python's `str(list)`
+        # form). Found live via prometheus.prometheus.blackbox_exporter's
+        # own `ansible.builtin.package: name: "{{ _common_dependencies
+        # }}"` task - _common_dependencies ultimately resolves through
+        # exactly this template shape.
+        parsed ||= begin
+          Array(String).from_json(trimmed.gsub('\'', '"'))
+        rescue
+          nil
+        end
         name = parsed.join(" ") if parsed
       elsif trimmed.includes?(',')
         # A *literal* YAML list (`name: [tuned, python3-configobj]`,

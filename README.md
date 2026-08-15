@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.351-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.352-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,18 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.352` (round 27) - `prometheus.prometheus.blackbox_exporter`,
+  first new role tested since round 26.** Two real gaps found and
+  fixed live: `package.cr`'s `name:` parsing had the same Python-repr
+  single-quoted-list JSON gap already fixed in `apt.cr` this round -
+  an independent copy, and the one this role's own dependency-install
+  task actually hits (`ansible.builtin.package:`, not `apt:`
+  directly). Also `community.general.capabilities` had no plugin
+  implementation at all - added a new `capabilities.cr`, ported from
+  the real Python module's `getcap`/`setcap` parsing, needed by the
+  role's own `cap_net_raw` grant for ICMP probing. Cold pass
+  `failed=0` on both engines, service verified `active` and answering
+  on its HTTP port.
 - **`0.9.351` (round 26) - `prometheus.prometheus.alertmanager`, first
   new role tested since round 25.** 7 real engine bugs found and fixed
   live on a fresh `G3.2GB` Atlantic.net pair: a dict-literal `== {}`

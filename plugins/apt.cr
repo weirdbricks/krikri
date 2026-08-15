@@ -235,6 +235,29 @@ module CrystalPlay
           nil
         end
         return parsed if parsed
+
+        # A Python-repr list (single-quoted strings, e.g.
+        # `"['python3-apt', 'libcap2-bin']"`) isn't valid JSON, so the
+        # parse above fails and previously fell through to the naive
+        # comma-split, leaving the brackets/quotes stuck to the first/
+        # last entries again ("['python3-apt", "libcap2-bin']"). This
+        # shape comes from a Jinja `{% if %}...{% endif %}` template
+        # whose only `{{ }}` is a literal list - real Ansible/Jinja2
+        # renders that as the Python `str(list)` form, then Ansible's
+        # own templating re-parses a whole-template result that looks
+        # like a Python literal back into a real list (`ast.literal_
+        # eval`-equivalent). Found live via prometheus.prometheus.
+        # blackbox_exporter's own `_blackbox_exporter_dependencies:
+        # "{% if ... %}{{ [...] }}{% endif %}"`. Naive but safe for the
+        # common case (no embedded quotes/escapes in element strings,
+        # true for every real caller so far): swap single quotes for
+        # double and retry as JSON.
+        parsed = begin
+          Array(String).from_json(trimmed.gsub('\'', '"'))
+        rescue
+          nil
+        end
+        return parsed if parsed
       end
 
       # Split by comma and clean up whitespace
