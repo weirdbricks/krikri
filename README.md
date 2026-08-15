@@ -298,13 +298,16 @@ context.
   `cpus:`/`cpu_shares:`/`cpuset_cpus:`/`cpuset_mems:`/`oom_kill_disable:`/
   `oom_score_adj:`/`pids_limit:`, built and compared for idempotency.
   Required adding 10 new fields to the `docr` fork's `HostConfig` type
-  first. `memory:`/`cpus:`/`cpu_shares:`/`pids_limit:` live-verified end
-  to end; the rest command-construction-verified only - this dev
-  machine's rootless Podman lacks `cpuset` delegation and can't disable
-  the OOM killer under cgroups v2 at all, and showed a couple of
-  transformed-value quirks on the remaining fields consistent with
-  rootless-Podman-specific behavior (same class as prior Podman-only
-  caveats), not confirmed against real Docker Engine.
+  first. All fields now live-verified end to end against a real Docker
+  Engine 29.1.3 (root, full cgroups, throwaway Atlantic.net host) - a
+  same-day follow-up after the rootless Podman dev machine used
+  initially couldn't exercise `cpuset_cpus:`/`oom_score_adj:`/
+  `memory_swap: "unlimited"` properly (no `cpuset` delegation, and
+  unexplained value transformations that turned out to be
+  rootless-Podman-only artifacts, not bugs). `oom_kill_disable: true` is
+  sent correctly but silently discarded by a real kernel limitation on
+  this specific host - confirmed identical via the native `docker` CLI
+  itself, so not an engine issue.
 - **`0.9.379` - `firewalld:`'s `state: present`/`absent` leniency gap**,
   noticed incidentally during the round-34 host round. Real
   `ansible.posix.firewalld` only accepts `present`/`absent` for

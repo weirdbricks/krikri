@@ -50,25 +50,27 @@ module CrystalPlay
   # - cpuset_cpus / cpuset_mems: string (e.g. "0-3", "0,2")
   # - oom_kill_disable: bool
   #
-  # memory/cpus/cpu_shares/pids_limit live-verified end to end (create,
-  # idempotent rerun, drift-triggers-recreate) against a real
-  # Docker-API-compatible daemon (Podman 5.4.2). cpuset_cpus/
-  # oom_kill_disable/oom_score_adj/`memory_swap: "unlimited"` build and
-  # send correctly (command-construction-verified, matching real
-  # Ansible's own algorithm exactly) but could NOT be functionally
-  # live-verified beyond that on this specific dev machine: rootless
-  # Podman here has no `cpuset` cgroup controller delegated at all
-  # (`crun: controller 'cpuset' is not available`), `crun` refuses to
-  # disable the OOM killer under cgroups v2 entirely regardless of
-  # engine, and `oom_score_adj`/`memory_swap: "unlimited"` both came back
-  # from `docker inspect` transformed in ways inconsistent with the
-  # literal requested value (`oom_score_adj: 100` read back as `200`;
-  # `memory_swap: "unlimited"` read back as `0` alone or `2x memory` when
-  # combined with `memory:`) - the same class of rootless-Podman-specific
-  # runtime quirk as `env:`'s own extra injected vars (0.9.376) and
-  # `HostIp`'s empty-string difference (0.9.378), not confirmed as real
-  # Docker Engine behavior and not something either engine's comparison
-  # logic could account for even if it were.
+  # All of the above live-verified end to end (create, idempotent rerun,
+  # drift-triggers-recreate) against a real Docker Engine 29.1.3 daemon
+  # (root, full cgroups delegation, a throwaway Atlantic.net host) -
+  # `cpuset_cpus`/`oom_score_adj`/`memory_swap: "unlimited"` had
+  # initially only been command-construction-verified against a rootless
+  # Podman dev machine that couldn't exercise them properly (no `cpuset`
+  # cgroup delegated at all, and unexplained `oom_score_adj`/
+  # `memory_swap` value transformations - both confirmed as
+  # rootless-Podman-specific artifacts once re-tested against real
+  # Docker Engine as root: `cpuset_cpus`/`oom_score_adj` matched the
+  # requested value exactly and stayed idempotent, `memory_swap:
+  # "unlimited"` correctly read back as the literal `-1`).
+  # `oom_kill_disable: true` is a genuine exception: it's accepted and
+  # sent correctly, but a real, standalone kernel limitation on this
+  # particular Atlantic.net host silently discards it - confirmed
+  # identical via the native `docker` CLI itself (`docker run
+  # --oom-kill-disable` on the same host prints `WARNING: Your kernel
+  # does not support OomKillDisable. OomKillDisable discarded.` and
+  # `docker inspect` shows the field as unset), so this is not an engine
+  # divergence real Ansible would avoid either - both would see the
+  # exact same discarded value on this kernel.
   # - pull: bool, default true - pull image: if not already present locally
   # - recreate: bool, default false - force recreate even if image/command
   #   already match

@@ -29,24 +29,29 @@ adding 10 new fields to the `docr` fork's own `HostConfig` type first
 MemorySwap/MemorySwappiness/NanoCpus/CpuShares/CpusetCpus/CpusetMems/
 OomKillDisable/PidsLimit existed there before.
 
-`memory:`/`cpus:`/`cpu_shares:`/`pids_limit:` live-verified end to end
-(create/idempotent-rerun/drift-triggers-recreate) against a real
-Docker-API-compatible daemon (Podman 5.4.2). `cpuset_cpus:`/
-`oom_kill_disable:`/`oom_score_adj:`/`memory_swap: "unlimited"` are
-command-construction-verified (matching real Ansible's own algorithm
-exactly) but could not be functionally live-verified beyond that on this
-dev machine - rootless Podman here has no `cpuset` cgroup controller
-delegated at all, `crun` refuses to disable the OOM killer under
-cgroups v2 regardless of engine, and `oom_score_adj`/`memory_swap:
-"unlimited"` both came back from `docker inspect` transformed in ways
-inconsistent with the literal requested value (`oom_score_adj: 100` read
-back as `200`; `"unlimited"` read back as `0` alone or `2x memory` when
-combined with `memory:`) - the same class of rootless-Podman-specific
-runtime quirk as `env:`'s extra injected vars (0.9.376) and `HostIp`'s
-empty-string difference (0.9.378), not confirmed as real Docker Engine
-behavior. `device_requests:`/`container_default_behavior:` remain a
-real, deliberate scope cut (unrelated to resource limits, larger
-features of their own).
+**Update, same day**: `memory:`/`cpus:`/`cpu_shares:`/`pids_limit:` had
+been live-verified end to end (create/idempotent-rerun/drift-triggers-
+recreate) against a real Docker-API-compatible daemon (Podman 5.4.2)
+already; `cpuset_cpus:`/`oom_kill_disable:`/`oom_score_adj:`/
+`memory_swap: "unlimited"` were only command-construction-verified at
+first, since this dev machine's rootless Podman couldn't exercise them
+properly (no `cpuset` cgroup controller delegated at all, and
+unexplained `oom_score_adj`/`memory_swap` value transformations on
+`docker inspect`). Re-tested on request against a real Docker Engine
+29.1.3 (root, full cgroups, throwaway Atlantic.net host):
+`cpuset_cpus:`/`oom_score_adj:` matched the requested value exactly and
+stayed idempotent (drift-recreate also confirmed for `oom_score_adj:`),
+and `memory_swap: "unlimited"` correctly read back as the literal `-1`
+- all three earlier anomalies confirmed as rootless-Podman-specific
+artifacts, not real bugs. `oom_kill_disable: true` is a genuine
+exception: sent correctly, but silently discarded by a real kernel
+limitation on this specific Atlantic.net host - confirmed identical via
+the native `docker` CLI itself (`docker run --oom-kill-disable` prints
+`WARNING: Your kernel does not support OomKillDisable. OomKillDisable
+discarded.` on the same host), so not an engine divergence real Ansible
+would avoid either. `device_requests:`/`container_default_behavior:`
+remain a real, deliberate scope cut (unrelated to resource limits,
+larger features of their own).
 
 ---
 
