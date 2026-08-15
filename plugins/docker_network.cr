@@ -49,10 +49,17 @@ module CrystalPlay
   # network already exists would make it useless on every run after the
   # first, the same reasoning docker_container.cr's own networks: uses.
   #
-  # Not implemented: `force:` (real Ansible's "disconnect everyone, delete
-  # and recreate the network" override, distinct from the driver-mismatch
-  # auto-recreate above), ipam_config:, enable_ipv6:, custom driver
-  # options:, `api_version:` (see PluginHelpers::DockerClient).
+  # - force: unconditionally deletes and recreates the network even when
+  #   its config already matches (distinct from the driver-mismatch
+  #   auto-recreate above, which only fires on an actual difference) -
+  #   verified against real Ansible's own `present()`/`remove_network()`
+  #   source: disconnects every currently-connected container first
+  #   (Docker's own network-remove API refuses to delete a network with
+  #   any container still attached), matching the driver-mismatch path's
+  #   own delete exactly - live-verified against a real Docker daemon.
+  #
+  # Not implemented: ipam_config:, enable_ipv6:, custom driver options:,
+  # `api_version:` (see PluginHelpers::DockerClient).
   class DockerNetworkPlugin < BasePlugin
     def execute : PluginResult
       name = @params["name"]?
@@ -100,16 +107,19 @@ module CrystalPlay
       existing : Docr::Types::Network?,
       check_mode : Bool,
     ) : PluginResult
-      if existing && existing.driver == driver
+      force = is_true?(@params["force"]?)
+
+      if existing && existing.driver == driver && !force
         return sync_connected_result(api, existing, connected, appends, check_mode, "Network #{name} already present")
       end
 
       if check_mode
-        verb = existing ? "recreated (driver changed)" : "created"
+        verb = existing ? (force ? "recreated (force)" : "recreated (driver changed)") : "created"
         return PluginResult.new(changed: true, failed: false, msg: "Network #{name} would be #{verb}")
       end
 
       if existing
+        disconnect_all!(api, existing.id)
         api.networks.delete(existing.id)
       end
 
@@ -123,8 +133,21 @@ module CrystalPlay
       created = api.networks.create(config)
       net_changes = sync_connected!(api, created.id, connected, appends)
 
-      verb = existing ? "Recreated (driver changed)" : "Created"
+      verb = existing ? (force ? "Recreated (force)" : "Recreated (driver changed)") : "Created"
       PluginResult.new(changed: true, failed: false, msg: "#{verb} network #{name}#{connected_suffix(net_changes)}")
+    end
+
+    # `force:` (and the driver-mismatch auto-recreate above) both delete
+    # the existing network before recreating it - real Ansible's own
+    # `remove_network()` disconnects every currently-connected container
+    # FIRST (`disconnect_all_containers()`, verified against its actual
+    # source), since Docker's own network-remove API itself refuses to
+    # delete a network with any container still attached.
+    private def disconnect_all!(api : Docr::API, network_id : String)
+      current = api.networks.inspect(network_id).containers || Hash(String, Docr::Types::NetworkContainer).new
+      current.values.each do |container|
+        docker_raw_call(api.client, "POST", "/networks/#{network_id}/disconnect", {"Container" => container.name})
+      end
     end
 
     # Shared tail for "the network itself needs no change" - still syncs

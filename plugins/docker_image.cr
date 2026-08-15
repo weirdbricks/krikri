@@ -38,7 +38,23 @@ module CrystalPlay
   #   PluginHelpers::DockerClient's own doc comment for exact behavior
   #   (including tls_hostname:/DOCKER_TLS*/DOCKER_CERT_PATH support).
   #
-  # Not implemented: force_tag, force_source, `api_version:` (see
+  # - force_source: with state: present, re-pulls even when the image
+  #   already exists locally - verified against real Ansible's own
+  #   `present()` source (`if not image or self.force_source:`). A
+  #   forced re-pull that resolves to the exact same image digest it
+  #   already had reports `changed: false` (real Ansible's own source
+  #   re-checks the image ID before/after and resets `changed` back to
+  #   false on a match - NOT an unconditional `changed: true` the way a
+  #   naive reading of the trigger condition alone would suggest) -
+  #   caught live against a real Docker daemon: initially implemented as
+  #   unconditional `changed: true`, then found to diverge from real
+  #   ansible-playbook's own observed `changed: false` for this exact
+  #   scenario before this was fixed.
+  #
+  # Not implemented: force_tag (only meaningful for real Ansible's own
+  # `repo_tags:`-based re-tag-to-a-different-repository feature, which
+  # isn't implemented here at all - a param modifying an unimplemented
+  # feature, not a standalone gap), `api_version:` (see
   # PluginHelpers::DockerClient), build/archive/repository sources.
   class DockerImagePlugin < BasePlugin
     def execute : PluginResult
@@ -67,17 +83,28 @@ module CrystalPlay
       client, docker_host_description = PluginHelpers::DockerClient.build(@params)
       api = Docr::API.new(client)
 
-      exists = image_exists?(client, full_ref)
+      pre_pull_id = image_id(client, full_ref)
+      exists = !pre_pull_id.nil?
+      force_source = is_true?(@params["force_source"]?)
 
       case state
       when "present"
-        if exists
+        if exists && !force_source
           PluginResult.new(changed: false, failed: false, msg: "Image #{full_ref} already present")
         elsif check_mode
           PluginResult.new(changed: true, failed: false, msg: "Image #{full_ref} would be pulled")
         else
           api.images.create(ref_name, ref_tag)
-          PluginResult.new(changed: true, failed: false, msg: "Pulled image #{full_ref}")
+          # force_source: re-pulling an image that resolves to the
+          # exact same digest it already had is a real no-op - see
+          # #image_id's own doc comment for why this matters and what
+          # real Ansible's source does.
+          unchanged = exists && image_id(client, full_ref) == pre_pull_id
+          PluginResult.new(
+            changed: !unchanged,
+            failed: false,
+            msg: unchanged ? "Image #{full_ref} already present (force_source, unchanged)" : (exists ? "Re-pulled image #{full_ref} (force_source)" : "Pulled image #{full_ref}")
+          )
         end
       when "absent"
         if !exists
@@ -102,13 +129,29 @@ module CrystalPlay
     # docr's much larger, less-exercised Docr::Types::Image parse just to
     # throw the result away.
     private def image_exists?(client : Docr::Client, ref : String) : Bool
-      # The body must be drained even though its content is unused -
-      # otherwise it's left sitting on the shared keep-alive connection and
-      # desyncs the HTTP/1.1 framing for whatever call comes next.
-      client.call("GET", "/images/#{ref}/json") { |response| response.consume_body_io }
-      true
+      !image_id(client, ref).nil?
+    end
+
+    # The image's own "Id" field (a "sha256:..." digest) via a raw GET -
+    # same minimal-trust approach as the old image_exists? (no reason to
+    # pull in docr's much larger Docr::Types::Image parse just for one
+    # field). nil if the image doesn't exist.
+    #
+    # Used for force_source:'s own idempotency re-check - verified
+    # against real Ansible's own `present()` source: after a forced
+    # re-pull, if the image existed BEFORE and its ID is UNCHANGED
+    # after, `changed` is reset back to false (`if image and image["Id"]
+    # == self.results["image"]["Id"]: self.results["changed"] = False`)
+    # - a force_source-triggered pull that resolves to the identical,
+    # already-current image is a real no-op, not a "changed" pull.
+    private def image_id(client : Docr::Client, ref : String) : String?
+      id = nil
+      client.call("GET", "/images/#{ref}/json") do |response|
+        id = JSON.parse(response.body_io).dig?("Id").try(&.as_s?)
+      end
+      id
     rescue ex : Docr::Errors::DockerAPIError
-      return false if ex.status_code == 404
+      return nil if ex.status_code == 404
       raise ex
     end
   end

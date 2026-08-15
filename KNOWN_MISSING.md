@@ -8,7 +8,32 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.372`.**
+**Currently at `0.9.373`.**
+
+---
+
+`0.9.373` (part 5 of the scope-cut pass, the docker trio - all three
+live-verified against a real Docker-compatible daemon on the dev
+machine): `docker_network:`'s `force:` (unconditionally deletes and
+recreates the network even when its config already matches, distinct
+from the existing driver-mismatch auto-recreate; disconnects every
+currently-connected container first, matching real Ansible's own
+`remove_network()` source - this fix also closed a bonus pre-existing
+bug in the driver-mismatch recreate path, which was missing the same
+disconnect-before-delete step). `docker_image:`'s `force_source:`
+(re-pulls even when the image already exists locally - matches real
+Ansible's own `present()` source, INCLUDING a non-obvious detail found
+only by comparing live output against real ansible-playbook: a forced
+re-pull resolving to the exact same image digest reports `changed:
+false`, not an unconditional `changed: true` the trigger condition alone
+would suggest - real Ansible re-checks the image ID before/after and
+resets `changed` back to false on a match). `docker_container:`'s
+`comparisons: {networks: strict}` (disconnects the container from any
+network not in `networks:` - the only key of real Ansible's ~40-field
+`comparisons:` system meaningfully implementable here, since `networks`
+is the only field this plugin tracks/syncs at all; verified against
+real Ansible's own documented behavior and confirmed via `docker
+inspect` that only the requested network remained attached afterward).
 
 ---
 

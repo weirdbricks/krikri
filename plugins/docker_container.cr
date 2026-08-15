@@ -68,12 +68,19 @@ module CrystalPlay
   # ignoring it after the container already exists would make it useless
   # on every run after the first.
   #
-  # Not implemented: `comparisons: strict`/`networks: strict` (Ansible's
-  # own per-field idempotency override system) - so an existing container
-  # attached to networks NOT listed in networks: is never disconnected
-  # from them here, matching real Ansible's own default (non-strict)
-  # behavior, but there's no way to opt into the stricter purge behavior;
-  # `networks_cli_compatible:` (real Ansible's "don't attach the default
+  # - comparisons: a dict (e.g. `{"networks": "strict"}`) - only the
+  #   `networks` key is meaningfully implementable here, since it's the
+  #   one field this plugin actually tracks/syncs at all (every other
+  #   possible key in real Ansible's own ~40-field comparison system
+  #   isn't compared here regardless - see above). `comparisons:
+  #   {networks: strict}` disconnects the container from any network NOT
+  #   in networks: - verified against real Ansible's own documented
+  #   behavior ("To remove a container from one or more networks, use
+  #   `networks: strict` in the `comparisons` option") - live-verified
+  #   against a real Docker daemon.
+  #
+  # Not implemented: `networks_cli_compatible:` (real Ansible's "don't
+  # attach the default
   # network when networks: is given" toggle - this plugin always leaves
   # whatever network_mode:/Docker's own default produced alone and only
   # ever *adds* the requested networks on top); `mac_address:` on a
@@ -156,8 +163,8 @@ module CrystalPlay
         ensure_image_pulled(api, image_ref.not_nil!) if pull
         resp = api.containers.create(name, config)
         api.containers.start(resp.id) if start
-        connected = sync_networks!(api, resp.id, requested_networks)
-        return PluginResult.new(changed: true, failed: false, msg: "Created#{start ? " and started" : ""} container #{name}#{network_suffix(connected)}")
+        connected, disconnected = sync_networks!(api, resp.id, requested_networks)
+        return PluginResult.new(changed: true, failed: false, msg: "Created#{start ? " and started" : ""} container #{name}#{network_suffix(connected, disconnected)}")
       end
 
       existing = existing.not_nil!
@@ -171,16 +178,16 @@ module CrystalPlay
         ensure_image_pulled(api, image_ref.not_nil!) if pull
         resp = api.containers.create(name, config)
         api.containers.start(resp.id) if start
-        connected = sync_networks!(api, resp.id, requested_networks)
-        return PluginResult.new(changed: true, failed: false, msg: "Recreated container #{name}#{network_suffix(connected)}")
+        connected, disconnected = sync_networks!(api, resp.id, requested_networks)
+        return PluginResult.new(changed: true, failed: false, msg: "Recreated container #{name}#{network_suffix(connected, disconnected)}")
       end
 
       if start && existing.state != "running"
         return PluginResult.new(changed: true, failed: false, msg: "Container #{name} would be started") if check_mode
 
         api.containers.start(existing.id)
-        connected = sync_networks!(api, existing.id, requested_networks)
-        return PluginResult.new(changed: true, failed: false, msg: "Started container #{name}#{network_suffix(connected)}")
+        connected, disconnected = sync_networks!(api, existing.id, requested_networks)
+        return PluginResult.new(changed: true, failed: false, msg: "Started container #{name}#{network_suffix(connected, disconnected)}")
       end
 
       no_op_networks_result(api, existing.id, requested_networks, check_mode, "Container #{name} already #{start ? "started" : "present"}")
@@ -197,8 +204,8 @@ module CrystalPlay
         config = build_container_config(image_ref.not_nil!)
         ensure_image_pulled(api, image_ref.not_nil!) if pull
         resp = api.containers.create(name, config)
-        connected = sync_networks!(api, resp.id, requested_networks)
-        return PluginResult.new(changed: true, failed: false, msg: "Created container #{name} (stopped)#{network_suffix(connected)}")
+        connected, disconnected = sync_networks!(api, resp.id, requested_networks)
+        return PluginResult.new(changed: true, failed: false, msg: "Created container #{name} (stopped)#{network_suffix(connected, disconnected)}")
       end
 
       existing = existing.not_nil!
@@ -211,16 +218,16 @@ module CrystalPlay
         api.containers.delete(existing.id, force: true)
         ensure_image_pulled(api, image_ref.not_nil!) if pull
         resp = api.containers.create(name, config)
-        connected = sync_networks!(api, resp.id, requested_networks)
-        return PluginResult.new(changed: true, failed: false, msg: "Recreated container #{name} (stopped)#{network_suffix(connected)}")
+        connected, disconnected = sync_networks!(api, resp.id, requested_networks)
+        return PluginResult.new(changed: true, failed: false, msg: "Recreated container #{name} (stopped)#{network_suffix(connected, disconnected)}")
       end
 
       if existing.state == "running"
         return PluginResult.new(changed: true, failed: false, msg: "Container #{name} would be stopped") if check_mode
 
         api.containers.stop(existing.id)
-        connected = sync_networks!(api, existing.id, requested_networks)
-        return PluginResult.new(changed: true, failed: false, msg: "Stopped container #{name}#{network_suffix(connected)}")
+        connected, disconnected = sync_networks!(api, existing.id, requested_networks)
+        return PluginResult.new(changed: true, failed: false, msg: "Stopped container #{name}#{network_suffix(connected, disconnected)}")
       end
 
       no_op_networks_result(api, existing.id, requested_networks, check_mode, "Container #{name} already stopped")
@@ -235,8 +242,8 @@ module CrystalPlay
       requested_networks : Array(RequestedNetwork), check_mode : Bool, base_msg : String,
     ) : PluginResult
       unless check_mode
-        connected = sync_networks!(api, container_id, requested_networks)
-        return PluginResult.new(changed: true, failed: false, msg: "#{base_msg}#{network_suffix(connected)}") unless connected.empty?
+        connected, disconnected = sync_networks!(api, container_id, requested_networks)
+        return PluginResult.new(changed: true, failed: false, msg: "#{base_msg}#{network_suffix(connected, disconnected)}") unless connected.empty? && disconnected.empty?
       end
 
       PluginResult.new(changed: false, failed: false, msg: base_msg)
@@ -283,14 +290,21 @@ module CrystalPlay
     end
 
     # Connects the container to whichever requested networks it isn't
-    # already a member of; never disconnects it from anything (see the
-    # class doc comment - no `comparisons: strict` purge support). Returns
-    # the names of networks actually connected, for the result message.
-    private def sync_networks!(api : Docr::API, container_id : String, requested : Array(RequestedNetwork)) : Array(String)
-      return [] of String if requested.empty?
+    # already a member of. Also disconnects it from any network NOT in
+    # *requested* when `comparisons: {networks: strict}` is given -
+    # verified against real Ansible's own documented behavior ("To
+    # remove a container from one or more networks, use `networks:
+    # strict` in the `comparisons` option" - the default leaves extra
+    # networks alone entirely, matching this plugin's own prior
+    # behavior before `strict:` support existed). Returns
+    # {connected, disconnected} names, for the result message.
+    private def sync_networks!(api : Docr::API, container_id : String, requested : Array(RequestedNetwork)) : {Array(String), Array(String)}
+      strict = networks_strict?
+      return {[] of String, [] of String} if requested.empty? && !strict
 
       already_connected = api.containers.inspect(container_id).network_settings.networks.keys
       connected = [] of String
+      disconnected = [] of String
 
       requested.each do |net|
         next if already_connected.includes?(net.name)
@@ -298,7 +312,29 @@ module CrystalPlay
         connected << net.name
       end
 
-      connected
+      if strict
+        requested_names = requested.map(&.name)
+        already_connected.each do |name|
+          next if requested_names.includes?(name)
+          disconnect_network(api.client, name, container_id)
+          disconnected << name
+        end
+      end
+
+      {connected, disconnected}
+    end
+
+    # `comparisons:` is a dict (e.g. `{"networks": "strict"}`) real
+    # Ansible uses to override per-field idempotency strictness across
+    # ~40 possible keys - only `networks` is meaningfully implementable
+    # here, since it's the one field this plugin actually tracks/syncs
+    # at all (see the class doc comment for the other ~40 fields' own
+    # documented, deliberate non-comparison scope cut).
+    private def networks_strict? : Bool
+      raw = @params["comparisons"]?
+      return false unless raw
+      parsed = JSON.parse(raw) rescue nil
+      parsed.try(&.["networks"]?).try(&.as_s?) == "strict"
     end
 
     # docr's own Networks#connect/#disconnect are unimplemented stubs
@@ -320,8 +356,18 @@ module CrystalPlay
       client.call("POST", "/networks/#{net.name}/connect", headers, body) { |response| response.consume_body_io }
     end
 
-    private def network_suffix(connected : Array(String)) : String
-      connected.empty? ? "" : " (connected to network#{connected.size == 1 ? "" : "s"}: #{connected.join(", ")})"
+    private def disconnect_network(client : Docr::Client, network_name : String, container_id : String)
+      body = {"Container" => container_id}.to_json
+      headers = HTTP::Headers{"Content-Type" => "application/json"}
+
+      client.call("POST", "/networks/#{network_name}/disconnect", headers, body) { |response| response.consume_body_io }
+    end
+
+    private def network_suffix(connected : Array(String), disconnected : Array(String) = [] of String) : String
+      parts = [] of String
+      parts << "connected to network#{connected.size == 1 ? "" : "s"}: #{connected.join(", ")}" unless connected.empty?
+      parts << "disconnected from network#{disconnected.size == 1 ? "" : "s"}: #{disconnected.join(", ")}" unless disconnected.empty?
+      parts.empty? ? "" : " (#{parts.join("; ")})"
     end
 
     private def ensure_image_pulled(api : Docr::API, image_ref : String)
