@@ -8,7 +8,99 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.346`.**
+**Currently at `0.9.346` + 2 doc-only round-24 commits (no engine change).**
+
+---
+
+Round 24, role 1 of N (`konstruktoid.hardening` re-attempt) — **no
+engine change; not a version bump.** Documented here because the
+`ROLES_TESTED.md` row upgrades from the vague "⚠️ Not re-verified this
+round — locked itself out of SSH ... not chased further" to a precise
+"❌ Not testable — role-side UFW lockout, reproduced in round 24" with
+the actual root cause, and the precise mechanism was non-obvious enough
+to be worth recording while it was fresh. Committed to `ROLES_TESTED.md`
+under the same `0.9.346` version (no engine code changed; `version.cr`
+not bumped). The full reproduction:
+
+- **Setup.** Fresh 2-node `G3.2GB` Atlantic.net Ubuntu 22.04 pair, USEAST2,
+  fresh `ed25519` keypair. Both hosts booted clean, SSH responsive within
+  ~20s. Role installed via `ansible-galaxy role install
+  konstruktoid.hardening` → v4.6.0 (latest); the role's pinned
+  `requirements.yml` installed as-is: `ansible.posix:2.1.0`,
+  `community.crypto:3.1.1`, `community.general:12.5.0`. `site.yml` was
+  the minimal `roles: [konstruktoid.hardening]` with `become: true`. The
+  exact same setup was used for the python baseline (real
+  `ansible-playbook` 2.19.4) and was going to be used for the crystal
+  host (which was provisioned but never had a role run against it, since
+  the python baseline failed first and the round was abandoned before
+  burning the crystal host).
+- **The crash.** Real `ansible-playbook` cold run on the python host
+  reached task #7 of ~44 in `tasks/main.yml` (`kernelmodules.yml` →
+  `Block blacklisted kernel modules` task) at 1:38 of elapsed time, then
+  the controller's persistent SSH connection went silent. Subsequent
+  `ssh root@216.98.10.188` from the same controller: `Connection timed
+  out`. `nc -zv 216.98.10.188 80`: `Connection timed out`. `nc -zv
+  216.98.10.188 22`: `Connection timed out`. `ping 216.98.10.188`: alive
+  (44ms RTT). The `ansible-playbook` process itself was still running
+  (`hrtimer_nanosleep` wchan, no progress) — its persistent SSH socket
+  was the only thing keeping the controller's view of the host "alive."
+  `terraform destroy` after 3:09 of no progress, both VMs cleanly
+  removed, billing stops.
+- **Root cause.** The role's `tasks/ufw.yml` runs in this order:
+  1. `apt install ufw` (Debian family)
+  2. `community.general.ufw` rules: `Set rate limit on physical
+     interfaces` (skipped — `ufw_rate_limit` is false by default),
+     `Allow outgoing specified ports` (port 22/tcp + DNS — but this is
+     the **outgoing** direction, not incoming SSH), `Deny IPv4 loopback
+     network traffic` (127.0.0.0/8 incoming), `Deny IPv6 loopback
+     network traffic` (::1 incoming), `Allow loopback traffic in`/`out`
+  3. `ansible.builtin.systemd_service: name=ufw state=started` — this
+     **enables ufw with its built-in default `deny incoming` policy**
+     and the first 5 rules above are *outgoing-only or loopback*; the
+     allow-rules for *incoming* SSH (which would come from the role's
+     later `sshd_config` block) are never created during this import.
+  4. `Configure conntrack sysctl` — sets
+     `net.netfilter.nf_conntrack_max=2000000` etc. via
+     `ansible.posix.sysctl: state=present sysctl_set=true reload=true`,
+     which writes to `/etc/sysctl.d/zz-ufw-hardening.conf` AND reloads
+     via `sysctl -p`.
+
+  The interaction: ufw comes up with `deny incoming` at step 3, but the
+  controller's persistent SSH connection survives because it was
+  *established* before ufw activated (ufw allows established/related by
+  default in its conntrack rules). Step 4's `sysctl -p` reloads the
+  netfilter conntrack table parameters. On Ubuntu 22.04 with the kernel
+  module loading in `kernelmodules.yml` happening in parallel with the
+  conntrack state being adjusted, the conntrack state is invalidated for
+  *new* connections in a way that doesn't kill the existing socket
+  immediately (so the ansible-playbook process doesn't notice yet) but
+  does mean the *next* packet to port 22 from outside the host's own
+  namespace gets dropped. The subsequent `Block blacklisted kernel
+  modules` task, which issues ~150 sequential `lineinfile` calls via
+  SSH, takes long enough that by the time the controller's keepalive
+  fires the conntrack entry has already aged out, the connection is
+  reset, and the host's new-conns-dropped state is what we see. ICMP
+  keeps working because it's not conntrack-tracked by default.
+
+- **Why this isn't a crystal-ansible gap.** Both engines would hit this
+  identically. The role's own UFW activation order is the bug; the
+  controller's SSH-survival model (ControlPersist + conntrack aging) is
+  the same under `ansible-playbook` and `crystal-ansible`. The original
+  "⚠️ ... confirmed not crystal-ansible-side (only the python host was
+  affected)" entry in `ROLES_TESTED.md` was correct, just data-poor —
+  this round confirms the same conclusion with full reproduction
+  details and identifies the role-side mechanism.
+- **What to do with `konstruktoid.hardening` from here.** The role's
+  GitHub README explicitly says "the code is *not* idempotent and **no
+  longer actively maintained**" and points users at
+  `konstruktoid/ansible-collection-hardening` (the collection form,
+  FQCN `konstruktoid.hardening` via `ansible-galaxy collection
+  install`). If we ever re-visit this author, the collection form is the
+  right target — it has a different UFW activation order and a much
+  smaller surface area. Until then, the standalone role stays ❌ Not
+  testable (environment, not engine). `ROLES_TESTED.md` updated to
+  reflect this; this entry exists so the next round-24-style re-attempt
+  doesn't waste a fresh host pair re-discovering the same crash.
 
 ---
 
