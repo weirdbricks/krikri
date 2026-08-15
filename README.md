@@ -63,7 +63,7 @@ See [KNOWN_MISSING.md](KNOWN_MISSING.md) for what's still missing, and
   per task, on by default (`--no-batching` to disable; see the
   Performance section below and `git log`'s `0.9.61`-`0.9.63` commits)
 
-### Plugins (64 total)
+### Plugins (66 total)
 
 **Files & templates:** `copy`, `template`, `file`, `lineinfile`,
 `blockinfile`, `replace`, `stat`, `find`, `archive`, `unarchive`, `fetch`,
@@ -279,392 +279,143 @@ harness covers and how it works.
 
 ## 🚧 Limitations
 
-See [KNOWN_MISSING.md](KNOWN_MISSING.md) for the live tracking of what is
-not yet implemented.
+See [KNOWN_MISSING.md](KNOWN_MISSING.md) for the live, per-round narrative
+of what's still being found and fixed. `ROLES_TESTED.md` tracks the
+current status of every Ansible Galaxy role that has been benchmarked
+against a real host. The historical per-round detail (anything before
+0.9.327) lives in `git log` - the project deliberately does not duplicate
+it in this README.
 
-**One known cross-cutting engine gap is currently open** (found, not yet
-fixed - see KNOWN_MISSING.md's `0.9.334` entry): array/hash values
-rendered as a bare string (`{{ some_list }}` with no further filter)
-print in a JSON-compact form (`[1,2,3]`, `{"a":1}`) instead of real
-Ansible/Jinja2's Python-repr form (`[1, 2, 3]`, `{'a': 1}`) - no spec
-currently pins the wrong format, and it no longer blocks CRINJA.md
-step-5 work (see below).
+### Recent rounds (rolling summary)
 
-A twenty-third round (`geerlingguy.phpmyadmin`, with its dependency
-chain `geerlingguy.mysql`/`php`/`apache`/`php-mysql`) took a role that
-was previously ❌ `Not testable` to ✅ **clean**, fixing two real engine
-bugs it surfaced. Because the role's `mysql_db`/`mysql_user` tasks pass
-*no* login params (relying on the `~/.my.cnf` the role itself writes),
-crystal's `MysqlConnection.build_uri` had to learn the same implicit
-option-file fallback real Ansible's community.mysql modules get for free
-from their `config_file: ~/.my.cnf` argument-spec default - it now parses
-the `[client]` user/password/socket and merges them under explicit
-login_* params. And `lineinfile` (state=present) was replacing only the
-**first** regexp match; real Ansible replaces the **last**, which is what
-makes a `$cfg['Servers'][$i]['host'] = $dbserver;` template (an active
-PHP-variable line *and* a commented copy near EOF) converge. Verified on
-a fresh 2-node pair: cold crystal ok=80/changed=31/failed=0 vs baseline
-ok=96/changed=30/failed=0, warm `changed=1` on **both** (the same
-`mysql_user` `update_password: always` re-assert, matching real Ansible
-exactly), byte-identical `config.inc.php`, both serving phpmyadmin HTTP
-200 on port 8080. See KNOWN_MISSING.md's `0.9.346` entry.
+The last few benchmark rounds on real Atlantic.net host pairs vs. real
+`ansible-playbook`. Each entry is one round, newest first; the bug list
+is the headline only, see `KNOWN_MISSING.md` for full reproduction
+context.
 
-Most recently (`0.9.333`-`0.9.338`, all in one session), CRINJA.md's
-step-5 dual-evaluator convergence went from 3 converged constructs to
-essentially the ENTIRE `#evaluate_expr` dispatch: bare literals, the `~`
-operator, `*`/`/`/`//` arithmetic, literal array/dict expressions,
-`range()`, dotted/simple/indexed variable lookups, Python slicing,
-`|`-filter chains, and the leading-paren wrapper all now try Crinja
-first, falling back to the original hand-rolled code on any failure.
-The key enabler was solving an architectural blocker along the way:
-`CrinjaRenderer#evaluate_value!` extracts Crinja's raw evaluated result
-directly (bypassing its own Python-repr `Finalizer` stringification)
-so it can be fed through this codebase's own JSON-compact
-`format_value` instead - keeping the internal render-then-`JSON.parse`-
-back round trip other call sites depend on intact. Along the way this
-found and fixed several real, independent bugs: two in the
-`weirdbricks/crinja` fork itself (`Hash` finalization using Crystal's
-`{'a' => 1}` separator instead of Python's `{'a': 1}`; `~`/`+`'s
-string-fallback bypassing `Finalizer` entirely), a process-crashing
-`OverflowError` on `10 // 0`, a slicing dispatch bug where `items[1:3]`
-(both bounds present) never worked at all through the plain `evaluate()`
-entry point, and a missing `round` filter in the hand-rolled
-`FilterEngine`. Only `lookup()` bare-calls (no Crinja equivalent) and
-`dict()`'s positional-iterable form (Crinja's own `dict()` silently
-mishandles it) remain intentionally unconverged. Verified via `crystal
-spec` (1063 examples, 0 failures) and `./build.sh` after every step -
-**since then live-host verified** (0.9.339, see the next paragraph and
-KNOWN_MISSING.md's `0.9.339` entry) given the scope of what changed. See
-`CRINJA.md` and KNOWN_MISSING.md's `0.9.333`-`0.9.338` entries for full
-detail.
+- **`0.9.346` (round 23) - `geerlingguy.phpmyadmin`** went from
+  ❌ `Not testable` to ✅ **clean** (its `include:` -> `include_tasks:`
+  patch synced to the baseline host so both engines ran the same role).
+  Two real engine bugs found live: `MysqlConnection.build_uri` now parses
+  the `[client]` section of `~/.my.cnf` for `user`/`password`/`socket`
+  when the task itself passes no `login_*` params (community.mysql
+  modules get this from their `config_file: ~/.my.cnf` argument-spec
+  default; crystal-ansible's shared helper had to learn the same
+  fallback), and `lineinfile` (state=present) now uses `rindex` instead
+  of `index` - real Ansible replaces the **last** regexp match, which
+  is the only way the role's `$cfg['Servers'][$i]['host'] = $dbserver;`
+  template (an active line plus a commented copy near EOF) converges.
+  Cold: crystal ok=80/changed=31/failed=0 vs baseline
+  ok=96/changed=30/failed=0; warm `changed=1` on **both** (the same
+  `mysql_user` `update_password: always` re-assert, role-side not
+  engine); byte-identical `config.inc.php`; both serving phpmyadmin HTTP
+  200 on port 8080.
+- **`0.9.345`** - `hostname` module completed, `http_download` refactored,
+  `mysql_user` auth hardening. Independent follow-up commits
+  completing things 0.9.346's mysql work depended on.
+- **`0.9.339` - `dev-sec.os_hardening` re-verified clean as the
+  live-host host for CRINJA.md step-5's full `#evaluate_expr` dispatch
+  convergence.** Found two real mode-octal-integrity bugs the spec suite
+  had never surfaced: `set_fact:` decimal-parsed the leading-zero
+  octal-style *string* `"0755"` into int `755`, and `TaskExecutor`
+  re-expressed an int whose decimal digits already looked like a valid
+  octal mode (`"1777"` -> `"3361"`), corrupting `/dev/shm`/`/tmp`/
+  `/var/tmp` to mode `3361` on a live host. Both fixed with regression
+  specs. Clean fresh-host re-verify on a new 2-node pair: cold crystal
+  ok=101/changed=35/failed=0 vs python ok=102/changed=36/failed=0,
+  crystal warm `changed=0` (fully idempotent), config/service parity
+  byte-identical; every residual cold diff traced to documented
+  non-engine causes (the `/var/log` systemd-tmpfiles 755<->775
+  environmental flake plus the loop-hash iteration-order display
+  artifact). **`ExpressionEvaluator`'s step-5 convergence is now
+  live-verified end to end.**- **`0.9.327`–`0.9.338` - CRINJA.md step-5 dual-evaluator convergence.**
+  `ExpressionEvaluator`'s `#evaluate_expr` dispatch went from 3
+  converged constructs to essentially the entire surface: bare
+  literals, the `~` operator, `*`/`/`/`//` arithmetic, literal
+  array/dict expressions, `range()`, dotted/simple/indexed variable
+  lookups, Python slicing, `|`-filter chains, and the leading-paren
+  wrapper all now try Crinja first, falling back to the original
+  hand-rolled code on any failure. The key enabler was solving an
+  architectural blocker: `CrinjaRenderer#evaluate_value!` extracts
+  Crinja's raw evaluated result directly (bypassing its own Python-repr
+  `Finalizer` stringification) so it can be fed through this codebase's
+  own JSON-compact `format_value` instead. Found and fixed along the
+  way: two real bugs in the `weirdbricks/crinja` fork itself (`Hash`
+  finalization using Crystal's `{'a' => 1}` separator instead of
+  Python's `{'a': 1}`; `~`/`+`'s string-fallback bypassing `Finalizer`
+  entirely), a process-crashing `OverflowError` on `10 // 0`, a
+  slicing dispatch bug where `items[1:3]` never worked through the
+  plain `evaluate()` entry point, and a missing `round` filter in
+  `FilterEngine`. Only `lookup()` bare-calls (no Crinja equivalent)
+  and `dict()`'s positional-iterable form (Crinja's own `dict()`
+  silently mishandles it) remain intentionally unconverged. See
+  `CRINJA.md` and `KNOWN_MISSING.md`'s `0.9.333`–`0.9.338` entries
+  for full detail.
 
-`0.9.339` started that live-host verification of the step-5 convergence
-against `dev-sec.os_hardening` on a real 2-node Atlantic.net pair, and
-immediately found two real mode-integrity bugs the unit specs had never
-surfaced. Both stem from the same root: a mode value that has been
-converted to a native `Int64` loses its original octal spelling, and the
-engine then either mis-parses or mis-reformats it. Live-confirmed on a
-real host: `set_fact:`'s `coerce` was decimal-parsing a leading-zero
-octal-style *string* like `"0755"` into int `755` (dropping the leading
-zero), so a downstream `file: mode:` applied `01363` instead of `0755`;
-and `TaskExecutor`'s mode reformatting was re-expressing via `to_s(8)`
-an int whose own decimal digits already looked like a valid octal mode
-(`"1777"` -> `"3361"`), corrupting `/dev/shm`/`/tmp`/`/var/tmp` on a
-live host to mode `3361`. Both fixed with regression specs. Then closed
-out with a **clean fresh-host re-verify** (new 2-node pair, cold run on
-both engines + warm pass): crystal cold ok=101/changed=35/failed=0 vs
-python ok=102/changed=36/failed=0, crystal warm `changed=0` (fully
-idempotent), config/service parity byte-identical, and every residual
-cold diff traced to documented non-engine causes (the `/var/log`
-systemd-tmpfiles 755<->775 environmental flake - both engines apply mode
-`"0775"` identically in a controlled test - plus the loop-hash
-iteration-order display artifact). **CRINJA.md step 5's
-`ExpressionEvaluator` convergence is now live-verified end to end.**
-See KNOWN_MISSING.md's `0.9.339` entry.
+### Current open scope cuts
 
-Before that, a twentieth round (`weareinteractive.nginx`/`mysql`/`redis`/
-`users` plus `Stouts.iptables`/`timezone`) found 5 of 6 roles blocked
-externally (a stale nginx.org apt GPG key; four roles all sharing the
-same legacy `include:` directive, removed from current ansible-core,
-same failure mode already seen for `phpmyadmin`/`gogs` - all confirmed
-by reproducing on real `ansible-playbook` first). The one testable role,
-`weareinteractive.users`, found and fixed 2 more bugs: a Jinja2
-`~`-concatenation `default()` argument (`default(a ~ b ~ c)`) was
-unhandled - only `+`/`-` had the ExpressionEvaluator delegation - and
-`authorized_key:` wasn't idempotent for an empty `key:` value (a
-legitimate case - no keys configured for a user), reporting `changed:
-true` on every single run forever; real Ansible's own module treats an
-empty key as a true no-op and doesn't even create the file, matched
-exactly. Before that, a nineteenth round (`robertdebock.nginx`/`mysql`/`docker_ce`/
-`users`/`phpmyadmin` plus `Oefenweb.fail2ban`) found and fixed 9 more
-bugs: `community.general.ini_file` entirely unimplemented; `include_
-tasks:`/`include_role:` never resolving a scalar-template `loop:` at
-all (a custom `loop_var` stayed "undefined"); plain-`{{ }}` `or`/`and`
-always coercing to literal "True"/"False" instead of real Jinja2
-value-selector semantics; `getent:` never failing a missing single-key
-lookup, breaking a role's own `rescue:` block; the `password_hash`
-filter entirely unimplemented, silently storing plaintext into
-`/etc/shadow`; `type_debug` entirely unimplemented; `unarchive:`'s
-`extra_opts:` silently dropped, breaking `--strip-components=1`; the
-resulting tar-based idempotency check trusting `tar --compare`'s raw
-exit code instead of parsing its output like real Ansible's own
-`TgzArchive#is_unarchived` does; and Python's `SEP.join(iterable)`
-string-method-call syntax (the reverse argument order of the `join`
-filter) entirely unimplemented, plus one more recursive-re-templating
-copy found fixing it. Before that, a `robertdebock.*` round (a
-different, prolific role author -
-`zabbix_server`/`zabbix_agent`, pulling in 8 more robertdebock roles as
-real dependencies) found and fixed 8 bugs: several missing Jinja2 type
-tests (`is boolean`/`is number`/`is string`/`is integer`/`is float`/
-`is iterable`/`is none`), a no-argument `.split()` gap plus another
-recursive-re-templating copy, `systemd:`'s `daemon_reexec:` and `apt:`'s
-`deb:` param both entirely unimplemented, `meta: flush_handlers`
-implemented for real (not cosmetic - a role relies on its ordering for
-correct package installation), a crash it exposed for any `meta:` task
-against a genuine remote host, and a `mysql_user` idempotency bug.
-Before that, a `geerlingguy.glusterfs` round (single instance, then a
-genuine 3-node cluster - real `ansible-playbook` orchestrating one
-cluster, `crystal-ansible` a separate one, both via real SSH, both
-forming actual replicated GlusterFS volumes) found single-instance
-install clean on the first try, and two real bugs in the 3-node
-cluster phase's hand-written peer-probe play (the standard shape any
-real multi-node playbook uses, not part of the role itself).
-`hostvars[<name>]`, Ansible's magic variable for looking up any OTHER
-inventory host's own vars, was entirely unimplemented - any
-`hostvars['node2'].ansible_host` lookup silently resolved "undefined",
-so a peer-probe task ran against a bogus hostname instead of the real
-peer's IP, breaking cluster formation outright. Separately,
-`evaluate_in`'s own naive string split on " in " wasn't quote-aware,
-so a quoted literal that itself contains the word "in" as its own word
-(`'already in peer list' not in ...` - gluster's own real idempotency-
-check message) split at the "in" INSIDE the quotes instead of the real
-operator, breaking `changed_when` idempotency for any multi-node
-cluster playbook using this pattern. Both fixed and re-verified: both
-3-node clusters converge to `changed=0` on rerun, with cross-node file
-replication through the mounted volume functionally confirmed. Before
-that, a `geerlingguy.hdparm`/`geerlingguy.daemonize`/`geerlingguy.
-svn`/`geerlingguy.blackfire` round found `hdparm` clean on the first
-try, and two more bugs. `svn` found a THIRD bug in the same trailing
-`creates=`/`removes=`/`chdir=` extraction logic two earlier rounds had
-already fixed twice (each time in the opposite direction) - a bare
-`\{\{.*?\}\}` regex alternative can't be trusted to stop at a single
-template block's boundary when backtracking is involved, so with two
-separate `key={{ x }}`-shaped params on the same command, the first
-param's value could absorb the entire second param (space, braces, and
-all) by backtracking into the second block's own closing `}}`.
-Replaced the whole regex-matching loop with a proper brace-depth-
-tracking tokenizer instead of trying to patch the regex a third time.
-`blackfire` found `apt_key:`'s idempotency check only ever ran when an
-explicit `id:` was given - `url:`/`data:` (the overwhelmingly common
-real-world shape) always reported `changed: true`, never converging;
-fixed by deriving the key's own fingerprint from the fetched key
-material via a dry-run `gpg --import-options show-only` parse, matching
-real Ansible's own behavior. Before that, a `geerlingguy.java`/
-`geerlingguy.containerd`/`geerlingguy.helm`/`geerlingguy.gogs` round
-found `java` and `containerd` both
-clean on the first try, and one high-value bug in `helm`: the
-hand-rolled `when:` evaluator checked a leading `not ` prefix BEFORE
-splitting on any top-level `and`/`or` at all, so `not X or Y` negated
-the entire remaining string as one unit instead of binding `not` only
-to the immediate next term - the opposite of real Python/Jinja2
-precedence (`not` binds tightest, `or` loosest), discarding `or`'s
-short-circuiting and silently skipping tasks gated on patterns like
-`when: not some.stat.exists or ...`. `gogs` isn't testable - its role
-uses the legacy `include:` directive, removed from current
-ansible-core, the same failure already documented for `geerlingguy.
-phpmyadmin`. Before that, a `geerlingguy.composer`/`geerlingguy.solr`/
-`geerlingguy.passenger`/`geerlingguy.drupal` round found two bugs in
-`composer`
-(`get_url:`'s checksum algorithm silently using SHA1 for anything but
-md5/sha256, and `command:`/`shell:`/`unarchive:`'s `creates=`/
-`removes=`/`chdir=` never expanding a leading `~`) and, chained across
-a single role include file, six bugs in `solr`: a `creates=` extraction
-regex that dropped values with exactly one `{{ }}` template block and
-no other `}}` elsewhere in the string; local-connection `become_user:`
-plugin execution breaking under a non-root-traversable install
-directory (staged binaries fix it, mirroring the SSH upload path);
-Crinja missing Python's `.split(...)` string method entirely (and its
-own blanket exception handler silently discarding a whole template's
-render on that one failure); Crinja's `trim_blocks` eating a literal
-space instead of only a real newline; and `file:` not applying owner/
-group/mode to newly-created *intermediate* directory components, only
-the leaf. `passenger` and `drupal` both hit confirmed external
-blockers (a stale apt-key ID; a role task that explicitly opts out of
-root, which this benchmark harness's root-only connection violates for
-both engines equally) - not engine bugs. Before that, a `geerlingguy.
-tomcat6`/`geerlingguy.exim`/`geerlingguy.git`/
-`geerlingguy.swap` round found `mount:` never recognized `name:`, real
-Ansible's own original alias for `path:` - and fixing that surfaced a
-much deeper gap chasing it down: `*`/`/`/`//` arithmetic were entirely
-unimplemented anywhere in the plain `{{ }}` evaluator (even a bare
-`{{ 10 / 2 }}` rendered "undefined"), which in turn meant `geerlingguy.
-swap`'s own file-size comparison always differed, silently deleting and
-recreating the swap file every single run instead of converging.
-Implementing arithmetic (verified digit-for-digit against real Python's
-own jinja2.Environment) surfaced two more compounding bugs: the `int`
-filter always converted its input to a string first, so ANY float
-(not just one from division) silently became 0; and a bare numeric
-literal used alone or as a filter chain's own head was never
-recognized at all. `git`/`exim` both passed clean (including git's
-full download-and-build-from-source path); `tomcat6` isn't testable -
-its package doesn't exist on Ubuntu 22.04 and both engines reject its
-own deprecated `state: installed` identically. Before that, a
-`geerlingguy.filebeat`/`geerlingguy.fluentd`/`geerlingguy.mailhog`/
-`geerlingguy.ruby` round found `ansible.builtin.gem` had no plugin at
-all (implemented from scratch, shelling out to the real `gem` CLI like
-real Ansible's own module does) and, separately, that `apt:`
-unconditionally reported `changed: true` whenever `apt-get install`
-exited 0 without checking whether it actually did anything - a purely
-*virtual* package name already satisfied via another installed
-package's own `Provides:` (`rubygems`, satisfied by `ruby`) has no real
-`dpkg -l` entry for the pre-check to find, so it always looked like it
-needed installing. Fixed by parsing apt-get's own end-of-run summary
-line post-execution instead of trusting the exit code alone.
-`filebeat`/`mailhog` both passed clean; `fluentd`'s own apt repo has no
-valid Release file for Ubuntu jammy, reproducing identically on real
-ansible-playbook. Before that, a
-`geerlingguy.puppet`/`geerlingguy.munin-node`/`geerlingguy.
-phpmyadmin`/`geerlingguy.adminer` round found no engine bugs at all -
-`munin-node` and `adminer` (incl. its apache dependency) both passed
-byte-identical and idempotent on the first try; `puppet` and
-`phpmyadmin` both hit confirmed external/upstream blockers (an expired
-Puppet Labs apt key; a role version using the `include:` directive
-current ansible-core has removed entirely), not crystal-ansible gaps.
-Before that, a regression-verification pass (re-running `dev-sec.
-os-hardening`, `geerlingguy.kibana`, and `geerlingguy.supervisor` to
-stress-test a prior round's truthiness/bool fixes) found four MORE
-real, pre-existing bugs on `os-hardening` alone - none of them
-regressions: `with_flattened:` (the short lookup-plugin-name alias real
-roles actually write, not the FQCN form) was entirely unrecognized as a
-loop keyword at all; the same resolver silently dropped every literal
-string loop source and never evaluated a filter-chain source, both
-masked by a misleading dead duplicate elsewhere in the codebase; and a
-real Jinja2 `in` test against a variable-bound list (not just an inline
-literal) failed to parse inside `{% if %}` outright. `os-hardening` now
-passes clean and fully idempotent; `kibana`/`supervisor` re-verified
-clean end to end too. Before that, a `geerlingguy.clamav`/`geerlingguy.
-kibana`/`geerlingguy.
-logstash`/`geerlingguy.gitlab` round found six bugs, the deepest being a
-handler's own `register:`/`changed_when:`/`failed_when:` entirely
-unapplied (`execute_handler_plugin_once` just returned the raw plugin
-result) - `gitlab`'s own "restart gitlab" handler depends on
-`failed_when:` to suppress a real, expected upstream GitLab-version
-incompatibility (confirmed identically failing run directly on both
-hosts, a role issue not a crystal-ansible one); chasing why `| bool`
-didn't suppress it surfaced a second bug, the plain evaluator's `bool`
-filter reusing general truthiness instead of real Ansible's own
-keyword-only semantics. `kibana` found Crinja's own truthiness treated
-an empty String/Array/Hash as truthy (Python doesn't), silently breaking
-`and`/`or` wherever both operands could be empty. `logstash` found the
-`to_json` filter entirely unimplemented, and `command:`/`shell:`'s
-`chdir=`/etc. extraction breaking on a templated value with internal
-spaces (`chdir={{ x }}`, the near-universal style). `clamav` found
-`.find(substring)` missing from the String method-call resolver. Before
-that, a `geerlingguy.munin`/`geerlingguy.samba`/`geerlingguy.
-supervisor`/`geerlingguy.htpasswd` round passed `samba` clean on the
-first try and found `community.general.htpasswd` had no plugin at all
-(implemented from scratch - `openssl passwd -stdin` for hashing,
-apr_md5_crypt/md5_crypt/sha256_crypt/sha512_crypt/plaintext schemes,
-idempotent via re-hashing with the existing entry's own salt), fixing
-both `munin` (its own admin-user setup) and `htpasswd` (the whole point
-of the role) in one fix; and two bugs in `supervisor`'s own
-supervisord.conf.j2 template: the `hash` filter
-(`ansible.plugins.filter.core.hash`) was entirely unimplemented in both
-Jinja2 evaluators, and a bare boolean interpolated into a `.j2`
-template rendered Crystal's lowercase "false" instead of real
-Jinja2/Python's capitalized "False". Before that, `geerlingguy.postgresql` found the recursive-re-templating
-bug class's newest sub-case: a role default that's a list of dicts,
-whose own field values are themselves unrendered Jinja - every prior
-fix for this bug class only re-rendered a top-level String value, not
-one nested inside an Array/Hash. `geerlingguy.nginx`/`geerlingguy.docker`
-were re-run as regression checks and still pass. Before that,
-`ansible.builtin.pip` was implemented from scratch
-(`geerlingguy.pip` - no plugin existed at all, so every real playbook's
-`pip:` task silently skipped); `geerlingguy.haproxy`/`geerlingguy.
-certbot` were re-run as regression checks and still pass exactly as
-they did in round 4. Before that, `geerlingguy.ntp` found `service_facts:` missing from task
-batching's fact-producing guard (a `when:` reading its output right
-after gathering it always silently skipped); `geerlingguy.node_exporter`
-found THREE bugs from one "download latest GitHub release and extract
-it" task - `is match(...)`/`is search(...)` regex tests, `regex_replace`
-missing from the plain `{{ }}` evaluator entirely, and `unarchive:`'s
-`src:` as a URL (with `remote_src: true`) never implemented despite
-being real Ansible's own documented behavior; and `geerlingguy.firewall`
-found `command:`/`shell:` never extracting trailing
-`creates=`/`chdir=`/etc. key=value params the way every other module's
-inline syntax does. Before that, `geerlingguy.nfs` found two
-filter-engine bugs: `map()` only
-implemented the `map(attribute='x')` form, so real Jinja2's filter-name
-positional form (`map('split')`) silently no-op'd; and `split` with no
-delimiter argument split into individual characters instead of on
-whitespace runs, matching Python's `str.split()`. (`geerlingguy.
-php-mysql` was also attempted but its own repo is missing
-`vars/Debian.yml` entirely - real ansible-playbook fails identically,
-not a crystal-ansible gap.) Before that, a `geerlingguy.memcached`/
-`geerlingguy.rabbitmq` round passed
-`memcached` clean on the first try (byte-identical config) and found
-two bugs in `rabbitmq`: `deb822_repository`'s `signed_by:` only handled
-a local path (added the round before), not a bare URL - rabbitmq's own
-task gives one directly, now fetched and dearmored into a local
-keyring, matching real Ansible's own naming convention; and `apt:`'s
-`name=version` pinning syntax was passed straight to `dpkg -l`, which
-doesn't understand it, so a pinned package reported changed on every
-single run even once already installed at that exact version. (A third
-role, `varnish`, was blocked by an external packagecloud.io repo issue
-affecting real ansible-playbook identically - not chased.) Before that,
-a `geerlingguy.jenkins`/`geerlingguy.elasticsearch` round
-found four real bugs in `jenkins` - a handler written as
-`include_tasks: file.yml` crashed the whole process for any remote
-host; a handler using `template:` never ran the controller-side render
-step at all (a separate dispatch path from regular tasks, missing the
-same `ActionPluginManager` check); `lineinfile`'s "line already
-present" idempotency check was gated behind `!regexp`, so any
-`regexp:` that failed to match appended a fresh duplicate line every
-run; and `get_url`'s `force: true` unconditionally reported changed
-after every download instead of comparing content first - and one in
-`elasticsearch`: plain-string character indexing (`"7.x"[0]`) was
-entirely unsupported, so the role's own version-branch `when:` silently
-picked the wrong (pre-7.x) config layout and failed to start the
-service. Before that, a `geerlingguy.apache`/`geerlingguy.nodejs` round passed
-`apache` clean on the first try (byte-identical vhost config) and found
-that `nodejs` needed `ansible.builtin.deb822_repository` - already
-flagged as a known gap from `geerlingguy.docker` hitting it too, now
-implemented for the shape real playbooks actually write. Before that, a
-`geerlingguy.redis`/`geerlingguy.postfix` round passed `postfix` clean
-on the first try (byte-identical `main.cf`) and found three bugs in
-`redis`: `apt:` install/upgrade never passed real
-Ansible's own default `--force-confdef`/`--force-confold` dpkg options,
-hanging forever on an interactive conffile prompt; the legacy free-form
-`key={{ x }} state=y` inline module-args tokenizer split on whitespace
-with no awareness of `{{ }}` as an opaque span, corrupting a templated
-value's own internal spaces; and `mode:` piped through a variable that's
-itself an unquoted-octal YAML literal lost its octal-ness in a way a
-*direct* `mode:` literal already didn't. Before that, a proactive
-*audit pass* (not a real-host round - grepping every remaining
-`VariableLookup#resolve` call site in the engine after two rounds found
-5 independent copies of the "recursive re-templating" bug) found and
-fixed **8 more copies**, plus a 10th while writing a test for one of
-them, plus - unrelated - a single-element `loop:`/`with_items:` list
-whose one templated element resolves to a scalar silently producing no
-loop items at all, and `cron:` required `cron_file:` (a documented but
-overly-broad scope cut - real Ansible's own default, editing a live
-user crontab, is what `certbot`'s own renewal-cron task needs). See
-KNOWN_MISSING.md for the full list of all of these (`0.9.225`-`0.9.270`),
-the `ansible-vault` and `prometheus`/`grafana` rounds before that
-(`0.9.198`-`0.9.224`), and the `geerlingguy.*`/`range(...)` rounds
-before that.
+These are the only explicit, deliberate open items. Everything else is
+found and fixed through benchmark rounds rather than tracked from a
+static pre-planned list (see `KNOWN_MISSING.md`'s own intro).
 
-The remaining open items are narrow, documented scope cuts:
-
-- **`meta:`** supports only `clear_facts`.
-  `end_play`/`flush_handlers`/`refresh_inventory` and friends act on
-  execution-flow machinery this engine models differently, and are
-  rejected at parse time rather than silently ignored.
+- **`meta:`** supports only `clear_facts`. `end_play` / `flush_handlers` /
+  `refresh_inventory` and friends act on execution-flow machinery this
+  engine models differently, and are rejected at parse time rather than
+  silently ignored.
+- **`dict2items` / `items2dict` filters** - `FilterEngine` passes the
+  dict through unchanged instead of producing the `[{"key": k, "value":
+  v}, ...]` (or inverse) list real Ansible's filters produce. Hit live
+  benchmarking `dev-sec.os_hardening`'s `loop: "{{ os_vars |
+  dict2items }}"` shape (a regression spec for the related mode bug had
+  to be rewritten because the dict2items passthrough made the loop never
+  actually run).
+- **Crinja's `namespace()` builtin** is unimplemented - the Jinja2
+  mutable-state-across-`{% for %}`-iterations construct. Hit
+  benchmarking `prometheus.prometheus.node_exporter`'s systemd
+  `ProtectHome=` template (computes the value from whether any mount
+  is under `/home`); not investigated further this round.
 - **`docker_*` `api_version:`** is deliberately not planned - the
-  underlying `docr` client uses unversioned endpoint URLs throughout, so
-  pinning a version means touching every endpoint in a separate shard.
-  The unversioned URLs negotiate fine against current Docker and Podman.
+  underlying `docr` client uses unversioned endpoint URLs throughout,
+  so pinning a version means touching every endpoint in a separate
+  shard. The unversioned URLs negotiate fine against current Docker
+  and Podman. Revisit only if a real playbook actually needs the pin.
 - **Cloud plugins** (`ec2`, `s3_bucket`, `azure_rm_*`) and inventory
-  *plugins* (`aws_ec2.yml` et al.) remain explicitly lowest-ROI and are
-  not planned.
+  *plugins* (`aws_ec2.yml` et al.) remain explicitly lowest-ROI and
+  are not planned.
 - **Role-private custom modules** (a role's own `library/*.py`, outside
-  the `ansible.builtin`/`community.*`/etc. plugin set this engine ships)
-  aren't executed - there's no generic arbitrary-Python-module runner.
-  A task using one is skipped with a "Plugin not available" warning
-  rather than crashing the run; anything downstream that depends on its
-  result sees that value as undefined, which can cascade into broader
-  task-status divergence from real Ansible for roles that lean on this
-  (seen repeatedly benchmarking linux-system-roles - `sr_fingerprint`,
-  `timesync_provider`, `kernel_settings_get_config`, `blivet`).
-- **`crystal-mysql`'s wire-protocol driver has no `unix_socket`/
-  `auth_socket` auth support** - reconfirmed again benchmarking
-  `geerlingguy.mysql`; see KNOWN_MISSING.md.
+  the `ansible.builtin`/`community.*`/etc. plugin set this engine
+  ships) aren't executed - there's no generic arbitrary-Python-module
+  runner. A task using one is skipped with a "Plugin not available"
+  warning rather than crashing the run, but anything downstream that
+  depends on its result sees that value as undefined, which can cascade
+  into broader task-status divergence from real Ansible for roles that
+  lean on this (seen repeatedly benchmarking `linux-system-roles`:
+  `sr_fingerprint`, `timesync_provider`, `kernel_settings_get_config`,
+  `blivet`).
 
-`postgresql_privs`, which this roadmap tracked scope cuts against for a
-long time, is complete as of `0.9.84` - every `type:` real Ansible's
-module supports is implemented, including `function`/`procedure` and
-`default_privs`.
+### Recently closed scope cuts
 
+- **`crystal-mysql` `auth_socket` / `unix_socket` auth** - added in the
+  `weirdbricks/crystal-mysql` fork (tag `crystal-ansible-0.9.340`,
+  commit `a91a592`): `CLIENT_PLUGIN_AUTH` advertised unconditionally,
+  auth plugin name written even without a password, and `Auth.scramble`
+  returns an empty response for `auth_socket`/`unix_socket`/
+  `mysql_clear_password` plugin names. A role connecting via
+  `login_unix_socket:` with no password can now authenticate using
+  socket peer-credential auth. `mysql_user.cr` also now implements the
+  `plugin:`/`plugin_hash_string:`/`plugin_auth_string:` params for
+  *creating/updating* accounts with non-password auth (`IDENTIFIED
+  WITH <p> [AS <hash> | BY <auth>]`, matching real Ansible's
+  `module_utils/user.py` precedence). Verified end-to-end by
+  `testing/test-mysql-auth-socket.sh` against a throwaway MariaDB
+  container.
+- **`ansible.builtin.deb822_repository`** supports the full four-way
+  `signed_by:` branching (local path / URL / inline ASCII-armored key
+  text / key fingerprint) matching real Ansible's own module
+  (`0.9.229`/`0.9.232`/`0.9.343`).
+- **`postgresql_privs`** is complete as of `0.9.84` - every `type:`
+  real Ansible's module supports is implemented, including
+  `function`/`procedure` signatures and `default_privs`.
 ---
 
 ## 🤝 Contributing
