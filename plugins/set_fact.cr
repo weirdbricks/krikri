@@ -95,7 +95,16 @@ module CrystalPlay
     private def try_parse_json(value : String) : JSON::Any?
       JSON.parse(value)
     rescue JSON::ParseException
-      nil
+      # A Python-repr list/dict (single-quoted, from a Jinja `{% if %}
+      # ...{{ [list] }}...{% endif %}` template rendering as Python's
+      # str() form) isn't valid JSON - same fallback as apt.cr/
+      # package.cr/dnf.cr/unarchive.cr's own copies of this logic.
+      # Proactive fix - not yet caught live for set_fact: specifically,
+      # but the same bug class already found independently in four
+      # other plugins. Narrow: only attempted on a value that already
+      # starts with `{`/`[` (the caller's own gate), so this can't
+      # misfire on an ordinary string value.
+      JSON.parse(value.gsub('\'', '"')) rescue nil
     end
 
     # "0", "0.5" - real numbers, fine to coerce. "0755", "0007" - a

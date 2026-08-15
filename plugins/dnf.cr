@@ -121,7 +121,20 @@ module CrystalPlay
                          begin
                            Array(String).from_json(trimmed)
                          rescue
-                           nil
+                           # A Python-repr list (single-quoted strings) isn't
+                           # valid JSON - same fallback as apt.cr's/package.cr's
+                           # own copies of this logic (see there for the full
+                           # rationale: a Jinja `{% if %}...{{ [list] }}...
+                           # {% endif %}` template idiom renders as Python's
+                           # `str(list)` form, not JSON). Proactive fix - not
+                           # yet caught live for dnf specifically, but the
+                           # exact same bug class already found independently
+                           # in two other plugins this way.
+                           begin
+                             Array(String).from_json(trimmed.gsub('\'', '"'))
+                           rescue
+                             nil
+                           end
                          end
                        end
 

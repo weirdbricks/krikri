@@ -22,6 +22,23 @@ describe "set_fact plugin" do
     facts["name"].as_s.should eq("web01")
   end
 
+  it "parses a Python-repr list/dict string (single-quoted), not just valid JSON" do
+    # A Jinja `{% if %}...{{ [list_expr] }}...{% endif %}` template
+    # idiom renders as Python's str() form (single-quoted), not JSON -
+    # same bug class already found live in apt.cr/package.cr/dnf.cr's
+    # own name: parsing (round 27 and this proactive audit pass);
+    # try_parse_json's plain JSON.parse silently left the value as a
+    # literal string instead of a real array/dict.
+    result = PluginSpecHelper.run("set_fact", {
+      "my_list" => "['a', 'b', 'c']",
+      "my_dict" => "{'x': 'y'}",
+    })
+
+    facts = result["ansible_facts"]
+    facts["my_list"].as_a.map(&.as_s).should eq(["a", "b", "c"])
+    facts["my_dict"]["x"].as_s.should eq("y")
+  end
+
   it "does not coerce a leading-zero numeric-looking string (octal-style file mode) to an int" do
     # Real bug found live-verifying CRINJA.md step 5 against dev-sec
     # os_hardening: "0755".to_i64? happily parses as decimal 755,

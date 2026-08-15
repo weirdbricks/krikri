@@ -191,6 +191,19 @@ describe "unarchive plugin" do
     File.exists?(File.join(dest, "sub", "b.txt")).should be_false
   end
 
+  it "excludes a member when exclude: is a Python-repr list string, not just JSON" do
+    # A Jinja `{% if %}...{{ [list_expr] }}...{% endif %}` template
+    # idiom renders as Python's str() form (single-quoted), not JSON -
+    # same bug class already found live in apt.cr/package.cr's own
+    # name: parsing (round 27), proactively fixed here too.
+    dest = fresh_dest("exclude-pyrepr")
+    result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.tar.gz"), "dest" => dest, "exclude" => "['sub/b.txt']"})
+
+    result["changed"].as_bool.should be_true
+    File.exists?(File.join(dest, "a.txt")).should be_true
+    File.exists?(File.join(dest, "sub", "b.txt")).should be_false
+  end
+
   it "fails with a clear message when dest doesn't already exist" do
     missing_dest = File.join(TMP_DIR, "does-not-exist-dir")
     FileUtils.rm_rf(missing_dest) if Dir.exists?(missing_dest)

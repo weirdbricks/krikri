@@ -196,6 +196,12 @@ module CrystalPlay
       return [] of String unless raw
       if raw.starts_with?('[')
         (Array(String).from_json(raw) rescue nil).try { |parsed| return parsed }
+        # A Python-repr list (single-quoted strings, from a Jinja
+        # `{% if %}...{{ [list] }}...{% endif %}` template rendering as
+        # Python's `str(list)` form) isn't valid JSON - same fallback as
+        # apt.cr/package.cr/dnf.cr's own copies of this logic. Proactive
+        # fix - not yet caught live for exclude:/include: specifically.
+        (Array(String).from_json(raw.gsub('\'', '"')) rescue nil).try { |parsed| return parsed }
       end
       raw.split(",").map(&.strip).reject(&.empty?)
     end

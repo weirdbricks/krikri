@@ -8,9 +8,43 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.354`.**
+**Currently at `0.9.355`.**
 
 ---
+
+`0.9.355` (proactive audit for the "same bug lives in multiple
+independent copies" pattern - round 27 found this exact bug class in
+`apt.cr` and, independently, `package.cr`; searched the rest of the
+plugin set for more copies rather than waiting for another live round
+to surface them one at a time):
+
+- Grepped every plugin for the same `starts_with?('[') && Array(String
+  ).from_json(...)`-only shape and found **three more copies with the
+  identical gap**, none caught live yet:
+  - **`dnf.cr`'s own `parse_package_names`** - same shape as `apt.cr`'s
+    (which round 27 fixed) and `package.cr`'s (also round 27) copies.
+  - **`unarchive.cr`'s `parse_list_param`** - used by `exclude:`/
+    `include:`, same Jinja `{% if %}...{{ [list] }}...{% endif %}`
+    idiom plausible there too.
+  - **`set_fact.cr`'s `try_parse_json`** - the most general case: any
+    `set_fact:`-assigned value that starts with `{`/`[` and is meant to
+    be a real array/dict. Verified directly: `set_fact: my_list: "{%
+    if true %}{{ ['a','b','c'] -}}{% else %}{% endif %}"` then `{{
+    my_list | length }}` now correctly reports `3` (previously would
+    have silently kept `my_list` as the literal string and either
+    errored on `| length` or given a wrong/misleading result).
+  - All three now have the same single-quote-to-double-quote JSON retry
+    fallback as `apt.cr`/`package.cr` (round 27). `mysql_query.cr`'s
+    own `starts_with?('[')` use (statement-list parsing, not a
+    name/path list) and `ini_file.cr`'s (unrelated - INI section-header
+    detection) were checked and don't share this bug class.
+- Two new regression specs (`set_fact_spec.cr`, `unarchive_spec.cr`)
+  cover the `set_fact:`/`unarchive:` cases directly; `dnf.cr` has no
+  spec file at all (needs real `dnf`/`rpm` tooling this dev environment
+  doesn't have, matching this codebase's existing "some things have no
+  spec at all by design" precedent for apt/dpkg-mutating plugins) -
+  verified via a standalone `crystal run` probe instead.
+- Full `crystal spec` suite: 1121 examples (was 1119), 0 failures.
 
 `0.9.354` (`copy:` checksum-first upload skip, no live round - see
 0.9.353's note, same follow-up-work session):
