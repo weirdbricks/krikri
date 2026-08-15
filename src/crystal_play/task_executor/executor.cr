@@ -1140,7 +1140,40 @@ module CrystalPlay
         if !value && stripped.starts_with?("{{") && stripped.ends_with?("}}")
           bare = stripped[2..-3].strip
           rendered = expression_evaluator_for(vars_context).evaluate(bare)
-          if parsed = parse_list_result(rendered, vars_context)
+          # Real bug found benchmarking devsec.hardening.mysql_hardening
+          # (round 24 role 2): the source `{{ mysql_users_wo_passwords
+          # .query_result }}` (no `| default(...)` filter - this source's
+          # `when:` clause skipped its task on modern MariaDB so the
+          # register was never set) renders through the bare-variable
+          # path to the literal string `"undefined"`. parse_list_result
+          # correctly returns nil on "undefined" (it isn't valid JSON),
+          # but then the code falls through to the literal-source branch
+          # below and pushes the substituted raw template as ONE loop
+          # item, producing a single `item=undefined` iteration that
+          # then crashes downstream as `DROP USER undefined@%`. Real
+          # Ansible's with_community.general.flattened correctly yields
+          # zero items for a missing-var source (skipping the whole
+          # task when all sources are empty). The "undefined" sentinel
+          # is the project's own (well-established) convention for
+          # "no value", and the same with_community.general.flattened
+          # code path already does the analogous skip for the `{{ var |
+          # default([]) }}` shape - this just makes the no-filter
+          # bare-`{{ var }}` shape match the same skip behavior. The
+          # check is `rendered.strip not in no-value sentinels` rather
+          # than a more general "parse as JSON" because the whole
+          # point is that the strings "undefined", "", "[]", and "{}"
+          # are the project's own no-value sentinels (a bare
+          # `{{ missing_var }}` reference renders to "undefined"; a
+          # `{{ missing_var | default([]) }}` filter chain where the
+          # whole `missing_var` is undefined renders to ""; a
+          # `{{ existing_var.list | default([]) }}` chain where the
+          # var IS set but the underlying value is itself an empty
+          # list renders to "[]"; same for "{}" on an empty dict). A
+          # filter chain that legitimately produced a non-empty list,
+          # a non-empty dict, a string, or any other value would never
+          # render to any of these four strings through this
+          # evaluator.
+          if rendered.strip != "undefined" && rendered.strip != "" && rendered.strip != "[]" && rendered.strip != "{}" && (parsed = parse_list_result(rendered, vars_context))
             value = JSON::Any.new(parsed)
           end
         end
@@ -1159,7 +1192,6 @@ module CrystalPlay
           else
             result << value
           end
-        else
           # A literal source (not a bare `{{ var }}` reference or a
           # `{{ }}`-wrapped filter-chain expression at all) - dev-sec
           # os_hardening's own with_flattened sources are mostly plain
@@ -1175,7 +1207,41 @@ module CrystalPlay
           # against any of the 6 real directories. Still substituted
           # (not just pushed raw) in case a literal source has `{{ }}`
           # embedded alongside other text, not only as the whole string.
-          result << JSON::Any.new(substitutor.substitute(raw))
+          #
+          # A `{{ }}`-wrapped source whose only variable is missing
+          # also lands here (the complex-template fallback at the
+          # top of this loop ALSO returns nil for it now - see the
+          # `rendered.strip != "undefined"` guard there). The same
+          # skip-for-missing-var policy applies: a substituted result
+          # that is one of the project's own no-value sentinels - the
+          # literal string "undefined" (a bare `{{ missing_var }}`
+          # reference), the empty string "" (a `{{ missing_var |
+          # default([]) }}` filter chain where the filter's
+          # undefined?-check on a fully-missing variable doesn't
+          # trigger the default - verified by test_eval9.cr: `q.r |
+          # default([])` with `q` missing returns ""), OR the string
+          # "[]" (a `{{ existing_var.query_result | default([]) }}`
+          # chain where the var IS set but the underlying value is
+          # itself an empty list, so the finalization renders it as
+          # the JSON-string "[]") - is "no value", not "one item with
+          # that value". Real Ansible's with_community.general.
+          # flattened yields zero items for any of these no-value
+          # sentinels. Pushing the bogus value would cascade into
+          # downstream `{{ item.X }}` rendering as "undefined" again
+          # (or as nothing for ""), which then crashes for any tool
+          # that tries to use the bogus value (devsec.mysql_hardening's
+          # DROP USER undefined@% is the live example that surfaced
+          # this). A legitimate literal source that wants the bare
+          # string "[]" pushed as one item is implausible - roles
+          # iterate lists, not the string representation of a list.
+          substituted = substitutor.substitute(raw).strip
+          case substituted
+          when "undefined", "", "[]", "{}"
+            # no items from this source - all four are "the engine
+            # has no value to give this loop" sentinels
+          else
+            result << JSON::Any.new(substituted)
+          end
         end
       end
       result

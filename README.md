@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.347-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.348-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,37 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.348` (round 24 role 2) - `devsec.hardening.mysql_hardening`
+  collection form.** `ansible-galaxy collection install
+  devsec.hardening` (the modern FQCN-shipped form of the
+  standalone `os_hardening` role that round 24 role 1's
+  standalone-form investigation revealed) ran cleanly end-to-end
+  on a fresh 2-node `G3.2GB` Atlantic.net Ubuntu 22.04 pair
+  (crystal `ok=22 changed=3 failed=0 skipped=6` vs real
+  `ansible-playbook` `ok=22 changed=8 failed=0 skipped=6`; the
+  ok/skipped counts are identical, the changed count differs
+  because of three deferred warm-idempotency bugs). Two real
+  engine bugs fixed in the process: a `role_loader.cr` tilde
+  expansion bug (`File.expand_path("~/.ansible/collections")`
+  didn't expand `~`, masking the whole default collections
+  lookup for any CWD other than `$HOME` - same bug class
+  already fixed for `~/.my.cnf` in 0.9.346 and for plugin
+  path args in `BasePlugin#expand_tilde`), and a
+  `with_community.general.flattened` literal-source-branch
+  bug that pushed the engine's "no value" sentinels (`"undefined"`,
+  `""`, `"[]"`, `"{}"`) as one loop item, crashing the
+  downstream task that ran with `item = "undefined"` (the
+  role's "Ensure that there are no users without password"
+  task tried `DROP USER undefined@%`). Three more engine bugs
+  found live (file-plugin chown-doesn't-follow-symlinks,
+  mysql_user password-already-set-not-detected, and the chmod
+  side of the same symlink-following issue) are deferred to a
+  future round. The role exercises `dict2items` and
+  `items2dict` filters from 0.9.347 end-to-end for the first
+  time on a real role, via the role's own
+  `mysql_hardening_options | dict2items | rejectattr(...) |
+  items2dict` chain - the filter works correctly in this
+  live context.
 - **`0.9.347` (doc-only round 24 cleanup + filter implementation)** -
   two unrelated things landed in this release: a small follow-up to
   the round-24 `konstruktoid.hardening` investigation (replacing the

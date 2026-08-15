@@ -1,5 +1,6 @@
 require "yaml"
 require "json"
+require "system/user"
 require "./playbook_parser"
 require "./vault"
 
@@ -278,10 +279,48 @@ module CrystalPlay
 
       paths << File.join(playbook_dir, "collections")
       paths << "collections"
-      paths << File.expand_path("~/.ansible/collections")
+      # Real Ansible's `~/.ansible/collections` default is a per-user
+      # absolute path (the user's actual home directory), NOT a
+      # path-relative-to-cwd starting with the literal character `~`.
+      # Crystal's `File.expand_path` does NOT expand a leading `~` -
+      # it treats `~` as a literal directory name and joins it to the
+      # CWD, producing `/tmp/~/.ansible/collections` when the binary
+      # is run from `/tmp` and silently finding nothing there. Real
+      # bug surfaced live in round 24 role 2 (dev-sec.hardening
+      # collection form): the FQCN `devsec.hardening.mysql_hardening`
+      # was being looked up as a bare role name first (failing with
+      # "Role not found: ... (looked under ./roles/... and roles/...)")
+      # because the collection path lookup silently never found
+      # `~/.ansible/collections` for any CWD other than `$HOME`. Same
+      # tilde-expansion bug already fixed in
+      # `plugin_helpers/mysql_connection.cr#resolve_option_file_path`
+      # (KNOWN_MISSING.md 0.9.346) and in `BasePlugin#expand_tilde`
+      # (used by every plugin's path-type arg) - mirror the
+      # System::User-home-directory + ENV["HOME"] fallback here too.
+      paths << expand_home_path("~/.ansible/collections")
       paths << "/usr/share/ansible/collections"
 
       paths
+    end
+
+    # Same logic as `BasePlugin#expand_tilde` and
+    # `plugin_helpers/mysql_connection.cr#resolve_option_file_path` -
+    # a leading `~` resolves to the current user's home directory
+    # (via `System::User` first, falling back to `ENV["HOME"]`),
+    # otherwise the path is returned unchanged. Used for the
+    # `~/.ansible/collections` default in `collections_paths` above.
+    private def self.expand_home_path(path : String) : String
+      return path unless path.starts_with?('~')
+
+      rest = path[1..]
+      username, _, remainder = rest.partition('/')
+      home = if username.empty?
+               System::User.find_by?(id: LibC.getuid.to_s).try(&.home_directory) || ENV["HOME"]?
+             else
+               System::User.find_by?(name: username).try(&.home_directory)
+             end
+      return path unless home
+      remainder.empty? ? home : File.join(home, remainder)
     end
 
     private def self.existing_dir(path : String) : String?

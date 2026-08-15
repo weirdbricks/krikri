@@ -250,6 +250,60 @@ describe CrystalPlay::RoleLoader do
     end
   end
 
+  it "expands the default '~/.ansible/collections' collection path to the real user home, not cwd-relative literal-~" do
+    # Real bug found live-verifying round 24 role 2 (dev-sec.
+    # hardening.mysql_hardening FQCN, see KNOWN_MISSING.md 0.9.348):
+    # the default `~/.ansible/collections` fallback in
+    # collections_paths was using `File.expand_path` which does NOT
+    # expand a leading `~` - it treats `~` as a literal directory
+    # name and joins it to the CWD, producing `/tmp/~/.ansible/
+    # collections` when the binary is run from `/tmp` (or anywhere
+    # other than `$HOME`). The collection path lookup silently never
+    # found anything there, the FQCN `devsec.hardening.mysql_hardening`
+    # fell through to the bare-roles search (also missing), and the
+    # whole role failed with a misleading "Role not found: ...
+    # (looked under ./roles/... and roles/...)" error that didn't
+    # mention collections at all. Same tilde-expansion bug already
+    # fixed in plugin_helpers/mysql_connection.cr's
+    # resolve_option_file_path (KNOWN_MISSING.md 0.9.346) and in
+    # BasePlugin#expand_tilde (used by every plugin's path-type arg);
+    # this test pins the role_loader's own copy.
+    #
+    # The fix uses System::User.find_by? to find the home dir (not
+    # ENV["HOME"], which can be overridden by env stubs or
+    # chrooted environments; the passwd-database lookup is the
+    # canonical source of truth for the user's actual home). This
+    # is why the test uses a REAL collection under a REAL home
+    # directory - the dev-sec.hardening collection already installed
+    # at `~/.ansible/collections/` from the round-24 devsec_mysql
+    # benchmark is the perfect test fixture (no test-local setup
+    # required, and the test fails the same way the live role would
+    # if anyone ever breaks the tilde expansion again).
+    ENV.delete("ANSIBLE_COLLECTIONS_PATH")
+    ENV.delete("ANSIBLE_COLLECTIONS_PATHS")
+    original_cwd = Dir.current
+    Dir.cd("/tmp")
+    begin
+      # The devsec.hardening collection is installed at
+      # ~/.ansible/collections/ansible_collections/devsec/hardening
+      # (round-24 devsec_mysql install). mysql_hardening is the
+      # smallest role (3 task files, 6 handlers, no networking
+      # surface), so use it as the test FQCN.
+      tasks, _ = CrystalPlay::RoleLoader.load_roles(
+        roles_yaml("- devsec.hardening.mysql_hardening"),
+        fresh_play,
+        ROLES_ROOT,
+      )
+      tasks.should_not be_empty
+      # Sanity: confirm it actually loaded the role (not a stub from
+      # some other path). The role's main.yml has a "Validating
+      # arguments" task as its first entry (arg-spec validation).
+      tasks[0].name.should contain("Validating arguments")
+    ensure
+      Dir.cd(original_cwd)
+    end
+  end
+
   it "tasks_from: loads tasks/<name>.yml instead of tasks/main.yml" do
     build_role("multi_entry") do |role|
       role.tasks(<<-YAML)

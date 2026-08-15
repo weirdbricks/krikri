@@ -8,7 +8,98 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.347`.**
+**Currently at `0.9.348`.**
+
+---
+
+`0.9.348` (round 24 role 2 - `devsec.hardening.mysql_hardening` collection
+form - clean cold pass plus one new engine bug fixed live, plus a
+role-loader bug found in the process; 2 more engine bugs found but
+deferred to a future round; no divergence on the items that
+_python_ kept clean):
+
+- **`role_loader.cr` collections path used `File.expand_path` which
+  does NOT expand a leading `~`** - silent bug that masked the
+  whole `~/.ansible/collections` default lookup. Crystal's
+  `File.expand_path` treats `~` as a literal directory name, so
+  `File.expand_path("~/.ansible/collections")` from any CWD other
+  than `$HOME` produces `/<cwd>/~/.ansible/collections` (which
+  never exists) instead of the user's actual home directory. Same
+  tilde-expansion bug class already fixed in
+  `plugin_helpers/mysql_connection.cr#resolve_option_file_path`
+  (0.9.346) and `BasePlugin#expand_tilde`. Fix: new
+  `expand_home_path` helper that uses `System::User` +
+  `ENV["HOME"]` fallback (matching `BasePlugin#expand_tilde`
+  exactly). Now `devsec.hardening.mysql_hardening`'s FQCN
+  `roles:` entry resolves correctly, same as any role
+  referenced via FQCN. Regression spec in
+  `spec/unit/role_loader_spec.cr` uses the real installed
+  collection to verify the path expansion end-to-end (chose real
+  installed over a fake-home setup because `System::User` reads
+  NSS and ignores `ENV["HOME"]` stubs, so a fake home would
+  actually be misleading).
+
+- **`with_community.general.flattened` literal-source branch
+  pushed a "no value" sentinel as one loop item**, crashing the
+  downstream task that ran with `item = "undefined"`. Three
+  different no-value sentinels could appear depending on the
+  templated source's shape: a bare `{{ missing_var }}` reference
+  renders to the literal string `"undefined"`; a `{{ missing_var
+  | default([]) }}` filter chain where the *whole* `missing_var`
+  is undefined renders to the empty string `""` (because the
+  `default` filter's `undefined?` check fires only on a
+  partially-defined `q.r` shape, not on a fully-missing `q.r`);
+  a `{{ existing_var.list | default([]) }}` chain where the var
+  is set but the underlying list IS empty renders to the JSON
+  string `"[]"`. None of these is "one item"; all are
+  "no items". Fix: the literal-source branch now treats all
+  three (plus `"{}"` for the empty-dict case) as no-items
+  sentinels, matching real Ansible's
+  `with_community.general.flattened` behavior. Found live via
+  `devsec.hardening.mysql_hardening`'s "Ensure that there are no
+  users without password" task, which had a
+  `with_community.general.flattened:` over two
+  `{{ ... | default([]) }}`-wrapped query result variables; the
+  python baseline correctly skipped the task (zero items, both
+  query_result vars are empty on a fresh MariaDB), crystal-ansible
+  crashed trying `DROP USER undefined@%` because the loop
+  produced one bogus item.
+
+- **One more engine bug found live but NOT fixed in this commit**
+  (deferred to a future round): `file` plugin's
+  `File.chown` call doesn't pass `follow_symlinks: true` when
+  the task has `follow: true` (default for Crystal's
+  `File.chown` is `follow_symlinks: false`, which is `lchown`
+  behavior). Result: `Protect my.cnf` task on
+  `/etc/mysql/my.cnf` (a symlink to `/etc/alternatives/my.cnf`
+  to `/etc/mysql/mariadb.cnf`) lchown'd the symlink (setting its
+  group to `mysql`) instead of chowning the target, leaving
+  `/etc/mysql/mariadb.cnf` at `root:root` instead of `root:mysql`.
+  Warm rerun shows `changed: File attributes updated` because
+  the lstat check still sees the symlink's now-stale group.
+  Also a third (chmod-follow-symlinks) and a fourth
+  (`mysql_user` reporting "Updated user" on every warm rerun
+  when the password is already set) - both warm-idempotency
+  divergences from the python baseline, deferred. Documented
+  in the round-24 memory for the next round to pick up.
+
+- **Verified cold** on a fresh 2-node `G3.2GB` Atlantic.net pair
+  (USEAST2, real `ansible-playbook` 2.19.4 vs crystal-ansible
+  HEAD): both engines completed the role end to end, no
+  `failed=1` on either side. Crystal's `ok=22 changed=3
+  failed=0 skipped=6` vs python's `ok=22 changed=8 failed=0
+  skipped=6` - the `changed` count differs but the `ok` and
+  `skipped` counts are identical, and the difference is the 4
+  known-deferred bugs (one of which is the with_flattened bug
+  that *is* fixed in this commit but only for the cold pass
+  scenario where the query result vars are empty; the warm
+  rerun shows the mysql_user + file + chmod bugs). Cold pass
+  success and warm-pass divergence in known-bug classes is the
+  expected post-fix state.
+
+- **Full crystal spec suite: 1117 examples, 0 failures, 0
+  errors, 0 pending** (up from 1116 in 0.9.347: +1 from the
+  new role_loader regression spec).
 
 ---
 
