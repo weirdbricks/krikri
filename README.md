@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.359-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.362-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,21 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.360`-`0.9.362` (round 32) - `robertdebock.nextcloud`, first
+  new role tested since round 31's ssh_hardening.** Three real bugs
+  found and fixed live: `command:`'s `chdir:` crashed an otherwise-
+  successful task under `become_user:` (tried to restore the process's
+  original cwd afterward - `/root` on a fresh SSH connection,
+  inaccessible to an unprivileged become_user - fixed by dropping the
+  pointless restore entirely); `unarchive:`'s `owner:`/`group:`/`mode:`
+  only applied to the destination directory itself instead of
+  recursively to every extracted file (broke the role's own downstream
+  `occ` commands needing the whole tree web-server-owned); `package:`'s
+  virtual/Provides:-satisfied package names never converged to
+  `changed: false` on a warm rerun (the same bug class already fixed in
+  `apt.cr` for the ruby round, ported to this separate code path).
+  Idempotent on both engines after the fixes, nextcloud verified
+  reachable and functional.
 - **`0.9.359` (round 31) - `devsec.hardening.ssh_hardening`, first new
   role tested since round 30's prometheus.** One real bug found and
   fixed live: `regex_replace`'s `\1`/`\2` backreference translation

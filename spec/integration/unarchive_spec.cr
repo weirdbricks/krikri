@@ -61,6 +61,31 @@ describe "unarchive plugin" do
     File.read(File.join(dest, "sub", "b.txt")).should eq("nested")
   end
 
+  it "applies mode: recursively to every extracted file, not just dest itself" do
+    # Real bug found benchmarking robertdebock.nextcloud: `owner:`/
+    # `group:` used to only ever be applied to the DESTINATION
+    # DIRECTORY itself (a `chown #{owner} #{dest}`, no `-R`), while
+    # real ansible-playbook's own unarchive module does a final
+    # os.walk()-based pass applying owner:/group:/mode: to every
+    # extracted path. Left everything but dest itself at its
+    # archive-native ownership - broke a role's downstream `occ`
+    # commands relying on the extracted tree being fully owned by the
+    # web server user ("Cannot write into 'apps' directory"). Using
+    # mode: here (not owner:/group:) since the spec runs as a normal
+    # user and can't chown to an arbitrary user/group without root.
+    dest = fresh_dest("tar-recursive-mode")
+    result = PluginSpecHelper.run("unarchive", {
+      "src"  => File.join(TMP_DIR, "archive.tar.gz"),
+      "dest" => dest,
+      "mode" => "0700",
+    })
+
+    result["changed"].as_bool.should be_true
+    (File.info(dest).permissions.value & 0o777).should eq(0o700)
+    (File.info(File.join(dest, "a.txt")).permissions.value & 0o777).should eq(0o700)
+    (File.info(File.join(dest, "sub", "b.txt")).permissions.value & 0o777).should eq(0o700)
+  end
+
   it "reports changed: false on an idempotent rerun (tar --compare based)" do
     dest = fresh_dest("tar-idempotent")
     PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.tar.gz"), "dest" => dest})

@@ -89,8 +89,22 @@ module CrystalPlay
       chdir = @params["chdir"]?.try { |c| expand_tilde(c) }
       stdin_data = @params["stdin"]?
 
-      # Change directory if requested
-      original_dir = Dir.current
+      # Change directory if requested. No need to track/restore the
+      # original directory afterwards - this plugin process runs once
+      # and exits, it never returns to running further code in the
+      # process's own original cwd. A prior version DID try to restore
+      # it (`Dir.cd(original_dir)` in both the exec-failure rescue and
+      # after a successful run below), which was worse than a no-op: on
+      # a remote SSH+`become_user:` invocation, the process starts with
+      # cwd inherited from the SSH login user's home (root's, `/root`,
+      # mode 700) - restoring to that path as an unprivileged
+      # become_user with no permission on `/root` at all raised an
+      # uncaught `Dir.cd` exception AFTER the real command had already
+      # run successfully, crashing an otherwise-successful task.
+      # ssh_hardening/nextcloud-shaped `command: ... chdir: X become_user:
+      # www-data` tasks hit this every time. Found via
+      # robertdebock.nextcloud's own `Configure nextcloud` task
+      # (`chdir: /var/www/html/nextcloud`, `become_user: www-data`).
       if chdir
         begin
           Dir.cd(chdir)
@@ -134,9 +148,6 @@ module CrystalPlay
         status = process.wait
         exit_code = status.exit_code
       rescue ex
-        # Restore directory
-        Dir.cd(original_dir) if chdir
-
         return PluginResult.new(
           changed: false,
           failed: true,
@@ -144,9 +155,6 @@ module CrystalPlay
           stderr: ex.message
         )
       end
-
-      # Restore directory
-      Dir.cd(original_dir) if chdir
 
       # Command module always reports changed (unless skipped)
       # This matches Ansible behavior

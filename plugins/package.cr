@@ -312,10 +312,30 @@ module CrystalPlay
           
           install_result = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get install -y #{name}")
           if install_result[:exit_code] == 0
+            # A requested name can be a virtual package already
+            # satisfied by something else installed (`php-dom`/
+            # `php-posix` aren't real dpkg packages on modern Ubuntu at
+            # all, only names apt resolves via Provides: to
+            # php8.1-xml/php8.1-common) - `is_installed`'s own `dpkg -l`
+            # pre-check above only ever looks up the literal requested
+            # name, which a purely virtual name never has a real dpkg
+            # entry for, so it always fell through to "needs install"
+            # here even on a warm rerun. apt-get's own exit code is 0
+            # either way, so trusting exit_code alone always reported
+            # changed: true - real Ansible's own apt module (and this
+            # engine's separate apt.cr, which already had this exact
+            # fix - see apt_summary_had_no_effect? there) correctly
+            # treats apt's own "0 upgraded, 0 newly installed" summary
+            # line as a no-op regardless of exit code. Found live
+            # benchmarking robertdebock.nextcloud: `package: {name:
+            # [php-bcmath, ..., php-dom, php-posix, ...]}` never
+            # converged to changed: false on a warm rerun.
+            summary = install_result[:stdout].match(/(\d+) upgraded, (\d+) newly installed/)
+            had_no_effect = summary && summary[1] == "0" && summary[2] == "0"
             return PluginResult.new(
-              changed: true,
+              changed: !had_no_effect,
               failed: false,
-              msg: "Package #{name} installed"
+              msg: had_no_effect ? "Package #{name} already satisfied" : "Package #{name} installed"
             )
           else
             return PluginResult.new(

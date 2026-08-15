@@ -8,7 +8,73 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.359`.**
+**Currently at `0.9.362`.**
+
+---
+
+`0.9.360`-`0.9.362` (round 32 - `robertdebock.nextcloud`, first new role
+tested since round 31's ssh_hardening): 3 real bugs found and fixed on a
+fresh `G3.2GB` Atlantic.net pair.
+
+- **`command:`'s `chdir:` used to crash an otherwise-successful task under
+  `become_user:` (0.9.360).** `plugins/command.cr` saved `Dir.current` up
+  front and tried to `Dir.cd` back to it after running the command -
+  completely unnecessary, since the plugin process exits right after
+  `execute` returns and never runs further code in its own original cwd.
+  On a real remote `become_user:` invocation the process starts with cwd
+  inherited from the SSH login user's home (root's, `/root`, mode 700) -
+  restoring to that path as an unprivileged become_user with no
+  permission on `/root` raised an uncaught `Dir.cd` exception AFTER the
+  real command had already run successfully, crashing an otherwise-
+  successful task. The role's own `Configure nextcloud` task (`command:
+  php occ maintenance:install ..., chdir: /var/www/html/nextcloud,
+  become_user: www-data`) hit this every time. Fixed by removing the
+  pointless restore entirely; regression spec reproduces the same failure
+  class (a `Dir.cd` to a now-nonexistent original directory) without
+  needing a real become_user, in `spec/integration/command_spec.cr`.
+- **`unarchive:`'s `owner:`/`group:`/`mode:` only ever applied to the
+  destination directory itself, not recursively (0.9.361).**
+  `plugins/unarchive.cr`'s `apply_dest_attributes` ran a plain `chown
+  #{owner} #{dest}` (no `-R`) - real `ansible-playbook`'s own unarchive
+  module does a final recursive pass over every extracted path. Verified
+  live: the role's `Install nextcloud` task (`owner: www-data, group:
+  www-data`) left the ENTIRE extracted tree `www-data:www-data` on real
+  ansible-playbook (dest itself, every subdirectory, every file down to
+  `AUTHORS`) - crystal-ansible left everything but `dest` itself
+  `root:root`, breaking the role's own downstream `occ` commands
+  ("Cannot write into 'apps' directory", `Configure nextcloud`'s handler
+  chain failing). Fixed with `chown -R`/`chgrp -R`/`chmod -R`; regression
+  spec added to `spec/integration/unarchive_spec.cr` (using `mode:`,
+  since the spec runs as a normal user and can't chown to an arbitrary
+  user without root).
+- **`package:`'s virtual/Provides:-satisfied package names always
+  reported `changed` forever, never converging on a warm rerun
+  (0.9.362).** `plugins/package.cr`'s `handle_apt` is a SEPARATE code
+  path from `apt.cr` (the OS-agnostic `package:` module vs. the
+  Debian-specific `apt:` module - this project's usual "same bug class,
+  independent copies" pattern) - it never got the `apt_summary_had_no_
+  effect?` fix `apt.cr` already has for exactly this (found during the
+  ruby round, see `0.9.258`). The role's own `Install requirements` task
+  (`package: {name: [php-bcmath, ..., php-dom, php-posix, ...]}`)
+  includes `php-dom`/`php-posix`, which aren't real dpkg packages on
+  modern Ubuntu at all - only names apt resolves via `Provides:` to
+  `php8.1-xml`/`php8.1-common` - so the pre-install `dpkg -l` check (which
+  only ever looks up the literal requested name) always found them
+  "not installed" and re-ran `apt-get install` on every single run;
+  apt's own exit code is 0 either way (a genuine no-op), so trusting
+  exit_code alone always reported `changed: true`. Fixed the same way
+  `apt.cr` was: parse apt's own "N upgraded, N newly installed" summary
+  line and treat "0 upgraded, 0 newly installed" as a no-op regardless of
+  exit code. No spec added (real `apt-get` mutation against the actual
+  dev machine's package state, same category CLAUDE.md already
+  documents as verify-live-only) - verified live instead: crystal cold
+  pass `ok=27 changed=11 failed=0 skipped=6` (matching python's `ok=26
+  changed=11 failed=0 skipped=7` shape, task-by-task identical modulo the
+  usual `Gathering Facts` cosmetic extra task), and a warm rerun now
+  reports `ok=20 changed=0 failed=0 skipped=6`, exactly matching python's
+  own warm `ok=18 changed=0 failed=0 skipped=8` (same shape, the count
+  diffs being the standing `Gathering Facts`/role-name-prefix cosmetic
+  gaps, not a real divergence) - fully idempotent on both engines.
 
 ---
 

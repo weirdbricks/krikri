@@ -35,10 +35,12 @@ module CrystalPlay
   #   archive's copy (default false)
   # - list_files: include the archive's member list in the result
   #   (default false)
-  # - mode / owner / group: applied to the DESTINATION DIRECTORY itself,
-  #   not to each extracted file - verified against real ansible-playbook's
-  #   actual return value shape (`mode`/`owner`/`group`/`uid`/`gid`
-  #   describe dest, not individual members)
+  # - mode / owner / group: applied RECURSIVELY to dest and every
+  #   extracted file/directory under it (`chown -R`/`chgrp -R`/
+  #   `chmod -R`) - matches real ansible-playbook's actual behavior
+  #   (verified live), even though its OWN return value shape
+  #   (`mode`/`owner`/`group`/`uid`/`gid`) only ever describes dest
+  #   itself, not each member
   #
   # Archive type is auto-detected by attempting to read it (`tar tf`, then
   # `unzip -l`), not by file extension - matches real Ansible's own
@@ -342,14 +344,28 @@ module CrystalPlay
     end
 
     private def apply_dest_attributes(dest : String)
+      # Applied RECURSIVELY over dest, not just to dest itself - real
+      # Ansible's unarchive module does a final os.walk()-based pass
+      # over every extracted path when owner:/group:/mode: is given.
+      # Verified live: robertdebock.nextcloud's `Install nextcloud`
+      # task (`owner: www-data, group: www-data`) left the ENTIRE
+      # extracted tree www-data:www-data on real ansible-playbook
+      # (dest itself, every subdirectory, every file down to AUTHORS)
+      # - crystal-ansible's own previous `chown #{owner} #{dest}` (no
+      # `-R`) left everything but dest itself still root:root, which
+      # then broke the role's own downstream `occ` commands ("Cannot
+      # write into 'apps' directory") since the role's own permissions
+      # pass only explicitly re-chowns config.php/config/data, relying
+      # on unarchive's owner: for everything else (apps/, 3rdparty/,
+      # etc).
       if owner = @params["owner"]?
-        remote_exec("chown #{owner} #{dest}")
+        remote_exec("chown -R #{owner} #{dest}")
       end
       if group = @params["group"]?
-        remote_exec("chgrp #{group} #{dest}")
+        remote_exec("chgrp -R #{group} #{dest}")
       end
       if mode = @params["mode"]?
-        remote_exec("chmod #{mode} #{dest}")
+        remote_exec("chmod -R #{mode} #{dest}")
       end
     end
 
