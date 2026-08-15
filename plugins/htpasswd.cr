@@ -39,6 +39,7 @@ module CrystalPlay
     def execute : PluginResult
       path = @params["path"]?
       return missing_param("path") unless path
+      path = expand_tilde(path)
 
       name = @params["name"]?
       return missing_param("name") unless name

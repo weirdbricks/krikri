@@ -86,6 +86,7 @@ module CrystalPlay
       unless src && dest
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: src and dest are both required")
       end
+      dest = expand_tilde(dest)
 
       if creates = @params["creates"]?
         expanded_creates = expand_tilde(creates)

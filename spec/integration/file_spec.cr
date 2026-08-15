@@ -62,6 +62,23 @@ describe "file plugin" do
       result["changed"].as_bool.should be_true
       File.info(path).modification_time.should be > old_mtime
     end
+
+    it "expands a leading ~ in path using $HOME (real Ansible's file module is type: path)" do
+      original_home = ENV["HOME"]?
+      home = File.join(Dir.tempdir, "crystal_ansible_spec_home_#{Random.rand(100_000)}")
+      Dir.mkdir_p(home)
+      ENV["HOME"] = home
+      begin
+        result = PluginSpecHelper.run("file", {"path" => "~/tilde_touched.txt", "state" => "touch"})
+
+        result["changed"].as_bool.should be_true
+        result["failed"].as_bool.should be_false
+        File.exists?(File.join(home, "tilde_touched.txt")).should be_true
+      ensure
+        FileUtils.rm_rf(home)
+        ENV["HOME"] = original_home if original_home
+      end
+    end
   end
 
   describe "state=file" do

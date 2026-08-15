@@ -44,6 +44,7 @@ module CrystalPlay
           msg: "Missing required parameter: path"
         )
       end
+      path = expand_tilde(path)
 
       pattern = @params["regexp"]?
       unless pattern

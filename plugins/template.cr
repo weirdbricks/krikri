@@ -42,7 +42,8 @@ module CrystalPlay
           msg: "Missing required parameter: dest"
         )
       end
-      
+      dest = expand_tilde(dest)
+
       # Get content (required - should come from action plugin)
       content = @params["content"]?
       unless content

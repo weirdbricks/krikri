@@ -47,7 +47,7 @@ module CrystalPlay
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: module_path") unless module_path
 
       state = @params["state"]? || "present"
-      dir = @params["path"]? || "/etc/pam.d"
+      dir = expand_tilde(@params["path"]? || "/etc/pam.d")
       path = File.join(dir, name)
       check_mode = is_true?(@params["check_mode"]?)
 

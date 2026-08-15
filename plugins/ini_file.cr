@@ -13,6 +13,7 @@ module CrystalPlay
     def execute : PluginResult
       path = @params["path"]? || @params["dest"]?
       return missing_param("path") unless path
+      path = expand_tilde(path)
 
       section = @params["section"]?
       option = @params["option"]?

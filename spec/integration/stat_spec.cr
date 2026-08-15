@@ -1,4 +1,5 @@
 require "../spec_helper"
+require "file_utils"
 
 private TMP_DIR = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp")
 
@@ -18,6 +19,22 @@ describe "stat plugin" do
     result["changed"].as_bool.should be_false
     result["stat"]["exists"].as_bool.should be_false
     result["stat"].as_h.size.should eq(1)
+  end
+
+  it "expands a leading ~ in path using $HOME (real Ansible's stat module is type: path)" do
+    original_home = ENV["HOME"]?
+    home = File.join(Dir.tempdir, "crystal_ansible_spec_home_#{Random.rand(100_000)}")
+    Dir.mkdir_p(home)
+    ENV["HOME"] = home
+    File.write(File.join(home, "tilde_stat.txt"), "x")
+    begin
+      result = PluginSpecHelper.run("stat", {"path" => "~/tilde_stat.txt"})
+
+      result["stat"]["exists"].as_bool.should be_true
+    ensure
+      FileUtils.rm_rf(home)
+      ENV["HOME"] = original_home if original_home
+    end
   end
 
   it "reports file attributes for a regular file, matching real ansible's stat module field shapes" do

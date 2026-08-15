@@ -98,8 +98,9 @@ module CrystalPlay
     end
 
     private def run(path_param : String, dest : String, format : String) : PluginResult
-      requested_paths = path_param.split(",").map(&.strip).reject(&.empty?)
-      requested_excludes = (@params["exclude_path"]? || "").split(",").map(&.strip).reject(&.empty?)
+      dest = expand_tilde(dest)
+      requested_paths = path_param.split(",").map(&.strip).reject(&.empty?).map { |p| expand_tilde(p) }
+      requested_excludes = (@params["exclude_path"]? || "").split(",").map(&.strip).reject(&.empty?).map { |p| expand_tilde(p) }
       force_archive = is_true?(@params["force_archive"]?, default: false)
       remove = is_true?(@params["remove"]?, default: false)
       exclusion_patterns = (@params["exclusion_patterns"]? || "").split(",").map(&.strip).reject(&.empty?)

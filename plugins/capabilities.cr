@@ -25,7 +25,7 @@ module CrystalPlay
     end
 
     def execute : PluginResult
-      path = @params["path"]? || @params["key"]?
+      path = (@params["path"]? || @params["key"]?).try { |raw| expand_tilde(raw) }
       capability = @params["capability"]? || @params["cap"]?
       state = @params["state"]? || "present"
       check_mode = is_true?(@params["check_mode"]?)

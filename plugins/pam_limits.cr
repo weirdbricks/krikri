@@ -51,7 +51,7 @@ module CrystalPlay
         )
       end
 
-      dest = @params["dest"]? || DEFAULT_DEST
+      dest = expand_tilde(@params["dest"]? || DEFAULT_DEST)
 
       # Comments attached above the entry.
       comment = @params["comment"]?

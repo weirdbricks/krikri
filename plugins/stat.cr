@@ -49,6 +49,7 @@ module CrystalPlay
       unless path
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: path")
       end
+      path = expand_tilde(path)
 
       follow = is_true?(@params["follow"]?, default: false)
       get_checksum = is_true?(@params["get_checksum"]?, default: true)

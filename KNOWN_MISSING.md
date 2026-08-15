@@ -8,7 +8,59 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.380`.**
+**Currently at `0.9.381`.**
+
+---
+
+`0.9.381` - proactive audit for the `~`-expansion bug class, not tied to
+a real host round. Real Ansible's `AnsibleModule` expands a leading
+`~`/`~user` for every `type: path` argument (Python's own
+`os.path.expanduser` semantics) before the module body ever runs; this
+codebase's `BasePlugin#expand_tilde` reimplements that, but it turned
+out only 3 of the codebase's ~24 path-accepting plugins were actually
+calling it (`unarchive:`'s `creates=`, plus two non-plugin call sites -
+`MysqlConnection.build_uri`'s `~/.my.cnf` default and
+`role_loader.cr`'s `~/.ansible/collections` lookup - found independently
+in 3 earlier rounds, 0.9.346/0.9.348). Swept every plugin's own
+`path:`/`dest:`/`src:`/`chdir:`-style required-or-optional param for the
+same gap and added the missing `expand_tilde(...)` call: `file:`
+(`path:`/`dest:`/`name:`, plus `src:` for `state: link`/`state: hard`),
+`copy:` (`dest:`), `template:` (`dest:`), `stat:` (`path:`), `archive:`
+(`path:`/`dest:`/`exclude_path:`), `unarchive:` (`dest:`), `git:`
+(`dest:`), `get_url:` (`dest:`), `htpasswd:` (`path:`), `ini_file:`
+(`path:`/`dest:`), `lineinfile:` (`path:`/`dest:`/`name:`),
+`blockinfile:` (`path:`/`dest:`/`name:`), `replace:`
+(`path:`/`dest:`/`name:`), `mount:` (`path:`/`name:`),
+`openssh_keypair:` (`path:`), `openssl_dhparam:` (`path:`), `pamd:`
+(`path:`), `pam_limits:` (`dest:`), `pip:` (`chdir:`), `wait_for:`
+(`path:`), `capabilities:` (`path:`/`key:`), `uri:` (`dest:`),
+`authorized_key:` (`path:`) - 21 plugins in total.
+
+Writing a regression spec for the fix surfaced a real bug in
+`BasePlugin#expand_tilde` itself: for the bare `~` case (no explicit
+username) it checked the current user's passwd-entry home directory
+*before* `$HOME`, backwards from Python's own `os.path.expanduser`
+(which checks `$HOME` first and only falls back to the passwd entry if
+`HOME` is unset) - `plugin_helpers/mysql_connection.cr`'s own separate
+copy of this same expansion already had the priority right, just never
+noticed as a divergence between the two copies until this pass compared
+them directly. Fixed by swapping the check order.
+
+`fetch:`'s `src:` deliberately left unexpanded: `fetch:` is dispatched
+to run on the *controller* (`PluginManager::CONTROLLER_ONLY_PLUGINS`)
+even though `src:` names a path on the *remote* target, so a local
+`expand_tilde` call there would resolve `~` against the controller's
+own home directory instead of the target host's - wrong in a different
+way than the original bug. A correct fix needs the expansion done
+target-side (e.g. shelled through the same SSH connection used for
+`remote_file_exists?`), out of scope for this pass; `fetch:`'s `dest:`
+(a genuine controller-side path) is fixed same as everywhere else.
+
+Two new regression specs (`file:`/`stat:` against a real temp `$HOME`)
+lock in the pattern; the full plugin sweep and the `expand_tilde`
+priority fix are otherwise only unit-shaped changes (no live host
+round needed - `~` expansion is deterministic, no daemon/network
+dependency).
 
 ---
 

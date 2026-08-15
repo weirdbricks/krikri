@@ -35,6 +35,7 @@ module CrystalPlay
     def execute : PluginResult
       path = @params["path"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: path") unless path
+      path = expand_tilde(path)
 
       state = @params["state"]? || "present"
       check_mode = is_true?(@params["check_mode"]?)

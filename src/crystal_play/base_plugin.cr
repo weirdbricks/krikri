@@ -313,7 +313,11 @@ module CrystalPlay
       rest = path[1..]
       username, _, remainder = rest.partition('/')
       home = if username.empty?
-               System::User.find_by?(id: LibC.getuid.to_s).try(&.home_directory) || ENV["HOME"]?
+               # Python's own os.path.expanduser checks $HOME FIRST for the
+               # bare `~` case, only falling back to the passwd entry if HOME
+               # is unset - matches plugin_helpers/mysql_connection.cr's own
+               # copy of this same expansion, which already had it right.
+               ENV["HOME"]? || System::User.find_by?(id: LibC.getuid.to_s).try(&.home_directory)
              else
                System::User.find_by?(name: username).try(&.home_directory)
              end

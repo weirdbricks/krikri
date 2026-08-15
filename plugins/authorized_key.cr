@@ -63,7 +63,9 @@ module CrystalPlay
     end
 
     private def resolve_path : String?
-      return @params["path"] if @params["path"]?
+      if p = @params["path"]?
+        return expand_tilde(p)
+      end
 
       user = @params["user"]?
       return nil unless user

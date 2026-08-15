@@ -106,6 +106,7 @@ module CrystalPlay
       unless path && state
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: path and state are both required")
       end
+      path = expand_tilde(path)
 
       unless %w[present absent absent_from_fstab mounted unmounted remounted ephemeral].includes?(state)
         return PluginResult.new(changed: false, failed: true, msg: "state must be one of present, absent, absent_from_fstab, mounted, unmounted, remounted, ephemeral")

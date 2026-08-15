@@ -48,6 +48,7 @@ module CrystalPlay
 
       changed = false
       if !failed && (dest = @params["dest"]?)
+        dest = expand_tilde(dest)
         changed = write_dest(dest, body)
         msg = "OK (#{body.bytesize} bytes)" + (changed ? "" : ", didn't change")
       end

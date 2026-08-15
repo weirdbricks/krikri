@@ -49,7 +49,7 @@ module CrystalPlay
       end
 
       port = @params["port"]?.try(&.to_i)
-      path = @params["path"]?
+      path = @params["path"]?.try { |raw| expand_tilde(raw) }
       state = @params["state"]? || "started"
       if error = validate(port, path, state)
         return error

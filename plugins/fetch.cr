@@ -21,6 +21,7 @@ module CrystalPlay
       dest = @params["dest"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: src") unless src
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: dest") unless dest
+      dest = expand_tilde(dest)
 
       if is_true?(@params["check_mode"]?)
         return PluginResult.new(changed: false, failed: false, msg: "check mode not (yet) supported for this module", skipped: true)

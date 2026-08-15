@@ -26,6 +26,7 @@ module CrystalPlay
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: url") unless url
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: dest") unless dest
 
+      dest = expand_tilde(dest)
       dest = File.directory?(dest) ? File.join(dest, File.basename(URI.parse(url).path)) : dest
       checksum = @params["checksum"]?.try { |checksum_param| parse_checksum(checksum_param) }
       force = is_true?(@params["force"]?, default: false)

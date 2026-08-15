@@ -28,7 +28,8 @@ module CrystalPlay
           msg: "Missing required parameter: dest"
         )
       end
-      
+      dest = expand_tilde(dest)
+
       # Check if using content or src
       content = @params["content"]?
       src = @params["src"]?

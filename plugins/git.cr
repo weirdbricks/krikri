@@ -21,6 +21,7 @@ module CrystalPlay
 
       dest = @params["dest"]?
       return missing_param("dest") unless dest
+      dest = expand_tilde(dest)
 
       version = @params["version"]? || "HEAD"
       update = @params["update"]?.nil? || is_true?(@params["update"]?)

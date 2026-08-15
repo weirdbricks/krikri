@@ -118,7 +118,7 @@ module CrystalPlay
 
     private def with_chdir(command : String) : String
       if chdir = @params["chdir"]?
-        "cd #{chdir} && #{command}"
+        "cd #{expand_tilde(chdir)} && #{command}"
       else
         command
       end

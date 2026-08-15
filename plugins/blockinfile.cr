@@ -26,6 +26,7 @@ module CrystalPlay
     def execute : PluginResult
       path = @params["path"]? || @params["dest"]? || @params["name"]?
       return missing_param("path") unless path
+      path = expand_tilde(path)
 
       check_mode = is_true?(@params["check_mode"]?)
       block = @params["block"]? || @params["content"]?

@@ -88,6 +88,7 @@ module CrystalPlay
           msg: "Missing required parameter: path"
         )
       end
+      path = expand_tilde(path)
 
       # Get state (default: file)
       state = @params["state"]? || "file"
@@ -307,6 +308,7 @@ module CrystalPlay
           msg: "src parameter required for state=link"
         )
       end
+      src = expand_tilde(src)
 
       # Check if link already exists and points to correct target
       current_target = try_readlink(path)
@@ -401,6 +403,7 @@ module CrystalPlay
           msg: "src parameter required for state=hard"
         )
       end
+      src = expand_tilde(src)
 
       # Check if hard link already exists (same inode)
       src_stat = lstat(src)

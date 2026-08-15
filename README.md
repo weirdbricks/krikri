@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.380-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.381-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,32 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.381` - proactive audit: `~`-expansion for path-type params
+  across 21 plugins**, not tied to a real host round. Real Ansible's
+  `AnsibleModule` expands a leading `~`/`~user` for every `type: path`
+  argument (matching Python's `os.path.expanduser`) before the module
+  ever sees it; the same gap had already been found and fixed 3
+  separate times in narrower spots (`~/.my.cnf` in
+  `MysqlConnection.build_uri`, `~/.ansible/collections` in
+  `role_loader.cr`, `unarchive:`'s `creates=`), so this pass swept
+  every plugin's own `path:`/`dest:`/`src:`/`chdir:`-style param for
+  the same missing call. Found and fixed 21 more instances (`file:`,
+  `copy:`, `template:`, `stat:`, `archive:`/`unarchive:`, `git:`,
+  `get_url:`, `htpasswd:`, `ini_file:`, `lineinfile:`, `blockinfile:`,
+  `replace:`, `mount:`, `openssh_keypair:`, `openssl_dhparam:`,
+  `pamd:`, `pam_limits:`, `pip:`'s `chdir:`, `wait_for:`,
+  `capabilities:`, `uri:`'s `dest:`, `authorized_key:`'s `path:`).
+  Also found a real bug in `BasePlugin#expand_tilde` itself while
+  writing a regression spec for it: for the bare `~` case it checked
+  the passwd-entry home directory *before* `$HOME`, backwards from
+  Python's own `os.path.expanduser` (which checks `$HOME` first,
+  passwd only as a fallback) - `plugin_helpers/mysql_connection.cr`'s
+  separate copy already had the priority right. `fetch:`'s `src:`
+  deliberately left unexpanded - it names a path on the *remote*
+  target while `fetch:` itself runs on the controller, so a local
+  `expand_tilde` there would resolve against the wrong host's home
+  directory; a correct fix needs remote-side expansion, out of scope
+  for this pass.
 - **`0.9.380` - `docker_container:`'s resource-limit params** -
   `memory:`/`memory_reservation:`/`memory_swap:`/`memory_swappiness:`/
   `cpus:`/`cpu_shares:`/`cpuset_cpus:`/`cpuset_mems:`/`oom_kill_disable:`/
