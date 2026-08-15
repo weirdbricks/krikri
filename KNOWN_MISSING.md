@@ -12,6 +12,26 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+**0.9.357 live-verified** (no version bump - confirms the already-
+shipped fix, no new bug): re-ran `prometheus.prometheus.pushgateway` on
+a fresh `G3.2GB` Atlantic.net pair. Cold pass now correctly fires
+`HANDLER [Restart pushgateway]` with real output (`changed: Systemd
+daemon reloaded, Unit restarted`) - matching real Ansible's own
+`RUNNING HANDLER [prometheus.prometheus.pushgateway : Restart
+pushgateway]`. Then deliberately forced a config-only change
+(`pushgateway_web_telemetry_path: "/pushmetrics"`) on a second pass to
+exercise the exact scenario the original bug broke - a warm rerun
+where ONLY the config template changes and nothing else would
+otherwise trigger a restart: the direct "Ensure Pushgateway is enabled
+on boot" task correctly reported `ok` (not `changed`, matching python
+exactly), and the handler alone fired and restarted the service.
+Confirmed via `systemctl status` (fresh restart timestamp) and `curl`
+(`/pushmetrics` → `200`, the old `/metrics` → `404`, proving the new
+config genuinely took effect through the handler-driven restart, not
+some other path). Also incidentally confirmed 0.9.354's `copy:`
+checksum-skip fix live in the same round: "Propagate binaries" reported
+`ok` (not `changed`) on the warm pass since the binary already matched.
+
 `0.9.357` (closes the `notify:` substitution gap 0.9.356 found and
 deferred - no new live round, verified via a repro matching the exact
 live-found structure/failure mode instead):
