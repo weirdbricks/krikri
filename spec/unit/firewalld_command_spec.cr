@@ -64,4 +64,61 @@ describe CrystalPlay::PluginHelpers::FirewalldCommand do
     cmd = CrystalPlay::PluginHelpers::FirewalldCommand.add_command("public", "rich_rule", value)
     cmd.should eq(%(firewall-offline-cmd --zone=public --add-rich-rule='#{value}'))
   end
+
+  # Real bugs found via a proactive scope-cut audit: interface/
+  # icmp_block/protocol/icmp_block_inversion/forward were entirely
+  # unimplemented. Every command shape below was verified live against a
+  # real `firewall-offline-cmd` (firewalld 2.3.1, installed fresh in a
+  # throwaway Debian container specifically to check these - not
+  # available on the regular dev machine, so not exercised by an
+  # integration spec the way the pre-existing things are; this covers
+  # the pure command-construction logic instead).
+  describe "interface/icmp_block/protocol (plain value things)" do
+    it "builds --add-interface=/--remove-interface=/--query-interface=" do
+      CrystalPlay::PluginHelpers::FirewalldCommand.add_command("public", "interface", "eth0")
+        .should eq("firewall-offline-cmd --zone=public --add-interface='eth0'")
+      CrystalPlay::PluginHelpers::FirewalldCommand.remove_command("public", "interface", "eth0")
+        .should eq("firewall-offline-cmd --zone=public --remove-interface='eth0'")
+      CrystalPlay::PluginHelpers::FirewalldCommand.query_command("public", "interface", "eth0")
+        .should eq("firewall-offline-cmd --zone=public --query-interface='eth0'")
+    end
+
+    it "builds --add-icmp-block=/--remove-icmp-block=" do
+      CrystalPlay::PluginHelpers::FirewalldCommand.add_command("public", "icmp_block", "echo-request")
+        .should eq("firewall-offline-cmd --zone=public --add-icmp-block='echo-request'")
+      CrystalPlay::PluginHelpers::FirewalldCommand.remove_command("public", "icmp_block", "echo-request")
+        .should eq("firewall-offline-cmd --zone=public --remove-icmp-block='echo-request'")
+    end
+
+    it "builds --add-protocol=/--remove-protocol=" do
+      CrystalPlay::PluginHelpers::FirewalldCommand.add_command("public", "protocol", "ah")
+        .should eq("firewall-offline-cmd --zone=public --add-protocol='ah'")
+      CrystalPlay::PluginHelpers::FirewalldCommand.remove_command("public", "protocol", "ah")
+        .should eq("firewall-offline-cmd --zone=public --remove-protocol='ah'")
+    end
+  end
+
+  describe "icmp_block_inversion/forward (no-value boolean things, same pattern as masquerade)" do
+    it "builds --add-icmp-block-inversion/--remove-icmp-block-inversion with no value" do
+      CrystalPlay::PluginHelpers::FirewalldCommand.add_command("public", "icmp_block_inversion", "true")
+        .should eq("firewall-offline-cmd --zone=public --add-icmp-block-inversion")
+      CrystalPlay::PluginHelpers::FirewalldCommand.remove_command("public", "icmp_block_inversion", "true")
+        .should eq("firewall-offline-cmd --zone=public --remove-icmp-block-inversion")
+    end
+
+    it "builds --add-forward/--remove-forward with no value" do
+      CrystalPlay::PluginHelpers::FirewalldCommand.add_command("public", "forward", "true")
+        .should eq("firewall-offline-cmd --zone=public --add-forward")
+      CrystalPlay::PluginHelpers::FirewalldCommand.remove_command("public", "forward", "true")
+        .should eq("firewall-offline-cmd --zone=public --remove-forward")
+    end
+  end
+
+  describe ".thing" do
+    it "recognizes every new thing as the one selected param" do
+      %w[interface icmp_block protocol icmp_block_inversion forward].each do |key|
+        CrystalPlay::PluginHelpers::FirewalldCommand.thing({key => "x"}).should eq({key, "x"})
+      end
+    end
+  end
 end

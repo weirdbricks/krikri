@@ -19,7 +19,14 @@ module CrystalPlay
     # `masquerade` don't have this quirk; their plain `--remove-<thing>=`
     # forms work fine with `--zone=`.
     module FirewalldCommand
-      SUPPORTED_THINGS = %w[service port rich_rule source masquerade]
+      SUPPORTED_THINGS = %w[service port rich_rule source masquerade interface icmp_block protocol icmp_block_inversion forward]
+
+      # Things whose add/remove/query flags take NO value at all
+      # (`--add-masquerade`, not `--add-masquerade=true`) - verified
+      # empirically against a real `firewall-offline-cmd` (firewalld
+      # 2.3.1) in a real container for icmp_block_inversion/forward too,
+      # the same way masquerade originally was.
+      NO_VALUE_THINGS = %w[masquerade icmp_block_inversion forward]
 
       # Returns nil if none or more than one "thing" param is present -
       # matches real Ansible's own mutually_exclusive constraint (exactly
@@ -49,15 +56,13 @@ module CrystalPlay
         "firewall-offline-cmd --zone=#{zone} --#{flag}#{value_suffix(thing, value)}"
       end
 
-      # masquerade takes no value (`--add-masquerade`, not
-      # `--add-masquerade=true`) - every other supported thing does.
       # Single-quoted (not double-quoted) since a rich_rule value
       # contains embedded double quotes of its own
       # (`rule family="ipv4" ...`) - single quotes need no escaping of
       # those. Caught by an actual failure running a real rich_rule
       # against firewall-offline-cmd with the value left unquoted.
       private def self.value_suffix(thing : String, value : String) : String
-        thing == "masquerade" ? "" : "='#{value}'"
+        NO_VALUE_THINGS.includes?(thing) ? "" : "='#{value}'"
       end
     end
   end

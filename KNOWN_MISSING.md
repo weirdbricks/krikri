@@ -8,7 +8,40 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.373`.**
+**Currently at `0.9.374`.**
+
+---
+
+`0.9.374` (part 6, final part, of the scope-cut pass) - `firewalld:`'s
+`interface`/`icmp_block`/`protocol` (plain value "things", same
+add/remove/query pattern as the pre-existing service/port/rich_rule/
+source), `icmp_block_inversion`/`forward` (no-value boolean "things",
+same pattern as the pre-existing masquerade), and `target` (NOT an
+add/remove/query "thing" at all - `--set-target=<value>`/`--get-target`
+instead, verified against real ansible.posix.firewalld's own
+`ZoneTargetTransaction` source: `state: disabled`/`absent` resets the
+target to the literal string `"default"`, not simply "removes" it,
+since a zone's target isn't optional the way a service/port entry is).
+Every single flag shape (all 6 new things) was verified live against a
+real `firewall-offline-cmd` (firewalld 2.3.1) - installed fresh in a
+throwaway Debian Docker container specifically for this, since firewalld
+isn't installed on the regular dev machine and this project's plugins
+run as compiled binaries invocable directly inside a container without
+needing SSH - full add/remove/idempotent-rerun cycles confirmed for
+every one via direct plugin invocation with a real config JSON, not
+just command-string inspection. `port_forward:` (a compound `port=X:
+proto=Y:toport=Z[:toaddr=W]` value, structurally different from every
+other thing's simple scalar value) remains genuinely unimplemented - a
+further, real gap, not folded into this pass.
+
+This closes out the full list of "narrow scope cut" items identified
+during this session's earlier discussion - every one either fixed (and
+verified, live wherever the target tool/daemon was reachable at all) or
+explicitly re-classified as out of scope with a stated reason
+(`yum_repository:`'s `proxy_password:` no_log redaction and
+`docker_container:`'s broader `comparisons:` system both turned out to
+be cross-cutting framework features affecting ~40 fields each, not
+single-plugin narrow gaps).
 
 ---
 

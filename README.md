@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.368-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.374-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,29 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.369`-`0.9.374` - closed every remaining "narrow scope cut"**
+  identified across the plugin set, on direct request: `modprobe:`'s
+  `params:`; `find:`'s `mode:`/`exact_mode:`/`limit:`; `wait_for:`'s
+  `search_regex` against an open socket (plus a message-format fix);
+  `apt_key:`'s `keyserver:`; `deb822_repository:`'s remaining DEB822
+  keys (and a real pre-existing field-ORDER bug found and fixed along
+  the way - real Ansible sorts fields alphabetically by param name, not
+  a fixed order); `archive:`'s `attributes:`/SELinux context params;
+  `gem:`'s `repository:`/`include_dependencies:`/`norc:`; `pip:`'s
+  `editable:`/`umask:`; `user:`'s `expires:`; the full Docker trio
+  (`docker_network:`'s `force:`, `docker_image:`'s `force_source:` -
+  including a real digest-comparison detail only caught by comparing
+  live output against real ansible-playbook, `docker_container:`'s
+  `comparisons: {networks: strict}`); and `firewalld:`'s
+  `interface`/`icmp_block`/`protocol`/`icmp_block_inversion`/`forward`/
+  `target`. Nearly every one live-verified against the real tool/daemon
+  (a throwaway Docker container standing in for firewalld/pip/user,
+  since none were installed on the dev machine) rather than assumed from
+  documentation. Two items were explicitly re-classified as out of scope
+  instead of force-fit: `yum_repository:`'s `proxy_password:` no_log
+  redaction and `docker_container:`'s broader `comparisons:` system are
+  both cross-cutting framework features spanning ~40 fields, not single-
+  plugin gaps. Full detail per item in `KNOWN_MISSING.md`.
 - **`0.9.368` - closes `mount.cr`'s last remaining gap** on direct
   request: `state: remounted`'s `opts:`-absent fallback (a bare `mount
   -o remount` failing right after a fstab entry was just added is the
