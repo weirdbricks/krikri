@@ -8,7 +8,37 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.369`.**
+**Currently at `0.9.370`.**
+
+---
+
+`0.9.370` (part 2 of the scope-cut pass) - `apt_key:`'s `keyserver:`
+(fetches by `id:` via `apt-key adv --no-tty --keyserver <keyserver>
+--recv <id>`, verified against real ansible/modules/apt_key.py's own
+source including its exact "Missing key_id, required with keyserver."
+validation message); `deb822_repository:`'s remaining DEB822 keys
+(`trusted`/`enabled`/`allow_insecure`/`allow_downgrade_to_insecure`/
+`allow_weak`/`pdiffs`/`by_hash`/`check_date`/`check_valid_until`/
+`languages`/`targets`/`date_max_future` - `architectures` turned out to
+already be implemented, the doc comment was just stale). While
+implementing these, found and fixed a real PRE-EXISTING bug in the
+already-implemented fields too: real Ansible writes DEB822 fields in
+ALPHABETICAL ORDER BY THE UNDERLYING PARAM NAME (`sorted(params.
+items())`), not the fixed Types/URIs/Suites/Components/Architectures/
+X-Repolib-Name/Signed-By order this plugin used - verified directly
+against a real `ansible-playbook -vvv --check` run's own `repo:` return
+value. This didn't affect apt's own functional parsing (DEB822/RFC822
+format doesn't care about field order) but would have spuriously
+reported `changed` on a warm rerun against any file real Ansible itself
+had written, since the idempotency check compares rendered content
+byte-for-byte. Extracted the field-sorting logic into a new pure
+`PluginHelpers::Deb822RepositoryContent`, unit-spec-covered against the
+exact real-Ansible-captured output. `no_log:` redaction of sensitive
+params like `yum_repository:`'s `proxy_password:` was considered and
+explicitly NOT done here - it's a cross-cutting framework feature (task-
+invocation display, not a single plugin's own result) that no plugin in
+this codebase implements yet, not a narrow single-plugin scope cut;
+doing it for just one param in one plugin would be inconsistent scope.
 
 ---
 

@@ -5,6 +5,7 @@ require "http/client"
 require "uri"
 require "../src/crystal_play/base_plugin"
 require "../src/crystal_play/plugin_helpers/http_download"
+require "../src/crystal_play/plugin_helpers/deb822_repository_content"
 
 module CrystalPlay
   # Deb822_repository plugin - adds/removes a DEB822-format (`.sources`)
@@ -24,13 +25,16 @@ module CrystalPlay
   # source) - not a silent divergence, a hard failure with no
   # obvious tie back to the skipped task.
   #
-  # Supported parameters (the shape both geerlingguy.docker and
-  # geerlingguy.nodejs actually write - real Ansible's own module
-  # supports many more DEB822 keys not implemented here: architectures,
-  # trusted, enabled, allow_insecure, allow_downgrade_to_insecure,
-  # allow_weak, pdiffs, by-hash, languages, targets, check_date,
-  # check_valid_until, date_max_future - a documented scope cut, not an
-  # oversight):
+  # Supported parameters (the core shape both geerlingguy.docker and
+  # geerlingguy.nodejs actually write, plus every other real DEB822 key
+  # real Ansible's own module supports: architectures, trusted, enabled,
+  # allow_insecure, allow_downgrade_to_insecure, allow_weak, pdiffs,
+  # by_hash, languages, targets, check_date, check_valid_until,
+  # date_max_future - closed in a later proactive scope-cut audit pass,
+  # verified against the real module's own source for exact field-name/
+  # value-format conversion; only `inrelease_path` remains genuinely
+  # unimplemented, a rare param for pinning a specific InRelease file
+  # path):
   # - name (required): base filename under /etc/apt/sources.list.d/,
   #   written as <name>.sources
   # - types: deb (default) | deb-src | "deb deb-src"
@@ -81,27 +85,54 @@ module CrystalPlay
       add(target, check_mode)
     end
 
+    BOOL_FIELDS = {
+      "trusted" => "Trusted", "enabled" => "Enabled", "allow_insecure" => "Allow-Insecure",
+      "allow_downgrade_to_insecure" => "Allow-Downgrade-To-Insecure", "allow_weak" => "Allow-Weak",
+      "pdiffs" => "Pdiffs", "by_hash" => "By-Hash", "check_date" => "Check-Date",
+      "check_valid_until" => "Check-Valid-Until",
+    }
+    LIST_FIELDS = {
+      "types" => "Types", "uris" => "URIs", "suites" => "Suites", "components" => "Components",
+      "architectures" => "Architectures", "languages" => "Languages", "targets" => "Targets",
+    }
+
+    # Real ansible.builtin.deb822_repository writes fields in ALPHABETICAL
+    # ORDER BY THE UNDERLYING PARAM NAME, not by field name and not in
+    # any fixed/declared order (`for key, value in sorted(params.items())`)
+    # - verified directly against a real ansible-playbook -vvv run's own
+    # `repo:` return value, not assumed from source alone. This matters
+    # for idempotency: a file real Ansible itself wrote and a file this
+    # plugin writes must line up byte-for-byte, or a warm rerun against
+    # an already-real-Ansible-managed file would spuriously report
+    # changed every time on line-order alone even though nothing
+    # meaningful differs. Bool fields (all `type: bool` in the real
+    # module's own argument_spec) are written as literal "yes"/"no" -
+    # real APT's own deb822 sources parser (and this codebase's own
+    # `is_true?`) both already understand "yes"/"no"/"true"/"false"
+    # interchangeably, so round-tripping an already-boolean-ish param
+    # value through `is_true?` first (rather than assuming it always
+    # arrives as literal "true"/"false") stays correct either way.
     private def render_content(check_mode : Bool = false) : String
       n = @params["name"]?.not_nil!
-      lines = [] of String
-      lines << "Types: #{(@params["types"]? || "deb").gsub(',', ' ')}"
-      lines << "URIs: #{@params["uris"]?.to_s.gsub(',', ' ')}"
-      lines << "Suites: #{@params["suites"]?.to_s.gsub(',', ' ')}"
-      if components = @params["components"]?
-        lines << "Components: #{components.gsub(',', ' ')}"
+      fields = {} of String => String
+
+      BOOL_FIELDS.each do |param, field|
+        fields[param] = "#{field}: #{is_true?(@params[param]?) ? "yes" : "no"}" if @params[param]?
       end
-      if architectures = @params["architectures"]?
-        lines << "Architectures: #{architectures.gsub(',', ' ')}"
+      LIST_FIELDS.each do |param, field|
+        default = param == "types" ? "deb" : nil
+        value = @params[param]? || default
+        fields[param] = "#{field}: #{value.gsub(',', ' ')}" if value
       end
-      lines << "X-Repolib-Name: #{n}"
+      if date_max_future = @params["date_max_future"]?
+        fields["date_max_future"] = "Date-Max-Future: #{date_max_future}"
+      end
+      fields["name"] = "X-Repolib-Name: #{n}"
       if (sb = resolve_signed_by(check_mode)) && !sb.empty?
-        if sb.starts_with?('\n')
-          lines << "Signed-By:#{sb}"
-        else
-          lines << "Signed-By: #{sb}"
-        end
+        fields["signed_by"] = sb.starts_with?('\n') ? "Signed-By:#{sb}" : "Signed-By: #{sb}"
       end
-      lines.join('\n') + '\n'
+
+      PluginHelpers::Deb822RepositoryContent.render(fields)
     end
 
     private def resolve_signed_by(check_mode : Bool = false) : String?

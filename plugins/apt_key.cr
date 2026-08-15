@@ -24,11 +24,15 @@ module CrystalPlay
   # - validate_certs: default true; false skips TLS verification for
   #   url: (grafana's own role sets this)
   #
-  # Not implemented: keyserver: (fetching by ID from a keyserver -
-  # real-world usage is overwhelmingly url:/data:, a keyserver round
-  # trip is also the flakiest/slowest part of the real module),
-  # keyring: (an alternate keyring file - real playbooks essentially
-  # always mean the default system one).
+  # - keyserver: fetches by id: from a keyserver instead of url:/data: -
+  #   verified against real ansible/modules/apt_key.py's own source:
+  #   `apt-key adv --no-tty --keyserver <keyserver> --recv <id>`, and
+  #   REQUIRES id: (real Ansible fails with "Missing key_id, required
+  #   with keyserver." otherwise - matched exactly, not silently
+  #   defaulted).
+  #
+  # Not implemented: keyring: (an alternate keyring file - real
+  # playbooks essentially always mean the default system one).
   class AptKeyPlugin < BasePlugin
     def execute : PluginResult
       state = @params["state"]?.try(&.downcase) || "present"
@@ -45,6 +49,17 @@ module CrystalPlay
 
       if key_id && key_present?(key_id)
         return PluginResult.new(changed: false, failed: false, msg: "Key already present")
+      end
+
+      if keyserver = @params["keyserver"]?
+        return PluginResult.new(changed: false, failed: true, msg: "Missing key_id, required with keyserver.") unless key_id
+
+        result = remote_exec("apt-key adv --no-tty --keyserver #{keyserver} --recv #{key_id}")
+        unless result[:exit_code] == 0
+          return PluginResult.new(changed: false, failed: true, msg: "Error fetching key #{key_id} from keyserver: #{result[:stderr]}")
+        end
+
+        return PluginResult.new(changed: true, failed: false, msg: "Key added")
       end
 
       content = if url = @params["url"]?
