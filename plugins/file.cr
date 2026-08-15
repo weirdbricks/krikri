@@ -608,9 +608,24 @@ module CrystalPlay
     # sticky bits) so a requested numeric mode's special bits compare
     # correctly - matches what `stat -c '%U'`/`'%G'`/`'%a'` (no `-L`,
     # i.e. not following symlinks) did before.
+    #
+    # The follow: parameter (default false, matching real Ansible's
+    # file module) flips the read path between lstat and stat
+    # (see the stat_follow helper). When true, a `state: file` task
+    # with a symlink path compares the TARGET's metadata (owner,
+    # group, mode) against the requested values, not the symlink's
+    # own. Real bug found benchmarking devsec.hardening.mysql_hardening
+    # in round 24 role 2 (the `Protect my.cnf` task has follow: true;
+    # previously always used lstat regardless of the follow param, so
+    # warm reruns always reported changed because the symlink's
+    # permission bits are always 0777 and never match the target's
+    # intended 0640 - dev-sec os_hardening's PAM symlinks hit a
+    # similar but separate issue handled by the state: link branch
+    # below via skip_mode, not this one).
     private def update_attributes_if_needed(path : String, is_directory : Bool, skip_mode : Bool = false) : Bool
+      follow = is_true?(@params["follow"]?)
       changed = false
-      info = lstat(path)
+      info = follow ? stat_follow(path) : lstat(path)
       return false unless info
 
       # Check owner
@@ -744,6 +759,7 @@ module CrystalPlay
     end
 
     private def apply_single_file_attributes(path : String)
+      follow = is_true?(@params["follow"]?)
       uid = -1
       gid = -1
 
@@ -759,7 +775,22 @@ module CrystalPlay
         end
       end
 
-      File.chown(path, uid: uid, gid: gid) if uid != -1 || gid != -1
+      # Crystal's File.chown defaults `follow_symlinks: false`, which is
+      # lchown(2) - changes the symlink's own owner/group, not the
+      # target's. For a task with `follow: true` (the file module's
+      # default for state: file), the chown must follow the symlink
+      # to change the target. File.chmod is unaffected - the Crystal
+      # stdlib's File.chmod always follows (matches the Linux chmod(2)
+      # default), so the mode apply was already correct on the target.
+      # Real bug found benchmarking devsec.hardening.mysql_hardening
+      # in round 24 role 2: the `Protect my.cnf` task (owner: root,
+      # group: mysql, follow: true, path: /etc/mysql/my.cnf symlink to
+      # .../mariadb.cnf) used lchown, leaving /etc/mysql/mariadb.cnf at
+      # root:root with the symlink itself group-changed to mysql -
+      # downstream comparisons via the unfixed lstat read path then
+      # always reported changed on warm rerun. With follow_symlinks
+      # passed through here, the chown now reaches the target.
+      File.chown(path, uid: uid, gid: gid, follow_symlinks: follow) if uid != -1 || gid != -1
 
       if mode = @params["mode"]?
         apply_mode(path, mode)
@@ -905,6 +936,28 @@ module CrystalPlay
     private def lstat(path : String) : LibC::Stat?
       stat = uninitialized LibC::Stat
       result = LibC.lstat(path, pointerof(stat))
+      result == 0 ? stat : nil
+    end
+
+    # Companion to lstat: stat() (not lstat()) - follows symlinks and
+    # returns the target's metadata instead of the symlink's own. Used
+    # by update_attributes_if_needed when the task has `follow: true`,
+    # so a "set owner: group: on /etc/mysql/my.cnf" task reads the
+    # target's actual owner/group (root:mysql) for the "is the file
+    # already correct?" check, instead of the symlink's owner/group
+    # (which is meaningless for ownership purposes - a symlink's
+    # owner is whoever its creator was, not who's allowed to traverse
+    # it). Real bug found benchmarking devsec.hardening.mysql_hardening
+    # in round 24 role 2 (the `Protect my.cnf` task has follow: true
+    # and path: /etc/mysql/my.cnf, a symlink to .../mariadb.cnf;
+    # lstat returned the symlink's own group=mysql, which was set
+    # by a previous run's lchown, while the actual target was still
+    # root:root - so warm reruns never converged even after the
+    # chown was fixed to follow symlinks, because the read path
+    # was still lstat).
+    private def stat_follow(path : String) : LibC::Stat?
+      stat = uninitialized LibC::Stat
+      result = LibC.stat(path, pointerof(stat))
       result == 0 ? stat : nil
     end
 

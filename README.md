@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.348-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.349-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,20 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.349` - follow-up on 0.9.348's three deferred warm-idempotency
+  bugs.** `file` plugin's `follow:` param now flows through to both
+  the chown write path (`follow_symlinks:`) and the attribute-read
+  comparison path (a new `stat_follow` vs `lstat`), fixing the
+  `Protect my.cnf` always-`changed` divergence; `mysql_user`'s
+  `host_all: true` expansion now checks
+  `password_already_matches?`/`plugin_matches?` before altering,
+  matching the per-host path's idempotency. Also caught and fixed a
+  real regression surfaced while doing this work: 0.9.348's own
+  `with_community.general.flattened` no-value-sentinel fix had a
+  missing `else`, so literal (non-templated) loop sources silently
+  produced zero items again - the same class of bug 0.9.250/0.9.251
+  fixed originally. Not yet live-reverified against a real host warm
+  rerun; full `crystal spec` suite (1117 examples) passes.
 - **`0.9.348` (round 24 role 2) - `devsec.hardening.mysql_hardening`
   collection form.** `ansible-galaxy collection install
   devsec.hardening` (the modern FQCN-shipped form of the

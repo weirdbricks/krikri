@@ -358,6 +358,35 @@ module CrystalPlay
         next unless update_password == "always" && (password || plugin)
         return PluginResult.new(changed: true, failed: false, msg: "User #{name}'s #{password ? "password" : "authentication"} would be updated on all hosts") if check_mode
 
+        # Real bug found benchmarking devsec.hardening.mysql_hardening
+        # in round 24 role 2 (0.9.348): the host_all: true expansion
+        # iterated over every existing host row for name: and ran
+        # ALTER USER unconditionally per host, with no
+        # password-already-matches check. The per-host (non-host_all)
+        # path through ensure_present/create_or_update_account DOES
+        # call password_already_matches? before the ALTER, so a
+        # single-host task is idempotent on warm rerun. The host_all:
+        # path was not. Result: devsec.mysql_hardening's "Ensure that
+        # the root password is present" task (host_all: true, password
+        # already set by the cold pass) ran ALTER USER on every
+        # existing root@* host on every warm rerun, always reporting
+        # "Updated user root on all hosts" even though the password
+        # matched. Diff the existing hash (or plugin column, for
+        # non-password auth) per host before deciding to ALTER,
+        # matching the per-host path's idempotency. Note this still
+        # uses one ALTER per host that actually needs a change -
+        # doesn't batch the comparison up into a single statement,
+        # because the per-host hash values can differ (e.g. one
+        # host's account might be using mysql_native_password and
+        # another's caching_sha2_password), and a real Ansible
+        # collection like community.mysql's user.py iterates the
+        # same way.
+        if password
+          next if password_already_matches?(db, name, host, password)
+        else
+          next if plugin_matches?(db, name, host, plugin.not_nil!, plugin_hash_string, plugin_auth_string)
+        end
+
         clause = build_auth_clause(password, plugin, plugin_hash_string, plugin_auth_string)
         db.exec "ALTER USER #{quote_str(name)}@#{quote_str(host)}#{clause}"
         changed = true

@@ -1192,6 +1192,7 @@ module CrystalPlay
           else
             result << value
           end
+        else
           # A literal source (not a bare `{{ var }}` reference or a
           # `{{ }}`-wrapped filter-chain expression at all) - dev-sec
           # os_hardening's own with_flattened sources are mostly plain

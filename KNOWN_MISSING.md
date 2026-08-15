@@ -8,9 +8,49 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.348`.**
+**Currently at `0.9.349`.**
 
 ---
+
+`0.9.349` (follow-up on round 24 role 2's deferred items, plus one
+regression found while doing so):
+
+- **`file` plugin's `follow:` param wasn't honored on the chown/lchown
+  write path or the attribute-comparison read path.** Crystal's
+  `File.chown` defaults to `follow_symlinks: false` (lchown behavior);
+  a `follow: true` task now passes `follow_symlinks: true` through so
+  the target, not the symlink, gets chowned. The "is this file already
+  correct?" read path (`update_attributes_if_needed`) now uses a new
+  `stat_follow` helper (real `stat()`, not `lstat()`) for owner/group/
+  mode comparisons when `follow: true`, so a warm rerun compares
+  against the target's actual metadata instead of the symlink's own -
+  fixes the `Protect my.cnf` always-`changed` divergence from
+  `devsec.hardening.mysql_hardening` documented under `0.9.348`.
+  `File.chmod` needed no fix - Crystal's stdlib already always follows
+  symlinks for chmod, matching `chmod(2)`'s own default.
+
+- **`mysql_user`'s `host_all: true` expansion path ran `ALTER USER`
+  unconditionally on every host row, with no password-already-matches
+  check** - unlike the per-host path, which already calls
+  `password_already_matches?`/`plugin_matches?` before altering. Fixed
+  by adding the same check to the `host_all:` path. Fixes the
+  `devsec.hardening.mysql_hardening` warm-rerun "Updated user root on
+  all hosts" always-`changed` divergence also documented under
+  `0.9.348`.
+
+- **Regression found while fixing the above, unrelated to either
+  deferred item**: `resolve_loop_flattened`'s literal-source handling
+  (the `with_community.general.flattened:` no-value-sentinel fix
+  landed in `0.9.348`) was missing an `else` - the sentinel-check
+  branch was nested *inside* `if value` instead of being its `else`,
+  so it only ever ran when `value` was already truthy, meaning every
+  literal (non-templated) source silently produced zero items again.
+  This is the same "drop literal sources" bug `0.9.250`-`0.9.251`
+  fixed originally, reintroduced by the `0.9.348` edit despite that
+  commit's own claim of "0 failures" on the full spec suite -
+  `spec/integration/with_flattened_spec.cr` was not actually run as
+  part of that verification. All 4 examples in that file now pass
+  again; full suite re-confirmed at 1117 examples, 0 failures.
 
 `0.9.348` (round 24 role 2 - `devsec.hardening.mysql_hardening` collection
 form - clean cold pass plus one new engine bug fixed live, plus a
