@@ -37,14 +37,25 @@ module CrystalPlay
   # - rowcount: one integer per statement - the row count for a read,
   #   rows_affected for a write.
   #
-  # changed: true if any statement wasn't a SELECT/SHOW/DESC/EXPLAIN read
-  # - real Ansible's own module reports changed unconditionally for any
-  #   executed write statement, with no before/after comparison.
+  # changed: for a DML statement (INSERT/UPDATE/DELETE/REPLACE), true only
+  # if rows_affected > 0 - matches real community.mysql.mysql_query's own
+  # `cursor.rowcount > 0` check (mysql_query.py's DML_QUERY_KEYWORDS loop),
+  # not an unconditional true. A DDL statement (CREATE/DROP/ALTER/RENAME/
+  # TRUNCATE) or anything else still reports changed unconditionally - the
+  # real module's DDL branch does its own already-exists detection that
+  # isn't replicated here, so unconditional-true is the safe default for
+  # the DDL/unrecognized case. Real bug found benchmarking
+  # devsec.hardening.mysql_hardening (round 25 live-reverify): the role's
+  # `Ensure that root can only login from localhost` task runs `DELETE
+  # FROM mysql.user WHERE ... HOST NOT IN (...)` on every run; on a fresh
+  # install this matches 0 rows, and real Ansible correctly reports `ok`
+  # (idempotent), but this plugin reported `changed` unconditionally.
   #
   # Not implemented: positional_args:/named_args: (parameterized
   # queries) - no real caller in this codebase uses them yet.
   class MysqlQueryPlugin < BasePlugin
-    READ_PREFIXES = {"SELECT", "SHOW", "DESC", "DESCRIBE", "EXPLAIN"}
+    READ_PREFIXES  = {"SELECT", "SHOW", "DESC", "DESCRIBE", "EXPLAIN"}
+    DML_KEYWORDS   = {"INSERT", "UPDATE", "DELETE", "REPLACE"}
 
     def execute : PluginResult
       raw_query = @params["query"]?
@@ -81,7 +92,7 @@ module CrystalPlay
             count = connection.exec(stmt).rows_affected
             query_results << JSON::Any.new([] of JSON::Any)
             rowcounts << JSON::Any.new(count)
-            changed = true
+            changed = true unless dml_statement?(stmt) && count == 0
           end
         end
       end
@@ -111,6 +122,11 @@ module CrystalPlay
     private def read_statement?(stmt : String) : Bool
       upcased = stmt.strip.upcase
       READ_PREFIXES.any? { |prefix| upcased.starts_with?(prefix) }
+    end
+
+    private def dml_statement?(stmt : String) : Bool
+      upcased = stmt.strip.upcase
+      DML_KEYWORDS.any? { |kw| upcased.starts_with?(kw) }
     end
 
     private def run_read(db : DB::Database, stmt : String) : {JSON::Any, Int64}

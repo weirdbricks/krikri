@@ -8,9 +8,48 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.349`.**
+**Currently at `0.9.350`.**
 
 ---
+
+`0.9.350` (round 25 - live re-verification of `0.9.349`'s fixes on a
+fresh Atlantic.net `G3.2GB` pair, `devsec.hardening.mysql_hardening`):
+
+- **Cold pass**: crystal `ok=23 changed=10 failed=0 skipped=6` vs real
+  `ansible-playbook` 2.19.4 `ok=22 changed=9 failed=0 skipped=6` (the
+  `ok` count difference is this environment's global smart fact-cache
+  reusing a stale entry under the shared inventory alias `target` for
+  the python run, not a crystal-ansible bug). One real divergence
+  found in the cold pass, not caught by `0.9.349`'s fixes: see below.
+
+- **`mysql_query` reported `changed` unconditionally for any DML
+  statement (INSERT/UPDATE/DELETE/REPLACE), even one that matched
+  zero rows.** Real `community.mysql.mysql_query` (`ansible/mysql`
+  collection form here) only sets `changed = true` for a DML
+  statement when `cursor.rowcount > 0` - a 0-row `DELETE` is
+  idempotent (`ok`), not `changed`. The plugin's own doc comment
+  claimed "real Ansible's own module reports changed unconditionally"
+  - that claim was simply wrong (verified against the actual
+  `mysql_query.py` source, `DML_QUERY_KEYWORDS` loop). Live symptom:
+  `devsec.hardening.mysql_hardening`'s `Ensure that root can only
+  login from localhost` task (`DELETE FROM mysql.user WHERE ...`,
+  0 rows affected on every run since no non-localhost root row ever
+  exists) reported `changed` on every single run, cold and warm.
+  Fix: `changed` is now `rows_affected > 0` for a recognized DML
+  statement; unrecognized/DDL statements keep the prior
+  unconditional-`true` behavior (the real module's DDL branch does
+  its own already-exists detection this plugin doesn't replicate).
+
+- **Warm rerun (idempotency) fully confirmed clean after this fix**:
+  crystal `ok=22 changed=0 failed=0 skipped=6` vs python
+  `ok=21 changed=0 failed=0 skipped=6` - `changed` and `skipped`
+  counts now match exactly (the `ok` difference is the same fact-cache
+  artifact as the cold pass). This is the live confirmation that all
+  three items deferred in `0.9.348` - `file`'s `follow:` handling and
+  `mysql_user`'s `host_all:` idempotency, both fixed in `0.9.349` -
+  plus this round's `mysql_query` fix, hold up end-to-end on a real
+  host. `Protect my.cnf` and `Ensure that the root password is
+  present` both report `ok` on warm rerun, matching python exactly.
 
 `0.9.349` (follow-up on round 24 role 2's deferred items, plus one
 regression found while doing so):

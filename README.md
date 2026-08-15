@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.349-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.350-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,17 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.350` (round 25) - live re-verification of 0.9.349 on a fresh
+  Atlantic.net `G3.2GB` pair.** Confirmed all three bugs deferred in
+  `0.9.348` and fixed in `0.9.349` hold up end-to-end: `Protect
+  my.cnf` and `Ensure that the root password is present` both report
+  `ok` on warm rerun, matching real `ansible-playbook`. Found and
+  fixed one more live: `mysql_query` reported `changed`
+  unconditionally for any DML statement, even a 0-row `DELETE` -
+  real `community.mysql.mysql_query` only reports `changed` when
+  `cursor.rowcount > 0`. Warm rerun now `ok=22 changed=0 skipped=6`
+  vs python's `ok=21 changed=0 skipped=6` - `changed`/`skipped`
+  counts match exactly.
 - **`0.9.349` - follow-up on 0.9.348's three deferred warm-idempotency
   bugs.** `file` plugin's `follow:` param now flows through to both
   the chown write path (`follow_symlinks:`) and the attribute-read
