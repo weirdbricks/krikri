@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.376-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.377-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,24 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.377` - `docker_container:`'s `ports:`/`healthcheck:`, plus a
+  real comparison-default correction.** `healthcheck:` was entirely
+  unimplemented before this (new `PluginHelpers::DockerHealthcheck`
+  helper, ported from real Ansible's own duration-parsing/test-
+  normalization logic); `ports:` now participates in idempotency
+  comparison too. Found and fixed a real bug in this project's own
+  `docr` fork along the way (`Health#log` crashing JSON parsing on a
+  real `null` from Docker/Podman) and, more importantly, a real
+  correctness bug in `0.9.376`'s own comparison logic: it assumed every
+  field defaulted to `strict`, but real Ansible's actual default for
+  every set/dict-typed field (`env`/`labels`/`volumes`/`ports`/
+  `healthcheck`) is `allow_more_present` (a subset match) - the wrong
+  assumption made a minimal `healthcheck:` recreate the container on
+  every single rerun forever, caught live before it could ship
+  uncorrected. `comparisons:` now takes each field's own real default
+  and accepts explicit `strict`/`allow_more_present` overrides in either
+  direction. Live-verified end to end against a real Docker-API-
+  compatible daemon (Podman 5.4.2).
 - **`0.9.376` - broadened `docker_container:`'s `comparisons:` system**
   from just `networks` to every field the plugin actually manages
   (`entrypoint`/`env`/`labels`/`volumes`/`restart_policy`/

@@ -8,7 +8,83 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.376`.**
+**Currently at `0.9.377`.**
+
+---
+
+`0.9.377` - `docker_container:`'s `ports:` and `healthcheck:` (the two
+fields explicitly deferred out of the `0.9.376` entry below), plus a
+real per-field comparison-default correction across everything the
+`0.9.376` pass added.
+
+`healthcheck:` was previously entirely unimplemented, not just
+uncompared - a new `PluginHelpers::DockerHealthcheck` helper parses the
+`{test:, interval:, timeout:, retries:, start_period:}` dict, porting
+real Ansible's own `convert_duration_to_nanosecond` (duration strings
+like `1m30s`/`5h34m56s` to nanoseconds) and
+`normalize_healthcheck_test`/`parse_healthcheck` (a plain string test
+becomes `CMD-SHELL`; `test: ["NONE"]` is the real, documented way to
+disable an inherited healthcheck; no `test:` at all means no override,
+matching real Ansible exactly). `ports:` now also participates in
+idempotency comparison alongside the 8 fields `0.9.376` added.
+
+While live-testing `healthcheck:`, found and fixed a **real bug in the
+`docr` library itself** (this project's own Docker API client fork,
+`github.com/weirdbricks/docr`): `Docr::Types::Health#log` was typed as a
+non-nullable `Array`, but real Docker/Podman returns `Log: null` (not
+`[]`) before a container's first health check has actually run - any
+`inspect()` of a freshly created container with a healthcheck crashed
+JSON parsing entirely, not just compared wrong. Fixed upstream in the
+fork itself (commit `49f65ee`) and pulled via `shards update docr`,
+matching this project's established pattern of fixing real bugs found
+in its own forked dependencies directly (see the Crinja fork work in
+earlier rounds) rather than working around them locally.
+
+Also found and fixed a **real correctness bug in `0.9.376`'s own
+freshly-added comparison logic**, caught by this same healthcheck live
+test before it shipped further: that pass assumed every field's default
+`comparisons:` mode was `strict` (exact equality). Checking real
+Ansible's own `module_utils/_module_container/base.py`
+(`Option.__init__`) shows this is wrong - only scalar options
+(`restart_policy`/`network_mode`/`privileged`/`auto_remove`) and the
+plain ordered `entrypoint` list actually default to `strict`; every
+set/dict-typed option (`env`/`labels`/`volumes`/`ports`/`healthcheck`)
+defaults to `allow_more_present` instead - a subset match where the
+task's own requested keys/values must be present and equal, but EXTRA
+keys/values already on the real container (an image's inherited
+env/labels, Docker's own default-filled healthcheck timeout/retries,
+ports the task didn't mention) are NOT treated as drift. Under the
+wrong strict-by-default assumption, a `healthcheck:` given with only
+`interval:`/`test:` (a common, minimal real-world shape) recreated the
+container on every single rerun forever, since Docker's own daemon
+fills in default `timeout:`/`retries:` that a strict comparison then
+saw as unexplained drift - caught live, not by code review. Corrected:
+`comparison_mode(field, default)` now takes each field's own real
+default, with `comparisons: {field: strict}` / `{field:
+allow_more_present}` available as explicit overrides in either
+direction (real Ansible's own supported override shape) alongside the
+pre-existing `ignore`. Also confirmed as a side effect: the corrected
+default made `env:`'s previous image-Env-merge workaround (0.9.376)
+fully idempotent even under Podman's own extra runtime-injected vars
+(`container=podman`/`HOME`/random `HOSTNAME`) - the earlier
+KNOWN_MISSING entry's "Podman-only testing caveat" no longer applies,
+since allow_more_present doesn't care about extra actual entries at
+all, image-provided or not.
+
+All of the above live-verified end to end against a real
+Docker-API-compatible daemon (Podman 5.4.2) on the dev machine: `ports:`
+create/idempotent-rerun/drift-recreate/`comparisons: {ports: ignore}`;
+`healthcheck:` create/idempotent-rerun-with-partial-fields (the bug this
+whole entry centers on)/drift-recreate/`comparisons: {healthcheck:
+ignore}`/`test: ["NONE"]` disable; and the corrected `allow_more_present`
+default re-verified for `env:`/`labels:` (including an explicit
+`comparisons: {labels: strict}` override correctly flagging an
+unrequested label as drift). `healthcheck.start_interval:` (real
+Ansible's own newer addition) remains unimplemented - the underlying
+`docr` library's `HealthConfig` type has no field for it, a real scope
+cut one layer below this plugin. Resource limits (memory/cpu) and every
+other remaining field of real Ansible's own ~40-field comparison system
+are still a documented, deliberate scope cut.
 
 ---
 

@@ -6,6 +6,7 @@ require "../src/crystal_play/base_plugin"
 require "../src/crystal_play/plugin_helpers/docker_ref"
 require "../src/crystal_play/plugin_helpers/docker_ports"
 require "../src/crystal_play/plugin_helpers/docker_client"
+require "../src/crystal_play/plugin_helpers/docker_healthcheck"
 
 module CrystalPlay
   # Docker container plugin - creates/starts/stops/removes a container.
@@ -53,33 +54,58 @@ module CrystalPlay
   #   TCP(+TLS) instead of the local UNIX socket - see
   #   PluginHelpers::DockerClient's own doc comment for exact behavior
   #   (including tls_hostname:/DOCKER_TLS*/DOCKER_CERT_PATH support).
+  # - healthcheck: a dict ({test:, interval:, timeout:, retries:,
+  #   start_period:}) - see PluginHelpers::DockerHealthcheck's own doc
+  #   comment for the duration-string-parsing/test-normalization rules,
+  #   ported from real Ansible's own `parse_healthcheck`/
+  #   `normalize_healthcheck`. `test: ["NONE"]` is the real, documented
+  #   way to explicitly disable an inherited healthcheck. `start_interval:`
+  #   (real Ansible's own newer addition) is NOT implemented - the
+  #   underlying `docr` library's own `HealthConfig` type has no field
+  #   for it, a real scope cut one layer below this plugin.
   # - check_mode
   #
   # Idempotency compares image (leniently, see DockerRef.same?), command,
   # entrypoint, env, labels, volumes, restart_policy, network_mode,
-  # privileged, and auto_remove against the existing container - each
-  # only for whichever of those params was actually given, matching real
-  # Ansible's own "only compare what you told me about" behavior for any
-  # option not mentioned at all. ports, healthcheck, resource limits
-  # (memory/cpu), and every other field of real Ansible's own ~40-field
-  # comparison system remain NOT detected and won't trigger a recreate on
-  # their own unless recreate: true is passed - a documented, deliberate
-  # scope cut given the size of that remaining surface (ports in
-  # particular is genuinely gnarly: Docker's own inspect output fills in
-  # HostIp defaults like "0.0.0.0" a request may have left nil), not an
+  # privileged, auto_remove, ports, and healthcheck against the existing
+  # container - each only for whichever of those params was actually
+  # given, matching real Ansible's own "only compare what you told me
+  # about" behavior for any option not mentioned at all. The per-field
+  # default comparison mode is NOT uniformly strict - verified against
+  # real Ansible's own module_utils source (`Option.__init__`): scalar
+  # options (restart_policy, network_mode, privileged, auto_remove) and
+  # the plain ordered entrypoint list default to `strict` (exact
+  # equality), but every set/dict-typed option (env, labels, volumes,
+  # ports, healthcheck) defaults to `allow_more_present` instead - a
+  # subset match where the task's own requested keys/values must be
+  # present and equal, but extra keys/values already on the real
+  # container (an image's inherited env/labels, Docker's own
+  # default-filled healthcheck timeout/retries, ports the task didn't
+  # mention) are NOT treated as drift. See comparison_mode's own doc
+  # comment - this distinction is load-bearing, not cosmetic: an earlier
+  # version of this comparison system defaulted everything to strict and
+  # it caused healthcheck: (and, under Podman specifically, env: too) to
+  # falsely recreate the container on every single rerun with zero actual
+  # drift. ports: compares both published_ports (host<->container
+  # bindings, HostIp defaulted to "0.0.0.0" the same way real
+  # Docker/Ansible do when a request left it nil) and exposed_ports
+  # (folding in the image's own declared ExposedPorts, same image-merge
+  # pattern as env: below) - see ports_match?'s own doc comment. resource
+  # limits (memory/cpu) and every other field of real Ansible's own
+  # ~40-field comparison system remain NOT detected and won't trigger a
+  # recreate on their own unless recreate: true is passed - a documented,
+  # deliberate scope cut given the size of that remaining surface, not an
   # oversight. networks: is a separate exception from all of the above -
-  # it's diffed and applied even when nothing else changed, since silently
-  # ignoring it after the container already exists would make it useless
-  # on every run after the first.
+  # it's diffed and applied even when nothing else changed, since
+  # silently ignoring it after the container already exists would make it
+  # useless on every run after the first.
   #
   # - comparisons: a dict (e.g. `{"networks": "strict"}`,
-  #   `{"env": "ignore"}`) - real Ansible's own default per field is
-  #   `strict` (exact-value equality, matching this plugin's own default
-  #   behavior above); `ignore` opts a field out of comparison entirely,
-  #   for every field this plugin actually tracks/syncs (the list above
-  #   plus networks). `allow_more_present` (real Ansible's third mode -
-  #   dict/list superset matching rather than exact equality) is NOT
-  #   implemented - a further, real scope cut. `comparisons:
+  #   `{"env": "ignore"}`, `{"labels": "strict"}`) - `ignore` opts a field
+  #   out of comparison entirely; `strict`/`allow_more_present` override
+  #   a field's own default mode (see above) in either direction, for
+  #   every field this plugin actually tracks/syncs (the list above,
+  #   including ports/healthcheck, plus networks). `comparisons:
   #   {networks: strict}` disconnects the container from any network NOT
   #   in networks: - verified against real Ansible's own documented
   #   behavior ("To remove a container from one or more networks, use
@@ -92,9 +118,9 @@ module CrystalPlay
   # whatever network_mode:/Docker's own default produced alone and only
   # ever *adds* the requested networks on top); `mac_address:` on a
   # per-network endpoint (only ipv4_address:/ipv6_address:/aliases:/
-  # links: per network); healthcheck:, resource limits (memory/cpu),
-  # device_requests:, container_default_behavior:, `api_version:` (see
-  # PluginHelpers::DockerClient).
+  # links: per network); `healthcheck.start_interval:`, resource limits
+  # (memory/cpu), device_requests:, container_default_behavior:,
+  # `api_version:` (see PluginHelpers::DockerClient).
   class DockerContainerPlugin < BasePlugin
     record RequestedNetwork,
       name : String,
@@ -293,62 +319,181 @@ module CrystalPlay
       extra_fields_match?(api, api.containers.inspect(existing.id), image_ref)
     end
 
-    EXTRA_COMPARISON_FIELDS = %w[entrypoint env labels volumes restart_policy network_mode privileged auto_remove]
+    EXTRA_COMPARISON_FIELDS = %w[entrypoint env labels volumes restart_policy network_mode privileged auto_remove ports healthcheck]
 
     private def extra_fields_given? : Bool
       EXTRA_COMPARISON_FIELDS.any? { |field| @params[field]? }
     end
 
-    # Real Ansible's own `comparisons:` default per field is `strict`
-    # (exact-value equality) unless the field is explicitly set to
-    # `ignore` (or `allow_more_present`, not implemented here - a
-    # further real scope cut, only `strict`/`ignore` are supported).
-    private def field_ignored?(field : String) : Bool
+    # Real Ansible's own per-field comparison default is NOT uniformly
+    # `strict` - verified against the real module_utils source
+    # (`Option.__init__` in `_module_container/base.py`): scalar
+    # ("value") options and plain ordered `list`s (entrypoint) default to
+    # `strict` (exact equality), but every `set`/`dict`-typed option
+    # (env, labels, volumes, ports, healthcheck) defaults to
+    # `allow_more_present` instead - a subset match where the task's own
+    # requested keys/values must be present and equal, but EXTRA
+    # keys/values already on the real container (e.g. Docker's own
+    # default-filled healthcheck timeout/retries, or an image's inherited
+    # env/labels) are NOT treated as drift. Getting this wrong isn't
+    # cosmetic: found live testing `healthcheck:` - a container created
+    # with only `interval:`/`test:` given got `timeout:`/`retries:`
+    # filled in by Docker's own daemon defaults, and comparing those
+    # against a naive "strict-by-default" implementation recreated the
+    # container on every single rerun despite zero actual drift.
+    # `comparisons: {<field>: strict}` explicitly overrides an
+    # allow_more_present-by-default field to exact-equality instead
+    # (real Ansible's own supported override direction); `ignore` always
+    # wins regardless of the field's default.
+    private def comparison_mode(field : String, default : String) : String
       raw = @params["comparisons"]?
-      return false unless raw
+      return default unless raw
       parsed = JSON.parse(raw) rescue nil
-      parsed.try(&.[field]?).try(&.as_s?) == "ignore"
+      parsed.try(&.[field]?).try(&.as_s?) || default
     end
 
     private def extra_fields_match?(api : Docr::API, inspected : Docr::Types::ContainerInspectResponse, image_ref : String?) : Bool
       config = inspected.config
       host_config = inspected.host_config
 
-      if (entrypoint = @params["entrypoint"]?) && !field_ignored?("entrypoint")
-        return false unless config.entrypoint == entrypoint.split(/\s+/).reject(&.empty?)
+      if entrypoint = @params["entrypoint"]?
+        mode = comparison_mode("entrypoint", "strict")
+        unless mode == "ignore"
+          requested = entrypoint.split(/\s+/).reject(&.empty?)
+          actual = config.entrypoint || [] of String
+          return false unless mode == "strict" ? actual == requested : requested.all? { |e| actual.includes?(e) }
+        end
       end
 
-      if (env_json = @params["env"]?) && !field_ignored?("env")
-        return false unless (config.env || [] of String).to_set == expected_env(api, image_ref, env_json)
+      if env_json = @params["env"]?
+        mode = comparison_mode("env", "allow_more_present")
+        unless mode == "ignore"
+          expected = expected_env(api, image_ref, env_json)
+          actual = (config.env || [] of String).to_set
+          return false unless mode == "strict" ? actual == expected : expected.subset_of?(actual)
+        end
       end
 
-      if (labels_json = @params["labels"]?) && !field_ignored?("labels")
-        requested = Hash(String, String).from_json(labels_json)
-        return false unless (config.labels || Hash(String, String).new) == requested
+      if labels_json = @params["labels"]?
+        mode = comparison_mode("labels", "allow_more_present")
+        unless mode == "ignore"
+          requested = Hash(String, String).from_json(labels_json)
+          actual = config.labels || Hash(String, String).new
+          return false unless mode == "strict" ? actual == requested : dict_subset?(requested, actual)
+        end
       end
 
-      if (volumes = @params["volumes"]?) && !field_ignored?("volumes")
-        requested = volumes.split(',').map(&.strip).reject(&.empty?).to_set
-        return false unless (host_config.binds || [] of String).to_set == requested
+      if volumes = @params["volumes"]?
+        mode = comparison_mode("volumes", "allow_more_present")
+        unless mode == "ignore"
+          requested = volumes.split(',').map(&.strip).reject(&.empty?).to_set
+          actual = (host_config.binds || [] of String).to_set
+          return false unless mode == "strict" ? actual == requested : requested.subset_of?(actual)
+        end
       end
 
-      if (restart_policy_name = @params["restart_policy"]?) && !field_ignored?("restart_policy")
+      if (restart_policy_name = @params["restart_policy"]?) && comparison_mode("restart_policy", "strict") != "ignore"
         return false unless host_config.restart_policy.try(&.name) == restart_policy_name
       end
 
-      if (network_mode = @params["network_mode"]?) && !field_ignored?("network_mode")
+      if (network_mode = @params["network_mode"]?) && comparison_mode("network_mode", "strict") != "ignore"
         return false unless host_config.network_mode == network_mode
       end
 
-      if @params["privileged"]? && !field_ignored?("privileged")
+      if @params["privileged"]? && comparison_mode("privileged", "strict") != "ignore"
         return false unless !!host_config.privileged == is_true?(@params["privileged"]?)
       end
 
-      if @params["auto_remove"]? && !field_ignored?("auto_remove")
+      if @params["auto_remove"]? && comparison_mode("auto_remove", "strict") != "ignore"
         return false unless !!host_config.auto_remove == is_true?(@params["auto_remove"]?)
       end
 
+      if @params["ports"]?
+        mode = comparison_mode("ports", "allow_more_present")
+        return false unless mode == "ignore" || ports_match?(api, config, host_config, image_ref, strict: mode == "strict")
+      end
+
+      if healthcheck_json = @params["healthcheck"]?
+        mode = comparison_mode("healthcheck", "allow_more_present")
+        return false unless mode == "ignore" || healthcheck_matches?(config.healthcheck, healthcheck_json, strict: mode == "strict")
+      end
+
       true
+    end
+
+    private def dict_subset?(expected : Hash(String, String), actual : Hash(String, String)) : Bool
+      expected.all? { |k, v| actual[k]? == v }
+    end
+
+    # `healthcheck:` given but with no `test:` (parse returns nil) means
+    # real Ansible's own "no override at all" - this plugin never set a
+    # `Healthcheck` at container-create time either (see
+    # `built_healthcheck`), so there's nothing to compare and it always
+    # matches, same as `healthcheck:` not being given at all. Default
+    # (`allow_more_present`) only compares the sub-fields the task itself
+    # set, so Docker's own default-filled `timeout:`/`retries:` (when the
+    # task didn't specify them) don't count as drift; `strict` compares
+    # every sub-field including ones the task left unset (matching real
+    # Ansible's own literal dict-equality behavior under an explicit
+    # `strict` override).
+    private def healthcheck_matches?(actual : Docr::Types::HealthConfig?, healthcheck_json : String, strict : Bool) : Bool
+      expected = PluginHelpers::DockerHealthcheck.parse(healthcheck_json)
+      return true unless expected
+      return false unless actual
+
+      return actual.test == expected.test &&
+        actual.interval == expected.interval &&
+        actual.timeout == expected.timeout &&
+        actual.retries == expected.retries &&
+        actual.start_period == expected.start_period if strict
+
+      (expected.test.nil? || actual.test == expected.test) &&
+        (expected.interval.nil? || actual.interval == expected.interval) &&
+        (expected.timeout.nil? || actual.timeout == expected.timeout) &&
+        (expected.retries.nil? || actual.retries == expected.retries) &&
+        (expected.start_period.nil? || actual.start_period == expected.start_period)
+    end
+
+    # Matches real Ansible's own `_get_expected_values_ports`: each
+    # `published_ports:` entry normalizes to a `{HostIp, HostPort}` pair
+    # with `HostIp` defaulted to `"0.0.0.0"` when the task left it
+    # unspecified (verified live: a real Docker/Podman daemon always
+    # reports `HostIp: "0.0.0.0"` back on inspect for a port bound
+    # without one, never a nil/missing field) - comparing against a raw
+    # nil would falsely mismatch on every single run. `exposed_ports` is
+    # compared separately from `published_ports` (matching real Ansible's
+    # own two-part model) and additionally folds in the image's own
+    # declared `ExposedPorts` (Dockerfile `EXPOSE`), the same
+    # image-merge pattern `expected_env` uses for `Env`, so an image that
+    # exposes a port beyond whatever `ports:` the task lists doesn't
+    # cause a false mismatch. Default (`allow_more_present`): every
+    # requested container_port/proto key must exist in the actual
+    # published_ports dict with an identical binding list, but the
+    # container may have EXTRA published/exposed ports the task never
+    # mentioned - `strict` requires the whole dict/set to match exactly.
+    private def ports_match?(api : Docr::API, config : Docr::Types::ContainerConfig, host_config : Docr::Types::HostConfig, image_ref : String?, strict : Bool) : Bool
+      exposed_ports, port_bindings = build_ports
+
+      expected_published = port_bindings.transform_values do |bindings|
+        bindings.map { |b| "#{b.host_ip || "0.0.0.0"}:#{b.host_port}" }.to_set
+      end
+      actual_published = (host_config.port_bindings || Hash(String, Array(Docr::Types::PortBinding)).new).transform_values do |bindings|
+        bindings.map { |b| "#{b.host_ip || "0.0.0.0"}:#{b.host_port}" }.to_set
+      end
+      published_ok = strict ? actual_published == expected_published : dict_set_subset?(expected_published, actual_published)
+      return false unless published_ok
+
+      expected_exposed = exposed_ports.keys.to_set
+      if image_ref
+        expected_exposed += (api.images.inspect(image_ref).config.exposed_ports || Hash(String, Hash(String, String)).new).keys.to_set
+      end
+      actual_exposed = (config.exposed_ports || Hash(String, Hash(String, String)).new).keys.to_set
+
+      strict ? actual_exposed == expected_exposed : expected_exposed.subset_of?(actual_exposed)
+    end
+
+    private def dict_set_subset?(expected : Hash(String, Set(String)), actual : Hash(String, Set(String))) : Bool
+      expected.all? { |k, v| actual[k]? == v }
     end
 
     # Matches real Ansible's own `_get_expected_env_value`: the image's
@@ -496,6 +641,8 @@ module CrystalPlay
 
       volumes = @params["volumes"]?.try(&.split(',').map(&.strip).reject(&.empty?))
 
+      healthcheck = @params["healthcheck"]?.try { |json| built_healthcheck(json) }
+
       host_config = Docr::Types::HostConfig.new(
         binds: volumes,
         port_bindings: port_bindings.empty? ? nil : port_bindings,
@@ -513,6 +660,26 @@ module CrystalPlay
         labels: labels,
         exposed_ports: exposed_ports.empty? ? nil : exposed_ports,
         host_config: host_config,
+        healthcheck: healthcheck,
+      )
+    end
+
+    # See `PluginHelpers::DockerHealthcheck`'s own doc comment for the
+    # duration-parsing/test-normalization rules this mirrors from real
+    # Ansible's own `parse_healthcheck`/`normalize_healthcheck`.
+    # `start_interval:` (real Ansible's own newer addition) is NOT
+    # implemented - the underlying `docr` library's `HealthConfig` type
+    # has no field for it, a real scope cut one layer below this plugin.
+    private def built_healthcheck(json : String) : Docr::Types::HealthConfig?
+      parsed = PluginHelpers::DockerHealthcheck.parse(json)
+      return nil unless parsed
+
+      Docr::Types::HealthConfig.new(
+        test: parsed.test,
+        interval: parsed.interval,
+        timeout: parsed.timeout,
+        retries: parsed.retries,
+        start_period: parsed.start_period,
       )
     end
 
