@@ -246,6 +246,32 @@ module CrystalPlay
         return negate ? !matched : matched
       end
 
+      # Generic fallback for any other real Jinja2 `is [not] <test>`
+      # built-in this module hasn't special-cased above (`divisibleby`,
+      # `even`, `odd`, `equalto`, `sameas`, `escaped`, `callable`, etc) -
+      # every specific `is` pattern already handled above (version,
+      # defined/undefined, mapping/sequence/etc, match/search) returns
+      # early, so reaching here with an " is "/" is not " substring means
+      # a genuinely UNHANDLED test name, not a real bare-variable
+      # truthiness check. Previously this fell straight into
+      # #evaluate_truthiness below, which has no notion of `is` tests at
+      # all - the whole condition string ("n is not divisibleby 2") was
+      # looked up as if it were a literal (nonexistent) variable NAME,
+      # always undefined -> nil -> false, regardless of the real
+      # divisibility - not "usually wrong", ALWAYS wrong (both an even
+      # and an odd operand evaluated identically to false). Found via
+      # robertdebock.nomad's own `nomad_server_bootstrap_expect is not
+      # divisibleby 2` assert (verifying an odd bootstrap_expect count).
+      # Delegates the whole condition to Crinja (`CrinjaRenderer`, the
+      # separate evaluator that already implements every real Jinja2
+      # test correctly by construction, verified directly here to
+      # produce the right True/False) rather than reimplementing every
+      # possible built-in test's own semantics by hand.
+      if condition.match(/\bis\s+(not\s+)?\w/)
+        rendered = VariableSubstitutor::CrinjaRenderer.new(vars).render("{{ (#{condition}) }}")
+        return rendered.strip == "True"
+      end
+
       # Handle bare variable (truthiness check)
       return evaluate_truthiness(condition, vars)
     end

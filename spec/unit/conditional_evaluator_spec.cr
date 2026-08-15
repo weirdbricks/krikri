@@ -503,6 +503,28 @@ describe CrystalPlay::ConditionalEvaluator do
       CrystalPlay::ConditionalEvaluator.evaluate(%(path is not search("nomatch")), v).should be_true
     end
 
+    it "falls back to Crinja for any real Jinja2 'is [not] <test>' this module hasn't hand-implemented (divisibleby, etc)" do
+      # Real bug found benchmarking robertdebock.nomad's own assert:
+      # `nomad_server_bootstrap_expect is not divisibleby 2` (verifying
+      # an odd bootstrap_expect count). `divisibleby` (like most of
+      # Jinja2's other built-in tests - even, odd, equalto, sameas,
+      # escaped, callable...) had no special case anywhere in this
+      # module, so the whole condition string fell straight through to
+      # #evaluate_truthiness, which has no notion of `is` tests at all -
+      # looked up as if "n is not divisibleby 2" were itself a literal
+      # variable NAME, always undefined -> nil -> false, regardless of
+      # the real divisibility (both an even and an odd operand evaluated
+      # identically to false, not just "usually wrong").
+      v = Hash(String, JSON::Any).new
+      v["odd_n"] = JSON::Any.new(1_i64)
+      v["even_n"] = JSON::Any.new(2_i64)
+
+      CrystalPlay::ConditionalEvaluator.evaluate("odd_n is not divisibleby 2", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("even_n is not divisibleby 2", v).should be_false
+      CrystalPlay::ConditionalEvaluator.evaluate("even_n is divisibleby 2", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("odd_n is divisibleby 2", v).should be_false
+    end
+
     it "resolves 'is (not) defined' against a dotted variable path" do
       # Real bug found benchmarking cloudalchemy.grafana's own "Fail
       # when grafana admin user isn't set" task: `grafana_security.

@@ -8,7 +8,98 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.362`.**
+**Currently at `0.9.365`.**
+
+---
+
+`0.9.363`-`0.9.365` (round 33 - `robertdebock.nomad` + its prerequisite
+`robertdebock.hashicorp`, first new role tested since round 32's
+nextcloud): 3 real bugs found and fixed on a fresh `G3.2GB` Atlantic.net
+pair, plus several external/environment findings verified identical on
+both engines (not crystal-ansible issues).
+
+- **`0.9.363`: `conditional_evaluator.cr` had no fallback for any
+  unimplemented Jinja2 `is [not] <test>` - always evaluated `false`
+  regardless of the real test outcome, not just "usually wrong".** Every
+  specific `is` pattern this module hand-implements (`version`,
+  `defined`/`undefined`, `mapping`/`sequence`/etc, `match`/`search`)
+  returns early; anything else (`divisibleby`, `even`, `odd`, `equalto`,
+  `sameas`, `escaped`, `callable`, ...) fell all the way through to
+  `#evaluate_truthiness`, which has no notion of `is` tests at all - the
+  WHOLE condition string ("n is not divisibleby 2") was looked up as if
+  it were a literal (nonexistent) variable NAME, always undefined -> nil
+  -> false. The role's own `assert: nomad_server_bootstrap_expect is not
+  divisibleby 2` (verifying an odd bootstrap_expect count, default `1`)
+  always failed despite `1` genuinely being odd - and would have
+  identically "passed" for an even value too, since both outcomes
+  collapse to the same always-false bug. Fixed with a generic fallback:
+  any unmatched `is`/`is not` condition now delegates the whole
+  expression to Crinja (`{{ (condition) }}`), which already implements
+  every real Jinja2 test correctly by construction, instead of
+  reimplementing each built-in test's semantics by hand. Regression spec
+  in `spec/unit/conditional_evaluator_spec.cr`.
+- **`0.9.364`-`0.9.365`: `apt_repository:`'s post-add `apt-get update`
+  failure was silently swallowed, never propagated as a task failure -
+  and once fixed to propagate it, needed a second fix to also roll back
+  the just-written repo line on that failure, matching real Ansible's
+  own behavior.** `plugins/apt_repository.cr`'s `run_update_cache` ran
+  `apt-get update` and discarded the result entirely; `#add`/`#remove`
+  unconditionally returned `changed: true, failed: false` regardless.
+  This mattered far more than it looks: `robertdebock.hashicorp`'s own
+  "Install repository for Debian (modern method)" task sits inside a
+  `block:`/`rescue:` specifically so a GPG-key failure falls back to the
+  legacy `apt_key` method - with the update failure swallowed, the block
+  never saw a failure and the `rescue:` never ran, so the broken
+  (ascii-armored-not-dearmored - a real bug in the ROLE itself, not just
+  environmental) keyring silently stuck around and a LATER, unrelated
+  task (`apt-get install nomad`) failed instead ("Unable to locate
+  package nomad") - the wrong task boundary for the same underlying
+  failure. Fixed in `0.9.364` by checking `apt-get update`'s exit code
+  and failing the task when it's non-zero. That surfaced a SECOND-order
+  bug: the legacy method's `rescue:` retry now correctly ran, but wrote
+  its own (no `signed-by=`) repo line into the SAME target file
+  alongside the modern method's own (never-cleaned-up) broken line -
+  `find_source` only ever checks for an EXACT line match, so two
+  differently-formatted lines for the identical repo URL coexisted, and
+  apt itself then refused outright ("Conflicting values set for option
+  Signed-By"). Fixed in `0.9.365` by rolling back the just-appended line
+  (deleting the file entirely if that empties it) whenever the post-add
+  cache update fails, matching real ansible-playbook's own verified
+  behavior (checked directly: real Ansible's resulting `.list` file had
+  only the legacy method's line, no trace of the modern method's failed
+  attempt at all). No spec added for either fix - real `apt-get`
+  mutation against the dev machine's own package state, same
+  verify-live-only category CLAUDE.md already documents.
+- **Live-verified**: crystal cold pass `ok=26 changed=7 failed=1
+  skipped=13 rescued=1` vs python `ok=24 changed=0 failed=1 skipped=13
+  rescued=1` (changed-count diff is cached-vs-fresh package/repo state
+  between runs, not a real divergence - task-by-task sequence and status
+  match 1:1 modulo the standing `Gathering Facts`/unnamed-`block:`-task-
+  banner cosmetic gaps already known from prior rounds). Confirmed the
+  hashicorp `.list` file has exactly one line post-fix (no
+  Signed-By conflict), `nomad` package installed, service `active`, and
+  `curl :4646/v1/status/leader` answers correctly on crystal - matching
+  python exactly.
+- **External/environment findings this round (verified identical on
+  both engines, NOT crystal-ansible bugs)**: (1) `ansible_default_ipv4.
+  address` resolves to a stale/wrong IP on this specific Atlantic.net
+  host (a real address from a DIFFERENT interface/allocation, not the
+  host's own `eth0` IP) - worked around in the test playbook via
+  `nomad_server_bind_addr: "{{ ansible_host }}"` instead. (2) Nomad
+  v2.0.5 (current release as of this round) fails to start at all with
+  the role's own default `bind_addr: "0.0.0.0"` ("Failed to resolve Serf
+  advertise address: lookup <nil>: no such host") - needs an explicit
+  bind address, a real Nomad-version/role-vintage incompatibility. (3)
+  Once bind_addr is a specific IP (not `0.0.0.0`), Nomad's HTTP listener
+  no longer binds `127.0.0.1` at all, so the role's own `nomad server
+  members`/`nomad server join` CLI invocations (which hardcode an
+  implicit `http://127.0.0.1:4646` client default) can never succeed -
+  reproduced as the SAME failure on both engines (`List server members`
+  in the recap above), a real, unfixable-from-our-side role/CLI-default
+  limitation for any single-node deploy that isn't `0.0.0.0`-bound. (4)
+  The role's own "List server members" task has no `wait_for`/retry
+  after "Start nomad", racing against Nomad's own HTTP API startup time
+  - reproduced on both engines equally.
 
 ---
 

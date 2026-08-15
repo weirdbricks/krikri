@@ -166,7 +166,34 @@ module CrystalPlay
       Dir.mkdir_p(File.dirname(target))
       File.open(target, "a", &.puts(normalized))
       apply_owner_group_mode(target, nil, nil, @params["mode"]?)
-      run_update_cache if update_cache
+
+      if update_cache
+        cache_result = run_update_cache
+        if cache_result[:exit_code] != 0
+          # Real ansible-playbook's own apt_repository module rolls back
+          # the line it just wrote when the post-add cache update fails,
+          # rather than leaving a broken repo definition behind - found
+          # via robertdebock.hashicorp's own block:/rescue: pattern
+          # (modern signed-by method, falling back to the legacy apt_key
+          # method on failure): without the rollback, the modern
+          # method's own (unsigned-key, update-failed) line stayed in
+          # the SAME target file the legacy method's retry also writes
+          # to, so the legacy attempt's differently-formatted line
+          # landed ALONGSIDE it instead of alone - two conflicting
+          # `signed-by=` definitions for the same repo URL in one file,
+          # which apt itself then refuses outright ("Conflicting values
+          # set for option Signed-By"), turning one recoverable failure
+          # into two.
+          rollback_line(target, normalized)
+          return PluginResult.new(
+            changed: true,
+            failed: true,
+            msg: "Failed to update apt cache: #{cache_result[:stderr]}",
+            repo: normalized,
+            state: "present"
+          )
+        end
+      end
 
       PluginResult.new(changed: true, failed: false, msg: "", repo: normalized, state: "present")
     end
@@ -184,9 +211,38 @@ module CrystalPlay
       remaining_lines = File.read_lines(file).reject { |line| line == normalized }
       File.write(file, remaining_lines.empty? ? "" : remaining_lines.join('\n') + "\n")
       File.delete?(file) if remaining_lines.none? { |line| !line.empty? } && file != SOURCES_LIST
-      run_update_cache if update_cache
+
+      if update_cache
+        cache_result = run_update_cache
+        if cache_result[:exit_code] != 0
+          return PluginResult.new(
+            changed: true,
+            failed: true,
+            msg: "Failed to update apt cache: #{cache_result[:stderr]}",
+            repo: normalized,
+            state: "absent"
+          )
+        end
+      end
 
       PluginResult.new(changed: true, failed: false, msg: "", repo: normalized, state: "absent")
+    end
+
+    # Undoes the just-appended line from #add's own File.open(target,
+    # "a", ...) write, deleting the whole file if that leaves it empty
+    # (mirrors #remove's own identical cleanup) - so a failed add: (the
+    # post-write cache update failing) leaves the filesystem exactly as
+    # it was found, matching real Ansible's own rollback-on-failure
+    # behavior for this case.
+    private def rollback_line(target : String, normalized : String)
+      return unless File.exists?(target)
+
+      remaining_lines = File.read_lines(target).reject { |line| line == normalized }
+      if remaining_lines.none? { |line| !line.empty? }
+        File.delete?(target)
+      else
+        File.write(target, remaining_lines.join('\n') + "\n")
+      end
     end
 
     private def target_file(normalized : String, filename_source : String) : String
@@ -197,6 +253,21 @@ module CrystalPlay
       File.join(SOURCES_LIST_D, "#{PluginHelpers::AptRepositoryLine.suggested_filename(filename_source)}.list")
     end
 
+    # Real ansible-playbook's own apt_repository module FAILS the task
+    # when the post-add `apt-get update` itself fails (e.g. a
+    # newly-added repo's GPG key can't be verified) - this used to run
+    # the update and silently discard the result, always returning
+    # `changed: true, failed: false` regardless. That mattered a lot
+    # more than it looks: robertdebock.hashicorp's own "Install
+    # repository for Debian (modern method)" task sits inside a
+    # `block:`/`rescue:` specifically so a broken key falls back to the
+    # legacy `apt_key` method - with the update failure swallowed here,
+    # the block never saw a failure at all and the `rescue:` never ran,
+    # so the broken (armored-not-dearmored) GPG key silently stuck
+    # around and the LATER `apt-get install nomad` task failed instead
+    # ("Unable to locate package nomad") - a real divergence from real
+    # Ansible, which recovers via the rescue: at the point it's supposed
+    # to. Found benchmarking robertdebock.nomad.
     private def run_update_cache
       remote_exec("apt-get update")
     end

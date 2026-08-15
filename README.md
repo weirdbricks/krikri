@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.362-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.365-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,23 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.363`-`0.9.365` (round 33) - `robertdebock.nomad` +
+  `robertdebock.hashicorp`, first new role tested since round 32's
+  nextcloud.** Three real bugs found and fixed live: `conditional_
+  evaluator.cr` had no fallback for ANY unimplemented Jinja2 `is [not]
+  <test>` (divisibleby, even, odd, equalto, sameas...) - always
+  evaluated false regardless of the real outcome, fixed with a generic
+  Crinja-delegation fallback; `apt_repository:`'s post-add `apt-get
+  update` failure was silently swallowed instead of failing the task
+  (breaking a role's own `block:`/`rescue:` GPG-key recovery), then a
+  second fix to roll back the just-written repo line on that failure
+  too, matching real Ansible and avoiding a conflicting-duplicate-line
+  apt error from the rescue's own retry. The role/Nomad-v2.0.5 combo
+  itself can't fully succeed on this specific cloud host regardless of
+  engine (a chain of real external issues: a stale `ansible_default_
+  ipv4` fact, Nomad v2.0.5 needing an explicit bind address, and the
+  role's own CLI defaulting to `127.0.0.1` once bind_addr isn't
+  `0.0.0.0`) - verified identical on both engines, not an engine issue.
 - **`0.9.360`-`0.9.362` (round 32) - `robertdebock.nextcloud`, first
   new role tested since round 31's ssh_hardening.** Three real bugs
   found and fixed live: `command:`'s `chdir:` crashed an otherwise-
