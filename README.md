@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.366-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.367-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,14 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.367` - follow-up to the audit pass below**, on direct request:
+  `mount.cr`'s own `ensure_mounted`/`ensure_unmounted`/`ensure_ephemeral`
+  helpers had the identical "real command failure silently discarded"
+  gap - previously flagged rather than fixed since it looked like a
+  deliberate scope cut. All four now propagate a genuine `mount`/`umount`
+  failure as a real task failure, matching real `ansible.posix.mount`'s
+  verified behavior. Regression specs added using a real (sandbox-
+  guaranteed-to-fail, no privilege escalation) mount/umount attempt.
 - **`0.9.366` - proactive audit pass** (not a live round), prompted
   directly by round 33's `apt_repository.cr` finding: searched the rest
   of the plugin set for the same "a real command's failure silently

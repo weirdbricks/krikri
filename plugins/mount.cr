@@ -56,10 +56,13 @@ module CrystalPlay
   # command fails (e.g. the mount point isn't actually in `fstab` yet,
   # which `remounted` expects), real Ansible falls back to a full
   # `umount` + `mount` cycle using the fstab entry; this plugin instead
-  # just reports `changed: true` regardless, matching the existing
-  # `ensure_mounted`/`ensure_unmounted` helpers' own exit-code-blind
-  # convention rather than adding exit-code checking to only one state -
-  # a documented simplification, not an oversight.
+  # just reports `changed: true` regardless - a documented simplification
+  # for this one specific fallback path, not the general exit-code-blind
+  # convention `ensure_mounted`/`ensure_unmounted` used to have (fixed in
+  # the same proactive audit pass that found the identical gap in
+  # sysctl.cr/unarchive.cr/apt_repository.cr - every other `mount`/
+  # `umount` invocation in this file now propagates a real failure
+  # instead of silently reporting `changed: true` regardless).
   #
   # state: ephemeral (`path`/`src`/`fstype` required, same as
   # `present`/`mounted` - verified against real Ansible's own
@@ -122,10 +125,16 @@ module CrystalPlay
       case state
       when "present", "mounted"
         fstab_changed, backup_file = set_fstab_entry(path, fstab, check_mode)
-        mount_changed = state == "mounted" ? ensure_mounted(path, check_mode) : false
+        if state == "mounted"
+          mount_changed, error = ensure_mounted(path, check_mode)
+          return PluginResult.new(changed: fstab_changed, failed: true, msg: error.not_nil!, name: path, fstab: fstab, backup_file: backup_file) if error
+        else
+          mount_changed = false
+        end
         PluginResult.new(changed: fstab_changed || mount_changed, failed: false, msg: "", name: path, fstab: fstab, backup_file: backup_file)
       when "unmounted"
-        changed = ensure_unmounted(path, check_mode)
+        changed, error = ensure_unmounted(path, check_mode)
+        return PluginResult.new(changed: false, failed: true, msg: error, name: path) if error
         PluginResult.new(changed: changed, failed: false, msg: "", name: path)
       when "remounted"
         ensure_remounted(path, check_mode)
@@ -133,7 +142,12 @@ module CrystalPlay
         ensure_ephemeral(path, check_mode)
       else
         fstab_changed, backup_file = remove_fstab_entry(path, fstab, check_mode)
-        unmount_changed = state == "absent" ? ensure_unmounted(path, check_mode) : false
+        if state == "absent"
+          unmount_changed, error = ensure_unmounted(path, check_mode)
+          return PluginResult.new(changed: fstab_changed, failed: true, msg: error.not_nil!, name: path, fstab: fstab, backup_file: backup_file) if error
+        else
+          unmount_changed = false
+        end
         PluginResult.new(changed: fstab_changed || unmount_changed, failed: false, msg: "", name: path, fstab: fstab, backup_file: backup_file)
       end
     end
@@ -270,9 +284,20 @@ module CrystalPlay
       remote_exec("mountpoint -q #{path}")[:exit_code] == 0
     end
 
-    private def ensure_mounted(path : String, check_mode : Bool) : Bool
-      return false if currently_mounted?(path)
-      return true if check_mode
+    # Returns {changed, error_message_or_nil}. Proactive audit fix (the
+    # same "real command failure silently discarded" shape found and
+    # fixed elsewhere this same pass, in sysctl.cr/unarchive.cr/
+    # apt_repository.cr) - the actual `mount`/`umount` command's exit
+    # code used to be discarded entirely, so a genuinely failed mount
+    # (wrong fstype, busy device, nonexistent src, ...) still reported
+    # `changed: true, failed: false` as if it had succeeded. Real
+    # ansible.posix.mount fails the task with the mount/umount command's
+    # own stderr when it fails - verified against its actual source
+    # (`module.fail_json(msg="Error mounting %s: %s" % (name, out +
+    # err))`), not assumed.
+    private def ensure_mounted(path : String, check_mode : Bool) : {Bool, String?}
+      return {false, nil} if currently_mounted?(path)
+      return {true, nil} if check_mode
 
       if is_local_connection?
         Dir.mkdir_p(path)
@@ -282,16 +307,20 @@ module CrystalPlay
       src = @params["src"]? || ""
       fstype = @params["fstype"]? || ""
       opts = desired_opts
-      remote_exec("mount -t #{fstype} -o #{opts} #{src} #{path}")
-      true
+      result = remote_exec("mount -t #{fstype} -o #{opts} #{src} #{path}")
+      return {false, "Error mounting #{path}: #{result[:stdout]}#{result[:stderr]}"} if result[:exit_code] != 0
+
+      {true, nil}
     end
 
-    private def ensure_unmounted(path : String, check_mode : Bool) : Bool
-      return false unless currently_mounted?(path)
-      return true if check_mode
+    private def ensure_unmounted(path : String, check_mode : Bool) : {Bool, String?}
+      return {false, nil} unless currently_mounted?(path)
+      return {true, nil} if check_mode
 
-      remote_exec("umount #{path}")
-      true
+      result = remote_exec("umount #{path}")
+      return {false, "Error unmounting #{path}: #{result[:stdout]}#{result[:stderr]}"} if result[:exit_code] != 0
+
+      {true, nil}
     end
 
     # `mount -o remount[,opts] [-T fstab] path` - always changed: true on
@@ -348,7 +377,11 @@ module CrystalPlay
         remote_exec("mkdir -p #{path}")
       end
 
-      remote_exec("mount -t #{fstype} -o #{desired_opts} #{src} #{path}")
+      result = remote_exec("mount -t #{fstype} -o #{desired_opts} #{src} #{path}")
+      if result[:exit_code] != 0
+        return PluginResult.new(changed: false, failed: true, msg: "Error mounting #{path}: #{result[:stdout]}#{result[:stderr]}", name: path)
+      end
+
       PluginResult.new(changed: true, failed: false, msg: "", name: path)
     end
 
@@ -371,7 +404,11 @@ module CrystalPlay
 
       return PluginResult.new(changed: true, failed: false, msg: "", name: path) if check_mode
 
-      remote_exec(ephemeral_remount_command(path, src, fstype))
+      result = remote_exec(ephemeral_remount_command(path, src, fstype))
+      if result[:exit_code] != 0
+        return PluginResult.new(changed: false, failed: true, msg: "Error mounting #{path}: #{result[:stdout]}#{result[:stderr]}", name: path)
+      end
+
       PluginResult.new(changed: true, failed: false, msg: "", name: path)
     end
 

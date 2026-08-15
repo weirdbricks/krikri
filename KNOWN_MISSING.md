@@ -8,7 +8,29 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.366`.**
+**Currently at `0.9.367`.**
+
+---
+
+`0.9.367` - follow-up to the `0.9.366` audit pass: `mount.cr`'s own
+`ensure_mounted`/`ensure_unmounted`/`ensure_ephemeral`/`ensure_ephemeral_
+remount` had the exact same "real command failure silently discarded"
+gap `0.9.366` explicitly declined to touch (previously flagged as an
+already-documented, deliberate scope cut rather than an oversight -
+fixed now on request rather than left alone indefinitely). All four now
+propagate a genuine `mount`/`umount` failure as a real task failure with
+the command's own stdout/stderr, matching real `ansible.posix.mount`'s
+verified behavior (`module.fail_json(msg="Error mounting/unmounting %s:
+%s" % ...)`). `state: remounted`'s own ALREADY-correct exit-code check
+(for the `opts:`-given case) is untouched; its one remaining documented
+gap - the `opts:`-absent fallback to a full `umount`+`mount` cycle via
+the fstab entry - is still not implemented, and is now the only
+remaining exit-code-blind path in this plugin, explicitly by design (not
+by omission). Regression specs added to `spec/integration/mount_spec.cr`
+for both `state: mounted` and `state: unmounted` failure propagation,
+using a real (guaranteed-to-fail-in-this-sandbox, no `CAP_SYS_ADMIN`)
+`mount`/`umount` attempt - no actual filesystem is mounted or unmounted
+by the spec either way.
 
 ---
 
@@ -54,12 +76,12 @@ of the right OS family isn't available).
   fail with a clear message; regression spec added to
   `spec/integration/unarchive_spec.cr` using a nonexistent owner name
   (no real chown of anything the spec doesn't own).
-- **Explicitly NOT changed**: `mount.cr`'s own `ensure_mounted`/
-  `ensure_unmounted`/`state: remounted` helpers are ALSO exit-code-blind
-  by the same shape, but this is already a deliberate, explicitly
-  documented scope cut from a prior round (see the class-level doc
-  comment in `mount.cr` itself) - not something this audit re-litigated.
-  Also checked and found clean (already correctly re-templates/
+- **Left as-is at the time** (fixed in the very next pass, `0.9.367`
+  below, on request): `mount.cr`'s own `ensure_mounted`/
+  `ensure_unmounted`/`ensure_ephemeral` helpers were ALSO exit-code-blind
+  by the same shape, but were flagged rather than fixed here since the
+  class-level doc comment described it as a deliberate scope cut. Also
+  checked and found clean (already correctly re-templates/
   propagates failures, no action needed): every other
   `VariableLookup.new(vars).resolve(...)` call site across the codebase
   (recursive re-templating - the audit pass from 2026-08-11 already

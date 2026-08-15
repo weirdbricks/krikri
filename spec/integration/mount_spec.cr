@@ -121,6 +121,44 @@ describe "mount plugin" do
     result["changed"].as_bool.should be_true
   end
 
+  it "fails the task when the real mount command fails, instead of silently reporting changed: true (state: mounted)" do
+    # Proactive audit fix (same "real command failure silently
+    # discarded" shape found and fixed this pass in sysctl.cr/
+    # unarchive.cr/apt_repository.cr): ensure_mounted used to discard
+    # the mount command's own exit code entirely - a genuinely failed
+    # mount (this spec sandbox has no CAP_SYS_ADMIN, so any real mount
+    # attempt fails the same way an invalid fstype/src would on a
+    # privileged host) still reported changed: true, failed: false as
+    # if it had succeeded. Real ansible.posix.mount fails the task with
+    # the mount command's own stderr - verified against its actual
+    # source, not assumed.
+    fstab = fresh_fstab("mount-fail.fstab")
+    mount_point = File.join(TMP_DIR, "mount-fail-target")
+    Dir.mkdir_p(mount_point)
+
+    result = PluginSpecHelper.run("mount", {
+      "path" => mount_point, "src" => "/dev/crystal_ansible_spec_fake_device",
+      "fstype" => "ext4", "state" => "mounted", "fstab" => fstab,
+    })
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should contain("mounting")
+  end
+
+  it "fails the task when the real umount command fails, instead of silently reporting changed: true (state: unmounted)" do
+    # Same fix, the ensure_unmounted side: only reachable when
+    # currently_mounted? is true, so this exercises it against a path
+    # that's ACTUALLY mounted (the spec's own tmp dir's parent
+    # filesystem root, "/" - already mounted by definition on any host)
+    # with an unmount that will fail (no privilege in this sandbox).
+    result = PluginSpecHelper.run("mount", {
+      "path" => "/", "state" => "unmounted",
+    })
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should contain("unmounting")
+  end
+
   it "does not actually write the fstab file in check mode (regression: check_mode only guarded the mount/umount step, not the fstab write)" do
     fstab = fresh_fstab("write-check.fstab", "UUID=abc / ext4 errors=remount-ro 0 1\n")
 
