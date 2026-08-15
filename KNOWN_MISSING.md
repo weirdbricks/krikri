@@ -8,7 +8,72 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.374`.**
+**Currently at `0.9.376`.**
+
+---
+
+`0.9.376` - `docker_container:`'s `comparisons:` system, broadened from
+only `networks` (the one field explicitly re-classified out of scope in
+the `0.9.373` entry below) to also cover `entrypoint`/`env`/`labels`/
+`volumes`/`restart_policy`/`network_mode`/`privileged`/`auto_remove` -
+i.e. every field this plugin actually manages at container-create time
+except `ports` (still a real, documented scope cut - see below). Real
+Ansible's own default comparison mode per field is `strict` (exact-value
+equality); `comparisons: {<field>: ignore}` opts a field out entirely,
+matching the real module's own `ignore` mode (`allow_more_present`,
+real Ansible's third mode, is NOT implemented - a further scope cut).
+Previously, drift on any of these 8 fields after a container's first
+creation went completely undetected forever unless `recreate: true` was
+passed on every single run - a real, unbounded idempotency gap, not
+cosmetic. `env:`'s comparison additionally ports over real Ansible's own
+`_get_expected_env_value` algorithm: the target image's own baked-in
+`Env` (from its Dockerfile `ENV` directives) is folded into the
+"expected" set before comparing against the container's actual `Env`,
+so a base image setting env vars beyond whatever `env:` the task lists
+doesn't cause a false mismatch on every run - found live (the naive
+compare-only-what-was-given-verbatim approach recreated on every single
+rerun once `env:` was set at all, even with no actual drift, since
+Alpine's own image `Env` already includes `PATH=...` never mentioned in
+the task). Live-verified against a real Docker-API-compatible daemon
+(Podman 5.4.2) on the dev machine: create, idempotent rerun across all 8
+fields together, single-field drift correctly triggering a recreate
+(`restart_policy`, `labels`), and `comparisons: {labels: ignore}`
+correctly suppressing a real label drift that would otherwise recreate.
+One live-testing caveat found along the way, not a crystal-ansible bug:
+Podman (unlike real Docker) injects its own extra `Env` entries
+(`container=podman`, `HOME`, a random per-container `HOSTNAME`) that
+aren't part of the image's declared `Env` and change every recreate -
+this makes `env:`'s own idempotency look broken under a Podman-backed
+live test specifically, confirmed as a Podman runtime quirk (not
+reproducible against real dockerd, and not something either engine could
+account for) by watching `HOSTNAME` change value on every single
+recreate regardless of engine. `ports:`/`healthcheck:`/resource limits
+(memory/cpu)/every other field of real Ansible's own ~40-field
+comparison system remain a real, deliberate scope cut - `ports:` in
+particular is genuinely gnarly to compare correctly (Docker's own
+inspect output fills in `HostIp` defaults like `0.0.0.0` a request may
+have left nil).
+
+---
+
+`0.9.375` - `firewalld:`'s `port_forward:` (the one remaining gap explicitly
+flagged as out of scope in the 0.9.374 entry below - a compound
+`port=X:proto=Y:toport=Z[:toaddr=W]` value, structurally different from
+every other "thing" this plugin handles, taking its own distinct
+`--add-forward-port=`/`--remove-forward-port=`/`--query-forward-port=`
+flags rather than the generic add/remove/query-<thing> pattern).
+Matches real Ansible's own `ForwardPortTransaction` construction
+exactly: a list of at most one dict (fails with the real module's own
+"Only one port forward supported at a time" message for more than one
+entry), requires `port`/`proto`/`toport` (checked in that order,
+matching the real module's own error-message order), `toaddr` optional
+and simply omitted from the compound value when absent (not defaulted
+to an empty `toaddr=` field). Verified live against a real
+`firewall-offline-cmd` (firewalld 1.3.3, installed fresh in a
+throwaway Debian bookworm container): add/remove/idempotent-rerun
+cycles confirmed both with and without `toaddr:`, plus the two error
+paths (missing required key, more than one entry), via direct plugin
+invocation with a real config JSON.
 
 ---
 

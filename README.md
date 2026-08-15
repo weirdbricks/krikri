@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.374-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.376-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,28 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.376` - broadened `docker_container:`'s `comparisons:` system**
+  from just `networks` to every field the plugin actually manages
+  (`entrypoint`/`env`/`labels`/`volumes`/`restart_policy`/
+  `network_mode`/`privileged`/`auto_remove`) - closing a real, previously
+  unbounded idempotency gap where drift on any of these went undetected
+  forever without `recreate: true`. `env:` also ports real Ansible's own
+  image-`Env`-merge algorithm so a base image's own baked-in env vars
+  don't cause a false mismatch on every run. Live-verified against a real
+  Docker-API-compatible daemon (Podman 5.4.2); `ports:`/healthcheck/
+  resource limits remain a deliberate scope cut. `yum_repository:`'s
+  `proxy_password:` no_log redaction, investigated in the same pass,
+  turned out to be a non-issue: no plugin or verbose mode in this
+  codebase ever echoes raw task params anywhere, so there is currently no
+  actual leak surface for it to redact.
+- **`0.9.375` - `firewalld:`'s `port_forward:`**, the one gap explicitly
+  left out of the `0.9.374` scope-cut pass below (a compound
+  `port=X:proto=Y:toport=Z[:toaddr=W]` value using its own distinct
+  `--add-forward-port=`/`--remove-forward-port=`/`--query-forward-port=`
+  flags). Matches real Ansible's own `ForwardPortTransaction` exactly
+  (single-entry-only, required-key check order, `toaddr` omitted not
+  defaulted). Live-verified against a real `firewall-offline-cmd`
+  (firewalld 1.3.3, throwaway Debian container).
 - **`0.9.369`-`0.9.374` - closed every remaining "narrow scope cut"**
   identified across the plugin set, on direct request: `modprobe:`'s
   `params:`; `find:`'s `mode:`/`exact_mode:`/`limit:`; `wait_for:`'s

@@ -64,6 +64,45 @@ module CrystalPlay
       private def self.value_suffix(thing : String, value : String) : String
         NO_VALUE_THINGS.includes?(thing) ? "" : "='#{value}'"
       end
+
+      # Builds the compound `port=X:proto=Y:toport=Z[:toaddr=W]` value
+      # real Ansible's own `ForwardPortTransaction` builds from a
+      # `port_forward:` entry (a dict with `port`/`proto`/`toport`
+      # required, `toaddr` optional and simply omitted from the value
+      # when absent - verified against the real module's own source and
+      # live against a real `firewall-offline-cmd`, firewalld 1.3.3).
+      # Returns {value: nil, error: "..."} with the exact error message
+      # real Ansible raises (checked in the same port/proto/toport order
+      # the real module checks them) when a required key is missing, or
+      # {value: "port=...", error: nil} on success.
+      def self.port_forward_value(entry : JSON::Any) : {value: String?, error: String?}
+        port = entry["port"]?
+        return {value: nil, error: "port must be specified for port forward"} unless port
+
+        proto = entry["proto"]?
+        return {value: nil, error: "proto udp/tcp must be specified for port forward"} unless proto
+
+        toport = entry["toport"]?
+        return {value: nil, error: "toport must be specified for port forward"} unless toport
+
+        toaddr = entry["toaddr"]?.try(&.to_s) || ""
+        value = "port=#{port}:proto=#{proto}:toport=#{toport}"
+        value += ":toaddr=#{toaddr}" unless toaddr.empty?
+
+        {value: value, error: nil}
+      end
+
+      def self.forward_port_query_command(zone : String, value : String) : String
+        "firewall-offline-cmd --zone=#{zone} --query-forward-port='#{value}'"
+      end
+
+      def self.forward_port_add_command(zone : String, value : String) : String
+        "firewall-offline-cmd --zone=#{zone} --add-forward-port='#{value}'"
+      end
+
+      def self.forward_port_remove_command(zone : String, value : String) : String
+        "firewall-offline-cmd --zone=#{zone} --remove-forward-port='#{value}'"
+      end
     end
   end
 end

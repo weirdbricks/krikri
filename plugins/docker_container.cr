@@ -55,24 +55,31 @@ module CrystalPlay
   #   (including tls_hostname:/DOCKER_TLS*/DOCKER_CERT_PATH support).
   # - check_mode
   #
-  # Idempotency compares only image (leniently, see DockerRef.same?) and
-  # command against the existing container found by exact name match - and
-  # only for whichever of those two params was actually given, matching
-  # real Ansible's own "only compare what you told me about" behavior; any
-  # other drifted setting (env, ports, volumes, restart_policy, ...) is
-  # NOT detected and won't trigger a recreate on its own unless recreate:
-  # true is passed - real Ansible's docker_container does a much deeper
-  # ~40-field comparison. A documented, deliberate scope cut given the
-  # size of that surface, not an oversight. networks: is the one exception -
+  # Idempotency compares image (leniently, see DockerRef.same?), command,
+  # entrypoint, env, labels, volumes, restart_policy, network_mode,
+  # privileged, and auto_remove against the existing container - each
+  # only for whichever of those params was actually given, matching real
+  # Ansible's own "only compare what you told me about" behavior for any
+  # option not mentioned at all. ports, healthcheck, resource limits
+  # (memory/cpu), and every other field of real Ansible's own ~40-field
+  # comparison system remain NOT detected and won't trigger a recreate on
+  # their own unless recreate: true is passed - a documented, deliberate
+  # scope cut given the size of that remaining surface (ports in
+  # particular is genuinely gnarly: Docker's own inspect output fills in
+  # HostIp defaults like "0.0.0.0" a request may have left nil), not an
+  # oversight. networks: is a separate exception from all of the above -
   # it's diffed and applied even when nothing else changed, since silently
   # ignoring it after the container already exists would make it useless
   # on every run after the first.
   #
-  # - comparisons: a dict (e.g. `{"networks": "strict"}`) - only the
-  #   `networks` key is meaningfully implementable here, since it's the
-  #   one field this plugin actually tracks/syncs at all (every other
-  #   possible key in real Ansible's own ~40-field comparison system
-  #   isn't compared here regardless - see above). `comparisons:
+  # - comparisons: a dict (e.g. `{"networks": "strict"}`,
+  #   `{"env": "ignore"}`) - real Ansible's own default per field is
+  #   `strict` (exact-value equality, matching this plugin's own default
+  #   behavior above); `ignore` opts a field out of comparison entirely,
+  #   for every field this plugin actually tracks/syncs (the list above
+  #   plus networks). `allow_more_present` (real Ansible's third mode -
+  #   dict/list superset matching rather than exact equality) is NOT
+  #   implemented - a further, real scope cut. `comparisons:
   #   {networks: strict}` disconnects the container from any network NOT
   #   in networks: - verified against real Ansible's own documented
   #   behavior ("To remove a container from one or more networks, use
@@ -127,7 +134,7 @@ module CrystalPlay
       recreate_requested = is_true?(@params["recreate"]?)
 
       needs_create = !existing
-      needs_recreate = !!existing && (recreate_requested || !matches?(existing.not_nil!, image_ref, command))
+      needs_recreate = !!existing && (recreate_requested || !matches?(api, existing.not_nil!, image_ref, command))
 
       if (needs_create || needs_recreate) && !image_ref
         return PluginResult.new(changed: false, failed: true, msg: "image is required to create a new container")
@@ -263,10 +270,16 @@ module CrystalPlay
     end
 
     # Idempotency scope cut - see the class doc comment. Only compares
-    # whichever of image_ref/command was actually given; with neither
-    # given, an existing container is always considered a match (nothing
-    # to compare it against).
-    private def matches?(existing : Docr::Types::ContainerSummary, image_ref : String?, command : Array(String)?) : Bool
+    # whichever of image_ref/command/entrypoint/env/labels/volumes/
+    # restart_policy/network_mode/privileged/auto_remove was actually
+    # given ("only compare what you told me about" - matches real
+    # Ansible's own general behavior for any option not mentioned at
+    # all). ports/healthcheck/resource-limits/etc remain a real,
+    # documented scope cut (see the class doc comment) - ports in
+    # particular is genuinely gnarly to compare (Docker's own inspect
+    # output fills in HostIp defaults like "0.0.0.0" the request may
+    # have left nil), not folded into this pass.
+    private def matches?(api : Docr::API, existing : Docr::Types::ContainerSummary, image_ref : String?, command : Array(String)?) : Bool
       if image_ref && !PluginHelpers::DockerRef.same?(existing.image, image_ref)
         return false
       end
@@ -275,7 +288,87 @@ module CrystalPlay
         return false unless existing.command == command.join(" ")
       end
 
+      return true unless extra_fields_given?
+
+      extra_fields_match?(api, api.containers.inspect(existing.id), image_ref)
+    end
+
+    EXTRA_COMPARISON_FIELDS = %w[entrypoint env labels volumes restart_policy network_mode privileged auto_remove]
+
+    private def extra_fields_given? : Bool
+      EXTRA_COMPARISON_FIELDS.any? { |field| @params[field]? }
+    end
+
+    # Real Ansible's own `comparisons:` default per field is `strict`
+    # (exact-value equality) unless the field is explicitly set to
+    # `ignore` (or `allow_more_present`, not implemented here - a
+    # further real scope cut, only `strict`/`ignore` are supported).
+    private def field_ignored?(field : String) : Bool
+      raw = @params["comparisons"]?
+      return false unless raw
+      parsed = JSON.parse(raw) rescue nil
+      parsed.try(&.[field]?).try(&.as_s?) == "ignore"
+    end
+
+    private def extra_fields_match?(api : Docr::API, inspected : Docr::Types::ContainerInspectResponse, image_ref : String?) : Bool
+      config = inspected.config
+      host_config = inspected.host_config
+
+      if (entrypoint = @params["entrypoint"]?) && !field_ignored?("entrypoint")
+        return false unless config.entrypoint == entrypoint.split(/\s+/).reject(&.empty?)
+      end
+
+      if (env_json = @params["env"]?) && !field_ignored?("env")
+        return false unless (config.env || [] of String).to_set == expected_env(api, image_ref, env_json)
+      end
+
+      if (labels_json = @params["labels"]?) && !field_ignored?("labels")
+        requested = Hash(String, String).from_json(labels_json)
+        return false unless (config.labels || Hash(String, String).new) == requested
+      end
+
+      if (volumes = @params["volumes"]?) && !field_ignored?("volumes")
+        requested = volumes.split(',').map(&.strip).reject(&.empty?).to_set
+        return false unless (host_config.binds || [] of String).to_set == requested
+      end
+
+      if (restart_policy_name = @params["restart_policy"]?) && !field_ignored?("restart_policy")
+        return false unless host_config.restart_policy.try(&.name) == restart_policy_name
+      end
+
+      if (network_mode = @params["network_mode"]?) && !field_ignored?("network_mode")
+        return false unless host_config.network_mode == network_mode
+      end
+
+      if @params["privileged"]? && !field_ignored?("privileged")
+        return false unless !!host_config.privileged == is_true?(@params["privileged"]?)
+      end
+
+      if @params["auto_remove"]? && !field_ignored?("auto_remove")
+        return false unless !!host_config.auto_remove == is_true?(@params["auto_remove"]?)
+      end
+
       true
+    end
+
+    # Matches real Ansible's own `_get_expected_env_value`: the image's
+    # own baked-in `Env` (from its Dockerfile `ENV` directives) is folded
+    # into the "expected" set before comparing against the running
+    # container's actual `Env`, so a base image that sets env vars beyond
+    # whatever `env:` the task itself lists doesn't cause a false
+    # mismatch on every single run - `env:`-given keys win over the
+    # image's own value for the same key.
+    private def expected_env(api : Docr::API, image_ref : String?, env_json : String) : Set(String)
+      expected = Hash(String, String).new
+      if image_ref
+        image_env = api.images.inspect(image_ref).config.env || [] of String
+        image_env.each do |entry|
+          key, _, value = entry.partition('=')
+          expected[key] = value
+        end
+      end
+      Hash(String, String).from_json(env_json).each { |k, v| expected[k] = v }
+      expected.map { |k, v| "#{k}=#{v}" }.to_set
     end
 
     private def find_container(api : Docr::API, name : String) : Docr::Types::ContainerSummary?

@@ -51,12 +51,22 @@ module CrystalPlay
   # underlying CLI tool, not the Ansible module) live in
   # `src/crystal_play/plugin_helpers/firewalld_command.cr`.
   #
-  # Not implemented: `port_forward` (a compound `port=X:proto=Y:toport=Z
-  # [:toaddr=W]` value, structurally different from every other "thing"
-  # here's simple scalar value - a real, further gap, not folded into
-  # this pass), `timeout`, `immediate` (meaningless without a running
-  # daemon - offline always forces it false, matching real Ansible's own
-  # behavior).
+  # - port_forward: a list of at most one dict
+  #   ({port, proto, toport, toaddr?}), structurally different from
+  #   every other "thing" above's simple scalar value - real Ansible's
+  #   own module (`ForwardPortTransaction`) fails with "Only one port
+  #   forward supported at a time" for more than one entry, and builds
+  #   a compound `port=X:proto=Y:toport=Z[:toaddr=W]` value (`toaddr`
+  #   omitted when absent). Verified live against a real
+  #   `firewall-offline-cmd` (firewalld 1.3.3, Debian bookworm
+  #   container): `--add-forward-port=`/`--remove-forward-port=`/
+  #   `--query-forward-port=` all take this same compound value and
+  #   exist as their own distinct flags (NOT reachable via the generic
+  #   add/remove/query-<thing> pattern the other things use).
+  #
+  # Not implemented: `timeout`, `immediate` (meaningless without a
+  # running daemon - offline always forces it false, matching real
+  # Ansible's own behavior).
   class FirewalldPlugin < BasePlugin
     def execute : PluginResult
       zone = @params["zone"]?
@@ -73,9 +83,13 @@ module CrystalPlay
         return run_target(zone, state, target)
       end
 
+      if port_forward = @params["port_forward"]?
+        return run_port_forward(zone, state, port_forward)
+      end
+
       thing = PluginHelpers::FirewalldCommand.thing(@params)
       unless thing
-        return PluginResult.new(changed: false, failed: true, msg: "exactly one of service, port, rich_rule, source, masquerade, interface, icmp_block, protocol, icmp_block_inversion, forward, target is required")
+        return PluginResult.new(changed: false, failed: true, msg: "exactly one of service, port, rich_rule, source, masquerade, interface, icmp_block, protocol, icmp_block_inversion, forward, port_forward, target is required")
       end
 
       key, value = thing
@@ -94,6 +108,33 @@ module CrystalPlay
       end
 
       result = remote_exec("firewall-offline-cmd --zone=#{zone} --set-target=#{desired}")
+      PluginResult.new(changed: result[:exit_code] == 0, failed: result[:exit_code] != 0, msg: result[:stdout], zone: zone)
+    end
+
+    # Matches real Ansible's own `ForwardPortTransaction` construction
+    # exactly: fails on >1 entries, requires port/proto/toport (checked
+    # in that order, matching the real module's own error-message
+    # order), `toaddr` optional and simply omitted from the compound
+    # value when absent.
+    private def run_port_forward(zone : String, state : String, raw : String) : PluginResult
+      entries = JSON.parse(raw).as_a
+      return PluginResult.new(changed: false, failed: true, msg: "Only one port forward supported at a time") if entries.size > 1
+      return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if entries.empty?
+
+      built = PluginHelpers::FirewalldCommand.port_forward_value(entries[0])
+      return PluginResult.new(changed: false, failed: true, msg: built[:error].not_nil!) unless value = built[:value]
+
+      present = remote_exec(PluginHelpers::FirewalldCommand.forward_port_query_command(zone, value))[:exit_code] == 0
+      want_present = state == "enabled" || state == "present"
+
+      return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if present == want_present
+
+      if is_true?(@params["check_mode"]?)
+        return PluginResult.new(changed: true, failed: false, msg: "", zone: zone)
+      end
+
+      cmd = want_present ? PluginHelpers::FirewalldCommand.forward_port_add_command(zone, value) : PluginHelpers::FirewalldCommand.forward_port_remove_command(zone, value)
+      result = remote_exec(cmd)
       PluginResult.new(changed: result[:exit_code] == 0, failed: result[:exit_code] != 0, msg: result[:stdout], zone: zone)
     end
 

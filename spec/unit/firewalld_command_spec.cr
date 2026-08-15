@@ -121,4 +121,54 @@ describe CrystalPlay::PluginHelpers::FirewalldCommand do
       end
     end
   end
+
+  # port_forward is structurally different from every other "thing" -
+  # a dict, not a scalar - so it's not part of `.thing`/SUPPORTED_THINGS
+  # at all; the plugin handles it as a separate case. Verified live
+  # against a real `firewall-offline-cmd` (firewalld 1.3.3, Debian
+  # bookworm container): `--add-forward-port=`/`--remove-forward-port=`/
+  # `--query-forward-port=` are their own distinct flags taking this
+  # compound value.
+  describe ".port_forward_value" do
+    it "builds the compound value with toaddr" do
+      entry = JSON.parse(%({"port": 80, "proto": "tcp", "toport": 8080, "toaddr": "192.168.1.1"}))
+      CrystalPlay::PluginHelpers::FirewalldCommand.port_forward_value(entry)
+        .should eq({value: "port=80:proto=tcp:toport=8080:toaddr=192.168.1.1", error: nil})
+    end
+
+    it "omits toaddr from the value when absent (matches real Ansible's own default of '')" do
+      entry = JSON.parse(%({"port": 80, "proto": "tcp", "toport": 8080}))
+      CrystalPlay::PluginHelpers::FirewalldCommand.port_forward_value(entry)
+        .should eq({value: "port=80:proto=tcp:toport=8080", error: nil})
+    end
+
+    it "errors on a missing port (checked first, matching real Ansible's own check order)" do
+      entry = JSON.parse(%({"proto": "tcp", "toport": 8080}))
+      CrystalPlay::PluginHelpers::FirewalldCommand.port_forward_value(entry)
+        .should eq({value: nil, error: "port must be specified for port forward"})
+    end
+
+    it "errors on a missing proto" do
+      entry = JSON.parse(%({"port": 80, "toport": 8080}))
+      CrystalPlay::PluginHelpers::FirewalldCommand.port_forward_value(entry)
+        .should eq({value: nil, error: "proto udp/tcp must be specified for port forward"})
+    end
+
+    it "errors on a missing toport" do
+      entry = JSON.parse(%({"port": 80, "proto": "tcp"}))
+      CrystalPlay::PluginHelpers::FirewalldCommand.port_forward_value(entry)
+        .should eq({value: nil, error: "toport must be specified for port forward"})
+    end
+  end
+
+  describe ".forward_port_query_command/.forward_port_add_command/.forward_port_remove_command" do
+    it "builds the three distinct forward-port commands" do
+      CrystalPlay::PluginHelpers::FirewalldCommand.forward_port_query_command("public", "port=80:proto=tcp:toport=8080")
+        .should eq("firewall-offline-cmd --zone=public --query-forward-port='port=80:proto=tcp:toport=8080'")
+      CrystalPlay::PluginHelpers::FirewalldCommand.forward_port_add_command("public", "port=80:proto=tcp:toport=8080")
+        .should eq("firewall-offline-cmd --zone=public --add-forward-port='port=80:proto=tcp:toport=8080'")
+      CrystalPlay::PluginHelpers::FirewalldCommand.forward_port_remove_command("public", "port=80:proto=tcp:toport=8080")
+        .should eq("firewall-offline-cmd --zone=public --remove-forward-port='port=80:proto=tcp:toport=8080'")
+    end
+  end
 end

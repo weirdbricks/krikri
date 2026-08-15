@@ -70,9 +70,17 @@ module CrystalPlay
   #
   # Not implemented: `async` (a legacy, Python-reserved-word-workaround
   # param, essentially unused in real playbooks), `exclude:`'s
-  # `excludepkgs` alias, `no_log` redaction of `password:`/
-  # `proxy_password:` from output (not implemented by any plugin in this
-  # codebase), SELinux options, `attributes`, `unsafe_writes`.
+  # `excludepkgs` alias, SELinux options, `attributes`, `unsafe_writes`.
+  # `no_log` redaction of `password:`/`proxy_password:` was investigated
+  # (0.9.376) and found to be a non-issue as things stand: no plugin or
+  # verbose mode anywhere in this codebase ever echoes raw task params to
+  # output/logs at all (confirmed by searching for any params/invocation
+  # dump - none exists), so there's currently no actual leak surface for
+  # a redaction to close. Real Ansible's `no_log` is also a real task-level
+  # keyword (`no_log: true`) entirely separate from this per-field
+  # concern, and is unimplemented as a keyword too - a genuine future gap
+  # if/when this codebase ever adds a verbose arg-echo mode, but not one
+  # yet.
   #
   # Like `apt_repository.cr`, this plugin is entirely file editing - no
   # actual `dnf`/`yum` call anywhere in it - so it's fully native
