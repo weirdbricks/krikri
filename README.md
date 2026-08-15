@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.378-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.379-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,13 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.379` - `firewalld:`'s `state: present`/`absent` leniency gap**,
+  noticed incidentally during the round-34 host round. Real
+  `ansible.posix.firewalld` only accepts `present`/`absent` for
+  `target:`; every other thing needs `enabled`/`disabled` and fails
+  otherwise. This plugin previously accepted them as silent synonyms
+  everywhere - fixed to match real Ansible's own validation exactly,
+  live-verified against a real `firewall-offline-cmd`.
 - **`0.9.378` - real 2-node host round verifying `0.9.375`-`0.9.377`
   end to end** (firewalld `port_forward:` + docker_container
   `ports:`/`healthcheck:`/comparison defaults), real `ansible-playbook`

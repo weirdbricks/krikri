@@ -10,7 +10,14 @@ module CrystalPlay
   #
   # Supported parameters:
   # - zone: firewalld zone (required)
-  # - state: enabled | present (add) | disabled | absent (remove)
+  # - state: enabled | disabled for every "thing" below except target: -
+  #   present/absent are ONLY valid for target: (a zone-level operation);
+  #   using them with any other thing fails with real Ansible's own
+  #   "absent and present state can only be used in zone level
+  #   operations" message (verified live against a real ansible-playbook
+  #   run - this plugin previously accepted present/absent everywhere as
+  #   silent synonyms, more lenient than real Ansible rather than
+  #   matching it)
   # - permanent: must be true (see below) - matches real Ansible's own
   #   validation ("offline cannot be enabled unless permanent changes are
   #   allowed")
@@ -83,6 +90,21 @@ module CrystalPlay
         return run_target(zone, state, target)
       end
 
+      # Real Ansible's own validation ("absent and present state can
+      # only be used in zone level operations" - verified live against
+      # a real `ansible-playbook`/`ansible.posix.firewalld` run):
+      # `present`/`absent` are only valid for `target:` operations
+      # (handled above, already returned). Every other "thing" -
+      # service/port/rich_rule/port_forward/etc - requires
+      # `enabled`/`disabled` instead. Found live testing `port_forward:`
+      # against real Ansible in a round-34 host round: this plugin
+      # previously accepted `present`/`absent` as silent synonyms for
+      # every thing, more lenient than real Ansible rather than matching
+      # it.
+      if state == "present" || state == "absent"
+        return PluginResult.new(changed: false, failed: true, msg: "absent and present state can only be used in zone level operations")
+      end
+
       if port_forward = @params["port_forward"]?
         return run_port_forward(zone, state, port_forward)
       end
@@ -125,7 +147,7 @@ module CrystalPlay
       return PluginResult.new(changed: false, failed: true, msg: built[:error].not_nil!) unless value = built[:value]
 
       present = remote_exec(PluginHelpers::FirewalldCommand.forward_port_query_command(zone, value))[:exit_code] == 0
-      want_present = state == "enabled" || state == "present"
+      want_present = state == "enabled"
 
       return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if present == want_present
 
@@ -140,7 +162,7 @@ module CrystalPlay
 
     private def run(zone : String, state : String, key : String, value : String) : PluginResult
       present = query(zone, key, value)
-      want_present = state == "enabled" || state == "present"
+      want_present = state == "enabled"
 
       return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if present == want_present
 

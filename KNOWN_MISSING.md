@@ -8,7 +8,28 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.378`.**
+**Currently at `0.9.379`.**
+
+---
+
+`0.9.379` - `firewalld:`'s `state: present`/`absent` leniency gap, noticed
+incidentally during the round-34 host round and fixed on request. Real
+`ansible.posix.firewalld` only accepts `present`/`absent` for `target:`
+(a zone-level operation) - every other "thing" (service/port/rich_rule/
+port_forward/etc) requires `enabled`/`disabled` instead, and fails with
+`"absent and present state can only be used in zone level operations"`
+otherwise (confirmed live against a real `ansible-playbook` run in round
+34). This plugin previously accepted `present`/`absent` as silent
+synonyms for `enabled`/`disabled` everywhere - more lenient than real
+Ansible rather than matching it, which could mask a real config-typo bug
+in a task that real Ansible would have caught. Fixed by rejecting
+`present`/`absent` for every thing except `target:`, matching the exact
+error message. Live-verified against a real `firewall-offline-cmd`
+(firewalld 1.3.3, throwaway Debian container): `present`/`absent`
+correctly rejected for `service:`/`port_forward:`, still accepted for
+`target:`, `enabled`/`disabled` unaffected. 3 new integration specs lock
+in the validation itself (pure pre-flight logic, no real firewalld
+needed to test it).
 
 ---
 
