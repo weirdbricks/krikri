@@ -2799,8 +2799,14 @@ module CrystalPlay
           vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
           # Each include_tasks loop iteration counts as one `ok` in the
           # recap, matching real Ansible (which tallies the include plus
-          # every included task per iteration).
-          @results[host.name]["ok"] += 1
+          # every included task per iteration) - but only once the
+          # include's own when: (checked inside run_include_tasks_once,
+          # since it may reference this iteration's `item`) actually
+          # passes. The increment used to happen unconditionally here,
+          # before that check ran - a when:-gated include_tasks: that
+          # ultimately skipped still got counted as `ok` AND `skipped`
+          # for the same task. See the non-looped branch's comment below
+          # for how this was found.
           run_include_tasks_once(task, host, vars_context, item_display(item))
         end
       else
@@ -2814,7 +2820,18 @@ module CrystalPlay
         # functionally harmless (the included tasks all still ran
         # correctly) but a real, easily reproduced recap-count
         # divergence.
-        @results[host.name]["ok"] += 1
+        #
+        # The increment itself moved into run_include_tasks_once (after
+        # its own when: check passes) rather than staying here
+        # unconditionally - robertdebock.openssl's own looped `include_
+        # tasks: create.yml` (loop: "{{ openssl_items }}", gated by
+        # `when: openssl_items is defined`) falls into THIS branch when
+        # openssl_items is undefined (the loop can't resolve, so
+        # loop_items above is nil) and was being counted as both `ok`
+        # and `skipped` for the same single skipped include - crediting
+        # `ok` here unconditionally, then run_include_tasks_once's own
+        # when:-false path adding `skipped` on top, with no when: check
+        # in between.
         run_include_tasks_once(task, host, base_vars_context, nil)
       end
     end
@@ -2832,6 +2849,11 @@ module CrystalPlay
           return
         end
       end
+
+      # The include itself counts as one `ok` (see the two call sites'
+      # own comments) - only reached once the when: check above has
+      # actually passed.
+      @results[host.name]["ok"] += 1
 
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       file_rel = substitutor.substitute(task.include_file.as(String))

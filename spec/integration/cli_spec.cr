@@ -162,6 +162,14 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("dynamic task ran, item=c")
     output.scan("skipping: [localhost]").size.should eq(1) # one skip for the whole `when: false` include, not one per nested task
     output.should contain("include_tasks smoke test complete!")
+
+    # Regression: the when:-false include_tasks: used to increment
+    # recap "ok" unconditionally BEFORE checking its own when:, then
+    # "skipped" again once the check failed - double-counted as both
+    # ok=8 and skipped=1 instead of the correct ok=7 skipped=1 (3 loop
+    # iterations x (include + nested task) = 6, plus the final debug = 7).
+    output.should contain("ok=7")
+    output.should contain("skipped=1")
   end
 
   it "batches a top-level include_tasks: across every host sharing the same resolved file, instead of running it one whole host at a time" do
