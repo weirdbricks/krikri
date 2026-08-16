@@ -12,6 +12,11 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 84 (no version bump - zero crystal-ansible bugs found): `robertdebock.gitea`.
+Identical on both engines cold (`ok=12 changed=6 failed=0 skipped=1`) and warm
+(`ok=12 changed=0 failed=0 skipped=1` - fully idempotent), `gitea` service
+`active` and serving HTTP 200 on `:3000` on both.
+
 Round 83 (0.9.407) - `robertdebock.keepalived`: 1 real bug found and fixed. A
 handler previously notified by an earlier task still ran at the implicit
 end-of-play `flush_handlers` even after a LATER regular task failed and halted
