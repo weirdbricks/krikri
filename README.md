@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.419-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.420-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,13 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.420` - round 110, `robertdebock.ulimit`**: 2 format bugs in
+  `pam_limits.cr` - a `comment:` was written as its own preceding
+  line instead of a trailing inline `\t#comment`, and a new entry was
+  inserted before a `# End of file` marker instead of always appended
+  at the true end (neither matches the real module's own source).
+  Also preserves an existing entry's own comment on a value-only
+  update. Live-reverified byte-identical written entries on both.
 - **`0.9.419` - round 109, `robertdebock.kubectl`**: `lookup('url',
   ...)` always returned a JSON-array string regardless of whether
   `wantlist=True` was actually passed, so a call with no

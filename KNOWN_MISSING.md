@@ -8,7 +8,36 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.419`.**
+**Currently at `0.9.420`.**
+
+---
+
+Round 110 (0.9.420) - `robertdebock.ulimit`: 2 real bugs found and fixed in
+`pam_limits.cr`, both format-mismatches from real `community.general.
+pam_limits` never verified against the real module's own source before.
+
+1. A `comment:` was written as its own SEPARATE preceding line (`"# comment"`
+   above the entry), while real Ansible's own module (`f"{domain}\t
+   {limit_type}\t{limit_item}\t{new_value}{new_comment}\n"` with `new_
+   comment = f"\t#{comment}"`) always writes it as a trailing INLINE
+   comment on the entry's own line, tab-separated, no space after `#`.
+
+2. A brand new entry was inserted BEFORE a `# End of file` marker if one
+   existed in the file - real Ansible's own module has no such special-
+   casing at all; it copies every existing line through unchanged and only
+   ever appends the new entry after the whole file, regardless of what the
+   trailing lines say.
+
+Also fixed while at it: updating an EXISTING entry's value now preserves
+that line's own existing trailing comment when no new `comment:` is given,
+matching real Ansible's own `if not new_comment: new_comment = old_comment`
+- previously any existing comment was silently dropped on every value
+update since `build_entry` never carried a comment through at all.
+
+Live-reverified: byte-identical `ok=8 changed=1 failed=0` cold and `ok=8
+changed=0 failed=0` warm recap on both engines, and the actual written
+`limits.conf` entries themselves byte-identical between engines (`*\thard\t
+nproc\t4096\t#raise process limit`, tab-for-tab).
 
 ---
 

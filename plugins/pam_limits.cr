@@ -12,14 +12,21 @@ module CrystalPlay
   #   limit_type: hard, soft, or -
   #   limit_item: core, nproc, nofile, data, fsize, ...
   #   value: the limit value
-  #   comment (optional): a comment to attach above the entry
+  #   comment (optional): a trailing `\t#comment` on the entry's own line
+  #     (matching real pam_limits.py exactly - NOT a separate line above
+  #     it, and NOT applied when an existing matching entry's value is
+  #     unchanged, same as real Ansible's own idempotency check).
   #   dest (optional): target file (defaults to /etc/security/limits.conf,
   #     but dev-sec os_hardening writes to /etc/security/limits.d/...).
   #   check_mode: dry-run
   #
-  # A matching existing entry (same domain/type/item) is updated in place;
-  # otherwise the line is appended near the `# End of file` marker if one
-  # exists, else at the end. Idempotent: no write when the exact entry is
+  # A matching existing entry (same domain/type/item) is updated in place
+  # (preserving its own existing comment unless a new one is given);
+  # otherwise a brand new entry is always appended at the true end of the
+  # file - real Ansible's own module has no special-casing for a `# End
+  # of file` marker or any other comment line anywhere in the file, it
+  # just copies every existing line through unchanged and appends after.
+  # Idempotent: no write when the exact entry (domain/type/item/value) is
   # already present.
   class PamLimitsPlugin < BasePlugin
     property check_mode : Bool
@@ -68,19 +75,22 @@ module CrystalPlay
         )
       end
 
-      entry_line = build_entry(domain, limit_type, limit_item, value)
-
-      # Find an existing entry with the same domain/type/item (ignoring
-      # wholesale comment handling - a comment change alone is a change).
+      # Find an existing entry with the same domain/type/item, and its
+      # own trailing `#comment` (if any) - real Ansible's own pam_limits
+      # module keeps a matched line's existing comment untouched when no
+      # new `comment:` param is given, only overwriting it when one is.
       lines = content.lines(chomp: false)
       index = nil
+      old_comment = nil
       lines.each_with_index do |line, i|
         stripped = line.strip
         next if stripped.empty? || stripped.starts_with?("#")
-        fields = stripped.split(/\s+/)
+        before_comment, _, after_hash = stripped.partition('#')
+        fields = before_comment.strip.split(/\s+/)
         next unless fields.size >= 4
         if fields[0] == domain && fields[1] == limit_type && fields[2] == limit_item
           index = i
+          old_comment = after_hash.empty? ? nil : after_hash
           break
         end
       end
@@ -88,33 +98,40 @@ module CrystalPlay
       changed = false
 
       if index
-        existing = lines[index].strip.split(/\s+/)
-        # Exact same domain/type/item/value already present -> no change.
+        existing = lines[index].strip.partition('#')[0].strip.split(/\s+/)
+        # Exact same domain/type/item/value already present -> no change
+        # (real Ansible's own idempotency check is value-only here - a
+        # comment-only change to an otherwise-matching line is NOT
+        # applied, matching pam_limits.py's own `if value ==
+        # actual_value: ... continue` with no comment comparison at all).
         same = existing.size >= 4 &&
                existing[0] == domain && existing[1] == limit_type &&
                existing[2] == limit_item && existing[3] == value
         unless same
           changed = true
-          if @check_mode
-            # predict only
-          else
+          unless @check_mode
+            effective_comment = comment || old_comment
+            entry_line = build_entry(domain, limit_type, limit_item, value, effective_comment)
             indent = lines[index][0, lines[index].size - lines[index].lstrip.size]
             lines[index] = "#{indent}#{entry_line}"
           end
         end
       else
         changed = true
-        if @check_mode
-          # predict only
-        else
-          # Find `# End of file` marker to insert before it, else append.
-          eof_idx = lines.index { |line| line.strip == "# End of file" }
-          new_lines = comment ? ["", "# #{comment}", entry_line] : [entry_line]
-          if eof_idx
-            insert_lines(lines, eof_idx, new_lines)
-          else
-            lines << (lines.empty? ? entry_line : "#{entry_line}\n")
-          end
+        unless @check_mode
+          # Real Ansible's own module has no special-casing for a `# End
+          # of file` marker (or any other comment line) anywhere in the
+          # file - it copies every existing line through unchanged and
+          # only ever appends the new entry after the whole file,
+          # regardless of what the last lines say. This plugin
+          # previously inserted BEFORE that marker instead, an invented
+          # behavior not in the real module at all.
+          entry_line = build_entry(domain, limit_type, limit_item, value, comment)
+          # A missing trailing newline on the file's current last line
+          # would otherwise run straight into the new entry on the same
+          # line.
+          lines[-1] = "#{lines[-1]}\n" if !lines.empty? && !lines.last.ends_with?("\n")
+          lines << entry_line
         end
       end
 
@@ -141,18 +158,14 @@ module CrystalPlay
       )
     end
 
-    private def build_entry(domain : String?, limit_type : String?, limit_item : String?, value : String?) : String
-      [domain, limit_type, limit_item, value].compact.join("\t")
-    end
-
-    # Insert *to_insert* into *lines* at *index* (before the existing line
-    # at that position), preserving a trailing newline on the final written
-    # line when the file wasn't empty.
-    private def insert_lines(lines : Array(String), index : Int32, to_insert : Array(String)) : Nil
-      inserted = to_insert.map { |line| line.ends_with?("\n") ? line : "#{line}\n" }
-      splice = lines[0, index] + inserted + lines[index..]
-      lines.clear
-      lines.concat(splice)
+    # Matches real pam_limits.py's own `f"{domain}\t{limit_type}\t
+    # {limit_item}\t{new_value}{new_comment}\n"` exactly - a comment, if
+    # any, is a trailing `\t#comment` on the SAME line, not a separate
+    # line above the entry.
+    private def build_entry(domain : String?, limit_type : String?, limit_item : String?, value : String?, comment : String? = nil) : String
+      line = [domain, limit_type, limit_item, value].compact.join("\t")
+      line += "\t##{comment}" if comment
+      "#{line}\n"
     end
   end
 end
