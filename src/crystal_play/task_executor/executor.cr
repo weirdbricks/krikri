@@ -3271,8 +3271,20 @@ module CrystalPlay
         end
       end
 
+      # Must be absolute: #inline_copy_source_content's own "is this a
+      # real controller-side path that needs staging to a remote host"
+      # gate is `src.starts_with?('/')` - a relative candidate (which
+      # this always was whenever crystal-ansible is invoked with a
+      # relative playbook path, the common case) silently skipped that
+      # gate entirely, leaving `src:` as an unresolved relative string
+      # in the params sent to copy.cr's plugin binary - which runs ON
+      # THE REMOTE HOST, where that relative path never existed. Found
+      # via robertdebock.dns's "Place override.conf" (a role-relative
+      # copy: src: reached over a real SSH connection, previously
+      # untested - every prior copy:-with-role-relative-src: round used
+      # either remote_src: true or a local connection).
       resolved = params.dup
-      resolved["src"] = candidate
+      resolved["src"] = File.expand_path(candidate)
       resolved
     end
 
@@ -3864,6 +3876,17 @@ module CrystalPlay
 
       # Substitute variables in handler parameters
       substituted_params = substitute_task_params(handler.params, substitutor)
+      # Same role-relative src: resolution + remote staging a regular
+      # task's #execute_task_once/#prepare_batch_step already do -
+      # previously missing here entirely, so a handler using copy:/
+      # template: with a role-relative src: (not just an action-plugin
+      # module, see #execute_handler_internal's own doc comment above)
+      # would fail identically to the resolve_role_relative_src bug just
+      # fixed for regular tasks. Found while auditing that fix, not yet
+      # hit by a real role in this round.
+      substituted_params = resolve_role_relative_src(handler, substituted_params)
+      substituted_params = inline_copy_source_content(handler, substituted_params, host, vars_context)
+      substituted_params = stage_unarchive_remote_src(handler, substituted_params, host, vars_context)
       substituted_become_user = handler.become_user.try { |raw_user| substitutor.substitute(raw_user) }
 
       # Real bug found benchmarking geerlingguy.jenkins: its own
