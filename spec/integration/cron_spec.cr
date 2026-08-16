@@ -29,6 +29,24 @@ describe "cron plugin" do
     content.should contain("0 2 * * * /usr/local/bin/backup.sh")
   end
 
+  it "resolves a relative cron_file: against /etc/cron.d, matching real Ansible" do
+    # This spec runs unprivileged, so it can't actually write to
+    # /etc/cron.d - it only asserts the path RESOLUTION is correct
+    # (cron.py's CronTab#__init__: a relative cron_file: joins onto
+    # /etc/cron.d, only an absolute path is used as-is). A permission
+    # error at exactly the resolved path is the observable proof.
+    result = PluginSpecHelper.run("cron", {
+      "name"      => "run lynis",
+      "job"       => "/tmp/lynis/lynis --cronjob audit system",
+      "hour"      => "4",
+      "minute"    => "23",
+      "cron_file" => "crystal-ansible-spec-relative",
+    })
+
+    result["failed"]?.try(&.as_bool).should be_true
+    result["msg"].as_s.should contain("/etc/cron.d/crystal-ansible-spec-relative")
+  end
+
   it "is idempotent on a second run with the same parameters" do
     path = tmp_path("cron-idempotent.txt")
     File.delete(path) if File.exists?(path)

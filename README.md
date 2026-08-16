@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.424-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.425-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,14 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.425` - round 126, `robertdebock.lynis`**: `cron.cr`'s
+  `execute_file` used a relative `cron_file:` (e.g. `cron_file:
+  lynis`) as a literal write path instead of resolving it against
+  `/etc/cron.d` the way real Ansible's `cron.py` does - reported
+  `changed: true` but silently never wrote the real cron file. Fixed
+  to match real Ansible's path resolution exactly. Live-reverified
+  byte-identical `/etc/cron.d/lynis` content and fully idempotent
+  warm rerun on both engines.
 - **round 125, `robertdebock.terraform`** (no version bump): zero
   bugs found, byte-identical on both engines cold and warm -
   single-task `unarchive: remote_src: true` install; installed

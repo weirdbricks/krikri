@@ -8,7 +8,28 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.424`.**
+**Currently at `0.9.425`.**
+
+---
+
+Round 126 (`0.9.425`) - `robertdebock.lynis`: 1 real bug found and
+fixed. `cron.cr`'s `execute_file` treated `cron_file:` as a literal
+write path regardless of whether it was absolute - real Ansible's
+`cron.py` resolves a relative `cron_file:` against `/etc/cron.d`
+(`os.path.join('/etc/cron.d', cron_file)`), only using the value as-is
+when it's already absolute. The role's own "Schedule a run of lynis"
+task (`cron_file: lynis`) reported `changed: true` on both cold and
+every subsequent run, but silently never wrote `/etc/cron.d/lynis` at
+all - it wrote `./lynis` relative to the plugin process's own cwd
+instead. Fixed by resolving the path the same way `cron.py` does before
+any read/write. Live-reverified on a fresh Atlantic.net pair:
+`/etc/cron.d/lynis` byte-identical between engines after the fix
+(`23 4 * * * root /tmp/lynis/lynis --cronjob audit system | tee -a
+...`), warm rerun `ok=10 changed=0 failed=0` identical on both (fully
+idempotent). Added a regression spec asserting the resolved absolute
+path in `cron.cr`'s result/error message (writing to real `/etc/cron.d`
+needs root, so the spec exercises the resolution logic via the expected
+permission-denied path rather than an actual write).
 
 ---
 

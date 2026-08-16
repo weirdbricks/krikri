@@ -50,7 +50,10 @@ module CrystalPlay
       cron_file ? execute_file(name, cron_file) : execute_user_crontab(name)
     end
 
-    private def execute_file(name : String, cron_file : String) : PluginResult
+    private def execute_file(name : String, raw_cron_file : String) : PluginResult
+      # Real Ansible resolves a relative cron_file: against /etc/cron.d -
+      # only an absolute path is used as-is (cron.py's CronTab#__init__).
+      cron_file = raw_cron_file.starts_with?("/") ? raw_cron_file : File.join("/etc/cron.d", raw_cron_file)
       state = @params["state"]? || "present"
       job = @params["job"]?
 
