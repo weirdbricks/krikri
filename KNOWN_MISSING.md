@@ -8,7 +8,7 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.412`.**
+**Currently at `0.9.413`.**
 
 ---
 
@@ -61,7 +61,24 @@ tasks are unconditionally skipped on Ubuntu on both engines anyway.
 
 ---
 
-Round 98 (0.9.412) - `robertdebock.earlyoom`: `community.general.make` was
+Round 98 (0.9.412-0.9.413) - `robertdebock.earlyoom`: 2 real bugs found and
+fixed. Second bug (0.9.413) - `git.cr`'s `resolve_ref` used `git rev-parse
+<ref>` to resolve `version: v1.6` (an ANNOTATED tag upstream), which returns
+the TAG OBJECT's own SHA, not the commit it actually points to - a real,
+distinct git object. `#current_commit`'s `rev-parse HEAD` always returns a real
+commit SHA, so `update_repo`'s `target == before` idempotency check never
+matched: every single rerun re-checked-out the same commit and reported
+`changed: true`/"Repository updated", never converging (`ok=16 changed=2` on a
+warm rerun where real Ansible showed `ok=14 changed=0`). Fixed by peeling every
+resolved ref through `^{commit}` (matching real `ansible.builtin.git`'s own
+approach for the exact same reason) - a lightweight tag/branch/commit-sha is
+already a commit and `^{commit}` is a harmless no-op for those. Added a
+regression spec using a real annotated tag (the existing spec fixture's own
+`v1` tag was lightweight, which is why this was never caught before). Live-
+reverified: `ok=14 changed=0 failed=0 skipped=8` now byte-identical to real
+Ansible's own warm-rerun recap.
+
+First bug (0.9.412) - `robertdebock.earlyoom`: `community.general.make` was
 entirely unimplemented - new `plugins/make.cr` added, ported exactly from real
 Ansible's own module source (chdir/target/targets/params/file/jobs/make
 parameters; idempotency via the same `make ... -q` "question mode" trick real

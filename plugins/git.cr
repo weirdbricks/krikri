@@ -79,9 +79,21 @@ module CrystalPlay
 
     # Tries origin/<version> first (branches/tags as known by the remote),
     # falling back to <version> directly (exact commit shas, local refs).
+    # `^{commit}` peels an ANNOTATED tag (a real git object distinct from
+    # the commit it points to) down to that underlying commit SHA - a
+    # lightweight tag/branch/commit-sha is already a commit and `^{commit}`
+    # is a harmless no-op for those. Without this, `rev-parse` on an
+    # annotated tag (real Ansible's own `git` module always uses this
+    # exact `^{}` peeling for the same reason) returns the TAG OBJECT's
+    # own SHA - which never equals `current_commit`'s `rev-parse HEAD`
+    # (always a real commit SHA, even when HEAD is checked out AT that
+    # tag) - so #update_repo's `target == before` idempotency check never
+    # matched, and every single rerun re-checked-out the same commit and
+    # reported `changed: true`/"Repository updated", never converging.
+    # Found benchmarking robertdebock.earlyoom's own `version: v1.6`.
     private def resolve_ref(dest : String, version : String) : String?
       ["origin/#{version}", version].each do |ref|
-        result = remote_exec("git -C #{dest} rev-parse #{ref}")
+        result = remote_exec("git -C #{dest} rev-parse #{ref}^{commit}")
         return result[:stdout].strip if result[:exit_code] == 0
       end
       nil

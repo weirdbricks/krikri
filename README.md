@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.412-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.413-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,12 +293,15 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
-- **`0.9.412` - round 98, `robertdebock.earlyoom`**: `community.general.
-  make` was entirely unimplemented - new `plugins/make.cr` added,
-  ported exactly from real Ansible's own module source. Found via two
-  handlers notified by the same task, where the dropped "Make"
-  handler broke the downstream "Install" handler that depended on its
-  output. Live-reverified to match real Ansible's recap exactly.
+- **`0.9.412`-`0.9.413` - round 98, `robertdebock.earlyoom`**: 2 bugs -
+  `community.general.make` entirely unimplemented (new `plugins/
+  make.cr`, ported from real Ansible's own module source); and
+  `git.cr`'s `resolve_ref` returning an ANNOTATED tag's own object SHA
+  instead of the commit it points to, breaking idempotency for any
+  `version:` pinned to an annotated tag - fixed by peeling through
+  `^{commit}`, matching real `ansible.builtin.git`'s own approach.
+  Live-reverified to match real Ansible's recap exactly, both cold and
+  warm.
 - **`0.9.410`-`0.9.411` - round 96, `robertdebock.tailscale`**: 3 bugs -
   a parse-time crash on a dict keyed by a bare YAML boolean (a real
   Ansible/Jinja2 idiom); a real Crystal 1.20.3 stdlib `HTTP::Client`

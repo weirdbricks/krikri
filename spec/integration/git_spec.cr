@@ -29,6 +29,11 @@ private def build_fixture_repo(path : String) : Hash(String, String)
   run!("cd #{path} && git config user.email test@example.com && git config user.name Test")
   run!("cd #{path} && echo one > file.txt && git add file.txt && git commit -q -m 'commit 1'")
   run!("cd #{path} && git tag v1")
+  # An ANNOTATED tag (-a/-m) is a real, distinct git object from the
+  # commit it points to - `git rev-parse v1-annotated` returns the tag
+  # OBJECT's own SHA, not the commit's, unlike a lightweight tag like
+  # v1 above (where rev-parse already returns the commit SHA directly).
+  run!("cd #{path} && git tag -a v1-annotated -m 'annotated tag'")
   first_sha = `cd #{path} && git rev-parse HEAD`.strip
 
   run!("cd #{path} && echo two > file.txt && git commit -q -am 'commit 2'")
@@ -65,6 +70,27 @@ describe "git plugin" do
 
     result["changed"].as_bool.should be_true
     File.read(File.join(dest, "file.txt")).strip.should eq("one")
+  end
+
+  it "is idempotent (changed: false on a second identical run) when version: is an ANNOTATED tag" do
+    # Real bug: resolve_ref's `git rev-parse <ref>` returned an
+    # ANNOTATED tag's own object SHA rather than the commit it points
+    # to, which never equaled #current_commit's `rev-parse HEAD` (always
+    # a real commit SHA) - #update_repo's `target == before` idempotency
+    # check never matched, so a second run always re-checked-out the
+    # same commit and reported changed: true, never converging. Found
+    # benchmarking robertdebock.earlyoom's own `version: v1.6` (an
+    # annotated tag upstream).
+    repo = tmp_path("git-fixture-annotated-tag")
+    build_fixture_repo(repo)
+    dest = tmp_path("git-clone-annotated-tag-dest")
+    `rm -rf #{dest}`
+
+    first = PluginSpecHelper.run("git", {"repo" => repo, "dest" => dest, "version" => "v1-annotated"})
+    first["changed"].as_bool.should be_true
+
+    second = PluginSpecHelper.run("git", {"repo" => repo, "dest" => dest, "version" => "v1-annotated"})
+    second["changed"].as_bool.should be_false
   end
 
   it "does not clone in check mode" do
