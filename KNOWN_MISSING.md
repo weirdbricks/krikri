@@ -12,6 +12,11 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 77 (no version bump - zero crystal-ansible bugs found): `robertdebock.ntp`.
+Identical on both engines cold (`ok=15 changed=2 failed=0 skipped=2`) and warm
+(`ok=14 changed=0 failed=0 skipped=2` - fully idempotent), `ntp` service `active`
+on both, `/etc/ntp.conf` byte-identical.
+
 Round 76 (no version bump - zero crystal-ansible bugs found): `robertdebock.fail2ban`
 (distinct from the already-tested `Oefenweb.fail2ban`). Identical on both engines cold
 (`ok=17 changed=5 failed=0 skipped=5`) and warm (`ok=16 changed=0 failed=0 skipped=5` -
