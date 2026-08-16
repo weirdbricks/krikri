@@ -12,6 +12,61 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 52 (no version bump - a real parity gap found and documented, but
+NOT fixed - see below): `robertdebock.postfix` on a fresh `G3.2GB`
+Atlantic.net pair. The role's own `vars/main.yml` is broken against a
+strict Jinja2 engine by default: several computed vars follow the
+pattern `_postfix_virtual_X_domains: "{{ (postfix_virtual_X_domains is
+defined) | ternary(postfix_virtual_X_domains | join(', '), '<None>')
+}}"` - `postfix_virtual_mailbox_domains`/`postfix_virtual_alias_domains`/
+etc are commented out (undefined) in `defaults/main.yml`. Real
+`ansible-playbook` fails outright with `AnsibleUndefinedVariable` on the
+FIRST such var, because Ansible's `ternary` is a Jinja *filter* (function
+call) - both arguments are evaluated eagerly before the filter runs,
+regardless of which one the ternary condition ultimately selects, so
+`postfix_virtual_mailbox_domains | join(', ')` gets evaluated (and fails
+on the undefined variable) even though the condition picks `'<None>'`.
+Setting the first var to `[]` in the playbook just exposed the SAME bug
+on the next such var (`postfix_virtual_alias_domains`), and so on - a
+systemic role-side anti-pattern, not a one-off; real Ansible cannot run
+this role's default config at all without pre-defining every one of
+these optional vars.
+
+**crystal-ansible does NOT reproduce this failure** - it completed the
+whole role cleanly (`ok=33 changed=2 failed=0 skipped=69`, `postfix`
+`active`) where real Ansible failed. Root cause: `FilterEngine`'s
+`ternary` filter (`filter_engine.cr` line ~656) only ever calls
+`resolve_expression` on the ONE chosen branch (`args[0]?` or `args[1]?`
+based on the condition), never the other - so an undefined-variable
+reference in the *unchosen* branch is silently never evaluated at all.
+This is architecturally correct for a lazy `a if b else c` Python
+conditional expression, but WRONG for Ansible's `ternary` *filter*
+(`x | ternary(a, b)`), which Jinja compiles as an ordinary function call
+with eagerly-evaluated arguments.
+
+**Not fixed this round** - deliberately deferred rather than patched
+blind during an unattended session. The real underlying issue is broader
+than this one filter: the entire hand-rolled `{{ }}` evaluator (unlike
+Crinja) has no concept of a strict-raising "undefined" at all - variable
+lookups resolve leniently everywhere (empty string/array fallbacks),
+so `join`/every other filter applied to an undefined value silently
+no-ops instead of raising `AnsibleUndefinedVariable` the way real
+Ansible's `StrictUndefined`-style context does. Making just `ternary`
+eagerly evaluate both branches wouldn't reproduce the real failure
+without ALSO teaching the evaluator to raise on undefined-variable use
+in filter contexts generally - a design change with much wider blast
+radius (regression risk across every existing spec and prior benchmark
+round that currently relies on the lenient fallback behavior) that
+deserves its own deliberate investigation, not a same-session patch.
+Tracked here as an open, real gap for a future round.
+
+Verified as a genuine role-side bug (not an artifact of our benchmark
+setup) by reproducing on real `ansible-playbook` 2.17.14 from a clean
+Galaxy install (`ansible-galaxy role install robertdebock.postfix`),
+independent of crystal-ansible entirely.
+
+---
+
 Round 51 (0.9.390): `robertdebock.httpd` on a fresh `G3.2GB` Atlantic.net
 pair. 1 real bug found and fixed: `RoleLoader#resolve_role_dir` only ever
 searched `<playbook_dir>/roles/<name>` and `roles/<name>` (plus, since
