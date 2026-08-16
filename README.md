@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.390-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.391-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,12 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.391` - round 54, `robertdebock.php`**: the `comment` Jinja filter
+  silently ignored the `style` argument (`'c'`/`'cblock'`/`'xml'`/
+  `'erlang'`), always producing the `'plain'` `#`-commented shape
+  regardless - `php.ini.j2`'s own `comment('c')` header needed `//`, got
+  `#` instead. Ported real Ansible's full style-selection algorithm.
+  Live-reverified byte-identical templated output, idempotent.
 - **`0.9.390` - round 51, `robertdebock.httpd`**: `RoleLoader#resolve_role_dir`
   never searched `~/.ansible/roles`/`ANSIBLE_ROLES_PATH` - the default
   install location for a plain `ansible-galaxy role install`, breaking

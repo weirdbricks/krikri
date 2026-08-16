@@ -130,6 +130,24 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     renderer.render("{{ 'Ansible managed' | comment(decoration='; ') }}").should eq(";\n; Ansible managed\n;")
   end
 
+  it "honors the style= positional argument for comment()" do
+    # Real bug found benchmarking robertdebock.php: `{{ "..." |
+    # comment('c') }}` (php.ini.j2's own header) previously ignored the
+    # style argument entirely (only `decoration=` was ever read) and
+    # always fell back to the "plain" "#"-style border regardless of
+    # style, producing a silently wrong (not crashing) comment banner -
+    # real Ansible's own `comment()` supports 'plain'/'erlang'/'c'/
+    # 'cblock'/'xml', each with its own decoration and (for cblock/xml)
+    # distinct begin/end border lines.
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render("{{ 'Ansible managed' | comment('c') }}").should eq("//\n// Ansible managed\n//")
+    renderer.render("{{ 'Ansible managed' | comment('erlang') }}").should eq("%\n% Ansible managed\n%")
+    renderer.render("{{ 'Ansible managed' | comment('cblock') }}").should eq("/*\n *\n * Ansible managed\n *\n */")
+    renderer.render("{{ 'Ansible managed' | comment('xml') }}").should eq("<!--\n -\n - Ansible managed\n -\n-->")
+  end
+
   it "treats an empty string as falsy in 'and', matching real Python/Jinja2 truthiness" do
     # Real bug found benchmarking geerlingguy.kibana's own kibana.yml.j2:
     # `{% if kibana_elasticsearch_username and kibana_elasticsearch_

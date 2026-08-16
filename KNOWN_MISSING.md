@@ -8,7 +8,31 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.390`.**
+**Currently at `0.9.391`.**
+
+---
+
+Round 54 (0.9.391): `robertdebock.php` (+ its own `robertdebock.httpd`
+dependency) on a fresh `G3.2GB` Atlantic.net pair. 1 real bug found and
+fixed: the `comment` Jinja filter (`jinja_filters.cr`) previously only
+ever honored the `decoration=` keyword argument, silently ignoring the
+`style` positional/keyword argument real Ansible's own filter accepts
+(`comment(text, style='plain', **kw)` - `'plain'`/`'erlang'`/`'c'`/
+`'cblock'`/`'xml'`). `php.ini.j2`'s own `{{ "..." | comment('c') }}`
+header should render a `//`-commented banner; crystal-ansible always
+produced the `'plain'` `#`-commented shape regardless, a silent content
+divergence (not a crash) from real Ansible's byte-for-byte templated
+output. Ported the full style-selection + `cblock`/`xml` begin/end
+border-line algorithm from real Ansible's own
+`ansible/plugins/filter/core.py#comment` exactly. Live-reverified: fresh
+pair, cold `ok=43 changed=7 failed=0 skipped=31` (real) vs `ok=43
+changed=7 failed=0 skipped=28` (crystal, before the fix) - the skip-count
+gap is the same pre-existing `seport`/`seboolean`/`apache2_module`
+cosmetic scope gap as round 51 (this role pulls in the same `httpd`
+dependency). After the fix, redeployed and re-ran: `/etc/php/8.1/cli/
+php.ini` now byte-identical to real Ansible's (`//`-commented banner on
+both), fully idempotent warm rerun (`changed=0` both), `apache2` `active`,
+HTTP 200. Regression spec added covering all 4 non-default styles.
 
 ---
 

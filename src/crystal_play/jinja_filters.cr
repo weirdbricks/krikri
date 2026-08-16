@@ -45,13 +45,53 @@ module CrystalPlay
     # parser doesn't treat "#" as a comment character and failed outright
     # ("value is NULL for a ZEND_INI_PARSER_ENTRY") on startup - the
     # config looked fine to a human eye but never actually took effect.
-    # The style=/prefix=/postfix= keyword variants (c/cpp/xml styles)
-    # still aren't implemented - no template seen so far uses them.
+    # The `style` positional/keyword argument (real Ansible:
+    # `comment(text, style='plain', **kw)`) previously silently ignored -
+    # only the plain "# "-decorated shape was ever produced, regardless of
+    # an explicit `| comment('c')`/`| comment('cblock')`/`| comment('xml')`/
+    # `| comment('erlang')` call. Found via robertdebock.php's own
+    # `php.ini.j2`: `{{ "..." | comment('c') }}` needs a `//`-commented
+    # banner (`;` is php.ini's real comment char, but the role's author
+    # chose 'c' style anyway) - crystal-ansible produced a `#`-commented
+    # banner instead, silently wrong (not a crash) since `;` isn't even
+    # what either style uses, but still a real content divergence from
+    # real Ansible's byte-for-byte output. Ported from real Ansible's own
+    # `ansible/plugins/filter/core.py#comment` algorithm exactly,
+    # including `cblock`'s/`xml`'s distinct `/* ... */`/`<!-- ... -->`
+    # begin/end border lines (different from their per-line decoration).
     Crinja.filter(:comment) do
-      decoration = arguments.kwargs["decoration"]?.try(&.to_s) || "# "
-      border = decoration.rstrip
+      style = (arguments.varargs[0]?.try(&.to_s) || arguments.kwargs["style"]?.try(&.to_s) || "plain")
+
+      beginning, style_decoration, ending = case style
+                                             when "erlang"
+                                               {"", "% ", ""}
+                                             when "c"
+                                               {"", "// ", ""}
+                                             when "cblock"
+                                               {"/*", " * ", " */"}
+                                             when "xml"
+                                               {"<!--", " - ", "-->"}
+                                             else
+                                               {"", "# ", ""}
+                                             end
+
+      prepostfix = arguments.kwargs["decoration"]?.try(&.to_s) || style_decoration
+      beginning = arguments.kwargs["beginning"]?.try(&.to_s) || beginning
+      ending = arguments.kwargs["end"]?.try(&.to_s) || ending
+      decoration = arguments.kwargs["decoration"]?.try(&.to_s) || style_decoration
+      prefix = arguments.kwargs["prefix"]?.try(&.to_s) || prepostfix.rstrip
+      postfix = arguments.kwargs["postfix"]?.try(&.to_s) || prepostfix.rstrip
+      prefix_count = arguments.kwargs["prefix_count"]?.try(&.to_s.to_i) || 1
+      postfix_count = arguments.kwargs["postfix_count"]?.try(&.to_s.to_i) || 1
+
+      str_beginning = beginning.empty? ? "" : "#{beginning}\n"
+      str_prefix = prefix.empty? ? "" : (["#{prefix}"] * prefix_count).join('\n') + "\n"
       lines = target.to_s.split('\n')
-      commented = ([border] + lines.map { |line| line.empty? ? border : "#{decoration}#{line}" } + [border]).join('\n')
+      str_text = lines.map { |line| line.empty? ? decoration.rstrip : "#{decoration}#{line}" }.join('\n')
+      str_postfix = (postfix_count > 0 ? ("\n" + (["#{postfix}"] * postfix_count).join('\n')) : "")
+      str_end = ending.empty? ? "" : "\n#{ending}"
+
+      commented = "#{str_beginning}#{str_prefix}#{str_text}#{str_postfix}#{str_end}"
       Crinja::Value.new(commented)
     end
 
