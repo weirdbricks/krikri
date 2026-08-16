@@ -2582,6 +2582,7 @@ module CrystalPlay
         connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
         puts "skipping: [#{connection_host}]".colorize(:cyan)
         @results[host.name]["skipped"] += 1
+        register_skip_result(nested_task, host)
         puts ""
       end
     end
@@ -2720,6 +2721,25 @@ module CrystalPlay
 
       tasks.each do |nested_task|
         break if @halted_hosts.includes?(host.name)
+
+        # A nested block: is transparent - like real Ansible, a named
+        # block gets no "TASK [...]" banner of its own, only its members
+        # do (execute_task already dispatches straight to execute_block,
+        # which prints its own children's banners via this same
+        # run_task_list). include_tasks: is NOT transparent - real
+        # Ansible (and execute_include_tasks below) still shows a banner
+        # for the include statement itself, so it keeps the banner here.
+        # Found benchmarking prometheus.prometheus.alertmanager round
+        # 134: a block-with-a-name nested inside another block (`_common`'s
+        # "Download binary {{ }}"/"Verify checksum of {{ }}") printed a
+        # spurious empty banner before its real children ran - this path
+        # lacked the same block? dispatch run_task_batch (the multi-host
+        # counterpart) already had.
+        if nested_task.block?
+          execute_task(nested_task, host)
+          next
+        end
+
         puts "TASK [#{render_task_name_for_display(nested_task, host)}]".colorize(:white).bold
         puts "*" * 70
         execute_task(nested_task, host)

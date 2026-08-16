@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.427-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.431-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,27 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.428`-`0.9.431` - round 134, regression pass (10 previously-
+  fixed roles retested)**: not a new-role round - 10 roles randomly
+  picked from the already-fixed set (`unowned_files`, `alternatives`,
+  `mount`, `spamassassin`, `python_pip`, `nextcloud`, `tailscale`,
+  `haproxy`+`bootstrap`, `prometheus.prometheus.alertmanager`,
+  `hashicorp`) to confirm 500+ commits hadn't regressed anything. 3
+  genuinely new (pre-existing, not regressions) bugs found: a
+  `register:` on a task skipped only via its enclosing block's `when:`
+  (not the task's own) was never re-applied, leaking a prior sibling
+  block's register value into a later `when:` check (`tailscale`); the
+  flat `ansible_facts['python_version']` fact was missing entirely
+  since round 133's rewrite, even though it legitimately co-exists with
+  the nested `ansible_python` dict in real Ansible (`alertmanager`); a
+  named `block:` nested inside another `block:` printed a spurious
+  empty `TASK [...]` banner on the single-host path (`alertmanager`).
+  Also fixed `unarchive.cr`'s `tar_changed?` unconditionally treating
+  Mode/Uid/Gid-differs as real changes, making any `mode:`/`owner:`/
+  `group:`-overriding unarchive task permanently non-idempotent -
+  matches real Ansible's own `TgzArchive#is_unarchived` gating exactly.
+  Live-reverified all 4 fixes on the same host pairs; all 10 roles
+  fully idempotent and functionally correct after fixes.
 - **`0.9.427` - round 133, `robertdebock.mitogen`**: `ansible_facts
   ['python']` was two invented flat strings (`ansible_python`/
   `ansible_python_version`) instead of real Ansible's actual nested

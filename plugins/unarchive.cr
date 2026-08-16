@@ -291,9 +291,11 @@ module CrystalPlay
     # true) purely because of that one benign warning line, verified via
     # real ansible-playbook staying changed: false on the identical
     # rerun.
-    MEANINGFUL_DIFF_PATTERNS = [
-      /: Uid differs$/, /: Gid differs$/, /: Mode differs$/, /: Mod time differs$/,
-      /: Invalid owner/, /: Invalid group/, /: Symlink differs$/,
+    UID_DIFF_PATTERN  = /: Uid differs$/
+    GID_DIFF_PATTERN  = /: Gid differs$/
+    MODE_DIFF_PATTERN = /: Mode differs$/
+    ALWAYS_MEANINGFUL_DIFF_PATTERNS = [
+      /: Mod time differs$/, /: Invalid owner/, /: Invalid group/, /: Symlink differs$/,
     ]
     EMPTY_FILE_WARNING = /: : Warning: Cannot stat: No such file or directory$/
     MISSING_FILE_WARNING = /: Warning: Cannot stat: No such file or directory$/
@@ -303,9 +305,29 @@ module CrystalPlay
       result = remote_exec(cmd)
       lines = (result[:stdout].split("\n") + result[:stderr].split("\n"))
 
+      # Real Ansible's own TgzArchive#is_unarchived (unarchive.py) only
+      # treats a Uid/Gid/Mode-differs line as a real change when the
+      # matching owner:/group:/mode: param was NOT itself given on the
+      # task - when it WAS given, `set_fs_attributes_if_different()` is
+      # trusted to already have applied it, and re-flagging the same diff
+      # every run (since the archive's OWN embedded mode/ownership never
+      # matches an explicit override) would make the task permanently
+      # non-idempotent. Real bug found benchmarking prometheus.prometheus.
+      # alertmanager round 134: its own `mode: 0755` unarchive task
+      # re-extracted (changed: true) on every single rerun purely because
+      # LICENSE/NOTICE/alertmanager.yml's archived mode (0644) differed
+      # from the 0755 crystal-ansible (correctly) chmod'd them to.
+      owner_set = !@params["owner"]?.nil?
+      group_set = !@params["group"]?.nil?
+      mode_set  = !@params["mode"]?.nil?
+
       lines.any? do |line|
         next false if EMPTY_FILE_WARNING.matches?(line)
-        MEANINGFUL_DIFF_PATTERNS.any? { |pattern| pattern.matches?(line) } || MISSING_FILE_WARNING.matches?(line)
+        next true if ALWAYS_MEANINGFUL_DIFF_PATTERNS.any? { |pattern| pattern.matches?(line) } || MISSING_FILE_WARNING.matches?(line)
+        next true if !owner_set && UID_DIFF_PATTERN.matches?(line)
+        next true if !group_set && GID_DIFF_PATTERN.matches?(line)
+        next true if !mode_set && MODE_DIFF_PATTERN.matches?(line)
+        false
       end
     end
 

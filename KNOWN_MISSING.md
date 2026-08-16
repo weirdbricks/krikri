@@ -8,7 +8,105 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.427`.**
+**Currently at `0.9.431`.**
+
+---
+
+Round 134 (`0.9.428`-`0.9.431`) - regression pass, not a new-role round:
+10 roles randomly selected from the set of previously-fixed roles
+(`robertdebock.unowned_files`, `.alternatives`, `.mount`, `.spamassassin`,
+`.python_pip`, `.nextcloud`, `.tailscale`, `.haproxy`+`.bootstrap`,
+`prometheus.prometheus.alertmanager`, `robertdebock.hashicorp`), retested
+on two fresh `G3.2GB` Atlantic.net pairs to confirm 500+ commits of
+ongoing work hadn't regressed anything already fixed. 5/10 roles were
+byte-identical clean reruns with no new findings (`unowned_files`,
+`alternatives`, `mount`, `spamassassin`, `python_pip`, `haproxy`,
+`hashicorp` - 7 actually, see `ROLES_TESTED.md` for the exact tally).
+3 genuinely new (pre-existing, not regressions - these bugs were always
+there, just never exercised by the exact role version/vars combination
+tested before) bugs found and fixed:
+
+1. **`task_executor/executor.cr`'s `register_skip_result`** was only
+   ever called from `when_passes?` (a task's own `when:` evaluating
+   false) - a task skipped only because its ENCLOSING `block:`'s
+   `when:` was false went through the separate `print_skipped_tasks`
+   path instead, which never re-registered the task's `register:` name
+   at all. `robertdebock.tailscale`'s own two sibling `block:`s
+   (`sources.list` path vs `deb822` path, gated by Debian/Ubuntu
+   version) both register the SAME name (`_deb_repository`) - on
+   Ubuntu 22.04 the `deb822` block is the one that's skipped, but its
+   nested task's register was never reapplied, so `_deb_repository`
+   kept holding the FIRST (sources.list) block's real `changed: true`
+   result instead of being overwritten to `changed: false`/`skipped:
+   true` - the downstream `Update apt cache` task (`when:
+   _deb_repository.changed`) ran (`changed: true`) instead of
+   correctly skipping, matching real `ansible-playbook`'s own register-
+   on-skip semantics exactly once fixed. Fixed (`0.9.428`) by giving
+   `print_skipped_tasks` the same `register_skip_result` call
+   `when_passes?` already had.
+
+2. **`plugins/facts.cr`'s `gather_python_facts`** never set
+   `ansible_facts['python_version']` at all after round 133's rewrite -
+   round 133 correctly removed the OLD bogus flat `ansible_python`
+   (interpreter-path string) and `ansible_python_version` (wrong-shape)
+   inventions in favor of the real nested `ansible_python` dict, but
+   real Ansible ALSO legitimately exposes a separate flat
+   `ansible_python_version` ("major.minor.micro", e.g. `"3.10.12"`)
+   alongside the nested dict - both co-exist in real `setup` output,
+   confirmed live. `prometheus.prometheus`'s own `_common_dependencies`
+   var does `ansible_facts['python_version'] is version('3', '<')` to
+   pick `python-apt` vs `python3-apt` - with the fact missing/undefined,
+   the version test silently evaluated true, always picking the wrong
+   (nonexistent on modern Ubuntu 22.04) `python-apt` package name and
+   crashing the very first real task. Fixed (`0.9.429`) by adding the
+   flat fact back alongside the nested one.
+
+3. **`task_executor/executor.cr`'s `run_task_list`** (the single-host
+   dispatch for `block:`/`rescue:`/`always:` nested task lists)
+   unconditionally printed a `TASK [...]` banner for every nested task
+   - including a nested task that was itself a named `block:`, printing
+   a spurious empty banner (no `ok`/`changed`/`skipping` line under it)
+   before that block's real children ran. `run_task_batch` (the multi-
+   host counterpart) already special-cased `task.block?` to skip
+   straight to `execute_block` without a banner of its own (blocks are
+   transparent in real Ansible - only their members get banners); this
+   single-host path lacked the same guard. Surfaced by `prometheus.
+   prometheus.alertmanager`'s own `_common` role, which nests a named
+   block (`"Download binary {{ }}"`) inside another block (`"Run apt
+   tasks"`-equivalent install block). Fixed (`0.9.430`).
+
+4. **`plugins/unarchive.cr`'s `tar_changed?`** treated every `tar
+   --compare` "Mode differs"/"Uid differs"/"Gid differs" line as a
+   meaningful change unconditionally - real Ansible's own
+   `TgzArchive#is_unarchived` (`unarchive.py`) only counts those lines
+   when the matching `mode:`/`owner:`/`group:` param was NOT itself
+   given on the task (when it WAS given, `set_fs_attributes_if_
+   different()` is trusted to have already applied it separately, and
+   re-flagging the archive's own embedded mode/ownership as a diff
+   forever would make any `mode:`-overriding unarchive task permanently
+   non-idempotent). `prometheus.prometheus.alertmanager`'s own `mode:
+   0755` unarchive task re-extracted (`changed: true`) on every single
+   rerun purely because the archive's embedded `LICENSE`/`NOTICE`/
+   `alertmanager.yml` member mode (0644) differed from the 0755
+   crystal-ansible correctly `chmod`'d them to. Fixed (`0.9.431`) by
+   gating the Uid/Gid/Mode-differs patterns on whether the
+   corresponding param was set, matching `unarchive.py` line-for-line.
+
+Live-reverified after each fix on the same host pair: `tailscaled`
+active and the `deb822`/`sources.list` recap byte-identical to real
+Ansible; `alertmanager` active, `curl` 200, and fully idempotent warm
+rerun (`changed=0`) matching real Ansible exactly. Full `crystal spec`
+suite (1274 examples) green throughout. Two pre-existing, already-
+documented environmental gaps were re-confirmed (not new): the apt-
+installed `ansible` 2.10.8 on the comparison host predates role
+argument-spec validation (`python_pip`'s galaxy release gained `meta/
+argument_specs.yml` since round 58, showing one extra `ok` task real
+2.10.8 can't run) and `ansible.builtin.rpm_key`/`community.general.
+zypper_repository`/`zypper` remain unimplemented (RHEL/SUSE-only scope
+gap, same class as `seport`/`seboolean` - `tailscale`'s own RPM-key/
+zypper tasks are silently absent rather than shown as `skipping`,
+functionally identical on non-SUSE/RHEL Ubuntu). See `ROLES_TESTED.md`
+for the per-role tally.
 
 ---
 

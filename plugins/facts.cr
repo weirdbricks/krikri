@@ -531,6 +531,18 @@ def gather_python_facts(facts)
     "has_sslcontext" => parsed["has_sslcontext"],
     "type"           => parsed["type"],
   } of String => JSON::Any
+
+  # Real Ansible also exposes a separate flat `ansible_python_version`
+  # ("major.minor.micro", e.g. "3.10.12") alongside the nested `ansible_python`
+  # dict above - both co-exist in real `setup` output. Found benchmarking
+  # robertdebock/prometheus.prometheus.alertmanager round 134:
+  # prometheus.prometheus's own `_common_dependencies` var does
+  # `ansible_facts['python_version'] is version('3', '<')` to pick
+  # python-apt vs python3-apt - with this fact missing entirely, the
+  # version test compared against Crinja's `Undefined` sentinel and
+  # silently evaluated true, always picking the wrong (nonexistent on
+  # modern Ubuntu) `python-apt` package name.
+  facts["ansible_python_version"] = "#{parsed["major"]}.#{parsed["minor"]}.#{parsed["micro"]}"
 end
 
 def gather_user_facts(facts)

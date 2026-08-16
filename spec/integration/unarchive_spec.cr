@@ -199,6 +199,27 @@ describe "unarchive plugin" do
     result["changed"].as_bool.should be_true
   end
 
+  it "is idempotent on a mode: override rerun despite tar --compare's own Mode differs line" do
+    # Real bug found benchmarking prometheus.prometheus.alertmanager round
+    # 134: its own unarchive task sets `mode: 0755` (applied recursively
+    # to every extracted file, matching real ansible-playbook's actual
+    # behavior - see this file's header comment) - since the archive's
+    # OWN embedded member mode is 0644, `tar --compare` legitimately
+    # reports "Mode differs" for those files on every single rerun. Real
+    # Ansible's own TgzArchive#is_unarchived (unarchive.py) explicitly
+    # ignores a Mode-differs line whenever mode: was itself given on the
+    # task (trusting set_fs_attributes_if_different() to have already
+    # applied it) - previously unarchive.cr treated every Mode differs
+    # line as meaningful unconditionally, making any mode:-overriding
+    # unarchive task permanently non-idempotent.
+    dest = fresh_dest("tar-mode-override-idempotent")
+    PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.tar.gz"), "dest" => dest, "mode" => "0755"})
+
+    result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.tar.gz"), "dest" => dest, "mode" => "0755"})
+
+    result["changed"].as_bool.should be_false
+  end
+
   it "extracts a zip archive" do
     dest = fresh_dest("zip-extract")
     result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.zip"), "dest" => dest})
