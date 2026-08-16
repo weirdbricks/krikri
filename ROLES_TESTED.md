@@ -8,6 +8,7 @@ or already-clean roles as if they were new.
 
 | Role | Status |
 |---|---|
+| robertdebock.tune2fs | ✅ Clean (round 88, no version bump - zero crystal-ansible bugs found; exercised with a real `maximum_count_mount: -1` setting, default is a no-op empty list). Identical on both engines (`ok=5 changed=0 failed=0 skipped=1` cold and warm), `tune2fs -l`'s "Maximum mount count" identical on both. |
 | robertdebock.logwatch | ✅ Clean (round 87, no version bump - zero crystal-ansible bugs found). Identical on both engines (`ok=8 changed=2 failed=0 skipped=1` cold, `ok=8 changed=0 failed=0 skipped=1` warm - fully idempotent). |
 | robertdebock.sysstat | ✅ Clean (round 86, no version bump - zero crystal-ansible bugs found). Identical on both engines (`ok=4 changed=3 failed=0` cold, `ok=4 changed=0 failed=0` warm - fully idempotent), `sysstat` service `active` on both, config byte-identical. |
 | robertdebock.collectd | ✅ Functionally clean (round 85, no version bump). Identical on both engines (`ok=33 changed=4 failed=0 skipped=2` cold, `ok=32 changed=0 failed=0 skipped=2` warm - fully idempotent), `collectd` service `active` on both. Found (but did NOT fix - see `KNOWN_MISSING.md`) a real Crinja whitespace-control gap: explicit `-` markers (`-%}`/`{%-`) don't strip a full multi-line whitespace run, only the first line - cosmetic here (indentation/blank-line differences only, config still parses and behaves identically), a same-session fix attempt regressed 21 Crinja specs and was reverted. |

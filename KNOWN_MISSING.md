@@ -12,6 +12,13 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 88 (no version bump - zero crystal-ansible bugs found): `robertdebock.tune2fs`
+(exercised with `tune2fs_settings: [{device: /dev/sda2, maximum_count_mount: -1}]`,
+since the default is an empty no-op list). Identical on both engines cold and
+warm (`ok=5 changed=0 failed=0 skipped=1` both, already idempotent since the
+target value matched Ubuntu's own default), `tune2fs -l /dev/sda2`'s "Maximum
+mount count" line identical on both.
+
 Round 87 (no version bump - zero crystal-ansible bugs found): `robertdebock.logwatch`.
 Identical on both engines cold (`ok=8 changed=2 failed=0 skipped=1`) and warm
 (`ok=8 changed=0 failed=0 skipped=1` - fully idempotent).
