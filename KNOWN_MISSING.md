@@ -12,6 +12,14 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 82 (no version bump - zero crystal-ansible bugs found): `robertdebock.nfsserver`.
+Identical on both engines cold (`ok=8 changed=4 failed=0 skipped=3`, after
+retrying node1's own cold pass once - the first attempt hit the same
+`unattended-upgrades` dpkg-lock race documented in round 78's memory, not a
+crystal-ansible bug) and warm (`ok=6 changed=0 failed=0 skipped=3` - fully
+idempotent), `nfs-server` service `active` on both, `/etc/exports`
+byte-identical.
+
 Round 81 (no version bump - zero crystal-ansible bugs found): `robertdebock.dhcpd`.
 Identical on both engines cold (`ok=17 changed=5 failed=0 skipped=1`) and warm
 (`ok=16 changed=1 failed=0 skipped=1`), `/etc/dhcp/dhcpd.conf` byte-identical.
