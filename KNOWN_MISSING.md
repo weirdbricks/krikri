@@ -12,6 +12,18 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 49 (no version bump - zero crystal-ansible bugs found):
+`robertdebock.dnsmasq` (+ `robertdebock.bootstrap`) on a fresh `G3.2GB`
+Atlantic.net pair. `dnsmasq` fails to start identically on both engines
+- a real, well-known environmental conflict, not an engine issue:
+`systemd-resolved`'s own stub listener already owns `127.0.0.53:53` on
+a stock Ubuntu 22.04 image, and `dnsmasq --test` confirms the rendered
+config itself is syntactically valid (`syntax check OK`) - the failure
+is purely the port conflict. Everything up to that point matched
+task-for-task between engines.
+
+---
+
 Round 48 (`0.9.389`), `robertdebock.squid` (+ `robertdebock.bootstrap`):
 1 real bug, found on a fresh `G3.2GB` Atlantic.net pair - the role's own
 `assert.yml` has `squid_cache_dir.split(" ")[0] in [ "ufs", "aufs",
