@@ -14,6 +14,7 @@ private PROJECT_ROOT                 = File.expand_path("../..", __DIR__)
 private BINARY                       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
 private INVENTORY                    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory.ini")
 private EXPLICIT_LOCALHOST_INVENTORY = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private TWO_LOCAL_HOSTS_INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-two-local-hosts.ini")
 private FIXTURES_DIR                 = File.join(PROJECT_ROOT, "testing")
 
 Spec.before_suite do
@@ -900,6 +901,22 @@ describe "crystal-ansible CLI (--check mode)" do
 
     status.success?.should be_true
     output.should contain("Skipping play - no hosts match pattern: testservers")
+  end
+
+  it "--limit restricts a hosts: all play to just the named host, not every matching host" do
+    # Regression: --limit's value was parsed into a variable that was
+    # never actually read anywhere else - crystal-ansible ran hosts: all
+    # against the WHOLE inventory regardless of --limit, silently
+    # ignoring the flag entirely.
+    status, output = run_playbook(
+      "test-limit-hosts.yml",
+      ["--limit", "hosttwo"],
+      inventory: TWO_LOCAL_HOSTS_INVENTORY
+    )
+
+    status.success?.should be_true
+    output.should contain("ran on hosttwo")
+    output.should_not contain("ran on hostone")
   end
 
   it "exits non-zero and reports the error for an invalid playbook" do

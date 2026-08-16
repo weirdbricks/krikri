@@ -319,6 +319,17 @@ playbook.plays.each_with_index do |play, play_index|
   # Get hosts for this play from inventory, excluding any host that
   # already hard-failed in an earlier play this run.
   matched_hosts = inventory.get_hosts(play.hosts.to_s)
+
+  # --limit further restricts the play's own hosts: pattern to the
+  # intersection with whatever it matches - real ansible-playbook's
+  # `-l`/`--limit`. Previously parsed into `limit_hosts` but never
+  # actually applied anywhere, so it silently ran every play against
+  # its full hosts: pattern regardless of --limit.
+  unless limit_hosts.empty?
+    limit_names = inventory.get_hosts(limit_hosts).map(&.name).to_set
+    matched_hosts = matched_hosts.select { |host| limit_names.includes?(host.name) }
+  end
+
   hosts = matched_hosts.reject { |host| permanently_failed_hosts.includes?(host.name) }
 
   if matched_hosts.empty?

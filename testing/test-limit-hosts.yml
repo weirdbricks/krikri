@@ -1,0 +1,11 @@
+---
+# Used only by the --limit regression spec (spec/integration/cli_spec.cr)
+# against spec/fixtures/inventory-two-local-hosts.ini.
+- name: Limit test
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Announce which host ran
+      ansible.builtin.debug:
+        msg: "ran on {{ inventory_hostname }}"
