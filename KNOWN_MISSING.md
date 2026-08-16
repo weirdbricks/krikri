@@ -12,6 +12,22 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 128 (no version bump - engine clean) - `robertdebock.tigervnc`:
+not fully runnable on this cloud image regardless of engine.
+Byte-identical `ok=13 changed=6 failed=1 skipped=2` on both engines,
+both failing the exact same "Restart tigervnc" handler with an
+identical systemd error. Confirmed via `journalctl -u
+vncserver@:1.service` on both hosts: the role's own `xstartup` execs
+`gnome-session` (the default `tigervnc_desktop_session`), which isn't
+installed on a minimal cloud image - the X session "cleanly exits too
+early (< 3 seconds)", byte-identical journal output on both. Rendered
+`xstartup`/`vncserver@.service` templates confirmed byte-identical
+between engines via diff. Not an engine bug - an environment
+prerequisite (no desktop environment installed) the role itself
+doesn't provide.
+
+---
+
 Round 127 (no version bump - engine clean) - `robertdebock.sosreport`:
 not runnable on this cloud image regardless of engine. The role's
 `sosreport_packages` default (`sos`) has no installation candidate at

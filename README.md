@@ -293,6 +293,11 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **round 128, `robertdebock.tigervnc`** (no version bump): engine
+  clean but not fully runnable - the role's default desktop session
+  (`gnome-session`) isn't installed on a minimal cloud image, both
+  engines fail the same handler identically; rendered templates
+  byte-identical.
 - **round 127, `robertdebock.sosreport`** (no version bump): engine
   clean but not runnable - the role's `sos` package default has no
   installation candidate on Ubuntu 22.04 at all, both engines fail
