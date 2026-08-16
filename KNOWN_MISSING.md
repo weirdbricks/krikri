@@ -12,6 +12,14 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 61 (no version bump - zero crystal-ansible bugs found):
+`robertdebock.snmpd` on a fresh `G3.2GB` Atlantic.net pair. Identical on
+both engines (`ok=21 changed=3 failed=0 skipped=6` cold, `ok=20
+changed=0 failed=0 skipped=6` warm - fully idempotent), byte-identical
+`/etc/snmp/snmpd.conf`, `snmpd` service `active` on both.
+
+---
+
 Round 60 (0.9.394): `robertdebock.dovecot` on a fresh `G3.2GB`
 Atlantic.net pair. 1 real bug found and fixed: `find:`'s own plugin
 only ever recognized the plural `paths:` parameter, failing outright
