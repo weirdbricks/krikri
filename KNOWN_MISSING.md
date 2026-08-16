@@ -12,6 +12,18 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 67 (no version bump - zero crystal-ansible bugs found):
+`robertdebock.autofs` on a fresh `G3.2GB` Atlantic.net pair
+(`autofs_maps:` with a `/home` NFS-style map, exercising the role's
+`regex_replace('^/', '') | regex_replace('/', autofs_slash_replace_char)`
+double-filter-chained `dest:`/`loop_control: label:` task-name idiom).
+Identical on both engines (`ok=14 changed=4 failed=0 skipped=6` cold,
+`ok=13 changed=0 failed=0 skipped=6` warm - fully idempotent), byte-
+identical `/etc/auto.master`/`/etc/auto.master.d/00-home.autofs`/
+`/etc/auto.home`, `autofs` service `active` on both.
+
+---
+
 Round 66 (0.9.397-0.9.398): `robertdebock.mount` on a fresh `G3.2GB`
 Atlantic.net pair (`mount_requests:` with a bind mount, `/tmp` onto
 `/mnt/tmp`). 2 real bugs found and fixed:
