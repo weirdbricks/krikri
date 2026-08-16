@@ -63,10 +63,20 @@ module CrystalPlay
     def execute : PluginResult
       state = @params["state"]? || "present"
       requirements = @params["requirements"]?
-      name = @params["name"]?
+      raw_name = @params["name"]?
+      name = normalize_name(raw_name)
 
-      unless name || requirements
-        return PluginResult.new(changed: false, failed: true, msg: "name or requirements is required")
+      # Real Ansible's pip.py: `name` is a list; `if name:` is Python
+      # truthiness, so a name: PARAM THAT IS PRESENT but resolves to an
+      # EMPTY list (e.g. a templated `name: "{{ some_list_var }}"` that
+      # rendered to `[]`) is not an error - it falls straight through to
+      # the same "nothing to do" branch pip.py uses, exiting cleanly
+      # with changed: false rather than trying to pip-install anything.
+      # A name: key that's genuinely absent (not just empty) together
+      # with no requirements: is the real required_one_of failure.
+      if name.nil? && requirements.nil?
+        return raw_name ? PluginResult.new(changed: false, failed: false, msg: "No valid name or requirements file found.") \
+                         : PluginResult.new(changed: false, failed: true, msg: "name or requirements is required")
       end
 
       pip_bin = resolve_pip_binary
@@ -83,6 +93,32 @@ module CrystalPlay
         install(pip_bin, target_spec(name, nil), upgrade: true)
       else
         install(pip_bin, target_spec(name, @params["version"]?), upgrade: false, requirements: requirements)
+      end
+    end
+
+    # Handles the "Python-repr-list JSON" case: a `{{ }}`-templated
+    # `name:` that resolves to a real list renders to its own bracketed
+    # text form (e.g. `[]`, `['pkg']`) since this codebase's plugin
+    # params are always plain strings. An empty list becomes `nil`
+    # (matching real Ansible's `if name:` falsy-empty-list no-op); a
+    # single-element list unwraps to that one package name (the common
+    # real-world shape). A genuine multi-package list (`['a', 'b']`)
+    # is a pre-existing, separately-scoped gap - this plugin has never
+    # supported installing several distinct packages in one task - so
+    # it's passed through as-is rather than silently dropped.
+    private def normalize_name(raw : String?) : String?
+      return nil unless raw
+      stripped = raw.strip
+      return raw unless stripped.starts_with?('[') && stripped.ends_with?(']')
+
+      list = (Array(String).from_json(stripped) rescue nil) ||
+             (Array(String).from_json(stripped.gsub('\'', '"')) rescue nil)
+      return raw unless list
+
+      case list.size
+      when 0 then nil
+      when 1 then list[0]
+      else        raw
       end
     end
 

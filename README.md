@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.425-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.426-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,13 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.426` - round 131, `robertdebock.vagrant`**: `pip.cr`'s
+  `name:` never handled a `{{ }}`-templated list resolving to its own
+  bracketed text form (the "Python-repr-list JSON" class, already
+  fixed elsewhere in apt.cr/package.cr/dnf.cr/find.cr) - an empty-list
+  `name:` crashed with `ERROR: Invalid requirement: '[]'` instead of
+  real Ansible's clean no-op. Fixed with a `normalize_name` helper.
+  Live-reverified byte-identical recap on both engines.
 - **round 130, `robertdebock.virtualbox`** (no version bump): zero
   bugs found, byte-identical package/repo state on both engines cold
   and warm; skip-count differs only via the pre-existing

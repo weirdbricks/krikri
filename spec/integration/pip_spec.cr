@@ -15,6 +15,31 @@ describe "pip plugin" do
     result["msg"].as_s.should contain("name or requirements")
   end
 
+  it "no-ops cleanly when name: is present but resolves to an empty list" do
+    # Round 131 (robertdebock.vagrant): name: "{{ vagrant_pip_packages }}"
+    # resolving to an empty list rendered as the literal text "[]" -
+    # real Ansible's pip.py treats `if name:` as Python truthiness, so
+    # an empty list is not an error, it falls through to the same
+    # "nothing to do" branch as name: omitted, exiting changed: false.
+    result = PluginSpecHelper.run("pip", {"name" => "[]"})
+
+    result["failed"]?.try(&.as_bool).should_not be_true
+    result["changed"].as_bool.should be_false
+  end
+
+  it "unwraps a single-element name: list to the bare package name" do
+    # state: absent on a not-installed package only ever calls `pip
+    # show` (no real install/network call) - safe to run for real,
+    # matching this file's own no-real-execution convention.
+    result = PluginSpecHelper.run("pip", {
+      "name"  => "['definitely-not-a-real-package-xyz']",
+      "state" => "absent",
+    })
+
+    result["failed"]?.try(&.as_bool).should_not be_true
+    result["msg"].as_s.should_not contain("[")
+  end
+
   describe "umask:" do
     # Real bug found via a proactive scope-cut audit: umask: was
     # entirely unimplemented. Verified against real

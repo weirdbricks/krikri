@@ -8,7 +8,34 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.425`.**
+**Currently at `0.9.426`.**
+
+---
+
+Round 131 (`0.9.426`) - `robertdebock.vagrant`: 1 real bug found and
+fixed. `pip.cr`'s `name:` param never handled a `{{ }}`-templated list
+variable rendering to its own bracketed text form - the same
+"Python-repr-list JSON" bug class already fixed independently in
+apt.cr/package.cr/dnf.cr/find.cr, now found again in pip.cr. The
+role's own `name: "{{ vagrant_pip_packages }}"` (an empty list on
+Debian, `vagrant_pip_packages: []`) fed pip the literal string `"[]"`
+verbatim, crashing with `ERROR: Invalid requirement: '[]'` and failing
+the whole task, while real `ansible-playbook`'s `pip.py` treats
+`if name:` as Python truthiness - an empty list is simply not an
+error, it falls through to the same clean "nothing to do" branch as
+`name:` omitted entirely, exiting `changed: false` with a warning.
+Fixed with a new `normalize_name` helper: an empty list normalizes to
+`nil` (no-op, matching real Ansible), a single-element list unwraps to
+the bare package name (the common real-world shape a role like this
+one hits), and a genuine multi-element list is left as a pre-existing,
+separately-scoped gap - this plugin has never supported installing
+several distinct packages in one task, and this fix doesn't expand
+that scope. Live-reverified on a fresh Atlantic.net pair: `ok=6
+changed=0 failed=0` identical on both engines after the fix and
+redeploy. Recap `skipped` count differs only via the pre-existing,
+already-documented `community.general.zypper` unimplemented-module
+gap (same cosmetic class as `rpm_key`/`zypper_repository`/`seport`
+from earlier rounds), not a new issue.
 
 ---
 
