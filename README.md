@@ -293,6 +293,10 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **round 129, `robertdebock.upgrade`** (no version bump): zero bugs
+  found, byte-identical on both engines cold and warm - including an
+  undefined-var `is defined` skip-guard short-circuit from the role's
+  own missing `register:`, reproduced identically.
 - **round 128, `robertdebock.tigervnc`** (no version bump): engine
   clean but not fully runnable - the role's default desktop session
   (`gnome-session`) isn't installed on a minimal cloud image, both

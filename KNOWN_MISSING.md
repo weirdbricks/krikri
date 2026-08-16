@@ -12,6 +12,20 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 129 (no version bump - zero crystal-ansible bugs found) -
+`robertdebock.upgrade`: byte-identical on both engines. Cold pass
+`ok=4 changed=0 failed=0 skipped=1` on both, warm rerun identical
+(fully idempotent). Set `upgrade_packages: [vim, curl]` via extra vars
+to exercise the role beyond its empty-list no-op default. The role's
+own "Upgrade package" task references
+`upgrade_check_if_package_is_installed.results` but the preceding
+"Check if package is installed" task has no `register:` at all in the
+role's source - `when: ...results is defined` always short-circuits
+to skip on an undefined variable, reproduced identically on both
+engines.
+
+---
+
 Round 128 (no version bump - engine clean) - `robertdebock.tigervnc`:
 not fully runnable on this cloud image regardless of engine.
 Byte-identical `ok=13 changed=6 failed=1 skipped=2` on both engines,
