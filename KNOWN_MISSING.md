@@ -12,6 +12,11 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 86 (no version bump - zero crystal-ansible bugs found): `robertdebock.sysstat`.
+Identical on both engines cold (`ok=4 changed=3 failed=0`) and warm (`ok=4
+changed=0 failed=0` - fully idempotent), `sysstat` service `active` on both,
+config byte-identical.
+
 Round 85 (no version bump - crystal-ansible itself unaffected): `robertdebock.collectd`.
 Identical recap on both engines cold (`ok=33 changed=4 failed=0 skipped=2`) and warm
 (`ok=32 changed=0 failed=0 skipped=2` - fully idempotent), `collectd` service `active`
