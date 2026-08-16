@@ -74,6 +74,19 @@ module CrystalPlay
     # to `mount.path`, `mount.owner`, etc. rather than always `item`. Kept
     # verbatim and resolved at execution time; nil means the default "item".
     property loop_var : String?
+    # loop_control.index_var - exposes the current loop iteration's
+    # zero-based index under this variable name (real Ansible's own
+    # `loop_control: { index_var: idx }`, commonly paired with a
+    # `register:`ed loop result so `some_registered.results[idx]` can be
+    # looked up against the SAME item currently being processed - e.g.
+    # `results[index].stat.exists` as a `when:` guard skipping re-work
+    # already verified by an earlier per-item `stat:` loop). Previously
+    # entirely unimplemented - parsed nowhere, injected into vars_context
+    # nowhere - so `{{ index }}` (or whatever name was configured) always
+    # resolved to "undefined" throughout the loop body, silently breaking
+    # any downstream `results[index]` lookup. Found via robertdebock.
+    # mount's own "Create mountpoint" task.
+    property index_var : String?
     # until: / retries: / delay: - retry a task until a condition passes.
     property until_condition : String?
     property retries : Int32
@@ -248,6 +261,7 @@ module CrystalPlay
       @loop_subelements_list = nil
       @loop_subelements_key = nil
       @loop_var = nil
+      @index_var = nil
       @until_condition = nil
       @retries = 3
       @delay = 5
@@ -1049,6 +1063,7 @@ module CrystalPlay
       # tasks that read `mount.path`, `mount.owner`, etc.
       if loop_control = task_hash["loop_control"]?.try(&.as_h?)
         task.loop_var = loop_control["loop_var"]?.try(&.as_s?)
+        task.index_var = loop_control["index_var"]?.try(&.as_s?)
       end
 
       # Parse until / retries / delay
@@ -1314,6 +1329,7 @@ module CrystalPlay
       # its per-mountpoint include_tasks loop.
       if loop_control = task_hash["loop_control"]?.try(&.as_h?)
         task.loop_var = loop_control["loop_var"]?.try(&.as_s?)
+        task.index_var = loop_control["index_var"]?.try(&.as_s?)
       end
 
       task
@@ -1365,6 +1381,7 @@ module CrystalPlay
 
       if loop_control = task_hash["loop_control"]?.try(&.as_h?)
         task.loop_var = loop_control["loop_var"]?.try(&.as_s?)
+        task.index_var = loop_control["index_var"]?.try(&.as_s?)
       end
 
       task

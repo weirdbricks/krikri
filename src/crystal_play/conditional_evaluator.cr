@@ -688,7 +688,18 @@ module CrystalPlay
       when Bool
         value
       when String
-        !value.empty? && value != "false" && value != "False"
+        # "undefined" - this codebase's own sentinel for an unresolved
+        # lookup/filter result (e.g. `regex_search()`'s own "no match"
+        # return, per its own doc comment) - must be FALSY here, matching
+        # real Jinja2's `Undefined`/Python's `None` (`bool(None)` is
+        # False). Found via robertdebock.mount's own handler condition
+        # `when: mount_requests | regex_search("swap")`: no "swap"
+        # anywhere in `mount_requests` correctly produced the "undefined"
+        # sentinel, but this String case only special-cased "false"/
+        # "False" - a non-empty, not-literally-"false" string is truthy
+        # by the general rule, so the handler fired unconditionally
+        # regardless of whether `mount_requests` actually mentioned swap.
+        !value.empty? && value != "false" && value != "False" && value != "undefined"
       when Int32, Int64
         value != 0
       when Nil

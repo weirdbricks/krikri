@@ -8,7 +8,43 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.396`.**
+**Currently at `0.9.398`.**
+
+---
+
+Round 66 (0.9.397-0.9.398): `robertdebock.mount` on a fresh `G3.2GB`
+Atlantic.net pair (`mount_requests:` with a bind mount, `/tmp` onto
+`/mnt/tmp`). 2 real bugs found and fixed:
+
+1. (0.9.397) `ConditionalEvaluator#evaluate_truthiness`'s `String` case
+   only special-cased `"false"`/`"False"` as falsy - the "undefined"
+   sentinel this codebase's filters/lookups return for an unresolved
+   result (e.g. `regex_search()`'s own documented "no match" return) is
+   a non-empty, not-literally-"false" string, so it was truthy by the
+   general rule. The role's own "Run swapon" handler guard (`when:
+   mount_requests | regex_search("swap")`) fired unconditionally
+   regardless of whether `mount_requests` actually mentioned swap.
+   Fixed by also treating the literal `"undefined"` string as falsy
+   here, matching real Jinja2/Python's `Undefined`/`None` semantics.
+2. (0.9.398) `loop_control.index_var` was entirely unimplemented -
+   parsed nowhere, never injected into the loop's vars context - so
+   `{{ idx }}` (or whatever name configured) always resolved to
+   "undefined" throughout the loop body. The role's own "Create
+   mountpoint" task depends on this via `when: not mount_requests_
+   check.results[index].stat.exists` (skip re-creating a mountpoint
+   directory a prior per-item `stat:` loop already confirmed exists) -
+   silently always ran instead of skipping on warm reruns. Added
+   `Task#index_var` (parsed alongside the existing `loop_var` at all 3
+   `loop_control` parse sites) and injected it into `vars_context` at
+   every task/include_tasks/include_role/handler loop-execution site.
+   New regression coverage in `testing/test-loop-quick.yml`.
+
+Live-reverified: fresh pair, cold `ok=10 changed=2 failed=0 skipped=4`
+identical both engines after both fixes, bind mount active and
+byte-identical on both (`mount | grep /mnt/tmp`), fully idempotent warm
+rerun (`ok=9 changed=0 skipped=4` both, matching exactly - previously
+crystal alone kept "fixing" the already-correct mountpoint directory on
+every rerun due to bug 2). All 1240 specs pass.
 
 ---
 

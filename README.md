@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.396-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.398-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,12 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.397`-`0.9.398` - round 66, `robertdebock.mount`**: the
+  "undefined" sentinel string wasn't treated as falsy in a bare filter-
+  chain `when:` condition, firing a handler unconditionally; and
+  `loop_control.index_var` was entirely unimplemented, breaking a
+  registered-loop-result re-creation guard on every warm rerun.
+  Live-reverified byte-identical, idempotent.
 - **`0.9.396` - round 65, `robertdebock.locale`**: `community.general.
   timezone` was entirely unimplemented - new `timezone.cr` plugin
   (systemd/`timedatectl` backend, matching every target this repo

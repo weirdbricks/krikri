@@ -620,5 +620,24 @@ describe CrystalPlay::ConditionalEvaluator do
       v["real_val"] = JSON::Any.new("resolved")
       CrystalPlay::ConditionalEvaluator.evaluate("outer.inner == 'resolved'", v).should be_true
     end
+
+    it "treats the \"undefined\" sentinel string as falsy in a bare filter-chain condition" do
+      # Real bug found benchmarking robertdebock.mount: `when:
+      # mount_requests | regex_search("swap")` (the "Run swapon" handler's
+      # own guard) - regex_search's own documented "no match" return is
+      # the literal string "undefined" (this codebase's general
+      # unresolved-lookup sentinel, not Python's None, but meant to behave
+      # the same way in a boolean context). #evaluate_truthiness's String
+      # case only special-cased "false"/"False" as falsy - a non-empty,
+      # not-literally-"false" string is truthy by the general rule, so a
+      # regex_search with no match still fired the handler unconditionally
+      # regardless of whether the searched value actually matched.
+      v = Hash(String, JSON::Any).new
+      v["mount_requests"] = JSON.parse(%([{"path": "/mnt/tmp", "src": "/tmp", "opts": "bind", "fstype": "none"}]))
+      CrystalPlay::ConditionalEvaluator.evaluate(%(mount_requests | regex_search("swap")), v).should be_false
+
+      v["mount_requests"] = JSON.parse(%([{"path": "swap", "fstype": "swap"}]))
+      CrystalPlay::ConditionalEvaluator.evaluate(%(mount_requests | regex_search("swap")), v).should be_true
+    end
   end
 end

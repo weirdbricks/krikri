@@ -76,6 +76,21 @@
         msg: "max_requests={{ item.pm_max_requests | default(500, true) }}"
       with_items: "{{ pools }}"
 
+    - name: loop_control.index_var exposes the zero-based iteration index
+      # Real bug found benchmarking robertdebock.mount: `loop_control:
+      # index_var:` was parsed nowhere and injected into the loop's vars
+      # context nowhere, so `{{ idx }}` (or any configured name) always
+      # resolved to "undefined" throughout the loop body - silently
+      # breaking any downstream `some_registered.results[idx]` lookup
+      # (the role's own "Create mountpoint" `when: not mount_requests_
+      # check.results[index].stat.exists` guard, used to skip re-
+      # creating a mountpoint directory that already exists).
+      ansible.builtin.debug:
+        msg: "idx={{ idx }} item={{ item }}"
+      loop: "{{ colors }}"
+      loop_control:
+        index_var: idx
+
     - name: SUCCESS
       ansible.builtin.debug:
         msg: "Loop constructs tests complete!"

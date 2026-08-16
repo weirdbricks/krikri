@@ -2220,10 +2220,12 @@ module CrystalPlay
                        # starting value every time.
                        running_vars_context = base_vars_context.dup
                        loop_var = task.loop_var
+                       index_var = task.index_var
                        rendered_items.map_with_index do |item, idx|
                          vars_context = running_vars_context.dup
                          vars_context["item"] = item
                          vars_context[loop_var] = item if loop_var
+                         vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
 
                          # A task-level vars: that references `item`
                          # (linux-system-roles/kernel_settings' own
@@ -2323,11 +2325,13 @@ module CrystalPlay
       steps = [] of BatchScript::Step
       step_indices = [] of Int32
       loop_var = task.loop_var
+      index_var = task.index_var
 
       loop_items.each_with_index do |item, idx|
         vars_context = base_vars_context.dup
         vars_context["item"] = item
         vars_context[loop_var] = item if loop_var
+        vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
         item_contexts[idx] = vars_context
 
         # Per item, not per call: each iteration builds its own context
@@ -2700,7 +2704,8 @@ module CrystalPlay
         # loop_control.loop_var is set, under that custom name too (e.g.
         # `mount` in dev-sec os_hardening's per-mountpoint include loop).
         loop_var = task.loop_var
-        loop_items.each do |item|
+        index_var = task.index_var
+        loop_items.each_with_index do |item, idx|
           vars_context = base_vars_context.dup
           # Render any string field of the item that is itself a template
           # (e.g. dev-sec os_hardening's mount-list entries: `enabled:
@@ -2712,6 +2717,7 @@ module CrystalPlay
           rendered_item = deep_render_item(item, vars_context, host.name)
           vars_context["item"] = rendered_item
           vars_context[loop_var] = rendered_item if loop_var
+          vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
           # Each include_tasks loop iteration counts as one `ok` in the
           # recap, matching real Ansible (which tallies the include plus
           # every included task per iteration).
@@ -2862,10 +2868,12 @@ module CrystalPlay
 
       if loop_items
         loop_var = task.loop_var
-        loop_items.each do |item|
+        index_var = task.index_var
+        loop_items.each_with_index do |item, idx|
           vars_context = base_vars_context.dup
           vars_context["item"] = item
           vars_context[loop_var] = item if loop_var
+          vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
           run_include_role_once(task, host, vars_context, item_display(item))
         end
       else
@@ -3699,13 +3707,15 @@ module CrystalPlay
       loop_items : Array(JSON::Any)
     ) : JSON::Any
       loop_var = handler.loop_var
+      index_var = handler.index_var
       any_changed = false
       any_failed = false
 
-      loop_items.each do |item|
+      loop_items.each_with_index do |item, idx|
         vars_context = base_vars_context.dup
         vars_context["item"] = item
         vars_context[loop_var] = item if loop_var
+        vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
 
         result = execute_handler_plugin_once(handler, host, vars_context)
         next if result["skipped"]?.try(&.as_bool)
