@@ -293,6 +293,9 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **round 112, `robertdebock.tlp`** (no version bump): zero bugs
+  found, byte-identical on both engines cold and warm, `tlp` service
+  verified active/enabled live.
 - **`0.9.421` - round 111, `robertdebock.unowned_files`**: 2 bugs -
   `find.cr`'s `paths:`/`patterns:`/`excludes:` never handled a `{{
   }}`-templated list variable rendering to its own bracketed text
