@@ -293,6 +293,10 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **round 118, `robertdebock.scripts`** (no version bump): zero bugs
+  found, byte-identical on both engines cold and warm; rendered `.j2`
+  script (block-tag loop, `comment` filter, conditional block)
+  byte-identical, verified live.
 - **`0.9.424` - round 117, `robertdebock.maintenance`**: `apt.cr`'s
   `autoclean:`/`autoremove:`/`clean:` changed-detection used an
   empty-vs-non-empty-stdout heuristic, but `apt-get autoclean` always

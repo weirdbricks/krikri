@@ -12,6 +12,14 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 118 (no version bump - zero crystal-ansible bugs found) -
+`robertdebock.scripts`: byte-identical on both engines. Cold pass `ok=9
+changed=2 failed=0` on both, warm rerun `ok=9 changed=0 failed=0` on both
+(fully idempotent). Rendered `.j2` script (block-tag loop, `comment`
+filter, conditional block) byte-identical on both, verified live.
+
+---
+
 Round 117 (0.9.424) - `robertdebock.maintenance`: 1 real bug found and
 fixed. `apt.cr`'s `autoclean:`/`autoremove:`/`clean:` changed-detection
 used an empty-vs-non-empty-stdout heuristic - but `apt-get autoclean`
