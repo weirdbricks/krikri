@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.413-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.414-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,13 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.414` - round 99, `robertdebock.irslackd`**: `npm.cr`'s own
+  `state: present` idempotency check was gated on a truthy
+  `name_version`, which is nil whenever `name:` is omitted (a
+  `path:`-only "install everything from package.json" task) - always
+  reported `changed: true`, never converging. Fixed to match real
+  `community.general.npm`'s own `if missing:` check exactly.
+  Live-reverified to match real Ansible's warm-rerun recap.
 - **`0.9.412`-`0.9.413` - round 98, `robertdebock.earlyoom`**: 2 bugs -
   `community.general.make` entirely unimplemented (new `plugins/
   make.cr`, ported from real Ansible's own module source); and

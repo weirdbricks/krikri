@@ -58,7 +58,17 @@ module CrystalPlay
         return failure(result) unless result[:exit_code] == 0
         PluginResult.new(changed: true, failed: false, msg: "Package removed", stdout: result[:stdout])
       else
-        if name_version && missing.empty?
+        # Real Ansible's own `state: present` branch checks `if missing:`
+        # alone - it does NOT require a name_version to be given at all.
+        # Gating this short-circuit on `name_version &&` (previously)
+        # meant a bare `path:`-only install (no `name:`, the common
+        # "install everything from package.json" idiom - see round 99's
+        # robertdebock.irslackd) always fell through to `npm install`
+        # and reported `changed: true` unconditionally, every single
+        # run, since `name_version` is nil whenever `name:` is omitted -
+        # never actually converging even when every dependency was
+        # already correctly installed.
+        if missing.empty?
           return PluginResult.new(changed: false, failed: false, msg: "Package already installed")
         end
         result = run_npm(["install"], name_version, global, path)

@@ -8,7 +8,25 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.413`.**
+**Currently at `0.9.414`.**
+
+---
+
+Round 99 (0.9.414) - `robertdebock.irslackd`: 1 real bug found and fixed in
+`npm.cr` (this codebase's own round-75 plugin). The `state: present` "already
+installed" short-circuit was `if name_version && missing.empty?` - requiring a
+truthy `name_version`, which is only set when a task-level `name:` is given.
+The role's own "Install packages based on package.json." task uses `path:`
+ONLY (no `name:` - the common "install everything from package.json" idiom),
+so `name_version` was always nil and the check never short-circuited
+regardless of whether `missing` (built correctly from `npm list --json`'s own
+per-dependency missing/invalid flags, matching real Ansible exactly) was
+empty or not - every single rerun fell through to `npm install` and reported
+`changed: true` unconditionally, never converging. Real `community.general.
+npm`'s own source checks `if missing:` alone with no `name_version` gate at
+all. Fixed by dropping the `name_version &&` requirement. Live-reverified:
+`ok=22 changed=0 failed=0 skipped=8` on warm rerun now byte-identical to real
+Ansible, `irslackd` service `active` on both.
 
 ---
 
