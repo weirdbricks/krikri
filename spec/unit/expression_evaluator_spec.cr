@@ -490,4 +490,29 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("items[:2]").should eq(%(["a","b"]))
     evaluator.evaluate("items[2:]").should eq(%(["c","d"]))
   end
+
+  it "re-templates a dotted-access BASE whose Crinja lookup returns nil (not just on a Crinja exception)" do
+    # Real bug found benchmarking robertdebock.spamassassin: `vars/
+    # main.yml`'s own `spamassassin_service: "{{ _spamassassin_service[
+    # ansible_facts['os_family'] ~ '-' ~ ansible_facts[
+    # 'distribution_major_version']] | default(...) }}"` stores itself
+    # as unrendered `{{ }}` text (a role default computed from a
+    # dict-index-with-fallback chain) - `{{ spamassassin_service }}`
+    # alone rendered fine (the outer multi-pass re-templating loop in
+    # VariableSubstitutor#substitute catches a bare leftover "{{"), but
+    # `{{ spamassassin_service.name }}` resolved to the literal string
+    # "undefined" instead of "spamassassin". Root cause: the dotted-
+    # access dispatch tries Crinja first, and Crinja's own vars are
+    # never re-templated - attribute access on the raw `{{ }}` string
+    # fails to Crinja's Undefined (not an exception), so `render_via_
+    # crinja_value` returned a quiet `nil` - the fallback to `@lookup.
+    # nested` (which already had the correct re-templating fix) only
+    # ever ran on an actual *exception*, never on this quiet nil.
+    v = Hash(String, JSON::Any).new
+    v["inner_dict"] = JSON.parse(%({"name":"spamassassin","state":"started"}))
+    v["outer_var"] = JSON::Any.new("{{ inner_dict }}")
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("outer_var").should eq(%({"name":"spamassassin","state":"started"}))
+    evaluator.evaluate("outer_var.name").should eq("spamassassin")
+  end
 end

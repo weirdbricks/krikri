@@ -662,7 +662,20 @@ module CrystalPlay
           # all matched `@lookup.nested`'s own output exactly.
           return begin
             value = render_via_crinja_value(expr)
-            value ? @lookup.format_value(value) : "undefined"
+            # A `nil` result here isn't necessarily a genuinely undefined
+            # value - Crinja's own vars are prepared once and never
+            # re-templated, so a dotted base whose STORED value is
+            # itself unrendered `{{ }}` text (a role default like
+            # `spamassassin_service: "{{ _spamassassin_service[...] |
+            # default(...) }}"`, robertdebock.spamassassin's own vars/
+            # main.yml) fails attribute access on the raw string outright
+            # (Crinja's Undefined, not an exception) instead of first
+            # re-resolving it - `@lookup.nested` already has the
+            # `rerender_if_templated` handling for exactly this, but
+            # previously only ran on an actual Crinja *exception*, never
+            # on a quiet `nil`. Real Ansible resolves the var fully (via
+            # its own vars_context) before evaluating `.name`.
+            value ? @lookup.format_value(value) : @lookup.nested(expr)
           rescue
             @lookup.nested(expr)
           end

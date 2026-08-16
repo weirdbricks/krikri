@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.394-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.395-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,12 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.395` - round 64, `robertdebock.spamassassin`**: dotted-access
+  dispatch only fell back from Crinja to the hand-rolled evaluator (with
+  its correct re-templating fix) on an actual Crinja exception - a
+  quiet Crinja `nil` (attribute access on a still-templated raw string)
+  fell through to literal `"undefined"` instead. Another "recursive
+  re-templating" instance. Live-reverified byte-identical, idempotent.
 - **`0.9.394` - round 60, `robertdebock.dovecot`**: `find:` only ever
   recognized the plural `paths:` param, failing outright on the
   singular `path:` alias - a real, documented alias of Ansible's own

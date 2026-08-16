@@ -8,7 +8,36 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.394`.**
+**Currently at `0.9.395`.**
+
+---
+
+Round 64 (0.9.395): `robertdebock.spamassassin` on a fresh `G3.2GB`
+Atlantic.net pair. 1 real bug found and fixed: `ExpressionEvaluator`'s
+dotted-access dispatch tries Crinja first, falling back to the hand-
+rolled `@lookup.nested` (which already has a `rerender_if_templated`
+fix for exactly this class of bug) only on an actual Crinja
+*exception*. `spamassassin_service` (used as `spamassassin_service.name`/
+`.state` by the "Start and enable spamassassin" task) is itself a
+computed role default whose own value is unrendered `{{ }}` text (a
+dict-index-with-`default()`-fallback chain keyed on `os_family`/
+`distribution_major_version`) - Crinja's own vars are never re-
+templated, so attribute access on the raw, still-templated string
+failed to Crinja's `Undefined` (not an exception) and `render_via_
+crinja_value` returned a quiet `nil` instead - the exception-only
+fallback never fired, so the literal string `"undefined"` became the
+`name:`/`state:` param values, and `systemctl enable undefined.service`
+failed outright ("Unit file undefined.service does not exist"). Fixed
+by also falling back to `@lookup.nested(expr)` on a nil Crinja result,
+not just an exception. This is another instance of the well-documented
+"recursive re-templating" bug class (a variable whose own value is
+itself unrendered Jinja), this time specifically in the dotted-access
+dispatch's Crinja-first delegation. Live-reverified: fresh pair (purged
+and reinstalled spamassassin on the crystal host for a genuine cold-vs-
+cold comparison), `ok=9 changed=6 failed=0 skipped=1` identical both
+engines, `spamassassin` service `enabled` on both, `spamd` user/group +
+`/var/log/spamassassin` ownership/mode byte-identical, fully idempotent
+warm rerun (`changed=0` both). Regression spec added.
 
 ---
 
