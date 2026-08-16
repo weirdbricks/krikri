@@ -8,9 +8,25 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.404`.**
+**Currently at `0.9.405`.**
 
 ---
+
+Round 78 (0.9.405) - `robertdebock.unbound`: 1 real bug found and fixed. A failed
+HANDLER never halted the rest of the play for that host -
+`execute_handler_internal` was the one execution path in `executor.cr` that never
+called `halt_if_failed` (every other path - looped tasks, include_tasks, the plain
+per-task path - does). The role's own `./configure --enable-systemd` handler
+genuinely fails on stock Ubuntu 22.04 (missing `pkg-config`, so `libsystemd`
+isn't detected even though `libsystemd-dev` gets installed - a real external
+role/environment gap, reproduces identically on real `ansible-playbook`, which
+correctly halts the play right there). crystal-ansible instead kept running every
+task after the `meta: flush_handlers` that triggered the failing handler,
+producing extra `ok:`/`changed:`/`failed:` recap entries real Ansible never even
+attempts. Fixed with a `halt_if_failed` call after handler execution (skipped for
+`ignore_errors:`). Live-reverified: crystal-ansible now halts at the exact same
+point as real Ansible (no result lines for `Replace values in service file`
+onward), matching real Ansible's own behavior on this host pair.
 
 Round 77 (no version bump - zero crystal-ansible bugs found): `robertdebock.ntp`.
 Identical on both engines cold (`ok=15 changed=2 failed=0 skipped=2`) and warm

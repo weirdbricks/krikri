@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.404-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.405-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,14 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.405` - round 78, `robertdebock.unbound`**: a failed handler never
+  halted the rest of the play for that host - the one execution path in
+  `executor.cr` missing a `halt_if_failed` call. The role's own
+  `./configure --enable-systemd` handler genuinely fails on stock Ubuntu
+  22.04 (missing pkg-config), reproducing identically on real
+  `ansible-playbook`, which correctly halts there; crystal-ansible instead
+  kept running every subsequent task. Live-reverified to halt at the same
+  point as real Ansible now.
 - **`0.9.403`-`0.9.404` - round 75, `robertdebock.node_red`**: new
   `community.general.npm` plugin (entirely unimplemented before);
   `import_role:` entirely unhandled by the parser (silently dropped the

@@ -3737,11 +3737,24 @@ module CrystalPlay
         resolve_loop_flattened(handler, vars_context, host.name) ||
         resolve_loop_subelements(handler, vars_context)
 
-      if loop_items
-        return execute_handler_loop(handler, host, vars_context, loop_items)
-      end
+      result = loop_items ? execute_handler_loop(handler, host, vars_context, loop_items) : execute_handler_plugin_once(handler, host, vars_context)
 
-      execute_handler_plugin_once(handler, host, vars_context)
+      # A failed handler halts the rest of the play for this host, same
+      # as a failed regular task (real Ansible: an unrescued handler
+      # failure aborts the host's play run) - every other execution path
+      # in this file (execute_looped_task, execute_include_tasks, the
+      # plain-task path, etc.) calls halt_if_failed, but this one never
+      # did. robertdebock.unbound's own `./configure --enable-systemd`
+      # handler genuinely fails on stock Ubuntu 22.04 (libsystemd-dev
+      # not installed - a real external role/environment gap, reproduces
+      # on real ansible-playbook too, which correctly stops right there)
+      # - crystal-ansible instead kept running every task after the
+      # `meta: flush_handlers` that triggered it, diverging from real
+      # Ansible's own recap (extra ok:/changed:/failed: entries for
+      # tasks real Ansible never even attempted).
+      halt_if_failed(handler, host, result["failed"]?.try(&.as_bool) == true) unless handler.ignore_errors
+
+      result
     end
 
     # Runs *handler*'s module once per *loop_items* entry (item/loop_var
