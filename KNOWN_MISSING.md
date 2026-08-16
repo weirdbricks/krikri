@@ -12,6 +12,19 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 44 (no version bump - zero crystal-ansible bugs found):
+`robertdebock.mongodb` (+ `robertdebock.bootstrap`) on a fresh `G3.2GB`
+Atlantic.net pair. Task-for-task identical on both engines
+(`ok=18 changed=6 failed=0 skipped=2` both), role's own MongoDB 6.0 apt
+repo added and `mongodb-org` installed cleanly on both. `mongod` itself
+then crash-dumps identically on both engines
+(`signal=ILL`/`code=core-dump`) - MongoDB 5.0+'s well-known AVX CPU
+requirement, confirmed absent from this Atlantic.net VM's CPU flags
+entirely (`lscpu` shows no `avx`). A real host/CPU-capability
+limitation, not an engine issue.
+
+---
+
 Round 43 (`0.9.387`), `robertdebock.postgres` (+ `robertdebock.bootstrap`):
 4 real bugs, found and fixed in sequence on a fresh `G3.2GB` Atlantic.net
 pair - the role's own "Create postgres database"/"Create postgres users"
