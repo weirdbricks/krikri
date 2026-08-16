@@ -293,6 +293,9 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **round 105, `robertdebock.docker_compose`** (no version bump):
+  zero bugs found, byte-identical on both engines cold and warm,
+  `docker-compose --version` verified live.
 - **`0.9.416` - round 104, `robertdebock.docker`**:
   `CrinjaRenderer#prepare_crinja_vars` re-rendered a nested-template
   variable but never re-parsed the result back to its real type, so a

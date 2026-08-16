@@ -12,6 +12,14 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 105 (no version bump - zero crystal-ansible bugs found) -
+`robertdebock.docker_compose`: byte-identical on both engines. Cold pass
+`ok=4 changed=1 failed=0 skipped=2` on both, warm rerun `ok=4 changed=0
+failed=0 skipped=2` on both (fully idempotent). `docker-compose --version`
+identical (`1.29.2`) on both, verified live.
+
+---
+
 Round 104 (0.9.416) - `robertdebock.docker`: 1 real bug found and fixed.
 `CrinjaRenderer#prepare_crinja_vars` re-rendered a nested-template variable
 (one whose entire raw value is itself a `{{ }}` expression, e.g. `docker_
