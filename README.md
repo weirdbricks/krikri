@@ -293,6 +293,11 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **round 101, `robertdebock.clamav`** (no version bump, documented not
+  fixed): role's own bug (`freshclam_private_mirrors` used without a
+  default) fails identically on both engines; re-confirms
+  `ansible.posix.seboolean` remains unimplemented (untestable without
+  an SELinux host).
 - **round 100, `robertdebock.cargo`** (no version bump): zero bugs
   found, byte-identical on both engines cold and warm, `cargo`/`rustc`
   1.97.1 verified live via rustup.

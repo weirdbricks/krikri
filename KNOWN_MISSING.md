@@ -12,6 +12,26 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 101 (no version bump - documented, not fixed) - `robertdebock.clamav`:
+role's own bug, confirmed identical on both engines - `tasks/main.yml`'s
+"Download signatures" task uses `freshclam_private_mirrors` unconditionally
+without a default, and the role's own `assert.yml` only checks it `when:
+freshclam_private_mirrors is defined` (i.e. doesn't require it) - so on a
+host that never sets it, real `ansible-playbook` hard-fails with "includes an
+option with an undefined variable" (strict-undefined), while crystal-ansible
+substitutes the literal string `"undefined"` and fails later with "Missing
+scheme: undefined/main.cvd" - same already-documented deferred
+strict-vs-lenient-undefined design gap from round 52/round 62. Also
+re-confirms `ansible.posix.seboolean` remains unimplemented (same
+already-documented class as the haproxy/apache2 rounds' `seport`/`seboolean`
+note) - both test hosts are Ubuntu with no SELinux, so this can't be
+implemented-and-verified without an EL/Fedora host; not attempted blind.
+`ok=9 changed=3 failed=1` identical on both engines; `skipped` differs (5 vs
+3) purely from the 2 missing seboolean task listings, not a behavioral
+difference on this host.
+
+---
+
 Round 100 (no version bump - zero crystal-ansible bugs found) -
 `robertdebock.cargo`: byte-identical on both engines. Cold pass `ok=6
 changed=2 failed=0` on both, warm rerun `ok=6 changed=0 failed=0` on both
