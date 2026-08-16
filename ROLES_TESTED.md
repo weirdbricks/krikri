@@ -8,6 +8,7 @@ or already-clean roles as if they were new.
 
 | Role | Status |
 |---|---|
+| robertdebock.umask | ✅ Clean (round 115, no version bump - zero crystal-ansible bugs found). Byte-identical on both engines: cold pass `ok=4 changed=1 failed=0`, warm rerun `ok=4 changed=0 failed=0` (fully idempotent). `~/.bashrc`'s appended `umask 0022` line byte-identical on both, verified live. |
 | robertdebock.types | ✅ Clean (round 114, no version bump - zero crystal-ansible bugs found). Byte-identical `ok=17 changed=0 failed=0` recap on both engines, cold and warm - every `is string`/`is number`/`is boolean`/`is float`/`is mapping`/`is iterable` test and `type_debug` call agreed with real Ansible. One cosmetic-only note: `debug: msg:` of a dict/list renders via Python repr (single quotes) on real Ansible vs compact JSON here - no assertion/result was affected. |
 | robertdebock.test_connection | ✅ Clean (round 113, 0.9.422). 2 real bugs found and fixed: `ansible.builtin.ping` and `ansible.builtin.wait_for_connection` were both entirely unimplemented (new `plugins/ping.cr` and `plugins/wait_for_connection.cr`). Live-reverified: byte-identical `ok=10 changed=0 failed=0` recap and the role's own written result files byte-identical between engines. |
 | robertdebock.tlp | ✅ Clean (round 112, no version bump - zero crystal-ansible bugs found). Byte-identical on both engines: cold pass `ok=4 changed=2 failed=0 skipped=5`, warm rerun `ok=4 changed=0 failed=0 skipped=5` (fully idempotent). `tlp` service active and enabled on both, verified live. |

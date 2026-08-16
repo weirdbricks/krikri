@@ -293,6 +293,9 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **round 115, `robertdebock.umask`** (no version bump): zero bugs
+  found, byte-identical on both engines cold and warm, `.bashrc`
+  content verified live.
 - **round 114, `robertdebock.types`** (no version bump): zero bugs
   found, byte-identical type-test recap on both engines cold and
   warm; noted a cosmetic-only dict/list `debug:` formatting

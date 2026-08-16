@@ -12,6 +12,14 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 115 (no version bump - zero crystal-ansible bugs found) -
+`robertdebock.umask`: byte-identical on both engines. Cold pass `ok=4
+changed=1 failed=0` on both, warm rerun `ok=4 changed=0 failed=0` on both
+(fully idempotent). `~/.bashrc`'s appended `umask 0022` line byte-identical
+on both, verified live.
+
+---
+
 Round 114 (no version bump - zero crystal-ansible bugs found) -
 `robertdebock.types`: byte-identical `ok=17 changed=0 failed=0` recap on
 both engines, both cold and warm - every `is string`/`is number`/`is
