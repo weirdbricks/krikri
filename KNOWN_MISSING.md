@@ -12,6 +12,11 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 80 (no version bump - zero crystal-ansible bugs found): `robertdebock.logrotate`.
+Identical on both engines cold (`ok=15 changed=1 failed=0 skipped=26`) and warm
+(`ok=15 changed=0 failed=0 skipped=26` - fully idempotent), `/etc/logrotate.conf`
+byte-identical.
+
 Round 79 (0.9.406) - `robertdebock.auditd`: 1 real bug found and fixed. A handler
 notifying ANOTHER handler (`notify:` inside `handlers/main.yml` itself, not just
 on a regular task) was entirely unhandled - only a regular task's own `notify:`
