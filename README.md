@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.395-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.396-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,10 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.396` - round 65, `robertdebock.locale`**: `community.general.
+  timezone` was entirely unimplemented - new `timezone.cr` plugin
+  (systemd/`timedatectl` backend, matching every target this repo
+  benchmarks against). Live-reverified byte-identical, idempotent.
 - **`0.9.395` - round 64, `robertdebock.spamassassin`**: dotted-access
   dispatch only fell back from Crinja to the hand-rolled evaluator (with
   its correct re-templating fix) on an actual Crinja exception - a

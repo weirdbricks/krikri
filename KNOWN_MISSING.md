@@ -8,7 +8,32 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.395`.**
+**Currently at `0.9.396`.**
+
+---
+
+Round 65 (0.9.396): `robertdebock.locale` on a fresh `G3.2GB`
+Atlantic.net pair. `community.general.timezone` was entirely
+unimplemented - the role's own "Set timezone" task silently skipped
+("Plugin not available") while real Ansible actually changed the
+timezone. Implemented a new `timezone.cr` plugin (new `AVAILABLE_
+PLUGINS`/`build.sh` entries per the usual 3-place registration).
+Real Ansible's module has several OS-specific backends (systemd/
+`timedatectl`, SmartOS, macOS, BSD, AIX) plus a non-systemd-Linux
+fallback editing `/etc/timezone`/`/etc/localtime` directly - every
+target this repo benchmarks against is systemd-based, so only the
+`SystemdTimezone` backend is implemented (`timedatectl show -p
+Timezone --value` to check current, `timedatectl set-timezone <name>`
+to change) - matches real Ansible's own class-selection logic exactly
+for a systemd host. `hwclock:` (a separate, rarer param no role
+benchmarked so far uses) is not implemented, only `name:`. No unit
+spec added (needs a real `timedatectl`/systemd session to test
+meaningfully, same as the existing `service:` plugin - verified live
+instead, per CLAUDE.md's "some things have no spec at all by design"
+guidance). Live-reverified: fresh pair, `ok=22 changed=3 failed=0`
+identical both engines, `timedatectl show -p Timezone --value` and
+`/etc/locale.conf`/`/etc/default/locale` byte-identical, fully
+idempotent warm rerun (`changed=0` both).
 
 ---
 

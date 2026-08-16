@@ -232,6 +232,7 @@ PLUGINS=(
     "pamd"
     "htpasswd"
     "ini_file"
+    "timezone"
     "service_facts"
     "postgresql_db"
     "postgresql_user"

@@ -437,6 +437,7 @@ module CrystalPlay
       "community.general.pamd",
       "community.general.htpasswd",
       "community.general.ini_file",
+      "community.general.timezone",
       "ansible.builtin.service_facts",
       "ansible.builtin.set_fact",
       "ansible.builtin.get_url",
