@@ -12,6 +12,14 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 74 (no version bump - zero crystal-ansible bugs found):
+`robertdebock.tftpd` on a fresh `G3.2GB` Atlantic.net pair. Identical
+on both engines (`ok=3 changed=1 failed=0` cold, `ok=3 changed=0
+failed=0` warm - fully idempotent), `tftpd-hpa` service `active` on
+both.
+
+---
+
 Round 73 (no version bump - zero crystal-ansible bugs found):
 `robertdebock.xinetd` on a fresh `G3.2GB` Atlantic.net pair. Identical
 on both engines (`ok=3 changed=1 failed=0` cold, `ok=3 changed=0
