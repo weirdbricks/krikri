@@ -39,6 +39,18 @@ module CrystalPlay
 
       original = File.exists?(path) ? File.read(path) : ""
       lines = split_lines(original)
+      # Real Ansible's own ini_file module force-seeds a single blank line
+      # (`if not ini_lines: ini_lines.append("\n")`) whenever the starting
+      # line list is empty - a brand-new file, or an existing-but-0-byte
+      # one - before any section/option insertion logic runs, so a freshly
+      # created config always gets exactly one leading blank line before
+      # its first `[section]` header. This plugin previously started from
+      # a genuinely empty array in that case, producing no leading blank
+      # line at all - a real, silent byte-for-byte divergence from real
+      # Ansible's output (not a crash) found benchmarking robertdebock.
+      # python_pip's own `Configure pip proxy`/`Trust hosts` tasks writing
+      # a brand-new `/etc/pip.conf`.
+      lines = [""] of String if lines.empty?
 
       new_lines, changed = apply(lines, section, option, value, state, create, exclusive, no_extra_spaces)
 

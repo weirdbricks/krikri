@@ -18,7 +18,13 @@ describe "ini_file plugin" do
     result = PluginSpecHelper.run("ini_file", {"path" => path, "section" => "mysqld", "option" => "port", "value" => "3306"})
 
     result["changed"].as_bool.should be_true
-    File.read(path).should eq("[mysqld]\nport = 3306\n")
+    # Real Ansible's own ini_file module force-seeds a single leading
+    # blank line whenever the starting file is empty/nonexistent (`if not
+    # ini_lines: ini_lines.append("\n")`) before any section/option
+    # insertion - a brand-new config always gets exactly one blank line
+    # before its first "[section]" header. Found benchmarking
+    # robertdebock.python_pip's own fresh /etc/pip.conf write.
+    File.read(path).should eq("\n[mysqld]\nport = 3306\n")
   end
 
   it "adds an option to an existing section without disturbing others" do
@@ -105,7 +111,7 @@ describe "ini_file plugin" do
     result = PluginSpecHelper.run("ini_file", {"path" => path, "section" => "mysqld", "option" => "port", "value" => "3306", "no_extra_spaces" => "true"})
 
     result["changed"].as_bool.should be_true
-    File.read(path).should eq("[mysqld]\nport=3306\n")
+    File.read(path).should eq("\n[mysqld]\nport=3306\n")
   end
 
   it "does not write to disk in check mode" do

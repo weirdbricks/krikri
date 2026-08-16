@@ -8,7 +8,30 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.391`.**
+**Currently at `0.9.392`.**
+
+---
+
+Round 58 (0.9.392): `robertdebock.python_pip` on a fresh `G3.2GB`
+Atlantic.net pair (`python_pip_proxy:`/`python_pip_trusted_host:` set to
+exercise both of the role's `community.general.ini_file:` tasks writing
+a brand-new `/etc/pip.conf`). 1 real bug found and fixed:
+`plugins/ini_file.cr` started from a genuinely empty line array for a
+nonexistent/empty destination file, while real Ansible's own
+`ini_file.py` force-seeds a single blank line (`if not ini_lines:
+ini_lines.append("\n")`) before any section/option insertion whenever
+the starting line list is empty - so every brand-new `ini_file`-managed
+config real Ansible produces has exactly one leading blank line before
+its first `[section]` header, which crystal-ansible's version omitted -
+a silent byte-for-byte content divergence, not a crash. Fixed by
+seeding `lines = [""]` under the same empty-check real Ansible uses.
+Live-reverified: fresh pair, cold `ok=7 changed=2 failed=0 skipped=1`
+identical both engines; `/etc/pip.conf` now byte-identical (`\n[global]
+\nindex-url = ...\ntrusted-host = ...\n` on both) after the fix; fully
+idempotent warm rerun (`changed=0` both). Two existing `ini_file` specs
+asserting the old no-leading-blank-line shape updated to match; two
+already-existing-file specs unaffected (the gap only applies when the
+file starts empty/nonexistent).
 
 ---
 
