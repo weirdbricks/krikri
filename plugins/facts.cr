@@ -48,8 +48,8 @@ rescue
 end
 
 # Gather all system facts
-def gather_facts : Hash(String, String | Int64 | Hash(String, String) | Array(String) | Array(Hash(String, String)))
-  facts = {} of String => (String | Int64 | Hash(String, String) | Array(String) | Array(Hash(String, String)))
+def gather_facts : Hash(String, String | Int64 | Hash(String, String) | Array(String) | Array(Hash(String, String)) | Hash(String, JSON::Any))
+  facts = {} of String => (String | Int64 | Hash(String, String) | Array(String) | Array(Hash(String, String)) | Hash(String, JSON::Any))
 
   gather_hostname(facts)
   gather_os_facts(facts)
@@ -490,13 +490,47 @@ def gather_mount_space_stats(mountpoint : String) : Hash(String, String)
 end
 
 def gather_python_facts(facts)
-  raw = capture_merged("python3", ["--version"])
-  raw = capture_merged("python", ["--version"]) if raw.empty?
-  version = raw.split.size >= 2 ? raw.split[1] : ""
-  facts["ansible_python_version"] = version unless version.empty?
+  # Real Ansible's PythonFactCollector exposes ansible_facts['python'] as
+  # a single nested dict (version/version_info/executable/
+  # has_sslcontext/type) - not the flat ansible_python (path string) /
+  # ansible_python_version (bare version string) this used to invent,
+  # which don't exist under those names in real Ansible at all. Asking
+  # the interpreter to introspect itself (like Ansible's own collector
+  # does, running inside Python) is more robust than re-deriving each
+  # field by shelling out separately.
+  python_bin = Process.find_executable("python3") || Process.find_executable("python")
+  return unless python_bin
 
-  path = Process.find_executable("python3") || Process.find_executable("python") || ""
-  facts["ansible_python"] = path unless path.empty?
+  script = <<-PY
+    import json, sys
+    vi = sys.version_info
+    print(json.dumps({
+        "major": vi[0], "minor": vi[1], "micro": vi[2],
+        "releaselevel": vi[3], "serial": vi[4],
+        "version_info": list(vi),
+        "executable": sys.executable,
+        "has_sslcontext": True,
+        "type": getattr(sys, "subversion", [getattr(sys, "implementation", type("", (), {"name": None})).name])[0],
+    }))
+    PY
+
+  raw = capture_merged(python_bin, ["-c", script])
+  parsed = (JSON.parse(raw).as_h? rescue nil)
+  return unless parsed
+
+  facts["ansible_python"] = {
+    "version" => JSON::Any.new({
+      "major"        => JSON::Any.new(parsed["major"].as_i64),
+      "minor"        => JSON::Any.new(parsed["minor"].as_i64),
+      "micro"        => JSON::Any.new(parsed["micro"].as_i64),
+      "releaselevel" => parsed["releaselevel"],
+      "serial"       => JSON::Any.new(parsed["serial"].as_i64),
+    } of String => JSON::Any),
+    "version_info"   => parsed["version_info"],
+    "executable"     => parsed["executable"],
+    "has_sslcontext" => parsed["has_sslcontext"],
+    "type"           => parsed["type"],
+  } of String => JSON::Any
 end
 
 def gather_user_facts(facts)

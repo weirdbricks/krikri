@@ -8,7 +8,39 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.426`.**
+**Currently at `0.9.427`.**
+
+---
+
+Round 133 (`0.9.427`) - `robertdebock.mitogen`: 1 real bug found and
+fixed. `facts.cr`'s `gather_python_facts` exposed `ansible_python`
+(the interpreter path) and `ansible_python_version` (a bare version
+string) as flat strings - names and shapes that don't exist under
+those names in real Ansible at all. Real Ansible's own
+`PythonFactCollector` (`module_utils/facts/system/python.py`) exposes
+a single fact, `ansible_facts['python']`, as a nested dict:
+`version.{major,minor,micro,releaselevel,serial}`, `version_info`
+(list), `executable`, `has_sslcontext`, `type`. The role's own `python{{
+ansible_facts['python'].version.major }}` command construction (used
+to pick `python3`/`python2` for the site-packages lookup) resolved
+`ansible_facts['python']` to the undefined-sentinel string, producing
+the literal command `python{{ }}` -> `pythonundefined`, which crashed
+outright with `No such file or directory` - the very first real task
+in the role. Fixed by rewriting `gather_python_facts` to have the
+target's own interpreter introspect itself via `python3 -c
+'...json.dumps(...)'` (matching how Ansible's own collector runs
+*inside* Python) and building the correct nested structure. The
+top-level `facts` union type gained a `Hash(String, JSON::Any)`
+variant to hold it - the only fact needing genuine multi-level nesting
+so far. Live-reverified on a fresh Atlantic.net pair: `ok=7 changed=3
+failed=0` identical cold, fully idempotent warm rerun on both engines
+(`/etc/ansible/ansible.cfg`'s written `strategy`/`strategy_plugins`
+lines byte-identical; a header-comment diff in that same file is
+pre-existing state from node0's apt-installed `ansible` package
+shipping a commented template, not related to this fix). Recap
+`skipped` vs `ok` categorization for the `unarchive: creates:`
+short-circuit differs cosmetically between engines - a separate,
+pre-existing gap, not new, and not investigated further this round.
 
 ---
 

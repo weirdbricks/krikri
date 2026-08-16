@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.426-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.427-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,16 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.427` - round 133, `robertdebock.mitogen`**: `ansible_facts
+  ['python']` was two invented flat strings (`ansible_python`/
+  `ansible_python_version`) instead of real Ansible's actual nested
+  dict (`version.major`/`.minor`/`.micro`, `version_info`,
+  `executable`, `has_sslcontext`, `type`) - a role's `python{{
+  ansible_facts['python'].version.major }}` construction resolved to
+  the literal `pythonundefined`, crashing outright. Rewrote
+  `gather_python_facts` to introspect the interpreter itself and
+  build the correct nested structure. Live-reverified byte-identical
+  recap and fully idempotent warm rerun on both engines.
 - **round 132, `robertdebock.revealmd`** (no version bump): engine
   clean but not fully runnable - Ubuntu 22.04's default Node.js
   (v12) is too old for the latest npm `reveal-md` release, both
