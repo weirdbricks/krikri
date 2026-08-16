@@ -1,0 +1,20 @@
+# Multi-host block: batching test - targets "multilocal" (see
+# inventory-multi-local.ini). Exercises execute_block_multi's per-host
+# when: partitioning (web1 runs the block, web2 skips it) alongside the
+# round-37 include_tasks: batching fix, since both share the same
+# run_task_batch engine.
+
+- name: multi-host block batching test
+  hosts: multilocal
+  gather_facts: false
+
+  tasks:
+    - block:
+        - name: report which host is running this block task
+          ansible.builtin.debug:
+            msg: "block task ran on {{ inventory_hostname }}"
+      when: inventory_hostname == 'web1'
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "multi-host block smoke test complete!"

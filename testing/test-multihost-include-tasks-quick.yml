@@ -1,0 +1,19 @@
+# Multi-host include_tasks: batching test - targets "multilocal" (see
+# inventory-multi-local.ini, both hosts ansible_connection=local so no
+# real second machine is needed). Real bug found benchmarking a real
+# 2-node geerlingguy.kubernetes cluster bring-up (round 37): every task
+# reached through a top-level include_tasks: used to run against one
+# whole host at a time, serially - fully bypassing --forks parallelism
+# for everything inside, even though both hosts resolve the exact same
+# included file here.
+
+- name: multi-host include_tasks batching test
+  hosts: multilocal
+  gather_facts: false
+
+  tasks:
+    - include_tasks: tasks/multihost-include.yml
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "multi-host include_tasks smoke test complete!"

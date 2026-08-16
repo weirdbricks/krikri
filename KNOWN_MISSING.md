@@ -8,7 +8,64 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.382`.**
+**Currently at `0.9.383`.**
+
+---
+
+`0.9.383` - round 37, a real performance bug: `include_tasks:` (and
+`block:`/`rescue:`/`always:`) ran every nested task one whole host at a
+time, fully serially, never getting the `--forks` multi-host parallelism
+regular top-level tasks get. Found running a fresh head-to-head timing
+comparison against real `ansible-playbook` on the real 2-node
+`geerlingguy.kubernetes` cluster playbook verified clean in round 36:
+crystal-ansible's *cold* run was a reproducible ~1.8x **slower** than
+real Ansible on the same playbook (247.4s/252.1s across two independent
+fresh host pairs vs. a stable ~136s for python) even though the *warm*
+(idempotent) run was faster as expected (23s vs 29s) - a red flag, since
+cold and warm should never diverge in relative direction like that.
+
+Root cause: `execute_include_tasks`'s `run_task_list(included_tasks,
+host)` (and the identical call from `execute_block` for block_tasks/
+rescue_tasks/always_tasks) takes a single host and runs the whole nested
+task list against just that host before the caller ever moves to the
+next one. `include_tasks:` for OS-family branching (`include_tasks:
+setup-Debian.yml`) is an extremely common Ansible idiom - not specific
+to the two roles that surfaced this - and everything reached through it
+(here: essentially the whole playbook - apt installs, kubeadm image
+pulls) lost all cross-host overlap regardless of `--forks`.
+
+Fixed by unifying the top-level play's own per-task dispatch and any
+nested `include_tasks:`/`block:` list onto one shared `run_task_batch`
+engine: one `TASK [...]` banner per task, fanned out across every
+currently-active host via the same forkable/parallel path the top level
+always used, recursing into itself for nested `include_tasks:`/`block:`
+found along the way. `include_tasks:` additionally now resolves when:/
+the included file's path per host first (cheap, local), groups hosts
+that resolve identically (the overwhelmingly common case - homogeneous
+inventories resolve every host to the same file), and runs each group
+through the same batch engine - also fixing a smaller cosmetic gap
+along the way: real Ansible's own `included: <path> for host1, host2`
+line (shared across every host that resolved the same file) was never
+printed at all before this, each host's resolution silently jumping
+straight to the nested tasks' own banners instead.
+
+Scoped conservatively: a looped `include_tasks:` (`with_items:` on the
+include statement itself - rarer, e.g. robertdebock.users' own "Loop
+over users_groups") still goes through the original, unchanged
+single-host path, since threading a per-item `item` binding across a
+host *group* needs more care than this pass attempted; the existing
+single-host `run_task_list`/`execute_include_tasks`/`execute_block`
+trio is left completely intact as that fallback, not removed.
+
+Live-verified end to end on a third independent fresh 2-node Atlantic.net
+pair: cold run dropped from 247.4s/252.1s to 175.7s (~30% faster, cutting
+the gap to real Ansible's ~136s roughly in half) with the resulting
+cluster identically healthy (both nodes `Ready`, all 10 system pods
+`Running`). Two new regression specs (multi-host `include_tasks:` and
+`block:`, both via the existing local-connection multi-host inventory
+fixture) lock in the correctness side - the full existing spec suite
+(1219 examples) needed zero changes, meaning single-host include_tasks:/
+block: behavior was completely unaffected by this rewrite.
 
 ---
 

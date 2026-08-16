@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.382-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.383-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,21 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.383` - round 37, a real performance bug**: a head-to-head cold-
+  run timing comparison against real `ansible-playbook` on the real
+  2-node `geerlingguy.kubernetes` cluster playbook (verified clean in
+  round 36) showed crystal-ansible a reproducible ~1.8x *slower*
+  (247-252s across two fresh host pairs vs. a stable ~136s for python),
+  even though the idempotent warm rerun was faster as expected - a red
+  flag. Root cause: `include_tasks:`/`block:` ran every nested task one
+  whole host at a time, fully serially, never getting the `--forks`
+  multi-host parallelism regular top-level tasks get - and
+  `include_tasks:` for OS-family branching is an extremely common
+  Ansible idiom, not specific to this role. Fixed by unifying the
+  top-level play loop and any nested `include_tasks:`/`block:` list onto
+  one shared batch-dispatch engine. Live-verified on a third independent
+  host pair: cold run dropped to 175.7s (~30% faster, cutting the gap to
+  real Ansible roughly in half), resulting cluster identically healthy.
 - **`0.9.382` - round 35, `robertdebock.vault` + `geerlingguy.kubernetes`**
   (first new roles since round 33's nomad), real 2-vCPU/4GB Atlantic.net
   pair. 3 real bugs, all surfaced by kubernetes' own "Set the kubeadm

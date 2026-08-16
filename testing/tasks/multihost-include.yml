@@ -1,0 +1,3 @@
+- name: report which host is running this included task
+  ansible.builtin.debug:
+    msg: "included task ran on {{ inventory_hostname }}"

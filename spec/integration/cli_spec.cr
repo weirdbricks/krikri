@@ -160,6 +160,44 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("include_tasks smoke test complete!")
   end
 
+  it "batches a top-level include_tasks: across every host sharing the same resolved file, instead of running it one whole host at a time" do
+    # Real bug found benchmarking a real 2-node geerlingguy.kubernetes
+    # cluster bring-up (round 37, 0.9.383): every task reached through a
+    # top-level include_tasks: used to run against host 1 to completion,
+    # then host 2 to completion - fully serial, bypassing --forks
+    # parallelism for everything inside (which is most of a typical
+    # role: geerlingguy.containerd/geerlingguy.kubernetes both gate
+    # their OS-family setup this way). Measured as a consistent ~1.8x
+    # cold-run wall-time regression on a real 2-host cluster playbook.
+    status, output = run_playbook(
+      "test-multihost-include-tasks-quick.yml",
+      [] of String,
+      inventory: File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-multi-local.ini")
+    )
+
+    status.success?.should be_true
+    output.should contain("included task ran on web1")
+    output.should contain("included task ran on web2")
+    # One shared "included: <path> for web1, web2" line - not two
+    # separate single-host include resolutions.
+    output.should contain("for web1, web2")
+    output.should contain("multi-host include_tasks smoke test complete!")
+  end
+
+  it "batches a top-level block: across hosts too, still honoring per-host when: skips correctly" do
+    status, output = run_playbook(
+      "test-multihost-block-quick.yml",
+      [] of String,
+      inventory: File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-multi-local.ini")
+    )
+
+    status.success?.should be_true
+    output.should contain("block task ran on web1")
+    output.should_not contain("block task ran on web2")
+    output.should contain("skipping: [web2]")
+    output.should contain("multi-host block smoke test complete!")
+  end
+
   it "runs include_role: once per loop item, applies invocation vars, and fires the role's handler exactly once even though the role (and its handler) were dynamically loaded twice" do
     status, output = run_playbook("test-include-role-quick.yml")
 

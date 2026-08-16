@@ -160,27 +160,7 @@ module CrystalPlay
         gather_facts_for_all_hosts
       end
 
-      ensure_grouped(@tasks)
-
-      @tasks.each do |task|
-        active_hosts = @hosts.reject { |host| @halted_hosts.includes?(host.name) }
-
-        # The banner prints once per task, not per host - real Ansible's
-        # own convention - so a templated name is rendered against
-        # whichever host will actually run first (matches this file's
-        # existing `run_once`-style "first host" precedent elsewhere).
-        display_host = active_hosts.first? || @hosts.first
-        puts "TASK [#{render_task_name_for_display(task, display_host)}]".colorize(:white).bold
-        puts "*" * 70
-
-        if @forks > 1 && task_forkable?(task) && active_hosts.size > 1
-          run_task_for_hosts_in_parallel(task, active_hosts)
-        else
-          active_hosts.each { |host| execute_task(task, host) }
-        end
-
-        puts ""
-      end
+      run_task_batch(@tasks, @hosts)
 
       # Run handlers at the end of all tasks (Ansible behavior)
       run_handlers
@@ -203,6 +183,254 @@ module CrystalPlay
       return false if task.include_tasks?
       return false if task.include_role?
       true
+    end
+
+    # True if *task* has ANY loop source configured (loop:/with_items:/
+    # with_dict:/with_fileglob:/with_first_found:/with_flattened:/
+    # with_subelements:/etc), regardless of whether it can be resolved
+    # yet. Used to keep a looped `include_tasks:` (rare - e.g.
+    # robertdebock.users' own "Loop over users_groups") on the
+    # existing, already-correct single-host path rather than the new
+    # multi-host batch one below, which doesn't attempt to thread a
+    # per-item `item` binding across a host group.
+    private def task_has_loop?(task : Task) : Bool
+      !task.loop_items.nil? || !task.loop_fileglob.nil? || !task.loop_first_found.nil? ||
+        !task.loop_template.nil? || !task.loop_flattened.nil? || !task.loop_subelements_list.nil?
+    end
+
+    # Runs *tasks* against *hosts* as one shared batch: one "TASK [...]"
+    # banner per task, fanned out across every currently-active host via
+    # the same forkable/parallel path #run always used at the top level -
+    # not resolved and re-run host-by-host in full serial passes. This is
+    # the single engine behind both the play's own top-level task list
+    # AND any nested list reached via include_tasks:/block:/rescue:/
+    # always: (previously two different code paths: the top-level loop
+    # here, and the single-host-only run_task_list/execute_include_tasks/
+    # execute_block trio below, still kept as-is and still used for the
+    # narrower cases this method defers to them for - a looped
+    # include_tasks:, or any task reached via some other single-host
+    # call site).
+    #
+    # Real bug found benchmarking a real 2-node geerlingguy.kubernetes
+    # cluster bring-up (round 37, 0.9.383): geerlingguy.containerd/
+    # geerlingguy.kubernetes both gate their OS-family setup via
+    # `include_tasks: setup-Debian.yml` - an extremely common Ansible
+    # idiom, not specific to these two roles. Every task previously
+    # reached through execute_include_tasks's single-host run_task_list
+    # ran against host 1 *to completion*, then host 2 *to completion*,
+    # serially - never overlapping their SSH round trips or remote
+    # command time despite `--forks` otherwise being available, because
+    # include_tasks: itself was excluded from task_forkable? and the
+    # tasks reached through it were dispatched one whole host at a time
+    # regardless. Measured as a consistent ~1.8x cold-run wall-time
+    # regression on a real 2-host cluster playbook (apt installs,
+    # kubeadm image pulls) across two independent host pairs
+    # (247.4s/252.1s vs a stable ~137s/135s for real ansible-playbook on
+    # the same playbook) - not host-to-host jitter, since both engines'
+    # own repeated measurements were reproducible within ~2%.
+    private def run_task_batch(tasks : Array(Task), hosts : Array(Host))
+      ensure_grouped(tasks)
+
+      tasks.each do |task|
+        active_hosts = hosts.reject { |host| @halted_hosts.includes?(host.name) }
+
+        if task.block? && !active_hosts.empty?
+          execute_block_multi(task, active_hosts)
+          next
+        end
+
+        if task.include_tasks? && !task_has_loop?(task) && !active_hosts.empty?
+          execute_include_tasks_multi(task, active_hosts)
+          next
+        end
+
+        # The banner prints once per task, not per host - real Ansible's
+        # own convention - so a templated name is rendered against
+        # whichever host will actually run first (matches this file's
+        # existing `run_once`-style "first host" precedent elsewhere).
+        display_host = active_hosts.first? || hosts.first
+        puts "TASK [#{render_task_name_for_display(task, display_host)}]".colorize(:white).bold
+        puts "*" * 70
+
+        if @forks > 1 && task_forkable?(task) && active_hosts.size > 1
+          run_task_for_hosts_in_parallel(task, active_hosts)
+        else
+          active_hosts.each { |host| execute_task(task, host) }
+        end
+
+        puts ""
+      end
+    end
+
+    # Splits *hosts* by *task*'s own when: (true unless a when: is
+    # actually present - matches ConditionalEvaluator's own default).
+    # Shared by execute_block_multi and execute_include_tasks_multi,
+    # both of which need to separate hosts that skip the whole nested
+    # list from ones that actually run it before batching the latter.
+    private def partition_by_when(task : Task, hosts : Array(Host)) : {Array(Host), Array(Host)}
+      return {hosts, [] of Host} unless when_condition = task.when_condition
+
+      run_hosts = [] of Host
+      skip_hosts = [] of Host
+      hosts.each do |host|
+        vars_context = build_vars_context(task, host)
+        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+        if ConditionalEvaluator.evaluate(substitutor.substitute(when_condition), vars_context)
+          run_hosts << host
+        else
+          skip_hosts << host
+        end
+      end
+      {run_hosts, skip_hosts}
+    end
+
+    # Multi-host counterpart to execute_block: batches block_tasks/
+    # rescue_tasks/always_tasks across every host in *hosts* at once via
+    # run_task_batch, instead of running the whole block one host at a
+    # time. Per-host bookkeeping (failed/rescued counts, @halted_hosts)
+    # mirrors execute_block's own single-host logic exactly, just driven
+    # off host sets instead of one host.
+    private def execute_block_multi(task : Task, hosts : Array(Host))
+      run_hosts, skip_hosts = partition_by_when(task, hosts)
+
+      skip_hosts.each do |host|
+        # A block's when: is inherited by every task inside block: and
+        # always: (verified against real ansible-playbook) - rescue: is
+        # left alone since it only ever runs if the block itself
+        # actually failed, which can't happen when it never ran at all.
+        print_skipped_tasks(task.block_tasks || [] of Task, host)
+        print_skipped_tasks(task.always_tasks || [] of Task, host)
+      end
+      return if run_hosts.empty?
+
+      failed_before = Hash(String, Int32).new
+      run_hosts.each { |host| failed_before[host.name] = @results[host.name]["failed"] }
+
+      propagate_role_context(task, task.block_tasks || [] of Task)
+      run_task_batch(task.block_tasks || [] of Task, run_hosts)
+
+      block_failed = Hash(String, Bool).new
+      run_hosts.each { |host| block_failed[host.name] = @halted_hosts.includes?(host.name) }
+
+      if (rescue_tasks = task.rescue_tasks) && block_failed.any? { |_, failed| failed }
+        rescue_hosts = run_hosts.select { |host| block_failed[host.name] }
+        rescue_hosts.each { |host| @halted_hosts.delete(host.name) }
+        propagate_role_context(task, rescue_tasks)
+        run_task_batch(rescue_tasks, rescue_hosts)
+
+        rescue_hosts.each do |host|
+          still_failed = @halted_hosts.includes?(host.name)
+          block_failed[host.name] = still_failed
+
+          # rescue: succeeded - the block-body failure it recovered from
+          # doesn't count as a play failure. Move it into "rescued"
+          # instead, matching Ansible's recap (failed=0 ... rescued=1).
+          unless still_failed
+            recovered = @results[host.name]["failed"] - failed_before[host.name]
+            if recovered > 0
+              @results[host.name]["failed"] -= recovered
+              @results[host.name]["rescued"] += recovered
+            end
+          end
+        end
+      end
+
+      if always_tasks = task.always_tasks
+        run_hosts.each { |host| @halted_hosts.delete(host.name) }
+        propagate_role_context(task, always_tasks)
+        run_task_batch(always_tasks, run_hosts)
+        run_hosts.each { |host| block_failed[host.name] ||= @halted_hosts.includes?(host.name) }
+      end
+
+      run_hosts.each do |host|
+        @halted_hosts.delete(host.name)
+        halt_if_failed(task, host, block_failed[host.name])
+      end
+    end
+
+    # Multi-host counterpart to execute_include_tasks (the no-loop case
+    # only - see task_has_loop?): resolves when:/the included file's path
+    # PER HOST first (cheap - local template substitution, no remote
+    # I/O), groups hosts that end up resolving the SAME file together,
+    # then runs each group's included tasks via run_task_batch instead of
+    # execute_include_tasks's single-host run_task_list. Real-world
+    # include_tasks: almost always resolves identically for every host in
+    # a homogeneous play (e.g. `include_tasks: setup-{{ ansible_os_family
+    # }}.yml` across an all-Debian inventory - exactly what geerlingguy.
+    # containerd/geerlingguy.kubernetes do), so this virtually always
+    # collapses to one group holding every host - the case that actually
+    # mattered for the ~1.8x cold-run slowdown this was written to fix.
+    private def execute_include_tasks_multi(task : Task, hosts : Array(Host))
+      puts "TASK [#{render_task_name_for_display(task, hosts.first)}]".colorize(:white).bold
+      puts "*" * 70
+
+      run_hosts, skip_hosts = partition_by_when(task, hosts)
+
+      skip_hosts.each do |host|
+        connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+        puts "skipping: [#{connection_host}]".colorize(:cyan)
+        @results[host.name]["skipped"] += 1
+      end
+
+      run_groups = Hash(String, Array(Host)).new { |hash, key| hash[key] = [] of Host }
+      run_hosts.each do |host|
+        vars_context = build_vars_context(task, host)
+        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+        file_rel = substitutor.substitute(task.include_file.as(String))
+        resolved_path = PlaybookParser.resolve_include_path(file_rel, task.include_file_dir.as(String))
+
+        unless File.exists?(resolved_path)
+          fail_include(task, host, "Included tasks file not found: #{resolved_path}")
+          next
+        end
+
+        run_groups[resolved_path] << host
+      end
+
+      puts ""
+
+      run_groups.each do |resolved_path, group_hosts|
+        begin
+          yaml = YAML.parse(Vault.maybe_decrypt(File.read(resolved_path)))
+          unless yaml.as_a?
+            group_hosts.each { |host| fail_include(task, host, "Included tasks file must be a YAML list: #{resolved_path}") }
+            next
+          end
+
+          inherited = Play.new("", "")
+          inherited.become = task.become
+          inherited.become_user = task.become_user
+          included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path))
+
+          if include_vars = task.include_vars
+            included_tasks.each do |included_task|
+              include_vars.each { |key, value| included_task.vars[key] = value }
+            end
+          end
+
+          # Task NAME substitution (e.g. a role default referenced in the
+          # included tasks' own names) uses one representative host's
+          # vars_context, same as the rest of this codebase's "first
+          # host" precedent for cosmetic-only banner rendering - it can't
+          # affect what actually runs.
+          representative = group_hosts.first
+          rep_vars_context = build_vars_context(task, representative)
+          name_substitutor = VarSubstitutor.new(vars: rep_vars_context, host_name: representative.name)
+          included_tasks.each do |included_task|
+            included_task.name = name_substitutor.substitute(included_task.name)
+          end
+
+          propagate_role_context(task, included_tasks)
+
+          connection_names = group_hosts.map { |host| host.vars["ansible_host"]?.try(&.as_s?) || host.name }
+          puts "included: #{resolved_path} for #{connection_names.join(", ")}".colorize(:cyan)
+          puts ""
+
+          run_task_batch(included_tasks, group_hosts)
+        rescue ex
+          group_hosts.each { |host| fail_include(task, host, "Failed to load included tasks: #{ex.message}") }
+        end
+      end
     end
 
     # Runs *task* against every host in *hosts* concurrently instead of
