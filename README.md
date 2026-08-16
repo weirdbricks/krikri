@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.418-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.419-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,13 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.419` - round 109, `robertdebock.kubectl`**: `lookup('url',
+  ...)` always returned a JSON-array string regardless of whether
+  `wantlist=True` was actually passed, so a call with no
+  `wantlist=True` (the role's own version-file fetch) spliced a
+  literal `["v1.31.0"]` into a download URL instead of the plain
+  string, a 404. Fixed to match real Ansible's `lookup()` semantics
+  exactly. Live-reverified byte-identical to real Ansible's own recap.
 - **round 108, `robertdebock.packer`** (no version bump): zero bugs
   found, byte-identical on both engines cold and warm, `packer
   version` verified live.

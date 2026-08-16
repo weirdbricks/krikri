@@ -1357,7 +1357,25 @@ module CrystalPlay
           # #resolve_plus_operand, which only understands a single
           # operand) rather than a bare variable/literal lookup.
           url = parts[1]?.try { |part| evaluate(part.strip) }
-          url ? fetch_url_lines(url) : "undefined"
+          return "undefined" unless url
+
+          # Real Ansible's `lookup()` Jinja function only returns a real
+          # LIST when the call site explicitly passes `wantlist=True` -
+          # otherwise it comma-joins the plugin's own (always-list)
+          # result into a single plain STRING. `fetch_url_lines` always
+          # returned the JSON-array form unconditionally (right for
+          # cloudalchemy.prometheus's own `wantlist=True) | list` idiom,
+          # which this was originally added for), so a call with no
+          # `wantlist=True` at all - robertdebock.kubectl's own
+          # `kubectl_url: ".../release/{{ lookup('url',
+          # kubectl_version_url) }}/bin/..."`, fetching a single-line
+          # version file - got the literal text `["v1.31.0"]` spliced
+          # into the URL instead of the plain string `v1.31.0`, a 404.
+          wantlist = parts[2..].any? { |part| part.strip.downcase.starts_with?("wantlist=true") }
+          lines_json = fetch_url_lines(url)
+          return lines_json if wantlist
+
+          (JSON.parse(lines_json).as_a?.try(&.map(&.as_s).join(",")) rescue nil) || "undefined"
         else
           "undefined"
         end

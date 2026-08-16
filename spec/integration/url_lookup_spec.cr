@@ -59,6 +59,23 @@ describe "lookup('url', ...)" do
     JSON.parse(result).as_a.map(&.as_s).should eq(["line one", "line two", "line three"])
   end
 
+  it "returns a plain comma-joined string, not a JSON array, when wantlist=True is NOT given" do
+    # Real bug found benchmarking robertdebock.kubectl (round 109):
+    # `kubectl_url: ".../release/{{ lookup('url', kubectl_version_url)
+    # }}/bin/linux/amd64/kubectl"` (the role's own vars/main.yml) calls
+    # lookup('url', ...) with no wantlist=True at all - real Ansible's
+    # own lookup() Jinja function only returns a real LIST when the
+    # call site explicitly passes wantlist=True, otherwise it
+    # comma-joins the plugin's own (always-list) result into a plain
+    # STRING. This always returned the JSON-array form unconditionally,
+    # so the literal text `["v1.31.0"]` got spliced into the URL
+    # instead of the plain string `v1.31.0`, a 404.
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    result = evaluator.evaluate(%(lookup('url', '#{url_lookup_base}/lines.txt')))
+    result.should eq("line one,line two,line three")
+  end
+
   it "resolves to \"undefined\" for a 404, rather than raising" do
     v = Hash(String, JSON::Any).new
     evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)

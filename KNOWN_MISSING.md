@@ -8,7 +8,26 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.418`.**
+**Currently at `0.9.419`.**
+
+---
+
+Round 109 (0.9.419) - `robertdebock.kubectl`: 1 real bug found and fixed.
+`lookup('url', ...)`'s own implementation always returned a JSON-array
+string unconditionally, regardless of whether `wantlist=True` was actually
+passed - real Ansible's `lookup()` Jinja function only returns a real LIST
+when the call site explicitly passes `wantlist=True`, otherwise it
+comma-joins the plugin's own (always-list) result into a plain STRING. The
+role's own `kubectl_url: ".../release/{{ lookup('url', kubectl_version_url)
+}}/bin/linux/amd64/kubectl"` (vars/main.yml) calls it with no `wantlist=True`
+at all, so the literal text `["v1.31.0"]` got spliced into the URL instead
+of the plain string `v1.31.0` - a 404. Fixed by checking for `wantlist=True`
+among the lookup's own arguments and comma-joining into a plain string when
+absent, matching real Ansible exactly (preserving the existing
+`wantlist=True) | list` behavior cloudalchemy.prometheus's own idiom
+depends on). Live-reverified: byte-identical `ok=2 changed=1 failed=0` cold
+and `ok=2 changed=0 failed=0` warm on both engines, `kubectl version
+--client` identical (`v1.31.0`) on both.
 
 ---
 
