@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.406-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.407-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,12 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.407` - round 83, `robertdebock.keepalived`**: a handler notified
+  by an earlier task still ran at the implicit end-of-play flush even
+  after a LATER task failed and halted the host - `HandlerRunner#run`
+  had no way to know about halted hosts. Fixed by threading
+  `@halted_hosts` through as a new parameter. Live-reverified to match
+  real Ansible's single-failure recap exactly.
 - **`0.9.406` - round 79, `robertdebock.auditd`**: a handler notifying
   ANOTHER handler was entirely unhandled - only a regular task's own
   `notify:` was ever forwarded to `HandlerRunner`. The role's "Run

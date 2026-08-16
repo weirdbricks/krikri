@@ -3620,7 +3620,7 @@ module CrystalPlay
         render_task_name_for_display(handler, host)
       }
 
-      @handler_runner.run(execute_callback, @results, @diff_mode, name_resolver)
+      @handler_runner.run(execute_callback, @results, @diff_mode, name_resolver, @halted_hosts)
     end
     
     # Execute a handler (internal - called via callback)

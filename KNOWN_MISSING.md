@@ -8,9 +8,25 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.406`.**
+**Currently at `0.9.407`.**
 
 ---
+
+Round 83 (0.9.407) - `robertdebock.keepalived`: 1 real bug found and fixed. A
+handler previously notified by an earlier task still ran at the implicit
+end-of-play `flush_handlers` even after a LATER regular task failed and halted
+the host - `HandlerRunner#run`'s own `@hosts.each` loop had no way to know about
+`@halted_hosts` at all. The role's own default `keepalived_vrrp_instances` is
+empty, so `keepalived` genuinely has "no configuration to run" and its
+`Start keepalived` task times out and fails identically on real
+`ansible-playbook` too (a real external role/environment gap - `keepalived_vrrp_
+instances` needs a real VRRP config to actually run, none is provided by
+default). Real Ansible correctly shows exactly one failure and halts there;
+crystal-ansible additionally ran the earlier-notified "Restart keepalived"
+handler at the end-of-play flush and failed a SECOND time. Fixed by threading
+`@halted_hosts` through to `HandlerRunner#run` as a new `halted_hosts` parameter,
+skipped in the per-host handler loop. Live-reverified: `failed=1` now, matching
+real Ansible exactly.
 
 Round 82 (no version bump - zero crystal-ansible bugs found): `robertdebock.nfsserver`.
 Identical on both engines cold (`ok=8 changed=4 failed=0 skipped=3`, after

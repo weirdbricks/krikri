@@ -57,11 +57,26 @@ module CrystalPlay
       # `name: "Restart {{ _common_service_name }}"`) - matching against
       # the raw, unrendered `handler.name` (as this used to) never equals
       # any real notify: string.
+      # *halted_hosts* - hosts a prior task already failed on (unrescued,
+      # no ignore_errors:) for this run. Real Ansible never runs a
+      # halted host's own notified handlers at the end-of-play flush -
+      # once a host is out, it's out entirely, handlers included.
+      # Previously unfiltered: @hosts.each below ran unconditionally, so
+      # a host whose LAST regular task failed (round 83's
+      # robertdebock.keepalived: "Start keepalived" times out and halts
+      # the host) still ran its own previously-notified "Restart
+      # keepalived" handler at the implicit end-of-play flush, since
+      # that flush happens after halt_if_failed already halted the host
+      # but before this method had any way to know. Real Ansible shows
+      # exactly one failure (the halting task); crystal-ansible showed
+      # two (the halting task, then the handler that should never have
+      # run).
       def run(
         execute_callback : Proc(Task, Host, JSON::Any),
         results : Hash(String, Hash(String, Int32)),
         diff_mode : Bool,
-        name_resolver : Proc(Task, Host, String)? = nil
+        name_resolver : Proc(Task, Host, String)? = nil,
+        halted_hosts : Set(String)? = nil
       )
         return unless any_notified?
 
@@ -81,6 +96,8 @@ module CrystalPlay
           handler_triggered = false
 
           @hosts.each do |host|
+            next if halted_hosts.try(&.includes?(host.name))
+
             rendered_name = name_resolver.try(&.call(handler, host)) || handler.name
             next if already_ran[host.name].includes?(rendered_name)
 
