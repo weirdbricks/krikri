@@ -293,6 +293,10 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **round 127, `robertdebock.sosreport`** (no version bump): engine
+  clean but not runnable - the role's `sos` package default has no
+  installation candidate on Ubuntu 22.04 at all, both engines fail
+  identically.
 - **`0.9.425` - round 126, `robertdebock.lynis`**: `cron.cr`'s
   `execute_file` used a relative `cron_file:` (e.g. `cron_file:
   lynis`) as a literal write path instead of resolving it against

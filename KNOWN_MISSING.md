@@ -12,6 +12,18 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 127 (no version bump - engine clean) - `robertdebock.sosreport`:
+not runnable on this cloud image regardless of engine. The role's
+`sosreport_packages` default (`sos`) has no installation candidate at
+all in Ubuntu 22.04's apt sources - confirmed independent of Ansible
+via `apt-cache policy sos` even with `universe` enabled, the package
+genuinely doesn't exist for this Ubuntu release. Both engines fail
+identically at "Install sosreport" (`ok=3 changed=0 failed=1` both,
+identical error message). A role/distro package-availability gap, not
+a crystal-ansible issue.
+
+---
+
 Round 126 (`0.9.425`) - `robertdebock.lynis`: 1 real bug found and
 fixed. `cron.cr`'s `execute_file` treated `cron_file:` as a literal
 write path regardless of whether it was absolute - real Ansible's
