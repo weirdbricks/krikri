@@ -8,7 +8,31 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.401`.**
+**Currently at `0.9.402`.**
+
+---
+
+Round 71 (0.9.402): `robertdebock.git` on a fresh `G3.2GB` Atlantic.net
+pair (`git_username: root`, cloning a real public repo). 1 real bug
+found and fixed: `getent:`'s own single-key lookup branch returned the
+matched entry's field list DIRECTLY (a bare array), while real
+Ansible's own `getent_passwd` fact is ALWAYS a dict keyed by the
+looked-up username - `{"root": ["x","0","0",...]}` - even for a
+single-key lookup, confirmed by running the exact same debug task
+against real `ansible-playbook` directly. The role's own `when:
+getent_passwd[git_username] != none` existence-check guard (shared by
+`robertdebock.users` too) indexed what it assumed was a dict, got back
+the raw field list itself (or "undefined" once `#[]` failed to find an
+integer index) instead, and behaved as if the user never existed
+regardless of whether it actually did - every downstream task gated on
+that guard (create the git-config directory, write `.gitconfig`, create
+the repo-destination directory, clone the actual repository) silently
+skipped. Fixed by wrapping the single-key result in a one-entry dict,
+matching the no-key branch's existing shape. Live-reverified: fresh
+pair, `ok=11 changed=4 failed=0 skipped=1` identical both engines,
+`.gitconfig` byte-identical, the real repo cloned identically on both,
+fully idempotent warm rerun (`changed=0` both). Two existing specs
+updated to match the corrected shape.
 
 ---
 

@@ -77,10 +77,21 @@ module CrystalPlay
             msg: "One or more supplied key could not be found in the database."
           )
         end
-        # Single-key lookup returns just that entry's field list (empty
-        # when not found and fail_key: false suppressed the failure
-        # above).
-        facts["getent_#{database}"] = JSON::Any.new((value || [] of String).map { |field| JSON::Any.new(field) })
+        # Single-key lookup still wraps the result in a dict keyed by
+        # *key* (a one-entry version of the no-key branch below), NOT a
+        # bare field-list - real Ansible's own `getent_passwd` fact is
+        # always `{"root": ["x", "0", "0", ...]}`, even for a single-key
+        # lookup, so a role's own `getent_passwd[username]` indexing
+        # (robertdebock.git's/.users' own `getent_passwd[git_username]
+        # != none` existence check) always resolved to the whole
+        # (unindexable-by-username) field list itself here instead of
+        # the one real field-list entry, or "undefined" once #[] failed
+        # to find an integer index - either way, `!= none` never behaved
+        # the way the role's author intended. Empty (not entirely
+        # absent) when not found and fail_key: false suppressed the
+        # failure above, matching how real Ansible's own dict is empty
+        # in that case rather than missing the key.
+        facts["getent_#{database}"] = JSON::Any.new({key => JSON::Any.new((value || [] of String).map { |field| JSON::Any.new(field) })})
       else
         dict = Hash(String, JSON::Any).new
         entries.each { |k, v| dict[k] = JSON::Any.new(v.map { |field| JSON::Any.new(field) }) }

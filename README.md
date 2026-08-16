@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.401-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.402-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,12 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.402` - round 71, `robertdebock.git`**: `getent:`'s single-key
+  lookup returned a bare field-list instead of a dict keyed by the
+  looked-up username (real Ansible's own `getent_passwd` is always a
+  dict, even for one key) - broke `getent_passwd[user] != none`
+  existence checks, silently skipping every downstream task gated on
+  it. Live-reverified byte-identical, idempotent.
 - **`0.9.399`-`0.9.401` - round 70, `robertdebock.diskspace`**: 3
   chained bugs - a looped include_tasks:'s propagated "item" clobbered
   a nested loop's own item every iteration; `ansible_facts['mounts']`

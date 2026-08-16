@@ -31,10 +31,20 @@ describe "getent plugin" do
     result["failed"].as_bool.should be_true
   end
 
-  it "returns just one entry's fields for a single key lookup" do
+  it "returns just one entry, still keyed by username (not a bare field list), for a single key lookup" do
+    # Real bug found benchmarking robertdebock.git: real Ansible's own
+    # getent_passwd fact is ALWAYS a dict keyed by the looked-up
+    # username, even for a single-key lookup (`{"root": [...]}` - never
+    # a bare field-array). This plugin's single-key branch previously
+    # returned the field list directly, unwrapped, so a role's own
+    # `getent_passwd[git_username] != none` existence check (indexing
+    # what it assumed was a dict) always got the wrong thing back -
+    # either the raw list itself or "undefined" once `#[]` failed to
+    # find an integer index - and the check behaved as if the user
+    # never existed, regardless of whether it actually did.
     result = PluginSpecHelper.run("getent", {"database" => "passwd", "key" => "root"})
     result["failed"].as_bool.should be_false
-    entry = result["ansible_facts"]["getent_passwd"].as_a.map(&.as_s)
+    entry = result["ansible_facts"]["getent_passwd"].as_h["root"].as_a.map(&.as_s)
     entry[1].to_i.should eq(0)
   end
 
@@ -53,6 +63,6 @@ describe "getent plugin" do
   it "does not fail a missing key when fail_key is false" do
     result = PluginSpecHelper.run("getent", {"database" => "passwd", "key" => "definitely-not-a-real-user-xyz", "fail_key" => "false"})
     result["failed"].as_bool.should be_false
-    result["ansible_facts"]["getent_passwd"].as_a.size.should eq(0)
+    result["ansible_facts"]["getent_passwd"].as_h["definitely-not-a-real-user-xyz"].as_a.size.should eq(0)
   end
 end
