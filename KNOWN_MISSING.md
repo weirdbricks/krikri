@@ -12,6 +12,17 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 63 (no version bump - zero crystal-ansible bugs found):
+`robertdebock.hostname` on a fresh `G3.2GB` Atlantic.net pair
+(`hostname_reboot: false` set deliberately to avoid the role's own
+`ansible.builtin.reboot` handler rebooting the benchmark host mid-round
+- still exercises the `hostname:` module itself). Identical on both
+engines (`ok=6 changed=1 failed=0 skipped=1` cold, `ok=5 changed=0
+failed=0` warm - fully idempotent), `hostname` command output matching
+exactly on both.
+
+---
+
 Round 61 (no version bump - zero crystal-ansible bugs found):
 `robertdebock.snmpd` on a fresh `G3.2GB` Atlantic.net pair. Identical on
 both engines (`ok=21 changed=3 failed=0 skipped=6` cold, `ok=20
