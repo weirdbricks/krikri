@@ -33,6 +33,28 @@ describe CrystalPlay::LocalExecutor do
       result[:stdout].should eq("it's a $HOME\\test\n")
     end
 
+    # Regression test for a real bug shipped in the same round as the
+    # "skip bash -c when no shell metacharacters" optimization above: a
+    # leading `NAME=value` env-assignment prefix (apt.cr/package.cr's own
+    # `DEBIAN_FRONTEND=noninteractive apt-get install ...`, no `export`/
+    # `;` involved) has no shell metacharacters at all, so the fast path
+    # argv-split it with "DEBIAN_FRONTEND=noninteractive" as argv[0] -
+    # ENOENT, since that's shell env-assignment syntax, not a real
+    # executable name.
+    it "still routes a leading NAME=value env-assignment prefix through the shell" do
+      result = CrystalPlay::LocalExecutor.exec("SOME_VAR=hello sh -c 'echo $SOME_VAR'")
+      result[:exit_code].should eq(0)
+      result[:stdout].should eq("hello\n")
+    end
+
+    # A later argument containing "=" (a normal --opt=value flag) is not
+    # env-assignment syntax and must not force the shell path.
+    it "does not mistake a later --opt=value argument for a leading env assignment" do
+      result = CrystalPlay::LocalExecutor.exec("echo --opt=value")
+      result[:exit_code].should eq(0)
+      result[:stdout].should eq("--opt=value\n")
+    end
+
     # Regression test for a real, previously-shipped bug: `sleep N && daemon &`
     # backgrounds a *shell* that blocks in its own wait() on `daemon` (nohup
     # only suppresses SIGHUP, it doesn't exempt a child from its parent's own

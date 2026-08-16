@@ -39,6 +39,16 @@ module CrystalPlay
     # forking a whole extra shell process per command.
     SHELL_METACHARACTERS = /[|<>&;`$*?\[\]{}~\\\n]/
 
+    # A leading `NAME=value` token (no metacharacters of its own, so the
+    # regex above misses it) is shell env-assignment syntax, not part of
+    # argv[0] - `DEBIAN_FRONTEND=noninteractive apt-get install ...`
+    # (apt.cr's own real command, no `export`/`;` involved) would
+    # otherwise get argv-split with "DEBIAN_FRONTEND=noninteractive" as
+    # the executable name and crash with ENOENT. Only checked at the
+    # start of the string - `=` inside a later argument (`--opt=value`)
+    # is completely ordinary and not env-assignment syntax.
+    LEADING_ENV_ASSIGNMENT = /\A[A-Za-z_][A-Za-z0-9_]*=/
+
     # `needs_shell?` is a pure function of the command string, and the same
     # command is often re-run many times (idempotency reruns, spec suites,
     # loop: bodies) - cache the verdict rather than re-scanning every call.
@@ -49,7 +59,9 @@ module CrystalPlay
         # A blank command is a no-op under `bash -c ""` (exit 0, no
         # output); Process.parse_arguments would hand back an empty argv
         # and crash on argv[0], so route it through the shell path too.
-        result = command.blank? || SHELL_METACHARACTERS.matches?(command)
+        result = command.blank? ||
+                 SHELL_METACHARACTERS.matches?(command) ||
+                 LEADING_ENV_ASSIGNMENT.matches?(command)
         @@needs_shell_cache[command] = result
         result
       end
