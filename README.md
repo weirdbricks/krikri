@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.431-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.432-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,19 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.432` - performance pass (no correctness bugs, not a benchmark
+  round)**: skip `/bin/bash -c` for local-connection commands with no
+  shell metacharacters (~7% faster wall-clock on a local-connection
+  shell-loop playbook, measured on real hosts); memoized `ansible_facts`
+  hash capacity hint; memoized SSH `ControlPath` computation (real but
+  negligible next to network latency); extended the existing bool-keyed-
+  YAML-dict fix (`Vault.yaml_value_to_json`) to role vars/inventory
+  parsing for correctness, not speed - measured ~10-15% *slower* than
+  the round-trip it replaced for typical nested var structures, kept
+  anyway because it fixes a real parse-time crash; dropped a
+  double-parse of already-parsed JSON in dynamic-inventory `_meta.
+  hostvars`/`--list` handling. See `SUGGESTED_PERFORMANCE_IMPROVEMENTS.md`
+  (gitignored, local-only) for the fuller write-up and what's still open.
 - **`0.9.428`-`0.9.431` - round 134, regression pass (10 previously-
   fixed roles retested)**: not a new-role round - 10 roles randomly
   picked from the already-fixed set (`unowned_files`, `alternatives`,

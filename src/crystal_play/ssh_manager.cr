@@ -460,12 +460,19 @@ module CrystalPlay
       end
     end
     
+    # Memoized per (host, user, port) - the gsub-over-a-regex result never
+    # changes for the same triple, and every exec/upload/download/rsync
+    # call on a host recomputes it.
+    @@control_path_cache = Hash({String, String, Int32}, String).new
+
     # Get control socket path for connection pooling
     private def self.get_control_path(host : String, user : String, port : Int32) : String
-      # Create a unique socket path for this connection
-      # Format: /tmp/.crystal-play-ssh/user@host:port
-      socket_name = "#{user}@#{host}:#{port}".gsub(/[^a-zA-Z0-9@:.-]/, "_")
-      "#{@@control_path_dir}/#{socket_name}"
+      @@control_path_cache.fetch({host, user, port}) do
+        # Create a unique socket path for this connection
+        # Format: /tmp/.crystal-play-ssh/user@host:port
+        socket_name = "#{user}@#{host}:#{port}".gsub(/[^a-zA-Z0-9@:.-]/, "_")
+        @@control_path_cache[{host, user, port}] = "#{@@control_path_dir}/#{socket_name}"
+      end
     end
     
     # `-i <path>` args for ssh/scp when the inventory specifies

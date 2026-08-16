@@ -192,7 +192,7 @@ module CrystalPlay
       end
 
       if vars_hash = hash["vars"]?.try(&.as_h?)
-        vars_hash.each { |k, v| group.vars[k.to_s] = Vault.maybe_decrypt_json(JSON.parse(v.to_json)) }
+        vars_hash.each { |k, v| group.vars[k.to_s] = Vault.maybe_decrypt_json(v) }
       end
 
       if children = hash["children"]?.try(&.as_a?)
@@ -220,7 +220,7 @@ module CrystalPlay
 
       hash.each do |key, value|
         key_str = key.to_s
-        json_value = Vault.maybe_decrypt_json(JSON.parse(value.to_json))
+        json_value = Vault.maybe_decrypt_json(value)
         host.vars[key_str] = json_value
 
         case key_str
@@ -410,7 +410,7 @@ module CrystalPlay
           # Parse host vars
           if host_vars.as_h?
             host_vars.as_h.each do |key, value|
-              host.vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json))
+              host.vars[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value))
               
               # Handle special ansible vars
               case key.to_s
@@ -430,7 +430,7 @@ module CrystalPlay
       # Parse group vars
       if vars_yaml = yaml["vars"]?.try(&.as_h?)
         vars_yaml.each do |key, value|
-          group.vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json))
+          group.vars[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value))
         end
       end
       
@@ -500,7 +500,7 @@ module CrystalPlay
           key_str = key.to_s
           next if host.vars.has_key?(key_str)
 
-          json_value = Vault.maybe_decrypt_json(JSON.parse(value.to_json))
+          json_value = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value))
           host.vars[key_str] = json_value
 
           case key_str

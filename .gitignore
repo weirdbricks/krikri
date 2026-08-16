@@ -21,3 +21,7 @@ scripts/crinja_corpus/corpus.jsonl
 scripts/crinja_corpus/oracle_python.jsonl
 scripts/crinja_corpus/oracle_crinja.jsonl
 scripts/crinja_corpus/divergence_report.md
+
+# Local scratch notes from ad-hoc perf-review passes - not part of repo
+# history, findings that matter get folded into README.md/commit messages
+/SUGGESTED_PERFORMANCE_IMPROVEMENTS.md

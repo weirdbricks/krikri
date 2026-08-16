@@ -30,18 +30,57 @@ module CrystalPlay
     # process that was never supposed to be waited on in the first place.
     DRAIN_GRACE_PERIOD = 200.milliseconds
 
+    # Any of these anywhere in the command string means it actually needs
+    # shell semantics (pipes, redirection, substitution, globbing, home-dir
+    # expansion, escaping, sequencing) - real Ansible's own local/ssh
+    # connection plugins make the same call (`_low_level_execute_command`'s
+    # `executable` handling). Absent all of these, splitting into argv and
+    # exec'ing directly is behaviorally identical to `bash -c` but skips
+    # forking a whole extra shell process per command.
+    SHELL_METACHARACTERS = /[|<>&;`$*?\[\]{}~\\\n]/
+
+    # `needs_shell?` is a pure function of the command string, and the same
+    # command is often re-run many times (idempotency reruns, spec suites,
+    # loop: bodies) - cache the verdict rather than re-scanning every call.
+    @@needs_shell_cache = Hash(String, Bool).new
+
+    private def self.needs_shell?(command : String) : Bool
+      @@needs_shell_cache.fetch(command) do
+        # A blank command is a no-op under `bash -c ""` (exit 0, no
+        # output); Process.parse_arguments would hand back an empty argv
+        # and crash on argv[0], so route it through the shell path too.
+        result = command.blank? || SHELL_METACHARACTERS.matches?(command)
+        @@needs_shell_cache[command] = result
+        result
+      end
+    end
+
     # Execute command locally
     def self.exec(command : String) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       # Passing argv directly (no shell: true) skips the extra sh -> bash
       # hop a shell-escaped string would need, and needs no quote-escaping
       # since the command travels as a single argv element, not a string
-      # a shell has to re-parse.
-      process = Process.new(
-        "/bin/bash",
-        ["-c", command],
-        output: Process::Redirect::Pipe,
-        error: Process::Redirect::Pipe
-      )
+      # a shell has to re-parse. Only takes this path when the command has
+      # no shell metacharacters at all - anything else (a real pipeline,
+      # `export K=V; ...` env prefixing, glob, etc.) still needs `bash -c`
+      # for correct semantics.
+      process =
+        if needs_shell?(command)
+          Process.new(
+            "/bin/bash",
+            ["-c", command],
+            output: Process::Redirect::Pipe,
+            error: Process::Redirect::Pipe
+          )
+        else
+          argv = Process.parse_arguments(command)
+          Process.new(
+            argv[0],
+            argv[1..],
+            output: Process::Redirect::Pipe,
+            error: Process::Redirect::Pipe
+          )
+        end
 
       stdout = IO::Memory.new
       stderr = IO::Memory.new

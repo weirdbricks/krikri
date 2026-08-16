@@ -888,7 +888,7 @@ module CrystalPlay
       # the two spellings can never disagree, and rebuilt per task so a
       # fact added mid-play (set_fact:, a re-gather) appears in both.
       unless @facts[host.name].empty?
-        facts_dict = Hash(String, JSON::Any).new
+        facts_dict = Hash(String, JSON::Any).new(initial_capacity: 128)
         @facts[host.name].each do |key, value|
           facts_dict[key.lchop("ansible_")] = value
         end
@@ -3720,7 +3720,7 @@ module CrystalPlay
       # in the same play correctly saw `ansible_facts.os_family` as
       # "RedHat".
       unless @facts[host.name].empty?
-        facts_dict = Hash(String, JSON::Any).new
+        facts_dict = Hash(String, JSON::Any).new(initial_capacity: 128)
         @facts[host.name].each do |key, value|
           vars_context[key] = value
           facts_dict[key.lchop("ansible_")] = value

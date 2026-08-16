@@ -65,14 +65,14 @@ module CrystalPlay
 
       vars = Hash(String, JSON::Any).new
       if vars_yaml = hash["vars"]?.try(&.as_h?)
-        vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
+        vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value)) }
       end
 
       reserved = {"role", "name", "vars", "tags"}
       hash.each do |key, value|
         key_str = key.to_s
         next if reserved.includes?(key_str)
-        vars[key_str] = Vault.maybe_decrypt_json(JSON.parse(value.to_json))
+        vars[key_str] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value))
       end
 
       tags = hash["tags"]?.try(&.as_a?).try(&.map(&.as_s)) || [] of String
@@ -365,49 +365,10 @@ module CrystalPlay
 
       yaml = YAML.parse(Vault.maybe_decrypt(File.read(path)))
       if hash = yaml.as_h?
-        hash.each { |key, value| result[key.to_s] = Vault.maybe_decrypt_json(yaml_value_to_json(value)) }
+        hash.each { |key, value| result[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value)) }
       end
 
       result
-    end
-
-    # Converts a YAML::Any value to JSON::Any, recursively stringifying
-    # every hash key at every nesting level - unlike the `JSON.parse(
-    # value.to_json)` round-trip used elsewhere in this codebase, which
-    # crashes ("Can't convert Bool to a JSON object key") on a real,
-    # supported Ansible/Jinja2 idiom: a dict keyed by a bare YAML boolean
-    # (`true:`/`false:`/`yes:`/`no:`), which Python's own YAML loader
-    # happily parses as a bool-keyed dict and Jinja2 happily indexes with
-    # `dict[some_bool_expression]`. JSON has no non-string-key concept at
-    # all, so crystal-ansible's own JSON::Any-based variable
-    # representation stringifies the key ("true"/"false") instead -
-    # meaning a role that then indexes such a dict with a boolean
-    # expression needs that same "true"/"false" stringification applied
-    # at lookup time too (see VariableLookup's own dotted/bracket-index
-    # handling). Found benchmarking robertdebock.tailscale's own
-    # `tailscale_sysctl_file`/`tailscale_command` vars, both keyed by a
-    # bare boolean - the crash happened at PARSE time, before any task
-    # ran, taking down the entire playbook.
-    def self.yaml_value_to_json(value : YAML::Any) : JSON::Any
-      case raw = value.raw
-      when Hash
-        result = Hash(String, JSON::Any).new
-        raw.each { |k, v| result[stringify_yaml_key(k)] = yaml_value_to_json(v) }
-        JSON::Any.new(result)
-      when Array
-        JSON::Any.new(raw.map { |item| yaml_value_to_json(item) })
-      else
-        JSON.parse(value.to_json)
-      end
-    end
-
-    private def self.stringify_yaml_key(key : YAML::Any) : String
-      case raw = key.raw
-      when Bool
-        raw.to_s
-      else
-        key.to_s
-      end
     end
 
     # Real Ansible auto-inserts a "Validating arguments against arg spec"
@@ -431,7 +392,7 @@ module CrystalPlay
       return nil unless options_yaml
 
       options = Hash(String, JSON::Any).new
-      options_yaml.each { |key, value| options[key.to_s] = JSON.parse(value.to_json) }
+      options_yaml.each { |key, value| options[key.to_s] = Vault.yaml_value_to_json(value) }
 
       short_description = main_spec["short_description"]?.try(&.as_s?)
       name = short_description ? "Validating arguments against arg spec 'main' - #{short_description}" : "Validating arguments against arg spec 'main'"

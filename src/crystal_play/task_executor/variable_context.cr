@@ -15,7 +15,11 @@ module CrystalPlay
       task : Task,
       registered_vars : Hash(String, JSON::Any)
     ) : Hash(String, JSON::Any)
-      context = Hash(String, JSON::Any).new
+      # Grows through role_defaults + play_vars + host.vars + registered_vars
+      # + role_vars + task.vars - routinely 100+ entries by the time
+      # build_vars_context (executor.cr) layers facts on top, so the
+      # default ~8-bucket start would rehash several times over.
+      context = Hash(String, JSON::Any).new(initial_capacity: 256)
 
       # Role defaults (lowest priority - only ever fill gaps a higher tier
       # doesn't already cover)

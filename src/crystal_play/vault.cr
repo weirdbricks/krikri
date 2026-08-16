@@ -1,6 +1,7 @@
 require "openssl"
 require "openssl/hmac"
 require "json"
+require "yaml"
 
 module CrystalPlay
   # Vault - Ansible Vault (AES256) encrypt/decrypt.
@@ -89,6 +90,45 @@ module CrystalPlay
         JSON::Any.new(raw.transform_values { |item| maybe_decrypt_json(item) })
       else
         value
+      end
+    end
+
+    # Converts a YAML::Any value to JSON::Any, recursively stringifying
+    # every hash key at every nesting level - unlike the `JSON.parse(
+    # value.to_json)` round-trip used in several places in this codebase,
+    # which crashes ("Can't convert Bool to a JSON object key") on a real,
+    # supported Ansible/Jinja2 idiom: a dict keyed by a bare YAML boolean
+    # (`true:`/`false:`/`yes:`/`no:`), which Python's own YAML loader
+    # happily parses as a bool-keyed dict and Jinja2 happily indexes with
+    # `dict[some_bool_expression]`. JSON has no non-string-key concept at
+    # all, so crystal-ansible's own JSON::Any-based variable
+    # representation stringifies the key ("true"/"false") instead -
+    # meaning a role that then indexes such a dict with a boolean
+    # expression needs that same "true"/"false" stringification applied
+    # at lookup time too (see VariableLookup's own dotted/bracket-index
+    # handling). Found benchmarking robertdebock.tailscale's own
+    # `tailscale_sysctl_file`/`tailscale_command` vars, both keyed by a
+    # bare boolean - the crash happened at PARSE time, before any task
+    # ran, taking down the entire playbook.
+    def self.yaml_value_to_json(value : YAML::Any) : JSON::Any
+      case raw = value.raw
+      when Hash
+        result = Hash(String, JSON::Any).new
+        raw.each { |k, v| result[stringify_yaml_key(k)] = yaml_value_to_json(v) }
+        JSON::Any.new(result)
+      when Array
+        JSON::Any.new(raw.map { |item| yaml_value_to_json(item) })
+      else
+        JSON.parse(value.to_json)
+      end
+    end
+
+    private def self.stringify_yaml_key(key : YAML::Any) : String
+      case raw = key.raw
+      when Bool
+        raw.to_s
+      else
+        key.to_s
       end
     end
 
