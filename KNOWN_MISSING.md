@@ -12,6 +12,27 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 39 (no version bump - zero crystal-ansible bugs found): new-role
+coverage, `devsec.hardening.nginx_hardening` (on top of `geerlingguy.nginx`)
+on a fresh `G3.2GB` Atlantic.net pair. Task-for-task match against real
+`ansible-playbook` (cosmetic-only banner/count diff). The intended first
+target, `devsec.hardening.apache_hardening`, turned out to be untestable:
+the published `devsec.hardening` Galaxy collection ships that role's
+directory completely empty - it's a git submodule
+(`dev-sec/ansible-apache-hardening`) that the collection's release
+tarball never checks out, so the role silently contributes zero tasks
+and no error. Reproduced identically on real `ansible-playbook`, so this
+is an upstream packaging bug, not an engine issue - switched to
+`nginx_hardening` (fully populated) instead. That role's own rerun shows
+`changed=9` (not idempotent) identically on both engines - the role's
+`lineinfile`-style `nginx.conf` edits perpetually drift against
+`geerlingguy.nginx`'s templated copy of the same file, a role-interaction
+quirk between two independently-authored roles (confirmed on real
+`ansible-playbook` too), not a crystal-ansible bug. `nginx` verified
+`active`/config-valid on both engines.
+
+---
+
 Round 38 (no version bump - pure verification, no code change): a
 follow-up to round 37's `include_tasks:`/`block:` parallelism fix, using
 `pexpect`-driven wall-clock timing (`timed_run.py`) for finer-grained
