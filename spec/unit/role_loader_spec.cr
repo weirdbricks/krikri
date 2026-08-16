@@ -109,6 +109,28 @@ describe CrystalPlay::RoleLoader do
     tasks[0].role_defaults.as(Hash(String, JSON::Any))["port"].as_i.should eq(8080)
   end
 
+  it "loads a defaults/main.yml dict keyed by a bare YAML boolean without crashing (real Ansible/Jinja2 idiom: dict[some_bool])" do
+    build_role("bool_keyed") do |role|
+      role.tasks(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+      role.defaults(<<-YAML)
+        my_dict:
+          true: "when true"
+          false: "when false"
+        YAML
+    end
+
+    tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- bool_keyed"), fresh_play, ROLES_ROOT)
+
+    defaults = tasks[0].role_defaults.as(Hash(String, JSON::Any))
+    inner = defaults["my_dict"].as_h
+    inner["true"].as_s.should eq("when true")
+    inner["false"].as_s.should eq("when false")
+  end
+
   it "sets role_vars from vars/main.yml, and invocation vars win over it" do
     build_role("varred") do |role|
       role.tasks(<<-YAML)

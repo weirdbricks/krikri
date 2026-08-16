@@ -8,9 +8,56 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.409`.**
+**Currently at `0.9.411`.**
 
 ---
+
+Round 96 (0.9.410-0.9.411) - `robertdebock.tailscale`: 3 real bugs found and
+fixed.
+
+1. A PARSE-TIME crash (`Can't convert Bool to a JSON object key`) took down the
+   ENTIRE playbook before any task ran. The role's own `vars/main.yml` uses a
+   real, supported Ansible/Jinja2 idiom - a dict keyed by a bare YAML boolean
+   (`true:`/`false:`/`yes:`/`no:`, e.g. `tailscale_sysctl_file`/`tailscale_
+   command`) - which Python's own YAML loader happily parses as a bool-keyed
+   dict and Jinja2 happily indexes with `dict[some_bool_expression]`.
+   `RoleLoader.load_vars_file`'s `JSON.parse(value.to_json)` round-trip
+   (used for defaults/main.yml and vars/main.yml) crashed hard on any nested
+   hash with a non-string YAML key. Fixed with a new recursive `yaml_value_
+   to_json` that stringifies every hash key at every nesting level instead of
+   relying on the `to_json`/`JSON.parse` round-trip.
+
+2. A real, reproducible Crystal 1.20.3 stdlib `HTTP::Client` bug silently
+   truncated chunked-transfer-encoded HTTPS response bodies for at least one
+   real key server (`pkgs.tailscale.com`) - 200 OK, no error, but 1399 of the
+   real 2288 bytes, deterministic and independent of how the response was
+   consumed (`.body`, streaming `.body_io.gets_to_end`, and the top-level
+   `HTTP::Client.get` convenience method all reproduced it identically; real
+   `curl` fetched the same URL correctly, byte-for-byte). `gpg`/`apt-key add`
+   then correctly rejected the truncated key material as invalid. `apt_key.cr`'s
+   own `fetch_key` was rewritten to shell out to `curl` on the target instead
+   of using Crystal's own `HTTP::Client`, matching how the `keyserver:` branch
+   already shells out to `apt-key adv` rather than reimplementing a protocol
+   client.
+
+3. `apt_key.cr`'s `keyring:` parameter was entirely unimplemented (previously
+   documented as "real playbooks essentially always mean the default system
+   one" - WRONG for this role). Every key always went into apt's legacy
+   default keyring regardless of `keyring:`, silently breaking any role whose
+   own `apt_repository:`/deb822 `signed-by=` pointed at that SAME specific
+   keyring path (a very common modern idiom, since apt deprecated the shared
+   default keyring) - apt couldn't find the key where the repo config said it
+   should be, and every subsequent `apt-get update` failed with "NO_PUBKEY"/
+   "is not signed" even though the key HAD been added, just to the wrong file.
+   Fixed by threading `--keyring <path>` through every `apt-key` subcommand
+   (add/del/list), matching real `ansible/modules/apt_key.py`'s own source
+   exactly.
+
+Live-reverified: `tailscaled` active and functional on both engines after all
+three fixes; remaining `ok=`/`skipped=` count differences are entirely the
+already-documented "unimplemented module (rpm_key/zypper/zypper_repository)
+silently dropped at parse time" pattern (rounds 75/90/93), not new - those
+tasks are unconditionally skipped on Ubuntu on both engines anyway.
 
 Round 95 (0.9.409) - `robertdebock.openvpn`: 1 real bug found and fixed
 (2 copies of the same root cause). A non-looped, single `include_tasks:` task

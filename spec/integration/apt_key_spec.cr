@@ -64,6 +64,22 @@ describe "apt_key plugin" do
     result["msg"].as_s.should eq("Missing key_id, required with keyserver.")
   end
 
+  it "fetches url: via curl (not Crystal's own HTTP::Client) and reaches apt-key add, not a crash" do
+    # Real bug: Crystal's own HTTP::Client silently truncated chunked-
+    # transfer-encoded HTTPS response bodies for at least one real key
+    # server (pkgs.tailscale.com) - 200 OK, no error, but a partial
+    # body, which gpg/apt-key then correctly rejected as invalid key
+    # material. Switched url: fetching to shell out to curl instead
+    # (this dev machine has curl but no real apt-key binary, so this
+    # confirms the fetch itself succeeds and the plugin reaches - and
+    # fails cleanly at - the apt-key add step, not a truncated-body
+    # false negative or a crash).
+    result = PluginSpecHelper.run("apt_key", {"state" => "present", "url" => "#{apt_key_base}/key.asc"})
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should_not contain("Failed to fetch key")
+  end
+
   it "attempts a real keyserver fetch (and fails cleanly, not a crash) when id: is given but not yet present" do
     # This dev machine has no real apt-key binary or network access for
     # a real fetch, so this only confirms the plugin reaches and

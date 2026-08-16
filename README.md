@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.409-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.411-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,13 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.410`-`0.9.411` - round 96, `robertdebock.tailscale`**: 3 bugs -
+  a parse-time crash on a dict keyed by a bare YAML boolean (a real
+  Ansible/Jinja2 idiom); a real Crystal 1.20.3 stdlib `HTTP::Client`
+  bug silently truncating a chunked HTTPS body (worked around by
+  shelling out to curl); and `apt_key.cr`'s `keyring:` parameter being
+  entirely unimplemented. Live-reverified: `tailscaled` active and
+  functional on both engines.
 - **`0.9.409` - round 95, `robertdebock.openvpn`**: a non-looped
   `include_tasks:` never credited itself as an `ok` in the recap tally
   (two independent copies of the gap - the single-host and multi-host

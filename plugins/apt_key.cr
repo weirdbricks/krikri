@@ -1,8 +1,6 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "http/client"
-require "uri"
 require "../src/crystal_play/base_plugin"
 
 module CrystalPlay
@@ -31,8 +29,20 @@ module CrystalPlay
   #   with keyserver." otherwise - matched exactly, not silently
   #   defaulted).
   #
-  # Not implemented: keyring: (an alternate keyring file - real
-  # playbooks essentially always mean the default system one).
+  # - keyring: the full path to a specific keyring file (real Ansible
+  #   passes this straight through as `apt-key --keyring <path> ...`,
+  #   applying to every apt-key subcommand - add/del/list). Previously
+  #   entirely unimplemented (every key always went into the legacy
+  #   default keyring regardless), which was silently WRONG rather than
+  #   just narrower whenever a role's own `apt_repository:`/deb822
+  #   `signed-by=` pointed at that same specific keyring path (a very
+  #   common modern idiom, since apt deprecated the shared default
+  #   keyring) - apt couldn't find the key where the repo config said
+  #   it should be, and every subsequent `apt-get update` failed with
+  #   "NO_PUBKEY"/"is not signed" even though the key HAD been added
+  #   (just to the wrong file). Found benchmarking robertdebock.
+  #   tailscale's own `keyring: /usr/share/keyrings/tailscale-archive-
+  #   keyring.gpg`.
   class AptKeyPlugin < BasePlugin
     def execute : PluginResult
       state = @params["state"]?.try(&.downcase) || "present"
@@ -42,6 +52,11 @@ module CrystalPlay
       end
 
       add_key
+    end
+
+    private def keyring_flag : String
+      keyring = @params["keyring"]?
+      keyring ? "--keyring #{keyring} " : ""
     end
 
     private def add_key : PluginResult
@@ -54,7 +69,7 @@ module CrystalPlay
       if keyserver = @params["keyserver"]?
         return PluginResult.new(changed: false, failed: true, msg: "Missing key_id, required with keyserver.") unless key_id
 
-        result = remote_exec("apt-key adv --no-tty --keyserver #{keyserver} --recv #{key_id}")
+        result = remote_exec("apt-key #{keyring_flag}adv --no-tty --keyserver #{keyserver} --recv #{key_id}")
         unless result[:exit_code] == 0
           return PluginResult.new(changed: false, failed: true, msg: "Error fetching key #{key_id} from keyserver: #{result[:stderr]}")
         end
@@ -62,18 +77,41 @@ module CrystalPlay
         return PluginResult.new(changed: true, failed: false, msg: "Key added")
       end
 
-      content = if url = @params["url"]?
-                  fetch_key(url)
-                elsif data = @params["data"]?
-                  data
-                else
-                  return PluginResult.new(changed: false, failed: true, msg: "Missing required parameter: url or data")
-                end
-      return PluginResult.new(changed: false, failed: true, msg: "Failed to fetch key") unless content
+      url = @params["url"]?
+      data = @params["data"]?
+      unless url || data
+        return PluginResult.new(changed: false, failed: true, msg: "Missing required parameter: url or data")
+      end
 
       tmp_path = "/tmp/.crystal-ansible-apt-key-#{Random.rand(100000..999999)}"
       begin
-        File.write(tmp_path, content)
+        if url
+          # Fetched via curl on the TARGET rather than Crystal's own
+          # HTTP::Client - a real, reproducible Crystal 1.20.3 stdlib
+          # bug truncates chunked-transfer-encoded HTTPS response
+          # bodies for at least this real key server (pkgs.tailscale.
+          # com), silently returning a partial/corrupt body with no
+          # error (fetch "succeeds", 200 OK, but 1399 of the real 2288
+          # bytes) - `gpg`/`apt-key add` then correctly rejects the
+          # truncated key material as invalid. Confirmed the truncation
+          # is deterministic and independent of how the response is
+          # consumed (direct `.body`, streaming `.body_io.gets_to_end`,
+          # and the top-level `HTTP::Client.get` convenience method all
+          # reproduce it identically), and confirmed real `curl` fetches
+          # the same URL correctly (byte-for-byte) both from this
+          # sandbox and from the live target host - so this shells out
+          # to curl instead of trying to work around Crystal's own HTTP
+          # client, matching how #add_key's `keyserver:` branch already
+          # shells out to `apt-key adv` rather than reimplementing a
+          # keyserver protocol client.
+          insecure_flag = is_true?(@params["validate_certs"]?, default: true) ? "" : "--insecure "
+          result = remote_exec("curl --fail --silent --show-error --location #{insecure_flag}-o #{tmp_path} #{url}")
+          unless result[:exit_code] == 0
+            return PluginResult.new(changed: false, failed: true, msg: "Failed to fetch key from #{url}: #{result[:stderr]}")
+          end
+        else
+          File.write(tmp_path, data.not_nil!)
+        end
 
         # Real Ansible's apt_key: is idempotent even when only url:/data:
         # is given (no id:) - it derives the key's own fingerprint from
@@ -89,7 +127,7 @@ module CrystalPlay
           return PluginResult.new(changed: false, failed: false, msg: "Key already present")
         end
 
-        result = remote_exec("apt-key add #{tmp_path}")
+        result = remote_exec("apt-key #{keyring_flag}add #{tmp_path}")
         unless result[:exit_code] == 0
           return PluginResult.new(changed: false, failed: true, msg: "apt-key add failed: #{result[:stderr]}")
         end
@@ -122,7 +160,7 @@ module CrystalPlay
         return PluginResult.new(changed: false, failed: false, msg: "Key already absent")
       end
 
-      result = remote_exec("apt-key del #{key_id}")
+      result = remote_exec("apt-key #{keyring_flag}del #{key_id}")
       unless result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true, msg: "apt-key del failed: #{result[:stderr]}")
       end
@@ -135,33 +173,8 @@ module CrystalPlay
       # spaces every 4 characters - stripping spaces from both sides
       # before comparing so a shortened (e.g. last-8-hex-chars) id: still
       # matches inside the full fingerprint.
-      result = remote_exec("apt-key list 2>/dev/null")
+      result = remote_exec("apt-key #{keyring_flag}list 2>/dev/null")
       result[:stdout].gsub(" ", "").includes?(key_id.gsub(" ", ""))
-    end
-
-    private def fetch_key(url : String, redirects_left : Int32 = 5) : String?
-      return nil if redirects_left < 0
-
-      uri = URI.parse(url)
-      client = HTTP::Client.new(uri)
-      client.connect_timeout = 15.seconds
-      client.read_timeout = 15.seconds
-
-      if !is_true?(@params["validate_certs"]?, default: true) && (tls = client.tls?)
-        tls.verify_mode = OpenSSL::SSL::VerifyMode::NONE
-      end
-
-      response = client.get(uri.request_target)
-
-      if response.status.redirection? && (location = response.headers["Location"]?)
-        resolved = URI.parse(location).absolute? ? location : uri.resolve(location).to_s
-        return fetch_key(resolved, redirects_left - 1)
-      end
-
-      return nil unless response.success?
-      response.body
-    ensure
-      client.try(&.close)
     end
   end
 end
