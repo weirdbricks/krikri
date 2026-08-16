@@ -8,9 +8,27 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.408`.**
+**Currently at `0.9.409`.**
 
 ---
+
+Round 95 (0.9.409) - `robertdebock.openvpn`: 1 real bug found and fixed
+(2 copies of the same root cause). A non-looped, single `include_tasks:` task
+never credited itself as an `ok` in the recap - real Ansible's own recap tally
+counts the `include_tasks:` dispatch itself as one `ok`, separate from every
+task it expands to (visible as the "included: ... for localhost" line).
+crystal-ansible's `execute_include_tasks`'s LOOPED branch already did this
+correctly (`@results[host.name]["ok"] += 1` per iteration), but the non-looped
+`else` branch never incremented anything for the include itself - and the
+SEPARATE multi-host batched path (`execute_include_tasks_multi`, used for the
+common single-host non-looped case via `run_task_batch`) had the exact same gap
+independently. Found via `robertdebock.openvpn`'s own "Setup openvpn server or
+client" (`include_tasks: file: "{{ openvpn_role }}.yml"`, no loop) - cosmetic
+only (the included tasks all ran and produced byte-identical results on both
+engines - same file checksums, same `openvpn@server.service active running` on
+both), but the recap consistently undercounted `ok=` by exactly 1 versus real
+Ansible on every such playbook. Live-reverified: `ok=16` now, matching real
+Ansible exactly, cold and warm.
 
 Round 94 (no version bump - zero crystal-ansible bugs found): `robertdebock.rundeck`.
 The role never installs a JRE at all (no "install requirements" task exists),

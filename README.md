@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.408-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.409-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,12 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.409` - round 95, `robertdebock.openvpn`**: a non-looped
+  `include_tasks:` never credited itself as an `ok` in the recap tally
+  (two independent copies of the gap - the single-host and multi-host
+  batched execution paths). Cosmetic only, the actual work was already
+  byte-identical; live-reverified to match real Ansible's recap count
+  exactly.
 - **`0.9.408` - round 89, `robertdebock.systemd`**: `ini_file.cr` never
   implemented real Ansible's `modify_inactive_option: true` default - a
   commented-out `#option=value` line should count as a match and get

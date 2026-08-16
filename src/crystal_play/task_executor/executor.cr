@@ -403,6 +403,14 @@ module CrystalPlay
           next
         end
 
+        # The include_tasks: task itself counts as one `ok` in the
+        # recap, matching real Ansible and the single-host
+        # execute_include_tasks path above - this multi-host batched
+        # path never credited it at all, undercounting the recap's
+        # `ok=` tally by one per host for every non-looped include_
+        # tasks: task. Found benchmarking robertdebock.openvpn's own
+        # "Setup openvpn server or client".
+        @results[host.name]["ok"] += 1
         run_groups[resolved_path] << host
       end
 
@@ -2776,6 +2784,17 @@ module CrystalPlay
           run_include_tasks_once(task, host, vars_context, item_display(item))
         end
       else
+        # Non-looped include_tasks: itself counts as one `ok` in the
+        # recap too, matching real Ansible - the looped branch above
+        # already credits this per iteration, but a plain (unlooped)
+        # include_tasks: never did, undercounting the recap's `ok=`
+        # tally by exactly 1 versus real Ansible for every such task.
+        # Found benchmarking robertdebock.openvpn's own "Setup openvpn
+        # server or client" (a single, non-looped include_tasks:) -
+        # functionally harmless (the included tasks all still ran
+        # correctly) but a real, easily reproduced recap-count
+        # divergence.
+        @results[host.name]["ok"] += 1
         run_include_tasks_once(task, host, base_vars_context, nil)
       end
     end
