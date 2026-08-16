@@ -12,6 +12,18 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 46 (no version bump - zero crystal-ansible bugs found):
+`robertdebock.gitlab_runner` (+ `robertdebock.bootstrap`) on a fresh
+`G3.2GB` Atlantic.net pair. Task-for-task identical on both engines
+(`ok=20 changed=4 failed=0 skipped=4` cold, `ok=20 changed=0 failed=0
+skipped=4` warm - fully idempotent), byte-identical rendered
+`config.toml`. `gitlab-runner` `active`/v16.3.1 on both (unregistered -
+no `gitlab_runner_registration_token:` given, matching the role's own
+optional-registration design, not tested here since it needs a real
+GitLab instance).
+
+---
+
 Round 45 (`0.9.388`), `robertdebock.jenkins` (+ `robertdebock.java`): 1
 real bug, found on a fresh `G3.4GB` Atlantic.net pair.
 `robertdebock.java`'s own `assert.yml` has `java_version | int is number`
