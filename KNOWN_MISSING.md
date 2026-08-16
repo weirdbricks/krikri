@@ -8,7 +8,28 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.414`.**
+**Currently at `0.9.415`.**
+
+---
+
+Round 103 (0.9.415) - `robertdebock.alternatives`: 1 real bug found and
+fixed. `community.general.alternatives` was entirely unimplemented (new
+`plugins/alternatives.cr`, wrapping `update-alternatives --install`/`--set`/
+`--auto`/`--remove`, ported from real Ansible's own module source) - the
+role's own "Configure alternatives" task was silently dropped while real
+Ansible actually ran `update-alternatives`. While implementing, hit a second
+bug in the new plugin itself before it even shipped: Crystal's `/regex/m`
+literal flag enables BOTH multiline anchors AND dot-matches-newline together
+(unlike Python's `re.MULTILINE`, which only affects `^`/`$`), so the ported
+regexes' `(.*)$` captures were greedily swallowing the rest of
+`update-alternatives --display`'s multi-line output instead of stopping at
+end-of-line - `current_path` ended up including trailing lines, breaking the
+idempotency check (`is_same_path` never matched) and causing every rerun to
+re-`--set` unconditionally. Fixed by using `([^\n]*)$` instead of `(.*)$`.
+Live-reverified: byte-identical `update-alternatives --display` output on
+both engines, cold `ok=6 changed=2 failed=0` and warm `ok=6 changed=0
+failed=0` both match real Ansible exactly. `family:` (RHEL-only) not
+implemented - no EL/Fedora host available to verify against.
 
 ---
 

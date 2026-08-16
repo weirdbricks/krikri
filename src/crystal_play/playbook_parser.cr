@@ -454,6 +454,7 @@ module CrystalPlay
       "community.general.ini_file",
       "community.general.timezone",
       "community.general.npm",
+      "community.general.alternatives",
       "ansible.builtin.service_facts",
       "ansible.builtin.set_fact",
       "ansible.builtin.get_url",

@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.414-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.415-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,13 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.415` - round 103, `robertdebock.alternatives`**:
+  `community.general.alternatives` entirely unimplemented (new
+  `plugins/alternatives.cr`) plus a self-inflicted regex idempotency
+  bug found before shipping (Crystal's `/m` flag = multiline anchors
+  + dot-matches-newline combined, unlike Python's `re.MULTILINE`).
+  Live-reverified byte-identical `update-alternatives --display`
+  output and matching recap counts both cold and warm.
 - **round 102, `robertdebock.aide`** (no version bump): zero bugs
   found, byte-identical on both engines cold and warm, `aide.db` +
   cron job verified live.

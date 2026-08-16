@@ -235,6 +235,7 @@ PLUGINS=(
     "ini_file"
     "timezone"
     "npm"
+    "alternatives"
     "service_facts"
     "postgresql_db"
     "postgresql_user"
