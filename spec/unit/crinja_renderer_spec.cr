@@ -130,6 +130,22 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     renderer.render("{{ 'Ansible managed' | comment(decoration='; ') }}").should eq(";\n; Ansible managed\n;")
   end
 
+  it "resolves a fully-qualified collection filter name (ansible.builtin.X) to the same bare filter" do
+    # Real bug found benchmarking robertdebock.vsftpd: `vsftpd.conf.j2`
+    # uses `| ansible.builtin.ternary('YES', 'NO')` throughout (real
+    # Ansible allows a filter to be referenced by its FQCN, exactly like
+    # a module, resolving to the same filter registered under its bare
+    # trailing name) - Crinja's own filter-name grammar only ever
+    # expected a single bare IDENTIFIER after `|`, so any dotted filter
+    # name crashed the whole template render ("Unexpected POINT")
+    # instead of resolving like a plain `| ternary(...)` call.
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render("{{ true | ansible.builtin.ternary('YES', 'NO') }}").should eq("YES")
+    renderer.render("{{ false | ansible.builtin.ternary('YES', 'NO') }}").should eq("NO")
+  end
+
   it "honors the style= positional argument for comment()" do
     # Real bug found benchmarking robertdebock.php: `{{ "..." |
     # comment('c') }}` (php.ini.j2's own header) previously ignored the

@@ -8,7 +8,34 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.392`.**
+**Currently at `0.9.393`.**
+
+---
+
+Round 59 (0.9.393): `robertdebock.vsftpd` on a fresh `G3.2GB`
+Atlantic.net pair. 1 real bug found and fixed, in the vendored
+`weirdbricks/crinja` fork itself (tag `crystal-play-0.9.9`), not
+crystal-ansible proper: the fork's filter/test-name grammar after `|`/
+`is` only ever expected a single bare `IDENTIFIER` token - real
+Ansible allows a filter or test to be referenced by its fully-qualified
+collection name (`ansible.builtin.ternary`, `community.general.X`),
+exactly like a module, resolving to the exact same filter registered
+under the bare trailing name. `vsftpd.conf.j2` uses `|
+ansible.builtin.ternary('YES', 'NO')` throughout for every yes/no
+setting - crashed the WHOLE template render ("Unexpected POINT",
+Crinja's lexer token name for `.`) on the very first such filter call,
+not just a wrong value. Fixed by extending the filter-name parse to
+consume trailing `.identifier` segments after the base name (keeping
+only the last segment, matching how a module's FQCN already resolves to
+its bare-name plugin elsewhere in this codebase). Live-reverified: fresh
+pair, `ok=37 changed=3 failed=0 skipped=2` (real) vs `ok=37 changed=2
+failed=0 skipped=2` (crystal after the fix - the 1-changed difference
+was an artifact of crystal's own earlier failed attempt having already
+installed the package before crashing on the template, not a new
+divergence); `/etc/vsftpd.conf` byte-identical, `vsftpd` `active` on
+both, fully idempotent warm rerun (`ok=36 changed=0` both). Regression
+spec added to both the fork and crystal-ansible's own Crinja renderer
+spec.
 
 ---
 

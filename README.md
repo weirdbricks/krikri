@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.392-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.393-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,13 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.393` - round 59, `robertdebock.vsftpd`**: a filter/test
+  referenced by its fully-qualified collection name (`|
+  ansible.builtin.ternary(...)`, valid real-Ansible syntax) crashed the
+  whole template render in the vendored Crinja fork's own grammar
+  ("Unexpected POINT") - fixed to resolve to the same bare-name filter
+  (fork tag `crystal-play-0.9.9`). Live-reverified byte-identical,
+  idempotent.
 - **`0.9.392` - round 58, `robertdebock.python_pip`**: `ini_file:`
   started from an empty line array for a brand-new destination file;
   real Ansible's own module force-seeds a single leading blank line
