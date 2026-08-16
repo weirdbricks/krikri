@@ -1005,18 +1005,37 @@ module CrystalPlay
 
       rendered_vars = Hash(String, JSON::Any).new
       vars.each do |key, value|
-        raw_string = value.raw.as?(String)
-        unless raw_string && raw_string.includes?("{{")
-          rendered_vars[key] = value
-          next
-        end
-
-        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host_name)
-        rendered = substitutor.substitute(raw_string)
-        parsed = (rendered.starts_with?('{') || rendered.starts_with?('[')) ? (JSON.parse(rendered) rescue nil) : nil
-        rendered_vars[key] = parsed || JSON::Any.new(rendered)
+        rendered_vars[key] = render_include_role_var_value(value, vars_context, host_name)
       end
       rendered_vars
+    end
+
+    # Recurses into a vars: value so a list-of-dicts (e.g. `service_
+    # list:` on robertdebock.node_red's `import_role: name: robertdebock.
+    # service`, each entry with its own `{{ node_red_service }}`-style
+    # fields) gets every nested String leaf rendered, not just a
+    # top-level scalar. Previously only checked `value.raw.as?(String)`
+    # directly, so any Array/Hash-shaped var passed through completely
+    # unrendered - every `{{ }}` inside it landed on the included role
+    # literally, showing up downstream as the string "undefined" once
+    # VariableLookup gave up resolving it.
+    private def render_include_role_var_value(value : JSON::Any, vars_context : Hash(String, JSON::Any), host_name : String) : JSON::Any
+      case raw = value.raw
+      when String
+        return value unless raw.includes?("{{")
+        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host_name)
+        rendered = substitutor.substitute(raw)
+        parsed = (rendered.starts_with?('{') || rendered.starts_with?('[')) ? (JSON.parse(rendered) rescue nil) : nil
+        parsed || JSON::Any.new(rendered)
+      when Array
+        JSON::Any.new(raw.map { |item| render_include_role_var_value(item, vars_context, host_name) })
+      when Hash
+        rendered_hash = Hash(String, JSON::Any).new
+        raw.each { |k, v| rendered_hash[k] = render_include_role_var_value(v, vars_context, host_name) }
+        JSON::Any.new(rendered_hash)
+      else
+        value
+      end
     end
 
     private def render_task_vars(task : Task, vars_context : Hash(String, JSON::Any), host_name : String)

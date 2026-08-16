@@ -233,6 +233,7 @@ PLUGINS=(
     "htpasswd"
     "ini_file"
     "timezone"
+    "npm"
     "service_facts"
     "postgresql_db"
     "postgresql_user"

@@ -452,6 +452,7 @@ module CrystalPlay
       "community.general.htpasswd",
       "community.general.ini_file",
       "community.general.timezone",
+      "community.general.npm",
       "ansible.builtin.service_facts",
       "ansible.builtin.set_fact",
       "ansible.builtin.get_url",
@@ -856,6 +857,23 @@ module CrystalPlay
         return parse_include_role(name, task_hash, include_role_yaml, play, file_dir)
       end
 
+      # import_role: - real Ansible resolves this statically at parse
+      # time (so its tasks/handlers become part of the play up front,
+      # unlike include_role's runtime dynamic inclusion). This codebase
+      # doesn't do a true static splice for it; reusing include_role's
+      # runtime machinery is a pragmatic approximation - the common case
+      # (unconditional, non-looped import with vars:, e.g.
+      # robertdebock.node_red's `import_role: name: robertdebock.
+      # service`) behaves identically either way. Previously entirely
+      # unhandled - "import_role" fell through to the module-name
+      # dispatch below, failed plugin resolution, and the whole task was
+      # silently dropped with only a yellow parse-warning (no TASK
+      # header, no error surfaced in the run) - a role using it appeared
+      # to just skip a step instead of failing loudly.
+      if import_role_yaml = directive(task_hash, "import_role").try(&.as_h?)
+        return parse_include_role(name, task_hash, import_role_yaml, play, file_dir)
+      end
+
       if meta_yaml = directive(task_hash, "meta")
         return parse_meta_task(name, meta_yaml)
       end
@@ -872,7 +890,7 @@ module CrystalPlay
                       "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "delegate_facts", "run_once",
                       "async", "poll", "vars", "environment",
                       "block", "rescue", "always", "import_tasks", "include_tasks", "include_role",
-                      "meta", "include_vars"]
+                      "import_role", "meta", "include_vars"]
       # ... and the same names fully qualified, since directive() accepts
       # either spelling and neither form is a module to dispatch on.
       special_keys += special_keys.map { |k| "ansible.builtin.#{k}" }

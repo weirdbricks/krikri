@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.402-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.404-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,15 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.403`-`0.9.404` - round 75, `robertdebock.node_red`**: new
+  `community.general.npm` plugin (entirely unimplemented before);
+  `import_role:` entirely unhandled by the parser (silently dropped the
+  whole task, no error surfaced); `include_role:`/`import_role:` `vars:`
+  never recursed into Array/Hash-shaped values (a list-of-dicts
+  `service_list:` landed with every `{{ }}` field unrendered). Live-
+  reverified identical both engines; node-red's own systemd service
+  fails identically on both (stock Ubuntu 22.04 nodejs too old), a real
+  external gap, not a crystal-ansible divergence.
 - **`0.9.402` - round 71, `robertdebock.git`**: `getent:`'s single-key
   lookup returned a bare field-list instead of a dict keyed by the
   looked-up username (real Ansible's own `getent_passwd` is always a

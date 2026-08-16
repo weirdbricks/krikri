@@ -8,9 +8,43 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.402`.**
+**Currently at `0.9.404`.**
 
 ---
+
+Round 75 (0.9.403-0.9.404) - `robertdebock.node_red`: motivated a brand-new
+`community.general.npm` plugin (`plugins/npm.cr`) - entirely unimplemented before,
+silently skipped the role's own "Install node-red" task while real Ansible actually
+installed the package. Idempotency ported exactly from real Ansible's algorithm
+(`npm list --json --long`, checking the `dependencies` hash for a `missing`/`invalid`
+entry), scoped to `state: present`/`absent` only. Live-verified directly (install/
+idempotent-rerun/uninstall/idempotent-reuninstall of `left-pad`), not in the spec
+suite (real npm mutation/network, matching `pip_spec.cr`'s convention).
+
+Two further real bugs found via the role's own `import_role: name: robertdebock.
+service` call:
+1. `import_role:` was entirely unhandled by the parser - not in `special_keys`, no
+   dedicated parse branch - so it fell through to plain module-name dispatch, failed
+   plugin resolution, and the whole task was silently dropped (a yellow parse-warning
+   only, no TASK header, no error in the run). Fixed by routing it through the same
+   parse function as `include_role:` (a pragmatic runtime-dynamic approximation of
+   real Ansible's static-at-parse-time resolution - fine for the common unconditional,
+   non-looped case).
+2. Once `import_role:`/`include_role:` executed, its `vars:` renderer
+   (`render_include_role_vars`) only substituted a top-level scalar String value -
+   never recursed into an Array/Hash-shaped var. The role's own `service_list:` is a
+   list of dicts with `{{ node_red_service }}`/`{{ node_red_start_command }}` fields
+   inside - every one landed on the sub-role literally unrendered, showing up
+   downstream as the literal string "undefined" (`Unit file nodered.service does not
+   exist`). Fixed with a recursive `render_include_role_var_value` walking Array/Hash/
+   String leaves.
+
+Live-reverified: `ok=14 changed=1 failed=0 skipped=8` identical both engines cold and
+warm. `node-red`'s own systemd unit fails identically on BOTH real ansible-playbook
+and crystal-ansible - the pinned Galaxy release's `node_red_requirements` installs
+Ubuntu 22.04's stock `nodejs` (v12.22.9), too old for the current node-red package
+(`Node.js v22.9 or later` required) - a real external role/environment gap, not a
+crystal-ansible divergence, confirmed by reproducing on real Ansible too.
 
 Round 74 (no version bump - zero crystal-ansible bugs found):
 `robertdebock.tftpd` on a fresh `G3.2GB` Atlantic.net pair. Identical
