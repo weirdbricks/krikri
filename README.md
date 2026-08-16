@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.385-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.386-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,15 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.386` - round 41, `robertdebock.haproxy`**: its `haproxy.cfg.j2`
+  template's `server.address | default(hostvars[server.name][...])`
+  idiom crashed the whole render whenever the unused `default()`
+  fallback branch chained through a non-inventory host name - fixed in
+  the vendored `weirdbricks/crinja` fork itself (tag
+  `crystal-play-0.9.8`): chained access on an undefined base now
+  self-propagates instead of raising, matching real Ansible's own
+  `Marker` class. Live-reverified byte-identical config + idempotent on
+  both engines.
 - **`0.9.385` - round 40, `robertdebock.redis`**: `mode: "{{ redis_mode
   }}"` rendered to a templated digit string ("640") with no leading
   zero - `template.cr`/`copy.cr`/`ini_file.cr` all mis-parsed that as

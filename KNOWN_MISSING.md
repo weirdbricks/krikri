@@ -8,7 +8,65 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.385`.**
+**Currently at `0.9.386`.**
+
+---
+
+Round 41 (`0.9.386`), `robertdebock.haproxy` (+ `robertdebock.bootstrap`):
+1 real bug, found on a fresh `G3.2GB` Atlantic.net pair - crystal-ansible
+crashed the role's own "Configure software" (`template:`) task outright,
+while real `ansible-playbook` rendered the same template fine.
+
+Root cause: the role's own `haproxy.cfg.j2` (a genuinely complex real
+Jinja2 template, not a toy one) has `server.address | default(hostvars
+[server.name]['ansible_facts']['default_ipv4']['address'])` - a very
+common Ansible idiom (guard an inline value with a `hostvars[..]`-derived
+fallback). Since the test playbook's `server.address` is defined
+("127.0.0.1"), the `hostvars[server.name]` fallback branch (`server.name`
+= "web1", a backend-server label, not a real inventory host) was never
+supposed to matter - but the vendored Crinja fork's evaluator raised as
+soon as ANY link in a chained `MemberExpression`/`IndexExpression`
+access hit an undefined base, even inside an unused `default()` fallback
+- crashing the ENTIRE template render, not just that one lookup.
+
+Verified directly against the installed `ansible-core`'s own `Marker`
+class (`_internal/_templating/_jinja_common.py`): its
+`__getattr__`/`__getitem__` deliberately self-propagate rather than
+raising - that's specifically what makes `x.y.z | default(fallback)`
+work when `x`/`y`/`z` don't exist, while still failing loudly if an
+undefined value is ever actually *used* as a concrete value (`Marker`
+extends `StrictUndefined`, so `__str__`/`__bool__` etc still trip). Also
+confirmed the exact same distinction directly against plain upstream
+Jinja2: `jinja2.Environment()` (default `Undefined`) raises immediately
+on this pattern, `jinja2.Environment(undefined=jinja2.ChainableUndefined)`
+doesn't - Ansible's `Marker` is the `ChainableUndefined` equivalent.
+
+Fixed in the `weirdbricks/crinja` fork itself (tag `crystal-play-0.9.8`,
+commit `efb7f88d`), not just crystal-ansible: `Evaluator#visit
+MemberExpression`/`visit IndexExpression` now use the non-raising
+`value` instead of `value!` for their base object, returning it directly
+(short-circuiting resolution) when already undefined instead of raising.
+Doesn't attempt Ansible's full `Marker`/`StrictUndefined` nuance (a
+directly-rendered, never-chained undefined value still resolves to an
+empty string here via the fork's existing default `Undefined#to_s`,
+matching crystal-ansible's own pre-existing lenient bare-undefined-
+render-as-empty behavior) - a project-wide switch to `StrictUndefined`
+semantics is a materially bigger, separate change, deliberately left out
+of scope. Updated 5 of the fork's own specs that asserted the old
+raise-immediately behavior; full fork suite 540/540, full crystal-ansible
+suite 1225/1225 (one new regression spec added,
+`spec/integration/template_undefined_chain_default_spec.cr`, exercising
+the real compiled binary against a real `.j2` template).
+
+Live-reverified on the same host pair after rebuilding: `haproxy.cfg`
+byte-identical to real Ansible's, `haproxy -c` valid on both, service
+`active` on both, second rerun fully idempotent and task-for-task
+identical (`ok=31 changed=0 failed=0` both - `skipped` differs by 2,
+`community.general.seport`/`ansible.posix.seboolean` aren't implemented
+in crystal-ansible at all, a pre-existing legitimate scope gap, not a
+new bug - both engines skip the SELinux tasks functionally identically
+on this non-SELinux Ubuntu host, crystal-ansible just doesn't print a
+`skipping:` banner for a plugin it doesn't have).
 
 ---
 
