@@ -12,6 +12,12 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 76 (no version bump - zero crystal-ansible bugs found): `robertdebock.fail2ban`
+(distinct from the already-tested `Oefenweb.fail2ban`). Identical on both engines cold
+(`ok=17 changed=5 failed=0 skipped=5`) and warm (`ok=16 changed=0 failed=0 skipped=5` -
+fully idempotent), `fail2ban` service `active` on both with the `sshd` jail configured,
+`jail.local` byte-identical apart from the expected hostname-derived `sender` field.
+
 Round 75 (0.9.403-0.9.404) - `robertdebock.node_red`: motivated a brand-new
 `community.general.npm` plugin (`plugins/npm.cr`) - entirely unimplemented before,
 silently skipped the role's own "Install node-red" task while real Ansible actually
