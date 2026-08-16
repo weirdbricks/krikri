@@ -293,6 +293,10 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **round 114, `robertdebock.types`** (no version bump): zero bugs
+  found, byte-identical type-test recap on both engines cold and
+  warm; noted a cosmetic-only dict/list `debug:` formatting
+  difference (Python repr vs compact JSON) with no behavioral effect.
 - **`0.9.422` - round 113, `robertdebock.test_connection`**: 2 bugs -
   `ansible.builtin.ping` and `ansible.builtin.wait_for_connection`
   were both entirely unimplemented, silently dropped. New

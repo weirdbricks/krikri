@@ -12,6 +12,22 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 114 (no version bump - zero crystal-ansible bugs found) -
+`robertdebock.types`: byte-identical `ok=17 changed=0 failed=0` recap on
+both engines, both cold and warm - every `is string`/`is number`/`is
+boolean`/`is float`/`is mapping`/`is iterable` assertion and `type_debug`
+call agreed with real Ansible for every value in the role's own test data
+(strings, ints, 18 boolean spellings incl. `yes`/`Yes`/`YES`/`on`/`On`/
+`ON`/etc, floats, a dict, a list-of-lists). One cosmetic-only, non-
+behavioral difference noted: `debug: msg:` embedding a dict/list value
+renders it via real Python's own `str()`/repr rules on real Ansible
+(single-quoted keys/values, `{'k': 'v'}`) vs this codebase's compact JSON
+form (`{"k":"v"}`) - purely a display-string difference, no assertion or
+task result was affected by it, not attempted as a fix (would need a
+broad Python-repr formatter, out of scope for this round's actual find).
+
+---
+
 Round 113 (0.9.422) - `robertdebock.test_connection`: 2 real bugs found and
 fixed - `ansible.builtin.ping` and `ansible.builtin.wait_for_connection`
 were both entirely unimplemented, silently dropped. New `plugins/ping.cr`
