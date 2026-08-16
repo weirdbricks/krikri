@@ -12,6 +12,21 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 132 (no version bump - engine clean) -
+`robertdebock.revealmd` (+ `robertdebock.npm`, `robertdebock.service`
+dependencies): not fully runnable on this cloud image regardless of
+engine. Byte-identical `ok=17 changed=6 failed=0 skipped=8` on both
+engines, identical rendered `/etc/systemd/system/revealmd.service`.
+The `reveal-md` service fails to start identically on both via
+`journalctl`: `Error [ERR_UNKNOWN_BUILTIN_MODULE]: No such built-in
+module: node:fs/promises` - Ubuntu 22.04's default apt `nodejs`
+package (v12.22.9) is too old for the latest npm `reveal-md` release,
+which needs Node >= 14. Not an engine bug - an environment/Node-version
+prerequisite gap the role itself doesn't address (it installs `npm`
+via apt, not a newer Node via nodesource/nvm).
+
+---
+
 Round 131 (`0.9.426`) - `robertdebock.vagrant`: 1 real bug found and
 fixed. `pip.cr`'s `name:` param never handled a `{{ }}`-templated list
 variable rendering to its own bracketed text form - the same

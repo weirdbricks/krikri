@@ -293,6 +293,11 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **round 132, `robertdebock.revealmd`** (no version bump): engine
+  clean but not fully runnable - Ubuntu 22.04's default Node.js
+  (v12) is too old for the latest npm `reveal-md` release, both
+  engines fail the service identically; rendered systemd unit
+  byte-identical.
 - **`0.9.426` - round 131, `robertdebock.vagrant`**: `pip.cr`'s
   `name:` never handled a `{{ }}`-templated list resolving to its own
   bracketed text form (the "Python-repr-list JSON" class, already
