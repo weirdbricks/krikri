@@ -12,6 +12,13 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 69 (no version bump - zero crystal-ansible bugs found):
+`robertdebock.at` on a fresh `G3.2GB` Atlantic.net pair. Identical on
+both engines (`ok=3 changed=1 failed=0` cold, `ok=3 changed=0 failed=0`
+warm - fully idempotent), `atd` service `active` on both.
+
+---
+
 Round 67 (no version bump - zero crystal-ansible bugs found):
 `robertdebock.autofs` on a fresh `G3.2GB` Atlantic.net pair
 (`autofs_maps:` with a `/home` NFS-style map, exercising the role's
