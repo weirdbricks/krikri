@@ -8,9 +8,24 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.405`.**
+**Currently at `0.9.406`.**
 
 ---
+
+Round 79 (0.9.406) - `robertdebock.auditd`: 1 real bug found and fixed. A handler
+notifying ANOTHER handler (`notify:` inside `handlers/main.yml` itself, not just
+on a regular task) was entirely unhandled - only a regular task's own `notify:`
+was ever forwarded to `HandlerRunner`. The role's own "Run augenrules" handler
+notifies "Load rules", which real Ansible runs within the same `flush_handlers`
+pass (handlers run in definition order, and a handler notified mid-pass still
+gets picked up later in that same pass since "Load rules" is defined after "Run
+augenrules"). crystal-ansible silently dropped "Load rules" entirely - one fewer
+`changed:` handler, and `augenrules --load` (which actually re-applies the
+just-regenerated rules into the running kernel audit rule set) never ran. Fixed
+by forwarding a handler's own `notify:` to `HandlerRunner` the same way a regular
+task's is, right after handler execution. Live-reverified: `ok=44 changed=5
+failed=0 skipped=5` identical to real Ansible's cold-run recap, "Load rules"
+handler now fires correctly.
 
 Round 78 (0.9.405) - `robertdebock.unbound`: 1 real bug found and fixed. A failed
 HANDLER never halted the rest of the play for that host -

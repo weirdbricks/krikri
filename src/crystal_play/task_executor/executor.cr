@@ -3739,6 +3739,24 @@ module CrystalPlay
 
       result = loop_items ? execute_handler_loop(handler, host, vars_context, loop_items) : execute_handler_plugin_once(handler, host, vars_context)
 
+      # A handler can itself notify: further handlers (robertdebock.
+      # auditd's own "Run augenrules" -> notify: "Load rules" -> real
+      # Ansible runs "Load rules" within the SAME flush_handlers pass,
+      # since HandlerRunner#run's @handlers.each iterates in definition
+      # order and "Load rules" is defined after "Run augenrules" - by
+      # the time the loop reaches it, this notify call has already
+      # landed in @notified_handlers and should_run_handler? picks it
+      # up naturally, no restructuring of #run needed. Previously
+      # entirely unhandled - only a regular TASK's own notify: was ever
+      # forwarded to HandlerRunner, so a handler-to-handler notify
+      # silently dropped the second handler ("Load rules" never ran,
+      # `augenrules --load` never re-applied the just-regenerated
+      # rules).
+      changed = result["changed"]?.try(&.as_bool) == true
+      if changed && (notify_list = handler.notify)
+        notify_handlers(handler, host, notify_list)
+      end
+
       # A failed handler halts the rest of the play for this host, same
       # as a failed regular task (real Ansible: an unrescued handler
       # failure aborts the host's play run) - every other execution path

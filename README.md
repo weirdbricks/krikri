@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.405-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.406-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,12 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.406` - round 79, `robertdebock.auditd`**: a handler notifying
+  ANOTHER handler was entirely unhandled - only a regular task's own
+  `notify:` was ever forwarded to `HandlerRunner`. The role's "Run
+  augenrules" handler notifies "Load rules", which real Ansible runs
+  within the same flush_handlers pass; crystal-ansible silently dropped
+  it. Live-reverified identical to real Ansible's cold-run recap.
 - **`0.9.405` - round 78, `robertdebock.unbound`**: a failed handler never
   halted the rest of the play for that host - the one execution path in
   `executor.cr` missing a `halt_if_failed` call. The role's own
