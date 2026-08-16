@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.384-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.385-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,15 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.385` - round 40, `robertdebock.redis`**: `mode: "{{ redis_mode
+  }}"` rendered to a templated digit string ("640") with no leading
+  zero - `template.cr`/`copy.cr`/`ini_file.cr` all mis-parsed that as
+  decimal instead of octal, corrupting `redis.conf`'s permissions
+  enough that `redis-server` couldn't read its own config and
+  crash-looped, while real Ansible (which always treats an all-digit
+  mode string as octal) came up clean. Fixed to match `file.cr`'s
+  already-correct parsing; live-reverified `PONG`/idempotent on both
+  engines.
 - **`0.9.384`**: closed the one gap round 37 left open - a *looped*
   top-level `include_tasks:` (`loop:`/`with_items:` on the include
   statement itself, e.g. `robertdebock.users`' "Loop over

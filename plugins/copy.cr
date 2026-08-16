@@ -447,14 +447,15 @@ module CrystalPlay
       # Set mode (permissions)
       if mode = @params["mode"]?
         begin
-          # Convert mode string to integer (handles octal like "0644")
-          mode_int = if mode.starts_with?("0")
-            mode.to_i(8)  # Octal
-          else
-            mode.to_i     # Decimal
+          # Real Ansible parses ANY all-digit mode string as octal,
+          # leading zero or not (`mode: "640"` and `mode: "0640"` are
+          # identical). See template.cr's identical fix (round 40,
+          # robertdebock.redis) for the full story - the old
+          # `starts_with?("0") ? octal : decimal` branch corrupted any
+          # templated mode value without a literal leading zero.
+          if mode =~ /\A0?[0-7]{3,4}\z/
+            File.chmod(path, mode.to_i(8))
           end
-          
-          File.chmod(path, mode_int)
         rescue
           # Mode setting failed, continue anyway
         end

@@ -284,13 +284,20 @@ module CrystalPlay
       # Set mode (permissions) using native Crystal
       if mode = @params["mode"]?
         begin
-          mode_int = if mode.starts_with?("0")
-            mode.to_i(8)  # Octal
-          else
-            mode.to_i     # Decimal
+          # Real Ansible parses ANY all-digit mode string as octal,
+          # leading zero or not (`mode: "640"` and `mode: "0640"` are
+          # identical - only a *symbolic* mode like `u+x` isn't valid
+          # octal digits). Real bug found benchmarking robertdebock.redis
+          # (round 40): `mode: "{{ redis_mode }}"` rendered to the plain
+          # string "640" (no leading zero, from a Jinja dict-lookup
+          # default, not a literal YAML octal) - the old `starts_with?
+          # ("0") ? octal : decimal` branch treated it as DECIMAL 640,
+          # producing octal 1200 (`--w------T`) instead of 0640
+          # (`rw-r-----`), leaving redis-server unable to even read its
+          # own config file. Matches file.cr's own `parse_numeric_mode`.
+          if mode =~ /\A0?[0-7]{3,4}\z/
+            File.chmod(path, mode.to_i(8))
           end
-          
-          File.chmod(path, mode_int)
         rescue
           # Mode setting failed, continue anyway
         end

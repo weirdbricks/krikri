@@ -179,8 +179,12 @@ module CrystalPlay
     private def apply_mode(path : String)
       if mode = @params["mode"]?
         begin
-          mode_int = mode.starts_with?("0") ? mode.to_i(8) : mode.to_i
-          File.chmod(path, mode_int)
+          # Real Ansible parses ANY all-digit mode string as octal,
+          # leading zero or not. See template.cr's identical fix (round
+          # 40, robertdebock.redis) for the full story.
+          if mode =~ /\A0?[0-7]{3,4}\z/
+            File.chmod(path, mode.to_i(8))
+          end
         rescue
         end
       end

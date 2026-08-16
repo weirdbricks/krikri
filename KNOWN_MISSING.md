@@ -8,7 +8,37 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.384`.**
+**Currently at `0.9.385`.**
+
+---
+
+Round 40 (`0.9.385`), `robertdebock.redis` (+ `robertdebock.bootstrap`): 1
+real bug, found on a fresh `G3.2GB` Atlantic.net pair - crystal-ansible's
+`redis-server.service` crash-looped after the role's own "Configure
+redis" (`template:`) task, while real `ansible-playbook` came up clean.
+
+Root cause: `mode: "{{ redis_mode }}"` renders to the plain string
+`"640"` (from a Jinja dict-lookup `default()` chain, not a literal YAML
+octal like `"0640"`). `template.cr`/`copy.cr`/`ini_file.cr` all shared
+the same `mode.starts_with?("0") ? octal : decimal` branch - a
+leading-zero-less digit string fell into the DECIMAL path, so `File.
+chmod` got called with decimal 640 (octal `1200`: `--w------T`) instead
+of octal 0640 (`rw-r-----`). Real Ansible parses any all-digit mode
+string as octal regardless of a leading zero (matches `file.cr`'s own
+already-correct `parse_numeric_mode`, untouched by this bug). With
+`redis.conf` mode-corrupted to write-only-plus-sticky, `redis-server`
+couldn't even read its own config file and crash-looped identically on
+every restart attempt. Fixed all three plugins to match `file.cr`'s
+correct octal-regardless-of-leading-zero parsing. Three new regression
+specs (`spec/integration/mode_octal_string_spec.cr`); full suite (1224
+examples) needed no other changes.
+
+Live-reverified on the same host pair after rebuilding: `redis.conf`
+mode now byte-identical to real Ansible's (`640 redis:redis`), content
+byte-identical too, `redis-server` `active (running)` and answering
+`redis-cli ping` -> `PONG` on both engines. A second, fully clean
+rerun of both engines matched task-for-task (`ok=12 changed=0 failed=0
+skipped=2` both) - fully idempotent.
 
 ---
 
