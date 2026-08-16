@@ -455,6 +455,7 @@ module CrystalPlay
       "community.general.timezone",
       "community.general.npm",
       "community.general.alternatives",
+      "community.general.filesystem",
       "ansible.builtin.service_facts",
       "ansible.builtin.set_fact",
       "ansible.builtin.get_url",
@@ -1280,6 +1281,17 @@ module CrystalPlay
         vars = Hash(String, JSON::Any).new
         vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
         task.vars = vars
+      end
+
+      # A block's own `notify:` fires once if any task nested inside it
+      # (block/rescue/always) changes, even when none of those nested
+      # tasks have a notify: of their own - real Ansible's own
+      # block-level notify semantics. Never parsed here at all before,
+      # so TaskExecutor#execute_block/#execute_block_multi's own
+      # block-notify handling had nothing to read regardless. Found via
+      # robertdebock.swap's own "Manage swap files." block.
+      if notify_yaml = task_hash["notify"]?
+        task.notify = notify_yaml.as_s? ? [notify_yaml.as_s] : notify_yaml.as_a.map(&.as_s)
       end
 
       task

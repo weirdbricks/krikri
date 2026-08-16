@@ -927,6 +927,17 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should_not contain("ran on hostone")
   end
 
+  it "fires a handler notified by a block: itself when a nested task (with no notify: of its own) changes" do
+    # Regression: execute_block/execute_block_multi never checked the
+    # enclosing block: task's own notify: at all - only an individual
+    # nested task's own notify: was ever forwarded to HandlerRunner.
+    status, output = run_playbook("test-block-notify-quick.yml", [] of String)
+
+    status.success?.should be_true
+    output.should contain("RUNNING HANDLER")
+    output.should contain("handler fired")
+  end
+
   it "exits non-zero and reports the error for an invalid playbook" do
     Dir.mkdir_p(File.join(PROJECT_ROOT, "spec", "tmp"))
     bad_playbook = File.join(PROJECT_ROOT, "spec", "tmp", "invalid.yml")

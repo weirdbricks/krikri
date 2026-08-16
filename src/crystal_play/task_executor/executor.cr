@@ -324,6 +324,10 @@ module CrystalPlay
 
       failed_before = Hash(String, Int32).new
       run_hosts.each { |host| failed_before[host.name] = @results[host.name]["failed"] }
+      # Same block-level notify: tracking as execute_block's own
+      # changed_before - see that method's comment.
+      changed_before = Hash(String, Int32).new
+      run_hosts.each { |host| changed_before[host.name] = @results[host.name]["changed"] }
 
       propagate_role_context(task, task.block_tasks || [] of Task)
       run_task_batch(task.block_tasks || [] of Task, run_hosts)
@@ -361,9 +365,20 @@ module CrystalPlay
         run_hosts.each { |host| block_failed[host.name] ||= @halted_hosts.includes?(host.name) }
       end
 
+      notify_hosts_if_changed(task, run_hosts, changed_before)
+
       run_hosts.each do |host|
         @halted_hosts.delete(host.name)
         halt_if_failed(task, host, block_failed[host.name])
+      end
+    end
+
+    private def notify_hosts_if_changed(task : Task, hosts : Array(Host), changed_before : Hash(String, Int32))
+      return unless (notify_list = task.notify) && !notify_list.empty?
+
+      hosts.each do |host|
+        next unless @results[host.name]["changed"] > changed_before[host.name]
+        notify_handlers(task, host, notify_list)
       end
     end
 
@@ -2612,6 +2627,15 @@ module CrystalPlay
       end
 
       failed_before = @results[host.name]["failed"]
+      # A block:'s own notify: (as opposed to notify: on one of its
+      # nested tasks) fires once if ANY task inside the block/rescue/
+      # always actually changed - real Ansible's own block-level notify
+      # semantics. Previously entirely unhandled: only a regular task's
+      # own notify: was ever forwarded to HandlerRunner. Found via
+      # robertdebock.swap's own "Manage swap files." block (wraps
+      # "Make a swap file"/"Make swap file system"/"Mount swap", none
+      # of which have their own notify:) - "Run swapon" never fired.
+      changed_before = @results[host.name]["changed"]
       propagate_role_context(task, task.block_tasks || [] of Task)
       run_task_list(task.block_tasks || [] of Task, host)
       block_failed = @halted_hosts.includes?(host.name)
@@ -2640,6 +2664,8 @@ module CrystalPlay
         run_task_list(always_tasks, host)
         block_failed ||= @halted_hosts.includes?(host.name)
       end
+
+      notify_hosts_if_changed(task, [host], {host.name => changed_before})
 
       @halted_hosts.delete(host.name)
       halt_if_failed(task, host, block_failed)

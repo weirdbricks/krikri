@@ -247,6 +247,7 @@ PLUGINS=(
     "timezone"
     "npm"
     "alternatives"
+    "filesystem"
     "service_facts"
     "postgresql_db"
     "postgresql_user"

@@ -1,0 +1,25 @@
+---
+# block:-level notify: regression fixture (spec/integration/cli_spec.cr) -
+# real Ansible fires a handler notified by a block: if ANY task inside it
+# changed, even though none of the individual nested tasks have their own
+# notify:.
+- name: Block notify test
+  hosts: localhost
+  gather_facts: false
+
+  handlers:
+    - name: block notified handler
+      ansible.builtin.debug:
+        msg: "handler fired"
+
+  tasks:
+    - name: block with its own notify
+      notify:
+        - block notified handler
+      block:
+        - name: a task that always changes
+          ansible.builtin.command: "true"
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "block notify smoke test complete!"
