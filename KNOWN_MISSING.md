@@ -8,7 +8,64 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.398`.**
+**Currently at `0.9.401`.**
+
+---
+
+Round 70 (0.9.399-0.9.401): `robertdebock.diskspace` on a fresh
+`G3.2GB` Atlantic.net pair (`diskspace_mounts:` checking `/` for
+64 MB minimum free space and 1000 minimum free inodes). 3 real bugs
+found and fixed, chained together - each one masked the next until
+fixed in sequence:
+
+1. (0.9.399) `execute_looped_task`'s per-iteration re-application of
+   `task.vars` (needed so a task-level `vars:` block recomputes against
+   each item) blindly re-applied EVERY `task.vars` key, including an
+   "item"/loop_var binding `execute_include_tasks` had already
+   propagated from an OUTER loop iteration (for a non-looped included
+   task's benefit). When the included task ALSO has its own `loop:`,
+   this clobbered the fresh, correct inner-loop item with the stale
+   outer one on every single inner iteration - `{{ item.foo }}` inside
+   `robertdebock.diskspace`'s own `mount.yml` (looped over
+   `ansible_facts['mounts']`, included in a loop with `loop_var:
+   mount`) always saw the OUTER include's item instead, so the
+   `when: mount.name == item.mount` guard never matched the real
+   mountpoint - the role's whole disk-space check silently never fired
+   at all. Fixed by excluding the loop's own `"item"`/`loop_var`/
+   `index_var` keys from that re-application.
+2. (0.9.400) `ansible_facts['mounts']` entries only ever had `mount`/
+   `device`/`fstype`/`opts` - real Ansible's own `setup` module always
+   includes `size_total`/`size_available`/`block_size`/`block_total`/
+   `block_available`/`block_used`/`inode_total`/`inode_available`/
+   `inode_used` (from `os.statvfs()` on each mountpoint), which the
+   role's own assertions read directly. Added `gather_mount_space_stats`
+   (uses `stat -f` rather than a raw statvfs(2) FFI binding) to
+   `facts.cr`, merged into every mount entry.
+3. (0.9.401) With bug 2 fixed, the actual comparison (`item.size_
+   available | int >= kilobytes_available | int`) STILL always failed -
+   traced to two independent Int32-narrowing bugs on real byte-scale
+   numbers (`46429401088`, ~46GB, comfortably past Int32::MAX ~2.1
+   billion): `VariableLookup#format_value`'s `Int64, Int32` case used
+   `JSON::Any#as_i` (always narrows to Int32, raising `OverflowError`);
+   and the vendored Crinja fork's own `int` filter used `String#to_i?`/
+   `Int#to_i` (also Int32-narrowing, silently returning the filter's own
+   `default: 0` instead of raising). Fixed both to use the `Int64`-width
+   forms throughout; fork tag `crystal-play-0.9.10`. Also fixed the same
+   Int32-narrowing pattern in `ConditionalEvaluator#json_any_to_value`
+   proactively (same bug class, not yet hit live but on the identical
+   code path).
+
+Live-reverified: fresh pair, `ok=12 changed=0 failed=0 skipped=6`
+identical both engines (an assert-only role, so `changed=0` on every
+run including cold), fully idempotent. **Gotcha re-learned mid-round**:
+`assert:`'s `that:` condition runs inside the `assert` PLUGIN's own
+separately-compiled binary - redeploying only `bin/crystal-ansible`
+after fixing `conditional_evaluator.cr`/`variable_lookup.cr` wasn't
+enough; `bin/plugins/assert` needed its own redeploy too, since plugin
+binaries link the same shared source but are independently compiled
+(the `./build.sh`-not-bare-`crystal build` warning in `CLAUDE.md`
+applies to redeploys mid-investigation too, not just full rounds). All
+1243 specs pass.
 
 ---
 

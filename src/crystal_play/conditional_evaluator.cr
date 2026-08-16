@@ -871,7 +871,13 @@ module CrystalPlay
       when String
         value.as_s
       when Int64, Int32
-        value.as_i.to_i64
+        # Same overflow bug class as VariableLookup#format_value: `#as_i`
+        # always narrows through Int32 first, raising `OverflowError` for
+        # any real Int64 value outside Int32's range (byte-scale disk/
+        # memory facts) even though the final target type here IS Int64.
+        # `value.raw.as(Int64 | Int32).to_i64` reads the correctly-typed
+        # union member directly, no narrowing round-trip.
+        value.raw.as(Int64 | Int32).to_i64
       when Float64
         value.as_f.to_s
       when Bool

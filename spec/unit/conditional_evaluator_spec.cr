@@ -639,5 +639,33 @@ describe CrystalPlay::ConditionalEvaluator do
       v["mount_requests"] = JSON.parse(%([{"path": "swap", "fstype": "swap"}]))
       CrystalPlay::ConditionalEvaluator.evaluate(%(mount_requests | regex_search("swap")), v).should be_true
     end
+
+    it "compares a dotted-access value piped through | int at Int64 (byte-count) scale correctly" do
+      # Real bug found benchmarking robertdebock.diskspace: `item.size_
+      # available | int >= kilobytes_available | int` (the role's own
+      # disk-space assertion). Two independent Int32-narrowing bugs
+      # chained together to always evaluate false regardless of real
+      # available space:
+      #  1. VariableLookup#format_value's Int64/Int32 case used
+      #     `JSON::Any#as_i` (always narrows to Int32), raising
+      #     OverflowError for any real byte-scale Int64 - caught
+      #     somewhere upstream and surfacing as a wrong (not crashed)
+      #     result.
+      #  2. The vendored Crinja fork's own `int` filter used `String#
+      #     to_i?`/`Int#to_i` (also Int32-narrowing) - a real Int64-scale
+      #     numeric STRING (`ansible_facts['mounts'][n].size_available`,
+      #     which this codebase's own facts plugin stores as a string)
+      #     silently returned the filter's own `default` (0) instead of
+      #     the real number, no exception at all.
+      # `46429401088` (≈46GB in bytes - a completely normal `size_
+      # available` value on any real host) is comfortably past
+      # Int32::MAX (~2.1 billion) and triggers both.
+      v = Hash(String, JSON::Any).new
+      v["item"] = JSON.parse(%({"size_available": "46429401088"}))
+      v["kilobytes_available"] = JSON::Any.new("65536")
+      CrystalPlay::ConditionalEvaluator.evaluate(
+        "item.size_available | int >= kilobytes_available | int", v
+      ).should be_true
+    end
   end
 end

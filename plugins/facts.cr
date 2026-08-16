@@ -409,12 +409,14 @@ def gather_mount_facts(facts)
       # roles only compare/map on mount/fstype, not individual options here.
       opts = fields[5]?
 
-      mounts << {
+      entry = {
         "mount"  => fields[4],
         "device" => source,
         "fstype" => fstype,
         "opts"   => opts || "",
       }
+      entry.merge!(gather_mount_space_stats(fields[4]))
+      mounts << entry
     end
   rescue
     # If mountinfo is unreadable (unusual), fall back to /etc/mtab.
@@ -422,12 +424,14 @@ def gather_mount_facts(facts)
       File.read_lines("/etc/mtab").each do |line|
         parts = line.split(/\s+/)
         next unless parts.size >= 3
-        mounts << {
+        entry = {
           "mount"  => parts[1],
           "device" => parts[0],
           "fstype" => parts[2],
           "opts"   => parts[3]? || "",
         }
+        entry.merge!(gather_mount_space_stats(parts[1]))
+        mounts << entry
       end
     rescue
       # Nothing - leave mounts empty rather than fail the whole gather.
@@ -435,6 +439,54 @@ def gather_mount_facts(facts)
   end
 
   facts["ansible_mounts"] = mounts unless mounts.empty?
+end
+
+# Real Ansible's own `ansible_facts['mounts']` entries always include
+# space/inode statistics (`size_total`/`size_available`/`block_size`/
+# `block_total`/`block_available`/`block_used`/`inode_total`/
+# `inode_available`/`inode_used`, from `os.statvfs()` on each mountpoint)
+# alongside mount/device/fstype/opts - this plugin only ever populated the
+# latter, so any role reading the former (robertdebock.diskspace's whole
+# purpose: `item.size_available | int >= kilobytes_available | int`) saw
+# an undefined field and either crashed or - worse - silently never
+# actually checked anything, since the role's own `when: mount.name ==
+# item.mount` guard still matched the real mountpoint correctly; the
+# comparison inside the assert is what broke. Uses `stat -f` (present on
+# every target this repo benchmarks) rather than a raw statvfs(2) FFI
+# binding - matches the same fields real Ansible's own `os.statvfs()`
+# reads, just fetched via a subprocess instead of a syscall:
+#   %S block_size (statvfs.f_frsize)   %b block_total (f_blocks)
+#   %f block_free, all users (f_bfree) %a block_available, non-root (f_bavail)
+#   %c inode_total (f_files)           %d inode_free, non-root (f_favail)
+# Returned as strings (matching this plugin's existing Hash(String,String)
+# mount-entry shape) - real Ansible's own `| int` filter chain in the
+# role already coerces the field before comparing, so a numeric-looking
+# string round-trips identically to a real int for that purpose.
+def gather_mount_space_stats(mountpoint : String) : Hash(String, String)
+  output = IO::Memory.new
+  status = Process.run("stat", ["-f", "--format=%S %b %f %a %c %d", mountpoint], output: output, error: Process::Redirect::Close)
+  return {} of String => String unless status.success?
+
+  parts = output.to_s.strip.split(" ")
+  return {} of String => String unless parts.size == 6
+
+  block_size, block_total, block_free, block_available, inode_total, inode_free =
+    parts.map { |p| p.to_i64? }
+
+  return {} of String => String if block_size.nil? || block_total.nil? || block_free.nil? ||
+                                   block_available.nil? || inode_total.nil? || inode_free.nil?
+
+  {
+    "size_total"       => (block_size * block_total).to_s,
+    "size_available"   => (block_size * block_available).to_s,
+    "block_size"       => block_size.to_s,
+    "block_total"      => block_total.to_s,
+    "block_available"  => block_available.to_s,
+    "block_used"       => (block_total - block_free).to_s,
+    "inode_total"      => inode_total.to_s,
+    "inode_available"  => inode_free.to_s,
+    "inode_used"       => (inode_total - inode_free).to_s,
+  }
 end
 
 def gather_python_facts(facts)

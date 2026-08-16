@@ -629,7 +629,17 @@ module CrystalPlay
           # This prevents issues with trailing newlines from command output
           value.as_s.strip
         when Int64, Int32
-          value.as_i.to_s
+          # `JSON::Any#as_i` always narrows to Int32 regardless of the
+          # underlying raw type, raising `OverflowError` for any real
+          # Int64 value outside Int32's range (~2.1 billion) - a real
+          # crash for byte-scale numbers, not just a wrong result.
+          # `ansible_facts['mounts'][n].size_available` (real Ansible's
+          # own field, gigabyte/terabyte-scale byte counts) hits this on
+          # any host with more than ~2GB free - found via robertdebock.
+          # diskspace's own `item.size_available | int >= kilobytes_
+          # available | int` comparison. `raw.to_s` reads the correctly-
+          # typed Int64/Int32 union member directly, no narrowing.
+          value.raw.to_s
         when Float64
           value.as_f.to_s
         when Bool

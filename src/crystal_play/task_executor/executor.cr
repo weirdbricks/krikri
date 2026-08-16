@@ -2241,7 +2241,39 @@ module CrystalPlay
                          # cheap enough even for a task whose vars: don't
                          # reference item at all (identical result either
                          # way), so no need to detect which case this is.
-                         task.vars.each { |key, raw_value| vars_context[key] = raw_value }
+                         #
+                         # `task.vars` also carries an inherited "item"/
+                         # loop_var binding when this task lives inside an
+                         # include_tasks: file whose OWN include statement
+                         # was itself looped (execute_include_tasks
+                         # propagates the outer iteration's item into
+                         # every included task's `vars` so a non-looped
+                         # included task can still see it - see the
+                         # comment there). When the included task ALSO has
+                         # its own `loop:`, blindly re-applying every
+                         # `task.vars` key here clobbered the fresh,
+                         # correct inner-loop "item"/loop_var binding set
+                         # two lines above with that stale OUTER value,
+                         # right before this same key would otherwise have
+                         # been used to render/execute the task - `{{ item
+                         # }}` (or a custom loop_var) inside the included
+                         # task's own loop resolved to the outer include's
+                         # item on every inner iteration instead of the
+                         # inner loop's real one. Found via robertdebock.
+                         # diskspace's own `mount.yml`, `include_tasks:`d
+                         # in a loop with `loop_var: mount`, whose own
+                         # `mount | Check space available` task loops
+                         # `ansible_facts['mounts']` under the default
+                         # `item` - the disk-space assertion never once
+                         # matched a real mount entry, so the whole role's
+                         # actual purpose (failing on low disk space)
+                         # silently never fired. The loop's own binding
+                         # must always win over an inherited one for the
+                         # same key.
+                         task.vars.each do |key, raw_value|
+                           next if key == "item" || key == loop_var || key == index_var
+                           vars_context[key] = raw_value
+                         end
                          render_task_vars(task, vars_context, host.name)
 
                          # delegate_to: templated against the loop variable

@@ -1,0 +1,36 @@
+# Real bug found benchmarking robertdebock.diskspace: an include_tasks:
+# itself looped with a custom loop_var, whose included file's own task ALSO
+# loops (default `item`) - the inner loop's per-iteration "item" binding was
+# silently clobbered by the outer include's propagated (stale) item right
+# before each iteration executed, because execute_looped_task's per-
+# iteration re-application of `task.vars` (needed so a task-level `vars:`
+# block gets recomputed against each item) blindly re-applied EVERY
+# task.vars key, including the "item"/loop_var key execute_include_tasks
+# had already propagated from the OUTER iteration. `{{ item.foo }}` inside
+# the inner loop resolved against the outer include's item on every single
+# inner iteration instead of the inner loop's own - silently breaking any
+# role whose whole purpose is a per-mount/per-item check inside a looped
+# include (robertdebock.diskspace's disk-space assertion never once
+# matched a real mount, so the role's actual check silently never fired).
+
+- name: nested loop inside a looped include_tasks
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    outer_items:
+      - name: first
+      - name: second
+    inner_items:
+      - name: a
+      - name: b
+
+  tasks:
+    - include_tasks: tasks/nested-loop-in-include.yml
+      loop: "{{ outer_items }}"
+      loop_control:
+        loop_var: mount
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "nested loop in include smoke test complete!"

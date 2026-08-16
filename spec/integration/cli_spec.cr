@@ -226,6 +226,26 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("multi-host looped include_tasks smoke test complete!")
   end
 
+  it "keeps a nested loop's own item bound inside a looped include_tasks:, not the outer include's item" do
+    # Real bug found benchmarking robertdebock.diskspace: execute_looped_
+    # task's per-iteration re-application of task.vars (needed so a task-
+    # level vars: block recomputes against each item) blindly re-applied
+    # EVERY task.vars key, including "item"/loop_var - which
+    # execute_include_tasks had already propagated from the OUTER
+    # iteration into task.vars for a NON-looped included task's benefit.
+    # For an included task that ALSO loops, this silently clobbered the
+    # correct inner-loop item with the stale outer one on every single
+    # inner iteration.
+    status, output = run_playbook("test-nested-loop-in-include-quick.yml")
+
+    status.success?.should be_true
+    output.should contain("mount={\"name\":\"first\"} item=a")
+    output.should contain("mount={\"name\":\"first\"} item=b")
+    output.should contain("mount={\"name\":\"second\"} item=a")
+    output.should contain("mount={\"name\":\"second\"} item=b")
+    output.should contain("nested loop in include smoke test complete!")
+  end
+
   it "runs include_role: once per loop item, applies invocation vars, and fires the role's handler exactly once even though the role (and its handler) were dynamically loaded twice" do
     status, output = run_playbook("test-include-role-quick.yml")
 

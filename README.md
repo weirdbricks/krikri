@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.398-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.401-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,12 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.399`-`0.9.401` - round 70, `robertdebock.diskspace`**: 3
+  chained bugs - a looped include_tasks:'s propagated "item" clobbered
+  a nested loop's own item every iteration; `ansible_facts['mounts']`
+  was missing size/inode stats entirely; two independent Int32-
+  narrowing overflow bugs silently produced wrong results for real
+  byte-scale numbers. Live-reverified identical, idempotent.
 - **`0.9.397`-`0.9.398` - round 66, `robertdebock.mount`**: the
   "undefined" sentinel string wasn't treated as falsy in a bare filter-
   chain `when:` condition, firing a handler unconditionally; and

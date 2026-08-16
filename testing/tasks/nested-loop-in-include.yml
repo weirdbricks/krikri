@@ -1,0 +1,9 @@
+# Included by test-nested-loop-in-include-quick.yml, itself looped with a
+# custom loop_var (`mount`). This file's own task ALSO loops (default
+# `item`), over a completely different list - the inner loop's own "item"
+# binding must win over the outer include's propagated one.
+
+- name: show outer mount alongside inner item
+  ansible.builtin.debug:
+    msg: "mount={{ mount }} item={{ item.name }}"
+  loop: "{{ inner_items }}"
