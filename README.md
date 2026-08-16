@@ -293,6 +293,9 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **round 121, `robertdebock.gotop`** (no version bump): zero bugs
+  found, byte-identical on both engines cold and warm; `gotop` binary
+  byte-identical (same size, version, mtime), verified live.
 - **round 120, `robertdebock.code`** (no version bump): zero bugs
   found, byte-identical on both engines cold and warm - exercises
   `apt_key`, `apt_repository`, and a real ~100MB VS Code install

@@ -12,6 +12,14 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 121 (no version bump - zero crystal-ansible bugs found) -
+`robertdebock.gotop`: byte-identical on both engines. Cold pass `ok=4
+changed=1 failed=0` on both, warm rerun `ok=4 changed=0 failed=0` on both
+(fully idempotent). `gotop` binary byte-identical (same size, version,
+mtime) on both, verified live.
+
+---
+
 Round 120 (no version bump - zero crystal-ansible bugs found) -
 `robertdebock.code` (Visual Studio Code): byte-identical on both engines.
 Cold pass `ok=4 changed=3 failed=0 skipped=1` on both, warm rerun `ok=4
