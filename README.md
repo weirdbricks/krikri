@@ -293,6 +293,9 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **round 102, `robertdebock.aide`** (no version bump): zero bugs
+  found, byte-identical on both engines cold and warm, `aide.db` +
+  cron job verified live.
 - **round 101, `robertdebock.clamav`** (no version bump, documented not
   fixed): role's own bug (`freshclam_private_mirrors` used without a
   default) fails identically on both engines; re-confirms

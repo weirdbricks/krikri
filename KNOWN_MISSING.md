@@ -12,6 +12,14 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 102 (no version bump - zero crystal-ansible bugs found) -
+`robertdebock.aide`: byte-identical on both engines. Cold pass `ok=5
+changed=3 failed=0` on both, warm rerun `ok=4 changed=0 failed=0` on both
+(fully idempotent). `aide.db` initialized and `@daily aide --check` cron job
+identical on both nodes, verified live.
+
+---
+
 Round 101 (no version bump - documented, not fixed) - `robertdebock.clamav`:
 role's own bug, confirmed identical on both engines - `tasks/main.yml`'s
 "Download signatures" task uses `freshclam_private_mirrors` unconditionally
