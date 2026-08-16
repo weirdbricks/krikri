@@ -12,6 +12,16 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 47 (no version bump - zero crystal-ansible bugs found):
+`robertdebock.memcached` (+ `robertdebock.bootstrap`) on a fresh
+`G3.2GB` Atlantic.net pair. Task-for-task identical on both engines
+(`ok=16 changed=3 failed=0 skipped=2` cold, `ok=15 changed=0 failed=0
+skipped=2` warm - fully idempotent), byte-identical `/etc/memcached.conf`.
+`memcached` `active` and answering `stats` over its own protocol on
+both.
+
+---
+
 Round 46 (no version bump - zero crystal-ansible bugs found):
 `robertdebock.gitlab_runner` (+ `robertdebock.bootstrap`) on a fresh
 `G3.2GB` Atlantic.net pair. Task-for-task identical on both engines
