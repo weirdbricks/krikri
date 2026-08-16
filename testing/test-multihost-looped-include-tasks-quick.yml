@@ -1,0 +1,26 @@
+# Multi-host LOOPED include_tasks: forking test - targets "multilocal"
+# (see inventory-multi-local.ini, both hosts ansible_connection=local so
+# no real second machine is needed). Round 37 (0.9.383) fixed a
+# non-looped top-level include_tasks: running one whole host at a time;
+# a looped include_tasks: (with_items:/loop: on the include statement
+# itself - rare, e.g. robertdebock.users' own "Loop over users_groups")
+# was deliberately left on the original single-host path at the time.
+# This exercises that looped case now being forkable across hosts too
+# (task_forkable? change), while still correctly threading each
+# iteration's custom loop_var per host.
+
+- name: multi-host looped include_tasks forking test
+  hosts: multilocal
+  gather_facts: false
+
+  tasks:
+    - include_tasks: tasks/multihost-looped-include.yml
+      loop:
+        - apple
+        - banana
+      loop_control:
+        loop_var: fruit
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "multi-host looped include_tasks smoke test complete!"

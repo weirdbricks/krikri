@@ -102,8 +102,10 @@ module CrystalPlay
     # to 5, matching real ansible-playbook's own default (--forks 1
     # restores the original one-host-at-a-time behavior). Only tasks
     # `task_forkable?` allows actually fan out - run_once:/block:/
-    # include_tasks:/include_role: always run one host at a time
-    # regardless of this value. See `run_task_for_hosts_in_parallel`.
+    # include_role: (and a non-looped include_tasks:, batched by its own
+    # execute_include_tasks_multi path instead) always run one host at a
+    # time regardless of this value. A *looped* include_tasks: IS
+    # forkable. See `run_task_for_hosts_in_parallel`.
     @forks : Int32
 
     def initialize(
@@ -169,18 +171,33 @@ module CrystalPlay
     # Whether *task* can safely fan out across hosts via --forks. Excluded:
     # run_once: (needs @hosts.first to have actually finished before other
     # hosts can copy its register via copy_run_once_register - a real
-    # ordering dependency, not just a data-race concern) and the
-    # structural/dynamic task kinds (block?/include_tasks?/include_role?),
-    # which recurse into their own nested task lists and ensure_grouped
-    # calls - kept serial to sidestep any question of concurrent
-    # re-entrancy into the batching planner. Every other task kind only
-    # ever touches per-host keys of hashes pre-seeded with every host's
-    # key in #initialize, which is safe under cooperative fiber scheduling
-    # (see run_task_for_hosts_in_parallel's own docs for the full argument).
+    # ordering dependency, not just a data-race concern), block?/
+    # include_role? (recurse into their own nested task lists and
+    # ensure_grouped calls via run_task_batch - kept serial to sidestep any
+    # question of concurrent re-entrancy into the batching planner), and
+    # the non-looped include_tasks? case (handled by its own
+    # execute_include_tasks_multi path in run_task_batch before this is
+    # ever consulted).
+    #
+    # A *looped* include_tasks: (task_has_loop? true - e.g. robertdebock.
+    # users' "Loop over users_groups") IS allowed through here: each host's
+    # execute_task -> execute_include_tasks call re-parses its own fresh
+    # `included_tasks` Task array (no shared object with any other host's
+    # fiber) and only ever touches per-host keys of hashes pre-seeded with
+    # every host's key in #initialize - the same safety argument
+    # run_task_for_hosts_in_parallel's own docs make for plain tasks. The
+    # one shared mutable state a nested run_task_list/ensure_grouped call
+    # touches is @task_group/@grouped_lists, keyed by each per-host task
+    # list's own object_id, so concurrent hosts never collide on the same
+    # key; TaskBatcher.plan itself does no I/O, so a fiber never yields
+    # mid-mutation. Before this, a looped include_tasks: ran every whole
+    # host's full loop serially before the next host started - the same
+    # one-host-at-a-time bug round 37 (0.9.383) fixed for the non-looped
+    # case, just never extended to this narrower, rarer shape.
     private def task_forkable?(task : Task) : Bool
       return false if task.run_once
       return false if task.block?
-      return false if task.include_tasks?
+      return false if task.include_tasks? && !task_has_loop?(task)
       return false if task.include_role?
       true
     end
@@ -189,10 +206,12 @@ module CrystalPlay
     # with_dict:/with_fileglob:/with_first_found:/with_flattened:/
     # with_subelements:/etc), regardless of whether it can be resolved
     # yet. Used to keep a looped `include_tasks:` (rare - e.g.
-    # robertdebock.users' own "Loop over users_groups") on the
-    # existing, already-correct single-host path rather than the new
-    # multi-host batch one below, which doesn't attempt to thread a
-    # per-item `item` binding across a host group.
+    # robertdebock.users' own "Loop over users_groups") off
+    # execute_include_tasks_multi below, which doesn't attempt to thread a
+    # per-item `item` binding across a host group - it still goes through
+    # execute_include_tasks's own single-host per-iteration loop, just now
+    # fanned out across hosts concurrently via task_forkable? instead of
+    # one whole host's loop finishing before the next host starts.
     private def task_has_loop?(task : Task) : Bool
       !task.loop_items.nil? || !task.loop_fileglob.nil? || !task.loop_first_found.nil? ||
         !task.loop_template.nil? || !task.loop_flattened.nil? || !task.loop_subelements_list.nil?

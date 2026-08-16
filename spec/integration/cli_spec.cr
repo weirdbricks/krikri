@@ -198,6 +198,31 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("multi-host block smoke test complete!")
   end
 
+  it "forks a LOOPED top-level include_tasks: across hosts too, still threading each iteration's loop_var correctly per host" do
+    # Round 37 (0.9.383) fixed the non-looped include_tasks: case above
+    # but deliberately left a looped one (loop:/with_items: on the
+    # include statement itself - rare, e.g. robertdebock.users' "Loop
+    # over users_groups") on the original single-host path, since it
+    # doesn't share execute_include_tasks_multi's per-file host grouping.
+    # This exercises that looped case now being forkable via
+    # task_forkable? too - each host still runs its own full loop
+    # independently (not batched per-item across hosts like the
+    # non-looped case), just concurrently with other hosts instead of
+    # one host's whole loop finishing before the next host starts.
+    status, output = run_playbook(
+      "test-multihost-looped-include-tasks-quick.yml",
+      [] of String,
+      inventory: File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-multi-local.ini")
+    )
+
+    status.success?.should be_true
+    output.should contain("included task ran on web1 for fruit apple")
+    output.should contain("included task ran on web1 for fruit banana")
+    output.should contain("included task ran on web2 for fruit apple")
+    output.should contain("included task ran on web2 for fruit banana")
+    output.should contain("multi-host looped include_tasks smoke test complete!")
+  end
+
   it "runs include_role: once per loop item, applies invocation vars, and fires the role's handler exactly once even though the role (and its handler) were dynamically loaded twice" do
     status, output = run_playbook("test-include-role-quick.yml")
 

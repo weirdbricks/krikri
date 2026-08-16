@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.383-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.384-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,16 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.384`**: closed the one gap round 37 left open - a *looped*
+  top-level `include_tasks:` (`loop:`/`with_items:` on the include
+  statement itself, e.g. `robertdebock.users`' "Loop over
+  users_groups") still ran each host's whole loop to completion before
+  the next host started. `task_forkable?` now allows this narrower case
+  through the same fiber-pool parallelism plain tasks use - correctness
+  (per-item `loop_var` binding, `when:` gating) unchanged, only
+  host-to-host overlap. New regression spec added; not yet benchmarked
+  live (no role tested so far happens to hit a looped top-level
+  `include_tasks:`).
 - **Round 38 (no version bump - pure verification)**: a follow-up
   timing pass on round 37's fix, using finer-grained `pexpect` timing on
   a fresh 2-node `geerlingguy.kubernetes` pair. Crystal-ansible is now

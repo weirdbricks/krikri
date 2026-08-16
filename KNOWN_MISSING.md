@@ -8,7 +8,34 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.383`.**
+**Currently at `0.9.384`.**
+
+---
+
+`0.9.384` - closed the one gap round 37 (`0.9.383`) deliberately left
+open: a *looped* top-level `include_tasks:` (`loop:`/`with_items:` on
+the include statement itself - rare, e.g. `robertdebock.users`' own
+"Loop over users_groups") still ran every host's whole loop to
+completion before the next host started, same one-host-at-a-time
+serialization round 37 fixed for the non-looped case. It couldn't just
+go through `execute_include_tasks_multi` (that path groups hosts by
+resolved *file* and doesn't thread a per-item `item`/custom `loop_var`
+binding across a host group), so instead `task_forkable?` now allows
+this narrower case through unchanged: each host's `execute_task` ->
+`execute_include_tasks` call already re-parses its own fresh
+`included_tasks` array per host (no object shared with any other host's
+fiber), so it's safe to run those per-host calls concurrently via the
+same `run_task_for_hosts_in_parallel` fiber pool plain tasks already
+use - correctness (per-item loop_var binding, when: gating) is
+completely unchanged, only host-to-host overlap changes. New regression
+spec (`spec/integration/cli_spec.cr`, multi-host looped include_tasks:
+via the existing local-connection multi-host fixture) confirms both
+hosts still bind their own loop items correctly; the full spec suite
+(1221 examples) needed no other changes. Not benchmarked live against a
+real role hitting this path (looped top-level include_tasks: is rare
+enough that none of the ~100 roles tested so far exercise it) - the fix
+follows the same reasoning already verified live for the non-looped
+case in round 37/38, and is covered by the spec.
 
 ---
 
