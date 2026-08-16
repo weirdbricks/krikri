@@ -12,6 +12,39 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 42 (no version bump - zero crystal-ansible bugs found):
+`robertdebock.consul` (+ `robertdebock.bootstrap`) on a fresh `G3.2GB`
+Atlantic.net pair. Task-for-task identical on both engines throughout
+(`ok=28 changed=1 failed=0 skipped=5` both on the final clean pass),
+rendered `consul.hcl` byte-identical.
+
+Two false leads chased down and ruled out before concluding this,
+worth recording so a future round doesn't re-derive them:
+
+1. The role's own "Start and enable consul" task is gated behind
+   `consul_license` being set (an Enterprise-only knob) - skipped
+   identically on both engines with no license var set, not a bug.
+   Setting a placeholder license value to force the gate open crash-
+   looped `consul` on BOTH engines identically (a fake license is
+   naturally rejected), and which engine's `systemctl start`/`restart`
+   happened to synchronously observe the resulting failure turned out
+   to be a genuine systemd race (`StartLimitBurst`/`StartLimitIntervalSec`
+   - manually reproduced the same flip-flop by hand, unrelated to
+   either engine) - not a reproducible divergence, dropped.
+2. Even with NO license var and an explicit follow-up `service:` task
+   (bypassing the role's own gate) to actually verify health, `consul`
+   still failed to start on BOTH engines identically -
+   `/etc/consul.d/consul.hcl` (byte-identical on both) uses a
+   `license_path` config key and a `ui_config` block format that
+   Ubuntu 22.04's apt-repo `consul` package (v1.8.7, an old version -
+   the role assumes something newer) doesn't understand at all
+   (`invalid config key ui_config` / `invalid config key license_path`
+   from `consul agent`'s own parse error, run directly, independent of
+   Ansible). A real role/package-version incompatibility, not a
+   crystal-ansible issue.
+
+---
+
 Round 41 (`0.9.386`), `robertdebock.haproxy` (+ `robertdebock.bootstrap`):
 1 real bug, found on a fresh `G3.2GB` Atlantic.net pair - crystal-ansible
 crashed the role's own "Configure software" (`template:`) task outright,
