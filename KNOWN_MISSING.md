@@ -12,6 +12,16 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 120 (no version bump - zero crystal-ansible bugs found) -
+`robertdebock.code` (Visual Studio Code): byte-identical on both engines.
+Cold pass `ok=4 changed=3 failed=0 skipped=1` on both, warm rerun `ok=4
+changed=0 failed=0 skipped=1` on both (fully idempotent) - exercises
+`apt_key`, `apt_repository`, and a real ~100MB package install together.
+`code` package version (`1.133.0-1786487972`) byte-identical on both,
+verified live.
+
+---
+
 Round 119 (no version bump - zero crystal-ansible bugs found) -
 `robertdebock.environment`: byte-identical on both engines. Cold pass
 `ok=2 changed=1 failed=0` on both, warm rerun `ok=2 changed=0 failed=0`

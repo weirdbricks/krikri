@@ -293,6 +293,10 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **round 120, `robertdebock.code`** (no version bump): zero bugs
+  found, byte-identical on both engines cold and warm - exercises
+  `apt_key`, `apt_repository`, and a real ~100MB VS Code install
+  together, verified live.
 - **round 119, `robertdebock.environment`** (no version bump): zero
   bugs found, byte-identical on both engines cold and warm;
   `dict2items`-driven lineinfile output verified live.
