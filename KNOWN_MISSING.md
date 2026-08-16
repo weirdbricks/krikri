@@ -12,6 +12,29 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 85 (no version bump - crystal-ansible itself unaffected): `robertdebock.collectd`.
+Identical recap on both engines cold (`ok=33 changed=4 failed=0 skipped=2`) and warm
+(`ok=32 changed=0 failed=0 skipped=2` - fully idempotent), `collectd` service `active`
+on both. A real, but NOT crystal-ansible, whitespace-control gap found in the
+vendored Crinja fork: an explicit `-` marker (`{% for ... -%}` / `{%- endfor %}`)
+should strip ALL contiguous whitespace (any number of lines) on that side,
+matching real Jinja2/real Ansible exactly - `StringTrimmer.trim`'s existing
+"newline present" branch only strips the first line + optionally that one
+newline, never the *rest* of a multi-line whitespace run, so an indented
+`{% for %}...{%- endfor %}` loop body renders with wrong indentation and stray
+blank lines (confirmed via a minimal Python jinja2 comparison harness and an
+isolated Crinja repro). Purely cosmetic here - collectd's `Filter "*.conf"`
+directive still parses fine regardless of its leading whitespace, service
+behavior is identical on both engines - but the underlying whitespace-engine gap
+is real and could bite a config format that IS whitespace-sensitive. A same-
+session fix attempt (redesigning `StringTrimmer.trim`'s parameters to
+distinguish explicit-dash unbounded stripping from the config-driven bounded
+trim_blocks/lstrip_blocks stripping) regressed 21 previously-passing Crinja
+specs - the original function's default-argument behavior turned out richer
+than a first read suggested - so the change was reverted and this is documented
+rather than same-session-patched, same precedent as round 52/62/68. Needs a
+slower, spec-first pass in the Crinja repo itself, not a quick inline patch.
+
 Round 84 (no version bump - zero crystal-ansible bugs found): `robertdebock.gitea`.
 Identical on both engines cold (`ok=12 changed=6 failed=0 skipped=1`) and warm
 (`ok=12 changed=0 failed=0 skipped=1` - fully idempotent), `gitea` service
