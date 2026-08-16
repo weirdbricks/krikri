@@ -12,6 +12,15 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 57 (no version bump - zero crystal-ansible bugs found):
+`robertdebock.sysctl` on a fresh `G3.2GB` Atlantic.net pair
+(`net.ipv4.ip_forward`/`vm.swappiness`). Identical on both engines
+(`ok=5 changed=1 failed=0` cold, `ok=5 changed=0 failed=0` warm - fully
+idempotent), byte-identical `/etc/sysctl.conf`, live `sysctl` values
+matching on both.
+
+---
+
 Round 56 (no version bump - zero crystal-ansible bugs found):
 `robertdebock.openssh` on a fresh `G3.2GB` Atlantic.net pair. Task-for-
 task identical on both engines (`ok=61 changed=2 failed=0 skipped=3`
