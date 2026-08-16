@@ -59,6 +59,12 @@ already-documented "unimplemented module (rpm_key/zypper/zypper_repository)
 silently dropped at parse time" pattern (rounds 75/90/93), not new - those
 tasks are unconditionally skipped on Ubuntu on both engines anyway.
 
+---
+
+Round 97 (no version bump - zero crystal-ansible bugs found): `robertdebock.haveged`.
+Identical on both engines cold (`ok=8 changed=4 failed=0`) and warm (`ok=7
+changed=0 failed=0` - fully idempotent), `haveged` service `active` on both.
+
 Round 95 (0.9.409) - `robertdebock.openvpn`: 1 real bug found and fixed
 (2 copies of the same root cause). A non-looped, single `include_tasks:` task
 never credited itself as an `ok` in the recap - real Ansible's own recap tally
