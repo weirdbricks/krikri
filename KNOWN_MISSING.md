@@ -12,6 +12,16 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 94 (no version bump - zero crystal-ansible bugs found): `robertdebock.rundeck`.
+The role never installs a JRE at all (no "install requirements" task exists),
+so its "Unpack rundeck" `java -jar ... --installonly` step fails identically on
+both engines on a fresh Ubuntu 22.04 host - a real external role gap, not a
+crystal-ansible divergence. After manually installing `default-jre-headless`:
+identical on both engines (`ok=31 changed=10 failed=0 skipped=9` cold, `ok=29
+changed=0 failed=0 skipped=9` warm - fully idempotent), `rundeck` service
+`active` on both. Also needed `robertdebock.service` installed separately
+(undeclared `import_role:` dependency, recurring pattern - rounds 75/91/93).
+
 Round 93 (no version bump - documented, not fixed) - `robertdebock.roundcubemail`:
 a real role bug (`notify: restart httpd` with no matching handler defined for the
 Debian family - likely present only for RedHat, or a typo) exposes a genuine
