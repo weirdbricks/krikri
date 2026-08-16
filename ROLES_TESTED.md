@@ -8,6 +8,7 @@ or already-clean roles as if they were new.
 
 | Role | Status |
 |---|---|
+| robertdebock.auto_update | ✅ Clean (round 123, no version bump - zero crystal-ansible bugs found). Byte-identical on both engines: cold pass `ok=9 changed=2 failed=0`, warm rerun `ok=9 changed=0 failed=0` (fully idempotent). Rendered `/etc/apt/apt.conf.d/10periodic` (`comment` filter's `//`-style rendering) byte-identical on both, verified live. |
 | robertdebock.modprobe | ✅ Clean (round 122, no version bump - zero crystal-ansible bugs found). Byte-identical on both engines: cold pass `ok=5 changed=1 failed=0`, warm rerun `ok=5 changed=0 failed=0` (fully idempotent). `br_netfilter`/`overlay` kernel modules loaded identically (`lsmod` byte-identical) on both, verified live. |
 | robertdebock.gotop | ✅ Clean (round 121, no version bump - zero crystal-ansible bugs found). Byte-identical on both engines: cold pass `ok=4 changed=1 failed=0`, warm rerun `ok=4 changed=0 failed=0` (fully idempotent). `gotop` binary byte-identical (same size, version, mtime) on both, verified live. |
 | robertdebock.code | ✅ Clean (round 120, no version bump - zero crystal-ansible bugs found). Byte-identical on both engines: cold pass `ok=4 changed=3 failed=0 skipped=1`, warm rerun `ok=4 changed=0 failed=0 skipped=1` (fully idempotent) - exercises `apt_key`, `apt_repository`, and a real ~100MB package install together. `code` package version identical on both, verified live. |
