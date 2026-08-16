@@ -12,6 +12,29 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 56 (no version bump - zero crystal-ansible bugs found):
+`robertdebock.openssh` on a fresh `G3.2GB` Atlantic.net pair. Task-for-
+task identical on both engines (`ok=61 changed=2 failed=0 skipped=3`
+cold real vs `skipped=2` crystal - the 1-task gap is the pre-existing
+`community.general.seport` cosmetic scope gap seen in prior rounds;
+`ok=60 changed=0` warm both - fully idempotent), byte-identical
+`/etc/ssh/sshd_config`, `ssh` service `active` on both, no lockout (the
+role's own `openssh_permit_root_login`/`openssh_password_authentication`
+defaults stay permissive).
+
+---
+
+Round 55 (no version bump - role not testable, external): `robertdebock.
+elasticsearch` on a `G3.4GB` Atlantic.net pair. The published Galaxy
+release (`1.1.6`) installs a package literally named `elasticsearch-oss`,
+discontinued by Elastic years ago - current GitHub `master` already
+fixed this to plain `elasticsearch`, but that fix was never re-released
+to Galaxy. `apt` fails identically on both engines with `E: Unable to
+locate package elasticsearch-oss`, reproduced independent of
+crystal-ansible. See `ROLES_TESTED.md`.
+
+---
+
 Round 54 (0.9.391): `robertdebock.php` (+ its own `robertdebock.httpd`
 dependency) on a fresh `G3.2GB` Atlantic.net pair. 1 real bug found and
 fixed: the `comment` Jinja filter (`jinja_filters.cr`) previously only
