@@ -12,6 +12,15 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 50 (no version bump - zero crystal-ansible bugs found):
+`robertdebock.rsyslog` (+ `robertdebock.bootstrap`) on a fresh `G3.2GB`
+Atlantic.net pair. Task-for-task identical on both engines (cosmetic-
+only banner/count diff, the usual `Gathering Facts` artifact),
+byte-identical `/etc/rsyslog.conf`, service `active` on both, fully
+idempotent warm rerun (`ok=34 changed=0 failed=0 skipped=5` both).
+
+---
+
 Round 49 (no version bump - zero crystal-ansible bugs found):
 `robertdebock.dnsmasq` (+ `robertdebock.bootstrap`) on a fresh `G3.2GB`
 Atlantic.net pair. `dnsmasq` fails to start identically on both engines
