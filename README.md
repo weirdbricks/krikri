@@ -293,6 +293,9 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **round 100, `robertdebock.cargo`** (no version bump): zero bugs
+  found, byte-identical on both engines cold and warm, `cargo`/`rustc`
+  1.97.1 verified live via rustup.
 - **`0.9.414` - round 99, `robertdebock.irslackd`**: `npm.cr`'s own
   `state: present` idempotency check was gated on a truthy
   `name_version`, which is nil whenever `name:` is omitted (a

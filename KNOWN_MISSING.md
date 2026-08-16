@@ -12,6 +12,14 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 100 (no version bump - zero crystal-ansible bugs found) -
+`robertdebock.cargo`: byte-identical on both engines. Cold pass `ok=6
+changed=2 failed=0` on both, warm rerun `ok=6 changed=0 failed=0` on both
+(fully idempotent). `cargo 1.97.1` / `rustc 1.97.1` installed via rustup
+identically on both nodes, verified live.
+
+---
+
 Round 99 (0.9.414) - `robertdebock.irslackd`: 1 real bug found and fixed in
 `npm.cr` (this codebase's own round-75 plugin). The `state: present` "already
 installed" short-circuit was `if name_version && missing.empty?` - requiring a
