@@ -76,7 +76,14 @@ module CrystalPlay
   # psql CLI args).
   class PostgresqlDbPlugin < BasePlugin
     def execute : PluginResult
-      name = @params["name"]?
+      # Real Ansible's `name:` param has `aliases: ['db']` - real bug
+      # found benchmarking robertdebock.postgres (round 43): its own
+      # "Create postgres database" task writes `db: "{{ item.name }}"`
+      # (the alias, arguably more common in real playbooks than the
+      # canonical `name:`), which this plugin didn't recognize at all,
+      # always failing with "missing required argument: name" no matter
+      # what `db:` was set to.
+      name = @params["name"]? || @params["db"]?
       unless name
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name")
       end
@@ -88,12 +95,13 @@ module CrystalPlay
         return run_dump_or_restore(state, name)
       end
 
+      login = PluginHelpers::PostgresqlConnection.resolve_login_params(@params)
       uri = PluginHelpers::PostgresqlConnection.build_uri(
-        host: @params["login_host"]?,
-        port: @params["login_port"]?,
-        user: @params["login_user"]? || "postgres",
-        password: @params["login_password"]?,
-        unix_socket: @params["login_unix_socket"]?,
+        host: login[:host],
+        port: login[:port],
+        user: login[:user] || "postgres",
+        password: login[:password],
+        unix_socket: login[:unix_socket],
         dbname: @params["maintenance_db"]? || "postgres",
       )
 

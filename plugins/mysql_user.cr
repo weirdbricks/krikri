@@ -65,7 +65,12 @@ module CrystalPlay
   # resource_limits:, locked:, config_file:.
   class MysqlUserPlugin < BasePlugin
     def execute : PluginResult
-      name = @params["name"]?
+      # Real Ansible's `name:` param has a deprecated `aliases: [user]`
+      # - same bug class fixed for postgresql_db/postgresql_user in
+      # round 43 (robertdebock.postgres): a real playbook writing
+      # `user: bob` (the alias) got "missing required argument: name"
+      # no matter what `user:` was set to.
+      name = @params["name"]? || @params["user"]?
       unless name
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name")
       end

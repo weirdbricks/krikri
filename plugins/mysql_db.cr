@@ -84,7 +84,12 @@ module CrystalPlay
   # returns; dump/import's own `--default-character-set=`.
   class MysqlDbPlugin < BasePlugin
     def execute : PluginResult
-      name = @params["name"]?
+      # Real Ansible's `name:` param has `aliases: [db]` - same bug
+      # class fixed for postgresql_db/postgresql_user in round 43
+      # (robertdebock.postgres): a real playbook writing `db: mydb`
+      # (the alias) got "missing required argument: name" no matter
+      # what `db:` was set to.
+      name = @params["name"]? || @params["db"]?
       unless name
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name")
       end

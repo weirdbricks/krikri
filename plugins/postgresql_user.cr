@@ -53,7 +53,12 @@ module CrystalPlay
     ROLE_ATTR_COLUMNS = %w[rolsuper rolinherit rolcreaterole rolcreatedb rolcanlogin rolreplication rolbypassrls]
 
     def execute : PluginResult
-      name = @params["name"]?
+      # Real Ansible's `name:` param has `aliases: ['user']` - same bug
+      # class as postgresql_db's `db:` alias (round 43,
+      # robertdebock.postgres): its own "Create postgres users" task
+      # writes `user: "{{ item.name }}"`, which this plugin didn't
+      # recognize at all.
+      name = @params["name"]? || @params["user"]?
       unless name
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name")
       end
@@ -64,13 +69,21 @@ module CrystalPlay
 
       desired_flags = @params["role_attr_flags"]?.try { |spec| PluginHelpers::PostgresqlRoleFlags.parse(spec) }
 
+      # Real Ansible's `login_db:` param has a deprecated `aliases:
+      # [db]` - same bug class as this file's own `user:`/`name:` fix
+      # above. robertdebock.postgres's own "Create postgres users" task
+      # writes `db: "{{ item.db | default(omit) }}"` (the alias), which
+      # this plugin didn't recognize, always connecting to the
+      # "postgres" default database instead of the one the role
+      # actually wanted the user granted on.
+      login = PluginHelpers::PostgresqlConnection.resolve_login_params(@params)
       uri = PluginHelpers::PostgresqlConnection.build_uri(
-        host: @params["login_host"]?,
-        port: @params["login_port"]?,
-        user: @params["login_user"]? || "postgres",
-        password: @params["login_password"]?,
-        unix_socket: @params["login_unix_socket"]?,
-        dbname: @params["login_db"]? || "postgres",
+        host: login[:host],
+        port: login[:port],
+        user: login[:user] || "postgres",
+        password: login[:password],
+        unix_socket: login[:unix_socket],
+        dbname: @params["login_db"]? || @params["db"]? || "postgres",
       )
 
       DB.open(uri) do |db|
@@ -101,7 +114,17 @@ module CrystalPlay
           s << " " << PluginHelpers::PostgresqlRoleFlags.to_sql(desired_flags) if desired_flags
           s << " PASSWORD " << quote_str(password) if password
         end
-        db.exec "CREATE ROLE #{quote_ident(name)}#{clause}"
+        # Real Ansible's own user_add() uses `CREATE USER`, not `CREATE
+        # ROLE` - they're otherwise identical in Postgres, but `CREATE
+        # USER` implies LOGIN by default while plain `CREATE ROLE`
+        # defaults to NOLOGIN. Real bug found benchmarking
+        # robertdebock.postgres (round 43): with no `role_attr_flags:`
+        # given at all (the common case - most playbooks just want a
+        # normal login-capable user), this plugin created a role that
+        # couldn't log in at all, while real Ansible's created one that
+        # could - confirmed via `\du` showing "Cannot login" here vs.
+        # empty attributes on real Ansible's identically-configured run.
+        db.exec "CREATE USER #{quote_ident(name)}#{clause}"
         changed = true
       else
         if password

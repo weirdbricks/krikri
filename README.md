@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.386-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.387-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,19 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.387` - round 43, `robertdebock.postgres`**: 4 chained bugs -
+  `postgresql_db`/`postgresql_user`/`mysql_db`/`mysql_user` never
+  recognized real Ansible's deprecated `name:` aliases (`db:`/`user:`);
+  the postgres connection helper always forced TCP to "localhost"
+  instead of defaulting to a Unix socket like real libpq (failed the
+  `ident` TCP gate this host's `pg_hba.conf` uses, while a socket
+  connection's `peer` auth succeeds); `login_host:`/`login_port:`/
+  `login_user:`/`login_unix_socket:` didn't recognize their own aliases
+  either (`host:`/`port:`/`login:`/`unix_socket:`); and role creation
+  used `CREATE ROLE` (implies `NOLOGIN`) instead of real Ansible's
+  `CREATE USER` (implies `LOGIN`), leaving created users unable to log
+  in. Live-reverified `\du`-identical and `rolcanlogin=t` on both
+  engines.
 - **`0.9.386` - round 41, `robertdebock.haproxy`**: its `haproxy.cfg.j2`
   template's `server.address | default(hostvars[server.name][...])`
   idiom crashed the whole render whenever the unused `default()`

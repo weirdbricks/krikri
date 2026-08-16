@@ -8,7 +8,72 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.386`.**
+**Currently at `0.9.387`.**
+
+---
+
+Round 43 (`0.9.387`), `robertdebock.postgres` (+ `robertdebock.bootstrap`):
+4 real bugs, found and fixed in sequence on a fresh `G3.2GB` Atlantic.net
+pair - the role's own "Create postgres database"/"Create postgres users"
+tasks kept surfacing one new layer as each prior one was fixed.
+
+1. **`postgresql_db`/`postgresql_user`/`mysql_db`/`mysql_user` never
+   recognized real Ansible's deprecated `name:` aliases** (`db:` for
+   the two `_db` modules, `user:` for the two `_user` modules) - the
+   role's own tasks use exactly these aliases (`db: "{{ item.name }}"`,
+   `user: "{{ item.name }}"`), always failing "missing required
+   argument: name" no matter what the alias was set to. Fixed all four
+   plugins to fall back to the alias.
+2. **`postgresql_connection.cr` always forced a TCP connection to
+   "localhost"** when no `login_host:`/`unix_socket:` was given at all,
+   instead of defaulting to a Unix socket the way real libpq/psycopg2
+   (which every real `postgresql_db`/`postgresql_user` run uses
+   underneath) does. This host's `pg_hba.conf` gates TCP connections
+   behind `ident` (no ident daemon running) but Unix socket connections
+   behind `peer` (which succeeds automatically for a matching OS user,
+   e.g. `become_user: postgres`) - real Ansible connected fine, this
+   plugin failed outright (`DB::ConnectionRefused` /
+   `PQ::ConnectionError: Cannot establish connection`, confirmed via
+   direct debug instrumentation against the live host). Fixed to
+   default to `/var/run/postgresql` (Debian/Ubuntu's actual compiled-in
+   default) when no host is given, matching libpq.
+3. **`login_host:`/`login_port:`/`login_user:`/`login_unix_socket:`
+   never recognized their own real-Ansible deprecated aliases either**
+   (`host:`/`port:`/`login:`/`unix_socket:` respectively, shared across
+   `postgresql_db`/`postgresql_user`/`postgresql_privs`'s common
+   `module_utils/postgres.py` argument spec) - the role's own task sets
+   `port: "{{ postgres_port }}"` (6543, not the 5432 default), so even
+   after fix #2's Unix-socket default, the connection kept targeting
+   port 5432's (nonexistent) socket file instead of 6543's. Added a
+   single `PostgresqlConnection.resolve_login_params` helper (used by
+   all three plugins) so the alias list only lives in one place.
+4. **`postgresql_user`'s role-creation used `CREATE ROLE`, not
+   `CREATE USER`** - Postgres treats these identically except for one
+   default: `CREATE USER` implies `LOGIN`, plain `CREATE ROLE` implies
+   `NOLOGIN`. Real Ansible's own `user_add()` uses `CREATE USER`
+   specifically so a role created with no `role_attr_flags:` at all
+   (the common case) still ends up login-capable - this plugin's
+   `CREATE ROLE` left it `NOLOGIN` instead, confirmed via `\du` showing
+   "Cannot login" here vs. empty (login-capable) attributes on an
+   identically-configured real Ansible run. Fixed to match.
+
+Also confirmed a *non-bug*, already-documented divergence still holds
+here: `postgresql_user`'s `password:` always reissues `ALTER ROLE ...
+PASSWORD` and reports `changed: true` on every rerun (real Ansible
+compares a SCRAM/MD5 hash to stay idempotent) - this codebase's own
+class-doc comment already calls this out as "a documented
+simplification, not an oversight," matching `mysql_user.cr`'s identical
+`update_password: always` behavior. Left as-is.
+
+Live-reverified end to end: `\du test` identical on both engines after
+fix #4 (empty/login-capable attributes), `rolcanlogin` confirmed `t` via
+direct SQL, database+role both functionally reachable via the real Unix
+socket path. 8 new regression specs across
+`spec/unit/postgresql_connection_spec.cr` (rewritten for the new
+Unix-socket-default behavior plus 2 new `resolve_login_params` cases)
+and `spec/integration/postgresql_mysql_alias_spec.cr` (5 new, no live DB
+needed - these exercise only the pre-connection parameter-validation
+path). Full suite: 1233 examples, 0 failures.
 
 ---
 

@@ -207,12 +207,13 @@ module CrystalPlay
         return PluginResult.new(changed: false, failed: true, msg: ex.message || "invalid parameters")
       end
 
+      login = PluginHelpers::PostgresqlConnection.resolve_login_params(@params)
       uri = PluginHelpers::PostgresqlConnection.build_uri(
-        host: @params["login_host"]?,
-        port: @params["login_port"]?,
-        user: @params["login_user"]? || "postgres",
-        password: @params["login_password"]?,
-        unix_socket: @params["login_unix_socket"]?,
+        host: login[:host],
+        port: login[:port],
+        user: login[:user] || "postgres",
+        password: login[:password],
+        unix_socket: login[:unix_socket],
         dbname: p.login_db,
       )
 
@@ -334,13 +335,19 @@ module CrystalPlay
       raise "type must be one of #{valid_types.join(", ")}, got '#{type}'" unless valid_types.includes?(type)
       raise "state must be 'present' or 'absent', got '#{state}'" unless state == "present" || state == "absent"
 
-      privs_param = @params["privs"]?
-      roles_param = @params["roles"]?
+      # Real Ansible aliases: privs: -> priv:, roles: -> role:,
+      # login_db: -> db:/database:, objs: -> obj: (below). Same bug
+      # class fixed for postgresql_db/postgresql_user/mysql_db/
+      # mysql_user in round 43 (robertdebock.postgres) - a real
+      # playbook using any of these aliases got treated as if the
+      # param was never set at all.
+      privs_param = @params["privs"]? || @params["priv"]?
+      roles_param = @params["roles"]? || @params["role"]?
       raise "roles is required" unless roles_param
 
       privs = resolve_privs_for(type, privs_param)
 
-      login_db = @params["login_db"]? || "postgres"
+      login_db = @params["login_db"]? || @params["db"]? || @params["database"]? || "postgres"
       schema = @params["schema"]? || "public"
       roles_raw = roles_param.split(',').map(&.strip).reject(&.empty?)
       target_roles = resolve_target_roles!(type)
@@ -368,7 +375,7 @@ module CrystalPlay
     # doesn't need an extra nil-check branch just to get Array(String)
     # instead of Array(String)?.
     private def resolve_objs!(type : String, login_db : String) : {Array(String), Bool}
-      objs_param = @params["objs"]?
+      objs_param = @params["objs"]? || @params["obj"]?
 
       return {default_privs_classes(objs_param), false} if type == "default_privs"
 
