@@ -12,6 +12,28 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 92 (no version bump - zero crystal-ansible bugs found): `robertdebock.etherpad`.
+The pinned Galaxy release is stale relative to upstream's CURRENT etherpad
+release archive naming - the role hardcodes `etherpad_working_directory:
+etherpad-lite-{{ version }}` (and templates the systemd unit's `start_command`
+from it), but the actual downloaded archive now extracts to `etherpad-{{
+version }}` (upstream dropped "-lite" from their own directory naming at some
+point). Both engines ultimately fail to produce a WORKING etherpad service, just
+via different failure points: real Ansible's `unarchive` module itself performs
+a stricter internal validation and fails outright ("Destination directory /opt/
+etherpad-lite-1.8.16 does not exist"); crystal-ansible's `unarchive` plugin
+extracts successfully (creating the real, correctly-named `/opt/etherpad-
+1.8.16`), but the LATER systemd-unit "Start and enable etherpad" step then fails
+identically in spirit - `Failed to locate executable /opt/etherpad-lite-
+1.8.16/bin/run.sh` (the WRONG hardcoded path, per the role's own stale
+`etherpad_working_directory`). Confirmed reproducible on a clean `/opt` (ruled
+out stale-state contamination from an earlier `unzip`-missing attempt). Also
+needed `unzip` installed (missing on stock Ubuntu 22.04, needed by real
+Ansible's `unarchive` for `.zip` archives - not needed by crystal-ansible's own
+`unarchive.cr`, which doesn't shell out to `unzip`) and `robertdebock.service`
+installed separately (undeclared `import_role:` dependency, same recurring
+gotcha as rounds 75/91).
+
 Round 91 (no version bump - zero crystal-ansible bugs found): `robertdebock.cntlm`.
 Externally blocked identically on both engines - the role's own default download
 mirror (`netcologne.dl.sourceforge.net`) doesn't resolve at all (DNS lookup
