@@ -8,7 +8,48 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.420`.**
+**Currently at `0.9.421`.**
+
+---
+
+Round 111 (0.9.421) - `robertdebock.unowned_files`: 2 real bugs found and
+fixed.
+
+1. `find.cr`'s own `paths:`/`patterns:`/`excludes:` parsing only ever
+   split on `,` - the role's own `paths: "{{ unowned_files_directories
+   }}"` (a `{{ }}`-templated single-element list variable) renders to the
+   array's own bracketed text form (`["/opt/unowned_test"]`) rather than
+   the bare path, since this codebase's plugin params are always plain
+   strings. The whole bracketed text got treated as ONE literal path
+   ("'[\"/opt/unowned_test\"]' is not a directory"), so the loop over
+   matched files never even started - same "Python-repr-list JSON" bug
+   class documented repeatedly elsewhere (apt.cr/package.cr/dnf.cr's own
+   `parse_package_names`), just never applied to `find.cr`. Fixed with the
+   same defensive JSON-array (with Python-repr single-quote fallback)
+   re-parse those other plugins already use.
+
+2. `BasePlugin#native_stat`'s own `pw_name`/`gr_name` resolution fell back
+   to the STRINGIFIED numeric uid/gid when no matching `/etc/passwd`/
+   `/etc/group` entry existed, instead of an EMPTY string - real
+   `find.py`'s own module source explicitly initializes `pw_name = ""` /
+   `gr_name = ""` before the lookup and only overwrites on success. The
+   role's own `item.pw_name | length == 0` check (the whole point of
+   "unowned files" detection) therefore never matched ANY file, even a
+   genuinely orphaned one, since the fallback text always had nonzero
+   length. Fixed to match real Ansible exactly.
+
+Live-reverified: byte-identical `ok=13 changed=3 failed=0 skipped=1` recap
+on both engines, per-item loop results (skip/change decisions per file)
+matching exactly including the orphaned file's `pw_name`/`gr_name` both
+resolving to empty string on both engines.
+
+Note: `stat.cr` shares the same `native_stat` helper, but real
+`stat.py`'s own module OMITS the `pw_name`/`gr_name` key entirely on an
+unresolvable uid/gid (a `try/except: pass`), rather than using an empty
+string like `find.py` does - a narrower, untested-this-round divergence
+for `stat:` specifically, left as a known follow-up rather than blocking
+this fix (which was verified against `find.py`'s own different
+convention).
 
 ---
 

@@ -107,10 +107,10 @@ module CrystalPlay
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: paths")
       end
 
-      paths = paths_param.split(",").map(&.strip).reject(&.empty?)
+      paths = parse_list_param(paths_param)
       options = Options.new(
-        patterns: (@params["patterns"]? || "").split(",").map(&.strip).reject(&.empty?),
-        excludes: (@params["excludes"]? || "").split(",").map(&.strip).reject(&.empty?),
+        patterns: parse_list_param(@params["patterns"]? || ""),
+        excludes: parse_list_param(@params["excludes"]? || ""),
         use_regex: is_true?(@params["use_regex"]?, default: false),
         file_type: @params["file_type"]? || "file",
         recurse: is_true?(@params["recurse"]?, default: false),
@@ -164,6 +164,40 @@ module CrystalPlay
         files: files,
         skipped_paths: skipped_paths
       )
+    end
+
+    # `paths:`/`patterns:`/`excludes:` accept real Ansible's comma-
+    # separated string idiom directly, but a `{{ some_list_var }}`
+    # template resolving to a real array (robertdebock.unowned_files'
+    # own `paths: "{{ unowned_files_directories }}"`) instead renders to
+    # the array's own bracketed text form (`["/opt/unowned_test"]`) -
+    # this codebase's plugin params are always plain strings, and
+    # nothing re-parses that bracketed text back into real elements
+    # before this plugin's own naive `.split(",")` saw it, so a
+    # single-element list became ONE path literally containing the
+    # brackets and quotes, "not a directory". Same bug class documented
+    # repeatedly elsewhere (apt.cr/package.cr/dnf.cr's own
+    # `parse_package_names`) - each plugin that accepts a list-shaped
+    # param needs this same defensive re-parse; find.cr never got it.
+    private def parse_list_param(raw : String) : Array(String)
+      trimmed = raw.strip
+      if trimmed.starts_with?('[') && trimmed.ends_with?(']')
+        parsed = begin
+          Array(String).from_json(trimmed)
+        rescue
+          nil
+        end
+        # A Python-repr list (single-quoted strings) isn't valid JSON -
+        # same fallback as package.cr's own parse_package_names.
+        parsed ||= begin
+          Array(String).from_json(trimmed.gsub('\'', '"'))
+        rescue
+          nil
+        end
+        return parsed.map(&.strip).reject(&.empty?) if parsed
+      end
+
+      trimmed.split(",").map(&.strip).reject(&.empty?)
     end
 
     # Returns the stat hash for entry_path if it passes every filter, nil

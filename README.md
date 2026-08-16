@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.420-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.421-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,14 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.421` - round 111, `robertdebock.unowned_files`**: 2 bugs -
+  `find.cr`'s `paths:`/`patterns:`/`excludes:` never handled a `{{
+  }}`-templated list variable rendering to its own bracketed text
+  form (same "Python-repr-list JSON" class as apt.cr/package.cr/
+  dnf.cr), and `pw_name`/`gr_name` fell back to the stringified
+  uid/gid instead of an empty string for an orphaned owner, breaking
+  the role's own unowned-file detection entirely. Live-reverified
+  byte-identical recap and per-item loop results on both engines.
 - **`0.9.420` - round 110, `robertdebock.ulimit`**: 2 format bugs in
   `pam_limits.cr` - a `comment:` was written as its own preceding
   line instead of a trailing inline `\t#comment`, and a new entry was

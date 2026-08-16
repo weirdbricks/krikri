@@ -251,4 +251,20 @@ describe "find plugin" do
       result["matched"].as_i64.should eq(2)
     end
   end
+
+  it "accepts a paths: that rendered as a bracketed list-of-one string, not just a comma-separated string" do
+    # Real bug found benchmarking robertdebock.unowned_files (round
+    # 111): `paths: "{{ unowned_files_directories }}"` where the
+    # variable is a real single-element list - this codebase's plugin
+    # params are always plain strings, so a `{{ }}`-templated list
+    # variable renders to its own bracketed text form
+    # (`["/some/dir"]`) rather than the bare path. Naively splitting
+    # that on "," treated the WHOLE bracketed text as one literal path
+    # ("not a directory"), so the loop over matched files never
+    # iterated at all. Same bug class as apt.cr/package.cr/dnf.cr's own
+    # `parse_package_names`.
+    result = PluginSpecHelper.run("find", {"paths" => %(["#{TMP_DIR}"]), "patterns" => "*.txt"})
+
+    paths_of(result).should eq([File.join(TMP_DIR, "a.txt")])
+  end
 end

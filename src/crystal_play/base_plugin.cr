@@ -247,8 +247,16 @@ module CrystalPlay
       result = follow ? LibC.stat(path, pointerof(stat)) : LibC.lstat(path, pointerof(stat))
       return nil unless result == 0
 
-      pw_name = System::User.find_by?(id: stat.st_uid.to_s).try(&.username) || stat.st_uid.to_s
-      gr_name = System::Group.find_by?(id: stat.st_gid.to_s).try(&.name) || stat.st_gid.to_s
+      # An orphaned uid/gid with no matching /etc/passwd or /etc/group
+      # entry resolves to an EMPTY string in real Ansible's own stat
+      # (and find's per-file) result, not the stringified numeric id -
+      # robertdebock.unowned_files' own `item.pw_name | length == 0`
+      # check (and community.general's wider "unowned files" idiom)
+      # depends on this exact empty-string convention to detect an
+      # orphaned owner/group at all. Falling back to the numeric id
+      # (non-empty) meant that check silently never matched anything.
+      pw_name = System::User.find_by?(id: stat.st_uid.to_s).try(&.username) || ""
+      gr_name = System::Group.find_by?(id: stat.st_gid.to_s).try(&.name) || ""
 
       PluginHelpers::StatFields.build(
         path,
