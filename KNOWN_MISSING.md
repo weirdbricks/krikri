@@ -8,7 +8,54 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.422`.**
+**Currently at `0.9.423`.**
+
+---
+
+Round 116 (0.9.423) - `robertdebock.functions`: 2 real bugs found and
+fixed.
+
+1. `VariableLookup#format_value`'s own String case unconditionally stripped
+   every string value's leading/trailing whitespace before returning it
+   from any `{{ }}` substitution - real Jinja2 never strips a rendered
+   value's own whitespace (only `{%- -%}` block-tag whitespace control
+   does, an orthogonal template-syntax feature operating on the
+   surrounding text, never on a variable's own value). A variable whose
+   real content legitimately has meaningful leading/trailing whitespace
+   (the role's own `functions_strings` test data, `" Extra spaces. "`)
+   silently lost it on EVERY plain `{{ var }}` reference, filtered or not -
+   this affected every string-valued variable in every role, not just this
+   one test case. Fixed by removing the strip (and two related leftover
+   `.strip()` calls on rendered filter-chain results in
+   `variable_substitutor.cr`, the same historical bug in a second spot).
+
+2. The vendored Crinja fork's own `wordwrap` filter chopped the source
+   line into fixed-`width` character chunks unconditionally, only weakly
+   backtracking to a space *within an already-truncated chunk* - a
+   completely different output shape than real Jinja2's own `wordwrap`
+   (which calls Python's `textwrap.wrap`: greedily packs WHOLE WORDS onto
+   each line up to `width`, only breaking within a word when that one word
+   alone exceeds `width`). `"Extra spaces." | wordwrap(5)` real Ansible
+   gives `"Extra\nspace\ns."`; this filter previously gave `"\nExtr\na
+   spa\nces. "`. Fixed upstream in the Crinja fork itself
+   (`crystal-play-0.9.11`, then `-0.9.12` for a follow-up edge case -
+   continuing a long word onto an already-non-empty line needs its own
+   separating space counted against the remaining width budget too),
+   verified against real Python `textwrap.wrap` output directly for 11
+   cases, not assumed.
+
+Also found and fixed while verifying: `build.sh`'s own staleness check
+only ever looked at `src/*.cr` mtimes, never `lib/`'s - a `shards update`
+(exactly what pulling in the Crinja fix above requires) silently no-opped
+the ENTIRE rebuild, twice in a row, each reporting success while shipping
+the stale pre-fix binary. Fixed by adding the same `lib/`-mtime check
+already used for `src/`.
+
+Live-reverified: byte-identical `ok=23 changed=0 failed=0` recap on both
+engines, cold and warm, and every one of the 27 `debug:` msg lines across
+all 19 filter/type-debug tasks byte-identical to real Ansible's own output
+- including the exact `wordwrap` line-break positions and the `"with "`
+trailing-space edge case.
 
 ---
 

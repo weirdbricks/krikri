@@ -2,11 +2,19 @@ require "../spec_helper"
 require "../../src/crystal_play/variable_substitutor/variable_lookup"
 
 describe CrystalPlay::VariableSubstitutor::VariableLookup do
-  it "resolves a simple string variable and strips whitespace" do
+  it "resolves a simple string variable, preserving its own whitespace" do
+    # Real bug found benchmarking robertdebock.functions (round 116):
+    # format_value used to unconditionally strip every string value -
+    # real Jinja2 never strips a rendered value's own whitespace (only
+    # `{%- -%}` block-tag whitespace control does, an orthogonal
+    # template-syntax feature operating on the surrounding text, not a
+    # variable's own value). A variable whose real content legitimately
+    # has meaningful leading/trailing whitespace (" Extra spaces. ")
+    # silently lost it on every `{{ }}` reference.
     v = Hash(String, JSON::Any).new
     v["name"] = JSON::Any.new("  hello  ")
     lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
-    lookup.simple("name").should eq("hello")
+    lookup.simple("name").should eq("  hello  ")
   end
 
   it "returns 'undefined' for a missing simple variable" do

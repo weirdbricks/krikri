@@ -625,9 +625,18 @@ module CrystalPlay
       def format_value(value : JSON::Any) : String
         case value.raw
         when String
-          # Strip whitespace from string values (matches Ansible behavior)
-          # This prevents issues with trailing newlines from command output
-          value.as_s.strip
+          # Real Jinja2 NEVER strips a rendered value's own whitespace -
+          # `{{ some_string }}` renders exactly what the variable holds,
+          # leading/trailing spaces included (only `{%- -%}` BLOCK-TAG
+          # whitespace control, an orthogonal template-syntax feature,
+          # strips anything, and it operates on the template text around
+          # a tag, never on a variable's own value). This unconditional
+          # strip corrupted any variable whose real value legitimately
+          # has meaningful leading/trailing whitespace - found via
+          # robertdebock.functions' own `functions_strings` test data
+          # (" Extra spaces. ", used as-is with no filter at all) commonly
+          # rendering as "Extra spaces." on every `{{ }}` reference.
+          value.as_s
         when Int64, Int32
           # `JSON::Any#as_i` always narrows to Int32 regardless of the
           # underlying raw type, raising `OverflowError` for any real

@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.422-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.423-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,16 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.423` - round 116, `robertdebock.functions`**: 2 bugs -
+  `format_value` unconditionally stripped every rendered value's
+  leading/trailing whitespace (a real Jinja2 never does this,
+  affecting every string variable, not just this test data), and the
+  vendored Crinja fork's `wordwrap` filter did fixed-width character
+  chunking instead of real Python `textwrap.wrap`'s whole-word
+  packing (fixed upstream, `crystal-play-0.9.12`). Also fixed
+  `build.sh`'s staleness check never looking at `lib/` mtimes,
+  silently no-opping a `shards update`-driven rebuild.
+  Live-reverified byte-identical to real Ansible's own output.
 - **round 115, `robertdebock.umask`** (no version bump): zero bugs
   found, byte-identical on both engines cold and warm, `.bashrc`
   content verified live.

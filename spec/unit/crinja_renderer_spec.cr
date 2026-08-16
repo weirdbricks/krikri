@@ -24,6 +24,21 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     renderer.render("worker_processes  {{ nginx_worker_processes }};").should eq(%(worker_processes  "1";))
   end
 
+  it "wordwrap packs whole words onto each line (real Python textwrap.wrap semantics), not fixed-width character chunks" do
+    # Real bug found benchmarking robertdebock.functions (round 116):
+    # the vendored Crinja fork's wordwrap filter chopped the source
+    # line into fixed-width character chunks unconditionally, giving a
+    # completely different output shape than real Ansible's own
+    # wordwrap (which calls Python's textwrap.wrap - greedy whole-word
+    # packing, only breaking within a word when it alone exceeds
+    # width). Fixed upstream in the Crinja fork (crystal-play-0.9.11).
+    v = Hash(String, JSON::Any).new
+    v["s"] = JSON::Any.new("Extra spaces.")
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render("{{ s | wordwrap(5) }}").should eq("Extra\nspace\ns.")
+  end
+
   it "re-renders a nested-template variable back to its real array type, not the array's stringified text" do
     # Real bug found benchmarking robertdebock.docker (round 104):
     # `docker_pip_packages: "{{ _docker_pip_packages[ansible_facts[

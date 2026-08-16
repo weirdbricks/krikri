@@ -141,7 +141,7 @@ module CrystalPlay
         end
       end
 
-      result = expand_mustache_spans(text) { |inner| evaluator.evaluate(inner.strip).strip }
+      result = expand_mustache_spans(text) { |inner| evaluator.evaluate(inner.strip) }
 
       # Ansible re-templates a rendered result that still contains "{{" -
       # this happens whenever a variable's own value is itself a template
@@ -179,7 +179,7 @@ module CrystalPlay
                           @@block_tag_escalation_depth -= 1
                         end
                       else
-                        expand_mustache_spans(result) { |inner| evaluator.evaluate(inner.strip).strip }
+                        expand_mustache_spans(result) { |inner| evaluator.evaluate(inner.strip) }
                       end
         break if next_result == result
         result = next_result

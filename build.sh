@@ -146,6 +146,15 @@ elif [ "$MAIN_SOURCE" -nt "$MAIN_BINARY" ]; then
 elif find src -name '*.cr' -newer "$MAIN_BINARY" -print -quit | grep -q .; then
     # crystal-play.cr's own mtime doesn't change when only its src/ deps do
     NEEDS_BUILD=true
+elif [ -d lib ] && find lib -name '*.cr' -newer "$MAIN_BINARY" -print -quit | grep -q .; then
+    # A `shards update` (e.g. pulling in a Crinja fork fix) touches
+    # lib/'s own mtimes but never crystal-play.cr's - without this
+    # check the whole rebuild silently no-ops, compiling nothing, and
+    # every subsequent "verify the fix" step re-tests the SAME stale
+    # binary. Found live: round 116's wordwrap fix appeared to not
+    # apply at all across two separate `./build.sh` runs, each
+    # reporting success, until this was added.
+    NEEDS_BUILD=true
 fi
 
 if [ "$NEEDS_BUILD" = true ]; then
@@ -272,6 +281,11 @@ for plugin in "${PLUGINS[@]}"; do
             # gap the main executable's own check already accounts for
             # above; without this, `./build.sh` after a src/ change reports
             # every plugin "up to date" and silently ships stale binaries.
+            NEEDS_BUILD=true
+        elif [ -d lib ] && find lib -name '*.cr' -newer "$BINARY" -print -quit | grep -q .; then
+            # Same gap as above, for a `shards update` touching lib/'s
+            # own mtimes (e.g. a Crinja fork fix) - see the main
+            # executable's own identical check for the story.
             NEEDS_BUILD=true
         fi
 
