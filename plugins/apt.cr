@@ -97,15 +97,25 @@ module CrystalPlay
             return PluginResult.new(changed: false, failed: true, msg: "#{cmd} failed: #{result[:stderr]}")
           end
 
-          # `autoremove` prints apt's own "nothing to do" summary line
-          # when there's genuinely nothing to remove; `autoclean`/`clean`
-          # print nothing at all when the cache was already clean - both
-          # signal "unchanged" as empty/no-op output, matching real
-          # Ansible's apt module's own changed: for these flags.
-          did_something = if cmd.includes?("autoremove")
-                             !result[:stdout].includes?("0 upgraded, 0 newly installed, 0 to remove")
+          # Real Ansible's apt module checks for a specific marker
+          # string in apt-get's own stdout, per operation
+          # (CLEAN_OP_CHANGED_STR in apt.py) - NOT empty-vs-non-empty
+          # output. `autoclean`/`autoremove` (and plain `apt-get
+          # update`) print informational "Reading package lists..."
+          # boilerplate to stdout unconditionally, whether or not
+          # anything was actually removed, so the previous "non-empty
+          # stdout means changed" heuristic always reported changed:
+          # true for autoclean specifically. `clean:` (real Ansible's
+          # own `aptclean()`) reports changed: true UNCONDITIONALLY
+          # when called with no package/upgrade/deb - not based on
+          # output at all.
+          did_something = case cmd
+                           when .includes?("autoremove")
+                             result[:stdout].includes?("The following packages will be REMOVED")
+                           when .includes?("autoclean")
+                             result[:stdout].includes?("Del ")
                            else
-                             !result[:stdout].strip.empty?
+                             true
                            end
 
           if did_something

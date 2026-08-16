@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.423-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.424-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,14 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.424` - round 117, `robertdebock.maintenance`**: `apt.cr`'s
+  `autoclean:`/`autoremove:`/`clean:` changed-detection used an
+  empty-vs-non-empty-stdout heuristic, but `apt-get autoclean` always
+  prints boilerplate stdout regardless of whether anything was
+  removed - `autoclean: true` on an already-clean cache always
+  reported `changed: true`. Fixed to match real Ansible's own
+  per-operation marker-string check. Live-reverified byte-identical
+  on both a clean and a dirty cache.
 - **`0.9.423` - round 116, `robertdebock.functions`**: 2 bugs -
   `format_value` unconditionally stripped every rendered value's
   leading/trailing whitespace (a real Jinja2 never does this,

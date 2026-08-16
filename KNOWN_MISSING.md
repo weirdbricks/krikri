@@ -8,7 +8,27 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.423`.**
+**Currently at `0.9.424`.**
+
+---
+
+Round 117 (0.9.424) - `robertdebock.maintenance`: 1 real bug found and
+fixed. `apt.cr`'s `autoclean:`/`autoremove:`/`clean:` changed-detection
+used an empty-vs-non-empty-stdout heuristic - but `apt-get autoclean`
+prints "Reading package lists...\nBuilding dependency tree...\nReading
+state information...\n" boilerplate UNCONDITIONALLY, whether or not
+anything was actually removed, so `autoclean: true` on an already-clean
+cache always reported `changed: true`. Real Ansible's own apt module
+checks for a specific marker string in apt-get's own stdout per operation
+(`CLEAN_OP_CHANGED_STR` in apt.py: `"The following packages will be
+REMOVED"` for autoremove, `"Del "` for autoclean) - not output emptiness
+at all. Also aligned `clean:` with real Ansible's own unconditional
+`changed: true` (when called with no package/upgrade/deb), matching
+`aptclean()`'s own behavior rather than an output-based heuristic that
+happened to usually agree. Live-reverified: byte-identical `ok=8
+changed=0 failed=0 skipped=3` warm recap on a clean cache, and both
+engines correctly reported `changed=1` identically once real leftover
+package files existed in the cache from an install/remove cycle.
 
 ---
 
