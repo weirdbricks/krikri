@@ -404,6 +404,7 @@ module CrystalPlay
       "ansible.posix.selinux",
       "community.general.pam_limits",
       "community.general.capabilities",
+      "community.general.make",
       "ansible.builtin.user",
       "ansible.builtin.group",
       "ansible.builtin.git",

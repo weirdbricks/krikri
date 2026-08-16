@@ -170,6 +170,7 @@ echo ""
 # Build plugins
 echo -e "${YELLOW}🔌 Building plugins...${NC}"
 PLUGINS=(
+    "make"
     "copy"
     "template"
     "file"

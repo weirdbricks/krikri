@@ -8,7 +8,7 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.411`.**
+**Currently at `0.9.412`.**
 
 ---
 
@@ -60,6 +60,21 @@ silently dropped at parse time" pattern (rounds 75/90/93), not new - those
 tasks are unconditionally skipped on Ubuntu on both engines anyway.
 
 ---
+
+Round 98 (0.9.412) - `robertdebock.earlyoom`: `community.general.make` was
+entirely unimplemented - new `plugins/make.cr` added, ported exactly from real
+Ansible's own module source (chdir/target/targets/params/file/jobs/make
+parameters; idempotency via the same `make ... -q` "question mode" trick real
+Ansible uses - exit 0 means already up to date, non-zero means a rebuild is
+needed). Found via `robertdebock.earlyoom`'s own "Make earlyoom" handler
+(notified alongside "Install earlyoom" by the same "Clone repository" task) -
+previously silently dropped at parse time, so the earlyoom binary never got
+built; the very next handler ("Install earlyoom", a `copy: remote_src: true`
+from the unbuilt binary's path) then failed with "Source file not found".
+Live-verified directly (a scratch Makefile + gcc build, rebuild-on-change,
+idempotent no-op on an unchanged rerun, `target:` support) and via the live
+host: `ok=17 changed=5 failed=0 skipped=8` now matches real Ansible's recap
+exactly, `earlyoom` service `active` on both engines.
 
 Round 97 (no version bump - zero crystal-ansible bugs found): `robertdebock.haveged`.
 Identical on both engines cold (`ok=8 changed=4 failed=0`) and warm (`ok=7
