@@ -293,6 +293,10 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **round 125, `robertdebock.terraform`** (no version bump): zero
+  bugs found, byte-identical on both engines cold and warm -
+  single-task `unarchive: remote_src: true` install; installed
+  binary `md5sum`-identical between engines, verified live.
 - **round 124, `robertdebock.xrdp`** (no version bump): zero bugs
   found, byte-identical on both engines cold and warm - exercises
   `ini_file` with a real loop, `copy`, and `until:`/`retries:`,

@@ -12,6 +12,17 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 125 (no version bump - zero crystal-ansible bugs found) -
+`robertdebock.terraform`: byte-identical on both engines. Cold pass
+`ok=4 changed=1 failed=0` on both, warm rerun `ok=4 changed=0 failed=0`
+on both (fully idempotent) - single-task role, `ansible.builtin.unarchive`
+with `remote_src: true` unpacking a HashiCorp release zip straight to
+`/usr/local/bin`. `/usr/local/bin/terraform` byte-identical (`md5sum`
+match) between engines, `terraform version` `1.0.11` on both, verified
+live.
+
+---
+
 Round 124 (no version bump - zero crystal-ansible bugs found) -
 `robertdebock.xrdp`: byte-identical on both engines. Cold pass `ok=9
 changed=5 failed=0` on both, warm rerun `ok=8 changed=0 failed=0` on both
