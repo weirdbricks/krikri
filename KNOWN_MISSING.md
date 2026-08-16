@@ -12,6 +12,16 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 81 (no version bump - zero crystal-ansible bugs found): `robertdebock.dhcpd`.
+Identical on both engines cold (`ok=17 changed=5 failed=0 skipped=1`) and warm
+(`ok=16 changed=1 failed=0 skipped=1`), `/etc/dhcp/dhcpd.conf` byte-identical.
+`isc-dhcp-server` fails identically on BOTH engines (default config has no subnet
+declaration matching this VM's actual network interface, so `dhcpd` exits
+immediately) - reproduces on real `ansible-playbook` too, a real external
+role/environment gap not a crystal-ansible divergence; the "Start and enable
+software" task's own restart-on-failure retry is why the warm rerun still shows
+`changed=1` on both engines identically rather than true idempotency.
+
 Round 80 (no version bump - zero crystal-ansible bugs found): `robertdebock.logrotate`.
 Identical on both engines cold (`ok=15 changed=1 failed=0 skipped=26`) and warm
 (`ok=15 changed=0 failed=0 skipped=26` - fully idempotent), `/etc/logrotate.conf`
