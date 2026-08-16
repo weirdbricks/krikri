@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.421-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.422-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,11 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.422` - round 113, `robertdebock.test_connection`**: 2 bugs -
+  `ansible.builtin.ping` and `ansible.builtin.wait_for_connection`
+  were both entirely unimplemented, silently dropped. New
+  `plugins/ping.cr` and `plugins/wait_for_connection.cr`.
+  Live-reverified byte-identical recap and result files on both.
 - **round 112, `robertdebock.tlp`** (no version bump): zero bugs
   found, byte-identical on both engines cold and warm, `tlp` service
   verified active/enabled live.

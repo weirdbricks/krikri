@@ -463,6 +463,8 @@ module CrystalPlay
       "ansible.builtin.assert",
       "ansible.builtin.fail",
       "ansible.builtin.wait_for",
+      "ansible.builtin.wait_for_connection",
+      "ansible.builtin.ping",
       "ansible.builtin.fetch",
       "ansible.builtin.pause",
     }

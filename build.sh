@@ -197,6 +197,8 @@ PLUGINS=(
     "assert"
     "fail"
     "wait_for"
+    "wait_for_connection"
+    "ping"
     "fetch"
     "pause"
     "user"

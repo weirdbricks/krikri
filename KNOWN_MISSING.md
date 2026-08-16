@@ -8,7 +8,23 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.421`.**
+**Currently at `0.9.422`.**
+
+---
+
+Round 113 (0.9.422) - `robertdebock.test_connection`: 2 real bugs found and
+fixed - `ansible.builtin.ping` and `ansible.builtin.wait_for_connection`
+were both entirely unimplemented, silently dropped. New `plugins/ping.cr`
+(returns `{"ping": data}`, defaulting to `"pong"`; `data: crash` fails,
+matching real Ansible's own deliberate-failure test path exactly) and new
+`plugins/wait_for_connection.cr` (this codebase's plugins already run ON
+the target over the exact connection real Ansible's own module would
+otherwise be retrying to establish, so by the time this plugin's own
+process runs at all that connection has already succeeded - only `delay:`
+has an observable effect here). Live-reverified: byte-identical `ok=10
+changed=0 failed=0` recap on both engines, and the role's own written
+result files (`connection_succeeded.txt`/`wait_for_connection_succeeded.
+txt`/`become_succeeded.txt`) byte-identical between engines.
 
 ---
 
