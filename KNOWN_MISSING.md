@@ -12,6 +12,15 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 124 (no version bump - zero crystal-ansible bugs found) -
+`robertdebock.xrdp`: byte-identical on both engines. Cold pass `ok=9
+changed=5 failed=0` on both, warm rerun `ok=8 changed=0 failed=0` on both
+(fully idempotent) - exercises `community.general.ini_file` with a real
+loop, `copy`, and `until:`/`retries:`. `xrdp.ini`'s `crypt_level` setting
+byte-identical and `xrdp` service active on both, verified live.
+
+---
+
 Round 123 (no version bump - zero crystal-ansible bugs found) -
 `robertdebock.auto_update`: byte-identical on both engines. Cold pass
 `ok=9 changed=2 failed=0` on both, warm rerun `ok=9 changed=0 failed=0`

@@ -293,6 +293,10 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **round 124, `robertdebock.xrdp`** (no version bump): zero bugs
+  found, byte-identical on both engines cold and warm - exercises
+  `ini_file` with a real loop, `copy`, and `until:`/`retries:`,
+  verified live.
 - **round 123, `robertdebock.auto_update`** (no version bump): zero
   bugs found, byte-identical on both engines cold and warm; rendered
   `10periodic` config (`comment` filter) verified live.
