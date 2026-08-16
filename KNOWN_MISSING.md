@@ -8,7 +8,33 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.389`.**
+**Currently at `0.9.390`.**
+
+---
+
+Round 51 (0.9.390): `robertdebock.httpd` on a fresh `G3.2GB` Atlantic.net
+pair. 1 real bug found and fixed: `RoleLoader#resolve_role_dir` only ever
+searched `<playbook_dir>/roles/<name>` and `roles/<name>` (plus, since
+round 24, the collection-FQCN path) for a `roles:` entry - it never
+searched `~/.ansible/roles` (or `ANSIBLE_ROLES_PATH`), the default
+install location for `ansible-galaxy role install <namespace>.<name>`,
+the standard way to fetch a plain (non-collection) Galaxy role. Any
+playbook referencing a Galaxy-installed role by its bare name from a
+working directory other than one with a local `roles/` checkout failed
+outright with "Role not found" - crystal-ansible errored immediately
+while real `ansible-playbook` found the role fine. Fixed by adding a
+`roles_paths` search list mirroring the existing `collections_paths`
+handling (`ANSIBLE_ROLES_PATH` env var, then `~/.ansible/roles`,
+`/usr/share/ansible/roles`, `/etc/ansible/roles`), using the same
+`expand_home_path` tilde-expansion helper already used for collections.
+Live-reverified on a fresh pair: cold `ok=18 changed=4 failed=0
+skipped=28` (real) vs `ok=18 changed=4 failed=0 skipped=25` (crystal) -
+the skipped-count gap is the pre-existing documented cosmetic scope gap
+(`ansible.posix.seboolean`/`community.general.seport`/
+`community.general.apache2_module` unimplemented, same class as the
+haproxy round's `seport`/`seboolean` note), not a new bug. Both hosts
+served HTTP 200 via `apache2`, both fully idempotent on warm rerun
+(`changed=0` both). See `ROLES_TESTED.md`.
 
 ---
 

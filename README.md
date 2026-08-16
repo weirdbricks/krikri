@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.389-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.390-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,14 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.390` - round 51, `robertdebock.httpd`**: `RoleLoader#resolve_role_dir`
+  never searched `~/.ansible/roles`/`ANSIBLE_ROLES_PATH` - the default
+  install location for a plain `ansible-galaxy role install`, breaking
+  any bare Galaxy-role reference outside a cwd with a local `roles/`
+  checkout ("Role not found"). Fixed with a search-path list mirroring
+  the existing collections-path handling. Live-reverified identical to
+  real Ansible (`skipped` count diff is a pre-existing documented
+  cosmetic gap), idempotent, `apache2` serving HTTP 200 on both.
 - **`0.9.389` - round 48, `robertdebock.squid`**: `squid_cache_dir.split(
   " ")[0] in [...]` (a Python-style `.split(...)` method call, not a `|
   split` filter) - same class as round 45's bug: works fine inside

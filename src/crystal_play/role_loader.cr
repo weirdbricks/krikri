@@ -233,7 +233,36 @@ module CrystalPlay
         return collection_dir
       end
 
-      [File.join(playbook_dir, "roles", name), File.join("roles", name)].find { |dir| Dir.exists?(dir) }
+      search_dirs = [File.join(playbook_dir, "roles", name), File.join("roles", name)]
+      search_dirs.concat(roles_paths.map { |base| File.join(base, name) })
+      search_dirs.find { |dir| Dir.exists?(dir) }
+    end
+
+    # Real Ansible's role search also checks `ANSIBLE_ROLES_PATH` (colon-
+    # separated, like `ANSIBLE_ROLES_PATH`/`ANSIBLE_COLLECTIONS_PATH`) and
+    # its own default `roles_path`, which is where `ansible-galaxy role
+    # install <namespace>.<name>` (the standard way to fetch a plain,
+    # non-collection Galaxy role) puts things by default:
+    # `~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles`.
+    # `resolve_role_dir` previously only ever checked playbook-relative
+    # `roles/<name>` dirs, so any Galaxy-installed role referenced by its
+    # bare name (`robertdebock.httpd`, not a 3-part collection FQCN) failed
+    # outright with "Role not found" the moment the working directory
+    # wasn't also where the role happened to be vendored locally - the
+    # collection-role lookup right above already got this treatment for
+    # collection-shipped roles; bare Galaxy roles never did.
+    private def self.roles_paths : Array(String)
+      paths = [] of String
+
+      if env_path = ENV["ANSIBLE_ROLES_PATH"]?
+        paths.concat(env_path.split(':').reject(&.empty?))
+      end
+
+      paths << expand_home_path("~/.ansible/roles")
+      paths << "/usr/share/ansible/roles"
+      paths << "/etc/ansible/roles"
+
+      paths
     end
 
     # A `namespace.collection.role_name` FQCN roles: entry (e.g.
