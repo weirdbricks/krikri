@@ -8,7 +8,26 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.393`.**
+**Currently at `0.9.394`.**
+
+---
+
+Round 60 (0.9.394): `robertdebock.dovecot` on a fresh `G3.2GB`
+Atlantic.net pair. 1 real bug found and fixed: `find:`'s own plugin
+only ever recognized the plural `paths:` parameter, failing outright
+("missing required argument: paths") on the singular `path:` - a real,
+documented alias of real Ansible's own `find` module
+(`aliases: ['path', 'name']` on its `paths` arg-spec entry), and the
+far more common spelling for a single-directory search.
+`robertdebock.dovecot`'s own "Find users in /var/spool/mail" task uses
+exactly `path: /var/spool/mail`. Fixed by falling back to `path`/`name`
+params when `paths` is absent. Live-reverified: fresh pair (purged and
+reinstalled dovecot on the crystal host to get a genuine cold-vs-cold
+comparison, since the first attempt had already partially applied
+before hitting the failure), `ok=8 changed=3 failed=0 skipped=2`
+identical both engines, `mail_location`/`mail_access_groups` lines
+byte-identical, `dovecot` `active` on both, fully idempotent warm rerun
+(`ok=8 changed=0 skipped=1` both).
 
 ---
 

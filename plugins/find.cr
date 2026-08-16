@@ -94,7 +94,15 @@ module CrystalPlay
       limit : Int32?
 
     def execute : PluginResult
-      paths_param = @params["paths"]?
+      # Real Ansible's find module declares `paths` with aliases `path`
+      # and `name` (`ansible.plugins.modules.find`'s own argument_spec) -
+      # a single-path invocation almost always uses the singular form
+      # (`path: /var/spool/mail`, robertdebock.dovecot's own "Find users
+      # in /var/spool/mail" task), which real Ansible accepts
+      # transparently. This plugin only ever recognized the plural
+      # `paths:`, failing outright ("missing required argument: paths")
+      # on the far more common singular spelling.
+      paths_param = @params["paths"]? || @params["path"]? || @params["name"]?
       unless paths_param
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: paths")
       end

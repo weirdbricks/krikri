@@ -25,6 +25,19 @@ describe "find plugin" do
     paths_of(result).should eq([File.join(TMP_DIR, "a.txt")])
   end
 
+  it "accepts the singular path= alias for paths=" do
+    # Real Ansible's find module declares `paths` with aliases `path`
+    # and `name` - a single-directory search almost always uses the
+    # singular form. Found via robertdebock.dovecot's own "Find users
+    # in /var/spool/mail" task (`path: /var/spool/mail`), which real
+    # Ansible accepts transparently; this plugin only ever recognized
+    # the plural `paths:`, failing outright.
+    result = PluginSpecHelper.run("find", {"path" => TMP_DIR, "patterns" => "*.txt"})
+
+    result["matched"].as_i64.should eq(1)
+    paths_of(result).should eq([File.join(TMP_DIR, "a.txt")])
+  end
+
   it "recurses into subdirectories when recurse: true" do
     result = PluginSpecHelper.run("find", {"paths" => TMP_DIR, "patterns" => "*.txt", "recurse" => "true"})
 
