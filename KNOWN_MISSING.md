@@ -12,6 +12,10 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 87 (no version bump - zero crystal-ansible bugs found): `robertdebock.logwatch`.
+Identical on both engines cold (`ok=8 changed=2 failed=0 skipped=1`) and warm
+(`ok=8 changed=0 failed=0 skipped=1` - fully idempotent).
+
 Round 86 (no version bump - zero crystal-ansible bugs found): `robertdebock.sysstat`.
 Identical on both engines cold (`ok=4 changed=3 failed=0`) and warm (`ok=4
 changed=0 failed=0` - fully idempotent), `sysstat` service `active` on both,
