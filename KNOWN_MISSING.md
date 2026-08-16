@@ -12,6 +12,23 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 130 (no version bump - zero crystal-ansible bugs found) -
+`robertdebock.virtualbox`: byte-identical package/repo state on both
+engines. `virtualbox-6.1` installed identically (`dpkg -l` match),
+`/etc/apt/sources.list.d/download_virtualbox_org_virtualbox_debian.list`
+byte-identical, cold `changed=4` and warm `changed=0` on
+crystal-ansible (fully idempotent). Recap `skipped` count differs from
+real Ansible (1 vs 3) - `ansible.builtin.rpm_key` and
+`community.general.zypper_repository` remain unimplemented (same
+already-documented cosmetic scope gap as `seport`/`seboolean`/
+`apache2_module` from earlier rounds), not a new bug. Note: this
+role's VirtualBox package install triggers a real DKMS kernel-module
+build via its postinst, which took ~90s-2min on this cloud host on
+both engines - not a hang, just a slow apt postinst step worth
+budgeting extra wait time for on any future round touching it.
+
+---
+
 Round 129 (no version bump - zero crystal-ansible bugs found) -
 `robertdebock.upgrade`: byte-identical on both engines. Cold pass
 `ok=4 changed=0 failed=0 skipped=1` on both, warm rerun identical

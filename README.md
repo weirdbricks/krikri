@@ -293,6 +293,10 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **round 130, `robertdebock.virtualbox`** (no version bump): zero
+  bugs found, byte-identical package/repo state on both engines cold
+  and warm; skip-count differs only via the pre-existing
+  `rpm_key`/`zypper_repository` unimplemented-module scope gap.
 - **round 129, `robertdebock.upgrade`** (no version bump): zero bugs
   found, byte-identical on both engines cold and warm - including an
   undefined-var `is defined` skip-guard short-circuit from the role's
