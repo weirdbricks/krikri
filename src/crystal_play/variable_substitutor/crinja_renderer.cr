@@ -350,7 +350,51 @@ module CrystalPlay
       def self.rerender_nested_templates(value : JSON::Any, substitutor : VarSubstitutor) : JSON::Any
         case raw = value.raw
         when String
-          raw.includes?("{{") ? JSON::Any.new(substitutor.substitute(raw)) : value
+          if raw.includes?("{{")
+            rendered = substitutor.substitute(raw)
+            stripped = raw.strip
+            if stripped.starts_with?("{{") && stripped.ends_with?("}}")
+              # A nested-template variable whose ENTIRE value (no other
+              # literal characters around it) is a `{{ }}` expression
+              # can itself render to a real array/dict
+              # (`docker_pip_packages: "{{
+              # _docker_pip_packages[ansible_facts['os_family']] |
+              # default(...) }}"`, robertdebock.docker's own vars/main.
+              # yml) - substitutor.substitute always returns a formatted
+              # STRING, so without re-parsing back to JSON here every
+              # such variable silently became a String-typed Crinja
+              # value forever after (`docker_pip_packages | length`
+              # measured the STRING's character count instead of the
+              # list's element count, and the `| length > 0` when: guard
+              # on the role's own conditional "Install docker pip
+              # packages" task always passed even for the empty-list
+              # Debian case, then `ansible.builtin.pip: name: "[]"`
+              # tried to install a literal package named "[]"). Every
+              # other rerender call site in this codebase
+              # (VariableLookup#rerender_if_templated, ExpressionEvaluator's
+              # own bare-lookup/filter-chain-head fallback) already does
+              # this JSON.parse-back step; this one (feeding Crinja's
+              # own vars context) was the one gap.
+              #
+              # Restricted to a PURE `{{ }}` value (nothing else around
+              # it) rather than any string containing "{{" anywhere -
+              # geerlingguy.nginx's own `nginx_worker_processes: '"{{
+              # ansible_processor_vcpus | default(...) }}"'` has literal
+              # double-quote characters OUTSIDE the `{{ }}` span,
+              # deliberately, so its rendered value stays the literal
+              # 3-character string `"1"` in the .conf file - reparsing
+              # THAT as JSON would strip the quotes real Ansible keeps,
+              # a regression this same restriction (`raw.strip` must be
+              # entirely one `{{ }}` span) is what
+              # VariableLookup#rerender_if_templated already uses to
+              # draw the same line.
+              (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+            else
+              JSON::Any.new(rendered)
+            end
+          else
+            value
+          end
         when Array
           JSON::Any.new(raw.map { |item| rerender_nested_templates(item, substitutor) })
         when Hash

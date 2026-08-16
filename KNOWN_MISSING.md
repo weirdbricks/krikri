@@ -8,7 +8,32 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.415`.**
+**Currently at `0.9.416`.**
+
+---
+
+Round 104 (0.9.416) - `robertdebock.docker`: 1 real bug found and fixed.
+`CrinjaRenderer#prepare_crinja_vars` re-rendered a nested-template variable
+(one whose entire raw value is itself a `{{ }}` expression, e.g. `docker_
+pip_packages: "{{ _docker_pip_packages[ansible_facts['os_family']] |
+default(...) }}"`, robertdebock.docker's own vars/main.yml) but always
+wrapped the re-rendered result as a plain String rather than re-parsing it
+back to JSON - so a nested-template variable that itself evaluates to a real
+array/dict silently became String-typed forever after. `docker_pip_packages
+| length` measured the STRING's character count (10, for `["docker"]`)
+instead of the list's element count, so the role's own `when: docker_pip_
+packages | length > 0` guard on "Install docker pip packages" always passed
+even for the empty-list Debian case, and `ansible.builtin.pip: name: "[]"`
+tried to install a literal package named "[]" ("ERROR: Invalid requirement:
+'[]'"). Fixed by re-parsing the rendered result back to JSON - but ONLY when
+the raw value is a PURE `{{ }}` span with nothing else around it (matching
+`VariableLookup#rerender_if_templated`'s own established convention),
+distinguishing this from geerlingguy.nginx's own `nginx_worker_processes:
+'"{{ ansible_processor_vcpus | default(...) }}"'` (round-16-era regression
+test), whose literal surrounding quote characters are meaningful output that
+must NOT be reparsed away. Live-reverified: warm-rerun recap `ok=4 changed=0
+failed=0 skipped=2` identical on both engines, `docker` service `active` and
+`docker run hello-world` working on both.
 
 ---
 

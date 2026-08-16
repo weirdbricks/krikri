@@ -24,6 +24,33 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     renderer.render("worker_processes  {{ nginx_worker_processes }};").should eq(%(worker_processes  "1";))
   end
 
+  it "re-renders a nested-template variable back to its real array type, not the array's stringified text" do
+    # Real bug found benchmarking robertdebock.docker (round 104):
+    # `docker_pip_packages: "{{ _docker_pip_packages[ansible_facts[
+    # 'os_family']] | default(_docker_pip_packages['default']) }}"`
+    # (robertdebock.docker's own vars/main.yml) - a var whose ENTIRE
+    # value (nothing else around it) is a `{{ }}` expression that
+    # itself evaluates to a real list. #prepare_crinja_vars always
+    # wrapped the re-rendered result as a plain String (the STRING
+    # "[\"docker\"]", 10 characters), never re-parsing it back to JSON
+    # - so `docker_pip_packages | length` measured the STRING's
+    # character count (10) instead of the list's element count (1),
+    # and the role's own `when: docker_pip_packages | length > 0`
+    # guard on its "Install docker pip packages" task always passed
+    # even for the empty-list Debian case, feeding `ansible.builtin.
+    # pip: name: "[]"` the literal string "[]" as a package name
+    # ("ERROR: Invalid requirement: '[]'"). Distinguished from the
+    # nginx_worker_processes case above (which must NOT be reparsed,
+    # since its literal surrounding quote characters are meaningful
+    # output) by requiring the raw value to be a PURE `{{ }}` span
+    # with nothing else around it.
+    v = Hash(String, JSON::Any).new
+    v["inner_list"] = JSON::Any.new("{{ ['docker'] }}")
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render("{{ inner_list | length }}").should eq("1")
+  end
+
   it "re-templates a still-unrendered {{ }} nested inside a list-of-dicts variable's own field" do
     # Real bug found benchmarking geerlingguy.postgresql: its own
     # pg_hba.conf.j2 iterates `postgresql_hba_entries` (a list of

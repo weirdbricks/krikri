@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.415-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.416-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,15 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.416` - round 104, `robertdebock.docker`**:
+  `CrinjaRenderer#prepare_crinja_vars` re-rendered a nested-template
+  variable but never re-parsed the result back to its real type, so a
+  variable that itself evaluates to a real array (`docker_pip_
+  packages: "{{ ... }}"`) silently became String-typed forever after -
+  `| length` measured the string's character count instead of the
+  list's element count, breaking a `when:` guard. Live-reverified:
+  warm-rerun recap identical on both engines, `docker` service
+  healthy on both.
 - **`0.9.415` - round 103, `robertdebock.alternatives`**:
   `community.general.alternatives` entirely unimplemented (new
   `plugins/alternatives.cr`) plus a self-inflicted regex idempotency
