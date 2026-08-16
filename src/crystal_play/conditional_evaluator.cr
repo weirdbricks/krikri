@@ -497,12 +497,28 @@ module CrystalPlay
     # failing `is mapping`/`is sequence` regardless of what it actually
     # renders to.
     private def self.matches_type_test?(vars : Hash(String, JSON::Any), var_name : String, test_name : String) : Bool
-      value = if var_name.includes?(".") || var_name.includes?("[")
-                VariableSubstitutor::VariableLookup.new(vars).resolve(var_name)
-              else
-                vars[var_name]?
-              end
-      value = rerender_if_templated(vars, value)
+      # var_name may itself be a filter-chain expression, not a bare
+      # variable reference - e.g. `java_version | int is number`
+      # (robertdebock.java's own assert.yml, round 45). The bare
+      # hash/dotted-path lookup below has no notion of a `|` filter
+      # pipe at all, so `vars["java_version | int"]?` (the literal
+      # string, pipe included) always misses - undefined, always
+      # failing the type test regardless of what the filtered value
+      # actually is. Route anything containing a filter pipe through
+      # ExpressionEvaluator instead, the same "evaluate then
+      # JSON.parse the result" pattern rerender_if_templated already
+      # uses just above for re-rendering an already-resolved value.
+      if var_name.includes?("|")
+        rendered = VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate(var_name)
+        value = (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+      else
+        value = if var_name.includes?(".") || var_name.includes?("[")
+                  VariableSubstitutor::VariableLookup.new(vars).resolve(var_name)
+                else
+                  vars[var_name]?
+                end
+        value = rerender_if_templated(vars, value)
+      end
       return false unless value
 
       case test_name

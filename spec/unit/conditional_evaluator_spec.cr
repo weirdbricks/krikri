@@ -461,6 +461,29 @@ describe CrystalPlay::ConditionalEvaluator do
       CrystalPlay::ConditionalEvaluator.evaluate("an_int is not iterable", v).should be_true
     end
 
+    it "evaluates a type test against a FILTER CHAIN, not just a bare variable" do
+      # Real bug found benchmarking robertdebock.java (round 45,
+      # crystal-ansible 0.9.388): its own assert.yml has `java_version |
+      # int is number` and `java_version | int in [6, 7, ...]` -
+      # #matches_type_test?'s var_name-lookup treated the WHOLE
+      # "java_version | int" string (filter pipe included) as a literal
+      # variable name, doing a bare `vars["java_version | int"]?` hash
+      # lookup that obviously never matches any real key - always
+      # undefined, always failing the type test regardless of what
+      # java_version | int actually evaluates to. Confirmed on a real
+      # host: a `{{ java_version | int is number }}` debug interpolation
+      # of the exact same text correctly printed "True" (goes through
+      # the full expression evaluator), while the identical text inside
+      # an assert:'s `that:` list still failed (goes through
+      # ConditionalEvaluator directly instead).
+      v = Hash(String, JSON::Any).new
+      v["java_version"] = JSON::Any.new("19")
+
+      CrystalPlay::ConditionalEvaluator.evaluate("java_version | int is number", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("java_version | int in [6, 7, 8, 9, 10, 11, 12, 13, 17, 19, 20, 21]", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("java_version | int in [6, 7, 8]", v).should be_false
+    end
+
     it "evaluates 'is none', real Jinja2's None/null test" do
       # Real bug found benchmarking robertdebock.mysql's own defaults-
       # sanity assert: `mysql_bind_address is defined and

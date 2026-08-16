@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.387-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.388-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,13 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.388` - round 45, `robertdebock.java`/`robertdebock.jenkins`**:
+  `assert.yml`'s own `java_version | int is number`/`in [...]` - a
+  filter-chain type test - was treated as a literal (never-matching)
+  variable name by `ConditionalEvaluator`, always failing regardless of
+  the real value. Generic fix, any `X | filter is <type>` pattern was
+  affected. Jenkins itself stayed blocked on both engines either way -
+  its own apt repo's GPG key has expired.
 - **`0.9.387` - round 43, `robertdebock.postgres`**: 4 chained bugs -
   `postgresql_db`/`postgresql_user`/`mysql_db`/`mysql_user` never
   recognized real Ansible's deprecated `name:` aliases (`db:`/`user:`);

@@ -8,7 +8,45 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.387`.**
+**Currently at `0.9.388`.**
+
+---
+
+Round 45 (`0.9.388`), `robertdebock.jenkins` (+ `robertdebock.java`): 1
+real bug, found on a fresh `G3.4GB` Atlantic.net pair.
+`robertdebock.java`'s own `assert.yml` has `java_version | int is number`
+and `java_version | int in [6, 7, 8, ...]` - `ConditionalEvaluator#
+matches_type_test?`'s var-name lookup treated the WHOLE
+`"java_version | int"` string (filter pipe included) as a literal
+variable name, doing a bare `vars["java_version | int"]?` hash lookup
+that obviously never matches any real key - always undefined, always
+failing the `is number`/`is mapping`/etc type test regardless of what
+the filtered expression actually evaluates to. Confirmed on the live
+host: a `{{ java_version | int is number }}` debug interpolation of the
+exact same text correctly printed "True" (goes through the full
+expression evaluator), while the identical text inside an `assert:`'s
+`that:` list still failed (goes through `ConditionalEvaluator` directly,
+a separate code path). Fixed by routing any `var_name` containing a `|`
+through `ExpressionEvaluator` first, the same "evaluate then
+`JSON.parse` the result" pattern `rerender_if_templated` already used
+one function up in the same file. This is a generic fix - any `X |
+filter is <type>` pattern was broken, not just this one role. New
+regression spec; full suite 1234 examples, 0 failures.
+
+Jenkins itself never actually installed on either engine in this round -
+its apt repo's own published GPG signing key
+(`63667EE74BBA1F0A08A698725BA31D57EF5975CA`, fetched directly from
+`pkg.jenkins.io/debian-stable/jenkins.io-2023.key`) has **expired**
+(`[expired: 2026-03-26]`, confirmed via `gpg --show-keys` independent of
+Ansible entirely). Real `ansible-playbook`'s own `apt_key:` task failed
+outright on the id/fingerprint mismatch this triggers; crystal-ansible's
+`apt_key:` reported success but the key still wasn't trusted, surfacing
+as a later `apt-get update` GPG failure instead - different failure
+surface, same root cause and same ultimate outcome (blocked) on both
+engines. A real external blocker, not a crystal-ansible bug - worth
+revisiting `apt_key.cr`'s own id-vs-fingerprint validation someday to
+match real Ansible's earlier, clearer failure, but not chased further
+here since the end result is identical either way.
 
 ---
 
