@@ -190,6 +190,34 @@ describe CrystalPlay::ConditionalEvaluator do
       CrystalPlay::ConditionalEvaluator.evaluate("result.rc in [0, 3, 4]", v).should be_false
       CrystalPlay::ConditionalEvaluator.evaluate("result.rc not in [0, 3, 4]", v).should be_true
     end
+
+    it "checks membership against a METHOD CALL (not just a bare variable or filter)" do
+      # Real bug found benchmarking robertdebock.squid (round 48,
+      # crystal-ansible 0.9.389): its own assert.yml has
+      # `squid_cache_dir.split(" ")[0] in [ "ufs", "aufs", ... ]` - a
+      # Python-style `.split(...)` METHOD call (not a `| split` Jinja
+      # filter) followed by indexing. #evaluate_value's
+      # ExpressionEvaluator-routing guard only checked for `|`, a
+      # leading `(`, ` - `, `~`, `*`, `/` - none of which this
+      # expression contains - so it fell through to the naive
+      # dotted/indexed-access splitter instead, which has no concept of
+      # a parenthesized method call at all and just failed to resolve
+      # it (always undefined). `{{ squid_cache_dir.split(" ")[0] }}`
+      # alone already rendered correctly (goes through the full
+      # ExpressionEvaluator via the {{ }} path) - only the bare,
+      # unwrapped `assert: that:`/`when:` condition form was broken.
+      v = Hash(String, JSON::Any).new
+      v["squid_cache_dir"] = JSON::Any.new("aufs /var/spool/squid 16000 16 256 max-size=8589934592")
+
+      CrystalPlay::ConditionalEvaluator.evaluate(
+        %(squid_cache_dir.split(" ")[0] in [ "ufs", "aufs", "diskd", "rock", "null" ]), v
+      ).should be_true
+
+      v["squid_cache_dir"] = JSON::Any.new("bogus /var/spool/squid")
+      CrystalPlay::ConditionalEvaluator.evaluate(
+        %(squid_cache_dir.split(" ")[0] in [ "ufs", "aufs", "diskd", "rock", "null" ]), v
+      ).should be_false
+    end
   end
 
   describe "out-of-line parentheses from list-when ANDing" do

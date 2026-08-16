@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.388-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.389-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,13 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.389` - round 48, `robertdebock.squid`**: `squid_cache_dir.split(
+  " ")[0] in [...]` (a Python-style `.split(...)` method call, not a `|
+  split` filter) - same class as round 45's bug: works fine inside
+  `{{ }}`, breaks in a bare `assert:`/`when:` condition, this time
+  because the expression-routing guard only recognized a *leading* `(`,
+  not one anywhere in the string. Widened to any `(`. Live-reverified
+  identical to real Ansible, byte-identical config, idempotent.
 - **`0.9.388` - round 45, `robertdebock.java`/`robertdebock.jenkins`**:
   `assert.yml`'s own `java_version | int is number`/`in [...]` - a
   filter-chain type test - was treated as a literal (never-matching)

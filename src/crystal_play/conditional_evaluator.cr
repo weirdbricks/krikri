@@ -740,8 +740,19 @@ module CrystalPlay
       # arithmetic support - found via geerlingguy.swap's own
       # check-size.yml doing its own `{{ stat.size / 1024 / 1024 }}`
       # comparison as a bare `when:`/`assert:`-style value, not just
-      # inside `{{ }}` template interpolation.
-      if expr.includes?("|") || expr.starts_with?('(') || expr.includes?(" - ") || expr.includes?("~") ||
+      # inside `{{ }}` template interpolation. A bare `(` anywhere (not
+      # just a leading one) also needs routing here - real bug found
+      # benchmarking robertdebock.squid (round 48): its own assert.yml
+      # has `squid_cache_dir.split(" ")[0] in [...]`, a Python-style
+      # `.split(...)` METHOD call (not a `| split` filter) followed by
+      # indexing. `{{ squid_cache_dir.split(" ")[0] }}` alone already
+      # rendered correctly through ExpressionEvaluator (the `{{ }}`
+      # path), but this bare (unwrapped) `assert: that:` condition fell
+      # through to the naive dotted/indexed-access splitter below
+      # instead, which has no concept of a parenthesized method call at
+      # all - it just tried (and failed) to treat `split(" ")` as a
+      # literal, nonexistent hash key, always undefined.
+      if expr.includes?("|") || expr.includes?("(") || expr.includes?(" - ") || expr.includes?("~") ||
          expr.includes?("*") || expr.includes?("/")
         evaluator = VariableSubstitutor::ExpressionEvaluator.new(vars)
         rendered = evaluator.evaluate(expr)

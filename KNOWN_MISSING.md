@@ -8,7 +8,41 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.388`.**
+**Currently at `0.9.389`.**
+
+---
+
+Round 48 (`0.9.389`), `robertdebock.squid` (+ `robertdebock.bootstrap`):
+1 real bug, found on a fresh `G3.2GB` Atlantic.net pair - the role's own
+`assert.yml` has `squid_cache_dir.split(" ")[0] in [ "ufs", "aufs",
+"diskd", "rock", "null" ]` (a Python-style `.split(...)` METHOD call,
+not a `| split` Jinja filter, followed by indexing), which crashed the
+whole assert with a plain "Assertion failed" regardless of the real
+value.
+
+Same shape as round 45's `is number` bug (a construct that works fine
+inside `{{ }}` template interpolation but breaks in a bare, unwrapped
+`assert: that:`/`when:` condition) but a different code path:
+`ConditionalEvaluator#evaluate_value`'s guard for routing an expression
+through the fuller `ExpressionEvaluator` only checked for `|`, a
+*leading* `(`, ` - `, `~`, `*`, `/` - none of which
+`squid_cache_dir.split(" ")[0]` contains, so it fell through to the
+naive dotted/indexed-access splitter instead, which has no concept of a
+parenthesized method call anywhere in the string at all. Confirmed live:
+`{{ squid_cache_dir.split(" ")[0] }}` alone already rendered correctly
+(goes through the full evaluator via the `{{ }}` path); only the bare
+condition form was broken.
+
+Fixed by widening the guard to `expr.includes?("(")` (any paren, not
+just a leading one) - real Ansible variable names never contain parens,
+so this is unambiguous: anything with a `(` in it is a call, not a bare
+variable/dotted-path reference. New regression spec; full suite 1235
+examples, 0 failures.
+
+Live-reverified end to end on the same host pair: `ok=21 changed=5
+failed=0 skipped=3` matching real `ansible-playbook` exactly (cold),
+`squid.conf` byte-identical, `squid -k parse` valid, service `active` on
+both, fully idempotent warm rerun (`changed=0` both).
 
 ---
 
