@@ -12,6 +12,31 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 93 (no version bump - documented, not fixed) - `robertdebock.roundcubemail`:
+a real role bug (`notify: restart httpd` with no matching handler defined for the
+Debian family - likely present only for RedHat, or a typo) exposes a genuine
+crystal-ansible behavior gap. Real Ansible refuses to even run the notifying task
+- `ERROR! The requested handler 'restart httpd' was not found in either the main
+handlers list nor in the listening handlers list` - a fatal, whole-playbook-
+stopping validation. crystal-ansible has no equivalent upfront notify-target
+validation at all: it silently no-ops the unknown notify and keeps going,
+completing the ENTIRE role successfully (`ok=36 changed=13 failed=0 skipped=26`)
+- but the resulting deployment is actually broken (apache's own default vhost is
+still the only one enabled; the role's new roundcube site config was written but
+never activated, since the notify that should have restarted/reloaded apache to
+pick it up silently did nothing). This is the same broader "unresolvable
+reference silently dropped instead of hard-failing" design already established
+for unimplemented modules (rounds 75/90) and now confirmed to extend to
+unresolvable notify: handler NAMES too - deliberately not changed this round,
+since making it hard-fail would be a much larger design decision (affecting
+every other role that happens to reference a nonexistent handler) than a
+targeted bug fix; noted here as a known category, not something to patch blind.
+Needed `mariadb-server`/`python3-pymysql`/`community.mysql` collection installed
+as pre_tasks (the role itself expects an already-running DB, per its own
+`community.mysql.mysql_db`-based handler). Also hit the recurring
+`unattended-upgrades` dpkg-lock race on the real-Ansible host (not a bug, see
+round 78/82's memory).
+
 Round 92 (no version bump - zero crystal-ansible bugs found): `robertdebock.etherpad`.
 The pinned Galaxy release is stale relative to upstream's CURRENT etherpad
 release archive naming - the role hardcodes `etherpad_working_directory:
