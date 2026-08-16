@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.416-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.418-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,18 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.417`-`0.9.418` - round 107, `robertdebock.hashicorp`**: 2
+  bugs - `assert.cr`'s own standalone plugin binary never required
+  `jinja_filters.cr`, so an `is regex(...)`/`is version(...)`/etc test
+  inside `that:` silently failed even when the identical condition
+  worked via `when:` (Crinja's custom test library wasn't linked into
+  that binary); and `apt_repository.cr`'s cache-update validation
+  trusted `apt-get update`'s own exit code (stays 0 for a GPG
+  signature failure), so a broken signed-by= line survived instead of
+  being rolled back and then got duplicated by a rescue: retry. Fixed
+  by requiring `jinja_filters.cr` in `assert.cr`, and scanning both
+  `apt-get update` output streams for apt's own GPG-failure wording.
+  Live-reverified byte-identical to real Ansible's own recap.
 - **round 106, `robertdebock.openbao`** (no version bump, documented
   not fixed): `ansible.builtin.rpm_key` remains unimplemented (same
   cosmetic-scope gap class as `seboolean`/`seport`), zero runtime

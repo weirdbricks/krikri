@@ -8,7 +8,54 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.416`.**
+**Currently at `0.9.418`.**
+
+---
+
+Round 107 (0.9.417-0.9.418) - `robertdebock.hashicorp`: 2 real bugs found and
+fixed.
+
+1. `assert:`'s own `that:` conditions failed for any real Jinja2 test not
+   hand-implemented in `ConditionalEvaluator` (e.g. `item.name is
+   regex('^(consul|...|vault).*')`, the role's own assert.yml) even though
+   the IDENTICAL condition worked correctly via `when:`. Root cause:
+   `assert.cr` compiles as its OWN standalone plugin binary (this
+   codebase's one-binary-per-module architecture), and never required
+   `jinja_filters.cr` - the file that registers Crinja's custom test/filter
+   library (`regex`, `version`, etc) into the process-wide Crinja default
+   library. The main engine binary pulls this in transitively via other
+   files; `assert.cr` never did, so its own Crinja-delegation fallback
+   (used by every `is <test>` ConditionalEvaluator doesn't hand-implement)
+   silently rendered to something other than the literal "True" inside
+   THAT binary specifically. Fixed by requiring `jinja_filters.cr` directly
+   in `assert.cr`.
+
+2. `apt_repository.cr`'s cache-update validation only checked `apt-get
+   update`'s own exit code, which stays 0 even when a repo's GPG signature
+   can't be verified (apt only warns to stderr and falls back to the
+   previously cached index) - so the existing rollback-on-failure logic
+   (added for this same plugin in an earlier round) never triggered for a
+   real GPG failure, letting `state: present` silently "succeed" and skip
+   reverting the just-written line. Chained into a second, worse symptom:
+   the role's own block:/rescue: pattern (modern signed-by= method, falling
+   back to a legacy apt_key method) then wrote a SECOND, differently-
+   formatted line to the SAME auto-derived filename ("configured multiple
+   times" apt warnings), and the legacy line's own globally-trusted key
+   made subsequent `apt-get update` calls appear to succeed even with the
+   stale, still-broken signed-by= line present - papering over the
+   underlying signature failure entirely on any later task. Real Ansible
+   doesn't shell out to `apt-get` at all - it uses python-apt's
+   `Cache().update()`, which raises for exactly this case. Fixed by also
+   scanning both `apt-get update` output streams for apt's own GPG-failure
+   wording (`NO_PUBKEY`, `GPG error`, `is not signed`, `couldn't be
+   verified`) alongside the exit-code check.
+
+Live-reverified: byte-identical `ok=14 changed=4 failed=0 skipped=5
+rescued=1` recap on both engines (including the `rescued=1` real Ansible
+also hits every run - the GPG failure itself is a genuine, persistent
+external issue with `apt.releases.hashicorp.com`'s signed-by= setup, not a
+crystal-ansible bug), single clean (non-duplicated) `sources.list.d` entry
+on both, `terraform v1.15.8` installed identically on both.
 
 ---
 

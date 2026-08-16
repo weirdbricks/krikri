@@ -4,6 +4,22 @@ require "json"
 require "../src/crystal_play/base_plugin"
 require "../src/crystal_play/conditional_evaluator"
 require "../src/crystal_play/variable_substitutor"
+# jinja_filters.cr registers Crinja's custom test/filter library
+# (`regex`, `version`, etc, via `Crinja.test`/`Crinja.filter` at
+# top-level require time) into the process-wide Crinja default
+# library. The main engine binary pulls this in transitively via
+# template_action_plugin.cr, so `when:`/`changed_when:`/etc conditions
+# (evaluated inside that same process) see every registered test - but
+# `assert:` compiles as its OWN standalone plugin binary (per this
+# codebase's one-binary-per-module architecture) and evaluates its
+# `that:` conditions through the exact same ConditionalEvaluator ->
+# Crinja-delegation fallback WITHOUT ever linking this file in, so an
+# `is regex(...)`/`is version(...)`/etc test inside `that:` silently
+# rendered to something other than the literal "True" and the
+# assertion failed even for a condition that was actually true. Found
+# via robertdebock.hashicorp's own assert.yml: `item.name is
+# regex('^(consul|...|vault).*')`.
+require "../src/crystal_play/jinja_filters"
 
 module CrystalPlay
   # assert plugin (ansible.builtin.assert) - fails (or passes) based on a

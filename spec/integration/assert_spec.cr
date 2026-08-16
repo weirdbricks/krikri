@@ -45,6 +45,25 @@ describe "assert plugin" do
     result["failed"].as_bool.should be_false
   end
 
+  it "passes an 'is regex(...)' test - Crinja's custom test/filter library must be linked into this plugin's own binary" do
+    # Real bug found benchmarking robertdebock.hashicorp (round 107):
+    # `item.name is regex('^(consul|...|vault).*')` (the role's own
+    # assert.yml) always failed even for a genuinely matching name.
+    # assert.cr evaluates `that:` conditions via the same
+    # ConditionalEvaluator -> Crinja-delegation fallback `when:`
+    # conditions use, but `assert:` compiles as its OWN standalone
+    # plugin binary (this codebase's one-binary-per-module
+    # architecture) - the `regex`/`version`/etc Crinja test
+    # registrations only get linked in by requiring jinja_filters.cr
+    # (previously pulled in transitively by other files in the MAIN
+    # engine binary, never by this plugin), so the plugin's own binary
+    # silently lacked them and the Crinja delegation rendered to
+    # something other than the literal "True". Fixed by requiring
+    # jinja_filters.cr directly in assert.cr.
+    result = PluginSpecHelper.run("assert", {"that" => that_json("myname is regex('^terraform')")}, {"myname" => "terraform"})
+    result["failed"].as_bool.should be_false
+  end
+
   it "never reports changed" do
     result = PluginSpecHelper.run("assert", {"that" => that_json("true")})
     result["changed"].as_bool.should be_false

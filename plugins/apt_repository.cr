@@ -169,7 +169,7 @@ module CrystalPlay
 
       if update_cache
         cache_result = run_update_cache
-        if cache_result[:exit_code] != 0
+        if cache_result[:exit_code] != 0 || gpg_signature_failure?(cache_result[:stdout], cache_result[:stderr])
           # Real ansible-playbook's own apt_repository module rolls back
           # the line it just wrote when the post-add cache update fails,
           # rather than leaving a broken repo definition behind - found
@@ -184,6 +184,21 @@ module CrystalPlay
           # which apt itself then refuses outright ("Conflicting values
           # set for option Signed-By"), turning one recoverable failure
           # into two.
+          #
+          # The `gpg_signature_failure?` half of this check is itself a
+          # second, deeper bug in the SAME task found live-verifying the
+          # fix above: plain `apt-get update`'s own exit code is 0 even
+          # when a repo's signature can't be verified (apt only WARNs to
+          # stderr, "GPG error ... NO_PUBKEY ...", and still exits
+          # success using the previous cached index) - so the bare
+          # exit_code check above never even detected the failure real
+          # Ansible's own module DOES treat as fatal. Real Ansible
+          # doesn't shell out to `apt-get` at all - it uses the
+          # `python-apt` library's `Cache().update()`, which raises
+          # `FetchFailedException` for exactly this case, a stricter
+          # check than the CLI tool's own exit code. Matched here by
+          # scanning both streams for apt's own GPG-failure wording
+          # rather than trusting exit_code alone.
           rollback_line(target, normalized)
           return PluginResult.new(
             changed: true,
@@ -214,7 +229,7 @@ module CrystalPlay
 
       if update_cache
         cache_result = run_update_cache
-        if cache_result[:exit_code] != 0
+        if cache_result[:exit_code] != 0 || gpg_signature_failure?(cache_result[:stdout], cache_result[:stderr])
           return PluginResult.new(
             changed: true,
             failed: true,
@@ -270,6 +285,21 @@ module CrystalPlay
     # to. Found benchmarking robertdebock.nomad.
     private def run_update_cache
       remote_exec("apt-get update")
+    end
+
+    # `apt-get update`'s own exit code stays 0 even when a repo's
+    # signature can't be verified - apt only warns and falls back to the
+    # previously cached index for that one repo. Real Ansible's own
+    # module uses python-apt's `Cache().update()` instead, which raises
+    # for exactly this case - matched here by scanning for apt's own
+    # GPG-failure wording (checked on both streams; apt puts some lines
+    # on stdout, some on stderr).
+    private def gpg_signature_failure?(stdout : String, stderr : String) : Bool
+      combined = "#{stdout}\n#{stderr}"
+      combined.includes?("NO_PUBKEY") ||
+        combined.includes?("GPG error") ||
+        combined.includes?("is not signed") ||
+        combined.includes?("couldn't be verified")
     end
 
     # Reads VERSION_CODENAME= from /etc/os-release - matches real
