@@ -293,6 +293,14 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **Round 38 (no version bump - pure verification)**: a follow-up
+  timing pass on round 37's fix, using finer-grained `pexpect` timing on
+  a fresh 2-node `geerlingguy.kubernetes` pair. Crystal-ansible is now
+  *faster* than real `ansible-playbook` on both cold (128.6s vs 196.7s)
+  and warm (15.5s vs 45.1s) runs - round 37's own "~30% faster, roughly
+  halves the gap" estimate undersold the fix; the gap is fully closed
+  and inverted. No new bugs, correctness unchanged (`failed=0`/idempotent
+  warm rerun on both).
 - **`0.9.383` - round 37, a real performance bug**: a head-to-head cold-
   run timing comparison against real `ansible-playbook` on the real
   2-node `geerlingguy.kubernetes` cluster playbook (verified clean in

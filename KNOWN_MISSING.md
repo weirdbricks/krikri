@@ -12,6 +12,26 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 38 (no version bump - pure verification, no code change): a
+follow-up to round 37's `include_tasks:`/`block:` parallelism fix, using
+`pexpect`-driven wall-clock timing (`timed_run.py`) for finer-grained
+per-line timestamps than the round-37 method, on a fresh `G3.4GB`
+2-node (`geerlingguy.containerd` + `geerlingguy.kubernetes`) Atlantic.net
+pair per engine. Result: crystal-ansible is now **faster than real
+`ansible-playbook` on both cold and warm runs**, not just "closer" -
+cold 128.6s (crystal) vs 196.7s (python), warm 15.5s (crystal) vs 45.1s
+(python). Round 37's own write-up (below) undersold the fix, having only
+measured a partial "~30% faster, roughly halves the gap" result from an
+earlier, less-precise timing pass; this pass shows the gap fully closed
+and inverted. Correctness unaffected either way: cold
+`ok=61/changed=37/failed=0` (crystal) vs `ok=64/changed=35/failed=0`
+(python) (task-count deltas are the known fact-cache/banner-grouping
+cosmetic artifact, not a divergence), warm `changed=0` idempotent on
+both. No new bugs found; `ROLES_TESTED.md`'s kubernetes entry updated to
+reflect the closed-out perf comparison.
+
+---
+
 `0.9.383` - round 37, a real performance bug: `include_tasks:` (and
 `block:`/`rescue:`/`always:`) ran every nested task one whole host at a
 time, fully serially, never getting the `--forks` multi-host parallelism
