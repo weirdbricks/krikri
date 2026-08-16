@@ -12,6 +12,15 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 91 (no version bump - zero crystal-ansible bugs found): `robertdebock.cntlm`.
+Externally blocked identically on both engines - the role's own default download
+mirror (`netcologne.dl.sourceforge.net`) doesn't resolve at all (DNS lookup
+failure, confirmed live), so "Download cntlm software (deb)" fails on real
+`ansible-playbook` too, byte-identical recap: `ok=16 changed=0 failed=1
+skipped=4` both. Also needed `robertdebock.service` role installed separately on
+the real-Ansible host - `import_role: name: robertdebock.service` again not a
+declared Galaxy dependency, same gotcha as round 75's `robertdebock.node_red`.
+
 Round 90 (no version bump - zero NEW crystal-ansible bugs found): `robertdebock.prosody`.
 Needs `community.crypto` collection installed for real `ansible-playbook` to even
 parse the playbook - its own `ssl.yml` (statically `import_tasks:`'d) references
