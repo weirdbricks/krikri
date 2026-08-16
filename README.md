@@ -293,6 +293,10 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **round 122, `robertdebock.modprobe`** (no version bump): zero
+  bugs found, byte-identical on both engines cold and warm;
+  `br_netfilter`/`overlay` kernel modules loaded identically, verified
+  live.
 - **round 121, `robertdebock.gotop`** (no version bump): zero bugs
   found, byte-identical on both engines cold and warm; `gotop` binary
   byte-identical (same size, version, mtime), verified live.

@@ -12,6 +12,14 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 122 (no version bump - zero crystal-ansible bugs found) -
+`robertdebock.modprobe`: byte-identical on both engines. Cold pass `ok=5
+changed=1 failed=0` on both, warm rerun `ok=5 changed=0 failed=0` on both
+(fully idempotent). `br_netfilter`/`overlay` kernel modules loaded
+identically (`lsmod` output byte-identical) on both, verified live.
+
+---
+
 Round 121 (no version bump - zero crystal-ansible bugs found) -
 `robertdebock.gotop`: byte-identical on both engines. Cold pass `ok=4
 changed=1 failed=0` on both, warm rerun `ok=4 changed=0 failed=0` on both
