@@ -12,6 +12,14 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 108 (no version bump - zero crystal-ansible bugs found) -
+`robertdebock.packer`: byte-identical on both engines. Cold pass `ok=3
+changed=1 failed=0` on both, warm rerun `ok=3 changed=0 failed=0` on both
+(fully idempotent). `packer version` identical (`1.7.8`) on both, verified
+live.
+
+---
+
 Round 107 (0.9.417-0.9.418) - `robertdebock.hashicorp`: 2 real bugs found and
 fixed.
 

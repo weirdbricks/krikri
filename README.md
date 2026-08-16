@@ -293,6 +293,9 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **round 108, `robertdebock.packer`** (no version bump): zero bugs
+  found, byte-identical on both engines cold and warm, `packer
+  version` verified live.
 - **`0.9.417`-`0.9.418` - round 107, `robertdebock.hashicorp`**: 2
   bugs - `assert.cr`'s own standalone plugin binary never required
   `jinja_filters.cr`, so an `is regex(...)`/`is version(...)`/etc test
