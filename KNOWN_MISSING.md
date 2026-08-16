@@ -12,6 +12,22 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 106 (no version bump - documented, not fixed) - `robertdebock.openbao`:
+`ansible.builtin.rpm_key` remains unimplemented (same class as the
+`seport`/`seboolean`/`apache2_module` cosmetic-scope gaps from earlier
+rounds) - the role's own "Import OpenBao GPG key (dnf/dnf5/yum)" task is
+entirely missing from crystal-ansible's task list (real Ansible still lists
+it and shows a `skipping:` result for its `when: ansible_facts['pkg_mgr'] in
+["dnf","dnf5","yum"]` guard). Zero runtime impact on this round's Ubuntu
+hosts (the task never actually runs on either engine either way; `dnf`/`yum`
+tooling isn't available to test `rpm_key` for real). `ok=12 changed=5
+failed=0` identical cold, `ok=12 changed=0 failed=0` identical warm
+(idempotent) - only `skipped` differs (2 real vs 1 crystal), purely
+cosmetic. `openbao 2.5.0` byte-identical package/version on both, verified
+live.
+
+---
+
 Round 105 (no version bump - zero crystal-ansible bugs found) -
 `robertdebock.docker_compose`: byte-identical on both engines. Cold pass
 `ok=4 changed=1 failed=0 skipped=2` on both, warm rerun `ok=4 changed=0

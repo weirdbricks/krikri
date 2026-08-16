@@ -293,6 +293,11 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **round 106, `robertdebock.openbao`** (no version bump, documented
+  not fixed): `ansible.builtin.rpm_key` remains unimplemented (same
+  cosmetic-scope gap class as `seboolean`/`seport`), zero runtime
+  impact on Ubuntu. `openbao 2.5.0` byte-identical on both, verified
+  live.
 - **round 105, `robertdebock.docker_compose`** (no version bump):
   zero bugs found, byte-identical on both engines cold and warm,
   `docker-compose --version` verified live.
