@@ -12,6 +12,21 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 72 (no version bump - zero crystal-ansible bugs found):
+`robertdebock.go` on a fresh `G3.2GB` Atlantic.net pair (downloads and
+unpacks the real Go 1.14.4 toolchain via `unarchive: remote_src: yes`).
+Identical on both engines (`ok=8 changed=3 failed=0 skipped=5` cold,
+`changed=0` warm both - fully idempotent), `go version` and
+`/etc/profile.d/go.sh`/`go.csh` byte-identical on both. One cosmetic-
+only warm-rerun count difference (`ok=7 skipped=6` real vs `ok=8
+skipped=5` crystal): `unarchive:`'s `creates:` guard already short-
+circuits before any real extraction work on both engines (`changed:
+false` either way, no wasted work) - only whether that's DISPLAYED as
+a `skipping:` banner vs a plain `ok:` differs, the same well-documented
+cosmetic-count class seen throughout this project's benchmark history.
+
+---
+
 Round 71 (0.9.402): `robertdebock.git` on a fresh `G3.2GB` Atlantic.net
 pair (`git_username: root`, cloning a real public repo). 1 real bug
 found and fixed: `getent:`'s own single-key lookup branch returned the
