@@ -12,6 +12,26 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 90 (no version bump - zero NEW crystal-ansible bugs found): `robertdebock.prosody`.
+Needs `community.crypto` collection installed for real `ansible-playbook` to even
+parse the playbook - its own `ssl.yml` (statically `import_tasks:`'d) references
+`community.crypto.x509_certificate` unconditionally, and real Ansible resolves
+every statically-imported module reference at PARSE time regardless of the
+task's own `when:` (here `prosody_https_enable`, default false - the task never
+actually runs either way). `community.crypto.x509_certificate` remains
+unimplemented in crystal-ansible (not new - same established "unresolvable
+module dropped with a yellow parse-warning, rest of the playbook still runs"
+design as every other unimplemented plugin, not something to change - see round
+75's `import_role` finding for the same class of behavior). Once the collection
+is installed on the real-Ansible host, both engines: `prosody` service `active`
+on both, `prosody.cfg.lua` content identical (only the expected per-host
+hostname/VirtualHost lines differ), fully idempotent warm rerun (`changed=0`
+both). One cosmetic difference not chased further: real Ansible's own "Configure
+prosody" task reports `changed: false` (Debian's own `prosody` package apparently
+auto-generates a matching stock config on fresh install) while crystal-ansible
+reports `changed: true` for the exact same resulting content - a `changed:`
+bookkeeping nuance, not a content divergence.
+
 Round 89 (0.9.408) - `robertdebock.systemd`: 1 real bug found and fixed in
 `ini_file.cr`. Real Ansible's `community.general.ini_file` defaults
 `modify_inactive_option: true` - a commented-out `#option=value` line counts as
