@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.407-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.408-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,12 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.408` - round 89, `robertdebock.systemd`**: `ini_file.cr` never
+  implemented real Ansible's `modify_inactive_option: true` default - a
+  commented-out `#option=value` line should count as a match and get
+  uncommented in place, not treated as absent; crystal-ansible always
+  appended a duplicate active line instead. Live-reverified to uncomment
+  in place identically to real Ansible.
 - **`0.9.407` - round 83, `robertdebock.keepalived`**: a handler notified
   by an earlier task still ran at the implicit end-of-play flush even
   after a LATER task failed and halted the host - `HandlerRunner#run`

@@ -8,9 +8,27 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.407`.**
+**Currently at `0.9.408`.**
 
 ---
+
+Round 89 (0.9.408) - `robertdebock.systemd`: 1 real bug found and fixed in
+`ini_file.cr`. Real Ansible's `community.general.ini_file` defaults
+`modify_inactive_option: true` - a commented-out `#option=value` line counts as
+a match and gets uncommented/replaced in place, not treated as absent.
+`ini_file.cr`'s own option-matching regex only ever looked at ACTIVE
+(non-commented) lines, so a role whose config template ships every option
+pre-listed but commented out (very common - journald.conf/logind.conf's own
+upstream defaults, exactly what `robertdebock.systemd`'s `systemd_journald:
+[{option: LineMax, value: 48k}]` hits) always appended a brand-new active line
+at the END of the section instead of uncommenting the existing one in place -
+real Ansible's `journald.conf` ends up with `LineMax = 48k` exactly where
+`#LineMax=48K` used to be; crystal-ansible's left the stale `#LineMax=48K`
+comment untouched AND appended a duplicate active line after it. Fixed by
+widening the option-matching regex to allow an optional leading `#`/`;`
+comment marker, mirroring real Ansible's own `match_opt` regex exactly. Live-
+reverified: journald.conf now uncomments in place identically to real Ansible,
+no duplicate line.
 
 Round 88 (no version bump - zero crystal-ansible bugs found): `robertdebock.tune2fs`
 (exercised with `tune2fs_settings: [{device: /dev/sda2, maximum_count_mount: -1}]`,

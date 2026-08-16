@@ -115,8 +115,22 @@ module CrystalPlay
       lines.size
     end
 
+    # Matches option lines the same way real Ansible's own `match_opt`
+    # does: an OPTIONAL leading `#`/`;` comment marker is allowed before
+    # the option name, since `modify_inactive_option` (default `true`)
+    # means a commented-out `#option=value` line counts as a match and
+    # gets uncommented/replaced in place, not treated as absent. Only
+    # bare-name matching used to look at active (non-commented) lines
+    # at all - `#LineMax=48K` never matched `option: LineMax`, so
+    # `matches.empty?` was always true for a role that ships its config
+    # template with every option pre-listed but commented out (very
+    # common, e.g. journald.conf/logind.conf's own upstream defaults) -
+    # crystal-ansible always appended a brand-new active line at the
+    # end of the section instead of uncommenting the existing one in
+    # place, unlike real Ansible. Found benchmarking robertdebock.
+    # systemd's own journald.conf `LineMax` setting.
     private def option_line_index?(line : String, option : String) : Bool
-      match = line.match(/^\s*([^=;#\s][^=]*?)\s*=/)
+      match = line.match(/^\s*[#;]?\s*([^=;#\s][^=]*?)\s*=/)
       return false unless match
       match[1].strip == option
     end

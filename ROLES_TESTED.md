@@ -8,6 +8,7 @@ or already-clean roles as if they were new.
 
 | Role | Status |
 |---|---|
+| robertdebock.systemd | ✅ Clean (round 89, 0.9.408). 1 real bug found and fixed: `ini_file.cr` never implemented real Ansible's `modify_inactive_option: true` default - a commented-out `#option=value` line should count as a match and get uncommented/replaced in place; crystal-ansible only ever matched active lines, so it appended a duplicate active line at the end of the section instead, leaving the stale commented line behind. Found via `systemd_journald: [{option: LineMax, value: 48k}]` against journald.conf's own upstream-commented defaults. Live-reverified: uncomments in place identically to real Ansible, no duplicate line. |
 | robertdebock.tune2fs | ✅ Clean (round 88, no version bump - zero crystal-ansible bugs found; exercised with a real `maximum_count_mount: -1` setting, default is a no-op empty list). Identical on both engines (`ok=5 changed=0 failed=0 skipped=1` cold and warm), `tune2fs -l`'s "Maximum mount count" identical on both. |
 | robertdebock.logwatch | ✅ Clean (round 87, no version bump - zero crystal-ansible bugs found). Identical on both engines (`ok=8 changed=2 failed=0 skipped=1` cold, `ok=8 changed=0 failed=0 skipped=1` warm - fully idempotent). |
 | robertdebock.sysstat | ✅ Clean (round 86, no version bump - zero crystal-ansible bugs found). Identical on both engines (`ok=4 changed=3 failed=0` cold, `ok=4 changed=0 failed=0` warm - fully idempotent), `sysstat` service `active` on both, config byte-identical. |

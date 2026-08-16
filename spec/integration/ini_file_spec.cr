@@ -27,6 +27,16 @@ describe "ini_file plugin" do
     File.read(path).should eq("\n[mysqld]\nport = 3306\n")
   end
 
+  it "uncomments and replaces an existing commented-out option line in place, matching real Ansible's modify_inactive_option default" do
+    path = tmp_path("ini_file-uncomment-option")
+    File.write(path, "[Journal]\n#Storage=auto\n#LineMax=48K\n#ReadKMsg=yes\n")
+
+    result = PluginSpecHelper.run("ini_file", {"path" => path, "section" => "Journal", "option" => "LineMax", "value" => "48k"})
+
+    result["changed"].as_bool.should be_true
+    File.read(path).should eq("[Journal]\n#Storage=auto\nLineMax = 48k\n#ReadKMsg=yes\n")
+  end
+
   it "adds an option to an existing section without disturbing others" do
     path = tmp_path("ini_file-add-option")
     File.write(path, "[mysqld]\nbind-address = 127.0.0.1\n")
