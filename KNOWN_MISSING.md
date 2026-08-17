@@ -8,7 +8,52 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.465`.**
+**Currently at `0.9.466`.**
+
+---
+
+Round 151 (`0.9.466`) - closes the second half of round 150's lookup
+gap: round 150's 5 new lookup types (`vars`/`file`/`pipe`/`template`/
+`password`) only reached `ExpressionEvaluator#evaluate_lookup` - the
+plain `{{ }}` task-param path. A real `.j2` template file calling
+`lookup(...)` directly went through Crinja instead, which had NO
+`lookup()` concept registered at all (not Ansible-specific to begin
+with - `lookup()` isn't a real Jinja2/Crinja builtin, it's an
+Ansible-only extension Ansible injects into its own Jinja2 environment,
+same category as `to_nice_yaml`/`password_hash`/`comment`, all already
+registered into Crinja's global library from this codebase's own
+`jinja_filters.cr` rather than by patching the vendored shard).
+
+New `Crinja.function({type: "", a1: Crinja::UNDEFINED, a2:
+Crinja::UNDEFINED}, :lookup)` in `jinja_filters.cr`, bringing 6 of the 8
+lookup types `ExpressionEvaluator` supports to `.j2` files:
+`env`/`vars`/`file`/`pipe`/`template`/`password`. Deliberately does NOT
+port `url`/`first_found` - both meaningfully more complex (a redirect-
+following HTTP fetch with `wantlist=` handling; a two-list-argument
+role-relative file search) and rare enough inside a `.j2` file
+specifically that porting them wasn't judged worth it yet - revisit if
+a real template actually needs one. Uses the declared-keyword-args
+registration form, not the plain block form - `arguments.varargs`
+doesn't reliably split multiple positional arguments for the plain
+form (documented at length next to the pre-existing `version` test's
+own identical fix).
+
+`role_path`-relative resolution for `file`/`template`/`password` reads
+`env.context["role_path"]` (`Crinja::Context` is a `ScopeMap`, no
+`[]?` - `undefined?` on the returned `Crinja::Value` is the correct
+"was it actually set" check, not a nil check). `lookup('template', ...)`
+renders the target `.j2` file through `env.from_string(...).render`
+using the SAME live environment/context the calling template is already
+running in, so the looked-up template correctly sees the calling
+template's own vars (verified: a `my_var` set only in the outer
+playbook's `vars:` was visible inside the looked-up file).
+
+New unit specs in `crinja_renderer_spec.cr` (6 examples, one per lookup
+type). Full suite green (1367 examples). Live-verified via a real
+`template:` task rendering a `.j2` file that exercises all 5 non-`env`
+lookup types together (a real controller-side text file for `file`, a
+real inline `.j2` fragment for `template`, a real shell command for
+`pipe`) - output matched exactly.
 
 ---
 

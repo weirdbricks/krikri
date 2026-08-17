@@ -1048,5 +1048,116 @@ module CrystalPlay
         false
       end
     end
+
+    # `lookup(type, arg1, ...)` - real Ansible's own Jinja global
+    # function, callable directly from a `.j2` template file (not just a
+    # bare `{{ }}` task param, the only path ExpressionEvaluator's own
+    # #evaluate_lookup covered before this). Was entirely unregistered
+    # in Crinja before - "no function with name \"lookup\"", failing the
+    # whole template render.
+    #
+    # Mirrors 6 of ExpressionEvaluator#evaluate_lookup's 8 lookup types
+    # (env/vars/file/pipe/template/password) - deliberately NOT
+    # url/first_found, both meaningfully more complex (a redirect-
+    # following HTTP fetch with wantlist= handling; a two-list-argument
+    # role-relative file search) and rare enough inside a real `.j2`
+    # file specifically (as opposed to a task param, where
+    # ExpressionEvaluator already covers them) that porting them here
+    # wasn't judged worth the added surface - revisit if a real template
+    # actually needs one.
+    #
+    # Declared keyword-args form (`Crinja.function({...}, :lookup)`), not
+    # the plain block form - found the hard way (see the `version` test
+    # above's own comment) that `arguments.varargs` for the plain form
+    # doesn't reliably split multiple positional arguments into separate
+    # entries.
+    Crinja.function({type: "", a1: Crinja::UNDEFINED, a2: Crinja::UNDEFINED}, :lookup) do
+      lookup_type = arguments["type"].to_s
+      arg1 = arguments["a1"]
+      role_path_value = env.context["role_path"]
+      role_path = role_path_value.undefined? ? nil : role_path_value.to_s
+
+      case lookup_type
+      when "env"
+        var_name = arg1.to_s
+        Crinja::Value.new(var_name.empty? ? "" : (ENV[var_name]? || ""))
+      when "vars"
+        name = arg1.to_s
+        name.empty? ? Crinja::Value.new(nil) : env.context[name]
+      when "file"
+        path = arg1.to_s
+        resolved = JinjaFilters.resolve_lookup_path(path, role_path)
+        begin
+          Crinja::Value.new(File.read(resolved).chomp)
+        rescue
+          Crinja::Value.new(nil)
+        end
+      when "pipe"
+        command = arg1.to_s
+        begin
+          output = IO::Memory.new
+          status = Process.run("/bin/sh", ["-c", command], output: output, error: Process::Redirect::Close)
+          status.success? ? Crinja::Value.new(output.to_s.chomp) : Crinja::Value.new(nil)
+        rescue
+          Crinja::Value.new(nil)
+        end
+      when "template"
+        path = arg1.to_s
+        resolved = JinjaFilters.resolve_lookup_path(path, role_path)
+        begin
+          Crinja::Value.new(env.from_string(File.read(resolved)).render.chomp)
+        rescue
+          Crinja::Value.new(nil)
+        end
+      when "password"
+        raw_arg = arg1.to_s
+        Crinja::Value.new(JinjaFilters.password_lookup(raw_arg, role_path))
+      else
+        Crinja::Value.new(nil)
+      end
+    end
+
+    # lookup('file'|'template', path) both name a CONTROLLER-side path
+    # that - inside a role - is conventionally relative to the role's
+    # own files/ dir (real Ansible's own behavior). An absolute path, or
+    # a relative one outside any role context, passes through unchanged.
+    # Same logic as ExpressionEvaluator's own #resolve_lookup_path,
+    # duplicated rather than shared - see this file's own top-of-file
+    # comment on why the two evaluators don't share implementation.
+    def self.resolve_lookup_path(path : String, role_path : String?) : String
+      return path if path.starts_with?('/')
+      role_path ? File.join(role_path, "files", path) : path
+    end
+
+    PASSWORD_CHARS  = ("a".."z").to_a + ("A".."Z").to_a + ("0".."9").to_a + [".", ",", ":", "-", "_"]
+    PASSWORD_LENGTH = 20
+
+    # lookup('password', 'path [length=N]') - generates a random
+    # password ONCE and persists it to *path* (real Ansible's own
+    # behavior: a later run/lookup reads the same file back rather than
+    # generating a new value every time). Same logic as
+    # ExpressionEvaluator's own #evaluate_password_lookup.
+    def self.password_lookup(raw_arg : String, role_path : String?) : String
+      tokens = raw_arg.strip.split(/\s+/)
+      path = tokens[0]?
+      return "" unless path
+      resolved_path = resolve_lookup_path(path, role_path)
+
+      length = PASSWORD_LENGTH
+      tokens[1..].each do |token|
+        length = token[7..].to_i? || length if token.starts_with?("length=")
+      end
+
+      return File.read(resolved_path).chomp if File.exists?(resolved_path)
+
+      password = Array.new(length) { PASSWORD_CHARS.sample }.join
+      begin
+        dir = File.dirname(resolved_path)
+        Dir.mkdir_p(dir) unless Dir.exists?(dir)
+        File.write(resolved_path, password + "\n")
+      rescue
+      end
+      password
+    end
   end
 end

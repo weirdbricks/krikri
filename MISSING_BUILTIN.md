@@ -17,9 +17,8 @@ live-verification notes.
 
 This module-level list is now fully closed. The next layer of gaps - the
 much larger Jinja2 filter/test/lookup surface used inside `{{ }}`
-expressions rather than task modules - is tracked separately (see the
-filter/test/lookup audit results from this same session; write-up
-pending in a follow-on file).
+expressions rather than task modules - is tracked below, in this same
+file.
 
 1. **`script`** (done, `0.9.463`) - transfers a local (controller-side) script to the target
    and executes it. Common in bootstrap/init tasks across many roles. Needs
@@ -115,12 +114,17 @@ focused on gaps, not the full reference list.
 
 **Lookups** - biggest gap of the three. `env`, `url`, `first_found`
 existed already; `vars`, `file`, `pipe`, `template`, `password` done
-(`0.9.465`, `ExpressionEvaluator#evaluate_lookup` only - the plain `{{ }}`
-task-param path; a `.j2` template file calling `lookup(...)` directly
-remains unsupported, Crinja has no `lookup` global function registered
-at all, a separate, still-open gap). Still missing: `config`, `csvfile`,
-`dict`, `indexed_items`, `ini`, `inventory_hostnames`, `items`, `lines`,
-`list`, `nested`, `random_choice`, `sequence`, `subelements`, `together`,
+(`0.9.465`, `ExpressionEvaluator#evaluate_lookup` - the plain `{{ }}`
+task-param path). `0.9.466` closed the second half of that gap: a new
+`Crinja.function(:lookup)` in `jinja_filters.cr` brings the SAME 6 types
+(`env`/`vars`/`file`/`pipe`/`template`/`password`, deliberately not
+`url`/`first_found` - meaningfully more complex and rare enough inside a
+`.j2` file specifically that porting them wasn't judged worth it yet) to
+real `.j2` template files too - `lookup(...)` called directly inside a
+template previously failed the whole render ("no function with name
+\"lookup\""). Still missing (both paths): `config`, `csvfile`, `dict`,
+`indexed_items`, `ini`, `inventory_hostnames`, `items`, `lines`, `list`,
+`nested`, `random_choice`, `sequence`, `subelements`, `together`,
 `unvault`, `varnames`.
 
 **Filters** - `b64encode`/`b64decode`/`from_json`/`from_yaml`/`to_yaml`/
@@ -166,9 +170,12 @@ implementation/verification detail): `lookup('vars', ...)`,
 `union`/`checksum` were cheap once `b64encode`'s registration pattern
 was in place). Live-verified via a real playbook run (all 5 lookups +
 6 filters/tests exercised together, `crystal spec` 1361 examples green).
-The remaining long tail (everything else in the missing lists above)
-stays open, revisited if a live benchmark round actually hits one -
-`lookup('vars'/'file'/'pipe'/'template'/'password', ...)` inside a real
-`.j2` template file (as opposed to a task param) is the one gap from
-this pass most likely to actually surface that way, since Crinja has no
-`lookup()` global function registered at all yet.
+`0.9.466` done: `Crinja.function(:lookup)` in `jinja_filters.cr`, bringing
+`env`/`vars`/`file`/`pipe`/`template`/`password` lookup support to real
+`.j2` template files (previously `.j2`-only path had ZERO lookup types
+at all - `lookup(...)` failed the whole render regardless of type).
+Live-verified via a real `template:` task rendering a `.j2` file that
+uses all 5 non-`env` lookup types together. The remaining long tail
+(everything else in the missing lists above, plus `url`/`first_found`
+inside a `.j2` file specifically) stays open, revisited if a live
+benchmark round actually hits one.

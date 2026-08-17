@@ -384,6 +384,65 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     renderer.render(%({% if big is contains("z") %}yes{% else %}no{% endif %})).should eq("no")
   end
 
+  it "renders lookup('env', ...) in a real .j2 template" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    ENV["CRYSTAL_ANSIBLE_SPEC_CRINJA_LOOKUP_ENV"] = "hello"
+    renderer.render(%({{ lookup('env', 'CRYSTAL_ANSIBLE_SPEC_CRINJA_LOOKUP_ENV') }})).should eq("hello")
+    ENV.delete("CRYSTAL_ANSIBLE_SPEC_CRINJA_LOOKUP_ENV")
+  end
+
+  it "renders lookup('vars', name) as an indirect variable lookup" do
+    v = Hash(String, JSON::Any).new
+    v["env_prod_port"] = JSON::Any.new(8080_i64)
+    v["target_env"] = JSON::Any.new("prod")
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render(%({{ lookup('vars', 'env_' + target_env + '_port') }})).should eq("8080")
+  end
+
+  it "renders lookup('file', path) reading a controller-side file" do
+    path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "crinja_lookup_file_test.txt")
+    Dir.mkdir_p(File.dirname(path))
+    File.write(path, "secret-content\n")
+
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ lookup('file', '#{path}') }})).should eq("secret-content")
+  end
+
+  it "renders lookup('pipe', command) running a local shell command" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ lookup('pipe', 'echo hello-from-pipe') }})).should eq("hello-from-pipe")
+  end
+
+  it "renders lookup('template', path) rendering a local .j2 file against the calling template's own vars" do
+    path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "crinja_lookup_template_test.j2")
+    Dir.mkdir_p(File.dirname(path))
+    File.write(path, "value is {{ my_var }}\n")
+
+    v = Hash(String, JSON::Any).new
+    v["my_var"] = JSON::Any.new("computed")
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ lookup('template', '#{path}') }})).should eq("value is computed")
+  end
+
+  it "renders lookup('password', path) generating and persisting a password across renders" do
+    path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "crinja_lookup_password_test.txt")
+    File.delete(path) if File.exists?(path)
+
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    first = renderer.render(%({{ lookup('password', '#{path} length=8') }}))
+    first.size.should eq(8)
+
+    second = renderer.render(%({{ lookup('password', '#{path} length=8') }}))
+    second.should eq(first)
+    File.delete(path)
+  end
+
   it "type_debug returns Python's own type name" do
     # Real bug found benchmarking robertdebock.httpd's own assert.yml:
     # `httpd_additionnal_modules | type_debug == "list"` - entirely

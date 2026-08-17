@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.465-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.466-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -297,6 +297,14 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.466` - `lookup()` in real `.j2` template files (not a
+  benchmark round)**: `0.9.465`'s new lookup types only reached the
+  plain `{{ }}` task-param path; a `.j2` file calling `lookup(...)`
+  directly had no support at all (Crinja has no native `lookup()`
+  concept - it's an Ansible-only extension, same category as
+  `to_nice_yaml`/`password_hash`). New `Crinja.function(:lookup)`
+  brings `env`/`vars`/`file`/`pipe`/`template`/`password` to `.j2`
+  files too. See `KNOWN_MISSING.md`.
 - **`0.9.465` - filter/test/lookup gap-closing pass (not a benchmark
   round)**: this layer (Jinja2 filters/tests/lookups used inside
   `{{ }}` expressions, not task modules) turned out to have a much
