@@ -15,6 +15,7 @@ require "../async_jobs"
 require "../task_batcher"
 require "../batch_script"
 require "../ssh_manager"
+require "../custom_stats"
 require "random/secure"
 
 module CrystalPlay
@@ -2061,6 +2062,16 @@ module CrystalPlay
         return apply_changed_failed_when(task, result, vars_context, host)
       end
 
+      if task.module_name == "ansible.builtin.group_by"
+        result = execute_group_by(substituted_params, host)
+        return apply_changed_failed_when(task, result, vars_context, host)
+      end
+
+      if task.module_name == "ansible.builtin.set_stats"
+        result = execute_set_stats(substituted_params, host, vars_context)
+        return apply_changed_failed_when(task, result, vars_context, host)
+      end
+
       substituted_params = resolve_role_relative_src(task, substituted_params)
       substituted_params = inline_copy_source_content(task, substituted_params, exec_host, vars_context)
       substituted_params = stage_unarchive_remote_src(task, substituted_params, exec_host, vars_context)
@@ -2239,6 +2250,75 @@ module CrystalPlay
     # false, failed: true) - rebooting the controller process's own
     # machine out from under itself has no safe/sane implementation here
     # and real Ansible's own module warns heavily against it too.
+    # group_by: - like reboot:, has no uploaded plugin binary at all
+    # (listed in AVAILABLE_PLUGINS purely so the task isn't dropped at
+    # parse time as "Plugin not available"). Real Ansible implements it
+    # as an action plugin that mutates the live inventory rather than
+    # running anything on the target - mirrored here by mutating the
+    # shared Inventory instance crystal-play.cr passes to every play's
+    # TaskExecutor (the SAME object across the whole per-play loop, not
+    # a copy - a later play's `hosts:` pattern lookup sees whatever
+    # group membership an earlier play's group_by: task added). `key:`
+    # may itself be comma-separated (a rarely-used real Ansible feature:
+    # one task adding the host to several groups at once); `parents:` is
+    # accepted and recorded via HostGroup#add_child for completeness,
+    # though this codebase's own Inventory#get_hosts never actually
+    # walks group hierarchy (only exact group-name matches), so it's
+    # inert beyond documentation today - same limitation static
+    # inventory group parent/child nesting already has here.
+    private def execute_group_by(params : Hash(String, String), host : Host) : JSON::Any
+      key = params["key"]?
+      if key.nil? || key.empty?
+        return JSON.parse({"changed" => false, "failed" => true, "msg" => "missing required argument: key"}.to_json)
+      end
+
+      inventory = @inventory
+      unless inventory
+        return JSON.parse({"changed" => false, "failed" => true, "msg" => "group_by: no inventory available in this context"}.to_json)
+      end
+
+      group_names = key.split(",").map(&.strip).reject(&.empty?)
+      parent_names = params["parents"]?.try(&.split(",").map(&.strip).reject(&.empty?)) || [] of String
+
+      changed = false
+      group_names.each do |group_name|
+        group = inventory.get_or_create_group(group_name)
+        unless group.hosts.has_key?(host.name)
+          group.add_host(host)
+          changed = true
+        end
+        parent_names.each { |parent_name| inventory.get_or_create_group(parent_name).add_child(group_name) }
+      end
+
+      JSON.parse({"changed" => changed, "failed" => false, "msg" => "", "groups" => group_names}.to_json)
+    end
+
+    # set_stats: - same "no uploaded plugin binary" category as
+    # group_by:/reboot: above. Writes into CustomStats (a process-wide
+    # accumulator, not scoped to this TaskExecutor instance - real
+    # Ansible's own custom-stats block covers the WHOLE run, and
+    # crystal-play.cr constructs a fresh TaskExecutor per play).
+    private def execute_set_stats(params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : JSON::Any
+      data_json = params["data"]?
+      if data_json.nil? || data_json.empty?
+        return JSON.parse({"changed" => false, "failed" => true, "msg" => "missing required argument: data"}.to_json)
+      end
+
+      data = JSON.parse(data_json) rescue nil
+      unless data && data.as_h?
+        return JSON.parse({"changed" => false, "failed" => true, "msg" => "data must be a dictionary of stat name -> value"}.to_json)
+      end
+
+      aggregate = !["false", "no", "0", "off"].includes?(params["aggregate"]?.try(&.downcase))
+      per_host = ["true", "yes", "1", "on"].includes?(params["per_host"]?.try(&.downcase))
+
+      data.as_h.each do |key, value|
+        CustomStats.set(key, value, aggregate, host.name, per_host)
+      end
+
+      JSON.parse({"changed" => false, "failed" => false, "msg" => ""}.to_json)
+    end
+
     private def execute_reboot(params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any)) : JSON::Any
       return JSON.parse({"changed" => true, "failed" => false, "msg" => "Would have rebooted"}.to_json) if @check_mode
 

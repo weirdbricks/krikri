@@ -8,7 +8,96 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.463`.**
+**Currently at `0.9.464`.**
+
+---
+
+Round 149 (`0.9.464`) - continuation of the `ansible.builtin` gap-closing
+pass (not a benchmark round). Closes the remaining 5 ranked items from
+`MISSING_BUILTIN.md`:
+
+1. **`group_by`** - like `reboot:`, has no `plugins/*.cr` binary at all;
+   real Ansible implements it as a controller-side action plugin that
+   mutates the live inventory, mirrored here via a new
+   `TaskExecutor#execute_group_by` mutating the SAME shared `Inventory`
+   instance every play's `TaskExecutor` gets constructed with -
+   `crystal-play.cr`'s per-play loop re-resolves `hosts:` against that
+   one shared object every iteration, so a later play's `hosts:
+   <group_by-created-group>` correctly sees the new membership.
+   `parents:` is accepted and recorded but inert beyond documentation -
+   this codebase's own `Inventory#get_hosts` never walks group
+   hierarchy, only exact name matches, a pre-existing limitation.
+2. **`set_stats`** - same "no plugin binary" category. New
+   `CustomStats` module (`src/crystal_play/custom_stats.cr`) - a
+   process-wide accumulator, not scoped to one `TaskExecutor` instance,
+   since the custom-stats block covers the WHOLE run across every
+   play. `aggregate: true` (the default) sums numeric values across
+   repeated `set_stats:` calls under the same key; `per_host: true`
+   buckets separately per host. Printed as a new `CUSTOM STATS:` block
+   in `crystal-play.cr` after `PLAY RECAP`, unconditionally when
+   non-empty (real Ansible gates this behind `show_custom_stats` in
+   `ansible.cfg`, off by default - this codebase has no `ansible.cfg`
+   parsing for that specific option).
+3. **`dpkg_selections`** - new `plugins/dpkg_selections.cr`, shells to
+   real `dpkg --get-selections`/`--set-selections` (same approach real
+   Ansible's own module takes).
+4. **`subversion`** - new `plugins/subversion.cr`, shells to real
+   `svn checkout`/`update`/`info` (mirrors `git.cr`'s own structure -
+   revision-based idempotency, `force:` reverts local mods first).
+5. **`expect`** - new `plugins/expect.cr`. No pexpect equivalent exists
+   for Crystal, so this talks to the kernel pty layer directly via
+   `openpty(3)` (glibc, `-lutil`) rather than shelling out to a
+   separate `expect(1)` binary. Two real bugs found and fixed while
+   getting this working, both via direct manual testing (a pty-
+   interactive module doesn't lend itself to the same kind of unit
+   spec as a one-shot plugin, though the timeout/multi-prompt/exit-
+   code paths do have specs - see `spec/integration/expect_spec.cr`):
+   - `IO::FileDescriptor#read_timeout=` only has an effect when the fd
+     was opened with `blocking: false` (engages Crystal's evented
+     reactor); with `blocking: true`, a `read_timeout=` deadline is
+     silently accepted but never enforced at all - a `sleep 5` command
+     given `timeout: 1` blocked for the full 5 real seconds instead of
+     giving up after 1. Then, going the other way, `blocking: false`
+     writes onto the pty master silently went nowhere (no exception,
+     but the child's `read -p` never saw the response) - rather than
+     chase that gap further, settled on raw `poll(2)` + a plain
+     OS-blocking `read()`/`write()` via direct `LibC` bindings for
+     this fd pair, sidestepping Crystal's evented-IO layer entirely.
+   - A response is only ever sent once per pattern, not once per
+     buffer-length snapshot - the first version re-triggered on the
+     pty's own canonical-mode echo of whatever was just written
+     (which extends the accumulated buffer, and a substring pattern
+     match stays true forever once it first appears), sending the
+     same response in a tight loop until the deadline. Real Ansible's
+     list-of-responses feature (cycling answers across a prompt that
+     legitimately repeats) isn't supported for the same reason - only
+     a list's first entry is ever used, documented in the plugin.
+   Known, documented limitation: the child is never made a session
+   leader (no `setsid()`/`TIOCSCTTY`), so job-control signals don't
+   behave exactly like a real interactive shell session would;
+   `echo: false` (termios-level "don't echo the typed response back",
+   for passwords) isn't implemented either - a cosmetic-only gap.
+
+Live-verified end-to-end over real SSH against a throwaway Docker/
+Ubuntu-22.04 container (a second one, separate from round 148's - real
+`svn`/`dpkg` state, not just filesystem/SSH-command behavior): `svn`
+checkout + idempotent rerun against a real local `svnadmin`-created repo;
+`dpkg_selections` hold + idempotent rerun verified against real
+`dpkg --get-selections` output; `expect` answering a real interactive
+`read -p` prompt over a genuinely remote pty (not just the local-
+connection case already covered by unit specs). `group_by`/`set_stats`
+verified locally via a 2-play playbook (second play's `hosts:` pattern
+targeting the group `group_by:` created in the first play; `set_stats`
+aggregate summing confirmed in the printed `CUSTOM STATS:` block).
+
+This closes `MISSING_BUILTIN.md`'s module-level list entirely (all 10
+items done). Next candidate layer, from a background audit run this same
+session: the much larger Jinja2 filter/test/lookup surface (used inside
+`{{ }}` expressions, not task modules) - only 3 of 25 real `lookup(...)`
+plugins are implemented (`env`, `url`, `first_found`), and roughly a
+third of real filters/tests are missing (`b64encode`/`b64decode`,
+`to_yaml`, `union`, `is subset`/`superset`, etc.) - not yet written up
+into a tracking file.
 
 ---
 

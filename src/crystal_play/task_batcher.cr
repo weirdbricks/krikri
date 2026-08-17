@@ -96,7 +96,13 @@ module CrystalPlay
       structural_or_dynamic?(task) || needs_controller_control_flow?(task) ||
         !!task.delegate_to || !!task.connection || task.run_once || retroactive_verdict?(task) ||
         produces_ansible_facts?(task) || runs_as_action_plugin?(task) ||
-        reconfigures_firewall?(task) || task.module_name == "ansible.builtin.reboot"
+        reconfigures_firewall?(task) ||
+        # group_by:/set_stats: - same category as reboot: above: no
+        # uploaded plugin binary at all, handled entirely controller-side
+        # (group_by: mutates the shared Inventory; set_stats: writes into
+        # a controller-side accumulator for the final recap) - neither
+        # can run as a remote batch script step.
+        {"ansible.builtin.reboot", "ansible.builtin.group_by", "ansible.builtin.set_stats"}.includes?(task.module_name)
     end
 
     # ufw: (community.general.ufw) applies live firewall rules - real

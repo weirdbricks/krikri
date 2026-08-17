@@ -505,6 +505,16 @@ module CrystalPlay
       "ansible.builtin.assemble",
       "ansible.builtin.tempfile",
       "ansible.builtin.known_hosts",
+      # group_by:/set_stats: - no plugins/*.cr binary at all, same as
+      # ansible.builtin.reboot above (see TaskExecutor#execute_group_by/
+      # #execute_set_stats's own comments for why - both are handled
+      # entirely controller-side). Listed here only so the task isn't
+      # silently dropped at parse time as "Plugin not available".
+      "ansible.builtin.group_by",
+      "ansible.builtin.set_stats",
+      "ansible.builtin.dpkg_selections",
+      "ansible.builtin.subversion",
+      "ansible.builtin.expect",
     }
 
     # The collections a bare (non-FQCN) module name resolves against, in

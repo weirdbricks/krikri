@@ -11,11 +11,15 @@ are excluded here. `mount_facts` is also excluded - already covered inside
 excluded - deliberately handled controller-side in `TaskExecutor#execute_reboot`
 rather than as an uploaded plugin binary (see that method's comment).
 
-**Status (`0.9.463`): items 1-5 below are done** - see `KNOWN_MISSING.md`
-round 148 for implementation detail and live-verification notes. Items
-6-10 remain open, ranked by expected impact on the real-host benchmark
-rounds this project runs against actual Ansible roles/collections; revisit
-if one of them actually surfaces in a live round rather than proactively.
+**Status (`0.9.464`): all 10 items below are done** - see `KNOWN_MISSING.md`
+rounds 148 (items 1-5) and 149 (items 6-10) for implementation detail and
+live-verification notes.
+
+This module-level list is now fully closed. The next layer of gaps - the
+much larger Jinja2 filter/test/lookup surface used inside `{{ }}`
+expressions rather than task modules - is tracked separately (see the
+filter/test/lookup audit results from this same session; write-up
+pending in a follow-on file).
 
 1. **`script`** (done, `0.9.463`) - transfers a local (controller-side) script to the target
    and executes it. Common in bootstrap/init tasks across many roles. Needs
@@ -52,26 +56,26 @@ if one of them actually surfaces in a live round rather than proactively.
    available" instead. Cheap once recognized: reuse the `shell` plugin
    binary/executor path, don't build a new one.
 
-6. **`group_by`** - dynamically creates inventory groups based on facts,
+6. **`group_by`** (done, `0.9.464`) - dynamically creates inventory groups based on facts,
    mid-play. Lower priority for this project - relevant to complex
    multi-host orchestration playbooks, but the benchmark-round workflow
    here mostly tests single-role plays against 1-2 hosts, where `group_by:`
    rarely appears.
 
-7. **`set_stats`** - sets custom values shown in the playbook stats/recap.
+7. **`set_stats`** (done, `0.9.464`) - sets custom values shown in the playbook stats/recap.
    Purely a reporting feature, never affects a role's actual converged
    state - low priority for a correctness-focused benchmark harness.
 
-8. **`dpkg_selections`** - sets a package's dpkg selection state (e.g.
+8. **`dpkg_selections`** (done, `0.9.464`) - sets a package's dpkg selection state (e.g.
    `hold`). Niche; only shows up in roles that explicitly pin/hold Debian
    packages outside of `apt`'s own more common approach.
 
-9. **`expect`** - automates interactive prompts (pty-based). Real
+9. **`expect`** (done, `0.9.464`) - automates interactive prompts (pty-based). Real
    implementation cost is high (pty handling, timeout/response matching)
    for a module that appears rarely in the roles this project benchmarks
    against.
 
-10. **`subversion`** - checks out an SVN working copy. SVN itself is
+10. **`subversion`** (done, `0.9.464`) - checks out an SVN working copy. SVN itself is
     largely extinct in the roles this project has encountered (round 16's
     "svn" mention was a package-swap test, not this module) - lowest
     priority.
@@ -85,5 +89,5 @@ internal feature, `role_loader.cr`/`executor.cr`).
 
 ## Plan
 
-Items 1-5 done (`0.9.463`). Revisit 6-10 if one actually surfaces in a
-live benchmark round rather than proactively.
+All 10 items done (`0.9.463`-`0.9.464`). Next: the filter/test/lookup
+audit's findings (see `KNOWN_MISSING.md` round 149's closing note).

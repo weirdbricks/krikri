@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.463-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.464-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -17,7 +17,7 @@ compiled binary plus a directory of plugin binaries. It supports:
 - **Ansible-syntax playbooks** - roles, imports/includes, blocks, loops,
   handlers, vault, `become:`, Jinja2 templating - not just a handful of
   modules bolted onto a task runner
-- **84 built-in plugins** covering package/service/file management, users
+- **87 built-in plugins** covering package/service/file management, users
   and groups, Docker, MySQL/MariaDB, PostgreSQL, firewalls, archives,
   SELinux/PAM, hostname management and more (see below)
 - **Single binary deployment** - no dependencies, no Python required on
@@ -297,6 +297,16 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.464` - `ansible.builtin` gap-closing pass, part 2 (not a
+  benchmark round)**: closed the remaining 5 ranked items from
+  `MISSING_BUILTIN.md` - `group_by`/`set_stats` (controller-side only,
+  no plugin binary, mirrors how `reboot:` is handled), `dpkg_selections`,
+  `subversion`, and `expect` (a real pty via `openpty(3)` + raw
+  `poll(2)`/`read`/`write` `LibC` bindings - no pexpect equivalent
+  exists for Crystal). `MISSING_BUILTIN.md`'s module-level list is now
+  fully closed. Live-verified over real SSH against Docker containers
+  (real `svn`/`dpkg` state, a genuinely remote pty for `expect`) plus a
+  local 2-play `group_by`/`set_stats` run. See `KNOWN_MISSING.md`.
 - **`0.9.463` - `ansible.builtin` gap-closing pass (not a benchmark
   round)**: systematic audit of the full `ansible.builtin` collection
   module list against `AVAILABLE_PLUGINS`, tracked in

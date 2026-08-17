@@ -263,6 +263,9 @@ PLUGINS=(
     "assemble"
     "tempfile"
     "known_hosts"
+    "dpkg_selections"
+    "subversion"
+    "expect"
 )
 
 PLUGIN_COUNT=0

@@ -420,6 +420,23 @@ CrystalPlay::ResultDisplay.show_recap(all_hosts.uniq { |h| h.name }, combined_re
 
 puts ""
 
+# set_stats: custom stats block - real ansible-playbook only prints this
+# when show_custom_stats is enabled in ansible.cfg (off by default); this
+# codebase has no ansible.cfg parsing for that specific option, so it's
+# shown unconditionally whenever a task actually set anything (empty
+# otherwise, matching the "off" default's visible behavior for every
+# playbook that never used set_stats: at all).
+if CrystalPlay::CustomStats.any?
+  puts "CUSTOM STATS: ".colorize(:cyan).bold
+  unless CrystalPlay::CustomStats.global.empty?
+    puts "\t#{CrystalPlay::CustomStats.global.to_json}"
+  end
+  CrystalPlay::CustomStats.per_host_data.each do |host_name, stats|
+    puts "\t#{host_name}: #{stats.to_json}"
+  end
+  puts ""
+end
+
 any_failed = combined_results.values.any? { |host_stats| (host_stats["failed"]? || 0) > 0 }
 
 if check_mode
