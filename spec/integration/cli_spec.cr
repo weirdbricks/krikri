@@ -938,6 +938,33 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("handler fired")
   end
 
+  it "parses connection: on a task separately from delegate_to:, and exposes it as ansible_connection for that task" do
+    # Regression: `connection:` (distinct from delegate_to: - it changes
+    # HOW the task's module runs, not WHICH host's vars/facts apply) was
+    # never parsed at all, so it had no effect - robertdebock.backup's
+    # own "Create backup_directory" (writes to the controller's
+    # filesystem via connection: local, no delegate_to:) silently ran
+    # against the real remote target instead, live-reverified fixed on
+    # a real Atlantic.net host pair (round 136). Both hosts here are
+    # already local-connection either way, so this only proves
+    # connection: local is parsed and threaded into the task's own
+    # ansible_connection - not that it overrides an otherwise-remote
+    # host, which would need a real second SSH-reachable target this
+    # spec suite doesn't have (PluginManager's own eager per-play
+    # plugin pre-upload pass - see its comment in plugin_manager.cr -
+    # is scoped to hosts:, not individual tasks:, so a synthetic
+    # unreachable host hangs there before ever reaching this task,
+    # regardless of the override).
+    status, output = run_playbook(
+      "test-connection-local-quick.yml",
+      [] of String,
+      inventory: TWO_LOCAL_HOSTS_INVENTORY
+    )
+
+    status.success?.should be_true
+    output.should contain("connection is local")
+  end
+
   it "exits non-zero and reports the error for an invalid playbook" do
     Dir.mkdir_p(File.join(PROJECT_ROOT, "spec", "tmp"))
     bad_playbook = File.join(PROJECT_ROOT, "spec", "tmp", "invalid.yml")

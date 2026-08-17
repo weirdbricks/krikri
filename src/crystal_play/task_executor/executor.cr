@@ -915,6 +915,22 @@ module CrystalPlay
 
       render_task_vars(task, vars_context, host.name)
 
+      # connection: local (or any other connection: override) on this
+      # ONE task - independent of delegate_to:, which changes which
+      # host's vars/facts apply rather than how the module runs. Every
+      # local-vs-remote decision (PluginManager.is_local_connection?/
+      # .remote_execution?, LocalExecutor vs SSHManager dispatch) reads
+      # ansible_connection out of vars_context, so overriding it here
+      # takes effect for this task's own dispatch without mutating the
+      # host's own persistent vars. Previously entirely unparsed -
+      # `connection: local` silently had no effect, running the task's
+      # module against the real target over SSH instead of locally on
+      # the controller. Found via robertdebock.backup's own "Create
+      # backup_directory" task.
+      if task_connection = task.connection
+        vars_context["ansible_connection"] = JSON::Any.new(task_connection)
+      end
+
       vars_context
     end
 

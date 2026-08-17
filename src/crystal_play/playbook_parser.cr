@@ -105,6 +105,15 @@ module CrystalPlay
     # host. May be templated ({{ vars }}), so kept as a raw string and
     # resolved at execution time (same reasoning as include_file).
     property delegate_to : String?
+    # connection: - overrides the connection plugin for just this task
+    # (almost always "local"), independent of delegate_to: - it changes
+    # HOW the task's module runs (locally on the controller vs. over
+    # SSH), not WHICH host's vars/facts/register apply (that's still
+    # delegate_to:'s job). robertdebock.backup's own "Create backup_
+    # directory" (writes to the controller's filesystem while still
+    # being attributed to the current host's own inventory_hostname)
+    # uses exactly this combination: connection: local, no delegate_to:.
+    property connection : String?
     # delegate_facts: - when true alongside delegate_to:, a module's
     # returned ansible_facts (set_fact:, fact-gathering modules) attach to
     # the delegate_to: target's own hostvars instead of the delegating
@@ -892,7 +901,7 @@ module CrystalPlay
                       "diff", "become", "become_user", "tags", "args", "listen", "with_items", "loop",
                       "with_dict", "with_fileglob", "with_first_found", "with_nested", "with_sequence",
                       "with_flattened", "with_community.general.flattened", "with_subelements", "with_indexed_items", "until", "retries", "delay",
-                      "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "delegate_facts", "run_once",
+                      "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "delegate_facts", "run_once", "connection",
                       "async", "poll", "vars", "environment",
                       "block", "rescue", "always", "import_tasks", "include_tasks", "include_role",
                       "import_role", "meta", "include_vars"]
@@ -1100,6 +1109,7 @@ module CrystalPlay
 
       # Parse delegate_to / run_once
       task.delegate_to = task_hash["delegate_to"]?.try { |v| safe_yaml_to_string(v) }
+      task.connection = task_hash["connection"]?.try { |v| safe_yaml_to_string(v) }
       task.delegate_facts = task_hash["delegate_facts"]?.try(&.as_bool) || false
       task.run_once = task_hash["run_once"]?.try(&.as_bool) || false
 

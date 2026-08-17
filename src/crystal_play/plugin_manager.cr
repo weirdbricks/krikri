@@ -96,7 +96,26 @@ module CrystalPlay
         hosts = inventory.get_hosts(play.hosts.to_s)
 
         hosts.each do |host|
-          # Skip localhost
+          # Skip localhost. Checked against the HOST's own inventory
+          # vars only, not any individual task's connection: override -
+          # this pass runs once per play, before any task is even
+          # looked at, aggregating every module the whole play might
+          # need against every host. A play whose ONLY use of some
+          # module is via a task-level `connection: local` override
+          # (see Task#connection / TaskExecutor#build_vars_context)
+          # still eagerly uploads that module to the real remote host
+          # here, unnecessarily - harmless when the host is actually
+          # reachable (the per-task dispatch still correctly runs
+          # locally once execution reaches that task), but means a
+          # genuinely unreachable host can hang HERE, before ever
+          # reaching the task that would've run locally instead. Real-
+          # world impact is low (a play targeting an unreachable host
+          # generally has other, non-overridden tasks that would fail
+          # identically anyway) - documented rather than fixed, since
+          # correctly scoping this pass to "does EVERY use of this
+          # module for this host happen under a local override" needs
+          # a full pass over every play's tasks up front, not just
+          # their hosts:.
           next if is_local_connection?(host, host.vars)
 
           # Deduplicate by connection details
