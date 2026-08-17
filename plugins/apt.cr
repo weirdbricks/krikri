@@ -45,17 +45,34 @@ module CrystalPlay
       changed = false
       messages = [] of String
 
+      # Real Ansible's own apt.py only lets a cache refresh contribute to
+      # the task's overall `changed:` when update_cache: is the ONLY
+      # thing requested (`if not p['package'] and not p['upgrade'] and
+      # not p['deb']: module.exit_json(changed=updated_cache, ...)`) -
+      # once name:/upgrade:/deb: is ALSO given, the early-exit never
+      # happens and `changed` is decided entirely by that package/
+      # upgrade/deb operation's own result, regardless of whether the
+      # cache itself needed refreshing. Previously this plugin OR'd the
+      # cache-refresh's own `changed = true` into the same shared local
+      # unconditionally, so `apt: {update_cache: true, upgrade: dist}`
+      # always reported `changed: true` merely from refreshing the
+      # package lists, even when the subsequent dist-upgrade genuinely
+      # found "0 upgraded, 0 newly installed, 0 to remove" and real
+      # Ansible correctly reported `ok`. Found benchmarking robertdebock.
+      # update's own "Update all software (apt)" task.
+      cache_update_is_sole_operation = !@params["name"]? && !@params["upgrade"]? && !@params["deb"]?
+
       # Handle cache update
       if update_cache
         if should_update_cache?(cache_valid_time)
           if @check_mode
             messages << "Would update apt cache"
-            changed = true
+            changed = true if cache_update_is_sole_operation
           else
             update_result = remote_exec("apt-get update")
             if update_result[:exit_code] == 0
               messages << "APT cache updated"
-              changed = true
+              changed = true if cache_update_is_sole_operation
             else
               return PluginResult.new(
                 changed: false,
