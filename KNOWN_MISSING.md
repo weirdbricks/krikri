@@ -8,7 +8,45 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.461`.**
+**Currently at `0.9.462`.**
+
+---
+
+Round 147 (`0.9.462`) - fifth round of the 4-node 50/50 Ubuntu/RHEL
+pattern. Roles: `geerlingguy.elasticsearch-curator` (Ubuntu),
+`robertdebock.openbao`+`.openbao_server` (Rocky, with a real working
+listener/storage config passed in, `openbao_server_config`/
+`openbao_server_directories`). 1 real bug found and fixed, live-
+verified (cold + idempotency):
+
+1. **`pip.cr`'s `target_spec` didn't treat an empty-string `version:`
+   as "no version pin"** - `.elasticsearch-curator`'s own `pip:
+   {name: elasticsearch-curator, version: "{{
+   elasticsearch_curator_version | default(omit) }}"}` task, with the
+   role's own default `elasticsearch_curator_version: ''` - Jinja2's
+   `default(omit)` only substitutes for an actually-Undefined value,
+   never a defined-but-empty string, so the empty string reaches the
+   module as a real value either way (confirmed directly against real
+   Ansible's own `pip.py` source: `if version_string:` is a Python
+   truthiness check, so an empty string is correctly treated as
+   falsy/no-pin there). `target_spec` only checked for `nil`, so it
+   built the literal spec `elasticsearch-curator==` (trailing `==`
+   with no version) - pip correctly rejects that as unsatisfiable
+   ("Could not find a version that satisfies the requirement
+   elasticsearch-curator=="), while real Ansible's pip install
+   succeeds (unpinned, installs latest). Fixed by also checking
+   `version.empty?`. Live-verified: cold `changed: true` (installed
+   version 9.0.0, latest), warm rerun `changed: false`, `ok=8
+   changed=5 skipped=2` fully idempotent.
+
+`robertdebock.openbao`+`.openbao_server` clean (`ok=18 changed=5
+skipped=5` byte-identical cold on both engines) once given a real
+working `openbao_server_config` (the role's own default leaves it
+unset, which would start the daemon with no listener at all) and a
+`openbao_version` override matching what the repo actually has
+available (`2.5.0`, the role's own default, has been superseded
+upstream by `2.6.x` - external, not a crystal-ansible bug, confirmed
+identical failure on real `ansible-playbook` first).
 
 ---
 

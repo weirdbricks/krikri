@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.461-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.462-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -309,6 +309,13 @@ context.
   against the real remote target instead. `npm`/`ruby`/
   `ca_certificates`/`restore`/`turn` all clean. See `KNOWN_MISSING.md`/
   `ROLES_TESTED.md`.
+- **`0.9.462` - round 147, `geerlingguy.elasticsearch-curator`/
+  `robertdebock.openbao`+`.openbao_server`**: `pip.cr`'s `target_spec`
+  didn't treat an empty-string `version:` as unpinned (real Ansible's
+  own module uses Python truthiness) - built a literal `pkg==` spec
+  that pip rejects outright. `openbao`/`.openbao_server` clean given a
+  working config and a repo-available version override. See
+  `KNOWN_MISSING.md`/`ROLES_TESTED.md`.
 - **`0.9.461` - round 146, `robertdebock.bareos_dir`/`.bareos_repository`**:
   new `ansible.builtin.debconf` plugin - `.bareos_dir`'s own "Prevent
   db installation (apt)" task was silently dropped at parse time

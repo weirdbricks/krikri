@@ -127,9 +127,21 @@ module CrystalPlay
       "umask #{umask}; #{command}"
     end
 
+    # `version:` uses real Ansible's own Python truthiness (`if
+    # version_string:` in pip.py) - an empty string counts as "no
+    # version pin", same as nil/omitted, not literally "pin to the
+    # empty version". Found via geerlingguy.elasticsearch-curator's own
+    # `version: "{{ elasticsearch_curator_version | default(omit) }}"`
+    # with its own default `elasticsearch_curator_version: ''` - Jinja2's
+    # `default(omit)` only substitutes for an actually-Undefined value,
+    # never a defined-but-empty string, so the empty string reaches this
+    # module as a real (falsy) value either way. Without this check,
+    # `target_spec` built the literal spec `elasticsearch-curator==`
+    # (trailing `==` with no version), which pip correctly rejects as
+    # unsatisfiable - real Ansible's pip install succeeds (unpinned).
     private def target_spec(name : String?, version : String?) : String?
       return nil unless name
-      return name unless version
+      return name if version.nil? || version.empty?
       "#{name}==#{version}"
     end
 

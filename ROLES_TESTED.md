@@ -280,6 +280,9 @@ or already-clean roles as if they were new.
 
 | robertdebock.bareos_dir (+ .bareos_repository) | ⚠️ Engine clean for the reachable path (round 146, after fixing `ansible.builtin.debconf`, entirely unimplemented - `.bareos_dir`'s own "Prevent db installation (apt)" task, live-verified `debconf-show` byte-identical between engines, idempotent) but the role's own "Run database setup scripts" task fails identically on all 4 host/engine combos (Ubuntu 22.04 + Rocky 9.6) with `sudo: unknown user: postgres` - the role assumes PostgreSQL already has its system user set up, external/environmental, not a crystal-ansible bug. |
 
+| geerlingguy.elasticsearch-curator | ✅ Clean (round 147, after fixing `pip.cr`'s `target_spec` not treating an empty-string `version:` as unpinned - the role's own `version: "{{ var | default(omit) }}"` with `var` defaulting to `''` built a literal `pkg==` spec, which pip rejects; real Ansible's own module uses Python truthiness and correctly treats it as unpinned. `ok=8 changed=5 skipped=2` cold, idempotent warm rerun on both engines.) |
+| robertdebock.openbao (+ .openbao_server) | ✅ Clean (round 147, with a real working `openbao_server_config`/directories passed in - the role's own default leaves the daemon with no listener configured at all - and `openbao_version` overridden to `2.6.1` since the role's own default `2.5.0` is no longer in the upstream repo, confirmed failing identically on real Ansible first. `ok=18 changed=5 skipped=5` byte-identical cold on both engines.) |
+
 **Legend:** ✅ Clean = engine matches real `ansible-playbook` (idempotent,
 healthy services, config parity) as of the last time it was run. ⚠️ = engine
 itself is fine, but the role hit an external/environmental blocker partway
