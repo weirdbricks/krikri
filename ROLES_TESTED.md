@@ -278,6 +278,8 @@ or already-clean roles as if they were new.
 | robertdebock.kibana (+ .elastic_repo) | ✅ Clean (round 145, with `kibana_type: elastic` override - the role's own default `oss` fails identically on both engines since Elastic dropped `kibana-oss` packages years ago, external. `ok=15 changed=4 skipped=5` byte-identical cold both engines, service verified `active` via `systemctl`, idempotent warm rerun.) |
 | robertdebock.ansible | ✅ Clean (round 145, after manually installing `python3-pip` on the fresh Rocky 9.6 image - both engines failed identically without it, external. `ok=7 changed=4 rescued=1` byte-identical cold both engines, `ansible.cfg` byte-identical, idempotent warm rerun modulo the role's own always-fails-then-rescues shape which legitimately reruns `rescued=1` every time on both engines.) |
 
+| robertdebock.bareos_dir (+ .bareos_repository) | ⚠️ Engine clean for the reachable path (round 146, after fixing `ansible.builtin.debconf`, entirely unimplemented - `.bareos_dir`'s own "Prevent db installation (apt)" task, live-verified `debconf-show` byte-identical between engines, idempotent) but the role's own "Run database setup scripts" task fails identically on all 4 host/engine combos (Ubuntu 22.04 + Rocky 9.6) with `sudo: unknown user: postgres` - the role assumes PostgreSQL already has its system user set up, external/environmental, not a crystal-ansible bug. |
+
 **Legend:** ✅ Clean = engine matches real `ansible-playbook` (idempotent,
 healthy services, config parity) as of the last time it was run. ⚠️ = engine
 itself is fine, but the role hit an external/environmental blocker partway

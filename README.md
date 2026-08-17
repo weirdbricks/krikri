@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.460-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.461-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -309,6 +309,13 @@ context.
   against the real remote target instead. `npm`/`ruby`/
   `ca_certificates`/`restore`/`turn` all clean. See `KNOWN_MISSING.md`/
   `ROLES_TESTED.md`.
+- **`0.9.461` - round 146, `robertdebock.bareos_dir`/`.bareos_repository`**:
+  new `ansible.builtin.debconf` plugin - `.bareos_dir`'s own "Prevent
+  db installation (apt)" task was silently dropped at parse time
+  (entirely unimplemented module). First round to run the same role on
+  both Ubuntu and RHEL at once. Blocked partway on both distros/engines
+  identically by an external role gap (assumes PostgreSQL's system
+  user already exists). See `KNOWN_MISSING.md`/`ROLES_TESTED.md`.
 - **`0.9.460` - round 144, `robertdebock.glusterfs`/`.ara`**: `pip.cr`'s
   `already_installed?` didn't strip a PEP 508 extras suffix
   (`pkg[extra]`) before shelling to `pip show`, so `.ara`'s own `pip:

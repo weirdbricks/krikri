@@ -234,6 +234,7 @@ PLUGINS=(
     "ufw"
     "firewalld"
     "iptables"
+    "debconf"
     "async_status"
     "docker_image"
     "docker_network"

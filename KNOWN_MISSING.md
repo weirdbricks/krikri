@@ -8,7 +8,48 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.460`.** (Round 145 below found zero bugs - no bump.)
+**Currently at `0.9.461`.**
+
+---
+
+Round 146 (`0.9.461`) - fourth round of the 4-node 50/50 Ubuntu/RHEL
+pattern, first round to run the SAME role (`robertdebock.bareos_dir`,
+chained after `.bareos_repository`) on both distros at once (its own
+meta declares EL9 + Ubuntu jammy support). 1 real bug found and fixed,
+live-verified (cold + idempotency):
+
+1. **`ansible.builtin.debconf` was entirely unimplemented** -
+   `.bareos_dir`'s own "Prevent db installation (apt)" task (presets
+   `bareos-database-common/dbconfig-install: false` so the package's
+   own postinst script doesn't try to auto-create the database, since
+   the role runs its own manual `create_bareos_database`/
+   `make_bareos_tables`/`grant_bareos_privileges` scripts instead) was
+   silently dropped at parse time - real Ansible reported `changed:
+   true` (a real database drift), crystal never even attempted it.
+   New `plugins/debconf.cr`, shelling to the real `debconf-show`/
+   `debconf-set-selections` binaries (same approach real Ansible's own
+   module uses - no python-apt/libdebconf binding either). Not
+   implemented: `vtype: password`'s own idempotency read-back (a
+   narrow, rarely-hit shape - a password-typed task just always
+   re-applies rather than silently under-reporting drift). Live-
+   verified: cold `changed: true`, warm rerun `changed: false`,
+   `debconf-show bareos-database-common` byte-identical between the
+   python and crystal hosts (`dbconfig-install: false`, marked "seen").
+
+Not fixed, documented only: both `.bareos_repository`+`.bareos_dir`
+fail identically on all 4 host/engine combos this round at the
+"Run database setup scripts" task - `sudo: unknown user: postgres` -
+the role assumes PostgreSQL is already initialized with its own system
+user, but a fresh `postgresql-server` package install needs
+`postgresql-setup --initdb` (RHEL) or simply never got a `postgres`
+system user created on this specific chain (Ubuntu) - external role/
+environment gap, not a crystal-ansible bug, confirmed identical on
+real `ansible-playbook` too. The RHEL side's own `skipped` count still
+runs ~2-3 short of real Ansible's - `community.general.zypper_
+repository` (unreachable, no zypper-based host ever tested) gets
+dropped entirely at parse time instead of showing as "skipping",
+same cosmetic-only gap class documented for `gluster.gluster.
+gluster_volume` in round 143.
 
 ---
 
