@@ -39,6 +39,31 @@ describe "lineinfile plugin" do
     result["changed"].as_bool.should be_false
   end
 
+  it "reports changed when only mode: drifts, even if the line is already present (regression: robertdebock.grub round 143 - GRUB_TIMEOUT=5 already in /etc/default/grub, mode: \"0664\" silently never applied/checked)" do
+    path = tmp_path("lineinfile-mode-only-drift.txt")
+    File.write(path, "hello world\n")
+    File.chmod(path, 0o644)
+
+    result = PluginSpecHelper.run("lineinfile", {
+      "path"  => path,
+      "line"  => "hello world",
+      "state" => "present",
+      "mode"  => "0664",
+    })
+
+    result["changed"].as_bool.should be_true
+    (File.info(path).permissions.value & 0o777).should eq(0o664)
+
+    # Second run: mode already correct, content already correct -> idempotent
+    result2 = PluginSpecHelper.run("lineinfile", {
+      "path"  => path,
+      "line"  => "hello world",
+      "state" => "present",
+      "mode"  => "0664",
+    })
+    result2["changed"].as_bool.should be_false
+  end
+
   it "removes a matching line when state=absent" do
     path = tmp_path("lineinfile-absent.txt")
     File.write(path, "keep me\nremove me\n")

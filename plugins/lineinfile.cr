@@ -2,6 +2,8 @@
 
 require "json"
 require "file_utils"
+require "system/user"
+require "system/group"
 require "../src/crystal_play/base_plugin"
 require "../src/crystal_play/plugin_helpers/line_editor"
 
@@ -99,6 +101,19 @@ module CrystalPlay
 
       diff = generate_unified_diff(original_content, new_content, path, path) if changed && @diff_mode
 
+      # owner:/group:/mode: apply even when the line content itself was
+      # already correct - real Ansible's lineinfile module runs the
+      # generic file-attribute check unconditionally via
+      # set_fs_attributes_if_different, so a mode-only drift (task's
+      # mode: differs from the file's current mode, no line insertion
+      # needed) still reports changed: true. Found via robertdebock's
+      # grub role: `GRUB_TIMEOUT=5` already present in /etc/default/grub
+      # on a fresh Rocky 9.6 image, but the task's own `mode: "0664"`
+      # didn't match the file's actual 0644 - crystal previously never
+      # even looked at the mode param once no line edit was needed.
+      attrs_changed = apply_file_attrs(path, check_mode) if File.exists?(path)
+      changed = changed || !!attrs_changed
+
       PluginResult.new(
         changed: changed,
         failed: false,
@@ -137,6 +152,50 @@ module CrystalPlay
     private def should_backup?(being_created : Bool, changed : Bool, path : String, check_mode : Bool) : Bool
       return false if being_created || check_mode || !changed
       is_true?(@params["backup"]?) && File.exists?(path)
+    end
+
+    # Checks owner:/group:/mode: against the file's current attributes
+    # and applies any drift. Returns whether anything was actually
+    # changed (skips the actual chown/chmod under check_mode, matching
+    # every other check_mode-aware plugin in this codebase).
+    private def apply_file_attrs(path : String, check_mode : Bool) : Bool
+      changed = false
+      info = begin
+        File.info(path)
+      rescue
+        return false
+      end
+
+      if mode = @params["mode"]?
+        if mode =~ /^0?\d+$/
+          current = (info.permissions.value & 0o7777).to_s(8)
+          target = mode.to_i(8).to_s(8)
+          if current.lstrip('0').presence != target.lstrip('0').presence
+            changed = true
+            (File.chmod(path, mode.to_i(8)) rescue nil) unless check_mode
+          end
+        end
+      end
+
+      if owner = @params["owner"]?
+        if user = System::User.find_by?(name: owner)
+          if info.owner_id.to_s != user.id.to_s
+            changed = true
+            (File.chown(path, uid: user.id.to_i, gid: -1) rescue nil) unless check_mode
+          end
+        end
+      end
+
+      if group = @params["group"]?
+        if grp = System::Group.find_by?(name: group)
+          if info.group_id.to_s != grp.id.to_s
+            changed = true
+            (File.chown(path, uid: -1, gid: grp.id.to_i) rescue nil) unless check_mode
+          end
+        end
+      end
+
+      changed
     end
 
     private def write_backup(path : String) : String

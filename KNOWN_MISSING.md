@@ -8,7 +8,113 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.455`.**
+**Currently at `0.9.459`.**
+
+---
+
+Round 143 (`0.9.456`-`0.9.459`) - first round with a 4-node pair (2
+Ubuntu 22.04 + 2 Rocky 9.6, real Atlantic.net USEAST1) for a genuine
+50/50 Ubuntu/RHEL split within a single round, rather than an all-one-
+distro round. Roles: `robertdebock.investigate`, `.grub`, `.forensics`,
+`.fips`, `.vdo`, `.natrouter`, `.gnome`. 4 real bugs found and fixed,
+all live-verified (cold + idempotency):
+
+1. **`lineinfile:`'s `mode:`/`owner:`/`group:` params were silently
+   ignored whenever the line content itself was already correct** - no
+   insertion needed, so the plugin returned `changed: false` without
+   ever looking at the file-attribute params at all. Real Ansible's
+   own module runs the generic file-attribute check
+   (`set_fs_attributes_if_different`) unconditionally, independent of
+   whether the line content changed. Found via `robertdebock.grub` on
+   Rocky 9.6: `GRUB_TIMEOUT=5` was already present in
+   `/etc/default/grub` (RHEL ships it by default), but the task's own
+   `mode: "0664"` never got applied against the file's actual `0644` -
+   real `ansible-playbook` reported `changed: true` (mode fixed to
+   0664), crystal reported `changed: false` and left it at 0644. Fixed
+   by adding an `apply_file_attrs` check (mode/owner/group, compared
+   against the file's current `File.info` before any chmod/chown) to
+   `plugins/lineinfile.cr`, run unconditionally after the content edit
+   step, OR'd into the overall `changed` result. Ubuntu was unaffected
+   (Ubuntu's default `/etc/default/grub` doesn't pre-exist with a
+   conflicting mode the same way).
+2. **`ansible.builtin.iptables` was entirely unimplemented** - every
+   netfilter-rule task (`robertdebock.natrouter`'s own NAT MASQUERADE
+   POSTROUTING rule, the only task in the role that does real work) was
+   silently dropped at parse time ("Plugin not available"), so the role
+   completed with `changed: 0` while real Ansible added the rules and
+   reported `changed: 1`. New `plugins/iptables.cr` + a pure
+   `src/crystal_play/plugin_helpers/iptables_command.cr` rule-flag
+   builder (split out so the exact flag-ordering logic - matters for
+   `-C`/`-A` to agree - can be unit-tested without root/CAP_NET_ADMIN,
+   unlike the plugin itself which shells to real `iptables`/`ip6tables`
+   for both the `-C` idempotency check and the `-A`/`-I`/`-D` apply).
+   Covers table/chain/state/action, protocol/source/destination/
+   in_interface/out_interface, jump (+ implicit REJECT), match/ctstate,
+   ports (source_port/destination_port/destination_ports/to_ports),
+   log_prefix/log_level, limit/limit_burst, reject_with, icmp_type,
+   comment, plus chain-level flush/policy/create/delete. Deliberately
+   NOT implemented (scope-cut, matching `firewalld.cr`'s own precedent):
+   `tcp_flags`, `jump: TEE`/`gateway`, `goto`, `set_dscp_mark(_class)`,
+   `src_range`/`dst_range`, `match_set(_flags)`, `uid_owner`/
+   `gid_owner`, `wait`, `numeric` - none reachable by any role tested so
+   far. Live-verified: `iptables -t nat -L POSTROUTING -n` byte-
+   identical between the python and crystal hosts after the fix
+   (`MASQUERADE tcp/udp 192.168.1.0/24 -> 0.0.0.0/0`), idempotent on
+   rerun (`changed: 0`).
+3. **`package.cr`'s own space-joining of a `name:` list silently
+   mangled any single package/group name that legitimately contains a
+   literal space** - `robertdebock.gnome`'s own RedHat default
+   (`gnome_packages: ["@Server with GUI"]`, dnf's comps-group syntax)
+   is exactly this case: a genuinely ONE-item list whose one item has
+   an internal space. The module's pre-existing design (this simpler
+   OS-agnostic `package:` dispatcher, unlike the richer `apt.cr`/
+   `dnf.cr`, represents `name:` as a single possibly-multi-package
+   string, space-joining a templated list) always re-split that string
+   on every space when checking install state and building the actual
+   `dnf install -y ...` command line - `"@Server with GUI"` became 3
+   bogus tokens (`@Server`, `with`, `GUI`), and dnf rejected the
+   mangled group with "Unable to find a match: with GUI" while real
+   Ansible (which never splits a single list item apart) installed the
+   real group fine. Fixed by tracking a `single_name` flag (true when
+   `name:` is *known* to have originated as exactly one list/JSON-array
+   item, not a multi-package join) through `package.cr`'s dnf/apt
+   handlers - an atomic single name is never re-split for the install-
+   state check and is shell-quoted as ONE token for the actual command
+   line, while the existing multi-package space-joined behavior (e.g.
+   `name: "tuned python3-configobj"`) is untouched.
+4. **`package.cr`'s dnf backend could never converge a `@Group Name`
+   install to idempotent** - even after fixing #3 above, `dnf install
+   -y '@Server with GUI'` was correct, but the *pre-install check*
+   still used `rpm -q <name>`, which has no concept of a dnf comps
+   group at all (`rpm -q` queries individual RPM packages by name) -
+   so "already installed?" was always false and every single rerun
+   re-ran the full group install, reporting `changed: true` forever,
+   while real Ansible (whose dnf backend queries this through python-
+   dnf's own group API) correctly no-ops. Fixed with a new
+   `dnf_group_installed?` check for any `@`-prefixed name, parsing
+   `dnf group list installed`'s own output (indented group names, no
+   leading `@`, under an "Installed Environment Groups:"/"Installed
+   Groups:" header - verified live against dnf 4 on Rocky 9.6).
+   Live-verified end to end: cold `changed: true` (`Package @Server
+   with GUI installed`), warm rerun `changed: false`, matching real
+   `ansible-playbook`'s own `ok=3 changed=0` exactly.
+
+Not fixed, documented only: `community.general.vdo` (the actual VDO-
+device-creation module) is still entirely unimplemented, but untestable
+in this environment either way - `robertdebock.vdo`'s own
+`vdo_devices` default is `[]` (no block device configured), so the
+module is never actually invoked by any tested role; the `vdo`/
+`kmod-kvdo` *package install* itself (a separate, already-working
+`package:` task) was confirmed to succeed fine on Rocky 9.6.
+`robertdebock.investigate` failed identically on both engines on Rocky
+9.6 (real `ansible-playbook` too) - `screen` isn't installable without
+EPEL on a fresh image and pre-existing `curl`/`curl-minimal` package
+conflict on this specific Rocky 9.6 image, external/environmental, not
+a crystal-ansible bug. `package.cr` still has no automated spec
+coverage at all (it shells to a real system package manager, same "no
+spec by design, verified live" precedent already documented for other
+real-mutation plugins in this file) - bugs 3-4 above were verified live
+only, cold + warm, on the round's own Rocky 9.6 host pair.
 
 ---
 

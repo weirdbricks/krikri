@@ -448,6 +448,7 @@ module CrystalPlay
       "ansible.posix.sysctl",
       "community.general.ufw",
       "ansible.posix.firewalld",
+      "ansible.builtin.iptables",
       "ansible.builtin.async_status",
       "community.docker.docker_image",
       "community.docker.docker_network",

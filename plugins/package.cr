@@ -58,6 +58,21 @@ module CrystalPlay
       # idempotency for longer multi-package lists remains an existing
       # limitation of this module's single-name-string design (apt.cr/
       # dnf.cr's own richer per-package handling doesn't apply here).
+      # `single_name` tracks whether `name:` is known to be exactly ONE
+      # atomic package/group name - as opposed to this module's own
+      # legacy space-joining of a genuinely multi-package templated list
+      # (see below). This matters because a handful of real package/
+      # group names legitimately CONTAIN a literal space (dnf's own
+      # `@Server with GUI`/`@Development Tools` comps-group syntax is
+      # the common case) - naively `name.split(' ')`-ing those apart (to
+      # check each "name" individually, and passing them unquoted to
+      # `dnf install -y`) silently mangled the group into 2-3 bogus
+      # tokens ("@Server", "with", "GUI"), which dnf then rejected with
+      # "Unable to find a match: with GUI" while real Ansible (which
+      # never splits a single list item apart) installed the real group
+      # fine. Found via robertdebock.gnome on Rocky 9.6 (`gnome_
+      # packages: ["@Server with GUI"]`, RedHat's own default).
+      single_name = false
       trimmed = name.strip
       if trimmed.starts_with?('[') && trimmed.ends_with?(']')
         parsed = begin
@@ -78,7 +93,10 @@ module CrystalPlay
         rescue
           nil
         end
-        name = parsed.join(" ") if parsed
+        if parsed
+          single_name = parsed.size == 1
+          name = parsed.join(" ")
+        end
       elsif trimmed.includes?(',')
         # A *literal* YAML list (`name: [tuned, python3-configobj]`,
         # unlike the templated-var JSON-bracket case above) is stringified
@@ -87,7 +105,11 @@ module CrystalPlay
         # own stringify_value, but apt-get/dpkg -l/rpm -q all need space-
         # separated names, not comma-separated (a real single package
         # name never contains a comma, so this can't misfire).
-        name = trimmed.split(',').map(&.strip).reject(&.empty?).join(" ")
+        parts = trimmed.split(',').map(&.strip).reject(&.empty?)
+        single_name = parts.size == 1
+        name = parts.join(" ")
+      else
+        single_name = !trimmed.includes?(' ')
       end
 
       state = @params["state"]? || "present"
@@ -106,9 +128,9 @@ module CrystalPlay
       # Delegate to appropriate package manager
       case package_manager
       when "dnf", "yum"
-        handle_dnf(name, state)
+        handle_dnf(name, state, single_name)
       when "apt"
-        handle_apt(name, state)
+        handle_apt(name, state, single_name)
       else
         PluginResult.new(
           changed: false,
@@ -122,8 +144,36 @@ module CrystalPlay
     # own space-joining of a templated list var - see the JSON-array
     # handling in #execute above). True only if *every* one is installed,
     # not merely one of them.
-    private def all_packages_installed?(name : String, & : String -> Bool) : Bool
-      name.split(' ').reject(&.empty?).all? { |pkg| yield pkg }
+    private def all_packages_installed?(name : String, single_name : Bool, & : String -> Bool) : Bool
+      names = single_name ? [name] : name.split(' ').reject(&.empty?)
+      names.all? { |pkg| yield pkg }
+    end
+
+    # Shell-safe form of `name` for the actual install/remove/query
+    # command line: a single atomic name (may contain a literal space,
+    # e.g. a dnf `@Group Name`) must be quoted as ONE token; a legacy
+    # multi-name space-joined string is passed through unquoted exactly
+    # as before (each word its own argument).
+    private def shell_name(name : String, single_name : Bool) : String
+      single_name ? shell_single_quote(name) : name
+    end
+
+    # A `@Group Name` spec (dnf's own comps-group syntax, e.g. RHEL's
+    # `@Server with GUI`) is not an RPM package at all - `rpm -q` can
+    # never match it (it queries individual RPM packages by name, with
+    # no concept of a group), so the pre-install "already installed?"
+    # check always returned false and every rerun re-ran `dnf install`
+    # forever, even though dnf itself correctly no-ops (real Ansible's
+    # dnf backend queries this through python-dnf's own group API,
+    # which does understand groups, and IS idempotent). `dnf group list
+    # installed` is the CLI-only equivalent: installed group names are
+    # printed indented, no leading `@`, one per line, under either an
+    # "Installed Environment Groups:" or "Installed Groups:" header -
+    # verified live against dnf 4 on Rocky 9.6.
+    private def dnf_group_installed?(spec : String) : Bool
+      group_name = spec.lstrip('@')
+      result = remote_exec("dnf group list installed 2>/dev/null")
+      result[:stdout].split("\n").any? { |line| line.strip == group_name }
     end
 
     # Mirrors dnf.cr's own `is_url_or_file?` - a URL/local-path package
@@ -195,7 +245,7 @@ module CrystalPlay
     end
     
     # Handle DNF/YUM package management
-    private def handle_dnf(name : String, state : String) : PluginResult
+    private def handle_dnf(name : String, state : String, single_name : Bool = false) : PluginResult
       # Check if package is installed - each name checked individually
       # (not `rpm -q #{name}` as one combined call) so a multi-package
       # `name:` (this module's own space-joined list, from a templated
@@ -218,10 +268,17 @@ module CrystalPlay
       # remote RPM's metadata) and silently skip the real `dnf install`
       # entirely. Matches `dnf.cr`'s own `is_url_or_file?`-gated "always
       # try to install" handling for the identical case.
-      is_installed = all_packages_installed?(name) do |pkg|
-        is_url_or_file?(pkg) ? false : remote_exec("rpm -q #{pkg}")[:exit_code] == 0
+      is_installed = all_packages_installed?(name, single_name) do |pkg|
+        if is_url_or_file?(pkg)
+          false
+        elsif pkg.starts_with?('@')
+          dnf_group_installed?(pkg)
+        else
+          remote_exec("rpm -q #{pkg}")[:exit_code] == 0
+        end
       end
-      
+      shell_pkg = shell_name(name, single_name)
+
       case state
       when "present"
         if is_installed
@@ -238,8 +295,8 @@ module CrystalPlay
               msg: "Would install #{name} (check mode)"
             )
           end
-          
-          install_result = remote_exec("dnf install -y #{name} || yum install -y #{name}")
+
+          install_result = remote_exec("dnf install -y #{shell_pkg} || yum install -y #{shell_pkg}")
           if install_result[:exit_code] == 0
             # A URL/path `name:` skipped the `rpm -q` pre-check above
             # (it can't tell "installed" from "valid RPM file"), so a
@@ -282,7 +339,7 @@ module CrystalPlay
             )
           end
           
-          remove_result = remote_exec("dnf remove -y #{name} || yum remove -y #{name}")
+          remove_result = remote_exec("dnf remove -y #{shell_pkg} || yum remove -y #{shell_pkg}")
           if remove_result[:exit_code] == 0
             return PluginResult.new(
               changed: true,
@@ -300,7 +357,7 @@ module CrystalPlay
       
       when "latest"
         if @check_mode
-          check_update = remote_exec("dnf check-update #{name} || yum check-update #{name}")
+          check_update = remote_exec("dnf check-update #{shell_pkg} || yum check-update #{shell_pkg}")
           # check-update returns 100 if updates are available
           if check_update[:exit_code] == 100
             return PluginResult.new(
@@ -317,7 +374,7 @@ module CrystalPlay
           end
         end
         
-        update_result = remote_exec("dnf install -y #{name} || yum install -y #{name}")
+        update_result = remote_exec("dnf install -y #{shell_pkg} || yum install -y #{shell_pkg}")
         # Check if actually updated
         was_updated = !update_result[:stdout].includes?("Nothing to do")
         
@@ -337,13 +394,14 @@ module CrystalPlay
     end
     
     # Handle APT package management
-    private def handle_apt(name : String, state : String) : PluginResult
+    private def handle_apt(name : String, state : String, single_name : Bool = false) : PluginResult
       # Check if package is installed - each name checked individually
       # (see handle_dnf's own comment for why: a single combined `dpkg -l
       # pkg1 pkg2 | grep '^ii'` matches as soon as *any* one of them is
       # installed, not all of them).
-      is_installed = all_packages_installed?(name) { |pkg| remote_exec("dpkg -l #{pkg} 2>/dev/null | grep '^ii'")[:exit_code] == 0 }
-      
+      is_installed = all_packages_installed?(name, single_name) { |pkg| remote_exec("dpkg -l #{pkg} 2>/dev/null | grep '^ii'")[:exit_code] == 0 }
+      shell_pkg = shell_name(name, single_name)
+
       case state
       when "present"
         if is_installed
@@ -361,7 +419,7 @@ module CrystalPlay
             )
           end
           
-          install_result = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get install -y #{name}")
+          install_result = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get install -y #{shell_pkg}")
           if install_result[:exit_code] == 0
             # A requested name can be a virtual package already
             # satisfied by something else installed (`php-dom`/
@@ -414,7 +472,7 @@ module CrystalPlay
             )
           end
           
-          remove_result = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get remove -y #{name}")
+          remove_result = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get remove -y #{shell_pkg}")
           if remove_result[:exit_code] == 0
             return PluginResult.new(
               changed: true,
@@ -432,7 +490,7 @@ module CrystalPlay
       
       when "latest"
         if @check_mode
-          check_upgrade = remote_exec("apt-get install --simulate #{name} 2>&1 | grep -i upgrade")
+          check_upgrade = remote_exec("apt-get install --simulate #{shell_pkg} 2>&1 | grep -i upgrade")
           if check_upgrade[:exit_code] == 0
             return PluginResult.new(
               changed: true,
@@ -459,7 +517,7 @@ module CrystalPlay
         # }}", state: "{{ ... | ternary('latest', 'present') }}") -
         # reported "changed: Package grafana upgraded to latest" while
         # the package was never actually installed at all.
-        upgrade_result = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get install -y #{name}")
+        upgrade_result = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get install -y #{shell_pkg}")
 
         # "N upgraded, M newly installed, ..." is apt's own reliable,
         # locale-stable summary line - checking for the English phrase

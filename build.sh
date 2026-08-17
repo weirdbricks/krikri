@@ -233,6 +233,7 @@ PLUGINS=(
     "sysctl"
     "ufw"
     "firewalld"
+    "iptables"
     "async_status"
     "docker_image"
     "docker_network"

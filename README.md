@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.455-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.459-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -309,6 +309,22 @@ context.
   against the real remote target instead. `npm`/`ruby`/
   `ca_certificates`/`restore`/`turn` all clean. See `KNOWN_MISSING.md`/
   `ROLES_TESTED.md`.
+- **`0.9.456`-`0.9.459` - round 143, first 4-node 50/50 Ubuntu/RHEL
+  round (2 Ubuntu 22.04 + 2 Rocky 9.6 in one round), `robertdebock.
+  investigate`/`.grub`/`.forensics`/`.fips`/`.vdo`/`.natrouter`/
+  `.gnome`**: 4 real bugs found and fixed. `lineinfile:`'s `mode:`/
+  `owner:`/`group:` were silently ignored whenever the line content was
+  already correct (found on `.grub`'s `GRUB_TIMEOUT=5`, already present
+  on Rocky 9.6, `mode: "0664"` never applied against the actual `0644`).
+  New `ansible.builtin.iptables` plugin (`.natrouter`'s only real task,
+  a NAT MASQUERADE rule, was previously dropped entirely). `package.cr`'s
+  dnf backend mangled any `@Group Name` (dnf comps-group syntax, e.g.
+  Rocky 9.6's own `@Server with GUI` default) into bogus space-split
+  tokens, and even after that fix its `rpm -q`-based idempotency check
+  couldn't recognize a group at all, forever reporting `changed: true`
+  (new `dnf group list installed`-based check). `.investigate`/`.forensics`/
+  `.fips` clean; `.vdo`'s actual device-creation module remains
+  untestable (no block device). See `KNOWN_MISSING.md`/`ROLES_TESTED.md`.
 - **`0.9.449`-`0.9.455` - round 142, first RHEL-family (Rocky 9.6)
   round, `robertdebock.epel`/`.selinux`/`.remi`/`.rpmfusion`/
   `.powertools`/`.zabbix_repository`/`.digitalocean_agent`/`.update_
