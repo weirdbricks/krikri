@@ -96,7 +96,7 @@ module CrystalPlay
       structural_or_dynamic?(task) || needs_controller_control_flow?(task) ||
         !!task.delegate_to || !!task.connection || task.run_once || retroactive_verdict?(task) ||
         produces_ansible_facts?(task) || runs_as_action_plugin?(task) ||
-        reconfigures_firewall?(task)
+        reconfigures_firewall?(task) || task.module_name == "ansible.builtin.reboot"
     end
 
     # ufw: (community.general.ufw) applies live firewall rules - real

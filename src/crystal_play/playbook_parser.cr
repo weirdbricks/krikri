@@ -466,6 +466,13 @@ module CrystalPlay
       "community.general.alternatives",
       "community.general.filesystem",
       "ansible.builtin.service_facts",
+      # No plugins/reboot.cr - handled entirely on the controller by
+      # TaskExecutor#execute_reboot (see that method's own comment for
+      # why: unlike every other module, its process can't run ON the
+      # target, since the target is about to reboot out from under it).
+      # Listed here only so a reboot: task isn't silently dropped at
+      # parse time as "Plugin not available".
+      "ansible.builtin.reboot",
       "ansible.builtin.set_fact",
       "ansible.builtin.get_url",
       "ansible.builtin.blockinfile",

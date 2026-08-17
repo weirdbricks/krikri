@@ -174,6 +174,24 @@ describe CrystalPlay::TaskBatcher do
     groups.map { |group| group.map(&.name) }.should eq([["a"], ["b"], ["c"]])
   end
 
+  it "ends the run at an ansible.builtin.reboot task" do
+    # Regression: reboot: has no plugin binary at all (TaskExecutor#
+    # execute_reboot handles it entirely on the controller, over its own
+    # direct SSH calls) - batching it alongside other tasks would run it
+    # inside a shared SSH batch script, killing that whole connection
+    # mid-script (and everything else in the same batch) the moment the
+    # target actually reboots, instead of the single dedicated
+    # connection execute_reboot expects to control itself.
+    a = task("a")
+    b = CrystalPlay::Task.new("reboot", "ansible.builtin.reboot")
+    c = task("c")
+    tasks = [a, b, c]
+
+    groups = CrystalPlay::TaskBatcher.plan(tasks)
+
+    groups.map { |group| group.map(&.name) }.should eq([["a"], ["reboot"], ["c"]])
+  end
+
   it "ends the run at a run_once: task" do
     a = task("a")
     b = task("b")

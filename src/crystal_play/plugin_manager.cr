@@ -245,6 +245,14 @@ module CrystalPlay
         # the whole run before a single task executed.
         next if task.include_tasks? || task.include_role? || task.include_vars? || task.validate_argument_spec? || task.meta?
 
+        # ansible.builtin.reboot has no plugin binary at all (see
+        # TaskExecutor#execute_reboot's own comment - it can't run ON
+        # the target, since the target is about to reboot). Same crash
+        # shape as the "_meta"/"_include_tasks" pseudo-modules above if
+        # left in required_plugins: get_local_plugin_path("reboot") would
+        # raise outright the first time a real remote host used it.
+        next if task.module_name == "ansible.builtin.reboot"
+
         simple_name = task.module_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community\.(general|docker|mysql|postgresql|crypto))\./, "")
         required.add(simple_name)
       end

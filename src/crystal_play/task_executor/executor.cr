@@ -1062,6 +1062,9 @@ module CrystalPlay
       case raw = value.raw
       when String
         return value unless raw.includes?("{{")
+        if native = evaluate_bare_mustache_preserving_type(raw, vars_context)
+          return native
+        end
         substitutor = VarSubstitutor.new(vars: vars_context, host_name: host_name)
         rendered = substitutor.substitute(raw)
         parsed = (rendered.starts_with?('{') || rendered.starts_with?('[')) ? (JSON.parse(rendered) rescue nil) : nil
@@ -1082,6 +1085,11 @@ module CrystalPlay
         raw = vars_context[key]?
         next unless raw && (raw_string = raw.raw.as?(String)) && raw_string.includes?("{{")
 
+        if native = evaluate_bare_mustache_preserving_type(raw_string, vars_context)
+          vars_context[key] = native
+          next
+        end
+
         substitutor = VarSubstitutor.new(vars: vars_context, host_name: host_name)
         rendered = substitutor.substitute(raw_string)
 
@@ -1093,6 +1101,38 @@ module CrystalPlay
         parsed = (rendered.starts_with?('{') || rendered.starts_with?('[')) ? (JSON.parse(rendered) rescue nil) : nil
         vars_context[key] = parsed || JSON::Any.new(rendered)
       end
+    end
+
+    # A raw value that's EXACTLY one bare `{{ expr }}` span (nothing else
+    # around it, no second span) can be evaluated straight to its real
+    # JSON::Any type (bool/int/float/array/hash) via Crinja's own
+    # `evaluate_value!` instead of going through VarSubstitutor#substitute
+    # (always returns a String) and then re-parsing - which only ever
+    # attempted JSON.parse for a result starting with '{' or '[', silently
+    # leaving a scalar bool/int/float as its Python-repr-style STRING
+    # ("True"/"False", from Crinja's own str(bool) rendering) instead of a
+    # real JSON::Any bool. Found via robertdebock.tomcat's own `import_role:
+    # name: robertdebock.service` vars: (`enabled: "{{ instance.
+    # service_enabled | default(tomcat_service_enabled) }}"` - a real bool
+    # default, filter chain and all) - `item.enabled is boolean` failed the
+    # included role's own assert.yml because "enabled" was landing as the
+    # STRING "True", same bug class as the well-documented Python-repr-list
+    # one (apt.cr/package.cr/pip.cr/find.cr), just for a scalar bool here.
+    # `render_include_role_vars`/`render_task_vars` had the identical
+    # narrow-heuristic gap; shared here so both get the fix in one place.
+    # Falls back to nil (caller does its usual String-based rendering) for
+    # anything Crinja can't evaluate this way, or that isn't a single bare
+    # span to begin with.
+    private def evaluate_bare_mustache_preserving_type(raw : String, vars_context : Hash(String, JSON::Any)) : JSON::Any?
+      stripped = raw.strip
+      return nil unless stripped.starts_with?("{{") && stripped.ends_with?("}}")
+
+      inner = stripped[2..-3]
+      return nil if inner.includes?("{{") || inner.includes?("}}")
+
+      VariableSubstitutor::CrinjaRenderer.new(vars_context).evaluate_value!(inner.strip)
+    rescue
+      nil
     end
 
     # Merge a task result's `ansible_facts` (if any) into the host's fact
@@ -2013,6 +2053,12 @@ module CrystalPlay
 
       return nil unless when_passes?(task, vars_context, host, item_label, shared: substitutor, defer_stats: defer_loop_stats)
       substituted_params = substitute_task_params(task.params, substitutor)
+
+      if task.module_name == "ansible.builtin.reboot"
+        result = execute_reboot(substituted_params, exec_host, vars_context)
+        return apply_changed_failed_when(task, result, vars_context, host)
+      end
+
       substituted_params = resolve_role_relative_src(task, substituted_params)
       substituted_params = inline_copy_source_content(task, substituted_params, exec_host, vars_context)
       substituted_params = stage_unarchive_remote_src(task, substituted_params, exec_host, vars_context)
@@ -2163,6 +2209,101 @@ module CrystalPlay
         "failed"         => true,
         "msg"            => "async task did not complete within #{task.async_seconds} seconds",
         "ansible_job_id" => jid,
+      }.to_json)
+    end
+
+    # ansible.builtin.reboot - entirely unimplemented before (silently
+    # dropped at parse time, "Plugin not available"). Architecturally
+    # can't be a normal plugin binary the way every other module here
+    # works: those get uploaded to and run ON the target host, but a
+    # reboot module's own process would die the instant the machine it's
+    # running on actually reboots, before it could ever report back.
+    # Real Ansible's own reboot module is a controller-side ACTION
+    # plugin for exactly this reason - it issues the reboot command,
+    # then polls the CONNECTION (not the remote process) until the host
+    # goes away and comes back. Handled entirely here instead: issues
+    # reboot_command over one SSH call (tolerating the connection dying
+    # mid-command, which is the expected/successful outcome), waits
+    # post_reboot_delay, then polls a trivial remote command (test_command
+    # if given, else a bare `whoami`) until it succeeds or reboot_timeout
+    # is exceeded. Found via robertdebock.common's own "Reboot" handler
+    # (notified by "Set hostname"/"Fill /etc/hosts", `common_reboot:
+    # true` by default) and robertdebock.update's own reboot-on-upgrade
+    # handler - both very common real-world idioms, not narrow ones.
+    #
+    # local connection is intentionally left alone (returns changed:
+    # false, failed: true) - rebooting the controller process's own
+    # machine out from under itself has no safe/sane implementation here
+    # and real Ansible's own module warns heavily against it too.
+    private def execute_reboot(params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any)) : JSON::Any
+      return JSON.parse({"changed" => true, "failed" => false, "msg" => "Would have rebooted"}.to_json) if @check_mode
+
+      if PluginManager.is_local_connection?(exec_host, vars_context)
+        return JSON.parse({
+          "changed" => false,
+          "failed"  => true,
+          "msg"     => "ansible.builtin.reboot is not supported over a local connection (would reboot the controller itself)",
+        }.to_json)
+      end
+
+      reboot_timeout = params["reboot_timeout"]?.try(&.to_i?) || 600
+      connect_timeout = params["connect_timeout"]?.try(&.to_i?) || 5
+      pre_reboot_delay = params["pre_reboot_delay"]?.try(&.to_i?) || 2
+      post_reboot_delay = params["post_reboot_delay"]?.try(&.to_i?) || 0
+      test_command = params["test_command"]?.try { |v| v.empty? ? nil : v } || "whoami"
+      reboot_command = params["reboot_command"]?.try { |v| v.empty? ? nil : v } || "systemctl reboot"
+
+      connection_host = PluginManager.get_connection_host(exec_host, vars_context)
+      user = exec_host.user || "root"
+      identity_file = vars_context["ansible_ssh_private_key_file"]?.try(&.as_s?)
+
+      sleep pre_reboot_delay.seconds if pre_reboot_delay > 0
+
+      # A reboot command genuinely killing its own SSH session mid-
+      # response (rc 255, broken pipe, etc.) is the EXPECTED successful
+      # outcome here, not an error - only a clean non-zero exit from the
+      # remote shell itself (the command was rejected outright, e.g.
+      # permission denied) is worth surfacing.
+      issue_result = SSHManager.exec(connection_host, user, "(sleep 1; #{reboot_command}) &", exec_host.port, timeout: 15, identity_file: identity_file) rescue nil
+      if issue_result && issue_result[:exit_code] != 0 && issue_result[:exit_code] != 255 && !issue_result[:stderr].empty?
+        return JSON.parse({
+          "changed" => false,
+          "failed"  => true,
+          "msg"     => "Failed to issue reboot command: #{issue_result[:stderr]}",
+        }.to_json)
+      end
+
+      # Give the box a moment to actually start going down before
+      # polling for it to come back - polling immediately risks a false
+      # "success" against the OLD, not-yet-dead SSH session/ControlMaster.
+      sleep 5.seconds
+
+      deadline = Time.instant + reboot_timeout.seconds
+      reconnected = false
+      until Time.instant >= deadline
+        result = SSHManager.exec(connection_host, user, test_command, exec_host.port, timeout: connect_timeout, identity_file: identity_file) rescue nil
+        if result && result[:exit_code] == 0
+          reconnected = true
+          break
+        end
+        sleep Math.min(connect_timeout, 5).seconds
+      end
+
+      unless reconnected
+        return JSON.parse({
+          "changed" => false,
+          "failed"  => true,
+          "msg"     => "Timed out waiting for #{connection_host} to come back after reboot (#{reboot_timeout}s)",
+        }.to_json)
+      end
+
+      sleep post_reboot_delay.seconds if post_reboot_delay > 0
+
+      JSON.parse({
+        "changed"  => true,
+        "failed"   => false,
+        "rebooted" => true,
+        "msg"      => "Reboot complete",
       }.to_json)
     end
 
@@ -3940,6 +4081,16 @@ module CrystalPlay
 
       # Substitute variables in handler parameters
       substituted_params = substitute_task_params(handler.params, substitutor)
+
+      if handler.module_name == "ansible.builtin.reboot"
+        result = execute_reboot(substituted_params, host, vars_context)
+        result = apply_changed_failed_when(handler, result, vars_context, host)
+        if register_name = handler.register
+          register_result(host, register_name, result) unless register_name.empty?
+        end
+        return result
+      end
+
       # Same role-relative src: resolution + remote staging a regular
       # task's #execute_task_once/#prepare_batch_step already do -
       # previously missing here entirely, so a handler using copy:/
