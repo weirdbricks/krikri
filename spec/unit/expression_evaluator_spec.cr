@@ -179,6 +179,81 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("lookup('env', 'CRYSTAL_ANSIBLE_SPEC_ENV_LOOKUP_TEST')").should eq("")
   end
 
+  it "evaluates lookup('vars', name) as an indirect variable lookup" do
+    v = Hash(String, JSON::Any).new
+    v["env_prod_port"] = JSON::Any.new(8080_i64)
+    v["target_env"] = JSON::Any.new("prod")
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    evaluator.evaluate(%(lookup('vars', 'env_' + target_env + '_port'))).should eq("8080")
+  end
+
+  it "evaluates lookup('vars', ...) as undefined for a name that doesn't resolve" do
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    evaluator.evaluate(%(lookup('vars', 'no_such_variable'))).should eq("undefined")
+  end
+
+  it "evaluates lookup('file', path) reading a controller-side file, trailing newline stripped" do
+    path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "lookup_file_test.txt")
+    Dir.mkdir_p(File.dirname(path))
+    File.write(path, "secret-content\n")
+
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(%(lookup('file', '#{path}'))).should eq("secret-content")
+  end
+
+  it "evaluates lookup('file', ...) as undefined for a missing file" do
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(%(lookup('file', '/no/such/file/at/all'))).should eq("undefined")
+  end
+
+  it "evaluates lookup('pipe', command) running a local shell command" do
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(%(lookup('pipe', 'echo hello-from-pipe'))).should eq("hello-from-pipe")
+  end
+
+  it "evaluates lookup('template', path) rendering a local .j2 file against expression vars" do
+    path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "lookup_template_test.j2")
+    Dir.mkdir_p(File.dirname(path))
+    File.write(path, "value is {{ my_var }}\n")
+
+    v = Hash(String, JSON::Any).new
+    v["my_var"] = JSON::Any.new("computed")
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(%(lookup('template', '#{path}'))).should eq("value is computed")
+  end
+
+  it "evaluates lookup('password', path) generating and persisting a password across calls" do
+    path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "lookup_password_test.txt")
+    File.delete(path) if File.exists?(path)
+
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    first = evaluator.evaluate(%(lookup('password', '#{path}')))
+    first.should_not be_empty
+    File.exists?(path).should be_true
+
+    second = evaluator.evaluate(%(lookup('password', '#{path}')))
+    second.should eq(first)
+    File.delete(path)
+  end
+
+  it "evaluates lookup('password', ...) honoring length=" do
+    path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "lookup_password_length_test.txt")
+    File.delete(path) if File.exists?(path)
+
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    result = evaluator.evaluate(%(lookup('password', '#{path} length=8')))
+    result.size.should eq(8)
+    File.delete(path)
+  end
+
   it "resolves lookup(...) followed by a filter chain, not swallowing the whole thing as one bare call" do
     # Real bug found alongside the env lookup above: `lookup('env',
     # 'VAULT_VERSION') | default('2.0.3', true)` - the naive `starts_with

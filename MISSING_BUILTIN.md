@@ -89,5 +89,86 @@ internal feature, `role_loader.cr`/`executor.cr`).
 
 ## Plan
 
-All 10 items done (`0.9.463`-`0.9.464`). Next: the filter/test/lookup
-audit's findings (see `KNOWN_MISSING.md` round 149's closing note).
+All 10 module-level items done (`0.9.463`-`0.9.464`). Continuing below
+with the filter/test/lookup layer.
+
+---
+
+# Missing `ansible.builtin` filters/tests/lookups
+
+Same comparison exercise, one level down: the Jinja2-adjacent plugins used
+*inside* `{{ }}` expressions (`{{ x | filter }}`, `{{ x is test }}`,
+`{{ lookup('type', ...) }}`) rather than as task modules. This codebase
+has **two independent evaluators** for these (see the repo's own
+`CLAUDE.md`) - the hand-rolled `{{ }}` evaluator
+(`ExpressionEvaluator`/`ConditionalEvaluator`/`FilterEngine`, under
+`src/crystal_play/variable_substitutor/`) for plain task-param
+substitution, and the vendored Crinja shard (`jinja_filters.cr` registers
+custom additions into `Crinja.filter`/`Crinja.test`) for real `.j2`
+template files. A gap can exist in either, both, or neither - each is
+checked and fixed independently, same as any other bug class here.
+
+Full real name lists (ansible.builtin collection, official docs):
+Filter/Test/Lookup Plugins - see this file's own git history (round 149's
+audit) for the complete lists; not repeated here to keep this file
+focused on gaps, not the full reference list.
+
+**Lookups** - biggest gap of the three. `env`, `url`, `first_found`
+existed already; `vars`, `file`, `pipe`, `template`, `password` done
+(`0.9.465`, `ExpressionEvaluator#evaluate_lookup` only - the plain `{{ }}`
+task-param path; a `.j2` template file calling `lookup(...)` directly
+remains unsupported, Crinja has no `lookup` global function registered
+at all, a separate, still-open gap). Still missing: `config`, `csvfile`,
+`dict`, `indexed_items`, `ini`, `inventory_hostnames`, `items`, `lines`,
+`list`, `nested`, `random_choice`, `sequence`, `subelements`, `together`,
+`unvault`, `varnames`.
+
+**Filters** - `b64encode`/`b64decode`/`from_json`/`from_yaml`/`to_yaml`/
+`checksum`/`union` done (`0.9.465`, both evaluators - `filter_engine.cr`
+and `jinja_filters.cr`). Still missing: `combinations`, `commonpath`,
+`expanduser`, `expandvars`, `extract`, `from_yaml_all`, `human_readable`,
+`human_to_bytes`, `items`, `log`, `md5`/`sha1` (as standalone filters -
+only exist as an algorithm selector inside `hash`/`password_hash`),
+`normpath`, `path_join`, `permutations`, `pow`, `product`,
+`regex_escape`, `rekey_on_member`, `relpath`, `splitext`,
+`symmetric_difference`, `to_nice_json`, `to_uuid`, `unvault`,
+`urldecode`, `urlsplit`, `vault`,
+`win_basename`/`win_dirname`/`win_splitdrive`, `zip`, `zip_longest`.
+
+**Tests** - `subset`/`superset`/`contains` done (`0.9.465`, both
+`conditional_evaluator.cr` and `jinja_filters.cr`). `any`/`all` turned
+out to already be registered in Crinja (the original audit's list was
+wrong on these two - corrected here). Still missing: `abs`, `directory`,
+`exists`, `file`, `link`, `link_exists`, `mount`, `same_file`,
+`timedout`/`started`/`finished`/`reachable`/`unreachable` (async/host-
+check tests), `urn`, `vault_encrypted`, `vaulted_file`.
+
+Known limitation shared by every filter/test added in this pass that
+takes another list as an argument (`union(other)`, `is subset(other)`,
+`is superset(other)`) in the hand-rolled `{{ }}` evaluator: `other` must
+be a variable reference, not an inline `[...]` list literal -
+`resolve_expression`/`resolve_test_operand` have no list-literal parser
+(only a `{...}` dict-literal one) - a pre-existing gap already shared by
+`intersect`/`difference`, not introduced by this pass. Real playbooks
+almost always pass a variable here anyway.
+
+Original ranking (all 8 done in `0.9.465`, see `KNOWN_MISSING.md` for
+implementation/verification detail): `lookup('vars', ...)`,
+`lookup('file', ...)`, `lookup('template', ...)`, `lookup('pipe', ...)`,
+`b64encode`/`b64decode` filters, `to_yaml` filter, `is subset`/
+`is superset`/`is contains` tests, `lookup('password', ...)`.
+
+## Status
+
+`0.9.465` done: the 8 ranked items above, plus `from_json`/`from_yaml`/
+`checksum`/`union` filters (found while implementing the ranked set -
+`from_json`/`from_yaml` are `to_json`/`to_yaml`'s natural mirror,
+`union`/`checksum` were cheap once `b64encode`'s registration pattern
+was in place). Live-verified via a real playbook run (all 5 lookups +
+6 filters/tests exercised together, `crystal spec` 1361 examples green).
+The remaining long tail (everything else in the missing lists above)
+stays open, revisited if a live benchmark round actually hits one -
+`lookup('vars'/'file'/'pipe'/'template'/'password', ...)` inside a real
+`.j2` template file (as opposed to a task param) is the one gap from
+this pass most likely to actually surface that way, since Crinja has no
+`lookup()` global function registered at all yet.

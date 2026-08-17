@@ -1376,9 +1376,126 @@ module CrystalPlay
           return lines_json if wantlist
 
           (JSON.parse(lines_json).as_a?.try(&.map(&.as_s).join(",")) rescue nil) || "undefined"
+        when "vars"
+          # lookup('vars', 'variable_name') - real Ansible's own vars
+          # lookup plugin: an INDIRECT variable lookup, the name itself
+          # coming from an expression (commonly a computed string, e.g.
+          # `lookup('vars', 'nginx_' + ansible_distribution)`) rather
+          # than being written as a literal `{{ }}` reference. Entirely
+          # unimplemented before, fell through to "undefined".
+          var_name = parts[1]?.try { |part| evaluate(part.strip) }
+          return "undefined" unless var_name
+          resolved = @lookup.resolve(var_name)
+          resolved ? @lookup.format_value(resolved) : "undefined"
+        when "file"
+          # lookup('file', path) - reads a file's content from the
+          # CONTROLLER (same controller-side rule as env/url/first_found
+          # above), stripped of a single trailing newline (real
+          # Ansible's own file lookup plugin behavior - it splits on
+          # newlines and rejoins with the requested separator, default
+          # "\n", which drops exactly one trailing blank line same as a
+          # plain `.rstrip()` would for the common no-embedded-blank-
+          # lines case this covers).
+          path = parts[1]?.try { |part| evaluate(part.strip) }
+          return "undefined" unless path
+          resolved_path = resolve_lookup_path(path)
+          begin
+            File.read(resolved_path).chomp
+          rescue
+            "undefined"
+          end
+        when "pipe"
+          # lookup('pipe', command) - runs *command* via the shell ON
+          # THE CONTROLLER (not the target - matches real Ansible's own
+          # pipe lookup plugin, which always executes locally) and
+          # returns its stdout, stripped of a trailing newline.
+          command = parts[1]?.try { |part| evaluate(part.strip) }
+          return "undefined" unless command
+          begin
+            output = IO::Memory.new
+            status = Process.run("/bin/sh", ["-c", command], output: output, error: Process::Redirect::Close)
+            status.success? ? output.to_s.chomp : "undefined"
+          rescue
+            "undefined"
+          end
+        when "template"
+          # lookup('template', path) - renders a local (controller-side)
+          # `.j2` file through the same Crinja pipeline `template:`
+          # tasks use, against this expression's own vars, and returns
+          # the rendered text with one trailing newline stripped
+          # (matches real Ansible's own template lookup plugin, which
+          # is explicitly documented to strip a single trailing newline
+          # the way Jinja2's own template rendering leaves one).
+          path = parts[1]?.try { |part| evaluate(part.strip) }
+          return "undefined" unless path
+          resolved_path = resolve_lookup_path(path)
+          begin
+            crinja_renderer.render(File.read(resolved_path)).chomp
+          rescue
+            "undefined"
+          end
+        when "password"
+          # lookup('password', '/path/to/file [length=N chars=abc...]')
+          # - real Ansible's own password lookup plugin: generates a
+          # random password ONCE and persists it to *path* (on the
+          # CONTROLLER) so repeated runs/lookups return the SAME value;
+          # any later run finds the file and just reads it back rather
+          # than generating a new one. The whole argument is one
+          # space-separated string (path first, then key=value options),
+          # not comma-separated params like every other lookup type
+          # here - matches real Ansible's own free-form parsing for this
+          # specific lookup.
+          raw_arg = parts[1]?.try { |part| evaluate(part.strip) }
+          return "undefined" unless raw_arg
+          evaluate_password_lookup(raw_arg)
         else
           "undefined"
         end
+      end
+
+      # lookup('file'|'template', path) both name a CONTROLLER-side path
+      # that - inside a role - is conventionally relative to the role's
+      # own files/ dir (real Ansible's own behavior; `role_path` is
+      # already available as a magic var, same mechanism
+      # #resolve_first_found_root above uses). An absolute path, or a
+      # relative one outside any role context, passes through unchanged.
+      private def resolve_lookup_path(path : String) : String
+        return path if path.starts_with?('/')
+        role_path = @vars["role_path"]?.try(&.as_s?)
+        role_path ? File.join(role_path, "files", path) : path
+      end
+
+      # real Ansible's password lookup default charset (ascii_letters +
+      # digits + ".,:-_", its own `DEFAULT_PASSWORD_CHARS`) and default
+      # length (20).
+      PASSWORD_CHARS  = ("a".."z").to_a + ("A".."Z").to_a + ("0".."9").to_a + [".", ",", ":", "-", "_"]
+      PASSWORD_LENGTH = 20
+
+      private def evaluate_password_lookup(raw_arg : String) : String
+        tokens = raw_arg.strip.split(/\s+/)
+        path = tokens[0]?
+        return "undefined" unless path
+        resolved_path = resolve_lookup_path(path)
+
+        length = PASSWORD_LENGTH
+        tokens[1..].each do |token|
+          if token.starts_with?("length=")
+            length = token[7..].to_i? || length
+          end
+        end
+
+        if File.exists?(resolved_path)
+          return File.read(resolved_path).chomp
+        end
+
+        password = Array.new(length) { PASSWORD_CHARS.sample }.join
+        begin
+          dir = File.dirname(resolved_path)
+          Dir.mkdir_p(dir) unless Dir.exists?(dir)
+          File.write(resolved_path, password + "\n")
+        rescue
+        end
+        password
       end
 
       # Fetches *url* (a plain GET, no auth/headers - matches what these

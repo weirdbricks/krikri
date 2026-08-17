@@ -246,6 +246,48 @@ module CrystalPlay
         return negate ? !matched : matched
       end
 
+      # Handle 'is subset(...)' / 'is superset(...)' / 'is contains(...)'
+      # (plus each "is not ..." negation) - real Ansible's own tests
+      # (ansible.builtin, not standard Jinja2), common in `assert:`-heavy
+      # hardening roles checking one list/dict against another. Entirely
+      # unimplemented before - fell through to the generic fallback
+      # below, which has no notion of these test names either and always
+      # evaluated the whole condition as an undefined (falsy) bare
+      # variable lookup.
+      if test_match = condition.match(/^(.+?)\s+is\s+(not\s+)?(subset|superset|contains)\((.+)\)\s*$/)
+        var_expr = test_match[1].strip
+        negate = !test_match[2]?.nil?
+        test_name = test_match[3]
+        arg_expr = test_match[4].strip
+
+        left = resolve_test_operand(var_expr, vars)
+        right = resolve_test_operand(arg_expr, vars)
+
+        result = case test_name
+                 when "subset"
+                   left_arr = left.try(&.as_a?) || [] of JSON::Any
+                   right_arr = right.try(&.as_a?) || [] of JSON::Any
+                   left_arr.all? { |item| right_arr.includes?(item) }
+                 when "superset"
+                   left_arr = left.try(&.as_a?) || [] of JSON::Any
+                   right_arr = right.try(&.as_a?) || [] of JSON::Any
+                   right_arr.all? { |item| left_arr.includes?(item) }
+                 else # "contains" - Python's `b in a` for whichever container shape *a* (left) actually is
+                   case left.try(&.raw)
+                   when Array
+                     left.not_nil!.as_a.includes?(right || JSON::Any.new(nil))
+                   when Hash
+                     right.try(&.as_s?).try { |key| left.not_nil!.as_h.has_key?(key) } || false
+                   when String
+                     left.not_nil!.as_s.includes?(right.try(&.as_s?) || right.to_s)
+                   else
+                     false
+                   end
+                 end
+
+        return negate ? !result : result
+      end
+
       # Generic fallback for any other real Jinja2 `is [not] <test>`
       # built-in this module hasn't special-cased above (`divisibleby`,
       # `even`, `odd`, `equalto`, `sameas`, `escaped`, `callable`, etc) -
@@ -496,6 +538,34 @@ module CrystalPlay
     # from another default) would resolve to a String here, always
     # failing `is mapping`/`is sequence` regardless of what it actually
     # renders to.
+    # Resolves an `is subset(...)`/`is superset(...)`/`is contains(...)`
+    # operand (either side - the value being tested, or the argument
+    # inside the parens) to its real JSON::Any structure - handles a
+    # quoted literal, a filter-chain expression (`|`, same
+    # ExpressionEvaluator delegation #matches_type_test? uses), and a
+    # bare/dotted/indexed variable reference. Does NOT parse a `[...]`
+    # list literal (`is subset(['a', 'b'])`) - same pre-existing gap
+    # FilterEngine's own union filter has (see its comment); real
+    # playbooks almost always pass a variable here instead.
+    private def self.resolve_test_operand(expr : String, vars : Hash(String, JSON::Any)) : JSON::Any?
+      expr = expr.strip
+      if (expr.starts_with?('"') && expr.ends_with?('"')) || (expr.starts_with?('\'') && expr.ends_with?('\''))
+        return JSON::Any.new(expr[1..-2])
+      end
+
+      if expr.includes?("|")
+        rendered = VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate(expr)
+        return (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+      end
+
+      value = if expr.includes?(".") || expr.includes?("[")
+                VariableSubstitutor::VariableLookup.new(vars).resolve(expr)
+              else
+                vars[expr]?
+              end
+      rerender_if_templated(vars, value)
+    end
+
     private def self.matches_type_test?(vars : Hash(String, JSON::Any), var_name : String, test_name : String) : Bool
       # var_name may itself be a filter-chain expression, not a bare
       # variable reference - e.g. `java_version | int is number`

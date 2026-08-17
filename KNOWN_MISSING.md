@@ -8,7 +8,82 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.464`.**
+**Currently at `0.9.465`.**
+
+---
+
+Round 150 (`0.9.465`) - first round on the filter/test/lookup layer
+(not a benchmark round). A background audit this session found this
+layer (Jinja2 filters/tests/lookups used *inside* `{{ }}` expressions,
+not task modules) had a much bigger real gap than the module layer ever
+did - only 3 of 25 real `lookup(...)` plugins existed (`env`, `url`,
+`first_found`), and roughly a third of real filters/tests were missing.
+Implemented the top 8 ranked items from `MISSING_BUILTIN.md`'s new
+filter/test/lookup section, plus 4 more found cheap to add alongside
+them:
+
+**Lookups** (`ExpressionEvaluator#evaluate_lookup` only - the plain
+`{{ }}` task-param path; ordinary `lookup('vars', ...)` calls do reach
+task params via a role's `vars:`, `set_fact:`, etc. This is genuinely
+the more common surface, but a `.j2` template file calling `lookup(...)`
+directly is NOT covered here - Crinja has no `lookup()` global function
+registered at all, a separate, still-open gap this pass didn't touch):
+- `vars` - indirect variable lookup by computed name
+  (`lookup('vars', 'env_' + target_env + '_port')`).
+- `file` - reads a controller-side file's raw content, trailing newline
+  stripped. Resolves a relative path against the current role's own
+  `files/` dir first (real Ansible's own convention), same as `copy:`/
+  `template:`'s src: resolution.
+- `pipe` - runs a shell command on the CONTROLLER (never the target),
+  returns stdout stripped.
+- `template` - renders a local `.j2` file through the same Crinja
+  pipeline `template:` tasks use, against the calling expression's own
+  vars.
+- `password` - generates a random password ONCE and persists it to a
+  file on the controller (real Ansible's own behavior - a rerun reads
+  the same file back rather than generating a new one each time).
+  Supports `length=`.
+
+**Filters** (both evaluators - `filter_engine.cr` for plain `{{ }}` task
+params, `jinja_filters.cr`/Crinja for real `.j2` files - the usual
+"check both" rule):
+- `b64encode`/`b64decode` - standard (not urlsafe) base64.
+- `to_yaml` - real PyYAML default (block style, sorted keys); reuses
+  the same JSON::Any->YAML round-trip `to_nice_yaml` already used.
+- `from_json`/`from_yaml` - mirrors of `to_json`/`to_nice_yaml`, parse
+  a string into a real structure. Added alongside the ranked set once
+  `to_yaml`'s conversion helpers were already in place.
+- `checksum` - always sha1 (distinct from the general `hash(algorithm=)`
+  filter, which defaults to sha1 but accepts others).
+- `union` - set union, first-seen order preserved, matching Ansible's
+  own dedup approach (a duplicate within either source list is also
+  collapsed).
+
+**Tests** (`conditional_evaluator.cr` + `jinja_filters.cr`/Crinja):
+- `subset`/`superset`/`contains` - common in `assert:`-heavy hardening
+  roles per this project's own benchmark history (dev-sec/robertdebock).
+  `contains` matches Python's `b in a` semantics for whichever container
+  shape *a* actually is (list membership, dict key membership, or
+  string substring).
+- Correction to the original audit: `any`/`all` were reported missing
+  but turned out to already be registered in Crinja - not a real gap,
+  fixed in `MISSING_BUILTIN.md`.
+
+Known, documented limitation shared by every filter/test in this pass
+that takes another list as an argument (`union(other)`, `is
+subset(other)`, `is superset(other)`) in the hand-rolled `{{ }}`
+evaluator: `other` must be a variable reference, not an inline `[...]`
+list literal - `resolve_expression`/the new `resolve_test_operand` have
+no list-literal parser (only a `{...}` dict-literal one), a pre-existing
+gap already shared by `intersect`/`difference`, not introduced by this
+pass. Real playbooks almost always pass a variable here anyway.
+
+New unit specs across `expression_evaluator_spec.cr` (8 lookup examples),
+`filter_engine_spec.cr` and `crinja_renderer_spec.cr` (filters, both
+evaluators), `conditional_evaluator_spec.cr` (tests) - full suite green
+(1361 examples). Also live-verified via a real playbook run exercising
+all 5 lookups + 6 filters/tests together against a real `.j2` file and a
+real controller-side text file (not just unit-level mocking).
 
 ---
 

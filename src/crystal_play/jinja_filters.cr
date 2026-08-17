@@ -1,6 +1,8 @@
 require "crinja"
 require "yaml"
+require "base64"
 require "openssl/digest"
+require "./variable_substitutor/crinja_renderer"
 
 # Custom Jinja2 filters that real Ansible's Jinja2 provides but Crinja
 # doesn't ship, registered into the global Crinja default library so they're
@@ -473,6 +475,71 @@ module CrystalPlay
       Crinja::Value.new(any.to_yaml.sub(/\A---\n/, "").rstrip)
     end
 
+    # `to_yaml(**kwargs)` - real Ansible's own filter, real PyYAML
+    # default (block style, keys sorted) - same conversion as
+    # to_nice_yaml above (Crystal's YAML::Builder has no configurable
+    # indent width either way, so the two produce identical output),
+    # kept as a separate registration since real Ansible does too.
+    Crinja.filter(:to_yaml) do
+      any = JinjaFilters.sort_yaml_keys(JinjaFilters.crinja_value_to_yaml_any(target))
+      Crinja::Value.new(any.to_yaml.sub(/\A---\n/, "").rstrip)
+    end
+
+    # `b64encode(encoding='utf-8')`/`b64decode()` - real Ansible's own
+    # filters, standard (not urlsafe) base64. Entirely unregistered
+    # before - "no filter with name \"b64encode\" registered", failing
+    # the whole template render, same failure class as to_nice_yaml
+    # before it was added.
+    Crinja.filter(:b64encode) { Crinja::Value.new(Base64.strict_encode(target.to_s)) }
+    Crinja.filter(:b64decode) do
+      begin
+        Crinja::Value.new(Base64.decode_string(target.to_s))
+      rescue
+        raise "b64decode: invalid base64 input"
+      end
+    end
+
+    # `from_json()`/`from_yaml()` - real Ansible's own filters, parse a
+    # JSON/YAML string into a real Crinja value (dict/list/scalar) -
+    # mirrors of to_json/to_nice_yaml above. Converts through
+    # CrinjaRenderer.json_any_to_crinja_value (the same JSON::Any ->
+    # Crinja::Value converter #prepare_crinja_vars already uses for
+    # every ordinary variable) rather than a second hand-rolled one.
+    Crinja.filter(:from_json) do
+      begin
+        CrystalPlay::VariableSubstitutor::CrinjaRenderer.json_any_to_crinja_value(JSON.parse(target.to_s))
+      rescue
+        raise "from_json: invalid JSON input"
+      end
+    end
+    Crinja.filter(:from_yaml) do
+      begin
+        CrystalPlay::VariableSubstitutor::CrinjaRenderer.json_any_to_crinja_value(JSON.parse(YAML.parse(target.to_s).to_json))
+      rescue
+        raise "from_yaml: invalid YAML input"
+      end
+    end
+
+    # `checksum()` - real Ansible's own filter, always sha1 (distinct
+    # from the general-purpose `hash(algorithm=...)` filter above).
+    Crinja.filter(:checksum) do
+      digest = OpenSSL::Digest.new("SHA1")
+      digest.update(target.to_s)
+      Crinja::Value.new(digest.final.hexstring)
+    end
+
+    # `union(other)` - real Ansible's own filter, set union preserving
+    # first-seen order (matches Ansible's own dedup approach - a
+    # duplicate within either source list is also collapsed, not just
+    # cross-list duplicates).
+    Crinja.filter(:union) do
+      other = arguments.varargs[0]?
+      left = target.sequence? ? target.to_a : [] of Crinja::Value
+      right = (other && other.sequence?) ? other.to_a : [] of Crinja::Value
+      combined = (left + right).uniq { |item| item.to_s }
+      Crinja::Value.new(combined)
+    end
+
     # `version(comparison_version, operator='==')` - Ansible's own test
     # (ansible.builtin.version), not part of standard Jinja2 and not
     # provided by Crinja at all: `{% if sshd_version is version('5.8',
@@ -781,6 +848,39 @@ module CrystalPlay
     # select('gt', 0) | list is any) %}`.
     Crinja.test(:any) { target.each.any? { |item| item.truthy? } }
     Crinja.test(:all) { target.each.all? { |item| item.truthy? } }
+
+    # `subset`/`superset`/`contains` - real Ansible's own tests
+    # (ansible.builtin, not standard Jinja2), common in `assert:`-heavy
+    # hardening roles checking one list/dict against another. Entirely
+    # unregistered before - "no test with name \"subset\" registered",
+    # failing the whole template render.
+    Crinja.test({other: [] of Crinja::Value}, :subset) do
+      other = arguments["other"]
+      other_arr = other.sequence? ? other.to_a : [] of Crinja::Value
+      target_arr = target.sequence? ? target.to_a : [] of Crinja::Value
+      target_arr.all? { |item| other_arr.includes?(item) }
+    end
+    Crinja.test({other: [] of Crinja::Value}, :superset) do
+      other = arguments["other"]
+      other_arr = other.sequence? ? other.to_a : [] of Crinja::Value
+      target_arr = target.sequence? ? target.to_a : [] of Crinja::Value
+      other_arr.all? { |item| target_arr.includes?(item) }
+    end
+    # `contains(item)` - Python's `item in a` for whichever container
+    # shape *a* (target) actually is.
+    Crinja.test({other: nil}, :contains) do
+      other = arguments["other"]
+      case raw = target.raw
+      when Array(Crinja::Value)
+        raw.includes?(other)
+      when Crinja::Dictionary
+        raw.has_key?(Crinja::Value.new(other.to_s))
+      when String
+        raw.includes?(other.to_s)
+      else
+        false
+      end
+    end
 
     # Real Jinja2's comparison-operator test aliases - used almost
     # exclusively as a `select()`/`reject()`/`map(attribute=...)`

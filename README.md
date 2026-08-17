@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.464-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.465-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -297,6 +297,17 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.465` - filter/test/lookup gap-closing pass (not a benchmark
+  round)**: this layer (Jinja2 filters/tests/lookups used inside
+  `{{ }}` expressions, not task modules) turned out to have a much
+  bigger gap than modules ever did - only 3 of 25 real `lookup(...)`
+  plugins existed. Added `lookup('vars'/'file'/'pipe'/'template'/
+  'password', ...)`, `b64encode`/`b64decode`/`to_yaml`/`from_json`/
+  `from_yaml`/`checksum`/`union` filters, and `is subset`/`superset`/
+  `contains` tests, across both evaluators (the hand-rolled `{{ }}`
+  one and Crinja for `.j2` files) where each is reachable. See
+  `MISSING_BUILTIN.md`/`KNOWN_MISSING.md` for the full ranked list and
+  what's still open.
 - **`0.9.464` - `ansible.builtin` gap-closing pass, part 2 (not a
   benchmark round)**: closed the remaining 5 ranked items from
   `MISSING_BUILTIN.md` - `group_by`/`set_stats` (controller-side only,

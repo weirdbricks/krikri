@@ -1,5 +1,7 @@
 require "json"
 require "time"
+require "yaml"
+require "base64"
 require "openssl/digest"
 require "./variable_lookup"
 require "./expression_evaluator"
@@ -653,6 +655,84 @@ module CrystalPlay
           # logstash's own 30-elasticsearch-output.conf.j2 (a `.j2`
           # template file, reaching Crinja not this evaluator).
           JSON::Any.new(python_json_dump(value))
+        when "b64encode"
+          # b64encode(encoding='utf-8') - real Ansible's own filter,
+          # standard base64 (not urlsafe). Entirely unimplemented before
+          # - a bare `{{ }}` task param using it (as opposed to the same
+          # filter reaching Crinja via a `.j2` file, already registered
+          # separately in jinja_filters.cr) fell through to the
+          # unknown-filter passthrough, silently returning the plaintext
+          # value unencoded.
+          JSON::Any.new(Base64.strict_encode(as_string(value)))
+        when "b64decode"
+          # b64decode() - inverse of the above. Real Ansible raises on
+          # invalid input rather than silently passing it through;
+          # matched here via Base64's own DecodeError.
+          begin
+            JSON::Any.new(Base64.decode_string(as_string(value)))
+          rescue
+            raise "b64decode: invalid base64 input"
+          end
+        when "from_json"
+          # from_json() - real Ansible's own filter, parses a JSON
+          # string value into a real structure (the mirror of to_json
+          # above) - commonly used on a registered command/uri result's
+          # own stdout/content ("{{ result.stdout | from_json }}").
+          begin
+            JSON.parse(as_string(value))
+          rescue
+            raise "from_json: invalid JSON input"
+          end
+        when "from_yaml"
+          # from_yaml() - real Ansible's own filter, parses a YAML
+          # string into a real structure. Converts via YAML.parse ->
+          # to_json -> JSON.parse (YAML's Any and JSON::Any aren't the
+          # same type in Crystal) rather than hand-rolling a converter.
+          begin
+            JSON.parse(YAML.parse(as_string(value)).to_json)
+          rescue
+            raise "from_yaml: invalid YAML input"
+          end
+        when "to_yaml"
+          # to_yaml(**kwargs) - real Ansible's own filter, a YAML dump
+          # (real PyYAML default: block style, keys sorted). Converts
+          # via value.to_json -> YAML.parse -> to_yaml (JSON is a valid
+          # YAML flow-syntax subset, round-trips cleanly through
+          # Crystal's own YAML formatter) - same approach the Crinja-
+          # side to_nice_yaml filter already uses, mirrored here for the
+          # plain `{{ }}` evaluator. Unlike to_nice_yaml, doesn't accept
+          # indent=/sort_keys= overrides - matches real Ansible, where
+          # to_yaml (unlike to_nice_yaml) takes no such kwargs of its
+          # own beyond the underlying yaml.dump()'s already-implied
+          # defaults.
+          JSON::Any.new(YAML.parse(value.to_json).to_yaml)
+        when "checksum"
+          # checksum() - real Ansible's own filter (ansible.plugins.
+          # filter.core), a plain sha1 hex digest - distinct from the
+          # general-purpose `hash(algorithm=...)` filter above (which
+          # defaults to sha1 too, but accepts other algorithms);
+          # checksum specifically always means sha1, matching Ansible's
+          # own hard-coded `hashlib.sha1(...)`.
+          digest = OpenSSL::Digest.new("SHA1")
+          digest.update(as_string(value))
+          JSON::Any.new(digest.final.hexstring)
+        when "union"
+          # union(other) - real Ansible's own filter, set union
+          # preserving first-seen order (matches Ansible's own
+          # `_unique_dedupe` list dedup approach, not naive
+          # concatenation - a duplicate that appears within one of the
+          # two source lists is also collapsed, not just cross-list
+          # duplicates). Like intersect/difference above, `other` is
+          # expected to be a variable reference - resolve_base_expression
+          # has no `[...]` list-literal parser (only `{...}` dict
+          # literals), a pre-existing gap shared by every filter here
+          # that takes another list as its argument, not specific to
+          # union.
+          other = resolve_expression(filter_args)
+          left = value.as_a? || [] of JSON::Any
+          right = other.as_a? || [] of JSON::Any
+          combined = (left + right).uniq { |item| item.to_json }
+          JSON::Any.new(combined)
         when "ternary"
           # ternary(true_val, false_val) - real Ansible's own filter
           # (ansible.builtin, not standard Jinja2): `true_val` if value

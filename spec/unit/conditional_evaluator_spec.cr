@@ -554,6 +554,20 @@ describe CrystalPlay::ConditionalEvaluator do
       CrystalPlay::ConditionalEvaluator.evaluate(%(path is not search("nomatch")), v).should be_true
     end
 
+    it "evaluates 'is subset(...)' / 'is superset(...)' / 'is contains(...)' (plus negations)" do
+      v = Hash(String, JSON::Any).new
+      v["small"] = JSON.parse(%(["a", "b"]))
+      v["big"] = JSON.parse(%(["a", "b", "c"]))
+      v["items"] = JSON.parse(%(["x", "y", "z"]))
+
+      CrystalPlay::ConditionalEvaluator.evaluate("small is subset(big)", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("big is subset(small)", v).should be_false
+      CrystalPlay::ConditionalEvaluator.evaluate("big is superset(small)", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("small is not superset(big)", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate(%(items is contains("y")), v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate(%(items is not contains("q")), v).should be_true
+    end
+
     it "falls back to Crinja for any real Jinja2 'is [not] <test>' this module hasn't hand-implemented (divisibleby, etc)" do
       # Real bug found benchmarking robertdebock.nomad's own assert:
       # `nomad_server_bootstrap_expect is not divisibleby 2` (verifying

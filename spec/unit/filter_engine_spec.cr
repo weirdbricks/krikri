@@ -589,4 +589,44 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     result["a"].as_i.should eq(1)
     result["b"].as_i.should eq(2)
   end
+
+  it "b64encode/b64decode round-trip" do
+    encoded = engine.apply(s("hello world"), "b64encode").as_s
+    encoded.should eq("aGVsbG8gd29ybGQ=")
+    engine.apply(JSON::Any.new(encoded), "b64decode").as_s.should eq("hello world")
+  end
+
+  it "b64decode raises on invalid input" do
+    expect_raises(Exception) { engine.apply(s("not valid base64!!"), "b64decode") }
+  end
+
+  it "from_json parses a JSON string into a real structure" do
+    result = engine.apply(s(%({"a": 1, "b": [2, 3]})), "from_json")
+    result.as_h["a"].as_i.should eq(1)
+    result.as_h["b"].as_a.map(&.as_i).should eq([2, 3])
+  end
+
+  it "from_yaml parses a YAML string into a real structure" do
+    result = engine.apply(s("a: 1\nb:\n  - 2\n  - 3\n"), "from_yaml")
+    result.as_h["a"].as_i.should eq(1)
+    result.as_h["b"].as_a.map(&.as_i).should eq([2, 3])
+  end
+
+  it "to_yaml dumps a structure as a YAML string" do
+    result = engine.apply(JSON.parse(%({"b": 2, "a": 1})), "to_yaml").as_s
+    result.should contain("a: 1")
+    result.should contain("b: 2")
+  end
+
+  it "checksum computes a sha1 hex digest" do
+    engine.apply(s("hello"), "checksum").as_s.should eq("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d")
+  end
+
+  it "union combines two lists preserving order and dedup" do
+    v = Hash(String, JSON::Any).new
+    v["other"] = JSON.parse(%([2, 3, 4]))
+    vars_engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(v)
+    result = vars_engine.apply(JSON.parse(%([1, 2, 3])), "union(other)")
+    result.as_a.map(&.as_i).should eq([1, 2, 3, 4])
+  end
 end

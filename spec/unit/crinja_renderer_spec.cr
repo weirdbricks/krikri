@@ -327,6 +327,63 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     renderer.render(%({{ {"b": 1, "a": 2} | to_nice_yaml(sort_keys=False) }})).should eq("b: 1\na: 2")
   end
 
+  it "b64encode/b64decode round-trip in a .j2 template" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render(%({{ "hello world" | b64encode }})).should eq("aGVsbG8gd29ybGQ=")
+    renderer.render(%({{ "aGVsbG8gd29ybGQ=" | b64decode }})).should eq("hello world")
+  end
+
+  it "from_json parses a JSON string into a real dict usable by dotted access" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render(%({{ ('{"a": 1}' | from_json).a }})).should eq("1")
+  end
+
+  it "from_yaml parses a YAML string into a real dict" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render(%({{ ("a: 1\nb: 2\n" | from_yaml).b }})).should eq("2")
+  end
+
+  it "renders to_yaml, real Ansible's own filter (sorted keys, block style)" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render(%({{ {"b": 1, "a": 2} | to_yaml }})).should eq("a: 2\nb: 1")
+  end
+
+  it "checksum computes a sha1 hex digest" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render(%({{ "hello" | checksum }})).should eq("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d")
+  end
+
+  it "union combines two lists preserving order and dedup" do
+    v = Hash(String, JSON::Any).new
+    v["other"] = JSON.parse(%([2, 3, 4]))
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render(%({{ [1, 2, 3] | union(other) }})).should eq("[1, 2, 3, 4]")
+  end
+
+  it "renders is subset / is superset / is contains, real Ansible's own tests" do
+    v = Hash(String, JSON::Any).new
+    v["small"] = JSON.parse(%(["a", "b"]))
+    v["big"] = JSON.parse(%(["a", "b", "c"]))
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render(%({% if small is subset(big) %}yes{% else %}no{% endif %})).should eq("yes")
+    renderer.render(%({% if big is subset(small) %}yes{% else %}no{% endif %})).should eq("no")
+    renderer.render(%({% if big is superset(small) %}yes{% else %}no{% endif %})).should eq("yes")
+    renderer.render(%({% if big is contains("c") %}yes{% else %}no{% endif %})).should eq("yes")
+    renderer.render(%({% if big is contains("z") %}yes{% else %}no{% endif %})).should eq("no")
+  end
+
   it "type_debug returns Python's own type name" do
     # Real bug found benchmarking robertdebock.httpd's own assert.yml:
     # `httpd_additionnal_modules | type_debug == "list"` - entirely
