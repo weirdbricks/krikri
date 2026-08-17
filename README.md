@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.444-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.446-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -305,6 +305,15 @@ context.
   against the real remote target instead. `npm`/`ruby`/
   `ca_certificates`/`restore`/`turn` all clean. See `KNOWN_MISSING.md`/
   `ROLES_TESTED.md`.
+- **`0.9.445`-`0.9.446` - round 138, `robertdebock.dryrun`/`.ca`/
+  `.firewall`/`.elastic_repo`/`.subversion`/`.storage`**: added
+  `ansible.builtin.slurp` (entirely unimplemented before); fixed `ufw:
+  state: enabled`/`disabled` never converging on a warm rerun (used the
+  command's own always-0 exit code as `changed` instead of comparing
+  actual firewall state before/after, matching real ufw.py). `.ca`
+  remains blocked by the already-documented `community.crypto`
+  collection gap. `dryrun`/`elastic_repo`/`subversion`/`storage` clean.
+  See `KNOWN_MISSING.md`/`ROLES_TESTED.md`.
 - **`0.9.442`-`0.9.444` - round 137, `robertdebock.apt_repository`/
   `.common`/`.java`/`.tomcat`/`.zabbix_proxy`/`.update`**: 3 real bugs
   plus a full new module. `VarSubstitutor` silently defaulted

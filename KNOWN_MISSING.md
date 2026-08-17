@@ -8,7 +8,31 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.444`.**
+**Currently at `0.9.446`.**
+
+---
+
+Round 138 (`0.9.445`-`0.9.446`) - 6 roles (`robertdebock.dryrun`,
+`.ca`, `.firewall`, `.elastic_repo`, `.subversion`, `.storage`), fresh
+Atlantic.net USEAST1 pair. 1 real bug fixed plus a new module:
+
+1. **`ufw: state: enabled`/`disabled` never converged on a warm
+   rerun** - used the `ufw enable`/`disable` command's own exit code as
+   `changed`, but real ufw exits 0 regardless of whether anything
+   actually changed. Fixed by porting real ufw.py's own pre-state
+   comparison (`ufw status verbose` before the operation) instead.
+   Found via `robertdebock.firewall`'s own "Enable ufw" task.
+2. **`ansible.builtin.slurp` was entirely unimplemented** - found via
+   `robertdebock.ca`'s own cert-reading task. New `plugins/slurp.cr`.
+
+`robertdebock.ca` itself remains blocked by the already-documented
+`community.crypto` collection gap (openssl_csr/openssl_privatekey/
+openssl_certificate, same class as round 90's x509_certificate finding)
+- a full, correct X.509 CA implementation is out of scope for a single
+round, documented rather than attempted.
+`dryrun`/`elastic_repo`/`subversion`/`storage` were all clean, zero
+bugs (elastic_repo's own skip-count difference is the pre-existing
+`rpm_key` gap, not new).
 
 ---
 
