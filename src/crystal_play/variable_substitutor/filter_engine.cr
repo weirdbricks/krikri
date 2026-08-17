@@ -256,16 +256,40 @@ module CrystalPlay
           # with one backreference arg returns a plain string, matching
           # real Ansible - `first` on that string must then return its
           # first *character*, not nil).
+          #
+          # A genuinely empty sequence (an empty ARRAY specifically, not
+          # merely "not an array at all" - `as_array` also returns `[]`
+          # for an undefined/non-array value, a separate, still-deferred
+          # class of gap this deliberately does NOT touch) raises here,
+          # matching real Jinja2's own `do_first`: `next(iter(seq))`
+          # against an empty sequence raises `StopIteration`, which
+          # surfaces to a real playbook run as a hard "No first item,
+          # sequence was empty." task-arg error the moment anything
+          # (`.split`, `.join`, ...) touches the result. Found
+          # benchmarking robertdebock.mount_options (round 140): a
+          # corrupted `opts: ",nodev"` from `ansible_mounts |
+          # selectattr(...) | first` on an empty match silently flowed
+          # through as `nil` before this fix, failing much LATER with a
+          # confusing, unrelated mount(8) error instead of failing
+          # immediately with a clear message at the actual source task.
           if str = value.as_s?
-            JSON::Any.new(str.empty? ? nil : str[0].to_s)
+            raise "No first item, sequence was empty." if str.empty?
+            JSON::Any.new(str[0].to_s)
+          elsif arr = value.as_a?
+            raise "No first item, sequence was empty." if arr.empty?
+            arr.first
           else
-            as_array(value).first? || JSON::Any.new(nil)
+            JSON::Any.new(nil)
           end
         when "last"
           if str = value.as_s?
-            JSON::Any.new(str.empty? ? nil : str[-1].to_s)
+            raise "No last item, sequence was empty." if str.empty?
+            JSON::Any.new(str[-1].to_s)
+          elsif arr = value.as_a?
+            raise "No last item, sequence was empty." if arr.empty?
+            arr.last
           else
-            as_array(value).last? || JSON::Any.new(nil)
+            JSON::Any.new(nil)
           end
         when "min"
           as_array(value).min_by? { |v| numeric(v) } || JSON::Any.new(nil)

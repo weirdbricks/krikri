@@ -321,6 +321,22 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     engine.apply(value, "max").as_i.should eq(3)
   end
 
+  it "raises a clean error for first/last on a genuinely empty sequence, matching real Jinja2's do_first/do_last" do
+    # Real bug found benchmarking robertdebock.mount_options (round
+    # 140): `ansible_mounts | selectattr(...) | first` on an empty match
+    # used to silently return nil, letting a corrupted value flow
+    # through undetected and fail much LATER in an unrelated task with a
+    # confusing message - real ansible-playbook hard-fails immediately
+    # at the source with "No first item, sequence was empty."
+    empty = JSON.parse("[]")
+    expect_raises(Exception, "No first item, sequence was empty.") { engine.apply(empty, "first") }
+    expect_raises(Exception, "No last item, sequence was empty.") { engine.apply(empty, "last") }
+
+    # An empty STRING (also a valid Jinja2 sequence) raises the same way.
+    expect_raises(Exception, "No first item, sequence was empty.") { engine.apply(s(""), "first") }
+    expect_raises(Exception, "No last item, sequence was empty.") { engine.apply(s(""), "last") }
+  end
+
   it "strips the last path component with dirname, and keeps only it with basename" do
     # Real bug found benchmarking geerlingguy.mysql: entirely
     # unimplemented before, so `path | dirname` fell through to the

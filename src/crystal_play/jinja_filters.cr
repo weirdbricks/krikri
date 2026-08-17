@@ -65,6 +65,37 @@ module CrystalPlay
     # `ansible/plugins/filter/core.py#comment` algorithm exactly,
     # including `cblock`'s/`xml`'s distinct `/* ... */`/`<!-- ... -->`
     # begin/end border lines (different from their per-line decoration).
+    # Overrides the vendored shard's own `first`/`last` (lib/crinja/src/
+    # lib/filter/collections.cr) - real Jinja2's `do_first`/`do_last`
+    # raise a clean "No first/last item, sequence was empty." the moment
+    # anything touches the result, on a genuinely empty sequence. The
+    # vendored version instead let a bare Crystal `Array#first`/`#last`
+    # raise its own unhelpful "Index out of bounds" - or, worse, inside
+    # `CrinjaRenderer#render`'s bare `rescue` (used for plain `{{ }}`
+    # task-param substitution), got silently swallowed into rendering
+    # the ORIGINAL unparsed `{{ ... }}` text rather than failing at all.
+    # Same real-world trigger as the hand-rolled FilterEngine's own
+    # `first`/`last` fix below: `ansible_mounts | selectattr(...) |
+    # first` when nothing matches. Deliberately narrow - only the
+    # "empty sequence" case gets a real error; a general Undefined-
+    # sentinel redesign (covering undefined-variable propagation more
+    # broadly) is bigger, separately-deferred work - see
+    # KNOWN_MISSING.md.
+    Crinja.filter(:first) do
+      if target.undefined?
+        Crinja::UNDEFINED
+      elsif target.sequence? && target.size == 0
+        raise Crinja::RuntimeError.new("No first item, sequence was empty.")
+      else
+        target.first.raw
+      end
+    end
+
+    Crinja.filter(:last) do
+      raise Crinja::RuntimeError.new("No last item, sequence was empty.") if target.sequence? && target.size == 0
+      target.last.raw
+    end
+
     Crinja.filter(:comment) do
       style = (arguments.varargs[0]?.try(&.to_s) || arguments.kwargs["style"]?.try(&.to_s) || "plain")
 

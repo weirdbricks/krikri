@@ -513,6 +513,21 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     result.should eq(File.join(role_dir, "vars", "main.yml"))
   end
 
+  it "raises a clean error rendering first/last on a genuinely empty sequence, rather than silently rendering the raw template text" do
+    v = Hash(String, JSON::Any).new
+    v["mylist"] = JSON::Any.new([] of JSON::Any)
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    expect_raises(Exception, "No first item, sequence was empty.") { renderer.render!("{{ mylist | first }}") }
+    expect_raises(Exception, "No last item, sequence was empty.") { renderer.render!("{{ mylist | last }}") }
+  end
+
+  it "leaves an undefined target's first filter lenient, matching the vendored library's own prior behavior" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ nonexistent_var | first | default('fallback') }})).should eq("fallback")
+  end
+
   it "path_join joins a list of path components, an absolute one resets" do
     v = Hash(String, JSON::Any).new
     renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)

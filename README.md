@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.470-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.471-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -297,6 +297,24 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.471` - closes out the KNOWN_MISSING.md real-gaps list (not a
+  benchmark round)**: `expect:` is now a real session leader (manual
+  `fork()`+`setsid()`+`ioctl(TIOCSCTTY)`, since `Process.new`'s own
+  spawn has no fork-to-exec hook), honors `echo:` (off by default,
+  matching real Ansible - sent responses no longer leak into captured
+  output unless requested), and cycles through a `responses:` list as
+  the same prompt reappears instead of only ever sending the first
+  entry. `first`/`last` (both evaluators) now raise "No first/last item,
+  sequence was empty." immediately on a genuinely empty sequence,
+  matching real Jinja2's `do_first`/`do_last` - found via
+  `robertdebock.mount_options` (round 140), where a silent `nil` let a
+  corrupted value flow through to fail much later with an unrelated
+  mount(8) error; the Crinja-side override also fixes a worse case where
+  the same expression inside a plain `{{ }}` task param silently
+  rendered the ORIGINAL unparsed template text instead of failing at
+  all. `to_datetime()`/timedelta arithmetic gains `+` (`Time` +
+  `TimeDelta`, `TimeDelta` + `TimeDelta`) and `*` (`TimeDelta` by a
+  scalar, either order) alongside the pre-existing `-`.
 - **`0.9.470` - Crinja `lookup()` gains `url`/`first_found` (not a
   benchmark round)**: real `.j2` template files can now call
   `lookup('url', ...)` (redirect-following, `wantlist=` honored) and

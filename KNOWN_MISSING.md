@@ -10,26 +10,17 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.470`.**
+**Currently at `0.9.471`.**
 
 ---
 
 ## Real gaps (worth revisiting)
 
-- **`expect:` plugin limitations**: no session leader (`setsid`), so
-  some interactive programs that check for a controlling TTY behave
-  differently than under real `pexpect`; no `echo: false` (response
-  values are not masked in any logging/output); only the first
-  response in a `responses:` list is ever sent (real Ansible sends each
-  response in sequence as the corresponding pattern matches again).
-- **`mount_options`'s `first` filter on an empty sequence** produces a
-  real, confirmed divergence from real Ansible's own error/behavior.
-  Tied to a broader deferred design question (a proper strict-undefined
-  mode) rather than a one-line filter fix - see git log around
-  `mount_options` for the repro.
-- **`to_datetime()`/timedelta arithmetic** only supports subtraction.
-  Deliberately narrow - no real role has needed addition/multiplication
-  yet.
+None currently tracked - the last three (`expect:`'s missing session
+leader/echo masking/response cycling, `mount_options`'s `first`-on-
+empty-sequence crash, `to_datetime()` addition/multiplication) were
+fixed in `0.9.470`-`0.9.471`. New gaps get added here as they're found
+during real-host benchmark rounds.
 
 ## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 

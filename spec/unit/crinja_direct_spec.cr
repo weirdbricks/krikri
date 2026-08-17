@@ -59,6 +59,39 @@ describe "raw Crinja (rebase canary)" do
     ).should eq("1")
   end
 
+  # `+`/`*` on a Time/TimeDelta - the "addition/multiplication" half of
+  # to_datetime()/timedelta arithmetic this codebase deliberately left
+  # narrowly scoped to subtraction-only until a real role needed more.
+  it "adds a timedelta back onto a datetime (Python's datetime + timedelta)" do
+    # b + (a - b) should land back on a - verified by re-subtracting a
+    # from the result and checking a zero-second difference, since
+    # Crinja's own Time value has no strftime/formatting support to
+    # compare against a literal date string directly.
+    crinja_render(
+      "{{ (( (b | to_datetime('%b %d, %Y')) + (a | to_datetime('%b %d, %Y') - b | to_datetime('%b %d, %Y')) ) - (a | to_datetime('%b %d, %Y'))).total_seconds() }}",
+      {"a" => "Jan 03, 2024", "b" => "Jan 01, 2024"}
+    ).should eq("0.0")
+  end
+
+  it "adds two timedeltas together" do
+    crinja_render(
+      "{{ ((a | to_datetime('%b %d, %Y') - b | to_datetime('%b %d, %Y')) + (a | to_datetime('%b %d, %Y') - b | to_datetime('%b %d, %Y'))).days }}",
+      {"a" => "Jan 03, 2024", "b" => "Jan 01, 2024"}
+    ).should eq("4")
+  end
+
+  it "multiplies a timedelta by a scalar in either order" do
+    crinja_render(
+      "{{ ((a | to_datetime('%b %d, %Y') - b | to_datetime('%b %d, %Y')) * 3).days }}",
+      {"a" => "Jan 02, 2024", "b" => "Jan 01, 2024"}
+    ).should eq("3")
+
+    crinja_render(
+      "{{ (3 * (a | to_datetime('%b %d, %Y') - b | to_datetime('%b %d, %Y'))).days }}",
+      {"a" => "Jan 02, 2024", "b" => "Jan 01, 2024"}
+    ).should eq("3")
+  end
+
   # Ansible-specific filters/tests that live in jinja_filters.cr and must
   # stay registered - a future fork addition would make these redundant
   # (then can be deleted), a regression would fail here.
