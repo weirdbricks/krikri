@@ -305,6 +305,12 @@ context.
   against the real remote target instead. `npm`/`ruby`/
   `ca_certificates`/`restore`/`turn` all clean. See `KNOWN_MISSING.md`/
   `ROLES_TESTED.md`.
+- **round 141, `robertdebock.ansible_lint`/`.update_pip_packages`/
+  `.container_docs`/`.molecule`/`.php_fpm`/`.metricbeat`/`.powertop`/
+  `.digitalocean_agent`** (no bump): all 8 clean/known-gap, 10th
+  consecutive such result this session - `php_fpm` verified with real
+  `.j2` template rendering, byte-identical config files. See
+  `KNOWN_MISSING.md`/`ROLES_TESTED.md`.
 - **round 140, `robertdebock.apt_autostart`/`.update_package_cache`/
   `.buildtools`/`.zabbix_repository`/`.filesystem`/`.mount_options`**
   (no bump): 5 of 6 clean, incl. `filesystem` against a real

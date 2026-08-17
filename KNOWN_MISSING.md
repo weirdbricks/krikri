@@ -12,6 +12,24 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 141 (no version bump - zero new crystal-ansible bugs, 10
+consecutive clean/known-gap results) - 8 roles (`robertdebock.
+ansible_lint`, `.update_pip_packages`, `.container_docs`, `.molecule`,
+`.php_fpm`, `.metricbeat`, `.powertop`, `.digitalocean_agent`), fresh
+Atlantic.net USEAST1 pair. All byte-identical to real ansible-playbook
+(cold and warm/idempotency). `php_fpm` verified with real `.j2` template
+rendering (config files byte-for-byte identical, service active on
+both). `powertop` exercised `import_role: robertdebock.service` with
+`vars:` overrides. `molecule` and `metricbeat` fail identically on both
+engines (external dependency gaps in the roles themselves, not
+crystal-ansible bugs). `digitalocean_agent`'s `skipped` count differs
+(1 vs 0) due to the already-documented `rpm_key` unimplemented-plugin
+gap (rounds 62/101/106/130) - not new. This is the 10th consecutive
+clean/known-gap result, meeting the user's "stop at 10 in a row"
+threshold for this session's benchmark marathon.
+
+---
+
 Round 140 (no version bump - documented, not fixed) - 6 roles
 (`robertdebock.apt_autostart`, `.update_package_cache`, `.buildtools`,
 `.zabbix_repository`, `.filesystem`, `.mount_options`), fresh Atlantic.net
