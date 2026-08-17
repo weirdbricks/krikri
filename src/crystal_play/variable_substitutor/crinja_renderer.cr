@@ -418,7 +418,12 @@ module CrystalPlay
         when String
           Crinja::Value.new(json.as_s)
         when Int64
-          Crinja::Value.new(json.as_i)
+          # as_i is Int32-only, raises "Arithmetic overflow" for a value
+          # like a large uid rendered via a real .j2 template - see
+          # playbook_parser.cr's own identical fix for the same root
+          # cause. Crinja::Value's own Raw type already includes Int64
+          # directly (Number), no further conversion needed.
+          Crinja::Value.new(json.as_i64)
         when Float64
           Crinja::Value.new(json.as_f)
         when Bool

@@ -100,7 +100,10 @@ module CrystalPlay
       when String
         value.as_s
       when Int64, Int32
-        value.as_i.to_s
+        # as_i is Int32-only, raises "Arithmetic overflow" for a value
+        # like a large uid (2147483659) - see playbook_parser.cr's own
+        # identical fix for the same root cause.
+        value.as_i64.to_s
       when Float64
         value.as_f.to_s
       when Bool

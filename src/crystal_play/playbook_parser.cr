@@ -1886,7 +1886,18 @@ module CrystalPlay
       when Bool
         yaml.as_bool.to_s
       when Int64, Int32
-        yaml.as_i.to_s
+        # yaml.as_i returns Int32 - raises "Arithmetic overflow" for any
+        # value outside that range, silently dropping the WHOLE task at
+        # parse time ("Skipping task ...: Arithmetic overflow", no
+        # further detail). Real Ansible/YAML integers aren't bounded to
+        # 32 bits - a uid: like 2147483659 (one past Int32::MAX, real
+        # Linux allows uids up to UINT32_MAX) is completely ordinary.
+        # Found via robertdebock.cve_2018_19788's own "Create user"
+        # task (`uid: 2147483659`) - the whole task silently vanished,
+        # not just that one field, so the role's actual test (a
+        # non-privileged user shouldn't be able to manage a systemd
+        # service) never ran against a real user at all.
+        yaml.as_i64.to_s
       when Float64
         yaml.as_f.to_s
       when Nil
@@ -1902,7 +1913,18 @@ module CrystalPlay
       when String
         yaml.as_s
       when Int64, Int32
-        yaml.as_i.to_s
+        # yaml.as_i returns Int32 - raises "Arithmetic overflow" for any
+        # value outside that range, silently dropping the WHOLE task at
+        # parse time ("Skipping task ...: Arithmetic overflow", no
+        # further detail). Real Ansible/YAML integers aren't bounded to
+        # 32 bits - a uid: like 2147483659 (one past Int32::MAX, real
+        # Linux allows uids up to UINT32_MAX) is completely ordinary.
+        # Found via robertdebock.cve_2018_19788's own "Create user"
+        # task (`uid: 2147483659`) - the whole task silently vanished,
+        # not just that one field, so the role's actual test (a
+        # non-privileged user shouldn't be able to manage a systemd
+        # service) never ran against a real user at all.
+        yaml.as_i64.to_s
       when Float64
         yaml.as_f.to_s
       when Bool

@@ -75,6 +75,31 @@ describe CrystalPlay::PlaybookParser do
       task.tags.should eq(["demo"])
     end
 
+    it "keeps a task whose own integer param exceeds Int32 range, instead of silently dropping it with \"Arithmetic overflow\"" do
+      # Regression: safe_yaml_to_string/stringify_value both did
+      # `yaml.as_i.to_s` - YAML::Any#as_i is Int32-only, so a real
+      # (unremarkable) value like a uid: one past Int32::MAX raised
+      # "Arithmetic overflow", silently dropping the WHOLE task at parse
+      # time. Found via robertdebock.cve_2018_19788's own "Create user"
+      # task (uid: 2147483659).
+      playbook = <<-YAML
+        - name: Example play
+          hosts: all
+          gather_facts: false
+          tasks:
+            - name: Create user
+              ansible.builtin.user:
+                name: cve_2018_19788
+                uid: 2147483659
+                state: present
+        YAML
+
+      result = CrystalPlay::PlaybookParser.parse_string(playbook)
+
+      result.plays[0].tasks.size.should eq(1)
+      result.plays[0].tasks[0].params["uid"].should eq("2147483659")
+    end
+
     it "recognizes listen: as a task keyword on a handler, not a module name" do
       # Real bug found benchmarking prometheus.prometheus.node_exporter's
       # own handlers/main.yml: `listen:` wasn't in the special_keys
