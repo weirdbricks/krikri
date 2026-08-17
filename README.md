@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.432-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.439-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,23 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.433`-`0.9.439` - round 135, `robertdebock.dns`/`.certbot`/
+  `.openssl`/`.facts`/`.swap`/`.sudo_pair`**: first new-role round since
+  round 133. 7 real bugs found and fixed: `--limit` was parsed but
+  never actually applied anywhere (ran every play against the whole
+  inventory regardless); the prior round's local-exec "skip bash -c"
+  optimization missed a leading `NAME=value` env-assignment prefix
+  (broke every local-connection apt install); a role-relative `copy:
+  src:` never got staged to a genuinely remote host when the resolved
+  path was relative (the common case); a when:-gated `include_tasks:`
+  double-counted `ok`+`skipped` for the same task; `community.general.
+  filesystem` was entirely unimplemented (new plugin); a `block:`'s own
+  `notify:` was silently dropped at both the parser and executor level;
+  `zip_changed?` dereferenced symlink zip members, making any archive
+  with a symlink permanently non-idempotent. All 7 live-reverified,
+  cold and warm, byte-identical to real ansible-playbook on a fresh
+  Atlantic.net USEAST1 (Orlando FL) pair - switched from USEAST2 for
+  better round-trip latency. See `KNOWN_MISSING.md`/`ROLES_TESTED.md`.
 - **`0.9.432` - performance pass (no correctness bugs, not a benchmark
   round)**: skip `/bin/bash -c` for local-connection commands with no
   shell metacharacters (~7% faster wall-clock on a local-connection

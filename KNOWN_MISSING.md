@@ -8,7 +8,92 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.431`.**
+**Currently at `0.9.439`.**
+
+---
+
+Round 135 (`0.9.433`-`0.9.439`) - first new-role round since round 133's
+`robertdebock.mitogen`, preceded by an unrelated performance-review pass
+(`0.9.432`, see `git log` and `README.md`'s own entry - no correctness
+bugs there). 6 roles tested (`robertdebock.dns`, `.certbot`, `.openssl`,
+`.facts`, `.swap`, `.sudo_pair`), 7 real bugs found and fixed across a
+fresh `G3.1GB` Atlantic.net pair in **USEAST1 (Orlando FL)** - switched
+from the previously-used USEAST2 for better round-trip latency (the
+user is physically in Florida). See `ROLES_TESTED.md` for full per-role
+detail; summary here:
+
+1. **`--limit` was parsed into a variable that was never read anywhere
+   else** - a complete no-op since the flag was first added, zero spec
+   coverage. `crystal-play.cr` ran every play against the WHOLE
+   inventory regardless of `--limit`, silently including hosts real
+   `ansible-playbook` would have excluded. Found because a `--limit
+   crystal_host` run visibly mutated the real-ansible-playbook
+   comparison host too. Fixed by intersecting the play's own `hosts:`
+   pattern match against `inventory.get_hosts(limit_hosts)`.
+2. **The round-132 "skip `/bin/bash -c` when no shell metacharacters"
+   local-exec optimization missed leading `NAME=value` env-assignment
+   syntax** - `apt.cr`/`package.cr`'s own real
+   `DEBIAN_FRONTEND=noninteractive apt-get install ...` (no `export`/`;`
+   involved) has no metacharacters at all, so it got argv-split with
+   `"DEBIAN_FRONTEND=noninteractive"` as argv[0] - ENOENT, breaking
+   every local-connection apt install. Fixed with an anchored
+   `LEADING_ENV_ASSIGNMENT` check.
+3. **A role-relative `copy: src:` never got staged to a genuinely
+   remote host when the resolved path was relative** (the common case
+   whenever crystal-ansible is invoked with a relative playbook path) -
+   `resolve_role_relative_src`'s own resolved candidate stayed relative,
+   and `inline_copy_source_content`'s "does this need staging" gate
+   required an absolute path. Silently left the remote plugin with an
+   unresolvable relative `src:` string. Fixed with `File.expand_path`.
+   Also extended the same staging sequence to
+   `execute_handler_plugin_once`, which never had it at all (not yet
+   hit by a real role, found auditing the task-path fix).
+4. **A when:-gated `include_tasks:` double-counted `ok` and `skipped`
+   for the same task** in the single-host recap path - `ok` was
+   incremented unconditionally before the when: check ran, then
+   `skipped` again once it failed. Fixed by moving the increment into
+   `run_include_tasks_once`, after the when: check passes (the
+   multi-host batched path already partitioned run/skip hosts
+   correctly first).
+5. **`community.general.filesystem` was entirely unimplemented** - new
+   `plugins/filesystem.cr` (state present/absent, blkid-based existing-
+   fs detection, force/opts, most Linux fstypes; `resizefs:`/`uuid:`
+   not implemented, same class of documented scope cut as this repo's
+   other RHEL/FreeBSD-only gaps).
+6. **A `block:`'s own `notify:` was silently dropped at two levels** -
+   `parse_block_task` never parsed the `notify:` key on a block task at
+   all, and even with that fixed, `execute_block`/`execute_block_multi`
+   never checked it - only an individual nested task's own `notify:`
+   was ever forwarded to `HandlerRunner`. Fixed both: parse it, and fire
+   it from both execution paths when any nested task actually changed
+   (a changed-count snapshot, mirroring the existing `failed_before`
+   rescue-recovery tracking).
+7. **`zip_changed?` dereferenced symlink zip members via shell
+   redirection** (`md5sum < dest_path` always follows a symlink),
+   comparing the DEREFERENCED target file's content against the
+   archive's own raw member content (a zip symlink entry's content IS
+   the short target-path string) - permanently mismatched even on a
+   byte-correct extraction, so any zip archive containing a symlink
+   (square/sudo_pair's own GitHub release archive, sharing a
+   LICENSE/README across sub-crate dirs) was re-extracted on every
+   single rerun. Fixed by comparing `readlink`'s own output instead.
+
+One environmental finding, not a crystal-ansible bug: this sandbox's
+`~/.bashrc` exports `ANSIBLE_GATHERING=smart` + fact-cache vars
+globally, which skews the real-`ansible-playbook` side of any round
+comparison toward smart gathering (facts cached across separate
+invocations) while crystal-ansible correctly still defaults to
+`implicit` (real ansible-core's own actual default) - a warm/idempotency
+rerun then shows a spurious `ok=N` vs `ok=N+1` "Gathering Facts"
+mismatch that looks like an engine bug but isn't. Now unset for the
+real-ansible side of every comparison in this round onward.
+
+All 7 fixes live-reverified on the same host pair, cold and warm
+(idempotency) rerun, byte-identical recaps to real `ansible-playbook`
+after each fix. `robertdebock.swap`'s own handler bug (bare `swapon`
+with no `-a` never actually activates the swap file) reproduces
+identically on real `ansible-playbook` too - external, not an engine
+issue.
 
 ---
 
