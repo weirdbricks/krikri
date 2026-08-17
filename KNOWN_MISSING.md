@@ -8,7 +8,76 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.441`.**
+**Currently at `0.9.444`.**
+
+---
+
+Round 137 (`0.9.442`-`0.9.444`) - 6 roles (`robertdebock.apt_repository`,
+`.common`, `.java`, `.tomcat`, `.zabbix_proxy`, `.update`), same
+Atlantic.net USEAST1 pair as rounds 135-136. 3 real bugs, one of which
+(`ansible.builtin.reboot`) is a full new module implementation, not a
+targeted fix:
+
+1. **`VarSubstitutor` silently defaulted `inventory_hostname` to the
+   literal string "localhost"** for any internal re-render call site
+   that omitted `host_name:` - `CrinjaRenderer#prepare_crinja_vars`'s
+   own inner substitutor chief among them (3 other call sites had the
+   same omission). `robertdebock.common`'s own `common_hostname: "{{
+   inventory_hostname }}"` default (itself unrendered `{{ }}` text,
+   needing a re-render pass) got "localhost" baked in regardless of
+   which host was actually running - its "Set hostname" task silently
+   renamed every managed host to "localhost". Fixed at the source:
+   `host_name:` now defaults to `nil`, and when omitted, falls back to
+   whatever's already in the passed-in vars hash before finally
+   defaulting to "localhost" only if that's genuinely missing too -
+   fixes every affected call site at once.
+2. **`import_role:`/task `vars:` rendering never preserved a scalar
+   bool/int/float's real type** when the raw value was itself a bare
+   `{{ }}` expression - only ever attempted `JSON.parse` for a result
+   starting with `{`/`[`, silently leaving a real boolean as the
+   Python-repr STRING `"True"` (Crinja's own `str(bool)`-style
+   rendering) instead of a JSON boolean. `robertdebock.tomcat`'s own
+   `import_role: name: robertdebock.service` vars (`enabled: "{{
+   instance.service_enabled | default(tomcat_service_enabled) }}"`)
+   failed the included role's own `item.enabled is boolean` assert
+   outright - same bug class as the well-documented Python-repr-list
+   one, just for a scalar this time. Fixed via a shared helper that
+   evaluates a bare whole-value `{{ }}` span through Crinja's own
+   `evaluate_value!` (preserves real type) instead of round-tripping
+   through a String, used by both `render_include_role_vars` and
+   `render_task_vars` (identical gap in both).
+3. **`apt: update_cache: true` let its own cache-refresh `changed`
+   leak into the task's overall status** even when a subsequent
+   `upgrade:`/`name:`/`deb:` operation genuinely found nothing to do -
+   real Ansible's own apt.py only lets the cache refresh alone decide
+   `changed:` when nothing else was requested. `robertdebock.update`'s
+   own `{update_cache: true, upgrade: dist}` task always reported
+   `changed: true` merely from refreshing package lists. Fixed to match
+   apt.py's exact condition.
+4. **`ansible.builtin.reboot` was entirely unimplemented** - silently
+   dropped at parse time, found via both `.common`'s and `.update`'s
+   own reboot-on-change handlers (common real-world idioms, not
+   narrow). Architecturally can't be a normal remotely-uploaded plugin
+   binary the way every other module works here (the process would die
+   with the machine mid-reboot, before it could report back) -
+   implemented as a controller-side special case instead
+   (`TaskExecutor#execute_reboot`): issues the reboot command
+   tolerating the connection dying mid-command (the expected success
+   case), then polls a trivial remote command until the host comes
+   back or `reboot_timeout` is exceeded. Excluded from SSH batching and
+   the eager per-play plugin pre-upload pass, for the same "no single
+   shared connection survives this" reason `delegate_to:`/`connection:`
+   already needed that treatment for. `local` connection intentionally
+   refused. Live-verified end-to-end: a real reboot completed against a
+   live host, which genuinely rebooted, and the playbook correctly
+   reconnected and continued.
+
+All fixes live-reverified, cold and warm rerun where applicable,
+byte-identical to real `ansible-playbook` after each fix.
+`apt_repository`/`java`/`zabbix_proxy` were clean, zero bugs.
+Real apt-get dist-upgrade processes on both hosts legitimately took
+several minutes during `.update`'s own testing - not a hang, waited
+them out rather than killing anything.
 
 ---
 

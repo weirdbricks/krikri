@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.441-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.444-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -305,6 +305,22 @@ context.
   against the real remote target instead. `npm`/`ruby`/
   `ca_certificates`/`restore`/`turn` all clean. See `KNOWN_MISSING.md`/
   `ROLES_TESTED.md`.
+- **`0.9.442`-`0.9.444` - round 137, `robertdebock.apt_repository`/
+  `.common`/`.java`/`.tomcat`/`.zabbix_proxy`/`.update`**: 3 real bugs
+  plus a full new module. `VarSubstitutor` silently defaulted
+  `inventory_hostname` to the literal string "localhost" for any
+  internal re-render call site that omitted `host_name:` (renamed every
+  managed host to "localhost"); `import_role:`/task `vars:` rendering
+  never preserved a scalar bool/int/float's real type through a bare
+  `{{ }}` re-render (landed as the Python-repr string "True"); `apt:
+  update_cache: true` let its own cache-refresh changed status leak
+  into the task overall even when the real upgrade found nothing to
+  do. Also implemented `ansible.builtin.reboot` from scratch - entirely
+  unimplemented before, architecturally can't be a normal remotely-run
+  plugin (the process would die with the machine), so it's a
+  controller-side special case that issues the reboot and polls for
+  reconnection. `apt_repository`/`java`/`zabbix_proxy` clean. See
+  `KNOWN_MISSING.md`/`ROLES_TESTED.md`.
 - **`0.9.433`-`0.9.439` - round 135, `robertdebock.dns`/`.certbot`/
   `.openssl`/`.facts`/`.swap`/`.sudo_pair`**: first new-role round since
   round 133. 7 real bugs found and fixed: `--limit` was parsed but
