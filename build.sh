@@ -249,6 +249,7 @@ PLUGINS=(
     "alternatives"
     "filesystem"
     "service_facts"
+    "slurp"
     "postgresql_db"
     "postgresql_user"
     "postgresql_privs"
