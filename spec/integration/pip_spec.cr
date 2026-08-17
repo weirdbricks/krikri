@@ -40,6 +40,22 @@ describe "pip plugin" do
     result["msg"].as_s.should_not contain("[")
   end
 
+  it "strips a PEP 508 extras suffix before checking pip show (regression: robertdebock.ara round 144 - pip show 'ara[server]' fails outright, extras aren't a separate installed distribution)" do
+    # state: absent on a not-installed package only ever calls `pip
+    # show` (no real install/network call) - safe to run for real.
+    # Before the fix, `pip show 'definitely-not-a-real-package-xyz[extra]'`
+    # would have been shelled out with the extras suffix intact (pip
+    # itself rejects that form outright), and any `name: "pkg[extra]"`
+    # install task would never converge to changed: false.
+    result = PluginSpecHelper.run("pip", {
+      "name"  => "definitely-not-a-real-package-xyz[extra]",
+      "state" => "absent",
+    })
+
+    result["failed"]?.try(&.as_bool).should_not be_true
+    result["changed"].as_bool.should be_false
+  end
+
   describe "umask:" do
     # Real bug found via a proactive scope-cut audit: umask: was
     # entirely unimplemented. Verified against real

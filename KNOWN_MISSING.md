@@ -8,7 +8,48 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.459`.**
+**Currently at `0.9.460`.**
+
+---
+
+Round 144 (`0.9.460`) - second round of the 4-node 50/50 Ubuntu/RHEL
+pattern introduced in round 143 (2 Ubuntu 22.04 + 2 Rocky 9.6, fresh
+Atlantic.net USEAST1 pair). Roles: `robertdebock.glusterfs` (Ubuntu),
+`robertdebock.ara` (Rocky, incl. its own `import_role:
+robertdebock.service` dependency). 1 real bug found and fixed, live-
+verified (cold + idempotency):
+
+1. **`pip.cr`'s `already_installed?`/`installed_version` didn't strip a
+   PEP 508 extras suffix (`pkg[extra]`) before shelling to `pip show`**
+   - `robertdebock.ara`'s own "install ara" task uses `pip: {name:
+   "ara[server]"}` (ara's own optional "server" extra dependency set).
+   `pip show 'ara[server]'` itself fails outright ("Package(s) not
+   found: ara[server]" - extras aren't a separate installed
+   distribution, `pip show ara` is what actually reports it), so the
+   pre-install check always returned false and every single rerun
+   re-ran the full `pip install`, reporting `changed: true` forever -
+   real Ansible's pip module (which resolves this through pip's own
+   Python `pkg_resources`/`importlib.metadata` API, not a shelled
+   `pip show`) correctly no-ops. Fixed with a new `distribution_name`
+   helper (strips both the existing version-operator suffix and a
+   trailing `[...]`), used by both `already_installed?` and
+   `installed_version`. Live-verified: cold `changed: true`, warm
+   rerun `changed: false`, matching real `ansible-playbook`'s own
+   `ok=11 changed=0` exactly.
+
+Not fixed, documented only: `robertdebock.glusterfs`'s own `Configure
+volume` block (gated behind `when: glusterfs_volumes is defined`,
+unset by default - not reachable by this round) references
+`gluster.gluster.gluster_volume`, a collection module not implemented
+in this engine; crystal silently drops the entire task at PARSE time
+(no banner, no "skipping" line at all) whereas real Ansible keeps a
+"skipping" task in the recap for it (module resolution happens before
+`when:` evaluation) - a cosmetic recap-count-only difference
+(`skipped=11` vs real Ansible's `skipped=12`), not a functional one,
+since the block is never actually reachable either way without
+`glusterfs_volumes` set. The ara service's own web UI 500s on both
+engines identically (real Ansible too) - the role doesn't run Django
+migrations, an external role gap, not a crystal-ansible bug.
 
 ---
 

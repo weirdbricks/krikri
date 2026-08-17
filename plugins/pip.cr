@@ -160,13 +160,29 @@ module CrystalPlay
       end
     end
 
+    # `pip show` only understands a bare distribution name - a PEP 508
+    # extras suffix (`ara[server]`, requesting ara's own optional
+    # "server" extra dependencies) makes `pip show` itself fail with
+    # "Package(s) not found: ara[server]" (verified live: `pip3 show
+    # ara` succeeds, `pip3 show 'ara[server]'` doesn't - extras aren't a
+    # separate installed distribution, pip just pulls in more deps for
+    # the same base package). Without stripping this, `already_installed?`
+    # always returned false for any `name: "pkg[extra]"` spec, so a
+    # `pip: {name: ara[server]}` task (robertdebock.ara's own "install
+    # ara" task) never converged - `changed: true` forever. Strips both
+    # the version-operator suffix (existing behavior) AND any trailing
+    # `[...]` extras.
+    private def distribution_name(package : String) : String
+      package.split(/[=<>!~]/, 2)[0].sub(/\[[^\]]*\]\z/, "")
+    end
+
     private def already_installed?(pip_bin : String, package : String) : Bool
-      bare_name = package.split(/[=<>!~]/, 2)[0]
+      bare_name = distribution_name(package)
       remote_exec("#{pip_bin} show #{bare_name}")[:exit_code] == 0
     end
 
     private def installed_version(pip_bin : String, package : String) : String?
-      bare_name = package.split(/[=<>!~]/, 2)[0]
+      bare_name = distribution_name(package)
       result = remote_exec("#{pip_bin} show #{bare_name} 2>/dev/null")
       return nil unless result[:exit_code] == 0
 
