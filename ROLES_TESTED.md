@@ -275,6 +275,9 @@ or already-clean roles as if they were new.
 | robertdebock.glusterfs | ✅ Clean for the tested (single-node, no bricks/volumes configured) path (round 144, Ubuntu 22.04: `ok=6 changed=2 skipped=11` vs real Ansible's `ok=6 changed=2 skipped=12` - the 1-skip cosmetic difference is `gluster.gluster.gluster_volume` (unimplemented, unreachable `Configure volume` block) being dropped entirely at parse time instead of appearing as a "skipping" task; idempotent, `changed=0` on rerun.) |
 | robertdebock.ara | ✅ Clean (round 144, after fixing `pip.cr`'s `already_installed?` not stripping a PEP 508 extras suffix - `pip: {name: "ara[server]"}` never converged to idempotent, `pip show 'ara[server]'` itself fails. Rocky 9.6: `ok=13 changed=5 skipped=13` byte-identical cold on both engines, `ok=11 changed=0` idempotent warm rerun on both after the fix. The ara web UI itself 500s on both engines identically - role doesn't run Django migrations, external role gap.) |
 
+| robertdebock.kibana (+ .elastic_repo) | ✅ Clean (round 145, with `kibana_type: elastic` override - the role's own default `oss` fails identically on both engines since Elastic dropped `kibana-oss` packages years ago, external. `ok=15 changed=4 skipped=5` byte-identical cold both engines, service verified `active` via `systemctl`, idempotent warm rerun.) |
+| robertdebock.ansible | ✅ Clean (round 145, after manually installing `python3-pip` on the fresh Rocky 9.6 image - both engines failed identically without it, external. `ok=7 changed=4 rescued=1` byte-identical cold both engines, `ansible.cfg` byte-identical, idempotent warm rerun modulo the role's own always-fails-then-rescues shape which legitimately reruns `rescued=1` every time on both engines.) |
+
 **Legend:** ✅ Clean = engine matches real `ansible-playbook` (idempotent,
 healthy services, config parity) as of the last time it was run. ⚠️ = engine
 itself is fine, but the role hit an external/environmental blocker partway

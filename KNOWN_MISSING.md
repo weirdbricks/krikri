@@ -8,7 +8,32 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.460`.**
+**Currently at `0.9.460`.** (Round 145 below found zero bugs - no bump.)
+
+---
+
+Round 145 (no version bump) - third round of the 4-node 50/50
+Ubuntu/RHEL pattern. Roles: `robertdebock.elastic_repo`+`.kibana`
+(Ubuntu, chained since `.kibana` assumes the Elastic apt repo is
+already configured), `robertdebock.ansible` (Rocky). Both roles
+**clean** - zero real crystal-ansible bugs. Two external/environmental
+things worked around to get a genuine comparison, not engine bugs:
+`kibana_type: oss` (the role's own default) fails identically on both
+engines - Elastic dropped `kibana-oss` packages from their repo years
+ago, matched failure `ok=11 changed=2 skipped=5 failed=1` on both;
+re-ran with `kibana_type: elastic` (a real, supported override) for a
+clean `ok=15 changed=4 skipped=5` byte-identical result on both,
+service verified `active`. `robertdebock.ansible`'s own `block:`
+"install via package, rescue: install via pip" pattern needs
+`python3-pip` on the target, absent from a fresh Rocky 9.6 image (both
+engines failed identically with pip-related errors until `dnf install
+-y python3-pip` was run manually); after that, `ok=7 changed=4
+rescued=1` byte-identical cold on both, fully idempotent warm rerun
+(`changed=0`, `rescued=1` persists every run on both engines since the
+role's own package-install-always-fails-then-pip-rescue shape is
+itself not idempotent by design - matches real Ansible exactly, not a
+bug). Config file (`ansible.cfg`) verified byte-identical between
+engines.
 
 ---
 
