@@ -72,12 +72,40 @@ module CrystalPlay
         return PluginResult.new(changed: false, failed: true, msg: "state must be one of enabled, disabled, reloaded, reset")
       end
 
+      # reloaded/reset always count as changed (real ufw.py: `if value in
+      # ['reloaded', 'reset']: changed = True` unconditionally); enabled/
+      # disabled only actually change anything if the firewall wasn't
+      # already in that state - matches ufw.py's own pre-state comparison
+      # (`ufw_enabled = pre_state.find(" active") != -1`, checked against
+      # both real and check-mode runs). Previously this used the state
+      # COMMAND's own exit code as "changed" - `ufw enable` exits 0
+      # whether or not anything actually changed (real ufw prints
+      # "Firewall is active and enabled on system startup" and exits 0
+      # even when already enabled), so `state: enabled`/`disabled`
+      # reported changed: true on every single run, never converging.
+      # Found benchmarking robertdebock.firewall's own "Enable ufw" task.
+      changed = if state == "reloaded" || state == "reset"
+                  true
+                else
+                  currently_enabled = ufw_currently_enabled?
+                  (state == "enabled" && !currently_enabled) || (state == "disabled" && currently_enabled)
+                end
+
       if is_true?(@params["check_mode"]?)
-        return PluginResult.new(changed: true, failed: false, msg: "Would run: #{cmd} (check mode)")
+        return PluginResult.new(changed: changed, failed: false, msg: "Would run: #{cmd} (check mode)")
       end
 
       result = remote_exec(cmd)
-      PluginResult.new(changed: result[:exit_code] == 0, failed: result[:exit_code] != 0, msg: result[:stdout])
+      PluginResult.new(changed: changed, failed: result[:exit_code] != 0, msg: result[:stdout])
+    end
+
+    # "Status: active" (verbose) / a bare "active" appearing in `ufw
+    # status` - matches ufw.py's own `pre_state.find(" active") != -1`
+    # check (the leading space is deliberate there too: "active" alone
+    # would also match "inactive").
+    private def ufw_currently_enabled? : Bool
+      result = remote_exec("ufw status verbose")
+      result[:stdout].includes?(" active")
     end
 
     private def run_simple(cmd : String) : PluginResult
