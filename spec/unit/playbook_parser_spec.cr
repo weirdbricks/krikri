@@ -238,6 +238,34 @@ describe CrystalPlay::PlaybookParser do
       play.tasks.map(&.name).should eq(["pre one", "main one", "post one"])
     end
 
+    it "recognizes community.general.gem: (real Ansible's own FQCN for it), not just the bare gem: short name" do
+      # Regression: AVAILABLE_PLUGINS registered this as
+      # "ansible.builtin.gem" - not a real Ansible module (gem has
+      # always lived in community.general, never ansible-core). A bare
+      # `gem:` task still happened to resolve via MODULE_SEARCH_
+      # COLLECTIONS regardless, but a role writing the fully-qualified
+      # `community.general.gem:` form (the far more common style in
+      # practice) got "Plugin not available" and the whole task
+      # silently dropped, even though plugins/gem.cr is a real, working
+      # plugin. Found via robertdebock.travis's own "install travis"
+      # task.
+      playbook = <<-YAML
+        - name: Example play
+          hosts: all
+          gather_facts: false
+          tasks:
+            - name: install travis
+              community.general.gem:
+                name: travis
+                state: present
+        YAML
+
+      result = CrystalPlay::PlaybookParser.parse_string(playbook)
+
+      result.plays[0].tasks.size.should eq(1)
+      result.plays[0].tasks[0].module_name.should eq("community.general.gem")
+    end
+
     it "raises when the only play has no hosts field" do
       # parse_play's error is caught per-play and downgraded to a warning,
       # so a playbook where every play fails to parse surfaces as this

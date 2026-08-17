@@ -6,8 +6,8 @@ require "../src/crystal_play/plugin_helpers/gem_command"
 
 module CrystalPlay
   # Gem plugin - manages Ruby gems via the `gem` CLI. Compatible with (a
-  # subset of) Ansible's ansible.builtin.gem module - real Ansible's own
-  # module also just shells out to the `gem` command line tool
+  # subset of) Ansible's community.general.gem module - real Ansible's
+  # own module also just shells out to the `gem` command line tool
   # internally, not a Ruby API, so this mirrors that approach rather
   # than being a compromise.
   #

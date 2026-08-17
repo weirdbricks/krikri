@@ -418,7 +418,18 @@ module CrystalPlay
       "ansible.builtin.group",
       "ansible.builtin.git",
       "ansible.builtin.pip",
-      "ansible.builtin.gem",
+      # community.general, not ansible.builtin - real Ansible's own gem
+      # module has always lived in that collection, never ansible-core.
+      # Registered under the wrong namespace before, so a role writing
+      # the (correct, and far more common in practice) fully-qualified
+      # `community.general.gem:` form - as opposed to the bare `gem:`
+      # short name, which happened to still resolve via
+      # MODULE_SEARCH_COLLECTIONS regardless of which FQCN this was
+      # registered under - got "Plugin not available" and the whole
+      # task silently dropped, even though plugins/gem.cr is a real,
+      # working plugin. Found via robertdebock.travis's own "install
+      # travis" task (`community.general.gem: {name: travis, ...}`).
+      "community.general.gem",
       "ansible.builtin.cron",
       "ansible.posix.authorized_key",
       "ansible.builtin.stat",
