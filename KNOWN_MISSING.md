@@ -12,6 +12,41 @@ the same level of detail per commit; search there (e.g. `git log --all
 
 ---
 
+Round 140 (no version bump - documented, not fixed) - 6 roles
+(`robertdebock.apt_autostart`, `.update_package_cache`, `.buildtools`,
+`.zabbix_repository`, `.filesystem`, `.mount_options`), fresh Atlantic.net
+USEAST1 pair. `apt_autostart`/`update_package_cache`/`buildtools` clean
+and idempotent, byte-identical recaps both engines. `zabbix_repository`
+clean too, modulo the already-documented `rpm_key`/`zypper_repository`
+unimplemented-plugin skip-count gap (rounds 62/101/106/130) - not a new
+issue. `filesystem` (community.general.filesystem against a real
+`/dev/loop8` ext4 format) byte-identical `ok=9 changed=3 skipped=5` cold,
+fully idempotent warm - the round-135 `filesystem.cr` plugin holds up.
+
+`mount_options` surfaced a real, but deliberately NOT fixed, divergence:
+the test playbook mounts a loop device via `pre_tasks:` in the same play
+that then runs the role (a synthetic-test artifact - the role's own docs
+assume the mountpoint was already established in an earlier run, so
+`ansible_mounts` gathered at play start doesn't yet include it). Real
+Ansible immediately hard-fails task-arg templating with `Error while
+resolving value for 'opts': No first item, sequence was empty` - Jinja2's
+`first` filter on an empty sequence returns an `Undefined` sentinel, and
+the very next `.split(',')`/`.join(',')` call on it raises. Crystal-
+ansible's `first` filter (`filter_engine.cr`) instead silently returns
+`JSON::Any.new(nil)` on an empty array, so the corrupted templated value
+(a leading-comma `opts: ",nodev"`) flows through undetected and the run
+fails much later, in a completely different task (the `Remount
+filesystems` handler), with an unrelated mount(8) error message instead.
+Both engines DO fail (so this isn't silently wrong), but at a different
+point with a different message - the same class of gap as the deferred
+strict-undefined work from rounds 52/62/93/101/129: fixing just `first`
+in isolation (without a real `Undefined`-sentinel design that also
+covers `last`/general undefined-value propagation) would be inconsistent
+piecemeal work, so this is documented rather than fixed, per the same
+precedent.
+
+---
+
 Round 139 (`0.9.447`-`0.9.448`) - 6 roles (`robertdebock.cve_2018_19788`,
 `.cve_2021_44228`, `.debug`, `.core_dependencies`,
 `.microsoft_repository_keys`, `.travis`), fresh Atlantic.net USEAST1

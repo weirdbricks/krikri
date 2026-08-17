@@ -305,6 +305,17 @@ context.
   against the real remote target instead. `npm`/`ruby`/
   `ca_certificates`/`restore`/`turn` all clean. See `KNOWN_MISSING.md`/
   `ROLES_TESTED.md`.
+- **round 140, `robertdebock.apt_autostart`/`.update_package_cache`/
+  `.buildtools`/`.zabbix_repository`/`.filesystem`/`.mount_options`**
+  (no bump): 5 of 6 clean, incl. `filesystem` against a real
+  `/dev/loop8` ext4 format (confirms the round-135 `filesystem.cr`
+  plugin end-to-end). `mount_options` found a real but deliberately
+  unfixed divergence - Jinja2's `first` filter on an empty sequence
+  raises immediately in real Ansible, but crystal-ansible's `first`
+  silently returns nil, letting a corrupted value flow through to fail
+  later at an unrelated task - same class as the deferred strict-
+  undefined gap (rounds 52/62/93/101/129). See `KNOWN_MISSING.md`/
+  `ROLES_TESTED.md`.
 - **`0.9.447`-`0.9.448` - round 139, `robertdebock.cve_2018_19788`/
   `.cve_2021_44228`/`.debug`/`.core_dependencies`/
   `.microsoft_repository_keys`/`.travis`**: 2 real bugs. A task with an
