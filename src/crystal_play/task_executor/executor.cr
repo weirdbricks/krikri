@@ -1984,6 +1984,8 @@ module CrystalPlay
       substituted_params = resolve_role_relative_src(task, substituted_params)
       substituted_params = inline_copy_source_content(task, substituted_params, host, vars_context)
       substituted_params = stage_unarchive_remote_src(task, substituted_params, host, vars_context)
+      substituted_params = stage_script_src(task, substituted_params, host, vars_context)
+      substituted_params = stage_assemble_dir(task, substituted_params, host, vars_context)
       substituted_become_user = task.become_user.try { |raw_user| substitutor.substitute(raw_user) }
 
       if ActionPluginManager.has_action_plugin?(task.module_name)
@@ -2062,6 +2064,8 @@ module CrystalPlay
       substituted_params = resolve_role_relative_src(task, substituted_params)
       substituted_params = inline_copy_source_content(task, substituted_params, exec_host, vars_context)
       substituted_params = stage_unarchive_remote_src(task, substituted_params, exec_host, vars_context)
+      substituted_params = stage_script_src(task, substituted_params, exec_host, vars_context)
+      substituted_params = stage_assemble_dir(task, substituted_params, exec_host, vars_context)
       # become_user: goes through the same {{ }} substitution as any
       # params: value (e.g. become_user: "{{ service_user }}", a common
       # real-playbook pattern) - task.become_user itself is never mutated
@@ -3774,6 +3778,114 @@ module CrystalPlay
       resolved
     end
 
+    # script:'s free-form `cmd` (or bare-string `_raw_params`, resolved to
+    # `cmd` by RAW_COMMAND_MODULES parsing either way) is "<local path>
+    # [args...]" - the path always names a file on the CONTROLLER, same
+    # category of gap as unarchive:'s src: (see
+    # #stage_unarchive_remote_src). Resolves the path against the
+    # currently-executing role's own files/ dir first (real Ansible's own
+    # script: action plugin searches there, same convention copy:/
+    # template: use), then falls back to whatever's resolvable relative to
+    # the controller's own cwd. A local connection needs the path resolved
+    # (a role-relative name isn't meaningful relative to the plugin
+    # process's own cwd otherwise) but never staged - the plugin process
+    # already runs directly on the controller's filesystem in that case.
+    private def stage_script_src(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String)
+      return params unless task.module_name == "ansible.builtin.script"
+
+      cmd = params["cmd"]? || params["_raw_params"]?
+      return params unless cmd
+
+      parts = cmd.strip.split(/\s+/, 2)
+      local_path = parts[0]?
+      return params if local_path.nil? || local_path.empty?
+      rest = parts[1]?
+
+      resolved_local = resolve_script_path(local_path, task)
+      return params unless resolved_local
+
+      if PluginManager.is_local_connection?(host, vars_context)
+        resolved = params.dup
+        resolved["cmd"] = rest ? "#{resolved_local} #{rest}" : resolved_local
+        return resolved
+      end
+
+      connection_host = PluginManager.get_connection_host(host, vars_context)
+      remote_tmp = "/tmp/.crystal-ansible-script-#{Random::Secure.hex(8)}-#{File.basename(resolved_local)}"
+
+      begin
+        SSHManager.upload(
+          connection_host,
+          host.user || "root",
+          resolved_local,
+          remote_tmp,
+          host.port,
+          identity_file: vars_context["ansible_ssh_private_key_file"]?.try(&.as_s?)
+        )
+      rescue
+        return params
+      end
+
+      resolved = params.dup
+      resolved["cmd"] = rest ? "#{remote_tmp} #{rest}" : remote_tmp
+      resolved["__cleanup_after_script"] = "true"
+      resolved
+    end
+
+    # Resolves script:'s leading path token against (in order) the
+    # currently-executing role's own files/ dir, then the controller's own
+    # cwd (an absolute path, or a relative one for a playbook invoked from
+    # its own directory - the common case). nil if it can't be found
+    # anywhere, in which case the caller leaves params untouched and the
+    # normal "file not found on target" failure surfaces from script.cr
+    # itself once uploaded/executed.
+    private def resolve_script_path(local_path : String, task : Task) : String?
+      if role_dir = task.role_files_dir
+        candidate = File.join(role_dir, local_path)
+        return File.expand_path(candidate) if File.exists?(candidate)
+      end
+      return File.expand_path(local_path) if File.exists?(local_path)
+      nil
+    end
+
+    # assemble:'s `src` defaults to `remote_src: true` (unlike copy:/
+    # template:/unarchive:) - the common real-world shape is fragments
+    # already deployed on the target by earlier copy:/template: tasks, so
+    # no staging happens by default. Only `remote_src: false` (src names a
+    # controller-side directory instead) needs the directory SCP'd up
+    # first, same approach as copy:'s stage_directory_copy_source.
+    private def stage_assemble_dir(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String)
+      return params unless task.module_name == "ansible.builtin.assemble"
+      return params if ["true", "yes", "1", "on"].includes?(params["remote_src"]?.try(&.downcase)) || params["remote_src"]?.nil?
+      return params if PluginManager.is_local_connection?(host, vars_context)
+
+      src = params["src"]?
+      return params unless src && Dir.exists?(src)
+
+      connection_host = PluginManager.get_connection_host(host, vars_context)
+      remote_tmp = "/tmp/.crystal-ansible-assemble-#{Random::Secure.hex(8)}"
+
+      begin
+        SSHManager.upload(
+          connection_host,
+          host.user || "root",
+          src.rstrip('/'),
+          remote_tmp,
+          host.port,
+          mode: nil,
+          identity_file: vars_context["ansible_ssh_private_key_file"]?.try(&.as_s?),
+          recursive: true
+        )
+      rescue
+        return params
+      end
+
+      resolved = params.dup
+      resolved["src"] = remote_tmp
+      resolved["__cleanup_after_assemble"] = "true"
+      resolved
+    end
+
     # Build plugin configuration
     private def build_plugin_config(
       task : Task,
@@ -4102,6 +4214,8 @@ module CrystalPlay
       substituted_params = resolve_role_relative_src(handler, substituted_params)
       substituted_params = inline_copy_source_content(handler, substituted_params, host, vars_context)
       substituted_params = stage_unarchive_remote_src(handler, substituted_params, host, vars_context)
+      substituted_params = stage_script_src(handler, substituted_params, host, vars_context)
+      substituted_params = stage_assemble_dir(handler, substituted_params, host, vars_context)
       substituted_become_user = handler.become_user.try { |raw_user| substitutor.substitute(raw_user) }
 
       # Real bug found benchmarking geerlingguy.jenkins: its own

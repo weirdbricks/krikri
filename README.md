@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.462-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.463-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -17,7 +17,7 @@ compiled binary plus a directory of plugin binaries. It supports:
 - **Ansible-syntax playbooks** - roles, imports/includes, blocks, loops,
   handlers, vault, `become:`, Jinja2 templating - not just a handful of
   modules bolted onto a task runner
-- **66 built-in plugins** covering package/service/file management, users
+- **84 built-in plugins** covering package/service/file management, users
   and groups, Docker, MySQL/MariaDB, PostgreSQL, firewalls, archives,
   SELinux/PAM, hostname management and more (see below)
 - **Single binary deployment** - no dependencies, no Python required on
@@ -297,6 +297,22 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.463` - `ansible.builtin` gap-closing pass (not a benchmark
+  round)**: systematic audit of the full `ansible.builtin` collection
+  module list against `AVAILABLE_PLUGINS`, tracked in
+  `MISSING_BUILTIN.md`. Added 4 previously entirely-unimplemented
+  modules - `script` (controller->target SCP staging, mirrors
+  unarchive's), `assemble` (fragment-dir concatenation, `remote_src:
+  true` by default), `tempfile`, `known_hosts` (ssh-keygen-backed
+  idempotent add/remove) - plus `raw:` (previously silently dropped at
+  parse time, now aliased straight to the existing `shell` plugin - no
+  new binary needed, since crystal-ansible never ships Python modules
+  to begin with). 25 new unit specs; also live-verified end-to-end over
+  real SSH against a throwaway Docker/Ubuntu container (script
+  upload+exec+cleanup, assemble both remote_src: true/false, known_hosts
+  add/idempotent-rerun/replace, raw:, tempfile file+directory). See
+  `MISSING_BUILTIN.md` for the remaining ranked gaps (`group_by`,
+  `set_stats`, `dpkg_selections`, `expect`, `subversion`).
 - **`0.9.440`-`0.9.441` - round 136, `robertdebock.npm`/`.ruby`/
   `.ca_certificates`/`.backup`/`.restore`/`.turn`**: 3 real bugs, both
   found via `.backup`'s own default `/var/spool` target and its

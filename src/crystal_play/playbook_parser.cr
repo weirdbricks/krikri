@@ -501,6 +501,10 @@ module CrystalPlay
       "ansible.builtin.ping",
       "ansible.builtin.fetch",
       "ansible.builtin.pause",
+      "ansible.builtin.script",
+      "ansible.builtin.assemble",
+      "ansible.builtin.tempfile",
+      "ansible.builtin.known_hosts",
     }
 
     # The collections a bare (non-FQCN) module name resolves against, in
@@ -524,9 +528,11 @@ module CrystalPlay
     # defensively alongside the resolved FQCN forms, in case this is
     # ever reached before module_name resolution.
     RAW_COMMAND_MODULES = {
-      "command", "shell",
+      "command", "shell", "script", "raw",
       "ansible.builtin.command", "ansible.builtin.shell",
       "ansible.legacy.command", "ansible.legacy.shell",
+      "ansible.builtin.script", "ansible.legacy.script",
+      "ansible.builtin.raw", "ansible.legacy.raw",
     }
 
     # Resolves a task's module key (as written) to the AVAILABLE_PLUGINS
@@ -550,6 +556,19 @@ module CrystalPlay
       "systemd_service"                 => "ansible.builtin.systemd",
       "ansible.builtin.systemd_service" => "ansible.builtin.systemd",
       "ansible.legacy.systemd_service"  => "ansible.builtin.systemd",
+      # raw: has no real Ansible-module counterpart of its own in this
+      # codebase - unlike real Ansible (whose raw: exists specifically to
+      # run on hosts with no Python interpreter at all, executed straight
+      # over the connection plugin with zero module machinery),
+      # crystal-ansible never ships Python modules to begin with, so
+      # raw:'s only real distinguishing behavior (module-arg-free command
+      # text, same free-form parsing as shell:/command:, already covered
+      # by RAW_COMMAND_MODULES) is already identical to shell:'s. Aliased
+      # straight to the existing shell plugin binary rather than shipping
+      # a near-duplicate one.
+      "raw"                 => "ansible.builtin.shell",
+      "ansible.builtin.raw" => "ansible.builtin.shell",
+      "ansible.legacy.raw"  => "ansible.builtin.shell",
     }
 
     def self.resolve_module_name(raw : String) : String?

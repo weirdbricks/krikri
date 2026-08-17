@@ -8,7 +8,71 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.462`.**
+**Currently at `0.9.463`.**
+
+---
+
+Round 148 (`0.9.463`) - not a real-host benchmark round; a systematic
+audit of the full `ansible.builtin` collection module list against
+`AVAILABLE_PLUGINS`, tracked in `MISSING_BUILTIN.md`. Closed the 4
+highest-ranked real gaps, plus `raw:`:
+
+1. **`script`** - was entirely unimplemented (silently dropped at parse
+   time). New `plugins/script.cr` + `TaskExecutor#stage_script_src`
+   (SCPs the controller-side script to a remote scratch path first,
+   same pattern as `unarchive`'s `stage_unarchive_remote_src` - `src:`
+   there is likewise always a controller path, never a target one).
+   Resolves a role-relative path against the role's own `files/` dir
+   first, same convention `copy:`/`template:` use. Supports
+   `creates:`/`removes:`/`chdir:`/`executable:`, always reports
+   `changed: true` otherwise (no idempotency concept, matching real
+   Ansible).
+2. **`assemble`** - also entirely unimplemented. New
+   `plugins/assemble.cr`. `remote_src` defaults to `true` (unlike
+   `copy:`/`template:`/`unarchive:`) - the common real-world shape
+   (fragments already deployed by earlier tasks) needs no controller
+   staging at all; `remote_src: false` gets a new
+   `TaskExecutor#stage_assemble_dir` (SCPs the whole source dir tree
+   up, mirrors `copy:`'s `stage_directory_copy_source`). Supports
+   `delimiter:`, `regexp:`, `ignore_hidden:`, `backup:`,
+   `owner:`/`group:`/`mode:`.
+3. **`tempfile`** - new `plugins/tempfile.cr`, shells to the real
+   `mktemp` binary (same approach real Ansible's own module takes
+   under the hood). `state: file`/`directory`, `path:`, `prefix:`,
+   `suffix:`.
+4. **`known_hosts`** - new `plugins/known_hosts.cr`, backed by the real
+   `ssh-keygen -F`/`-R`/`-H` binary rather than hand-parsing the file -
+   handles hashed (`hash_host: true`) entries for free this way, since
+   ssh-keygen already understands its own hash format. `state:
+   present`/`absent`, replaces a differing key for the same host
+   rather than appending a duplicate line.
+5. **`raw`** - was silently dropped at parse time (not in
+   `AVAILABLE_PLUGINS` at all). Since crystal-ansible never ships
+   Python modules to begin with, real Ansible's `raw:` (its escape
+   hatch for a target with no Python) has no distinguishing behavior
+   left here beyond `shell:`'s own free-form command parsing - aliased
+   straight to the existing `shell` plugin binary via a new
+   `MODULE_ALIASES` entry rather than shipping a near-duplicate one.
+
+25 new unit specs (`spec/integration/{script,assemble,tempfile,
+known_hosts}_spec.cr`), full suite green (1328 examples). Also live-
+verified end-to-end over real SSH against a throwaway Docker/Ubuntu-22.04
+container (not Atlantic.net - none of these 5 features need a real
+package manager or systemd, just filesystem/SSH-command behavior, so a
+container with sshd was sufficient): `raw:` output captured correctly;
+`tempfile` file+directory creation; `script` uploaded+executed+cleaned up
+(no leftover `/tmp/.crystal-ansible-script-*`) with args/creates:/
+executable: all working, always-changed confirmed on rerun; `known_hosts`
+add + idempotent rerun (verified across two separate playbook runs, not
+just two tasks in one run) + key-replacement; `assemble` both
+`remote_src: true` (default) and `remote_src: false` (controller-side
+`files/` dir staged and cleaned up, no leftover
+`/tmp/.crystal-ansible-assemble-*`), idempotent rerun, `backup:` writing
+the pre-change content.
+
+Remaining ranked gaps (`group_by`, `set_stats`, `dpkg_selections`,
+`expect`, `subversion`) tracked in `MISSING_BUILTIN.md`, deferred as
+lower-value until one actually surfaces in a live benchmark round.
 
 ---
 

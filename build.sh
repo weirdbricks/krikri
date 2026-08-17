@@ -259,6 +259,10 @@ PLUGINS=(
     "postgresql_user"
     "postgresql_privs"
     "hostname"
+    "script"
+    "assemble"
+    "tempfile"
+    "known_hosts"
 )
 
 PLUGIN_COUNT=0
