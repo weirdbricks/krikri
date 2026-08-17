@@ -9,6 +9,13 @@ Spec.before_suite do
   File.write(File.join(TMP_DIR, "src", "a.txt"), "hello")
   File.write(File.join(TMP_DIR, "src", "b.txt"), "world")
   File.write(File.join(TMP_DIR, "src", "sub", "c.txt"), "nested")
+
+  # A symlink pointing at a directory (e.g. Debian's default /var/spool/
+  # mail -> ../mail) - regression fixture for build_tar/build_zip's own
+  # symlink handling.
+  Dir.mkdir_p(File.join(TMP_DIR, "symlink_src", "real_dir"))
+  File.write(File.join(TMP_DIR, "symlink_src", "real_dir", "f.txt"), "hi")
+  File.symlink("real_dir", File.join(TMP_DIR, "symlink_src", "link_dir"))
 end
 
 private def dest_path(name : String) : String
@@ -44,6 +51,30 @@ describe "archive plugin" do
     result = PluginSpecHelper.run("archive", {"path" => File.join(TMP_DIR, "src"), "dest" => dest})
 
     result["changed"].as_bool.should be_false
+  end
+
+  it "archives a directory containing a symlink to another directory, instead of crashing the whole build (tar)" do
+    # Regression: File.open(member) on a symlink follows it - for one
+    # pointing at a directory, that raises, and the single top-level
+    # `rescue => false` around the whole build turned one bad member
+    # into a total archive failure. Found benchmarking robertdebock.
+    # backup's own default /var/spool target (Debian's own /var/spool/
+    # mail -> ../mail).
+    dest = dest_path("symlink.tar.gz")
+    result = PluginSpecHelper.run("archive", {"path" => File.join(TMP_DIR, "symlink_src"), "dest" => dest})
+
+    result["changed"].as_bool.should be_true
+    listing = `tar tzf #{dest}`.lines.reject(&.empty?)
+    listing.should contain("symlink_src/link_dir")
+    `tar xzOf #{dest} symlink_src/real_dir/f.txt`.should eq("hi")
+  end
+
+  it "archives a directory containing a symlink to another directory, instead of crashing the whole build (zip)" do
+    dest = dest_path("symlink.zip")
+    result = PluginSpecHelper.run("archive", {"path" => File.join(TMP_DIR, "symlink_src"), "dest" => dest, "format" => "zip"})
+
+    result["changed"].as_bool.should be_true
+    `unzip -p #{dest} symlink_src/real_dir/f.txt`.should eq("hi")
   end
 
   it "reports changed: true when source content changes since the last archive" do

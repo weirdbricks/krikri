@@ -357,8 +357,8 @@ module CrystalPlay
       Crystar::Writer.open(io) do |tar|
         members.each_with_index do |member, i|
           info = info_for(member)
-          tar.write_header(tar_header_for(info, relative_members[i]))
-          unless info.directory? && !info.symlink?
+          tar.write_header(tar_header_for(info, relative_members[i], member))
+          if !info.directory? && !info.symlink?
             File.open(member) { |src| tar.write(src.gets_to_end.to_slice) }
           end
         end
@@ -382,7 +382,19 @@ module CrystalPlay
       @gname_cache.fetch(gid) { @gname_cache[gid] = System::Group.find_by?(id: gid.to_s).try(&.name) || "" }
     end
 
-    private def tar_header_for(info : File::Info, archive_name : String) : Crystar::Header
+    # A symlink member (e.g. robertdebock.backup's own default /var/spool
+    # target - Debian's /var/spool/mail -> ../mail) previously hit
+    # `File.open(member)` (which, like real Ansible's own os.stat-based
+    # walk, follows symlinks) trying to read it as a plain file - for a
+    # symlink pointing at a DIRECTORY, that raises, and the single
+    # top-level `rescue => false` around the whole archive build turned
+    # one bad member into a total build failure instead of real
+    # Ansible's own per-member error tolerance (community.general.
+    # archive.py's `Archive#add` catches per-path exceptions and keeps
+    # going). Emit a real SYMLINK tar entry instead (matching Python's
+    # own tarfile.add default `dereference=False`) - no content to
+    # write, just the resolved link target.
+    private def tar_header_for(info : File::Info, archive_name : String, member : String) : Crystar::Header
       uid = info.owner_id.to_i32? || 0
       gid = info.group_id.to_i32? || 0
 
@@ -396,7 +408,10 @@ module CrystalPlay
         gname: gname_for(gid),
       )
 
-      if info.directory?
+      if info.symlink?
+        h.flag = Crystar::SYMLINK.ord.to_u8
+        h.link_name = File.readlink(member) rescue ""
+      elsif info.directory?
         h.flag = Crystar::DIR.ord.to_u8
         h.name += "/" unless h.name.ends_with?('/')
       else
@@ -413,6 +428,19 @@ module CrystalPlay
           info = info_for(member)
           if info.directory? && !info.symlink?
             zip.add_dir(relative_members[i])
+          elsif info.symlink?
+            # Crystal's stdlib Compress::Zip::Writer has no notion of a
+            # Unix symlink entry (no external file attributes API) -
+            # unlike real Ansible's own Python zipfile, which stores a
+            # proper symlink entry. Reading the symlink as a plain file
+            # (the previous behavior) crashes outright for one pointing
+            # at a directory (e.g. Debian's default /var/spool/mail ->
+            # ../mail, hit benchmarking robertdebock.backup's own
+            # default `/var/spool` archive target), taking down the
+            # whole archive build via the one top-level `rescue` below
+            # instead of real Ansible's own per-member error tolerance.
+            # Skip the member (documented format-capability gap) rather
+            # than crash or silently embed a wrong regular-file entry.
           else
             zip.add(relative_members[i]) { |io| File.open(member) { |src| IO.copy(src, io) } }
           end
