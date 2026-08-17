@@ -8,7 +8,68 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.466`.**
+**Currently at `0.9.468`.**
+
+---
+
+Round 152 (`0.9.467`-`0.9.468`) - continues down `MISSING_BUILTIN.md`'s
+filter/test/lookup list (not a benchmark round): 14 more filters, 6
+path-check tests (`0.9.467`), 8 more lookups (`0.9.468`).
+
+**Filters** (both evaluators - `filter_engine.cr` + `jinja_filters.cr`/
+Crinja): `path_join`, `splitext`, `urldecode`, `urlsplit`, `zip`/
+`zip_longest`, `product`, `regex_escape`, `to_nice_json`,
+`human_readable`/`human_to_bytes`, `md5`/`sha1` (standalone - distinct
+from the general `hash(algorithm=)` filter). `abs` turned out to
+already exist in `filter_engine.cr` - a duplicate `when "abs"` case hit
+a compile error immediately, corrected in `MISSING_BUILTIN.md`.
+`zip`/`zip_longest`/`product` are capped at 2 extra list arguments (a
+3-way combine) in the Crinja registration - the declared-keyword-args
+form (`Crinja.filter({other1:, other2:}, :zip)`) was needed to dodge
+the `arguments.varargs` multi-positional-argument splitting bug already
+documented next to the `version` test, and that form doesn't support a
+truly variadic argument count; real 4+-way zip/product is rare enough
+this wasn't judged worth a different registration approach.
+
+**Tests** (both evaluators - `conditional_evaluator.cr` +
+`jinja_filters.cr`): `exists`, `file`, `directory`, `link`,
+`link_exists`, `same_file(other)` - all check the CONTROLLER's
+filesystem (same rule `lookup('file', ...)` already follows, these are
+plain os.path.* wrappers real Ansible runs in its own controller-side
+Python process). Found and fixed a real bug while adding these: the
+hand-rolled evaluator's per-test-name loop does `condition.includes?("
+is #{test_name}")` substring matching, and `" is link_exists"` contains
+`" is link"` as a substring - checking `"link"` before `"link_exists"`
+in the iteration set misfired on it (`gsub(" is link", "")` on
+`"l is link_exists"` mangles the var_name to `"l_exists"`, always
+undefined). Fixed by checking the longer/more-specific name first (a
+comment now documents why the set's iteration order matters here,
+unlike every other such `.each` block in this file).
+
+**Lookups** (`ExpressionEvaluator` only - ported to Crinja was judged
+lower priority than covering more lookup TYPES first; `MISSING_BUILTIN.
+md` tracks this as still open): `dict`, `list`, `items`, `together`,
+`nested`, `lines`, `varnames`, `sequence`. All 8 always return real
+JSON array text via `.to_json`, not real Ansible's own default comma-
+joined-scalar rendering for a bare (non-`wantlist`) call - these lookup
+types exist almost exclusively to feed a `loop:`/`with_X:` source or a
+`| list`/`| flatten` chain, both of which need a real array; matching
+url's own comma-join default here would have made the far more common
+use case (as a loop source) not work at all. `sequence` supports both
+the shorthand `'1-5'` positional form and the `start=/end=/count=/
+stride=/format=` key=value form (Python %-style `format=`, Crystal's
+`String#%` is the same printf-family syntax).
+
+Full suite green throughout (1401 examples by the end). Live-verified:
+the 14 filters via real `debug:`-task rendering (an `assert:`-based
+verification attempt hit the pre-existing list-literal-argument
+limitation already documented in `MISSING_BUILTIN.md` - not a bug in
+the new filters, confirmed by checking each rendered value individually
+instead); the path-check tests weren't separately live-verified beyond
+their own unit specs (straightforward `File`/`Dir` wrappers, lower risk
+than the filters); the 8 new lookups via a real playbook using each as
+an actual `loop:` source (`with_sequence`/`with_nested`/`with_together`/
+`with_dict`-shaped iteration), output matched exactly.
 
 ---
 

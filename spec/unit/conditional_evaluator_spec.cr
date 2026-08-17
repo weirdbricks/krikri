@@ -568,6 +568,52 @@ describe CrystalPlay::ConditionalEvaluator do
       CrystalPlay::ConditionalEvaluator.evaluate(%(items is not contains("q")), v).should be_true
     end
 
+    it "evaluates 'is exists' / 'is file' / 'is directory' / 'is link' / 'is link_exists' against the CONTROLLER's filesystem" do
+      file_path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "conditional_path_test.txt")
+      dir_path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "conditional_path_test_dir")
+      link_path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "conditional_path_test_link")
+      File.write(file_path, "content")
+      Dir.mkdir_p(dir_path)
+      File.delete(link_path) if File.exists?(link_path) || File.symlink?(link_path)
+      File.symlink(file_path, link_path)
+
+      v = Hash(String, JSON::Any).new
+      v["f"] = JSON::Any.new(file_path)
+      v["d"] = JSON::Any.new(dir_path)
+      v["l"] = JSON::Any.new(link_path)
+      v["missing"] = JSON::Any.new("/no/such/path/at/all")
+
+      CrystalPlay::ConditionalEvaluator.evaluate("f is exists", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("f is file", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("f is not directory", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("d is directory", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("l is link", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("missing is not exists", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("l is link_exists", v).should be_true
+
+      File.delete(link_path)
+      File.delete(file_path)
+      Dir.delete(dir_path)
+    end
+
+    it "evaluates 'is same_file(...)'" do
+      path1 = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "same_file_a.txt")
+      path2 = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "same_file_b.txt")
+      File.write(path1, "same")
+      File.write(path2, "different")
+
+      v = Hash(String, JSON::Any).new
+      v["a"] = JSON::Any.new(path1)
+      v["b"] = JSON::Any.new(path1)
+      v["c"] = JSON::Any.new(path2)
+
+      CrystalPlay::ConditionalEvaluator.evaluate("a is same_file(b)", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("a is not same_file(c)", v).should be_true
+
+      File.delete(path1)
+      File.delete(path2)
+    end
+
     it "falls back to Crinja for any real Jinja2 'is [not] <test>' this module hasn't hand-implemented (divisibleby, etc)" do
       # Real bug found benchmarking robertdebock.nomad's own assert:
       # `nomad_server_bootstrap_expect is not divisibleby 2` (verifying

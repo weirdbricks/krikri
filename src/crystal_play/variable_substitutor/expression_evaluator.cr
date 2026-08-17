@@ -1448,9 +1448,123 @@ module CrystalPlay
           raw_arg = parts[1]?.try { |part| evaluate(part.strip) }
           return "undefined" unless raw_arg
           evaluate_password_lookup(raw_arg)
+        when "dict"
+          # lookup('dict', {'a': 1, 'b': 2}) - real Ansible's own dict
+          # lookup plugin: one dict term in, a list of {key:, value:}
+          # dicts out (one per top-level key) - identical shape to the
+          # dict2items filter. Always returns real JSON array text
+          # (not real Ansible's own default comma-joined-scalar
+          # behavior) - these list-producing lookups are almost always
+          # consumed as a loop: source or piped through | list/|
+          # flatten, both of which need a real array, not joined text.
+          source = parts[1]?.try { |part| evaluate(part.strip) }
+          return "undefined" unless source
+          dict = (JSON.parse(source) rescue nil).try(&.as_h?)
+          return "undefined" unless dict
+          dict.map { |k, v| {"key" => JSON::Any.new(k), "value" => v} }.to_json
+        when "list"
+          # lookup('list', a, b, c) - real Ansible's own list lookup:
+          # returns every term given, as a real list (mainly exists so
+          # a caller can always treat the result as a list regardless
+          # of how many terms were given).
+          parts[1..].map { |part| evaluate_lookup_term(part.strip) }.to_json
+        when "items"
+          # lookup('items', list1, list2, ...) - real Ansible's own
+          # items lookup: flattens the given list terms one level
+          # (itertools.chain, not a deep flatten).
+          parts[1..].flat_map { |part| lookup_array(evaluate_lookup_term(part.strip)) }.to_json
+        when "together"
+          # lookup('together', list1, list2, ...) - real Ansible's own
+          # together lookup: zips the given lists together (itertools.
+          # izip_longest, padding shorter lists with null), returning a
+          # list of lists - the classic with_together: parallel-
+          # iteration source.
+          lists = parts[1..].map { |part| lookup_array(evaluate_lookup_term(part.strip)) }
+          size = lists.map(&.size).max? || 0
+          (0...size).map { |i| lists.map { |list| list[i]? || JSON::Any.new(nil) } }.to_json
+        when "nested"
+          # lookup('nested', list1, list2, ...) - real Ansible's own
+          # nested lookup: a nested-loop Cartesian product of the given
+          # lists (same shape as the `product` filter, but as lookup
+          # terms rather than a piped value) - the classic with_nested:
+          # source.
+          lists = parts[1..].map { |part| lookup_array(evaluate_lookup_term(part.strip)) }
+          result = lists.reduce([[] of JSON::Any]) { |acc, list| acc.flat_map { |row| list.map { |item| row + [item] } } }
+          result.to_json
+        when "lines"
+          # lookup('lines', command) - real Ansible's own lines lookup:
+          # runs *command* on the CONTROLLER (same as pipe above) but
+          # returns its output SPLIT into a list of lines, not one
+          # joined string.
+          command = parts[1]?.try { |part| evaluate(part.strip) }
+          return "undefined" unless command
+          begin
+            output = IO::Memory.new
+            status = Process.run("/bin/sh", ["-c", command], output: output, error: Process::Redirect::Close)
+            return "undefined" unless status.success?
+            output.to_s.split('\n').reject(&.empty?).to_json
+          rescue
+            "undefined"
+          end
+        when "varnames"
+          # lookup('varnames', 'regex1', 'regex2', ...) - real Ansible's
+          # own varnames lookup: returns every variable NAME (not
+          # value) whose name matches ANY of the given regex patterns.
+          patterns = parts[1..].compact_map { |part| quoted_string_literal(part.strip).try(&.as_s?) }.compact_map { |p| Regex.new(p) rescue nil }
+          @vars.keys.select { |name| patterns.any? { |pattern| pattern.matches?(name) } }.to_json
+        when "sequence"
+          # lookup('sequence', 'start=1 end=5 stride=1 format=web%02d')
+          # - real Ansible's own sequence lookup: generates a numeric
+          # range (the classic with_sequence: source), formatted via
+          # format= (Python %-style, Crystal's String#% is the same
+          # printf-family syntax) when given.
+          raw_arg = parts[1]?.try { |part| evaluate(part.strip) }
+          return "undefined" unless raw_arg
+          evaluate_sequence_lookup(raw_arg)
         else
           "undefined"
         end
+      end
+
+      # Renders a single `lookup('list'/'items'/'together'/'nested', ...)`
+      # TERM (one comma-separated argument, not the whole call) to its
+      # real JSON::Any value - a term is usually a variable reference to
+      # a list, but may itself be a literal.
+      private def evaluate_lookup_term(part : String) : JSON::Any
+        rendered = evaluate(part)
+        (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+      end
+
+      private def evaluate_sequence_lookup(raw_arg : String) : String
+        tokens = raw_arg.strip.split(/\s+/)
+        opts = Hash(String, String).new
+        # Shorthand positional "start-end" form (`lookup('sequence',
+        # '1-5')`), real Ansible's own alternate spelling - only when
+        # the whole first token has no "=" at all, so it doesn't
+        # collide with the key=value form's own values (a format=
+        # string could itself contain a literal "-").
+        if tokens[0]? && !tokens[0].includes?('=') && (range_match = tokens[0].match(/^(\d+)-(\d+)$/))
+          opts["start"] = range_match[1]
+          opts["end"] = range_match[2]
+          tokens = tokens[1..]
+        end
+        tokens.each do |token|
+          key, sep, val = token.partition('=')
+          opts[key] = val unless sep.empty?
+        end
+
+        start = opts["start"]?.try(&.to_i) || 1
+        stride = opts["stride"]?.try(&.to_i) || 1
+        count = opts["count"]?.try(&.to_i)
+        finish = opts["end"]?.try(&.to_i)
+        format = opts["format"]?
+
+        total = count || (finish ? ((finish - start) // stride) + 1 : 1)
+        return "undefined" if total < 0
+
+        values = (0...total).map { |i| start + i * stride }
+        formatted = format ? values.map { |v| (format % v) rescue v.to_s } : values.map(&.to_s)
+        formatted.to_json
       end
 
       # lookup('file'|'template', path) both name a CONTROLLER-side path

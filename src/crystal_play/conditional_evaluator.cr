@@ -214,6 +214,41 @@ module CrystalPlay
         end
       end
 
+      # Handle 'is exists' / 'is file' / 'is directory' / 'is link' /
+      # 'is link_exists' (plus each "is not ..." negation) - real
+      # Ansible's own path-check tests. Like lookup('file', ...), these
+      # always check the CONTROLLER's filesystem, never the target's -
+      # matches real Ansible's own behavior (these are plain os.path.*
+      # wrappers running in the controller's own Python process).
+      # "link_exists" MUST be checked before "link" - " is link_exists"
+      # contains " is link" as a substring, so testing "link" first
+      # would misfire on it (gsub(" is link", "") on "l is link_exists"
+      # leaves the mangled var_name "l_exists", always undefined/false).
+      {"link_exists", "exists", "file", "directory", "link"}.each do |test_name|
+        if condition.includes?(" is not #{test_name}")
+          var_name = condition.gsub(" is not #{test_name}", "").strip
+          return !matches_path_test?(vars, var_name, test_name)
+        elsif condition.includes?(" is #{test_name}")
+          var_name = condition.gsub(" is #{test_name}", "").strip
+          return matches_path_test?(vars, var_name, test_name)
+        end
+      end
+
+      # Handle 'is same_file(...)' (plus "is not ..." negation) - real
+      # Ansible's own test, os.path.samefile (same device+inode, not
+      # just equal path strings - true for two different paths to the
+      # same hardlinked file).
+      if test_match = condition.match(/^(.+?)\s+is\s+(not\s+)?same_file\((.+)\)\s*$/)
+        var_expr = test_match[1].strip
+        negate = !test_match[2]?.nil?
+        arg_expr = test_match[3].strip
+
+        path1 = resolve_test_operand(var_expr, vars).try(&.as_s?)
+        path2 = resolve_test_operand(arg_expr, vars).try(&.as_s?)
+        result = (path1 && path2 && File.exists?(path1) && File.exists?(path2)) ? File.same?(path1, path2) : false
+        return negate ? !result : result
+      end
+
       # Handle 'is match(...)' / 'is search(...)' (plus each "is not ..."
       # negation) - real Jinja2's own regex tests: match() anchors at
       # the START of the string only (Python's re.match, NOT a full-
@@ -564,6 +599,27 @@ module CrystalPlay
                 vars[expr]?
               end
       rerender_if_templated(vars, value)
+    end
+
+    # 'is exists'/'is file'/'is directory'/'is link'/'is link_exists' -
+    # `path` resolves via #resolve_test_operand (same filter-chain/
+    # dotted/variable handling every other test here uses).
+    private def self.matches_path_test?(vars : Hash(String, JSON::Any), var_expr : String, test_name : String) : Bool
+      path = resolve_test_operand(var_expr, vars).try(&.as_s?)
+      return false unless path
+
+      case test_name
+      when "exists"
+        File.exists?(path)
+      when "file"
+        File.file?(path)
+      when "directory"
+        Dir.exists?(path)
+      when "link"
+        File.symlink?(path)
+      else # "link_exists" - real os.path.lexists: true even for a broken symlink, unlike "exists" above
+        !!File.info?(path, follow_symlinks: false)
+      end
     end
 
     private def self.matches_type_test?(vars : Hash(String, JSON::Any), var_name : String, test_name : String) : Bool

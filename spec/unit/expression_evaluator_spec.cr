@@ -254,6 +254,86 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     File.delete(path)
   end
 
+  it "evaluates lookup('dict', ...) as a list of {key, value} dicts" do
+    v = Hash(String, JSON::Any).new
+    v["mydict"] = JSON.parse(%({"a": 1, "b": 2}))
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    result = JSON.parse(evaluator.evaluate("lookup('dict', mydict)"))
+    result.as_a.map { |item| {item["key"].as_s, item["value"].as_i} }.should eq([{"a", 1}, {"b", 2}])
+  end
+
+  it "evaluates lookup('list', ...) returning every term as a list" do
+    v = Hash(String, JSON::Any).new
+    v["a"] = JSON::Any.new(1_i64)
+    v["b"] = JSON::Any.new(2_i64)
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    JSON.parse(evaluator.evaluate("lookup('list', a, b)")).as_a.map(&.as_i).should eq([1, 2])
+  end
+
+  it "evaluates lookup('items', ...) flattening list terms one level" do
+    v = Hash(String, JSON::Any).new
+    v["l1"] = JSON.parse(%([1, 2]))
+    v["l2"] = JSON.parse(%([3, 4]))
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    JSON.parse(evaluator.evaluate("lookup('items', l1, l2)")).as_a.map(&.as_i).should eq([1, 2, 3, 4])
+  end
+
+  it "evaluates lookup('together', ...) zipping lists, padding shorter ones with null" do
+    v = Hash(String, JSON::Any).new
+    v["l1"] = JSON.parse(%([1, 2, 3]))
+    v["l2"] = JSON.parse(%(["x", "y"]))
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    result = JSON.parse(evaluator.evaluate("lookup('together', l1, l2)")).as_a
+    result[0].as_a.should eq([JSON::Any.new(1_i64), JSON::Any.new("x")])
+    result[2].as_a[1].raw.should be_nil
+  end
+
+  it "evaluates lookup('nested', ...) as a Cartesian product" do
+    v = Hash(String, JSON::Any).new
+    v["l1"] = JSON.parse(%(["a", "b"]))
+    v["l2"] = JSON.parse(%([1, 2]))
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    result = JSON.parse(evaluator.evaluate("lookup('nested', l1, l2)")).as_a
+    result.map { |row| row.as_a.map(&.to_s) }.should eq([["a", "1"], ["a", "2"], ["b", "1"], ["b", "2"]])
+  end
+
+  it "evaluates lookup('lines', ...) splitting command output into a list of lines" do
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    JSON.parse(evaluator.evaluate(%(lookup('lines', 'printf "a\\nb\\nc\\n"')))).as_a.map(&.as_s).should eq(["a", "b", "c"])
+  end
+
+  it "evaluates lookup('varnames', ...) returning matching variable NAMES, not values" do
+    v = Hash(String, JSON::Any).new
+    v["nginx_port"] = JSON::Any.new(80_i64)
+    v["nginx_host"] = JSON::Any.new("example.com")
+    v["apache_port"] = JSON::Any.new(8080_i64)
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    result = JSON.parse(evaluator.evaluate(%(lookup('varnames', '^nginx_')))).as_a.map(&.as_s).sort!
+    result.should eq(["nginx_host", "nginx_port"])
+  end
+
+  it "evaluates lookup('sequence', ...) generating a numeric range" do
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    JSON.parse(evaluator.evaluate(%(lookup('sequence', 'start=1 end=3')))).as_a.map(&.as_s).should eq(["1", "2", "3"])
+  end
+
+  it "evaluates lookup('sequence', ...) honoring the shorthand start-end form and format=" do
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    JSON.parse(evaluator.evaluate(%(lookup('sequence', '1-3 format=web%02d')))).as_a.map(&.as_s).should eq(["web01", "web02", "web03"])
+  end
+
   it "resolves lookup(...) followed by a filter chain, not swallowing the whole thing as one bare call" do
     # Real bug found alongside the env lookup above: `lookup('env',
     # 'VAULT_VERSION') | default('2.0.3', true)` - the naive `starts_with

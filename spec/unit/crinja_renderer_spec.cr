@@ -443,6 +443,94 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     File.delete(path)
   end
 
+  it "path_join joins a list of path components, an absolute one resets" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ ["a", "b", "c.txt"] | path_join }})).should eq("a/b/c.txt")
+    renderer.render(%({{ ["a", "/b", "c.txt"] | path_join }})).should eq("/b/c.txt")
+  end
+
+  it "splitext splits a path into [root, ext]" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ "/etc/foo.conf" | splitext }})).should eq(%(['/etc/foo', '.conf']))
+  end
+
+  it "urldecode percent-decodes a string" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ "hello%20world" | urldecode }})).should eq("hello world")
+  end
+
+  it "urlsplit returns a component when given one, the full dict otherwise" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ "https://example.com:8080/path" | urlsplit('hostname') }})).should eq("example.com")
+    renderer.render(%({{ "https://example.com:8080/path" | urlsplit('port') }})).should eq("8080")
+  end
+
+  it "zip/zip_longest/product combine lists" do
+    v = Hash(String, JSON::Any).new
+    v["other"] = JSON.parse(%(["x", "y"]))
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ [1, 2] | zip(other) }})).should eq(%([[1, 'x'], [2, 'y']]))
+    renderer.render(%({{ [1] | zip_longest(other, fillvalue="-") }})).should eq(%([[1, 'x']]))
+    renderer.render(%({{ [1, 2] | product(other) }})).should eq(%([[1, 'x'], [1, 'y'], [2, 'x'], [2, 'y']]))
+  end
+
+  it "regex_escape escapes regex special characters" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ "1.2.3" | regex_escape }})).should eq("1\\.2\\.3")
+  end
+
+  it "renders to_nice_json, sorted keys by default" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ {"b": 1, "a": 2} | to_nice_json }})).should eq(%({\n  "a": 2,\n  "b": 1\n}))
+  end
+
+  it "human_readable/human_to_bytes round-trip a byte count" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ 1024 | human_readable }})).should eq("1.00 KB")
+    renderer.render(%({{ "2GB" | human_to_bytes }})).should eq((2_i64 * 1024 * 1024 * 1024).to_s)
+  end
+
+  it "md5/sha1 compute standalone hex digests" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ "hello" | md5 }})).should eq("5d41402abc4b2a76b9719d911017c592")
+    renderer.render(%({{ "hello" | sha1 }})).should eq("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d")
+  end
+
+  it "renders is exists/file/directory/link/link_exists/same_file, all against the CONTROLLER's filesystem" do
+    file_path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "crinja_path_test.txt")
+    dir_path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "crinja_path_test_dir")
+    link_path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "crinja_path_test_link")
+    File.write(file_path, "content")
+    Dir.mkdir_p(dir_path)
+    File.delete(link_path) if File.exists?(link_path) || File.symlink?(link_path)
+    File.symlink(file_path, link_path)
+
+    v = Hash(String, JSON::Any).new
+    v["f"] = JSON::Any.new(file_path)
+    v["d"] = JSON::Any.new(dir_path)
+    v["l"] = JSON::Any.new(link_path)
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render(%({% if f is exists %}yes{% else %}no{% endif %})).should eq("yes")
+    renderer.render(%({% if f is file %}yes{% else %}no{% endif %})).should eq("yes")
+    renderer.render(%({% if d is directory %}yes{% else %}no{% endif %})).should eq("yes")
+    renderer.render(%({% if l is link %}yes{% else %}no{% endif %})).should eq("yes")
+    renderer.render(%({% if l is link_exists %}yes{% else %}no{% endif %})).should eq("yes")
+    renderer.render(%({% if f is same_file(f) %}yes{% else %}no{% endif %})).should eq("yes")
+
+    File.delete(link_path)
+    File.delete(file_path)
+    Dir.delete(dir_path)
+  end
+
   it "type_debug returns Python's own type name" do
     # Real bug found benchmarking robertdebock.httpd's own assert.yml:
     # `httpd_additionnal_modules | type_debug == "list"` - entirely

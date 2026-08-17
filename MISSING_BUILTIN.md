@@ -114,38 +114,52 @@ focused on gaps, not the full reference list.
 
 **Lookups** - biggest gap of the three. `env`, `url`, `first_found`
 existed already; `vars`, `file`, `pipe`, `template`, `password` done
-(`0.9.465`, `ExpressionEvaluator#evaluate_lookup` - the plain `{{ }}`
-task-param path). `0.9.466` closed the second half of that gap: a new
-`Crinja.function(:lookup)` in `jinja_filters.cr` brings the SAME 6 types
-(`env`/`vars`/`file`/`pipe`/`template`/`password`, deliberately not
-`url`/`first_found` - meaningfully more complex and rare enough inside a
-`.j2` file specifically that porting them wasn't judged worth it yet) to
-real `.j2` template files too - `lookup(...)` called directly inside a
-template previously failed the whole render ("no function with name
-\"lookup\""). Still missing (both paths): `config`, `csvfile`, `dict`,
-`indexed_items`, `ini`, `inventory_hostnames`, `items`, `lines`, `list`,
-`nested`, `random_choice`, `sequence`, `subelements`, `together`,
-`unvault`, `varnames`.
+(`0.9.465`-`0.9.466`, both evaluators - see the module list above).
+`0.9.468` added 8 more, `ExpressionEvaluator` only (Crinja `lookup()`
+parity for these is a separate, still-open gap - see the note below):
+`dict`, `list`, `items`, `together`, `nested`, `lines`, `varnames`,
+`sequence`. All 8 always return real JSON array text (not real
+Ansible's own default comma-joined-scalar behavior for a bare, no-
+`wantlist` call) - these are essentially always consumed as a `loop:`/
+`with_X:` source or piped through `| list`/`| flatten`, both of which
+need a real array; live-verified as real `loop:` sources (`with_
+sequence`/`with_nested`/`with_together`/`with_dict`-shaped playbooks).
+Still missing: `config`, `csvfile`, `indexed_items`, `ini`,
+`inventory_hostnames`, `nested_subelements` (real name: `subelements`),
+`random_choice`, `unvault`.
 
 **Filters** - `b64encode`/`b64decode`/`from_json`/`from_yaml`/`to_yaml`/
-`checksum`/`union` done (`0.9.465`, both evaluators - `filter_engine.cr`
-and `jinja_filters.cr`). Still missing: `combinations`, `commonpath`,
-`expanduser`, `expandvars`, `extract`, `from_yaml_all`, `human_readable`,
-`human_to_bytes`, `items`, `log`, `md5`/`sha1` (as standalone filters -
-only exist as an algorithm selector inside `hash`/`password_hash`),
-`normpath`, `path_join`, `permutations`, `pow`, `product`,
-`regex_escape`, `rekey_on_member`, `relpath`, `splitext`,
-`symmetric_difference`, `to_nice_json`, `to_uuid`, `unvault`,
-`urldecode`, `urlsplit`, `vault`,
-`win_basename`/`win_dirname`/`win_splitdrive`, `zip`, `zip_longest`.
+`checksum`/`union` done (`0.9.465`, both evaluators). `0.9.467` added 14
+more, both evaluators: `path_join`, `splitext`, `urldecode`, `urlsplit`,
+`zip`/`zip_longest` (capped at 2 extra list arguments in the Crinja
+registration - the declared-keyword-args form needed to dodge the
+`arguments.varargs` multi-positional-arg splitting bug, see the
+`version` test's own comment - real 4+-way zip is rare), `product`
+(same cap), `regex_escape`, `to_nice_json`, `human_readable`/
+`human_to_bytes`, `md5`/`sha1` (standalone). `abs` turned out to
+already exist (audit correction). Still missing: `combinations`,
+`commonpath`, `expanduser`, `expandvars`, `extract`, `from_yaml_all`,
+`items` (as a filter - real Ansible has no such filter, this was
+probably the `items` LOOKUP mis-scraped into the filter list by the
+original audit), `log`, `normpath`, `permutations`, `pow`,
+`rekey_on_member`, `relpath`, `symmetric_difference`, `to_uuid`,
+`unvault`, `vault`, `win_basename`/`win_dirname`/`win_splitdrive`.
 
 **Tests** - `subset`/`superset`/`contains` done (`0.9.465`, both
-`conditional_evaluator.cr` and `jinja_filters.cr`). `any`/`all` turned
-out to already be registered in Crinja (the original audit's list was
-wrong on these two - corrected here). Still missing: `abs`, `directory`,
-`exists`, `file`, `link`, `link_exists`, `mount`, `same_file`,
-`timedout`/`started`/`finished`/`reachable`/`unreachable` (async/host-
-check tests), `urn`, `vault_encrypted`, `vaulted_file`.
+evaluators). `any`/`all` turned out to already be registered in Crinja
+(audit correction). `0.9.467` added `exists`/`file`/`directory`/`link`/
+`link_exists`/`same_file` (both evaluators - `conditional_evaluator.cr`
++ `jinja_filters.cr`; always check the CONTROLLER's filesystem, same
+rule `lookup('file', ...)` follows). Found and fixed a real ordering
+bug while adding these: `" is link_exists"` contains `" is link"` as a
+substring, so the naive per-test-name `.each`/`condition.includes?`
+loop misfired on `link` before ever reaching `link_exists` - fixed by
+checking the longer/more-specific name first. Still missing: `abs` (as
+a test - real Jinja2/Ansible docs list it under both filters and tests;
+only the filter form was verified real, this may be a docs-scrape
+artifact, not investigated further), `mount`, `timedout`/`started`/
+`finished`/`reachable`/`unreachable` (async/host-check tests), `urn`,
+`vault_encrypted`, `vaulted_file`.
 
 Known limitation shared by every filter/test added in this pass that
 takes another list as an argument (`union(other)`, `is subset(other)`,
@@ -175,7 +189,21 @@ was in place). Live-verified via a real playbook run (all 5 lookups +
 `.j2` template files (previously `.j2`-only path had ZERO lookup types
 at all - `lookup(...)` failed the whole render regardless of type).
 Live-verified via a real `template:` task rendering a `.j2` file that
-uses all 5 non-`env` lookup types together. The remaining long tail
-(everything else in the missing lists above, plus `url`/`first_found`
-inside a `.j2` file specifically) stays open, revisited if a live
-benchmark round actually hits one.
+uses all 5 non-`env` lookup types together.
+
+`0.9.467` done: 14 filters + 6 path-check tests, both evaluators (see
+above). Full suite green throughout; live-verified filters via real
+`debug:`-task rendering (assert-form comparisons against inline `[...]`
+literals hit the pre-existing list-literal-argument limitation
+documented above, not a bug in the new filters - confirmed by checking
+each value individually instead).
+
+`0.9.468` done: 8 more lookups, `ExpressionEvaluator` only (see above).
+Live-verified as real `loop:` sources for `sequence`/`nested`/
+`together`/`dict`-shaped iteration, matching the classic `with_X:`
+idioms these replace.
+
+The remaining long tail (everything else in the missing lists above,
+plus Crinja `lookup()` parity for this round's 8 new types, plus
+`url`/`first_found` inside a `.j2` file specifically) stays open,
+revisited if a live benchmark round actually hits one.

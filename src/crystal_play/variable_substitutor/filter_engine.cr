@@ -2,6 +2,7 @@ require "json"
 require "time"
 require "yaml"
 require "base64"
+require "uri"
 require "openssl/digest"
 require "./variable_lookup"
 require "./expression_evaluator"
@@ -733,6 +734,109 @@ module CrystalPlay
           right = other.as_a? || [] of JSON::Any
           combined = (left + right).uniq { |item| item.to_json }
           JSON::Any.new(combined)
+        when "path_join"
+          # path_join(list) - real Ansible filter: joins a list of path
+          # components with os.path.join semantics (an absolute
+          # component resets the accumulated path rather than appending
+          # to it - Crystal's own File.join has no such reset).
+          parts = as_array(value).map(&.as_s?).compact
+          joined = parts.reduce("") { |acc, part| part.starts_with?('/') ? part : File.join(acc, part) }
+          JSON::Any.new(joined)
+        when "splitext"
+          # splitext() - real Ansible filter, mirrors Python's
+          # os.path.splitext: [root, ext] (ext includes the leading '.',
+          # empty string if there's no extension).
+          str = as_string(value)
+          ext = File.extname(str)
+          root = ext.empty? ? str : str[0, str.size - ext.size]
+          JSON::Any.new([JSON::Any.new(root), JSON::Any.new(ext)])
+        when "urldecode"
+          # urldecode() - real Ansible filter, percent-decodes a URL-
+          # encoded string.
+          JSON::Any.new(URI.decode(as_string(value)))
+        when "urlsplit"
+          # urlsplit(query='') - real Ansible filter: parses value as a
+          # URL. With no argument, returns the full breakdown dict; with
+          # a component name argument, returns just that component as a
+          # string (empty string if absent) - matches real Ansible's own
+          # urlsplit.py exactly (query= is the positional arg name
+          # despite selecting any component, not just the querystring).
+          uri = URI.parse(as_string(value)) rescue nil
+          return JSON::Any.new(nil) unless uri
+          args = split_top_level_args(filter_args)
+          component = args[0]?.try { |arg| as_string(resolve_expression(arg)) }
+          fragment = uri.fragment || ""
+          full = {
+            "scheme"   => uri.scheme || "",
+            "netloc"   => (uri.host ? "#{uri.host}#{uri.port ? ":#{uri.port}" : ""}" : ""),
+            "hostname" => uri.host || "",
+            "port"     => uri.port ? uri.port.to_s : "",
+            "path"     => uri.path || "",
+            "query"    => uri.query || "",
+            "fragment" => fragment,
+            "username" => uri.user || "",
+            "password" => uri.password || "",
+          }
+          if component
+            JSON::Any.new(full[component]? || "")
+          else
+            JSON::Any.new(full.transform_values { |v| JSON::Any.new(v) })
+          end
+        when "zip", "zip_longest"
+          # zip(*others)/zip_longest(*others, fillvalue=None) - real
+          # Ansible filters, Python's own zip()/itertools.zip_longest().
+          longest = filter_name == "zip_longest"
+          lists = [as_array(value)] + split_top_level_args(filter_args).reject { |a| a.strip.starts_with?("fillvalue") }.map { |arg| as_array(resolve_expression(arg)) }
+          fillvalue = parse_kwarg_expr(filter_args, "fillvalue") || JSON::Any.new(nil)
+          size = longest ? (lists.map(&.size).max? || 0) : (lists.map(&.size).min? || 0)
+          rows = (0...size).map do |i|
+            JSON::Any.new(lists.map { |list| list[i]? || fillvalue })
+          end
+          JSON::Any.new(rows)
+        when "product"
+          # product(*others) - real Ansible filter, Python's own
+          # itertools.product(): Cartesian product of value and every
+          # other list argument, each result row a list.
+          lists = [as_array(value)] + split_top_level_args(filter_args).map { |arg| as_array(resolve_expression(arg)) }
+          result = lists.reduce([[] of JSON::Any]) do |acc, list|
+            acc.flat_map { |row| list.map { |item| row + [item] } }
+          end
+          JSON::Any.new(result.map { |row| JSON::Any.new(row) })
+        when "regex_escape"
+          # regex_escape(re_type='python') - real Ansible filter, escapes
+          # regex special characters so the value can be embedded
+          # literally into a larger pattern.
+          JSON::Any.new(Regex.escape(as_string(value)))
+        when "to_nice_json"
+          # to_nice_json(indent=4, sort_keys=True) - real Ansible filter,
+          # a pretty-printed JSON dump (the mirror of to_nice_yaml).
+          # Crystal's own JSON::Any#to_pretty_json (2-space indent) is
+          # used rather than hand-rolling a 4-space emitter - narrower
+          # than real Ansible's exact byte output but structurally
+          # correct, same scope limit to_nice_yaml's own indent= already
+          # documents.
+          sort_keys = (kw = parse_kwarg_expr(filter_args, "sort_keys")) ? truthy?(kw) : true
+          sorted = sort_keys ? sort_json_keys(value) : value
+          JSON::Any.new(sorted.to_pretty_json)
+        when "human_readable"
+          # human_readable(isbits=False, unit=None) - real Ansible
+          # filter, formats a byte count as e.g. "1.00 KB" (1024-based).
+          bytes = value.as_i64? || value.as_f?.try(&.to_i64) || 0_i64
+          isbits = (kw = parse_kwarg_expr(filter_args, "isbits")) ? truthy?(kw) : false
+          JSON::Any.new(format_human_readable(bytes, isbits))
+        when "human_to_bytes"
+          # human_to_bytes(default_unit=None, isbits=False) - real
+          # Ansible filter, the inverse of human_readable: parses
+          # "10GB"/"1.5 MB" etc back into a raw byte count.
+          JSON::Any.new(parse_human_to_bytes(as_string(value)))
+        when "md5"
+          digest = OpenSSL::Digest.new("MD5")
+          digest.update(as_string(value))
+          JSON::Any.new(digest.final.hexstring)
+        when "sha1"
+          digest = OpenSSL::Digest.new("SHA1")
+          digest.update(as_string(value))
+          JSON::Any.new(digest.final.hexstring)
         when "ternary"
           # ternary(true_val, false_val) - real Ansible's own filter
           # (ansible.builtin, not standard Jinja2): `true_val` if value
@@ -1589,6 +1693,62 @@ module CrystalPlay
       # Parses `name='value'`/`name="value"` out of a filter's argument
       # list - only what `map(attribute=...)` needs, not general keyword
       # argument parsing.
+      # Recursively sorts a JSON object's keys - the JSON counterpart of
+      # #sort_yaml_keys-style helpers already used for to_nice_yaml's own
+      # Crinja copy, needed here for to_nice_json's sort_keys= default.
+      private def sort_json_keys(value : JSON::Any) : JSON::Any
+        case raw = value.raw
+        when Hash
+          sorted = raw.to_a.sort_by { |(k, _)| k }
+          JSON::Any.new(sorted.to_h { |(k, v)| {k, sort_json_keys(v)} })
+        when Array
+          JSON::Any.new(raw.map { |v| sort_json_keys(v) })
+        else
+          value
+        end
+      end
+
+      HUMAN_READABLE_SUFFIXES = {"Bytes", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"}
+      HUMAN_READABLE_BIT_SUFFIXES = {"bits", "Kb", "Mb", "Gb", "Tb", "Pb", "Eb", "Zb", "Yb"}
+
+      # Mirrors real Ansible's own bytes_to_human/human_to_bytes
+      # (module_utils.common.text.formatters) closely enough for the
+      # common cases - both base-1024, `isbits:` selects the bit-count
+      # suffix table (and multiplies the byte count by 8 first) rather
+      # than switching to a base-1000 divisor, matching real Ansible's
+      # own implementation exactly (a common misconception is that
+      # "bits" implies decimal/SI units - it doesn't, here).
+      private def format_human_readable(bytes : Int64, isbits : Bool) : String
+        value = isbits ? bytes.to_f * 8 : bytes.to_f
+        suffixes = isbits ? HUMAN_READABLE_BIT_SUFFIXES : HUMAN_READABLE_SUFFIXES
+        suffixes.each_with_index do |suffix, i|
+          unit = 1024.0 ** i
+          next_unit = 1024.0 ** (i + 1)
+          if value < next_unit || i == suffixes.size - 1
+            return i == 0 ? "#{value.to_i} #{suffix}" : "%.2f %s" % [value / unit, suffix]
+          end
+        end
+        "#{bytes} Bytes"
+      end
+
+      private def parse_human_to_bytes(str : String) : Int64
+        match = str.strip.match(/^([\d.]+)\s*([A-Za-z]*)$/)
+        return str.to_i64? || 0_i64 unless match
+
+        number = match[1].to_f
+        unit = match[2].downcase
+        multiplier = case unit
+                     when "", "b", "bytes" then 1_i64
+                     when "kb"              then 1024_i64
+                     when "mb"              then 1024_i64 ** 2
+                     when "gb"              then 1024_i64 ** 3
+                     when "tb"              then 1024_i64 ** 4
+                     when "pb"              then 1024_i64 ** 5
+                     else                        1_i64
+                     end
+        (number * multiplier).to_i64
+      end
+
       private def parse_kwarg(args : String, name : String) : String?
         if match = args.match(/#{name}\s*=\s*(['"])(.*?)\1/)
           match[2]

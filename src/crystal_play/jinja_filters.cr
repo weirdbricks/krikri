@@ -540,6 +540,166 @@ module CrystalPlay
       Crinja::Value.new(combined)
     end
 
+    # `path_join()` - real Ansible filter: joins a list of path
+    # components with os.path.join semantics (an absolute component
+    # resets the accumulated path).
+    Crinja.filter(:path_join) do
+      parts = target.sequence? ? target.to_a.map(&.to_s) : [] of String
+      joined = parts.reduce("") { |acc, part| part.starts_with?('/') ? part : File.join(acc, part) }
+      Crinja::Value.new(joined)
+    end
+
+    # `splitext()` - real Ansible filter, mirrors Python's
+    # os.path.splitext: [root, ext].
+    Crinja.filter(:splitext) do
+      str = target.to_s
+      ext = File.extname(str)
+      root = ext.empty? ? str : str[0, str.size - ext.size]
+      Crinja::Value.new([root, ext])
+    end
+
+    # `urldecode()` - real Ansible filter, percent-decodes a URL-encoded
+    # string.
+    Crinja.filter(:urldecode) { Crinja::Value.new(URI.decode(target.to_s)) }
+
+    # `urlsplit(query='')` - real Ansible filter: with no argument,
+    # returns the full breakdown dict; with a component name argument,
+    # returns just that component (real Ansible: the positional/keyword
+    # arg is literally named `query` despite selecting any component).
+    Crinja.filter({query: ""}, :urlsplit) do
+      uri = URI.parse(target.to_s) rescue nil
+
+      if uri
+        full = {
+          "scheme"   => uri.scheme || "",
+          "netloc"   => (uri.host ? "#{uri.host}#{uri.port ? ":#{uri.port}" : ""}" : ""),
+          "hostname" => uri.host || "",
+          "port"     => uri.port ? uri.port.to_s : "",
+          "path"     => uri.path || "",
+          "query"    => uri.query || "",
+          "fragment" => uri.fragment || "",
+          "username" => uri.user || "",
+          "password" => uri.password || "",
+        }
+        component = arguments["query"].to_s
+        component.empty? ? Crinja::Value.new(full) : Crinja::Value.new(full[component]? || "")
+      else
+        Crinja::Value.new(nil)
+      end
+    end
+
+    # `zip(other1, other2=None)`/`zip_longest(other1, other2=None,
+    # fillvalue=None)` - real Ansible filters, Python's own zip()/
+    # itertools.zip_longest(). Declared-keyword-args form (not the plain
+    # block form - see the `version` test's own comment on why: multiple
+    # positional arguments don't reliably split via `arguments.varargs`)
+    # caps this at up to 2 extra list arguments (3-way zip total) -
+    # covers the overwhelming majority of real-world usage; a real 4+way
+    # zip would need a different registration approach entirely.
+    {% for name in [:zip, :zip_longest] %}
+      Crinja.filter({other1: Crinja::UNDEFINED, other2: Crinja::UNDEFINED, fillvalue: Crinja::UNDEFINED}, {{ name }}) do
+        longest = {{ name.stringify }} == "zip_longest"
+        lists = [target] + [arguments["other1"], arguments["other2"]].reject(&.undefined?)
+        arrays = lists.map { |l| l.sequence? ? l.to_a : [] of Crinja::Value }
+        fillvalue = arguments["fillvalue"].undefined? ? Crinja::Value.new(nil) : arguments["fillvalue"]
+        size = longest ? (arrays.map(&.size).max? || 0) : (arrays.map(&.size).min? || 0)
+        rows = (0...size).map { |i| Crinja::Value.new(arrays.map { |arr| arr[i]? || fillvalue }) }
+        Crinja::Value.new(rows)
+      end
+    {% end %}
+
+    # `product(other1, other2=None)` - real Ansible filter, Python's own
+    # itertools.product(): Cartesian product of target and every other
+    # list argument. Same up-to-2-extra-lists cap as zip above.
+    Crinja.filter({other1: Crinja::UNDEFINED, other2: Crinja::UNDEFINED}, :product) do
+      lists = [target] + [arguments["other1"], arguments["other2"]].reject(&.undefined?)
+      arrays = lists.map { |l| l.sequence? ? l.to_a : [] of Crinja::Value }
+      result = arrays.reduce([[] of Crinja::Value]) do |acc, arr|
+        acc.flat_map { |row| arr.map { |item| row + [item] } }
+      end
+      Crinja::Value.new(result.map { |row| Crinja::Value.new(row) })
+    end
+
+    # `regex_escape(re_type='python')` - real Ansible filter, escapes
+    # regex special characters.
+    Crinja.filter(:regex_escape) { Crinja::Value.new(Regex.escape(target.to_s)) }
+
+    # `to_nice_json(indent=4, sort_keys=True)` - real Ansible filter, a
+    # pretty-printed JSON dump (mirrors to_nice_yaml above). Converts via
+    # crinja_value_to_yaml_any -> to_json (round-tripping through the
+    # same YAML::Any conversion to_nice_yaml already uses, since Crystal
+    # doesn't have a direct Crinja::Value -> JSON serializer here) rather
+    # than a hand-rolled one; Crystal's own JSON#to_pretty_json (2-space
+    # indent) is used rather than a 4-space emitter - same scope limit
+    # to_nice_yaml's own indent= already documents.
+    Crinja.filter(:to_nice_json) do
+      sort_keys = arguments.kwargs["sort_keys"]?.try { |v| JinjaFilters.real_truthy?(v) }
+      sort_keys = true if sort_keys.nil?
+
+      any = JinjaFilters.crinja_value_to_yaml_any(target)
+      any = JinjaFilters.sort_yaml_keys(any) if sort_keys
+      Crinja::Value.new(JSON.parse(any.to_json).to_pretty_json)
+    end
+
+    # `human_readable(isbits=False, unit=None)`/`human_to_bytes(
+    # default_unit=None, isbits=False)` - real Ansible filters (bytes
+    # count <-> "1.00 KB"-style string), both base-1024 (isbits: selects
+    # the bit-suffix table and multiplies by 8 first, real Ansible does
+    # NOT switch to base-1000 for bits).
+    HUMAN_READABLE_SUFFIXES     = {"Bytes", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"}
+    HUMAN_READABLE_BIT_SUFFIXES = {"bits", "Kb", "Mb", "Gb", "Tb", "Pb", "Eb", "Zb", "Yb"}
+
+    def self.format_human_readable(bytes : Int64, isbits : Bool) : String
+      value = isbits ? bytes.to_f * 8 : bytes.to_f
+      suffixes = isbits ? HUMAN_READABLE_BIT_SUFFIXES : HUMAN_READABLE_SUFFIXES
+      suffixes.each_with_index do |suffix, i|
+        unit = 1024.0 ** i
+        next_unit = 1024.0 ** (i + 1)
+        if value < next_unit || i == suffixes.size - 1
+          return i == 0 ? "#{value.to_i} #{suffix}" : "%.2f %s" % [value / unit, suffix]
+        end
+      end
+      "#{bytes} Bytes"
+    end
+
+    def self.parse_human_to_bytes(str : String) : Int64
+      match = str.strip.match(/^([\d.]+)\s*([A-Za-z]*)$/)
+      return str.to_i64? || 0_i64 unless match
+
+      number = match[1].to_f
+      unit = match[2].downcase
+      multiplier = case unit
+                   when "", "b", "bytes" then 1_i64
+                   when "kb"              then 1024_i64
+                   when "mb"              then 1024_i64 ** 2
+                   when "gb"              then 1024_i64 ** 3
+                   when "tb"              then 1024_i64 ** 4
+                   when "pb"              then 1024_i64 ** 5
+                   else                        1_i64
+                   end
+      (number * multiplier).to_i64
+    end
+
+    Crinja.filter(:human_readable) do
+      isbits = arguments.kwargs["isbits"]?.try { |v| JinjaFilters.real_truthy?(v) } || false
+      bytes = target.to_s.to_i64? || 0_i64
+      Crinja::Value.new(JinjaFilters.format_human_readable(bytes, isbits))
+    end
+    Crinja.filter(:human_to_bytes) { Crinja::Value.new(JinjaFilters.parse_human_to_bytes(target.to_s)) }
+
+    # `md5()`/`sha1()` - real Ansible filters, standalone hex digests
+    # (distinct from the general `hash(algorithm=)` filter above).
+    Crinja.filter(:md5) do
+      digest = OpenSSL::Digest.new("MD5")
+      digest.update(target.to_s)
+      Crinja::Value.new(digest.final.hexstring)
+    end
+    Crinja.filter(:sha1) do
+      digest = OpenSSL::Digest.new("SHA1")
+      digest.update(target.to_s)
+      Crinja::Value.new(digest.final.hexstring)
+    end
+
     # `version(comparison_version, operator='==')` - Ansible's own test
     # (ansible.builtin.version), not part of standard Jinja2 and not
     # provided by Crinja at all: `{% if sshd_version is version('5.8',
@@ -880,6 +1040,22 @@ module CrystalPlay
       else
         false
       end
+    end
+
+    # `exists`/`file`/`directory`/`link`/`link_exists`/`same_file(other)`
+    # - real Ansible's own path-check tests, always against the
+    # CONTROLLER's filesystem (same as `lookup('file', ...)` above -
+    # these are plain os.path.* wrappers running in the controller's own
+    # Python process, never the target's).
+    Crinja.test(:exists) { File.exists?(target.to_s) }
+    Crinja.test(:file) { File.file?(target.to_s) }
+    Crinja.test(:directory) { Dir.exists?(target.to_s) }
+    Crinja.test(:link) { File.symlink?(target.to_s) }
+    Crinja.test(:link_exists) { !!File.info?(target.to_s, follow_symlinks: false) }
+    Crinja.test({other: ""}, :same_file) do
+      path1 = target.to_s
+      path2 = arguments["other"].to_s
+      (File.exists?(path1) && File.exists?(path2)) ? File.same?(path1, path2) : false
     end
 
     # Real Jinja2's comparison-operator test aliases - used almost

@@ -629,4 +629,80 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     result = vars_engine.apply(JSON.parse(%([1, 2, 3])), "union(other)")
     result.as_a.map(&.as_i).should eq([1, 2, 3, 4])
   end
+
+  it "path_join joins a list of path components, an absolute one resets" do
+    engine.apply(JSON.parse(%(["a", "b", "c.txt"])), "path_join").as_s.should eq("a/b/c.txt")
+    engine.apply(JSON.parse(%(["a", "/b", "c.txt"])), "path_join").as_s.should eq("/b/c.txt")
+  end
+
+  it "splitext splits a path into [root, ext]" do
+    result = engine.apply(s("/etc/foo.conf"), "splitext").as_a
+    result.map(&.as_s).should eq(["/etc/foo", ".conf"])
+  end
+
+  it "urldecode percent-decodes a string" do
+    engine.apply(s("hello%20world"), "urldecode").as_s.should eq("hello world")
+  end
+
+  it "urlsplit returns the full breakdown dict with no argument" do
+    result = engine.apply(s("https://user:pass@example.com:8080/path?q=1#frag"), "urlsplit").as_h
+    result["scheme"].as_s.should eq("https")
+    result["hostname"].as_s.should eq("example.com")
+    result["port"].as_s.should eq("8080")
+    result["path"].as_s.should eq("/path")
+    result["query"].as_s.should eq("q=1")
+    result["fragment"].as_s.should eq("frag")
+  end
+
+  it "urlsplit returns a single component when given one" do
+    engine.apply(s("https://example.com/path"), "urlsplit('hostname')").as_s.should eq("example.com")
+  end
+
+  it "zip combines lists element-wise, truncating to the shortest" do
+    v = Hash(String, JSON::Any).new
+    v["other"] = JSON.parse(%(["x", "y"]))
+    vars_engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(v)
+    result = vars_engine.apply(JSON.parse(%([1, 2, 3])), "zip(other)").as_a
+    result.map { |row| row.as_a.map(&.to_s) }.should eq([["1", "x"], ["2", "y"]])
+  end
+
+  it "zip_longest pads shorter lists with fillvalue" do
+    v = Hash(String, JSON::Any).new
+    v["other"] = JSON.parse(%(["x"]))
+    vars_engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(v)
+    result = vars_engine.apply(JSON.parse(%([1, 2])), %(zip_longest(other, fillvalue="-"))).as_a
+    result.map { |row| row.as_a.map(&.to_s) }.should eq([["1", "x"], ["2", "-"]])
+  end
+
+  it "product computes the Cartesian product with another list" do
+    v = Hash(String, JSON::Any).new
+    v["other"] = JSON.parse(%([1, 2]))
+    vars_engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(v)
+    result = vars_engine.apply(JSON.parse(%(["a", "b"])), "product(other)").as_a
+    result.map { |row| row.as_a.map(&.to_s) }.should eq([["a", "1"], ["a", "2"], ["b", "1"], ["b", "2"]])
+  end
+
+  it "regex_escape escapes regex special characters" do
+    engine.apply(s("1.2.3"), "regex_escape").as_s.should eq("1\\.2\\.3")
+  end
+
+  it "to_nice_json pretty-prints with sorted keys by default" do
+    result = engine.apply(JSON.parse(%({"b": 1, "a": 2})), "to_nice_json").as_s
+    result.should eq(%({\n  "a": 2,\n  "b": 1\n}))
+  end
+
+  it "human_readable formats a byte count" do
+    engine.apply(JSON::Any.new(1024_i64), "human_readable").as_s.should eq("1.00 KB")
+    engine.apply(JSON::Any.new(500_i64), "human_readable").as_s.should eq("500 Bytes")
+  end
+
+  it "human_to_bytes parses a human-readable size back to bytes" do
+    engine.apply(s("1KB"), "human_to_bytes").as_i64.should eq(1024)
+    engine.apply(s("2GB"), "human_to_bytes").as_i64.should eq(2_i64 * 1024 * 1024 * 1024)
+  end
+
+  it "md5/sha1 compute standalone hex digests" do
+    engine.apply(s("hello"), "md5").as_s.should eq("5d41402abc4b2a76b9719d911017c592")
+    engine.apply(s("hello"), "sha1").as_s.should eq("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d")
+  end
 end
