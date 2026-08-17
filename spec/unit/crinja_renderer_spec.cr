@@ -531,6 +531,152 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     Dir.delete(dir_path)
   end
 
+  it "expanduser/expandvars expand ~ and $VAR from the controller's environment" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    ENV["HOME"] = "/home/testuser"
+    renderer.render(%({{ "~/foo" | expanduser }})).should eq("/home/testuser/foo")
+    ENV["CRYSTAL_ANSIBLE_SPEC_CRINJA_EXPANDVAR"] = "hello"
+    renderer.render(%({{ "v=$CRYSTAL_ANSIBLE_SPEC_CRINJA_EXPANDVAR" | expandvars }})).should eq("v=hello")
+    ENV.delete("CRYSTAL_ANSIBLE_SPEC_CRINJA_EXPANDVAR")
+  end
+
+  it "normpath/relpath/commonpath mirror Python's os.path helpers" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ "a/./b/../c" | normpath }})).should eq("a/c")
+    renderer.render(%({{ "/a/b/c" | relpath("/a") }})).should eq("b/c")
+    renderer.render(%({{ ["/a/b/c", "/a/b/d"] | commonpath }})).should eq("/a/b")
+  end
+
+  it "log/pow compute logarithms and powers" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ 8.0 | log(2) }})).should eq("3.0")
+    renderer.render(%({{ 2.0 | pow(10) }})).should eq("1024.0")
+  end
+
+  it "to_uuid produces a deterministic UUID5" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    a = renderer.render(%({{ "hello" | to_uuid }}))
+    b = renderer.render(%({{ "hello" | to_uuid }}))
+    a.should eq(b)
+  end
+
+  it "symmetric_difference/combinations/permutations" do
+    v = Hash(String, JSON::Any).new
+    v["other"] = JSON.parse(%([2, 3, 4]))
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ [1, 2, 3] | symmetric_difference(other) }})).should eq("[1, 4]")
+    renderer.render(%({{ [1, 2, 3] | combinations(2) }})).should eq("[[1, 2], [1, 3], [2, 3]]")
+    renderer.render(%({{ [1, 2] | permutations }})).should eq("[[1, 2], [2, 1]]")
+  end
+
+  it "rekey_on_member converts a list of dicts into a dict keyed by a field" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ ([{"name": "a", "v": 1}] | rekey_on_member("name")).a.v }})).should eq("1")
+  end
+
+  it "extract indexes into a container using the piped value" do
+    v = Hash(String, JSON::Any).new
+    v["container"] = JSON.parse(%(["zero", "one", "two"]))
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ 1 | extract(container) }})).should eq("one")
+  end
+
+  it "from_yaml_all parses a multi-document YAML string" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ ("a: 1\n---\nb: 2\n" | from_yaml_all)[1].b }})).should eq("2")
+  end
+
+  it "vault/unvault round-trip through real ansible-vault ciphertext" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    encrypted = renderer.render(%({{ "plaintext" | vault("secret123") }}))
+    encrypted.should start_with("$ANSIBLE_VAULT;")
+    v["ciphertext"] = JSON::Any.new(encrypted)
+    renderer2 = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer2.render(%({{ ciphertext | unvault("secret123") }})).should eq("plaintext")
+  end
+
+  it "renders is mount against the CONTROLLER's real mount table" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({% if "/" is mount %}yes{% else %}no{% endif %})).should eq("yes")
+  end
+
+  it "renders is vault_encrypted / is vaulted_file / is urn" do
+    v = Hash(String, JSON::Any).new
+    v["ciphertext"] = JSON::Any.new(CrystalPlay::Vault.encrypt("secret", "password123"))
+    v["urn"] = JSON::Any.new("urn:isbn:0451450523")
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render(%({% if ciphertext is vault_encrypted %}yes{% else %}no{% endif %})).should eq("yes")
+    renderer.render(%({% if urn is urn %}yes{% else %}no{% endif %})).should eq("yes")
+  end
+
+  it "renders is started/finished/reachable/unreachable on a registered result dict" do
+    v = Hash(String, JSON::Any).new
+    v["job"] = JSON.parse(%({"started": 1, "finished": 0}))
+    v["conn"] = JSON.parse(%({"unreachable": true}))
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render(%({% if job is started %}yes{% else %}no{% endif %})).should eq("yes")
+    renderer.render(%({% if job is finished %}yes{% else %}no{% endif %})).should eq("no")
+    renderer.render(%({% if conn is unreachable %}yes{% else %}no{% endif %})).should eq("yes")
+    renderer.render(%({% if conn is reachable %}yes{% else %}no{% endif %})).should eq("no")
+  end
+
+  it "renders lookup('dict'/'list'/'items'/'together'/'nested'/'indexed_items'/'random_choice', ...) in a real .j2 template" do
+    v = Hash(String, JSON::Any).new
+    v["mydict"] = JSON.parse(%({"a": 1}))
+    v["l1"] = JSON.parse(%([1, 2]))
+    v["l2"] = JSON.parse(%(["x", "y"]))
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render(%({{ (lookup('dict', mydict))[0].key }})).should eq("a")
+    renderer.render(%({{ lookup('list', 1, 2) }})).should eq("[1, 2]")
+    renderer.render(%({{ lookup('items', l1, l2) }})).should eq("[1, 2, 'x', 'y']")
+    renderer.render(%({{ lookup('together', l1, l2) }})).should eq("[[1, 'x'], [2, 'y']]")
+    renderer.render(%({{ lookup('nested', ['a'], [1, 2]) }})).should eq("[['a', 1], ['a', 2]]")
+    renderer.render(%({{ lookup('indexed_items', l2) }})).should eq("[[0, 'x'], [1, 'y']]")
+    renderer.render(%({{ lookup('random_choice', ['only']) }})).should eq("only")
+  end
+
+  it "renders lookup('lines'/'sequence'/'varnames', ...)" do
+    v = Hash(String, JSON::Any).new
+    v["nginx_port"] = JSON::Any.new(80_i64)
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render(%({{ lookup('lines', 'printf "a\\nb\\n"') }})).should eq("['a', 'b']")
+    renderer.render(%({{ lookup('sequence', 'start=1 end=3') }})).should eq("['1', '2', '3']")
+    renderer.render(%({{ lookup('varnames', '^nginx_') }})).should eq("['nginx_port']")
+  end
+
+  it "renders lookup('subelements'/'csvfile'/'ini'/'unvault', ...)" do
+    v = Hash(String, JSON::Any).new
+    v["users"] = JSON.parse(%([{"name": "alice", "groups": ["a"]}]))
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ (lookup('subelements', users, 'groups'))[0][1] }})).should eq("a")
+
+    csv_path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "crinja_lookup_csvfile_test.csv")
+    File.write(csv_path, "bob,designer\n")
+    renderer.render(%({{ lookup('csvfile', 'bob file=#{csv_path} delimiter=, col=1') }})).should eq("designer")
+
+    ini_path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "crinja_lookup_ini_test.ini")
+    File.write(ini_path, "[db]\nport = 5432\n")
+    renderer.render(%({{ lookup('ini', 'port section=db file=#{ini_path}') }})).should eq("5432")
+
+    unvault_path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "crinja_lookup_unvault_test.txt")
+    File.write(unvault_path, CrystalPlay::Vault.encrypt("hidden", "pw123"))
+    CrystalPlay::Vault.password = "pw123"
+    renderer.render(%({{ lookup('unvault', '#{unvault_path}') }})).should eq("hidden")
+    CrystalPlay::Vault.password = nil
+  end
+
   it "type_debug returns Python's own type name" do
     # Real bug found benchmarking robertdebock.httpd's own assert.yml:
     # `httpd_additionnal_modules | type_debug == "list"` - entirely

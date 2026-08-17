@@ -705,4 +705,92 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     engine.apply(s("hello"), "md5").as_s.should eq("5d41402abc4b2a76b9719d911017c592")
     engine.apply(s("hello"), "sha1").as_s.should eq("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d")
   end
+
+  it "expanduser expands a leading ~" do
+    ENV["HOME"] = "/home/testuser"
+    engine.apply(s("~/foo"), "expanduser").as_s.should eq("/home/testuser/foo")
+    engine.apply(s("~"), "expanduser").as_s.should eq("/home/testuser")
+    engine.apply(s("/already/absolute"), "expanduser").as_s.should eq("/already/absolute")
+  end
+
+  it "expandvars expands $VAR/${VAR} from the controller's environment" do
+    ENV["CRYSTAL_ANSIBLE_SPEC_EXPANDVAR"] = "hello"
+    engine.apply(s("value=$CRYSTAL_ANSIBLE_SPEC_EXPANDVAR"), "expandvars").as_s.should eq("value=hello")
+    engine.apply(s("value=${CRYSTAL_ANSIBLE_SPEC_EXPANDVAR}!"), "expandvars").as_s.should eq("value=hello!")
+    ENV.delete("CRYSTAL_ANSIBLE_SPEC_EXPANDVAR")
+  end
+
+  it "normpath collapses . and .. without absolutizing" do
+    engine.apply(s("a/./b/../c"), "normpath").as_s.should eq("a/c")
+    engine.apply(s("/a/b/../../c"), "normpath").as_s.should eq("/c")
+    engine.apply(s("../a/b"), "normpath").as_s.should eq("../a/b")
+  end
+
+  it "relpath computes a path relative to start=" do
+    engine.apply(s("/a/b/c"), "relpath('/a')").as_s.should eq("b/c")
+  end
+
+  it "commonpath finds the longest common directory prefix" do
+    engine.apply(JSON.parse(%(["/a/b/c", "/a/b/d", "/a/be"])), "commonpath").as_s.should eq("/a")
+  end
+
+  it "log computes natural log by default, arbitrary base otherwise" do
+    engine.apply(JSON::Any.new(Math::E), "log").as_f.should be_close(1.0, 0.0001)
+    engine.apply(JSON::Any.new(8.0), "log(2)").as_f.should be_close(3.0, 0.0001)
+  end
+
+  it "pow raises value to a power" do
+    engine.apply(JSON::Any.new(2.0), "pow(10)").as_f.should be_close(1024.0, 0.0001)
+  end
+
+  it "to_uuid produces a deterministic UUID5 for the same input" do
+    a = engine.apply(s("hello"), "to_uuid").as_s
+    b = engine.apply(s("hello"), "to_uuid").as_s
+    a.should eq(b)
+    a.should match(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+  end
+
+  it "symmetric_difference returns elements in exactly one of the two lists" do
+    v = Hash(String, JSON::Any).new
+    v["other"] = JSON.parse(%([2, 3, 4]))
+    vars_engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(v)
+    result = vars_engine.apply(JSON.parse(%([1, 2, 3])), "symmetric_difference(other)").as_a.map(&.as_i).sort!
+    result.should eq([1, 4])
+  end
+
+  it "combinations generates every n-length combination" do
+    result = engine.apply(JSON.parse(%([1, 2, 3])), "combinations(2)").as_a
+    result.map { |c| c.as_a.map(&.as_i) }.should eq([[1, 2], [1, 3], [2, 3]])
+  end
+
+  it "permutations generates every n-length ordered arrangement" do
+    result = engine.apply(JSON.parse(%([1, 2])), "permutations").as_a
+    result.map { |p| p.as_a.map(&.as_i) }.should eq([[1, 2], [2, 1]])
+  end
+
+  it "rekey_on_member converts a list of dicts into a dict keyed by a field" do
+    input = JSON.parse(%([{"name": "a", "v": 1}, {"name": "b", "v": 2}]))
+    result = engine.apply(input, "rekey_on_member('name')").as_h
+    result["a"].as_h["v"].as_i.should eq(1)
+    result["b"].as_h["v"].as_i.should eq(2)
+  end
+
+  it "extract indexes into a container using the piped value" do
+    v = Hash(String, JSON::Any).new
+    v["container"] = JSON.parse(%(["zero", "one", "two"]))
+    vars_engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(v)
+    vars_engine.apply(JSON::Any.new(1_i64), "extract(container)").as_s.should eq("one")
+  end
+
+  it "from_yaml_all parses a multi-document YAML string" do
+    result = engine.apply(s("a: 1\n---\nb: 2\n"), "from_yaml_all").as_a
+    result[0].as_h["a"].as_i.should eq(1)
+    result[1].as_h["b"].as_i.should eq(2)
+  end
+
+  it "vault/unvault round-trip through real ansible-vault ciphertext" do
+    encrypted = engine.apply(s("plaintext"), %(vault('secret123'))).as_s
+    encrypted.should start_with("$ANSIBLE_VAULT;")
+    engine.apply(JSON::Any.new(encrypted), %(unvault('secret123'))).as_s.should eq("plaintext")
+  end
 end

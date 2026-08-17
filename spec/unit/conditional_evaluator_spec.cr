@@ -614,6 +614,54 @@ describe CrystalPlay::ConditionalEvaluator do
       File.delete(path2)
     end
 
+    it "evaluates 'is mount' against the CONTROLLER's real mount table" do
+      v = Hash(String, JSON::Any).new
+      v["root"] = JSON::Any.new("/")
+      v["notmount"] = JSON::Any.new("/no/such/mountpoint/at/all")
+
+      CrystalPlay::ConditionalEvaluator.evaluate("root is mount", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("notmount is not mount", v).should be_true
+    end
+
+    it "evaluates 'is vault_encrypted' / 'is vaulted_file'" do
+      path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "conditional_vault_test.txt")
+      encrypted = CrystalPlay::Vault.encrypt("secret", "password123")
+      File.write(path, encrypted)
+
+      v = Hash(String, JSON::Any).new
+      v["ciphertext"] = JSON::Any.new(encrypted)
+      v["plain"] = JSON::Any.new("not encrypted")
+      v["path"] = JSON::Any.new(path)
+
+      CrystalPlay::ConditionalEvaluator.evaluate("ciphertext is vault_encrypted", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("plain is not vault_encrypted", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("path is vaulted_file", v).should be_true
+
+      File.delete(path)
+    end
+
+    it "evaluates 'is urn'" do
+      v = Hash(String, JSON::Any).new
+      v["good"] = JSON::Any.new("urn:isbn:0451450523")
+      v["bad"] = JSON::Any.new("not-a-urn")
+
+      CrystalPlay::ConditionalEvaluator.evaluate("good is urn", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("bad is not urn", v).should be_true
+    end
+
+    it "evaluates 'is started' / 'is finished' / 'is timedout' / 'is reachable' / 'is unreachable' on a registered result dict (int 0/1, not bool)" do
+      v = Hash(String, JSON::Any).new
+      v["job"] = JSON.parse(%({"started": 1, "finished": 0}))
+      v["conn"] = JSON.parse(%({"unreachable": true}))
+      v["conn_ok"] = JSON.parse(%({"unreachable": false}))
+
+      CrystalPlay::ConditionalEvaluator.evaluate("job is started", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("job is not finished", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("conn is unreachable", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("conn is not reachable", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("conn_ok is reachable", v).should be_true
+    end
+
     it "falls back to Crinja for any real Jinja2 'is [not] <test>' this module hasn't hand-implemented (divisibleby, etc)" do
       # Real bug found benchmarking robertdebock.nomad's own assert:
       # `nomad_server_bootstrap_expect is not divisibleby 2` (verifying

@@ -334,6 +334,67 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     JSON.parse(evaluator.evaluate(%(lookup('sequence', '1-3 format=web%02d')))).as_a.map(&.as_s).should eq(["web01", "web02", "web03"])
   end
 
+  it "evaluates lookup('indexed_items', ...) as [index, item] pairs" do
+    v = Hash(String, JSON::Any).new
+    v["l"] = JSON.parse(%(["a", "b"]))
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    result = JSON.parse(evaluator.evaluate("lookup('indexed_items', l)")).as_a
+    result.map { |pair| {pair[0].as_i, pair[1].as_s} }.should eq([{0, "a"}, {1, "b"}])
+  end
+
+  it "evaluates lookup('random_choice', ...) returning one element from the combined lists" do
+    v = Hash(String, JSON::Any).new
+    v["l"] = JSON.parse(%(["only"]))
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    evaluator.evaluate("lookup('random_choice', l)").should eq("only")
+  end
+
+  it "evaluates lookup('subelements', ...) yielding [parent, child] pairs" do
+    v = Hash(String, JSON::Any).new
+    v["users"] = JSON.parse(%([{"name": "alice", "groups": ["a", "b"]}, {"name": "bob", "groups": ["c"]}]))
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    result = JSON.parse(evaluator.evaluate("lookup('subelements', users, 'groups')")).as_a
+    result.size.should eq(3)
+    result[0].as_a[0].as_h["name"].as_s.should eq("alice")
+    result[0].as_a[1].as_s.should eq("a")
+  end
+
+  it "evaluates lookup('csvfile', ...) finding a row by key and returning a column" do
+    path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "lookup_csvfile_test.csv")
+    File.write(path, "alice,30,engineer\nbob,25,designer\n")
+
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(%(lookup('csvfile', 'bob file=#{path} delimiter=, col=2'))).should eq("designer")
+    File.delete(path)
+  end
+
+  it "evaluates lookup('ini', ...) reading a value from a section" do
+    path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "lookup_ini_test.ini")
+    File.write(path, "[web]\nport = 8080\n\n[db]\nport = 5432\n")
+
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(%(lookup('ini', 'port section=db file=#{path}'))).should eq("5432")
+    File.delete(path)
+  end
+
+  it "evaluates lookup('unvault', ...) decrypting a file with the session's vault password" do
+    path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "lookup_unvault_test.txt")
+    File.write(path, CrystalPlay::Vault.encrypt("top secret", "runpassword"))
+    CrystalPlay::Vault.password = "runpassword"
+
+    v = Hash(String, JSON::Any).new
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(%(lookup('unvault', '#{path}'))).should eq("top secret")
+
+    CrystalPlay::Vault.password = nil
+    File.delete(path)
+  end
+
   it "resolves lookup(...) followed by a filter chain, not swallowing the whole thing as one bare call" do
     # Real bug found alongside the env lookup above: `lookup('env',
     # 'VAULT_VERSION') | default('2.0.3', true)` - the naive `starts_with

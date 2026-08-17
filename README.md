@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.468-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.469-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -297,6 +297,17 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.469` - closes the filter/test/lookup list entirely (not a
+  benchmark round)**, except Windows-only filters (irrelevant here)
+  and 2 lookups requiring infrastructure this codebase doesn't have
+  (`config`, `inventory_hostnames`): 15 more filters (incl. real
+  `vault`/`unvault` encryption backed by the project's own `Vault`
+  module), 5 more tests (incl. async/host-check tests on a registered
+  result dict), 6 more lookups, and full Crinja `lookup()` parity for
+  every lookup type added since `0.9.466` - `lookup(...)` now works
+  identically whether called from a plain task param or a real `.j2`
+  template file. Live-verified `unvault` against a file encrypted with
+  the real `ansible-vault` CLI itself. See `MISSING_BUILTIN.md`.
 - **`0.9.467`-`0.9.468` - continues down the filter/test/lookup list
   (not a benchmark round)**: 14 more filters (`path_join`, `splitext`,
   `urldecode`, `urlsplit`, `zip`/`zip_longest`, `product`,

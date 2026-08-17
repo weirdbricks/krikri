@@ -3,7 +3,9 @@ require "time"
 require "yaml"
 require "base64"
 require "uri"
+require "uuid"
 require "openssl/digest"
+require "../vault"
 require "./variable_lookup"
 require "./expression_evaluator"
 require "../variable_substitutor"
@@ -837,6 +839,161 @@ module CrystalPlay
           digest = OpenSSL::Digest.new("SHA1")
           digest.update(as_string(value))
           JSON::Any.new(digest.final.hexstring)
+        when "expanduser"
+          # expanduser() - real Ansible filter, mirrors Python's
+          # os.path.expanduser: a leading `~` (or `~user`, not
+          # supported here - only the current-user shorthand) expands
+          # to $HOME.
+          str = as_string(value)
+          home = ENV["HOME"]? || ""
+          JSON::Any.new(str.starts_with?("~/") ? File.join(home, str[2..]) : (str == "~" ? home : str))
+        when "expandvars"
+          # expandvars() - real Ansible filter, mirrors Python's
+          # os.path.expandvars: `$VAR`/`${VAR}` references replaced from
+          # the CONTROLLER's own environment (unset -> left as-is,
+          # matching Python's own behavior).
+          str = as_string(value)
+          expanded = str.gsub(/\$\{(\w+)\}|\$(\w+)/) do |match|
+            name = $1? || $2?
+            name ? (ENV[name]? || match) : match
+          end
+          JSON::Any.new(expanded)
+        when "normpath"
+          # normpath() - real Ansible filter, mirrors Python's
+          # os.path.normpath: collapses `.`/`..`/redundant `/` without
+          # making the path absolute (relative stays relative).
+          JSON::Any.new(normalize_path(as_string(value)))
+        when "relpath"
+          # relpath(start='.') - real Ansible filter, mirrors Python's
+          # os.path.relpath: value expressed relative to *start*.
+          args = split_top_level_args(filter_args)
+          start = args[0]?.try { |arg| as_string(resolve_expression(arg)) } || "."
+          JSON::Any.new(Path[as_string(value)].relative_to(Path[start]).to_s)
+        when "commonpath"
+          # commonpath() - real Ansible filter, mirrors Python's
+          # os.path.commonpath: the longest common directory prefix of
+          # value (a list of paths).
+          paths = as_array(value).map(&.as_s?).compact
+          JSON::Any.new(common_path(paths))
+        when "log"
+          # log(base=math.e) - real Ansible filter: natural log with no
+          # argument, log base *base* otherwise.
+          args = split_top_level_args(filter_args)
+          base = args[0]?.try { |arg| as_string(resolve_expression(arg)).to_f? }
+          num = value.as_f? || value.as_i64?.try(&.to_f) || 0.0
+          result = base ? Math.log(num, base) : Math.log(num)
+          JSON::Any.new(result)
+        when "pow"
+          # pow(x) - real Ansible filter: value raised to the power x.
+          args = split_top_level_args(filter_args)
+          exponent = args[0]?.try { |arg| as_string(resolve_expression(arg)).to_f? } || 0.0
+          num = value.as_f? || value.as_i64?.try(&.to_f) || 0.0
+          JSON::Any.new(num ** exponent)
+        when "to_uuid"
+          # to_uuid(namespace=ANSIBLE_NAMESPACE) - real Ansible filter, a
+          # deterministic UUID5 (SHA1-based) - same input always
+          # produces the same UUID. Ansible's own default namespace
+          # ('361E6D51-FAEC-444A-9079-341386DA8E2E'), not the standard
+          # DNS namespace real uuid5() implementations default to.
+          JSON::Any.new(UUID.v5(as_string(value), UUID.new("361E6D51-FAEC-444A-9079-341386DA8E2E")).to_s)
+        when "symmetric_difference"
+          # symmetric_difference(other) - real Ansible filter: elements
+          # in exactly one of value/other, not both.
+          other = resolve_expression(filter_args)
+          left = (value.as_a? || [] of JSON::Any).uniq { |i| i.to_json }
+          right = (other.as_a? || [] of JSON::Any).uniq { |i| i.to_json }
+          result = (left.reject { |i| right.any? { |r| r.to_json == i.to_json } }) +
+                   (right.reject { |i| left.any? { |l| l.to_json == i.to_json } })
+          JSON::Any.new(result)
+        when "combinations"
+          # combinations(n) - real Ansible filter, Python's own
+          # itertools.combinations(value, n): every n-length combination
+          # (order-independent, no repeats) of value's own elements.
+          args = split_top_level_args(filter_args)
+          n = args[0]?.try { |arg| as_string(resolve_expression(arg)).to_i? } || 2
+          JSON::Any.new(combinations(as_array(value), n).map { |c| JSON::Any.new(c) })
+        when "permutations"
+          # permutations(n=None) - real Ansible filter, Python's own
+          # itertools.permutations(value, n): every n-length ordered
+          # arrangement (defaults to the full length of value).
+          args = split_top_level_args(filter_args)
+          arr = as_array(value)
+          n = args[0]?.try { |arg| as_string(resolve_expression(arg)).to_i? } || arr.size
+          JSON::Any.new(permutations(arr, n).map { |p| JSON::Any.new(p) })
+        when "rekey_on_member"
+          # rekey_on_member(member, duplicates='error') - real Ansible
+          # filter: converts a list of dicts into a dict keyed by each
+          # element's own `member` field value. `duplicates:` real
+          # options are error/overwrite/warn - `warn` isn't meaningfully
+          # different from `overwrite` in a non-interactive engine with
+          # no separate warning channel here, so both just overwrite;
+          # only the default `error` genuinely raises.
+          args = split_top_level_args(filter_args)
+          member = args[0]?.try { |arg| as_string(resolve_expression(arg)) } || ""
+          duplicates = args[1]?.try { |arg| as_string(resolve_expression(arg)) } || "error"
+          result = Hash(String, JSON::Any).new
+          as_array(value).each do |item|
+            key = item.as_h?.try(&.[member]?).try(&.as_s?)
+            next unless key
+            if duplicates == "error" && result.has_key?(key)
+              raise "rekey_on_member: duplicate key '#{key}'"
+            end
+            result[key] = item
+          end
+          JSON::Any.new(result)
+        when "extract"
+          # extract(container, morekeys=None) - real Ansible filter:
+          # value is used as an index/key into *container* (commonly
+          # piped from `map('extract', container)` over a list of
+          # indices/keys); `morekeys` (a further key, or list of keys)
+          # drills down into the extracted element.
+          args = split_top_level_args(filter_args)
+          container = args[0]?.try { |arg| resolve_expression(arg) }
+          return JSON::Any.new(nil) unless container
+
+          extracted = case raw = container.raw
+                      when Array
+                        idx = value.as_i64?.try(&.to_i)
+                        idx ? raw[idx]? : nil
+                      when Hash
+                        raw[as_string(value)]?
+                      end
+          return JSON::Any.new(nil) unless extracted
+
+          if morekeys_arg = args[1]?
+            morekeys = resolve_expression(morekeys_arg)
+            keys = morekeys.as_a? ? morekeys.as_a.map { |k| as_string(k) } : [as_string(morekeys)]
+            keys.reduce(extracted) { |acc, key| acc.as_h?.try(&.[key]?) || JSON::Any.new(nil) }
+          else
+            extracted
+          end
+        when "from_yaml_all"
+          # from_yaml_all() - real Ansible filter: parses a multi-
+          # document YAML string (`---`-separated) into a list of
+          # parsed documents.
+          begin
+            docs = as_string(value).split(/^---\s*$/m).map(&.strip).reject(&.empty?)
+            JSON::Any.new(docs.map { |doc| JSON.parse(YAML.parse(doc).to_json) })
+          rescue
+            raise "from_yaml_all: invalid YAML input"
+          end
+        when "vault"
+          # vault(secret, vault_id=None, salt=None) - real Ansible
+          # filter: encrypts value into ansible-vault ciphertext text
+          # using *secret* as the vault password (an explicit filter
+          # argument, NOT the session-wide --vault-password-file/
+          # --ask-vault-pass secret Vault.password holds - real
+          # Ansible's own vault filter takes its own key this way too).
+          args = split_top_level_args(filter_args)
+          secret = args[0]?.try { |arg| as_string(resolve_expression(arg)) } || ""
+          JSON::Any.new(Vault.encrypt(as_string(value), secret))
+        when "unvault"
+          # unvault(secret) - real Ansible filter, the inverse of vault
+          # above: decrypts an ansible-vault ciphertext string using
+          # *secret* as the password.
+          args = split_top_level_args(filter_args)
+          secret = args[0]?.try { |arg| as_string(resolve_expression(arg)) } || ""
+          JSON::Any.new(Vault.decrypt(as_string(value), secret))
         when "ternary"
           # ternary(true_val, false_val) - real Ansible's own filter
           # (ansible.builtin, not standard Jinja2): `true_val` if value
@@ -1747,6 +1904,67 @@ module CrystalPlay
                      else                        1_i64
                      end
         (number * multiplier).to_i64
+      end
+
+      # Mirrors Python's os.path.normpath: collapses `.`/`..`/redundant
+      # `/` segments without ever making a relative path absolute.
+      private def normalize_path(path : String) : String
+        return "." if path.empty?
+        absolute = path.starts_with?('/')
+        parts = path.split('/').reject { |p| p.empty? || p == "." }
+
+        result = [] of String
+        parts.each do |part|
+          if part == ".." && !result.empty? && result.last != ".."
+            result.pop
+          elsif part == ".." && !absolute
+            result << part
+          elsif part != ".."
+            result << part
+          end
+        end
+
+        joined = result.join("/")
+        absolute ? "/#{joined}" : (joined.empty? ? "." : joined)
+      end
+
+      # Mirrors Python's os.path.commonpath: the longest shared leading
+      # sequence of path SEGMENTS (not a naive character prefix) across
+      # every path in *paths*.
+      private def common_path(paths : Array(String)) : String
+        return "" if paths.empty?
+        segments = paths.map { |p| p.split('/').reject(&.empty?) }
+        first = segments.first
+        common = first.each_with_index.take_while { |seg, i| segments.all? { |s| s[i]? == seg } }.map(&.[0])
+        prefix = paths.first.starts_with?('/') ? "/" : ""
+        "#{prefix}#{common.join("/")}"
+      end
+
+      # itertools.combinations(array, n) - every n-length combination,
+      # order-independent, no element reused within one combination.
+      private def combinations(array : Array(JSON::Any), n : Int32) : Array(Array(JSON::Any))
+        return [[] of JSON::Any] if n == 0
+        return [] of Array(JSON::Any) if n > array.size || array.empty?
+
+        head = array.first
+        tail = array[1..]
+        with_head = combinations(tail, n - 1).map { |c| [head] + c }
+        without_head = combinations(tail, n)
+        with_head + without_head
+      end
+
+      # itertools.permutations(array, n) - every n-length ORDERED
+      # arrangement, no element reused within one arrangement.
+      private def permutations(array : Array(JSON::Any), n : Int32) : Array(Array(JSON::Any))
+        return [[] of JSON::Any] if n == 0
+        return [] of Array(JSON::Any) if n > array.size || array.empty?
+
+        result = [] of Array(JSON::Any)
+        array.each_with_index do |item, i|
+          rest = array[0...i] + array[(i + 1)..]
+          permutations(rest, n - 1).each { |p| result << ([item] + p) }
+        end
+        result
       end
 
       private def parse_kwarg(args : String, name : String) : String?

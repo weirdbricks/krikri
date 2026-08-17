@@ -1521,9 +1521,156 @@ module CrystalPlay
           raw_arg = parts[1]?.try { |part| evaluate(part.strip) }
           return "undefined" unless raw_arg
           evaluate_sequence_lookup(raw_arg)
+        when "indexed_items"
+          # lookup('indexed_items', list) - real Ansible's own
+          # indexed_items lookup: [index, item] pairs (Python's
+          # enumerate()), the classic with_indexed_items: source.
+          source = parts[1]?.try { |part| evaluate_lookup_term(part.strip) }
+          return "undefined" unless source
+          lookup_array(source).map_with_index { |item, i| [JSON::Any.new(i.to_i64), item] }.to_json
+        when "random_choice"
+          # lookup('random_choice', list1, list2, ...) - real Ansible's
+          # own random_choice lookup: every given term concatenated into
+          # one list, then a single random element returned.
+          # A single SCALAR result (unlike the always-array lookups
+          # above) - formatted via @lookup.format_value rather than
+          # .to_json, so a bare `{{ lookup('random_choice', l) }}`
+          # renders the plain value text ("only"), not a quoted JSON
+          # string literal ("\"only\"").
+          items = parts[1..].flat_map { |part| lookup_array(evaluate_lookup_term(part.strip)) }
+          return "undefined" if items.empty?
+          @lookup.format_value(items.sample)
+        when "subelements"
+          # lookup('subelements', list_of_dicts, 'subkey', {
+          # skip_missing: true}) - real Ansible's own subelements
+          # lookup: for each dict, yields [parent_dict, child_item] for
+          # every item in parent_dict[subkey] - the classic with_
+          # subelements: source (e.g. iterating {user, group} for every
+          # group in each user's own `groups:` list).
+          source = parts[1]?.try { |part| evaluate_lookup_term(part.strip) }
+          subkey = parts[2]?.try { |part| quoted_string_literal(part.strip) }.try(&.as_s?)
+          return "undefined" unless source && subkey
+
+          skip_missing = parts[3]?.try { |part| evaluate_lookup_term(part.strip) }.try(&.as_h?).try(&.["skip_missing"]?).try(&.as_bool?) || false
+          result = [] of JSON::Any
+          lookup_array(source).each do |parent|
+            children = parent.as_h?.try(&.[subkey]?)
+            if children.nil?
+              raise "subelements: '#{subkey}' not found" unless skip_missing
+              next
+            end
+            lookup_array(children).each { |child| result << JSON::Any.new([parent, child]) }
+          end
+          result.to_json
+        when "csvfile"
+          # lookup('csvfile', 'key file=data.csv delimiter=, col=1') -
+          # real Ansible's own csvfile lookup: finds the row whose first
+          # column matches *key*, returns the value at column `col=`
+          # (default 1) from that row. No quoted-field support (a
+          # narrower CSV parser than Python's own csv module) - real-
+          # world use of this lookup is almost always a simple lookup
+          # table with no embedded delimiters.
+          raw_arg = parts[1]?.try { |part| evaluate(part.strip) }
+          return "undefined" unless raw_arg
+          evaluate_csvfile_lookup(raw_arg)
+        when "ini"
+          # lookup('ini', 'value section=section1 file=file.ini') - real
+          # Ansible's own ini lookup: reads `value` under `section=`
+          # (default DEFAULT) from a controller-side INI file.
+          raw_arg = parts[1]?.try { |part| evaluate(part.strip) }
+          return "undefined" unless raw_arg
+          evaluate_ini_lookup(raw_arg)
+        when "unvault"
+          # lookup('unvault', 'path/to/vaultfile') - real Ansible's own
+          # unvault lookup: decrypts a vault-encrypted FILE (on the
+          # controller) using the RUN's own configured vault secret
+          # (Vault.password, set once from --vault-password-file/
+          # --ask-vault-pass) - distinct from the `unvault` FILTER
+          # above, which takes an explicit secret as a filter argument
+          # instead.
+          path = parts[1]?.try { |part| evaluate(part.strip) }
+          password = Vault.password
+          return "undefined" unless path && password
+          begin
+            Vault.decrypt(File.read(path), password)
+          rescue
+            "undefined"
+          end
         else
+          # `config`/`inventory_hostnames` deliberately NOT implemented:
+          # config reads real ansible-core's OWN configuration system
+          # (ansible.cfg + env vars + defaults across every plugin type),
+          # which this codebase has no equivalent of at all - there's
+          # nothing meaningful to look up. inventory_hostnames needs the
+          # full Inventory object (host pattern matching against every
+          # group), which ExpressionEvaluator has no access to - it's
+          # built fresh per task/vars-context from a plain Hash(String,
+          # JSON::Any), never threaded through from TaskExecutor's own
+          # @inventory. Revisit inventory_hostnames if a real role turns
+          # out to need it - would need @inventory plumbed through the
+          # VarSubstitutor/ExpressionEvaluator construction chain.
           "undefined"
         end
+      end
+
+      private def evaluate_csvfile_lookup(raw_arg : String) : String
+        tokens = raw_arg.strip.split(/\s+/)
+        key = tokens[0]?
+        return "undefined" unless key
+
+        opts = Hash(String, String).new
+        tokens[1..].each do |token|
+          k, sep, v = token.partition('=')
+          opts[k] = v unless sep.empty?
+        end
+
+        file = opts["file"]?
+        return "undefined" unless file
+        delimiter = opts["delimiter"]? || ","
+        col = opts["col"]?.try(&.to_i) || 1
+
+        begin
+          File.each_line(file) do |line|
+            fields = line.split(delimiter)
+            next unless fields[0]?.try(&.strip) == key
+            return (fields[col]? || "").strip
+          end
+        rescue
+        end
+        "undefined"
+      end
+
+      private def evaluate_ini_lookup(raw_arg : String) : String
+        tokens = raw_arg.strip.split(/\s+/)
+        value_key = tokens[0]?
+        return "undefined" unless value_key
+
+        opts = Hash(String, String).new
+        tokens[1..].each do |token|
+          k, sep, v = token.partition('=')
+          opts[k] = v unless sep.empty?
+        end
+
+        file = opts["file"]?
+        return "undefined" unless file
+        wanted_section = opts["section"]? || "DEFAULT"
+
+        begin
+          current_section = "DEFAULT"
+          File.each_line(file) do |raw_line|
+            line = raw_line.strip
+            next if line.empty? || line.starts_with?(';') || line.starts_with?('#')
+            if line.starts_with?('[') && line.ends_with?(']')
+              current_section = line[1..-2]
+              next
+            end
+            next unless current_section == wanted_section
+            k, sep, v = line.partition('=')
+            return v.strip if sep != "" && k.strip == value_key
+          end
+        rescue
+        end
+        "undefined"
       end
 
       # Renders a single `lookup('list'/'items'/'together'/'nested', ...)`

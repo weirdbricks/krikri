@@ -1,8 +1,10 @@
 require "crinja"
 require "yaml"
 require "base64"
+require "uuid"
 require "openssl/digest"
 require "./variable_substitutor/crinja_renderer"
+require "./vault"
 
 # Custom Jinja2 filters that real Ansible's Jinja2 provides but Crinja
 # doesn't ship, registered into the global Crinja default library so they're
@@ -700,6 +702,184 @@ module CrystalPlay
       Crinja::Value.new(digest.final.hexstring)
     end
 
+    # `expanduser()`/`expandvars()` - real Ansible filters, mirror
+    # Python's os.path.expanduser/expandvars (a leading `~` -> $HOME;
+    # `$VAR`/`${VAR}` -> the controller's own environment, unset left
+    # as-is).
+    Crinja.filter(:expanduser) do
+      str = target.to_s
+      home = ENV["HOME"]? || ""
+      Crinja::Value.new(str.starts_with?("~/") ? File.join(home, str[2..]) : (str == "~" ? home : str))
+    end
+    Crinja.filter(:expandvars) do
+      expanded = target.to_s.gsub(/\$\{(\w+)\}|\$(\w+)/) do |match|
+        name = $1? || $2?
+        name ? (ENV[name]? || match) : match
+      end
+      Crinja::Value.new(expanded)
+    end
+
+    # `normpath()`/`relpath(start='.')`/`commonpath()` - real Ansible
+    # filters, mirror Python's os.path.normpath/relpath/commonpath.
+    def self.normalize_path(path : String) : String
+      return "." if path.empty?
+      absolute = path.starts_with?('/')
+      parts = path.split('/').reject { |p| p.empty? || p == "." }
+
+      result = [] of String
+      parts.each do |part|
+        if part == ".." && !result.empty? && result.last != ".."
+          result.pop
+        elsif part == ".." && !absolute
+          result << part
+        elsif part != ".."
+          result << part
+        end
+      end
+
+      joined = result.join("/")
+      absolute ? "/#{joined}" : (joined.empty? ? "." : joined)
+    end
+
+    def self.common_path(paths : Array(String)) : String
+      return "" if paths.empty?
+      segments = paths.map { |p| p.split('/').reject(&.empty?) }
+      first = segments.first
+      common = first.each_with_index.take_while { |seg, i| segments.all? { |s| s[i]? == seg } }.map(&.[0])
+      prefix = paths.first.starts_with?('/') ? "/" : ""
+      "#{prefix}#{common.join("/")}"
+    end
+
+    Crinja.filter(:normpath) { Crinja::Value.new(JinjaFilters.normalize_path(target.to_s)) }
+    Crinja.filter({start: "."}, :relpath) do
+      Crinja::Value.new(Path[target.to_s].relative_to(Path[arguments["start"].to_s]).to_s)
+    end
+    Crinja.filter(:commonpath) do
+      paths = target.sequence? ? target.to_a.map(&.to_s) : [] of String
+      Crinja::Value.new(JinjaFilters.common_path(paths))
+    end
+
+    # `log(base=math.e)`/`pow(x)` - real Ansible filters.
+    Crinja.filter({base: Crinja::UNDEFINED}, :log) do
+      num = target.to_s.to_f? || 0.0
+      base_arg = arguments["base"]
+      Crinja::Value.new(base_arg.undefined? ? Math.log(num) : Math.log(num, base_arg.to_s.to_f? || Math::E))
+    end
+    Crinja.filter({x: 0}, :pow) do
+      num = target.to_s.to_f? || 0.0
+      Crinja::Value.new(num ** (arguments["x"].to_s.to_f? || 0.0))
+    end
+
+    # `to_uuid(namespace=ANSIBLE_NAMESPACE)` - real Ansible filter, a
+    # deterministic UUID5 using Ansible's own default namespace (not the
+    # standard DNS namespace).
+    Crinja.filter(:to_uuid) do
+      Crinja::Value.new(UUID.v5(target.to_s, UUID.new("361E6D51-FAEC-444A-9079-341386DA8E2E")).to_s)
+    end
+
+    # `symmetric_difference(other)` - real Ansible filter: elements in
+    # exactly one of target/other, not both.
+    Crinja.filter(:symmetric_difference) do
+      other = arguments.varargs[0]?
+      left = (target.sequence? ? target.to_a : [] of Crinja::Value).uniq { |i| i.to_s }
+      right = (other && other.sequence? ? other.to_a : [] of Crinja::Value).uniq { |i| i.to_s }
+      result = left.reject { |i| right.any? { |r| r.to_s == i.to_s } } + right.reject { |i| left.any? { |l| l.to_s == i.to_s } }
+      Crinja::Value.new(result)
+    end
+
+    # `combinations(n)`/`permutations(n=None)` - real Ansible filters,
+    # Python's own itertools.combinations()/itertools.permutations().
+    def self.combinations(array : Array(Crinja::Value), n : Int32) : Array(Array(Crinja::Value))
+      return [[] of Crinja::Value] if n == 0
+      return [] of Array(Crinja::Value) if n > array.size || array.empty?
+      head = array.first
+      tail = array[1..]
+      combinations(tail, n - 1).map { |c| [head] + c } + combinations(tail, n)
+    end
+
+    def self.permutations(array : Array(Crinja::Value), n : Int32) : Array(Array(Crinja::Value))
+      return [[] of Crinja::Value] if n == 0
+      return [] of Array(Crinja::Value) if n > array.size || array.empty?
+      result = [] of Array(Crinja::Value)
+      array.each_with_index do |item, i|
+        rest = array[0...i] + array[(i + 1)..]
+        permutations(rest, n - 1).each { |p| result << ([item] + p) }
+      end
+      result
+    end
+
+    Crinja.filter({n: 2}, :combinations) do
+      arr = target.sequence? ? target.to_a : [] of Crinja::Value
+      Crinja::Value.new(JinjaFilters.combinations(arr, arguments["n"].to_i).map { |c| Crinja::Value.new(c) })
+    end
+    Crinja.filter({n: Crinja::UNDEFINED}, :permutations) do
+      arr = target.sequence? ? target.to_a : [] of Crinja::Value
+      n = arguments["n"].undefined? ? arr.size : arguments["n"].to_i
+      Crinja::Value.new(JinjaFilters.permutations(arr, n).map { |p| Crinja::Value.new(p) })
+    end
+
+    # `rekey_on_member(member, duplicates='error')` - real Ansible
+    # filter: converts a list of dicts into a dict keyed by each
+    # element's own `member` field value.
+    Crinja.filter({member: "", duplicates: "error"}, :rekey_on_member) do
+      member = arguments["member"].to_s
+      duplicates = arguments["duplicates"].to_s
+      result = Crinja::Dictionary.new
+      arr = target.sequence? ? target.to_a : [] of Crinja::Value
+      arr.each do |item|
+        key = item.raw.is_a?(Crinja::Dictionary) ? item.raw.as(Crinja::Dictionary)[Crinja::Value.new(member)]? : nil
+        next unless key
+        key_str = Crinja::Value.new(key.to_s)
+        if duplicates == "error" && result.has_key?(key_str)
+          raise "rekey_on_member: duplicate key '#{key}'"
+        end
+        result[key_str] = item
+      end
+      Crinja::Value.new(result)
+    end
+
+    # `extract(container, morekeys=None)` - real Ansible filter: target
+    # is used as an index/key into *container*.
+    Crinja.filter({container: Crinja::UNDEFINED, morekeys: Crinja::UNDEFINED}, :extract) do
+      container = arguments["container"]
+      extracted = case raw = container.raw
+                  when Array(Crinja::Value)
+                    idx = target.to_s.to_i?
+                    idx ? raw[idx]? : nil
+                  when Crinja::Dictionary
+                    raw[Crinja::Value.new(target.to_s)]?
+                  else
+                    nil
+                  end
+
+      if extracted && !arguments["morekeys"].undefined?
+        morekeys = arguments["morekeys"]
+        keys = morekeys.sequence? ? morekeys.to_a.map(&.to_s) : [morekeys.to_s]
+        keys.reduce(extracted) { |acc, key| acc.raw.is_a?(Crinja::Dictionary) ? (acc.raw.as(Crinja::Dictionary)[Crinja::Value.new(key)]? || Crinja::Value.new(nil)) : Crinja::Value.new(nil) }
+      else
+        extracted || Crinja::Value.new(nil)
+      end
+    end
+
+    # `from_yaml_all()` - real Ansible filter: parses a multi-document
+    # YAML string (`---`-separated) into a list of parsed documents.
+    Crinja.filter(:from_yaml_all) do
+      docs = target.to_s.split(/^---\s*$/m).map(&.strip).reject(&.empty?)
+      values = docs.map { |doc| CrystalPlay::VariableSubstitutor::CrinjaRenderer.json_any_to_crinja_value(JSON.parse(YAML.parse(doc).to_json)) }
+      Crinja::Value.new(values)
+    end
+
+    # `vault(secret, vault_id=None, salt=None)`/`unvault(secret)` - real
+    # Ansible filters: encrypt/decrypt ansible-vault ciphertext using
+    # *secret* as an explicit filter-argument password (NOT the session-
+    # wide --vault-password-file/--ask-vault-pass secret).
+    Crinja.filter({secret: ""}, :vault) do
+      Crinja::Value.new(CrystalPlay::Vault.encrypt(target.to_s, arguments["secret"].to_s))
+    end
+    Crinja.filter({secret: ""}, :unvault) do
+      Crinja::Value.new(CrystalPlay::Vault.decrypt(target.to_s, arguments["secret"].to_s))
+    end
+
     # `version(comparison_version, operator='==')` - Ansible's own test
     # (ansible.builtin.version), not part of standard Jinja2 and not
     # provided by Crinja at all: `{% if sshd_version is version('5.8',
@@ -1058,6 +1238,47 @@ module CrystalPlay
       (File.exists?(path1) && File.exists?(path2)) ? File.same?(path1, path2) : false
     end
 
+    # `mount` - real Ansible test, real os.path.ismount(). Shells to the
+    # real `mountpoint(8)` utility (util-linux), same approach the
+    # ConditionalEvaluator copy of this test takes.
+    Crinja.test(:mount) { Process.run("mountpoint", ["-q", target.to_s]).success? rescue false }
+
+    # `vault_encrypted`/`vaulted_file` - real Ansible tests:
+    # vault_encrypted checks a STRING value's own content; vaulted_file
+    # reads a path (on the CONTROLLER) and checks its content.
+    Crinja.test(:vault_encrypted) { CrystalPlay::Vault.encrypted?(target.to_s) }
+    Crinja.test(:vaulted_file) do
+      content = File.read(target.to_s) rescue nil
+      content ? CrystalPlay::Vault.encrypted?(content) : false
+    end
+
+    # `urn` - real Ansible test: validates the value is a syntactically
+    # well-formed URN (RFC 8141: "urn:<nid>:<nss>").
+    URN_PATTERN = /^urn:[a-zA-Z0-9][a-zA-Z0-9-]{0,31}:[a-zA-Z0-9()+,\-.:=@;$_!*'%\/?#]+$/i
+    Crinja.test(:urn) { !!(target.to_s =~ URN_PATTERN) }
+
+    # `started`/`finished`/`timedout`/`reachable`/`unreachable` - real
+    # Ansible tests on a registered result dict (`async_status:`/
+    # `wait_for_connection:` shape). `started:`/`finished:` are a plain
+    # INTEGER 0/1 in that real result shape, not a JSON bool - checked
+    # for either a truthy bool or a non-zero number, same as the
+    # ConditionalEvaluator copy of this test. "reachable" inverts the
+    # SAME `unreachable` field real Ansible's own implementation checks.
+    def self.async_field_truthy?(target : Crinja::Value, field : String) : Bool
+      value = target[field]
+      return false if value.undefined?
+      case raw = value.raw
+      when Bool then raw
+      when Int32, Int64 then raw != 0
+      else false
+      end
+    end
+    Crinja.test(:started) { JinjaFilters.async_field_truthy?(target, "started") }
+    Crinja.test(:finished) { JinjaFilters.async_field_truthy?(target, "finished") }
+    Crinja.test(:timedout) { JinjaFilters.async_field_truthy?(target, "timedout") }
+    Crinja.test(:unreachable) { JinjaFilters.async_field_truthy?(target, "unreachable") }
+    Crinja.test(:reachable) { !JinjaFilters.async_field_truthy?(target, "unreachable") }
+
     # Real Jinja2's comparison-operator test aliases - used almost
     # exclusively as a `select()`/`reject()`/`map(attribute=...)`
     # predicate name (`values() | select('gt', 0)`), not written
@@ -1247,11 +1468,18 @@ module CrystalPlay
     # above's own comment) that `arguments.varargs` for the plain form
     # doesn't reliably split multiple positional arguments into separate
     # entries.
-    Crinja.function({type: "", a1: Crinja::UNDEFINED, a2: Crinja::UNDEFINED}, :lookup) do
+    # Capped at 4 extra positional args (a1..a4) beyond `type` - covers
+    # every lookup type registered below (the widest, `subelements`,
+    # needs 3; the variadic ones - list/items/together/nested/varnames/
+    # random_choice - are capped at 4 combined terms, same "declared-
+    # keyword-args form can't be truly variadic" tradeoff zip/product
+    # filters already made above).
+    Crinja.function({type: "", a1: Crinja::UNDEFINED, a2: Crinja::UNDEFINED, a3: Crinja::UNDEFINED, a4: Crinja::UNDEFINED}, :lookup) do
       lookup_type = arguments["type"].to_s
       arg1 = arguments["a1"]
       role_path_value = env.context["role_path"]
       role_path = role_path_value.undefined? ? nil : role_path_value.to_s
+      variadic_terms = [arguments["a1"], arguments["a2"], arguments["a3"], arguments["a4"]].reject(&.undefined?)
 
       case lookup_type
       when "env"
@@ -1277,6 +1505,15 @@ module CrystalPlay
         rescue
           Crinja::Value.new(nil)
         end
+      when "lines"
+        command = arg1.to_s
+        begin
+          output = IO::Memory.new
+          status = Process.run("/bin/sh", ["-c", command], output: output, error: Process::Redirect::Close)
+          status.success? ? Crinja::Value.new(output.to_s.split('\n').reject(&.empty?)) : Crinja::Value.new(nil)
+        rescue
+          Crinja::Value.new(nil)
+        end
       when "template"
         path = arg1.to_s
         resolved = JinjaFilters.resolve_lookup_path(path, role_path)
@@ -1288,6 +1525,58 @@ module CrystalPlay
       when "password"
         raw_arg = arg1.to_s
         Crinja::Value.new(JinjaFilters.password_lookup(raw_arg, role_path))
+      when "unvault"
+        # Session-wide vault secret (Vault.password), distinct from the
+        # `unvault` FILTER above (an explicit filter-argument secret).
+        path = arg1.to_s
+        password = CrystalPlay::Vault.password
+        begin
+          (password && File.exists?(path)) ? Crinja::Value.new(CrystalPlay::Vault.decrypt(File.read(path), password).chomp) : Crinja::Value.new(nil)
+        rescue
+          Crinja::Value.new(nil)
+        end
+      when "dict"
+        hash = arg1.raw.is_a?(Crinja::Dictionary) ? arg1.raw.as(Crinja::Dictionary) : Crinja::Dictionary.new
+        Crinja::Value.new(hash.map { |k, v| Crinja::Value.new({"key" => Crinja::Value.new(k.to_s), "value" => v}) })
+      when "list"
+        Crinja::Value.new(variadic_terms)
+      when "items"
+        Crinja::Value.new(variadic_terms.flat_map { |t| t.sequence? ? t.to_a : [t] })
+      when "together"
+        arrays = variadic_terms.map { |t| t.sequence? ? t.to_a : [] of Crinja::Value }
+        size = arrays.map(&.size).max? || 0
+        Crinja::Value.new((0...size).map { |i| Crinja::Value.new(arrays.map { |arr| arr[i]? || Crinja::Value.new(nil) }) })
+      when "nested"
+        arrays = variadic_terms.map { |t| t.sequence? ? t.to_a : [] of Crinja::Value }
+        result = arrays.reduce([[] of Crinja::Value]) { |acc, arr| acc.flat_map { |row| arr.map { |item| row + [item] } } }
+        Crinja::Value.new(result.map { |row| Crinja::Value.new(row) })
+      when "varnames"
+        patterns = variadic_terms.map { |t| Regex.new(t.to_s) rescue nil }.compact
+        names = env.context.keys.select { |name| patterns.any?(&.matches?(name)) }
+        Crinja::Value.new(names.map { |n| Crinja::Value.new(n) })
+      when "indexed_items"
+        arr = arg1.sequence? ? arg1.to_a : [] of Crinja::Value
+        Crinja::Value.new(arr.map_with_index { |item, i| Crinja::Value.new([Crinja::Value.new(i), item]) })
+      when "random_choice"
+        items = variadic_terms.flat_map { |t| t.sequence? ? t.to_a : [t] }
+        items.empty? ? Crinja::Value.new(nil) : items.sample
+      when "subelements"
+        source = arg1.sequence? ? arg1.to_a : [] of Crinja::Value
+        subkey = arguments["a2"].to_s
+        skip_missing = arguments["a3"].raw.is_a?(Crinja::Dictionary) ? (arguments["a3"].raw.as(Crinja::Dictionary)[Crinja::Value.new("skip_missing")]?.try(&.truthy?) || false) : false
+        result = [] of Crinja::Value
+        source.each do |parent|
+          children = parent.raw.is_a?(Crinja::Dictionary) ? parent.raw.as(Crinja::Dictionary)[Crinja::Value.new(subkey)]? : nil
+          next if children.nil? && skip_missing
+          (children.try(&.to_a) || [] of Crinja::Value).each { |child| result << Crinja::Value.new([parent, child]) }
+        end
+        Crinja::Value.new(result)
+      when "sequence"
+        Crinja::Value.new(JinjaFilters.sequence_lookup(arg1.to_s).map { |v| Crinja::Value.new(v) })
+      when "csvfile"
+        Crinja::Value.new(JinjaFilters.csvfile_lookup(arg1.to_s))
+      when "ini"
+        Crinja::Value.new(JinjaFilters.ini_lookup(arg1.to_s))
       else
         Crinja::Value.new(nil)
       end
@@ -1307,6 +1596,99 @@ module CrystalPlay
 
     PASSWORD_CHARS  = ("a".."z").to_a + ("A".."Z").to_a + ("0".."9").to_a + [".", ",", ":", "-", "_"]
     PASSWORD_LENGTH = 20
+
+    # lookup('sequence', 'start=1 end=5 stride=1 format=web%02d') - same
+    # logic as ExpressionEvaluator's own #evaluate_sequence_lookup,
+    # returning a real Array(String) here instead of JSON array text.
+    def self.sequence_lookup(raw_arg : String) : Array(String)
+      tokens = raw_arg.strip.split(/\s+/)
+      opts = Hash(String, String).new
+      if tokens[0]? && !tokens[0].includes?('=') && (range_match = tokens[0].match(/^(\d+)-(\d+)$/))
+        opts["start"] = range_match[1]
+        opts["end"] = range_match[2]
+        tokens = tokens[1..]
+      end
+      tokens.each do |token|
+        key, sep, val = token.partition('=')
+        opts[key] = val unless sep.empty?
+      end
+
+      start = opts["start"]?.try(&.to_i) || 1
+      stride = opts["stride"]?.try(&.to_i) || 1
+      count = opts["count"]?.try(&.to_i)
+      finish = opts["end"]?.try(&.to_i)
+      format = opts["format"]?
+
+      total = count || (finish ? ((finish - start) // stride) + 1 : 1)
+      return [] of String if total < 0
+
+      values = (0...total).map { |i| start + i * stride }
+      format ? values.map { |v| (format % v) rescue v.to_s } : values.map(&.to_s)
+    end
+
+    # lookup('csvfile', 'key file=data.csv delimiter=, col=1') - same
+    # logic as ExpressionEvaluator's own #evaluate_csvfile_lookup.
+    def self.csvfile_lookup(raw_arg : String) : String?
+      tokens = raw_arg.strip.split(/\s+/)
+      key = tokens[0]?
+      return nil unless key
+
+      opts = Hash(String, String).new
+      tokens[1..].each do |token|
+        k, sep, v = token.partition('=')
+        opts[k] = v unless sep.empty?
+      end
+
+      file = opts["file"]?
+      return nil unless file
+      delimiter = opts["delimiter"]? || ","
+      col = opts["col"]?.try(&.to_i) || 1
+
+      begin
+        File.each_line(file) do |line|
+          fields = line.split(delimiter)
+          next unless fields[0]?.try(&.strip) == key
+          return (fields[col]? || "").strip
+        end
+      rescue
+      end
+      nil
+    end
+
+    # lookup('ini', 'value section=section1 file=file.ini') - same logic
+    # as ExpressionEvaluator's own #evaluate_ini_lookup.
+    def self.ini_lookup(raw_arg : String) : String?
+      tokens = raw_arg.strip.split(/\s+/)
+      value_key = tokens[0]?
+      return nil unless value_key
+
+      opts = Hash(String, String).new
+      tokens[1..].each do |token|
+        k, sep, v = token.partition('=')
+        opts[k] = v unless sep.empty?
+      end
+
+      file = opts["file"]?
+      return nil unless file
+      wanted_section = opts["section"]? || "DEFAULT"
+
+      begin
+        current_section = "DEFAULT"
+        File.each_line(file) do |raw_line|
+          line = raw_line.strip
+          next if line.empty? || line.starts_with?(';') || line.starts_with?('#')
+          if line.starts_with?('[') && line.ends_with?(']')
+            current_section = line[1..-2]
+            next
+          end
+          next unless current_section == wanted_section
+          k, sep, v = line.partition('=')
+          return v.strip if sep != "" && k.strip == value_key
+        end
+      rescue
+      end
+      nil
+    end
 
     # lookup('password', 'path [length=N]') - generates a random
     # password ONCE and persists it to *path* (real Ansible's own

@@ -3,6 +3,7 @@ require "./variable_substitutor/filter_engine"
 require "./variable_substitutor/variable_lookup"
 require "./variable_substitutor/expression_evaluator"
 require "./variable_substitutor/crinja_renderer"
+require "./vault"
 
 module CrystalPlay
   # ConditionalEvaluator - Evaluates Ansible when: conditions
@@ -247,6 +248,75 @@ module CrystalPlay
         path2 = resolve_test_operand(arg_expr, vars).try(&.as_s?)
         result = (path1 && path2 && File.exists?(path1) && File.exists?(path2)) ? File.same?(path1, path2) : false
         return negate ? !result : result
+      end
+
+      # Handle 'is mount' (plus "is not ..." negation) - real Ansible's
+      # own test, real os.path.ismount(). Shells to the real
+      # `mountpoint(8)` utility (util-linux, near-universal on Linux)
+      # rather than hand-rolling a device/inode stat comparison, same
+      # "trust a real system tool" approach dpkg_selections/subversion/
+      # known_hosts already take. Runs on the CONTROLLER, same rule
+      # every other path-check test here follows.
+      if condition.includes?(" is not mount")
+        var_name = condition.gsub(" is not mount", "").strip
+        return !mount_point?(vars, var_name)
+      elsif condition.includes?(" is mount")
+        var_name = condition.gsub(" is mount", "").strip
+        return mount_point?(vars, var_name)
+      end
+
+      # Handle 'is vault_encrypted' / 'is vaulted_file' (plus each "is
+      # not ..." negation) - real Ansible's own tests: vault_encrypted
+      # checks a STRING value's own content; vaulted_file reads a path
+      # (on the CONTROLLER) and checks its content.
+      {"vault_encrypted", "vaulted_file"}.each do |test_name|
+        if condition.includes?(" is not #{test_name}")
+          var_name = condition.gsub(" is not #{test_name}", "").strip
+          return !matches_vault_test?(vars, var_name, test_name)
+        elsif condition.includes?(" is #{test_name}")
+          var_name = condition.gsub(" is #{test_name}", "").strip
+          return matches_vault_test?(vars, var_name, test_name)
+        end
+      end
+
+      # Handle 'is urn' (plus "is not ..." negation) - real Ansible's
+      # own test: validates the value is a syntactically well-formed
+      # URN (RFC 8141: "urn:<nid>:<nss>").
+      if condition.includes?(" is not urn")
+        var_name = condition.gsub(" is not urn", "").strip
+        return !matches_urn?(vars, var_name)
+      elsif condition.includes?(" is urn")
+        var_name = condition.gsub(" is urn", "").strip
+        return matches_urn?(vars, var_name)
+      end
+
+      # Handle 'is started' / 'is finished' / 'is timedout' / 'is
+      # reachable' / 'is unreachable' (plus each "is not ..." negation)
+      # - real Ansible's own tests on a registered result dict (the
+      # `async_status:`/`wait_for_connection:` shape). Deliberately NOT
+      # #result_field below - real Ansible's own async_status result
+      # (and this codebase's own plugins/async_status.cr) represents
+      # `started:`/`finished:` as an INTEGER 0/1, not a JSON bool, and
+      # #result_field's `.as_bool?` check silently returns false for
+      # any non-bool field - always wrong for the actual real-world
+      # shape these two tests exist to check. "reachable" inverts the
+      # SAME `unreachable` field real Ansible's own implementation
+      # checks, not a separately-tracked "reachable" field.
+      {"started", "finished", "timedout", "unreachable"}.each do |test_name|
+        if condition.includes?(" is not #{test_name}")
+          var_name = condition.gsub(" is not #{test_name}", "").strip
+          return !async_field_truthy?(vars, var_name, test_name)
+        elsif condition.includes?(" is #{test_name}")
+          var_name = condition.gsub(" is #{test_name}", "").strip
+          return async_field_truthy?(vars, var_name, test_name)
+        end
+      end
+      if condition.includes?(" is not reachable")
+        var_name = condition.gsub(" is not reachable", "").strip
+        return async_field_truthy?(vars, var_name, "unreachable")
+      elsif condition.includes?(" is reachable")
+        var_name = condition.gsub(" is reachable", "").strip
+        return !async_field_truthy?(vars, var_name, "unreachable")
       end
 
       # Handle 'is match(...)' / 'is search(...)' (plus each "is not ..."
@@ -619,6 +689,47 @@ module CrystalPlay
         File.symlink?(path)
       else # "link_exists" - real os.path.lexists: true even for a broken symlink, unlike "exists" above
         !!File.info?(path, follow_symlinks: false)
+      end
+    end
+
+    private def self.mount_point?(vars : Hash(String, JSON::Any), var_expr : String) : Bool
+      path = resolve_test_operand(var_expr, vars).try(&.as_s?)
+      return false unless path
+      Process.run("mountpoint", ["-q", path]).success? rescue false
+    end
+
+    private def self.matches_vault_test?(vars : Hash(String, JSON::Any), var_expr : String, test_name : String) : Bool
+      value = resolve_test_operand(var_expr, vars).try(&.as_s?)
+      return false unless value
+
+      content = test_name == "vaulted_file" ? (File.read(value) rescue nil) : value
+      content ? Vault.encrypted?(content) : false
+    end
+
+    URN_PATTERN = /^urn:[a-zA-Z0-9][a-zA-Z0-9-]{0,31}:[a-zA-Z0-9()+,\-.:=@;$_!*'%\/?#]+$/i
+
+    private def self.matches_urn?(vars : Hash(String, JSON::Any), var_expr : String) : Bool
+      value = resolve_test_operand(var_expr, vars).try(&.as_s?)
+      !!(value && URN_PATTERN.matches?(value))
+    end
+
+    # `started`/`finished`/`timedout`/`unreachable` fields are a plain
+    # INTEGER 0/1 in real Ansible's own async_status/wait_for_connection
+    # result shape (and this codebase's own plugins/async_status.cr) -
+    # not a JSON bool like #result_field's own `.as_bool?` check
+    # assumes. Truthy for either a real bool `true` or a non-zero
+    # number, matching real Python truthiness for the values these
+    # fields actually take.
+    private def self.async_field_truthy?(vars : Hash(String, JSON::Any), var_name : String, field : String) : Bool
+      result = vars[var_name]?
+      return false unless result
+      field_value = result[field]?
+      return false unless field_value
+
+      case raw = field_value.raw
+      when Bool  then raw
+      when Int64 then raw != 0
+      else            false
       end
     end
 

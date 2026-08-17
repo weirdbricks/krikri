@@ -8,7 +8,94 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.468`.**
+**Currently at `0.9.469`.**
+
+---
+
+Round 153 (`0.9.469`) - closes `MISSING_BUILTIN.md`'s filter/test/lookup
+list entirely except `win_*` filters (Windows-only, irrelevant) and the
+`config`/`inventory_hostnames` lookups (architecturally out of scope -
+see `MISSING_BUILTIN.md` for why). Not a benchmark round.
+
+**Filters** (both evaluators): `expanduser`, `expandvars`, `normpath`,
+`relpath`, `commonpath`, `log`, `pow`, `to_uuid`, `symmetric_difference`,
+`combinations`, `permutations`, `rekey_on_member`, `extract`,
+`from_yaml_all`, `vault`/`unvault`. The vault/unvault filters call
+straight into the project's own real `Vault` module
+(`src/crystal_play/vault.cr`, the same AES256 implementation already
+used for `--vault-password-file`-encrypted files elsewhere) with an
+explicit filter-argument secret - real Ansible's own `vault()`/
+`unvault()` filters take their own key this way too, distinct from the
+session-wide `--vault-password-file`/`--ask-vault-pass` secret
+`Vault.password` holds.
+
+**Tests** (both evaluators): `mount` (shells to the real `mountpoint(8)`
+utility rather than a hand-rolled device/inode stat comparison, same
+"trust a real system tool" approach `dpkg_selections`/`subversion`/
+`known_hosts` already take), `vault_encrypted`, `vaulted_file`, `urn`,
+`started`/`finished`/`timedout`/`reachable`/`unreachable`. The last 5
+operate on a registered result dict (the `async_status:`/
+`wait_for_connection:` shape) and are deliberately NOT built on the
+existing `#result_field` helper already used for `failed`/`succeeded`/
+`changed`/`skipped` - real Ansible's own async_status result (and this
+codebase's own `plugins/async_status.cr`) represents `started:`/
+`finished:` as a plain INTEGER 0/1, not a JSON bool, and
+`#result_field`'s `.as_bool?` check silently returns false for any
+non-bool field - always wrong for the actual real-world shape these
+tests exist to check against. New `#async_field_truthy?` handles either
+a real bool or a non-zero number.
+
+**Lookups**: 6 more in `ExpressionEvaluator` only - `indexed_items`,
+`random_choice`, `subelements`, `csvfile`, `ini`, `unvault` (the LOOKUP
+form: decrypts a FILE using the run's own session-wide vault secret via
+`Vault.password`, distinct from the filter form's explicit-argument
+secret). `csvfile`/`ini` are narrower parsers than Python's own
+`csv`/`configparser` modules (no quoted-field support) - real-world use
+of both lookups is almost always a simple flat lookup table, not data
+with embedded delimiters.
+
+Real bug found and fixed while adding `random_choice`: it initially
+returned its scalar result via `.to_json` (matching the always-array
+convention the `0.9.468` lookups deliberately use), which wrongly
+quoted a plain string result (rendered as `"only"` instead of `only`) -
+`random_choice` (like real Ansible's own implementation) returns ONE
+scalar, not a list, so it needed the same `@lookup.format_value`
+plain-text rendering `vars`/`env` already use, not JSON-array
+formatting. Caught via a real playbook run's own `assert:` failing,
+not a unit spec (the spec had made the same wrong assumption the
+implementation did) - fixed both together.
+
+Also closes the Crinja `lookup()` parity gap `0.9.468` left open: all
+14 non-`env`/`vars`/`file`/`pipe`/`template`/`password` lookup types
+added since `0.9.466` (the 8 from `0.9.468` plus this round's 6 new
+ones) now work inside real `.j2` template files too, not just plain
+`{{ }}` task params - the `Crinja.function(:lookup)` registration is
+capped at 4 extra positional arguments beyond `type` (same declared-
+keyword-args tradeoff `zip`/`product` already made for the same
+`arguments.varargs`-splitting reason), which covers every lookup type
+here including the 3-argument `subelements`.
+
+Two audit corrections found while working through the remaining list:
+`abs` (filter) and `any`/`all` (tests) already existed before this
+round (not gaps); `abs` as a *test* (as opposed to filter) was never
+confirmed to be real - may be a docs-scrape artifact from the original
+audit, not investigated further since it's unlikely to matter either
+way.
+
+Full suite green throughout (1441 examples by the end). Live-verified:
+the new filters via real `debug:`-task rendering; `unvault` (both filter
+and lookup forms) against a file encrypted with the REAL `ansible-vault`
+CLI itself (not just this codebase's own `Vault.encrypt`), decrypted via
+`--vault-password-file` end to end - confirms real interop with actual
+ansible-vault format, not just internal round-tripping; the 6 new
+lookups via a real playbook (`csvfile`/`ini` against real files,
+`subelements`/`indexed_items` as real `loop:` sources); full Crinja
+`lookup()` parity via a real `.j2` template rendered through an actual
+`template:` task, exercising `subelements` and `sequence` together.
+
+This closes `MISSING_BUILTIN.md`'s filter/test/lookup section - no
+further ranked candidates remain there beyond the explicitly-scoped-out
+items above.
 
 ---
 

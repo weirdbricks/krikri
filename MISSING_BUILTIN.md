@@ -112,98 +112,82 @@ Filter/Test/Lookup Plugins - see this file's own git history (round 149's
 audit) for the complete lists; not repeated here to keep this file
 focused on gaps, not the full reference list.
 
-**Lookups** - biggest gap of the three. `env`, `url`, `first_found`
-existed already; `vars`, `file`, `pipe`, `template`, `password` done
-(`0.9.465`-`0.9.466`, both evaluators - see the module list above).
-`0.9.468` added 8 more, `ExpressionEvaluator` only (Crinja `lookup()`
-parity for these is a separate, still-open gap - see the note below):
+## Status: fully closed except Windows-only filters (`0.9.469`)
+
+All three lists are now closed except `win_basename`/`win_dirname`/
+`win_splitdrive` (Windows-only, irrelevant - this codebase targets Linux
+managed hosts exclusively) and `config`/`inventory_hostnames` lookups
+(deliberately not implemented - `config` reads real ansible-core's own
+configuration system, which this codebase has no equivalent of at all;
+`inventory_hostnames` needs the full `Inventory` object threaded through
+`ExpressionEvaluator`, which is built fresh per task from a plain
+`Hash(String, JSON::Any)` with no access to `TaskExecutor`'s own
+`@inventory` - revisit either if a real role needs one).
+
+Two corrections the original audit got wrong, found while implementing:
+`abs` (filter) and `any`/`all` (tests) already existed; `abs` as a
+*test* was never confirmed real (may be a docs-scrape artifact, `abs`
+only exists as a filter in the ranged-checked ansible-core source).
+
+**`0.9.467`** - 14 filters + 6 path-check tests, both evaluators:
+`path_join`, `splitext`, `urldecode`, `urlsplit`, `zip`/`zip_longest`
+(capped at 2 extra list arguments in the Crinja registration - the
+declared-keyword-args form needed to dodge the `arguments.varargs`
+multi-positional-arg splitting bug, see the `version` test's own
+comment), `product` (same cap), `regex_escape`, `to_nice_json`,
+`human_readable`/`human_to_bytes`, `md5`/`sha1` (standalone);
+`exists`/`file`/`directory`/`link`/`link_exists`/`same_file` tests
+(always check the CONTROLLER's filesystem, same rule `lookup('file',
+...)` follows - found and fixed a real ordering bug here: `" is
+link_exists"` contains `" is link"` as a substring, so the naive per-
+test-name loop misfired on `link` before ever reaching `link_exists`).
+
+**`0.9.468`** - 8 more lookups, `ExpressionEvaluator` only at the time:
 `dict`, `list`, `items`, `together`, `nested`, `lines`, `varnames`,
-`sequence`. All 8 always return real JSON array text (not real
-Ansible's own default comma-joined-scalar behavior for a bare, no-
-`wantlist` call) - these are essentially always consumed as a `loop:`/
-`with_X:` source or piped through `| list`/`| flatten`, both of which
-need a real array; live-verified as real `loop:` sources (`with_
-sequence`/`with_nested`/`with_together`/`with_dict`-shaped playbooks).
-Still missing: `config`, `csvfile`, `indexed_items`, `ini`,
-`inventory_hostnames`, `nested_subelements` (real name: `subelements`),
-`random_choice`, `unvault`.
+`sequence`. Live-verified as real `loop:` sources.
 
-**Filters** - `b64encode`/`b64decode`/`from_json`/`from_yaml`/`to_yaml`/
-`checksum`/`union` done (`0.9.465`, both evaluators). `0.9.467` added 14
-more, both evaluators: `path_join`, `splitext`, `urldecode`, `urlsplit`,
-`zip`/`zip_longest` (capped at 2 extra list arguments in the Crinja
-registration - the declared-keyword-args form needed to dodge the
-`arguments.varargs` multi-positional-arg splitting bug, see the
-`version` test's own comment - real 4+-way zip is rare), `product`
-(same cap), `regex_escape`, `to_nice_json`, `human_readable`/
-`human_to_bytes`, `md5`/`sha1` (standalone). `abs` turned out to
-already exist (audit correction). Still missing: `combinations`,
-`commonpath`, `expanduser`, `expandvars`, `extract`, `from_yaml_all`,
-`items` (as a filter - real Ansible has no such filter, this was
-probably the `items` LOOKUP mis-scraped into the filter list by the
-original audit), `log`, `normpath`, `permutations`, `pow`,
-`rekey_on_member`, `relpath`, `symmetric_difference`, `to_uuid`,
-`unvault`, `vault`, `win_basename`/`win_dirname`/`win_splitdrive`.
+**`0.9.469`** - closes everything else:
+- Filters, both evaluators: `expanduser`, `expandvars`, `normpath`,
+  `relpath`, `commonpath`, `log`, `pow`, `to_uuid`, `symmetric_
+  difference`, `combinations`, `permutations`, `rekey_on_member`,
+  `extract`, `from_yaml_all`, `vault`/`unvault` (the FILTER forms -
+  encrypt/decrypt using an explicit filter-argument secret, backed by
+  the project's own real `Vault` module - `src/crystal_play/vault.cr`,
+  already used for `--vault-password-file`/`ansible-vault`-format
+  files elsewhere in this codebase).
+- Tests, both evaluators: `mount` (shells to the real `mountpoint(8)`
+  utility rather than hand-rolling a device/inode stat comparison),
+  `vault_encrypted`, `vaulted_file`, `urn`, `started`/`finished`/
+  `timedout`/`reachable`/`unreachable` (async/host-check tests, on a
+  registered result dict - deliberately NOT reusing the existing
+  `#result_field` helper, since real Ansible's own async_status/
+  wait_for_connection result shape represents these as an INTEGER 0/1,
+  not a JSON bool, which `#result_field`'s `.as_bool?` check would
+  silently treat as always-false).
+- Lookups: 6 more in `ExpressionEvaluator` (`indexed_items`,
+  `random_choice`, `subelements`, `csvfile`, `ini`, `unvault` - the
+  LOOKUP form, decrypting a file with the RUN's own session-wide vault
+  secret, distinct from the filter form's explicit argument), plus
+  full Crinja `lookup()` parity for all 14 non-`env`/`vars`/`file`/
+  `pipe`/`template`/`password` types added since `0.9.466` (capped at
+  4 extra positional arguments beyond `type`, same declared-args
+  tradeoff `zip`/`product` already made - covers every lookup type
+  registered, including the 3-argument `subelements`).
 
-**Tests** - `subset`/`superset`/`contains` done (`0.9.465`, both
-evaluators). `any`/`all` turned out to already be registered in Crinja
-(audit correction). `0.9.467` added `exists`/`file`/`directory`/`link`/
-`link_exists`/`same_file` (both evaluators - `conditional_evaluator.cr`
-+ `jinja_filters.cr`; always check the CONTROLLER's filesystem, same
-rule `lookup('file', ...)` follows). Found and fixed a real ordering
-bug while adding these: `" is link_exists"` contains `" is link"` as a
-substring, so the naive per-test-name `.each`/`condition.includes?`
-loop misfired on `link` before ever reaching `link_exists` - fixed by
-checking the longer/more-specific name first. Still missing: `abs` (as
-a test - real Jinja2/Ansible docs list it under both filters and tests;
-only the filter form was verified real, this may be a docs-scrape
-artifact, not investigated further), `mount`, `timedout`/`started`/
-`finished`/`reachable`/`unreachable` (async/host-check tests), `urn`,
-`vault_encrypted`, `vaulted_file`.
+Real bug found and fixed along the way: `lookup('random_choice', ...)`
+initially returned its scalar result via `.to_json` (matching the
+always-array convention the `0.9.468` lookups use), which wrongly
+quoted a string result (`"only"` instead of `only`) when rendered bare
+- fixed to use the same `@lookup.format_value` plain-text rendering
+`vars`/`env` already use, since `random_choice` (like real Ansible's
+own implementation) returns one scalar, not a list.
 
-Known limitation shared by every filter/test added in this pass that
-takes another list as an argument (`union(other)`, `is subset(other)`,
-`is superset(other)`) in the hand-rolled `{{ }}` evaluator: `other` must
-be a variable reference, not an inline `[...]` list literal -
-`resolve_expression`/`resolve_test_operand` have no list-literal parser
-(only a `{...}` dict-literal one) - a pre-existing gap already shared by
-`intersect`/`difference`, not introduced by this pass. Real playbooks
-almost always pass a variable here anyway.
-
-Original ranking (all 8 done in `0.9.465`, see `KNOWN_MISSING.md` for
-implementation/verification detail): `lookup('vars', ...)`,
-`lookup('file', ...)`, `lookup('template', ...)`, `lookup('pipe', ...)`,
-`b64encode`/`b64decode` filters, `to_yaml` filter, `is subset`/
-`is superset`/`is contains` tests, `lookup('password', ...)`.
-
-## Status
-
-`0.9.465` done: the 8 ranked items above, plus `from_json`/`from_yaml`/
-`checksum`/`union` filters (found while implementing the ranked set -
-`from_json`/`from_yaml` are `to_json`/`to_yaml`'s natural mirror,
-`union`/`checksum` were cheap once `b64encode`'s registration pattern
-was in place). Live-verified via a real playbook run (all 5 lookups +
-6 filters/tests exercised together, `crystal spec` 1361 examples green).
-`0.9.466` done: `Crinja.function(:lookup)` in `jinja_filters.cr`, bringing
-`env`/`vars`/`file`/`pipe`/`template`/`password` lookup support to real
-`.j2` template files (previously `.j2`-only path had ZERO lookup types
-at all - `lookup(...)` failed the whole render regardless of type).
-Live-verified via a real `template:` task rendering a `.j2` file that
-uses all 5 non-`env` lookup types together.
-
-`0.9.467` done: 14 filters + 6 path-check tests, both evaluators (see
-above). Full suite green throughout; live-verified filters via real
-`debug:`-task rendering (assert-form comparisons against inline `[...]`
-literals hit the pre-existing list-literal-argument limitation
-documented above, not a bug in the new filters - confirmed by checking
-each value individually instead).
-
-`0.9.468` done: 8 more lookups, `ExpressionEvaluator` only (see above).
-Live-verified as real `loop:` sources for `sequence`/`nested`/
-`together`/`dict`-shaped iteration, matching the classic `with_X:`
-idioms these replace.
-
-The remaining long tail (everything else in the missing lists above,
-plus Crinja `lookup()` parity for this round's 8 new types, plus
-`url`/`first_found` inside a `.j2` file specifically) stays open,
-revisited if a live benchmark round actually hits one.
+Full suite green throughout (1441 examples by the end). Live-verified:
+the `0.9.469` filters via real `debug:`-task rendering; `unvault` (both
+filter and lookup forms) against a file encrypted with the real
+`ansible-vault` CLI itself, decrypted via `--vault-password-file` end to
+end; the 6 new lookups via a real playbook (`csvfile`/`ini` against real
+files, `subelements`/`indexed_items` as real `loop:` sources); full
+Crinja `lookup()` parity via a real `.j2` template rendered through an
+actual `template:` task, exercising `subelements` and `sequence`
+together.
