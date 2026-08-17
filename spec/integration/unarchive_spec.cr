@@ -12,6 +12,15 @@ Spec.before_suite do
   `tar czf #{File.join(TMP_DIR, "archive.tar.gz")} -C #{File.join(TMP_DIR, "src")} .`
   `cd #{TMP_DIR} && zip -qr archive.zip src`
 
+  # A zip containing a symlink member (`zip -y` stores it as an actual
+  # symlink, matching how e.g. square/sudo_pair's own GitHub release
+  # archive links a shared LICENSE/README into several sub-crate dirs) -
+  # regression fixture for zip_changed?'s own symlink handling.
+  Dir.mkdir_p(File.join(TMP_DIR, "symlink_src"))
+  File.write(File.join(TMP_DIR, "symlink_src", "real.txt"), "real content")
+  File.symlink("real.txt", File.join(TMP_DIR, "symlink_src", "link.txt"))
+  `cd #{File.join(TMP_DIR, "symlink_src")} && zip -qy #{File.join(TMP_DIR, "symlink.zip")} real.txt link.txt`
+
   # A GitHub-release-shaped archive: everything nested one level down
   # inside a single top-level directory (`myproject-1.0/...`), the shape
   # extra_opts: ['--strip-components=1'] exists to flatten.
@@ -234,6 +243,25 @@ describe "unarchive plugin" do
     PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.zip"), "dest" => dest})
 
     result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.zip"), "dest" => dest})
+
+    result["changed"].as_bool.should be_false
+  end
+
+  it "reports changed: false on an idempotent zip rerun when a member is a symlink" do
+    # Regression: zip_changed? compared a symlink member's DEREFERENCED
+    # content (`md5sum < dest_path`, which shell redirection always
+    # follows) against the archive's own raw member content (the target
+    # path string a zip stores for a symlink entry, e.g. "real.txt") -
+    # permanently mismatched even on a byte-correct extraction, so any
+    # zip containing a symlink was re-extracted (reported changed: true)
+    # on every single run. Found benchmarking robertdebock.sudo_pair's
+    # own square/sudo_pair release archive (LICENSE/README symlinked
+    # into multiple sub-crate dirs).
+    dest = fresh_dest("zip-symlink-idempotent")
+    PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "symlink.zip"), "dest" => dest})
+    File.symlink?(File.join(dest, "link.txt")).should be_true
+
+    result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "symlink.zip"), "dest" => dest})
 
     result["changed"].as_bool.should be_false
   end

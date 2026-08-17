@@ -354,7 +354,26 @@ module CrystalPlay
 
       wanted.any? do |member|
         dest_path = File.join(dest, member)
-        return true unless remote_file_exists?(dest_path)
+
+        # A symlink zip member (common for a shared LICENSE/README
+        # linked into multiple sub-crate dirs, e.g. square/sudo_pair's
+        # own release archive) stores its TARGET STRING as the member's
+        # own content - `unzip -p` on it correctly returns that short
+        # string. `md5sum < dest_path` on the extracted symlink follows
+        # it (shell redirection always dereferences), comparing the
+        # short target string against the potentially much larger
+        # DEREFERENCED target file's content - permanently mismatched
+        # even though extraction itself was byte-correct, making any
+        # such archive permanently non-idempotent (re-extracted on
+        # every single run). Found benchmarking robertdebock.sudo_pair.
+        # `readlink` (not dereferenced) is the correct comparison.
+        symlink_result = remote_exec("test -L #{dest_path} && readlink #{dest_path}")
+        if symlink_result[:exit_code] == 0
+          archive_checksum = remote_exec("unzip -p #{src} \"#{member}\" 2>/dev/null")[:stdout].strip
+          next archive_checksum != symlink_result[:stdout].strip
+        end
+
+        next true unless remote_file_exists?(dest_path)
 
         archive_checksum = remote_exec("unzip -p #{src} \"#{member}\" 2>/dev/null | md5sum")[:stdout].strip
         dest_checksum = remote_exec("md5sum < #{dest_path} 2>/dev/null")[:stdout].strip
