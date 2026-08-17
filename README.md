@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.448-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.455-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -63,25 +63,29 @@ See [KNOWN_MISSING.md](KNOWN_MISSING.md) for what's still missing, and
   per task, on by default (`--no-batching` to disable; see the
   Performance section below and `git log`'s `0.9.61`-`0.9.63` commits)
 
-### Plugins (66 total)
+### Plugins (78 total)
 
 **Files & templates:** `copy`, `template`, `file`, `lineinfile`,
-`blockinfile`, `replace`, `stat`, `find`, `archive`, `unarchive`, `fetch`,
-`get_url`
+`blockinfile`, `replace`, `ini_file`, `stat`, `find`, `archive`,
+`unarchive`, `fetch`, `get_url`, `slurp`
 
 **Execution:** `command`, `shell`, `async_status`, `debug`, `assert`,
-`fail`, `set_fact`, `pause`, `wait_for`, `uri`
+`fail`, `set_fact`, `pause`, `wait_for`, `wait_for_connection`, `uri`,
+`ping`, `capabilities`
 
 **Packages:** `apt`, `apt_key`, `apt_repository`, `deb822_repository`,
-`dnf`, `yum_repository`, `package`, `package_facts`, `pip`, `gem`
+`dnf`, `yum`, `yum_repository`, `rpm_key`, `package`, `package_facts`,
+`pip`, `gem`, `npm`, `alternatives`, `make`
 
 **Users, groups & access:** `user`, `group`, `authorized_key`, `cron`,
 `getent`, `openssh_keypair`, `htpasswd`
 
 **Services & system:** `service`, `systemd`, `service_facts`, `sysctl`,
-`mount`, `modprobe`, `firewalld`, `ufw`, `facts`, `setup`
+`mount`, `modprobe`, `firewalld`, `ufw`, `facts`, `setup`, `filesystem`,
+`timezone`, `hostname`
 
-**Security:** `selinux`, `pamd`, `pam_limits`, `openssl_dhparam`
+**Security:** `selinux`, `seboolean`, `pamd`, `pam_limits`,
+`openssl_dhparam`
 
 **Source control:** `git`
 
@@ -305,6 +309,26 @@ context.
   against the real remote target instead. `npm`/`ruby`/
   `ca_certificates`/`restore`/`turn` all clean. See `KNOWN_MISSING.md`/
   `ROLES_TESTED.md`.
+- **`0.9.449`-`0.9.455` - round 142, first RHEL-family (Rocky 9.6)
+  round, `robertdebock.epel`/`.selinux`/`.remi`/`.rpmfusion`/
+  `.powertools`/`.zabbix_repository`/`.digitalocean_agent`/`.update_
+  package_cache`/`.python_pip`/`.cron`**: 8 real bugs/gaps found and
+  fixed. New plugins: `ansible.builtin.rpm_key` (GPG key import into
+  the RPM db), `ansible.posix.seboolean` (verified for real on a
+  rebooted, genuinely SELinux-enforcing target), `ansible.builtin.yum`.
+  New `ansible_selinux` facts (`when: ansible_selinux.status is
+  defined` previously always skipped SELinux management entirely).
+  `package.cr`'s dnf backend falsely read a URL-based RPM as "already
+  installed" (`rpm -q <url>` queries a FILE, not an installed name).
+  An unquoted `curl` URL let embedded `&` characters shell-split a key
+  download into background jobs (`apt_key.cr`+`rpm_key.cr`). `dnf`/
+  `yum` never supported `update_cache: true` with no `name:`, and
+  `package.cr`'s dnf/yum `update_cache`-only path always reported
+  `changed: true` when real Ansible's dnf backend reports `false` in
+  practice. `epel`/`selinux`/`rpmfusion` had real bugs; `remi`/
+  `powertools`/`zabbix_repository`/`update_package_cache`/`python_pip`/
+  `cron` clean (2 of those needed the above fixes to pass). See
+  `KNOWN_MISSING.md`/`ROLES_TESTED.md`.
 - **round 141, `robertdebock.ansible_lint`/`.update_pip_packages`/
   `.container_docs`/`.molecule`/`.php_fpm`/`.metricbeat`/`.powertop`/
   `.digitalocean_agent`** (no bump): all 8 clean/known-gap, 10th

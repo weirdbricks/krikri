@@ -190,6 +190,53 @@ def gather_os_facts(facts)
   apparmor_facts["status"] = Dir.exists?("/sys/kernel/security/apparmor") ? "enabled" : "disabled"
   facts["ansible_apparmor"] = apparmor_facts
 
+  # ansible_selinux.status - real Ansible's SelinuxFactCollector (module_
+  # utils/facts/system/selinux.py) reports 'Missing selinux Python
+  # library' when the target has no selinux Python bindings at all
+  # (stock Debian/Ubuntu), or 'disabled'/'enabled' (+ mode/config_mode/
+  # type/policyvers when enabled) otherwise. Entirely missing before -
+  # `ansible_selinux.status is defined` (robertdebock.selinux's own gate
+  # on its "Manage selinux"/"Manage selinux booleans" tasks, and a common
+  # real-role idiom generally) always evaluated false regardless of the
+  # host's real SELinux state, silently skipping SELinux management even
+  # on a real RHEL-family SELinux host - found live on a Rocky 9.6
+  # target. Uses `getenforce`/reads /etc/selinux/config directly (this
+  # plugin already shells out via #capture rather than binding libselinux
+  # itself, matching the rest of this file's own approach) instead of a
+  # Python-library check, since presence of the `getenforce` binary
+  # itself is the same practical signal on any real target.
+  selinux_facts = {} of String => String
+  getenforce_bin = capture("which", ["getenforce"])
+  if getenforce_bin.empty?
+    selinux_facts["status"] = "Missing selinux Python library"
+  else
+    runtime_mode = capture("getenforce").downcase
+    if runtime_mode == "disabled"
+      selinux_facts["status"] = "disabled"
+    else
+      selinux_facts["status"] = "enabled"
+      selinux_facts["mode"] = runtime_mode
+      selinux_facts["policyvers"] = "unknown"
+      config_mode = "unknown"
+      config_type = "unknown"
+      if File.exists?("/etc/selinux/config")
+        File.read("/etc/selinux/config").each_line do |line|
+          stripped = line.strip
+          next if stripped.empty? || stripped.starts_with?("#")
+          if stripped.starts_with?("SELINUX=")
+            config_mode = stripped.split("=", 2)[1].strip
+          elsif stripped.starts_with?("SELINUXTYPE=")
+            config_type = stripped.split("=", 2)[1].strip
+          end
+        end
+      end
+      selinux_facts["config_mode"] = config_mode
+      selinux_facts["type"] = config_type
+    end
+  end
+  facts["ansible_selinux"] = selinux_facts
+  facts["ansible_selinux_python_present"] = getenforce_bin.empty? ? "False" : "True"
+
   utsname = uninitialized LibC::Utsname
   uname_ok = LibC.uname(pointerof(utsname)) == 0
 

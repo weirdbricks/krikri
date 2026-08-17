@@ -126,6 +126,17 @@ module CrystalPlay
       name.split(' ').reject(&.empty?).all? { |pkg| yield pkg }
     end
 
+    # Mirrors dnf.cr's own `is_url_or_file?` - a URL/local-path package
+    # spec needs different installed-state handling than a bare name
+    # (see handle_dnf's own comment for why `rpm -q` can't be trusted
+    # for these).
+    private def is_url_or_file?(name : String) : Bool
+      name.starts_with?("http://") ||
+        name.starts_with?("https://") ||
+        name.starts_with?("ftp://") ||
+        name.starts_with?("/")
+    end
+
     # update_cache: true with no name: - just refresh the package
     # manager's own index, matching real Ansible's own cache-refresh-
     # only idiom for package:/apt:.
@@ -146,11 +157,24 @@ module CrystalPlay
                 end
 
       result = remote_exec(command)
-      if result[:exit_code] == 0
-        PluginResult.new(changed: true, failed: false, msg: "Package cache updated")
-      else
-        PluginResult.new(changed: false, failed: true, msg: "Failed to update package cache: #{result[:stderr]}")
-      end
+      return PluginResult.new(changed: false, failed: true, msg: "Failed to update package cache: #{result[:stderr]}") unless result[:exit_code] == 0
+
+      # apt's own `update_cache: true` always reports changed: true
+      # (verified in prior rounds - see apt.cr's own cache_update_is_
+      # sole_operation handling for the OPPOSITE apt-specific gap, a
+      # leaked changed: true when packages were ALSO being installed in
+      # the same call). Real dnf.py's own `update_cache_only`, though,
+      # reports `changed=result.get('changed', False)` from its internal
+      # libdnf5-backed helper script - which, on the ansible-core/dnf5
+      # combination verified live on a Rocky 9.6 target, never actually
+      # sets a `changed` key at all, so it's always False in practice -
+      # a real, dnf-specific difference from apt's own always-true
+      # semantics, not something visible from `dnf makecache`'s own CLI
+      # stdout (which prints the identical repo-download listing whether
+      # or not anything was genuinely stale). Found via robertdebock.
+      # update_package_cache's own single-task role.
+      changed = package_manager == "apt"
+      PluginResult.new(changed: changed, failed: false, msg: "Package cache updated")
     end
 
     # Detect which package manager is available
@@ -179,7 +203,24 @@ module CrystalPlay
       # isn't: linux-system-roles/kernel_settings' `name: "tuned
       # python3-configobj"` previously read as "installed" the moment
       # *either* package matched.
-      is_installed = all_packages_installed?(name) { |pkg| remote_exec("rpm -q #{pkg}")[:exit_code] == 0 }
+      #
+      # A URL/local-path `name:` (e.g. robertdebock.epel's own `epel_url:
+      # https://dl.fedoraproject.org/.../epel-release-latest-9.noarch.
+      # rpm`) must never be checked this way - `rpm -q <url-or-path>`
+      # does NOT look up an installed-package NAME the way `rpm -q
+      # <name>` does; real `rpm` treats a URL/path argument as a PACKAGE
+      # FILE to query (fetching it first for a URL) and happily reports
+      # the FILE's own embedded NEVRA with exit 0 as long as it's a
+      # valid, fetchable RPM - regardless of whether that package is
+      # actually installed on this system. That made a brand-new host
+      # that had never installed epel-release before read as "already
+      # installed" (exit 0 from a successful fetch-and-parse of the
+      # remote RPM's metadata) and silently skip the real `dnf install`
+      # entirely. Matches `dnf.cr`'s own `is_url_or_file?`-gated "always
+      # try to install" handling for the identical case.
+      is_installed = all_packages_installed?(name) do |pkg|
+        is_url_or_file?(pkg) ? false : remote_exec("rpm -q #{pkg}")[:exit_code] == 0
+      end
       
       case state
       when "present"
@@ -200,10 +241,20 @@ module CrystalPlay
           
           install_result = remote_exec("dnf install -y #{name} || yum install -y #{name}")
           if install_result[:exit_code] == 0
+            # A URL/path `name:` skipped the `rpm -q` pre-check above
+            # (it can't tell "installed" from "valid RPM file"), so a
+            # WARM rerun against an already-installed URL package always
+            # reaches here - dnf itself still correctly no-ops and
+            # prints "Nothing to do." with exit 0, so trusting the exit
+            # code alone would report changed: true on every single
+            # rerun, never converging. Same real-no-op-vs-exit-0 check
+            # dnf.cr's own `handle_install` already does for the
+            # identical reason.
+            already_satisfied = is_url_or_file?(name) && install_result[:stdout].includes?("Nothing to do")
             return PluginResult.new(
-              changed: true,
+              changed: !already_satisfied,
               failed: false,
-              msg: "Package #{name} installed"
+              msg: already_satisfied ? "Package #{name} already installed" : "Package #{name} installed"
             )
           else
             return PluginResult.new(

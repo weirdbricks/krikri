@@ -4,9 +4,24 @@ require "json"
 require "../src/crystal_play/base_plugin"
 
 module CrystalPlay
-  # DNF plugin - manages packages with the dnf package manager
-  # Compatible with Ansible's ansible.builtin.dnf module
-  # 
+  # Yum plugin - manages packages with the `yum` command. Compatible with
+  # Ansible's ansible.builtin.yum module - a near-duplicate of dnf.cr's
+  # own DnfPlugin (see build.sh's own convention of one tiny compiled
+  # binary per module rather than shared library code between them),
+  # shelling `yum` instead of `dnf` throughout.
+  #
+  # Verified live against a Rocky 9.6 target, where `/usr/bin/yum` is
+  # itself a symlink to `dnf-3` (the standard modern RHEL-family setup
+  # since RHEL8/CentOS8) - the flags this builds (`--setopt=install_
+  # weak_deps=False`, `--best`, `--allowerasing`) are real dnf options
+  # forwarded straight through that symlink. NOT verified against a
+  # genuinely dnf-less yum (RHEL6/7-era) target - those flags don't
+  # exist on classic yum, and real ansible.builtin.yum's own module
+  # internally detects and branches on which backend it's talking to,
+  # which this does not replicate. No RHEL7-or-older Atlantic.net image
+  # was available to verify that path this round.
+  #
+
   # Supports key Ansible dnf module parameters:
   # - name: Package name(s), group (@group), URL, or local RPM file
   # - state: present, installed, absent, removed, latest
@@ -35,14 +50,14 @@ module CrystalPlay
   #   dnf:
   #     name: "@Development tools"
   #     state: present
-  class DnfPlugin < BasePlugin
+  class YumPlugin < BasePlugin
     def execute : PluginResult
       # Parse package name(s)
       # Can be a string, array (via list parameter), or comma-separated
       names = parse_package_names
 
       # `name:` isn't required when `update_cache: true` is given with
-      # nothing else - real Ansible's own dnf: module allows a cache-
+      # nothing else - real Ansible's own yum: module allows a cache-
       # refresh-only invocation (robertdebock.rpmfusion's own "Yum
       # update cache" handler: `ansible.builtin.yum: {update_cache:
       # yes}`, no name: at all). Matches package.cr's own identical
@@ -51,7 +66,7 @@ module CrystalPlay
       # failure surfaced it live on a Rocky 9.6 target.
       if names.empty?
         if is_true?(@params["update_cache"]?)
-          result = remote_exec("dnf makecache")
+          result = remote_exec("yum makecache")
           return PluginResult.new(
             changed: result[:exit_code] == 0,
             failed: result[:exit_code] != 0,
@@ -281,7 +296,7 @@ module CrystalPlay
       # Install new packages
       unless to_install.empty?
         pkg_list = to_install.map { |p| quote_package(p) }.join(" ")
-        cmd = "dnf install #{options} #{pkg_list}"
+        cmd = "yum install #{options} #{pkg_list}"
         
         result = remote_exec(cmd)
         all_output << result[:stdout]
@@ -321,7 +336,7 @@ module CrystalPlay
       # Update packages (if update_only mode)
       unless to_update.empty?
         pkg_list = to_update.map { |p| quote_package(p) }.join(" ")
-        cmd = "dnf update #{options} #{pkg_list}"
+        cmd = "yum update #{options} #{pkg_list}"
         
         result = remote_exec(cmd)
         all_output << result[:stdout]
@@ -392,7 +407,7 @@ module CrystalPlay
       # Build remove command
       autoremove_flag = is_true?(@params["autoremove"]?) ? "" : "--setopt=clean_requirements_on_remove=False"
       pkg_list = to_remove.map { |p| quote_package(p) }.join(" ")
-      cmd = "dnf remove #{options} #{autoremove_flag} #{pkg_list}"
+      cmd = "yum remove #{options} #{autoremove_flag} #{pkg_list}"
       
       result = remote_exec(cmd)
       
@@ -424,7 +439,7 @@ module CrystalPlay
     # Update packages to latest version
     private def handle_update(names : Array(String), options : String) : PluginResult
       pkg_list = names.map { |p| quote_package(p) }.join(" ")
-      cmd = "dnf update #{options} #{pkg_list}"
+      cmd = "yum update #{options} #{pkg_list}"
       
       result = remote_exec(cmd)
       
@@ -460,7 +475,7 @@ module CrystalPlay
     # Upgrade all packages
     private def handle_upgrade_all : PluginResult
       options = build_dnf_options
-      cmd = "dnf upgrade #{options}"
+      cmd = "yum upgrade #{options}"
       
       result = remote_exec(cmd)
       
@@ -494,7 +509,7 @@ module CrystalPlay
     # Handle autoremove operation
     private def handle_autoremove : PluginResult
       options = build_dnf_options
-      cmd = "dnf autoremove #{options}"
+      cmd = "yum autoremove #{options}"
       
       result = remote_exec(cmd)
       
@@ -529,7 +544,7 @@ module CrystalPlay
       # Strip version specifiers for checking
       base_name = name.split(/[<>=]/).first.strip
       
-      result = remote_exec("dnf list installed #{base_name} 2>/dev/null")
+      result = remote_exec("yum list installed #{base_name} 2>/dev/null")
       result[:exit_code] == 0
     end
     
@@ -573,5 +588,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::DnfPlugin.new(config)
+plugin = CrystalPlay::YumPlugin.new(config)
 plugin.run

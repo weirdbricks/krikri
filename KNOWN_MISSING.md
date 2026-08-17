@@ -8,7 +8,102 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.448`.**
+**Currently at `0.9.455`.**
+
+---
+
+Round 142 (`0.9.449`-`0.9.455`) - first round on a RHEL-family target
+(Rocky Linux 9.6, real Atlantic.net USEAST1 pair) rather than Ubuntu -
+10 roles (`robertdebock.epel`, `.selinux`, `.remi`, `.rpmfusion`,
+`.powertools`, `.zabbix_repository`, `.digitalocean_agent`, `.update_
+package_cache`, `.python_pip`, `.cron`). 8 real bugs/gaps found and
+fixed, all live-verified (cold + warm/idempotency):
+
+1. **`ansible.builtin.rpm_key` was entirely unimplemented** - every
+   RHEL-family GPG-key-import task (`robertdebock.epel`'s own "Install
+   epel gpg key", found first) silently skipped. New `plugins/rpm_key.
+   cr`, shelling `rpm --import`/`rpm --erase` and using `gpg --with-
+   colons` to parse key material (mirrors `apt_key.cr`'s own approach
+   to the identical apt-side problem, rather than binding libselinux/
+   librpm directly).
+2. **`package.cr`'s dnf/yum backend falsely reported a URL-based RPM
+   as "already installed"** - `handle_dnf`'s pre-install check ran
+   `rpm -q <url>`, which does NOT look up an installed package name
+   the way `rpm -q <name>` does; real `rpm` treats a URL/path argument
+   as a package FILE to query (fetching it first), so it happily
+   returned the fetched file's own NEVRA with exit 0 regardless of
+   whether that package was actually installed. A brand-new host that
+   had never installed `epel-release` read as "already installed" and
+   silently skipped the real `dnf install` entirely. Now URL/file
+   names skip the `rpm -q` pre-check (matching `dnf.cr`'s own
+   `is_url_or_file?`-gated handling) and detect no-op reruns via dnf's
+   own "Nothing to do." output instead.
+3. **`ansible_selinux` was entirely unimplemented as a fact** - a
+   real, common real-role idiom (`when: ansible_selinux.status is
+   defined`, `robertdebock.selinux`'s own gate on its "Manage selinux"/
+   "Manage selinux booleans" tasks) always evaluated false regardless
+   of the host's real SELinux state, silently skipping SELinux
+   management even on a genuine SELinux-capable RHEL host. New fact
+   collection in `facts.cr` (status/mode/config_mode/type via
+   `getenforce` + `/etc/selinux/config`, matching real Ansible's
+   `SelinuxFactCollector` key names).
+4. **`ansible.posix.seboolean` was entirely unimplemented** - new
+   `plugins/seboolean.cr` (`getsebool`/`setsebool -P`), verified for
+   real: after fixing #3 above and rebooting into SELinux-enforcing
+   (via the already-existing `selinux.cr` module, which turned out to
+   need only the fact fix, not a module fix), `httpd_can_network_
+   connect` was genuinely toggled on and confirmed via `getsebool` on
+   the target - not just "didn't error."
+5. **Unquoted URL in a `curl` shell-out let embedded `&` characters
+   split the command into background jobs** - both `apt_key.cr` and
+   the new `rpm_key.cr` built `curl ... -o <tmp> #{url}` with the raw
+   URL interpolated unquoted. A key URL containing literal `&`
+   characters (`robertdebock.rpmfusion`'s own `https://rpmfusion.org/
+   keys?action=AttachFile&do=get&target=...`, a completely ordinary
+   real-world query-string URL) got shell-split at each `&`, silently
+   backgrounding a truncated `curl` call and leaving `do=get`/
+   `target=...` to execute as harmless no-op shell assignments - the
+   key file never downloaded, and "Failed to get keyid" surfaced far
+   from the real cause. Fixed both call sites via the already-existing
+   `shell_single_quote` helper.
+6. **`ansible.builtin.yum` was entirely unimplemented** - `dnf`/
+   `package:` existed, but the bare `yum:` module name (still common
+   in RHEL-targeting roles even on dnf-backed modern hosts, where
+   `/usr/bin/yum` is just a symlink to `dnf-3`) got "Plugin not
+   available". New `plugins/yum.cr`, structurally a near-duplicate of
+   `dnf.cr` shelling `yum` instead of `dnf` (NOT verified against a
+   genuinely dnf-less RHEL6/7-era yum - no such image was available
+   this round; the flags it builds are real dnf options that only work
+   because this target's `yum` is dnf underneath).
+7. **`dnf`/`yum` never supported the `update_cache: true`-with-no-
+   `name:` idiom** - `robertdebock.rpmfusion`'s own "Yum update cache"
+   handler (`ansible.builtin.yum: {update_cache: yes}`) failed with
+   "Missing required parameter: name". `package.cr` already had this
+   exception for the generic `package:` module; never ported to `dnf.
+   cr`/`yum.cr`. Both now run `dnf|yum makecache` when `name:` is
+   absent and `update_cache:` is set.
+8. **`package.cr`'s dnf/yum `update_cache`-only call always reported
+   `changed: true`** - real `ansible.builtin.package`'s dnf backend
+   reports `changed=result.get('changed', False)` from its internal
+   libdnf5-backed helper, which never actually sets a `changed` key in
+   the ansible-core/dnf5 combination verified live - so it's always
+   `False` in practice, a genuine dnf-specific difference from apt's
+   own always-`changed:true` semantics (verified: `robertdebock.
+   update_package_cache` matched real Ansible's `changed=0` exactly
+   after the fix, cold and warm).
+
+`powertools` and `zabbix_repository` also hit the already-documented
+`zypper`/`rpm_key`-adjacent unimplemented-plugin skip-count gap
+pattern (now down to just `zypper`, since `rpm_key` is real) and a
+role/environment mismatch (Rocky ships no `powertools` repo file, only
+`crb` - both engines fail identically) - not new. `cron`'s cold run
+showed one non-reproduced divergence (a `lineinfile` "Configure shell"
+task: real Ansible reported `changed: true`, crystal reported already-
+present) that vanished on a clean warm rerun (both `ok=9 changed=0`
+byte-identical) - most likely accumulated host-state drift from this
+round's unusually heavy reuse of the same two-host pair (10 roles plus
+several retries), per this file's own documented host-reuse-noise
+caveat, not a reproduced code bug; not fixed.
 
 ---
 
