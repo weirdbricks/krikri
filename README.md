@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.439-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.441-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -293,6 +293,18 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.440`-`0.9.441` - round 136, `robertdebock.npm`/`.ruby`/
+  `.ca_certificates`/`.backup`/`.restore`/`.turn`**: 3 real bugs, both
+  found via `.backup`'s own default `/var/spool` target and its
+  `connection: local` task - `community.general.archive` crashed the
+  whole build on a symlink-to-directory member (now a real SYMLINK tar
+  entry; zip gracefully skips it, a documented Crystal-stdlib
+  capability gap); task-level `connection:` was never parsed at all
+  (distinct from `delegate_to:` - changes HOW a task runs, not WHICH
+  host's vars apply), so a `connection: local` task silently ran
+  against the real remote target instead. `npm`/`ruby`/
+  `ca_certificates`/`restore`/`turn` all clean. See `KNOWN_MISSING.md`/
+  `ROLES_TESTED.md`.
 - **`0.9.433`-`0.9.439` - round 135, `robertdebock.dns`/`.certbot`/
   `.openssl`/`.facts`/`.swap`/`.sudo_pair`**: first new-role round since
   round 133. 7 real bugs found and fixed: `--limit` was parsed but

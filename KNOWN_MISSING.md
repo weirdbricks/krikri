@@ -8,7 +8,52 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.439`.**
+**Currently at `0.9.441`.**
+
+---
+
+Round 136 (`0.9.440`-`0.9.441`) - 6 more roles (`robertdebock.npm`,
+`.ruby`, `.ca_certificates`, `.backup`, `.restore`, `.turn`), same
+Atlantic.net USEAST1 pair as round 135. 3 real bugs, both found via
+`.backup`'s own default `/var/spool` target and `connection: local`
+task:
+
+1. **`community.general.archive` crashed the whole archive build on a
+   symlink-to-directory member** (Debian's own default `/var/spool/
+   mail -> ../mail`) - `File.open(member)` follows symlinks like real
+   Ansible's own traversal does, and reading a symlink-to-directory as
+   a file raises, taking down the entire build via one top-level
+   `rescue => false` instead of real Ansible's per-member error
+   tolerance. Fixed: a real SYMLINK tar entry for tar/gz/bz2/xz (full
+   parity, via the vendored Crystar shard); a documented skip for zip
+   (Crystal's stdlib `Compress::Zip::Writer` has no Unix-attrs API at
+   all, unlike Python's zipfile - a genuine format-capability gap, not
+   a logic bug).
+2. **Task-level `connection:` was never parsed at all** - distinct from
+   `delegate_to:` (which changes WHICH host's vars/facts apply, not HOW
+   the module runs). `robertdebock.backup`'s own "Create backup_
+   directory" (`connection: local`, no `delegate_to:`, writes to the
+   controller's filesystem) silently ran against the real remote target
+   instead. Fixed: new `Task#connection`, parsed alongside
+   `delegate_to:`, threaded into `ansible_connection` for that task's
+   own `vars_context` (every local-vs-remote dispatch decision already
+   reads that key), and excluded from SSH batching (same treatment
+   `delegate_to:` already gets - batching assumes one shared connection
+   per group). Documented remaining gap: the once-per-play eager plugin
+   pre-upload pass is scoped to `hosts:`, not individual `tasks:`, so it
+   can still try to upload to a genuinely unreachable host before
+   reaching a task that would've run locally - low real-world impact,
+   out of scope this round.
+
+Also needed `ansible_python_interpreter=/usr/bin/python3` in the
+inventory for real ansible-playbook's own side (its `connection: local`
+sub-task otherwise inherits the REMOTE host's cached python3.10 path,
+which this sandbox's controller doesn't have - an environment mismatch,
+not a role or engine bug).
+
+All fixes live-reverified, cold and warm (idempotency) rerun,
+byte-identical to real `ansible-playbook`. `npm`/`ruby`/`ca_certificates`/
+`restore`/`turn` were all clean, zero bugs.
 
 ---
 
