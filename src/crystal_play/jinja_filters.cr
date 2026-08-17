@@ -3,6 +3,8 @@ require "yaml"
 require "base64"
 require "uuid"
 require "openssl/digest"
+require "http/client"
+require "uri"
 require "./variable_substitutor/crinja_renderer"
 require "./vault"
 
@@ -1453,15 +1455,9 @@ module CrystalPlay
     # in Crinja before - "no function with name \"lookup\"", failing the
     # whole template render.
     #
-    # Mirrors 6 of ExpressionEvaluator#evaluate_lookup's 8 lookup types
-    # (env/vars/file/pipe/template/password) - deliberately NOT
-    # url/first_found, both meaningfully more complex (a redirect-
-    # following HTTP fetch with wantlist= handling; a two-list-argument
-    # role-relative file search) and rare enough inside a real `.j2`
-    # file specifically (as opposed to a task param, where
-    # ExpressionEvaluator already covers them) that porting them here
-    # wasn't judged worth the added surface - revisit if a real template
-    # actually needs one.
+    # Mirrors all of ExpressionEvaluator#evaluate_lookup's lookup types,
+    # including url/first_found (ported once a real template actually
+    # needed one, per the note this comment used to carry).
     #
     # Declared keyword-args form (`Crinja.function({...}, :lookup)`), not
     # the plain block form - found the hard way (see the `version` test
@@ -1571,6 +1567,50 @@ module CrystalPlay
           (children.try(&.to_a) || [] of Crinja::Value).each { |child| result << Crinja::Value.new([parent, child]) }
         end
         Crinja::Value.new(result)
+      when "url"
+        # lookup('url', url_expr[, wantlist=True]) - fetches from the
+        # CONTROLLER, following redirects (see .fetch_url_lines below).
+        # `wantlist` arrives as a plain caller-supplied kwarg - it's
+        # deliberately NOT declared in this function's defaults tuple
+        # (unlike type/a1..a4), since `Arguments#kwargs` already holds
+        # whatever named args the caller actually passed regardless of
+        # what's declared, and declaring it would force every OTHER
+        # lookup type to also tolerate a stray `wantlist=` kwarg.
+        wantlist = arguments.kwargs["wantlist"]?.try(&.truthy?) || false
+        lines = JinjaFilters.fetch_url_lines(arg1.to_s)
+        if lines.nil?
+          Crinja::Value.new(nil)
+        elsif wantlist
+          Crinja::Value.new(lines.map { |line| Crinja::Value.new(line) })
+        else
+          Crinja::Value.new(lines.join(","))
+        end
+      when "first_found"
+        # lookup('first_found', {'files': [...], 'paths': [...]}) - same
+        # search order/role-relative resolution as ExpressionEvaluator's
+        # own #evaluate_first_found, adapted to Crinja::Dictionary/Value
+        # instead of JSON::Any.
+        hash = arg1.raw.is_a?(Crinja::Dictionary) ? arg1.raw.as(Crinja::Dictionary) : nil
+        files_val = hash.try(&.[Crinja::Value.new("files")]?)
+        paths_val = hash.try(&.[Crinja::Value.new("paths")]?)
+        files = (files_val && files_val.sequence?) ? files_val.to_a : [] of Crinja::Value
+        paths = (paths_val && paths_val.sequence?) ? paths_val.to_a : ["files", "templates", "vars", "."].map { |root| Crinja::Value.new(root) }
+
+        rendered_paths = paths.map { |path_entry| JinjaFilters.resolve_first_found_root(env.from_string(path_entry.to_s).render, role_path) }
+
+        found = nil
+        files.each do |file_entry|
+          rendered_file = env.from_string(file_entry.to_s).render
+          rendered_paths.each do |path|
+            candidate = File.join(path, rendered_file)
+            if File.exists?(candidate)
+              found = candidate
+              break
+            end
+          end
+          break if found
+        end
+        Crinja::Value.new(found)
       when "sequence"
         Crinja::Value.new(JinjaFilters.sequence_lookup(arg1.to_s).map { |v| Crinja::Value.new(v) })
       when "csvfile"
@@ -1592,6 +1632,35 @@ module CrystalPlay
     def self.resolve_lookup_path(path : String, role_path : String?) : String
       return path if path.starts_with?('/')
       role_path ? File.join(role_path, "files", path) : path
+    end
+
+    # A relative first_found `paths:` entry resolves against the current
+    # role's own directory, not the process's cwd - same rule
+    # ExpressionEvaluator's own #resolve_first_found_root applies.
+    def self.resolve_first_found_root(path : String, role_path : String?) : String
+      return path if path.starts_with?('/')
+      role_path ? File.join(role_path, path) : path
+    end
+
+    # Mirrors ExpressionEvaluator's own #fetch_url_lines (redirect-
+    # following GET, stripped/blank-rejected lines), returning a real
+    # Array(String)? here instead of JSON array text - nil on any
+    # failure (unreachable host, non-2xx, too many redirects).
+    def self.fetch_url_lines(url : String, redirects_left : Int32 = 5) : Array(String)?
+      return nil if redirects_left < 0
+
+      response = HTTP::Client.get(url)
+
+      if response.status.redirection? && (location = response.headers["Location"]?)
+        resolved = URI.parse(location).absolute? ? location : URI.parse(url).resolve(location).to_s
+        return fetch_url_lines(resolved, redirects_left - 1)
+      end
+
+      return nil unless response.success?
+
+      response.body.lines.map(&.strip).reject(&.empty?)
+    rescue
+      nil
     end
 
     PASSWORD_CHARS  = ("a".."z").to_a + ("A".."Z").to_a + ("0".."9").to_a + [".", ",", ":", "-", "_"]

@@ -1,5 +1,29 @@
 require "../spec_helper"
+require "http/server"
 require "../../src/crystal_play/variable_substitutor/crinja_renderer"
+
+# Same tiny local HTTP server pattern as url_lookup_spec.cr, reused here
+# to test lookup('url', ...) reaching Crinja's own global function (real
+# .j2 template files), not just ExpressionEvaluator's plain `{{ }}` path.
+CRINJA_URL_LOOKUP_BODY = "line one\nline two\nline three\n"
+
+crinja_url_lookup_test_server = HTTP::Server.new do |context|
+  case context.request.path
+  when "/lines.txt"
+    context.response.status_code = 200
+    context.response.print(CRINJA_URL_LOOKUP_BODY)
+  when "/redirect.txt"
+    context.response.status_code = 302
+    context.response.headers["Location"] = "/lines.txt"
+  else
+    context.response.status_code = 404
+  end
+end
+crinja_url_lookup_test_address = crinja_url_lookup_test_server.bind_unused_port
+spawn { crinja_url_lookup_test_server.listen }
+Fiber.yield
+
+crinja_url_lookup_base = "http://#{crinja_url_lookup_test_address}"
 
 describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
   it "re-templates a variable whose own value is itself a {{ }} expression" do
@@ -441,6 +465,52 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     second = renderer.render(%({{ lookup('password', '#{path} length=8') }}))
     second.should eq(first)
     File.delete(path)
+  end
+
+  it "renders lookup('url', ...) fetching lines from the controller, with and without wantlist" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render(%({{ lookup('url', '#{crinja_url_lookup_base}/lines.txt') }}))
+      .should eq("line one,line two,line three")
+
+    renderer.render(%({{ lookup('url', '#{crinja_url_lookup_base}/lines.txt', wantlist=True) | join(';') }}))
+      .should eq("line one;line two;line three")
+  end
+
+  it "renders lookup('url', ...) following a redirect, matching how GitHub serves release assets" do
+    v = Hash(String, JSON::Any).new
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render(%({{ lookup('url', '#{crinja_url_lookup_base}/redirect.txt') }}))
+      .should eq("line one,line two,line three")
+  end
+
+  it "renders lookup('first_found', {...}) picking the first existing files: entry under paths:" do
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "crinja_first_found_role_spec")
+    Dir.mkdir_p(File.join(role_dir, "vars"))
+    File.write(File.join(role_dir, "vars", "Debian.yml"), "found: debian\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    v["distro"] = JSON::Any.new("Debian")
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    result = renderer.render(%({{ lookup('first_found', {'files': ['{{ distro }}.yml', 'default.yml'], 'paths': ['vars']}) }}))
+    result.should eq(File.join(role_dir, "vars", "Debian.yml"))
+  end
+
+  it "renders lookup('first_found', {...}) with a default paths: search order when omitted" do
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "crinja_first_found_default_paths_spec")
+    Dir.mkdir_p(File.join(role_dir, "vars"))
+    File.write(File.join(role_dir, "vars", "main.yml"), "found: default\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    result = renderer.render(%({{ lookup('first_found', {'files': ['main.yml']}) }}))
+    result.should eq(File.join(role_dir, "vars", "main.yml"))
   end
 
   it "path_join joins a list of path components, an absolute one resets" do

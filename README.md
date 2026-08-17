@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.469-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.470-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -283,12 +283,12 @@ harness covers and how it works.
 
 ## 🚧 Limitations
 
-See [KNOWN_MISSING.md](KNOWN_MISSING.md) for the live, per-round narrative
-of what's still being found and fixed. `ROLES_TESTED.md` tracks the
-current status of every Ansible Galaxy role that has been benchmarked
-against a real host. The historical per-round detail (anything before
-0.9.327) lives in `git log` - the project deliberately does not duplicate
-it in this README.
+See [KNOWN_MISSING.md](KNOWN_MISSING.md) for the current, short list of
+what's still genuinely missing today (real gaps plus explicit scope
+cuts). `ROLES_TESTED.md` tracks the current status of every Ansible
+Galaxy role that has been benchmarked against a real host. Fixed-bug
+history lives entirely in `git log` - the project deliberately does not
+duplicate it here or in KNOWN_MISSING.md.
 
 ### Recent rounds (rolling summary)
 
@@ -297,6 +297,18 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.470` - Crinja `lookup()` gains `url`/`first_found` (not a
+  benchmark round)**: real `.j2` template files can now call
+  `lookup('url', ...)` (redirect-following, `wantlist=` honored) and
+  `lookup('first_found', {...})` (role-relative `files:`/`paths:`
+  search), matching what `ExpressionEvaluator` already supported for
+  plain `{{ }}` task params - the last 2 lookup types Crinja's own
+  `lookup()` function didn't cover. Also gates the `CUSTOM STATS:` recap
+  block behind the `ANSIBLE_SHOW_CUSTOM_STATS` env var (off by default,
+  matching real Ansible's `show_custom_stats` default) instead of always
+  printing whenever `set_stats:` set anything - `ansible.cfg`'s own
+  `show_custom_stats` file setting still isn't read (no `ansible.cfg`
+  INI parsing exists in this codebase at all).
 - **`0.9.469` - closes the filter/test/lookup list entirely (not a
   benchmark round)**, except Windows-only filters (irrelevant here)
   and 2 lookups requiring infrastructure this codebase doesn't have

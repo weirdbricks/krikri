@@ -421,12 +421,12 @@ CrystalPlay::ResultDisplay.show_recap(all_hosts.uniq { |h| h.name }, combined_re
 puts ""
 
 # set_stats: custom stats block - real ansible-playbook only prints this
-# when show_custom_stats is enabled in ansible.cfg (off by default); this
-# codebase has no ansible.cfg parsing for that specific option, so it's
-# shown unconditionally whenever a task actually set anything (empty
-# otherwise, matching the "off" default's visible behavior for every
-# playbook that never used set_stats: at all).
-if CrystalPlay::CustomStats.any?
+# when show_custom_stats is enabled (ansible.cfg [defaults] show_custom_stats,
+# or its ANSIBLE_SHOW_CUSTOM_STATS env var override) - off by default. This
+# codebase has no ansible.cfg INI parsing, so only the env var override is
+# honored; the ansible.cfg file setting itself is not read.
+show_custom_stats = ["true", "yes", "1", "on"].includes?(ENV["ANSIBLE_SHOW_CUSTOM_STATS"]?.try(&.downcase) || "")
+if show_custom_stats && CrystalPlay::CustomStats.any?
   puts "CUSTOM STATS: ".colorize(:cyan).bold
   unless CrystalPlay::CustomStats.global.empty?
     puts "\t#{CrystalPlay::CustomStats.global.to_json}"
