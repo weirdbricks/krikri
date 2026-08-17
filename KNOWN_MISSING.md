@@ -8,7 +8,41 @@ fixed bugs - that detail lives in `git log` commit messages, written at
 the same level of detail per commit; search there (e.g. `git log --all
 --grep=auth_socket`) rather than in a second, easily-stale copy here.
 
-**Currently at `0.9.446`.**
+**Currently at `0.9.448`.**
+
+---
+
+Round 139 (`0.9.447`-`0.9.448`) - 6 roles (`robertdebock.cve_2018_19788`,
+`.cve_2021_44228`, `.debug`, `.core_dependencies`,
+`.microsoft_repository_keys`, `.travis`), fresh Atlantic.net USEAST1
+pair. 2 real bugs:
+
+1. **A task with an integer param past Int32 range was silently
+   dropped at parse time** ("Arithmetic overflow") - `safe_yaml_to_
+   string`/`stringify_value` (every module parameter's YAML->String
+   conversion) both used `YAML::Any#as_i` (Int32-only). Found via
+   `robertdebock.cve_2018_19788`'s own "Create user" task (`uid:
+   2147483659`, one past Int32::MAX and a completely ordinary real
+   uid) - the whole task vanished, so the role's actual test (can an
+   unprivileged user manage a systemd service) never ran for real, and
+   a coincidental `failed_when: no` masked it as a clean run instead of
+   a broken one. Same class as round 70's diskspace fixes - a 3rd/4th
+   independent copy, also fixed in `plugins/debug.cr` and
+   `CrinjaRenderer#json_any_to_crinja_value` (both would hit the
+   identical crash for a large int shown via `debug:` or a real `.j2`
+   template).
+2. **`community.general.gem` was registered under the wrong FQCN**
+   (`ansible.builtin.gem` - not a real Ansible module name; gem has
+   always lived in `community.general`, never ansible-core). A bare
+   `gem:` task still resolved via the fallback search order, but the
+   far-more-common fully-qualified `community.general.gem:` form got
+   "Plugin not available" despite `plugins/gem.cr` being a real,
+   working plugin. Found via `robertdebock.travis`'s own "install
+   travis" task. Fixed the registration.
+
+Both fixes live-reverified, cold and warm rerun, byte-identical to
+real ansible-playbook. `cve_2021_44228`/`debug`/`core_dependencies`/
+`microsoft_repository_keys` were clean, zero bugs.
 
 ---
 

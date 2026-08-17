@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.446-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.448-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -304,6 +304,18 @@ context.
   host's vars apply), so a `connection: local` task silently ran
   against the real remote target instead. `npm`/`ruby`/
   `ca_certificates`/`restore`/`turn` all clean. See `KNOWN_MISSING.md`/
+  `ROLES_TESTED.md`.
+- **`0.9.447`-`0.9.448` - round 139, `robertdebock.cve_2018_19788`/
+  `.cve_2021_44228`/`.debug`/`.core_dependencies`/
+  `.microsoft_repository_keys`/`.travis`**: 2 real bugs. A task with an
+  integer param past Int32 range (a uid: one past Int32::MAX) was
+  silently dropped at parse time ("Arithmetic overflow") - 3rd/4th
+  independent copy of the round-70 diskspace bug class; `community.
+  general.gem` was registered under the wrong FQCN
+  (`ansible.builtin.gem`), so the far-more-common fully-qualified form
+  got "Plugin not available" despite a real, working plugin existing.
+  `cve_2021_44228`/`debug`/`core_dependencies`/
+  `microsoft_repository_keys` clean. See `KNOWN_MISSING.md`/
   `ROLES_TESTED.md`.
 - **`0.9.445`-`0.9.446` - round 138, `robertdebock.dryrun`/`.ca`/
   `.firewall`/`.elastic_repo`/`.subversion`/`.storage`**: added
