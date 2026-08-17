@@ -63,11 +63,9 @@ module CrystalPlay
     @@block_tag_escalation_depth = 0
     MAX_BLOCK_TAG_ESCALATION_DEPTH = 50
 
-    def initialize(vars : Hash(String, String | JSON::Any) = {} of String => String | JSON::Any, 
-                   host_name : String = "localhost",
+    def initialize(vars : Hash(String, String | JSON::Any) = {} of String => String | JSON::Any,
+                   host_name : String? = nil,
                    facts : Hash(String, JSON::Any) = {} of String => JSON::Any)
-      @host_name = host_name
-      
       # Convert all vars to JSON::Any
       @vars = Hash(String, JSON::Any).new
       vars.each do |key, value|
@@ -80,7 +78,27 @@ module CrystalPlay
           JSON.parse(value.to_json)
         end
       end
-      
+
+      # A caller that already has the real per-host vars_context (every
+      # normal task-dispatch call site does) but omits host_name: - as
+      # several internal re-render helpers do, e.g. CrinjaRenderer#
+      # prepare_crinja_vars's own inner VarSubstitutor - used to silently
+      # default to the LITERAL string "localhost" here, clobbering
+      # `vars["inventory_hostname"]` (already correctly set to the real
+      # host by TaskExecutor#build_vars_context) with the wrong value for
+      # the lifetime of this instance. Any var whose own raw value
+      # referenced `{{ inventory_hostname }}` (or another magic var) and
+      # needed re-templating through one of these no-host_name: call
+      # sites baked in "localhost" instead of the real host - found via
+      # robertdebock.common's own `common_hostname: "{{ inventory_
+      # hostname }}"` default, silently setting every host's hostname to
+      # "localhost" via prepare_crinja_vars. Falling back to whatever's
+      # already in vars (only defaulting to the literal "localhost" if
+      # even that's missing, e.g. a genuinely-empty vars hash in a unit
+      # spec) fixes every such call site at once without needing to
+      # thread host_name: through each of them individually.
+      @host_name = host_name || @vars["inventory_hostname"]?.try(&.as_s?) || "localhost"
+
       # Add magic variables
       add_magic_variables(facts)
     end

@@ -24,6 +24,28 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     renderer.render("worker_processes  {{ nginx_worker_processes }};").should eq(%(worker_processes  "1";))
   end
 
+  it "re-templates a variable whose own value references inventory_hostname against the REAL host, not the literal string \"localhost\"" do
+    # Real bug found benchmarking robertdebock.common: its own
+    # `common_hostname: "{{ inventory_hostname }}"` default needs
+    # re-templating (its raw value is itself unrendered {{ }} text,
+    # same class as the spec above) via prepare_crinja_vars's own
+    # internal VarSubstitutor.new(vars: @vars) - which omitted
+    # host_name:, silently defaulting to the *literal* string
+    # "localhost" (VarSubstitutor's own former default) and clobbering
+    # vars["inventory_hostname"] (already correctly set to the real
+    # host by TaskExecutor#build_vars_context) for the lifetime of that
+    # re-render pass. Every host in the play got "localhost" baked into
+    # common_hostname regardless of its real inventory name - silently
+    # renaming every managed host to "localhost" via ansible.builtin.
+    # hostname.
+    v = Hash(String, JSON::Any).new
+    v["inventory_hostname"] = JSON::Any.new("web1.example.com")
+    v["common_hostname"] = JSON::Any.new("{{ inventory_hostname }}")
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render("hostname is {{ common_hostname }}").should eq("hostname is web1.example.com")
+  end
+
   it "wordwrap packs whole words onto each line (real Python textwrap.wrap semantics), not fixed-width character chunks" do
     # Real bug found benchmarking robertdebock.functions (round 116):
     # the vendored Crinja fork's wordwrap filter chopped the source
