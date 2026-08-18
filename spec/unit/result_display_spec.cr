@@ -2,7 +2,7 @@ require "../spec_helper"
 require "../../src/crystal_play/task_executor/result_display"
 
 private def fresh_stats : Hash(String, Int32)
-  {"ok" => 0, "changed" => 0, "failed" => 0, "skipped" => 0, "rescued" => 0}
+  {"ok" => 0, "changed" => 0, "failed" => 0, "skipped" => 0, "rescued" => 0, "ignored" => 0}
 end
 
 describe CrystalPlay::ResultDisplay do
@@ -44,6 +44,7 @@ describe CrystalPlay::ResultDisplay do
       stats["failed"].should eq(0)
       stats["ok"].should eq(1)
       stats["changed"].should eq(1)
+      stats["ignored"].should eq(1)
     end
 
     it "accumulates ok and changed independently across several tasks" do

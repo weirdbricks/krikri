@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.476-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.477-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -317,6 +317,16 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.477` - PLAY RECAP gains a real `ignored=` counter** (not tied
+  to a new real-host round - closes the cosmetic gap `0.9.476`'s round
+  150 documented). Verified against real `ansible-core`'s own
+  `strategy/__init__.py` source: a task that fails but is caught by
+  `ignore_errors:` increments BOTH `ok` (and `changed`, if applicable -
+  already correct here) AND a separate `ignored` counter - this recap's
+  stats hash had no `ignored` key at all, so the field was silently
+  omitted from every line instead of always showing `ignored=0`.
+  Verified byte-identical (`ok=2 changed=1 failed=0 ignored=1`) against
+  real `ansible-playbook` on a 2-task local repro.
 - **`0.9.476` - round 150, first round targeting fresh (2025/2026-updated)
   Galaxy roles outside the robertdebock/geerlingguy catalogs** already
   exhausted by prior rounds - queried the Galaxy API directly for

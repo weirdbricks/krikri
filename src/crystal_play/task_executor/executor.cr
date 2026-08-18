@@ -153,6 +153,7 @@ module CrystalPlay
           "failed"  => 0,
           "skipped" => 0,
           "rescued" => 0,
+          "ignored" => 0,
         }
         @registered_vars[host.name] = {} of String => JSON::Any
         # ||=, not =: a shared run-scoped store may already hold this

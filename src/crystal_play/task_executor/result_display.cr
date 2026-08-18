@@ -223,6 +223,15 @@ module CrystalPlay
         # changed + 1 unchanged successful tasks), not assumed.
         stats["ok"] += 1
         stats["changed"] += 1 if changed
+
+        # A task that failed but was caught by ignore_errors: still
+        # increments "ok" (and "changed") above - real Ansible's own
+        # strategy/__init__.py does the exact same `increment('ok', ...)`
+        # + `increment('ignored', ...)` pair for this case (verified
+        # against its source, not assumed) - but it ALSO increments a
+        # separate "ignored" counter alongside, which this recap had no
+        # key for at all until now.
+        stats["ignored"] += 1 if failed && ignore_errors
       end
     end
 
@@ -236,7 +245,7 @@ module CrystalPlay
         # here with `Missing hash key`. Zeroes are the honest recap for a
         # host nothing ran on, and match what real ansible-playbook prints.
         stats = results[host.name]? || {
-          "ok" => 0, "changed" => 0, "failed" => 0, "skipped" => 0, "rescued" => 0,
+          "ok" => 0, "changed" => 0, "failed" => 0, "skipped" => 0, "rescued" => 0, "ignored" => 0,
         }
 
         status_parts = [] of String
@@ -266,6 +275,13 @@ module CrystalPlay
         # Rescued count (yellow if any) - block: failures recovered by rescue:
         if stats["rescued"]? && stats["rescued"] > 0
           status_parts << "rescued=#{stats["rescued"]}".colorize(:yellow).to_s
+        end
+
+        # Ignored count (yellow if any) - tasks that failed but were
+        # caught by ignore_errors:, matching real ansible-playbook's own
+        # ignored=N field (see #update_stats for the increment logic).
+        if stats["ignored"]? && stats["ignored"] > 0
+          status_parts << "ignored=#{stats["ignored"]}".colorize(:yellow).to_s
         end
 
         puts "#{host.name.ljust(20)} : #{status_parts.join("  ")}"
