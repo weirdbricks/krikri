@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.491-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.492-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -466,6 +466,27 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.492`** - the Crinja variable context is now lazy: a bare `{{
+  var }}` used to convert the ENTIRE variable context (`JSON::Any` ->
+  `Crinja::Value`, plus a full re-templating pass and a second full copy
+  for the `vars` magic dict) regardless of how many variables the
+  template actually read. A new `LazyCrinjaContext` converts one entry
+  on first access, memoizing into the same `Crinja::Context` scope
+  `lib/crinja` already provides - 300 tasks x 2000 play vars reading one
+  var each measured at 1.22s before, 0.44s after (~2.75x). Each render
+  still gets a fresh child context (parented to the shared lazy one) so
+  a template's own `{% set %}` bindings can't leak into a later render
+  off the same renderer - verified directly, not just by spec. Found and
+  fixed one real gap in the design along the way: `lookup('varnames',
+  pattern)` needs every variable NAME in scope, not just the ones
+  already accessed - missed by the original investigation's `lib/
+  crinja`-only grep for `context.keys` callers, since the actual caller
+  lives in this codebase's own `jinja_filters.cr`; fixed with a cheap
+  `#keys` override (names only, no value conversion) that the full
+  `crystal spec` suite's 2 `varnames`-dependent specs caught immediately
+  (masked in the file's own isolated run by the project's pre-existing,
+  documented require-ordering artifact). `crystal spec`: 1490 examples,
+  0 failures.
 - **`0.9.491`** - `build_hostvars`/`build_groups` (the `hostvars[...]`/
   `groups[...]` magic vars) memoized per `TaskExecutor`, closing a
   quadratic-in-host-count gap: both were previously rebuilt from scratch
@@ -547,12 +568,6 @@ for current-state detail.
   - `willshersystems.sshd` re-uploaded the same fat binary 5 times under
   5 names before this fix. See **Performance** below for the real-role
   benchmark that found it.
-- **`0.9.480`** - `meta:` gains `refresh_inventory` too, re-reading a
-  dynamic inventory script's output in place - but (real Ansible's own
-  documented caveat, confirmed live with a real inventory script) it
-  does NOT add newly-discovered hosts to the CURRENT play's own host
-  loop, only to a LATER play's, since that's computed fresh from the
-  shared inventory each time.
 ---
 
 ## 🤝 Contributing

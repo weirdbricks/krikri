@@ -8,7 +8,7 @@ module CrystalPlay
     # This includes {% if %}, {% for %}, {% set %}, etc.
     class CrinjaRenderer
       @vars : Hash(String, JSON::Any)
-      @template_vars : Hash(String, Crinja::Value)?
+      @template_context : Crinja::Context?
 
       def initialize(@vars : Hash(String, JSON::Any))
       end
@@ -96,11 +96,16 @@ module CrystalPlay
       def render!(text : String) : String
         # @vars is fixed for the lifetime of a renderer (VarSubstitutor
         # #set_variable constructs a new renderer rather than mutating),
-        # so the recursive JSON::Any -> Crinja::Value conversion of the
-        # entire variable context is done once per renderer instead of
+        # so the lazy per-key JSON::Any -> Crinja::Value conversion (see
+        # #build_lazy_context) is set up once per renderer instead of
         # once per render - a task with several templated params renders
-        # more than once.
-        template_vars = (@template_vars ||= prepare_crinja_vars)
+        # more than once. Each render gets its own fresh CHILD context
+        # (parented to the shared lazy one) so a template's own `{% set
+        # %}` bindings never leak into a later render off the same
+        # renderer - see #build_lazy_context's own comment for why a
+        # bare Context (not a Hash) is passed to #render here.
+        parent_context = (@template_context ||= build_lazy_context)
+        child_context = Crinja::Context.new(parent_context)
 
         # Trim markers on OUTPUT tags (`{{- expr }}`/`{{ expr -}}`) used to
         # be worked around by pre-normalizing the source here (the removed
@@ -108,7 +113,7 @@ module CrystalPlay
         # tokenizes them correctly natively (crystal-play-0.9.5 and
         # earlier), so the raw source is handed straight to Crinja.
         template = cached_template(text)
-        template.render(template_vars)
+        template.render(child_context)
       end
 
       # Render a template containing Jinja2 control structures
@@ -154,9 +159,13 @@ module CrystalPlay
       # sequence for the same reason (getting at the raw value, not
       # Crinja's own stringified rendering of it).
       def evaluate_value!(expr : String) : JSON::Any?
-        template_vars = (@template_vars ||= prepare_crinja_vars)
+        # A bare expression (no surrounding template, no tags) can never
+        # contain a `{% set %}`, so - unlike #render! above - there is no
+        # leak risk in evaluating directly against the shared lazy parent
+        # context rather than a fresh per-call child.
+        parent_context = (@template_context ||= build_lazy_context)
         ast = cached_expression(expr)
-        value = shared_env.evaluate(ast, template_vars)
+        value = shared_env.evaluate(ast, parent_context)
         return nil if value.undefined?
 
         CrinjaRenderer.crinja_value_to_json_any(value)
@@ -214,105 +223,95 @@ module CrystalPlay
         end
       end
 
-      # Prepare variables for Crinja rendering
+      # Build the lazy Crinja context backing this renderer's variable
+      # scope. Real Ansible recursively re-templates every variable's
+      # value when it's actually used, no matter where - including
+      # inside a real .j2 template FILE, not just a plain task-param
+      # `{{ }}`. Role `defaults/main.yml` commonly relies on this:
+      # geerlingguy.nginx's own `nginx_worker_processes: '"{{
+      # ansible_processor_vcpus | default(ansible_processor_count)
+      # }}"'` is a YAML string whose *value* is itself more Jinja - real
+      # Jinja2 has no such recursive behavior on its own (a variable's
+      # string value is just a string to it), so without this, `{{
+      # nginx_worker_processes }}` inside nginx.conf.j2 rendered the
+      # literal, still-unparsed `{{ ansible_processor_vcpus | ... }}`
+      # text straight into the config file, and nginx's own config
+      # parser then choked on it. The plain `{{ }}` evaluator
+      # (VarSubstitutor#substitute) already implements exactly this
+      # re-templating for task params via its own bounded multi-pass
+      # loop - reused here (a plain, non-Crinja VarSubstitutor pass, so
+      # no risk of this recursing back into this same render) rather
+      # than duplicating that logic.
       #
-      # Real Ansible recursively re-templates every variable's value when
-      # it's actually used, no matter where - including inside a real
-      # .j2 template FILE, not just a plain task-param `{{ }}`. Role
-      # `defaults/main.yml` commonly relies on this: geerlingguy.nginx's
-      # own `nginx_worker_processes: '"{{ ansible_processor_vcpus |
-      # default(ansible_processor_count) }}"'` is a YAML string whose
-      # *value* is itself more Jinja - real Jinja2 has no such recursive
-      # behavior on its own (a variable's string value is just a string
-      # to it), so without this, `{{ nginx_worker_processes }}` inside
-      # nginx.conf.j2 rendered the literal, still-unparsed `{{
-      # ansible_processor_vcpus | ... }}` text straight into the config
-      # file, and nginx's own config parser then choked on it. The plain
-      # `{{ }}` evaluator (VarSubstitutor#substitute) already implements
-      # exactly this re-templating for task params via its own bounded
-      # multi-pass loop - reused here (a plain, non-Crinja
-      # VarSubstitutor pass, so no risk of this recursing back into this
-      # same render) rather than duplicating that logic.
+      # Used to eagerly walk and convert the WHOLE of `@vars` up front
+      # (`prepare_crinja_vars`/`finish_crinja_vars`, see git history) -
+      # O(all vars) per renderer regardless of how many variables a
+      # given template actually reads. `LazyCrinjaContext` below instead
+      # converts one key at a time, on first access, memoizing into its
+      # own `scope` (a plain `Crinja::Context` IS a
+      # `Util::ScopeMap(String, Crinja::Value)` - see that class's own
+      # `#[]`/`#has_key?`, the only two methods anything in `lib/crinja`
+      # ever calls on a context; `keys`/`values`/`entries` are never
+      # used, checked directly via `grep -rn
+      # 'context\.keys\|context\.entries\|context\.values' lib/crinja/src`)
+      # - so a template reading a handful of variables out of a
+      # thousand-entry context now does O(handful) conversion work, not
+      # O(thousand). Parented off `shared_env.context` (the process-wide
+      # environment's own root context, normally empty) rather than
+      # `nil`, matching what `Environment#with_scope(bindings)` used to
+      # build for us before this change.
+      private def build_lazy_context : Crinja::Context
+        LazyCrinjaContext.new(@vars, VarSubstitutor.new(vars: @vars), shared_env.context)
+      end
+
       # Guards against a genuine infinite-recursion trap distinct from
       # `VarSubstitutor`'s own `@@block_tag_escalation_depth`: that guard
       # bounds the RECURSION DEPTH of `substitute`/`render` calls, but
-      # each `prepare_crinja_vars` call at every depth level re-walks
-      # ALL of `@vars` (not just the one variable that triggered the
-      # recursion), and any OTHER still-templated `{% %}` variable found
-      # along the way recurses again the same way - so the total work is
+      # (back when this was `#prepare_crinja_vars`, walking the whole of
+      # `@vars` eagerly) each recursion level re-walked ALL of `@vars`,
+      # not just the one variable that triggered it - so total work was
       # exponential in (templated-var count) ^ (escalation depth), not
       # linear. Real bug found benchmarking prometheus.prometheus.
       # node_exporter (round 22): `_common_dependencies`'s own vars/
       # main.yml default is `{% if ... %}{{ ... }}{% else %}{% endif
       # %}` (block tags, no surrounding `{{ }}`) - rendering it re-
-      # entered `prepare_crinja_vars`, which re-walked the SAME raw
-      # `@vars` hash (unchanged - this is a read-only re-templating
-      # pass) and found the SAME `_common_dependencies` still raw,
-      # recursing again - with `@@block_tag_escalation_depth`'s cap of
-      # 50 and ~20 templated vars in that role's vars/main.yml, this
-      # pegged a CPU core indefinitely (observed >30s with zero
-      # progress) well before ever reaching the depth-50 exit. A much
-      # tighter cap here (re-templating a variable's value more than a
-      # couple of levels deep from within another variable's own re-
-      # templating pass is already a sign it won't converge) keeps the
-      # existing depth-50 guard as the outer safety net while making
-      # the common case (one or two levels of indirection) cheap.
+      # entered the whole-hash walk, which found the SAME
+      # `_common_dependencies` still raw and recursed again - with
+      # `@@block_tag_escalation_depth`'s cap of 50 and ~20 templated
+      # vars in that role's vars/main.yml, this pegged a CPU core
+      # indefinitely (observed >30s with zero progress) well before ever
+      # reaching the depth-50 exit.
+      #
+      # Now that conversion happens per-KEY on first access
+      # (`LazyCrinjaContext#convert` below) rather than per whole-hash
+      # walk, this guard brackets one key's conversion instead of all of
+      # them - strictly tighter than before (a recursion that used to
+      # burn through N variables' worth of work per depth level now
+      # burns through 1), so the existing cap of 3 stays just as safe,
+      # not looser.
       @@prepare_crinja_vars_depth = 0
       MAX_PREPARE_CRINJA_VARS_DEPTH = 3
 
-      private def prepare_crinja_vars : Hash(String, Crinja::Value)
-        vars = Hash(String, Crinja::Value).new
-
+      # Converts one `@vars` entry to its final `Crinja::Value`, applying
+      # the same recursive re-templating `#rerender_nested_templates`
+      # always did, bounded by the depth guard above. Called from
+      # `LazyCrinjaContext#convert` - kept here (not on that class)
+      # because it needs `@@prepare_crinja_vars_depth`, a CrinjaRenderer
+      # class variable shared across every renderer/context in the
+      # process, matching the guard's own "process-wide, not
+      # per-instance" reasoning (see `VarSubstitutor`'s identical
+      # `@@block_tag_escalation_depth` comment).
+      def self.convert_var(raw_value : JSON::Any, substitutor : VarSubstitutor) : Crinja::Value
         if @@prepare_crinja_vars_depth >= MAX_PREPARE_CRINJA_VARS_DEPTH
-          @vars.each { |key, value| vars[key] = json_any_to_crinja_value(value) }
-          return finish_crinja_vars(vars)
+          return json_any_to_crinja_value(raw_value)
         end
-
-        substitutor = VarSubstitutor.new(vars: @vars)
 
         @@prepare_crinja_vars_depth += 1
         begin
-          @vars.each do |key, value|
-            vars[key] = json_any_to_crinja_value(rerender_nested_templates(value, substitutor))
-          end
+          json_any_to_crinja_value(rerender_nested_templates(raw_value, substitutor))
         ensure
           @@prepare_crinja_vars_depth -= 1
         end
-
-        finish_crinja_vars(vars)
-      end
-
-      private def finish_crinja_vars(vars : Hash(String, Crinja::Value)) : Hash(String, Crinja::Value)
-
-        # `vars` - real Ansible's own magic variable exposing the whole
-        # current variable scope as a dict, letting a template look up a
-        # DYNAMICALLY-COMPUTED variable name (`vars['prefix_' +
-        # suffix]`) rather than a fixed one. openstack.ansible-hardening's
-        # own audit-rule template does exactly this (`vars['security_
-        # rhel7_audit_' + command_sanitized] | bool`, picking which of ~40
-        # individually-named enable/disable flags applies to the audit
-        # rule currently being rendered) - entirely absent before,
-        # "vars is undefined" failed the whole template render outright.
-        # A shallow snapshot (not recursively containing itself under its
-        # own "vars" key) is enough for every real lookup-by-computed-key
-        # usage.
-        vars["vars"] = Crinja::Value.new(vars.reduce(Crinja::Dictionary.new) { |dict, (key, value)| dict[Crinja::Value.new(key)] = value; dict })
-
-        # Real Ansible's `omit` magic variable - a bare identifier
-        # reference, not a filter/function call, so Crinja has no way to
-        # know about it unless it's bound in context like any other var.
-        # `CrystalPlay::OMIT_SENTINEL` is the same magic string
-        # `FilterEngine`'s own `default(omit)`/ternary-argument handling
-        # already produces for the hand-rolled evaluator - binding the
-        # SAME sentinel here means an expression routed through Crinja
-        # (e.g. `user.groups | default([]) | join(',') or omit`) drops
-        # its param the same way, via the same downstream `#substitute_
-        # task_params` sentinel-strip check, instead of silently
-        # rendering as the literal empty string (`omit` resolving to
-        # Undefined -> `""`) - a real, wrong value, not an omitted param.
-        vars["omit"] ||= Crinja::Value.new(CrystalPlay::OMIT_SENTINEL)
-
-        vars
       end
 
       # Real bug found benchmarking geerlingguy.postgresql: its own
@@ -323,25 +322,17 @@ module CrystalPlay
       # computed from ANOTHER default, the same recursive-re-templating
       # shape this codebase has already fixed a dozen-odd times over
       # for plain scalar variable values. This is a distinct sub-case
-      # none of those fixes covered: #prepare_crinja_vars only ever
-      # re-rendered a *top-level* String value - `postgresql_hba_
-      # entries` itself is an Array, so it never even reached the
-      # `raw.is_a?(String)` check at all, and the literal unrendered
-      # `{{ postgresql_auth_method }}` text landed straight into the
-      # rendered config file (PostgreSQL then refused to start:
-      # "invalid authentication method '{{'"). Real Ansible's own
-      # recursive re-templating applies at every level of a nested
-      # structure, not just the outermost value - walks Array/Hash
-      # values recursively, re-rendering every String leaf that still
-      # contains "{{".
-      private def rerender_nested_templates(value : JSON::Any, substitutor : VarSubstitutor) : JSON::Any
-        CrinjaRenderer.rerender_nested_templates(value, substitutor)
-      end
-
-      private def json_any_to_crinja_value(json : JSON::Any) : Crinja::Value
-        CrinjaRenderer.json_any_to_crinja_value(json)
-      end
-
+      # none of those fixes covered: only a *top-level* String value
+      # used to get re-rendered - `postgresql_hba_entries` itself is an
+      # Array, so it never even reached the `raw.is_a?(String)` check at
+      # all, and the literal unrendered `{{ postgresql_auth_method }}`
+      # text landed straight into the rendered config file (PostgreSQL
+      # then refused to start: "invalid authentication method '{{'").
+      # Real Ansible's own recursive re-templating applies at every
+      # level of a nested structure, not just the outermost value -
+      # walks Array/Hash values recursively, re-rendering every String
+      # leaf that still contains "{{".
+      #
       # Exposed as a class method for the same reason
       # #json_any_to_crinja_value is: TemplateActionPlugin has its own
       # separate prepare_*_vars (a genuinely separate Crinja

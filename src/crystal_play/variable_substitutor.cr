@@ -5,6 +5,7 @@ require "./variable_substitutor/filter_engine"
 require "./variable_substitutor/array_slicer"
 require "./variable_substitutor/variable_lookup"
 require "./variable_substitutor/crinja_renderer"
+require "./variable_substitutor/lazy_crinja_context"
 
 module CrystalPlay
   # Sentinel a rendered param value is compared against to detect real
