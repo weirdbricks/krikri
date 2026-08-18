@@ -1096,6 +1096,21 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("connection is local")
   end
 
+  it "doesn't crash a task whose when: skips it, even when its own task-level vars: would raise if evaluated (render_task_vars laziness)" do
+    # Real bug found benchmarking devsec.hardening.os_hardening: task-
+    # level vars: were rendered unconditionally, before when: was even
+    # checked, so a vars: expression that legitimately raises (`| first`
+    # on a genuinely empty sequence, even with `| default(None)` right
+    # after it) crashed the whole task even though when: would have
+    # skipped it before real Ansible's own lazy per-key Jinja templating
+    # ever touched that expression.
+    status, output = run_playbook("test-task-vars-lazy-quick.yml", [] of String)
+
+    status.success?.should be_true
+    output.should contain("SUCCESS")
+    output.should_not contain("should never print")
+  end
+
   it "exits non-zero and reports the error for an invalid playbook" do
     Dir.mkdir_p(File.join(PROJECT_ROOT, "spec", "tmp"))
     bad_playbook = File.join(PROJECT_ROOT, "spec", "tmp", "invalid.yml")

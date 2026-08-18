@@ -1,0 +1,25 @@
+# Regression fixture for render_task_vars's per-key rescue
+# (executor.cr) - a task-level vars: entry that legitimately raises
+# (`| first` on a genuinely empty sequence) must not crash a task whose
+# own when: would have skipped it before real Ansible's lazy per-key
+# Jinja templating ever touched that expression. Real trigger: devsec.
+# hardening.os_hardening's own mount-hardening task.
+- name: "task-level vars: laziness test"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    empty_list: []
+
+  tasks:
+    - name: "when: false skips before the broken vars: entry is ever needed"
+      ansible.builtin.debug:
+        msg: "should never print"
+      when: false
+      vars:
+        broken: "{{ empty_list | first | default(None) }}"
+
+    - name: a later task still runs normally - the play didn't crash
+      ansible.builtin.debug:
+        msg: "SUCCESS"
