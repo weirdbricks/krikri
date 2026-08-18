@@ -277,7 +277,7 @@ module CrystalPlay
     # below. Shared rather than inlined per call site (was duplicated
     # once already, in collect_required_plugins, before this extraction).
     def self.simple_plugin_name(module_name : String) : String
-      module_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community\.(general|docker|mysql|postgresql|crypto))\./, "")
+      module_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community\.(general|docker|mysql|postgresql|crypto)|amazon\.aws)\./, "")
     end
 
     # Plugins that actually read the "vars" field of their config JSON -
@@ -726,7 +726,7 @@ module CrystalPlay
     # case, since pre-upload got it), and costs the upload round trips
     # only the first time an unforeseen module is actually needed.
     def self.ensure_uploaded(host : Host, plugin_name : String, vars : Hash(String, JSON::Any))
-      simple_name = plugin_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community\.(general|docker|mysql|postgresql|crypto))\./, "")
+      simple_name = plugin_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community\.(general|docker|mysql|postgresql|crypto)|amazon\.aws)\./, "")
       connection_host = get_connection_host(host, vars)
       host_key = "#{host.user}@#{connection_host}:#{host.port}"
 
@@ -746,7 +746,7 @@ module CrystalPlay
     end
 
     def self.remote_plugin_target(plugin_name : String, become : Bool, become_user : String?) : String
-      simple_name = plugin_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community\.(general|docker|mysql|postgresql|crypto))\./, "")
+      simple_name = plugin_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community\.(general|docker|mysql|postgresql|crypto)|amazon\.aws)\./, "")
       remote_plugin_path = "#{REMOTE_PLUGIN_DIR}/#{simple_name}"
       become ? "sudo -n -u #{become_user} -- #{remote_plugin_path}" : remote_plugin_path
     end
@@ -834,7 +834,7 @@ module CrystalPlay
     # Get local plugin path (compiled binary)
     private def self.get_local_plugin_path(plugin_name : String) : String
       # Strip FQCN to get simple plugin filename
-      simple_name = plugin_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community\.(general|docker|mysql|postgresql|crypto))\./, "")
+      simple_name = plugin_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community\.(general|docker|mysql|postgresql|crypto)|amazon\.aws)\./, "")
 
       # Resolve plugins/ next to the running binary itself, not relative to
       # the current working directory - otherwise crystal-ansible could

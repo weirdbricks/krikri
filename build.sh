@@ -307,6 +307,7 @@ PLUGINS=(
     "sudoers"
     "dnf_versionlock"
     "docker_image_build"
+    "ec2_metadata_facts"
 )
 
 # These 6 stay real, independent binaries instead of joining the fat

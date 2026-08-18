@@ -519,6 +519,7 @@ module CrystalPlay
       "community.general.sudoers",
       "community.general.dnf_versionlock",
       "community.docker.docker_image_build",
+      "amazon.aws.ec2_metadata_facts",
     }
 
     # The collections a bare (non-FQCN) module name resolves against, in

@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.489-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.490-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -466,6 +466,18 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.490`** - `amazon.aws.ec2_metadata_facts` added and live-verified
+  against a real (throwaway, spot) EC2 instance: recursively walks the
+  IMDSv2 meta-data/dynamic trees the same way the real module does,
+  including flattening nested JSON leaves (e.g. the instance identity
+  document's own `accountId` key) into their own facts. A structural
+  diff against the SAME host's real-`ansible-playbook` output matched
+  on all 80 fact keys (excluding inherently-volatile session
+  credentials/timestamps that regenerate per fetch). Also fixed a real
+  bug found getting there: `PluginManager`'s FQCN-stripping regex (4
+  separate copies) never had an `amazon.aws.` case, so ANY task written
+  as `amazon.aws.<module>:` failed at parse time with "Plugin not
+  available" even for a module that otherwise existed and worked fine.
 - **`0.9.489`** - 4 new modules added, all cross-referenced against a
   real playbook-population frequency count from a work codebase rather
   than guessed at: `community.general.git_config` (live-verified against
@@ -536,12 +548,6 @@ for current-state detail.
   while implementing this: `when:` on ANY `meta:` task (including the
   pre-existing `clear_facts`/`flush_handlers`) was never evaluated at
   all - a when:-gated meta task always ran unconditionally.
-- **`0.9.478`** - `ansible.posix.firewalld`: `zone:` now defaults to the
-  system default zone instead of being required, and real Ansible's own
-  `permanent`/`immediate`/`offline` validation/fallback logic replaces
-  the previous blanket requirement. What's left unimplemented narrowed
-  to one case: a genuinely running firewalld daemon plus a real
-  `immediate:` (live D-Bus) change.
 ---
 
 ## 🤝 Contributing
