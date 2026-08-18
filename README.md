@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.486-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.487-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -86,12 +86,19 @@ have. See **Features** below for the full list of what's implemented.
 
 ## ❓ What's missing
 
-**Short version: as of this version, there are no known real correctness
-gaps left open** - the primary way gaps get found here is running real
-production Ansible roles (from Galaxy) against both engines on real
-hosts and diffing the result, not a pre-planned feature checklist, and
-every gap found that way has been fixed. The structural differences
-above are the only *deliberate* exclusions.
+**Short version: one known real correctness gap is open as of this
+version** - task-level `vars:` are evaluated eagerly rather than lazily
+like real Ansible's own per-key Jinja templating, so a `vars:`
+expression that would legitimately raise can crash a task even when
+`when:` would have skipped it before real Ansible ever touched that
+expression (found via `devsec.hardening.os_hardening`'s own
+mount-hardening task). The primary way gaps get found here is running
+real production Ansible roles (from Galaxy) against both engines on real
+hosts and diffing the result, not a pre-planned feature checklist - most
+gaps found that way have been fixed; this one is real, understood, and
+deliberately left open rather than rushed (see `KNOWN_MISSING.md` for
+why). The structural differences above are separate, deliberate
+exclusions, not gaps.
 
 That status changes as new roles get tested, so it's tracked in one place
 rather than duplicated here:
@@ -450,6 +457,17 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.487`** - real bug fix found benchmarking `devsec.hardening.
+  os_hardening` (heaviest real role tested to date): a bare (non-
+  `{{ }}`) `when: not lookup(...)` condition never actually invoked the
+  lookup call at all, always evaluating the condition text as an
+  undefined variable name instead - proven directly (`when: lookup(...)`
+  and `when: not lookup(...)` gave the SAME result regardless of what
+  the lookup returned). Left every OS-family variable this role loads
+  via a dynamic `set_fact:` loop (package names, config paths) undefined
+  for the rest of the role. Also found, and deliberately left open
+  rather than rushed: task-level `vars:` are evaluated eagerly instead
+  of lazily - see `KNOWN_MISSING.md`.
 - **`0.9.481`-`0.9.486`** - performance pass, measured before/after rather
   than estimated (see `SUGGESTED_PERFORMANCE_IMPROVEMENTS.md`, gitignored
   local notes): plugin config JSON no longer ships the full vars context
@@ -500,13 +518,6 @@ for current-state detail.
 - **`0.9.477`** - PLAY RECAP gained a real `ignored=` counter for tasks
   caught by `ignore_errors:`, matching real Ansible's recap fields
   exactly.
-- **`0.9.476`** - round 150: first round targeting actively-maintained
-  Galaxy roles outside the catalogs prior rounds had already exhausted
-  (the `buluma.*` family plus willshersystems/andrewrothstein/
-  mrlesmithjr/Oefenweb). Found and fixed a real bug where an empty
-  array literal (`[]`) in a `when:`/`assert:` condition compared unequal
-  to a real empty list, due to a Crystal stdlib quirk
-  (`"".split(',')` returning a 1-element array, not an empty one).
 ---
 
 ## 🤝 Contributing

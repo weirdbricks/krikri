@@ -684,6 +684,32 @@ describe CrystalPlay::ConditionalEvaluator do
       CrystalPlay::ConditionalEvaluator.evaluate("odd_n is divisibleby 2", v).should be_false
     end
 
+    it "falls back to Crinja for a bare function-call condition (lookup(...), query(...), etc)" do
+      # Real bug found benchmarking devsec.hardening.os_hardening's own
+      # `when: not lookup('varnames', '^' + item.key + '$')` (looped
+      # once per OS-family variable the role loads, deciding whether to
+      # skip a set_fact: for a name the user already defined).
+      # #evaluate_value has no notion of function-call syntax at all, so
+      # a bare `lookup(...)` condition (not wrapped in an `is <test>`,
+      # the only other Crinja-delegation trigger this module has) fell
+      # through to #evaluate_truthiness, which resolved the condition
+      # TEXT as an undefined variable NAME - the lookup call itself was
+      # never actually invoked, so both `lookup(...)` and
+      # `not lookup(...)` evaluated to the same result regardless of
+      # what the lookup actually returned (proof the call wasn't
+      # running, not just returning the wrong answer). Left every
+      # OS-family package/config variable the role loads (e.g.
+      # `auditd_package`) undefined for the rest of the role, failing
+      # its very first real task ("Unable to locate package undefined").
+      v = Hash(String, JSON::Any).new
+      v["my_defined_var"] = JSON::Any.new("hello")
+
+      CrystalPlay::ConditionalEvaluator.evaluate("not lookup('varnames', '^totally_undefined_var$')", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("not lookup('varnames', '^my_defined_var$')", v).should be_false
+      CrystalPlay::ConditionalEvaluator.evaluate("lookup('varnames', '^totally_undefined_var$')", v).should be_false
+      CrystalPlay::ConditionalEvaluator.evaluate("lookup('varnames', '^my_defined_var$')", v).should be_true
+    end
+
     it "resolves 'is (not) defined' against a dotted variable path" do
       # Real bug found benchmarking cloudalchemy.grafana's own "Fail
       # when grafana admin user isn't set" task: `grafana_security.

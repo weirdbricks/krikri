@@ -10,13 +10,44 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.480`.**
+**Currently at `0.9.487`.**
 
 ---
 
 ## Real gaps (worth revisiting)
 
-(none currently open)
+- **Task-level `vars:` are evaluated eagerly, not lazily like real
+  Ansible's own per-key Jinja templating** - `build_vars_context`
+  renders a task's whole `vars:` block unconditionally as part of
+  building the context `when:` itself gets evaluated against, so a
+  `vars:` expression that would legitimately raise (e.g. `| first` on a
+  genuinely empty sequence with no `| default(...)` after it, or one
+  the pipe order can't protect) crashes the task outright even when
+  `when:` would have skipped it before real Ansible ever touched that
+  expression. Same underlying class as the deferred `mount_options`
+  divergence documented in `ROLES_TESTED.md`'s `robertdebock.
+  mount_options` entry (round 140) - found again, independently, via
+  `devsec.hardening.os_hardening`'s own mount-hardening task: `vars:
+  mountinfo: "{{ ansible_facts.mounts | selectattr(...) | list | first |
+  default(None) }}"` crashes on any host missing that particular mount
+  point (e.g. no separate `/boot` partition - the common case on a cloud
+  VM), even though `when: mount.enabled | bool` is `false` by the role's
+  own default for that entry and real Ansible's lazy templating never
+  evaluates `mountinfo` at all in that case. 6 of the role's 9 default
+  mount entries (`home`/`tmp`/`var`/`var_log`/`var_log_audit`/`var_tmp`,
+  alongside `boot`) are disabled-by-default and share the same shape, so
+  this isn't narrow to one mount point. A real fix needs per-key lazy
+  `vars:` evaluation (or at minimum, evaluating `vars:` only for the
+  keys `when:`/the module's own params actually reference) - a
+  genuinely bigger, riskier change to `build_vars_context`'s sequencing
+  than a filter-level patch, given this project's own history of the
+  vars-context-visibility bug class being the dominant source of real
+  regressions. Not attempted narrowly: a same-session attempt at making
+  `first`/`last` return an Undefined sentinel instead of raising (so a
+  following `| default(...)` could catch it) broke the deliberately
+  distinct case of `| first` with NO `default()` following, which must
+  still raise (a real, spec-verified requirement - see
+  `crinja_renderer_spec.cr`) - reverted rather than landed half-right.
 
 Note: 0.9.474's entry here claiming `openssl_dhparam:`/
 `openssh_keypair:` had "no plugin, no `AVAILABLE_PLUGINS` entry" was

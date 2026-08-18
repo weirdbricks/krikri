@@ -419,6 +419,36 @@ module CrystalPlay
         return rendered.strip == "True"
       end
 
+      # Generic fallback for a bare Jinja FUNCTION CALL as the whole
+      # condition (`lookup(...)`, `query(...)`, etc.) - #evaluate_value
+      # has no notion of function-call syntax at all, so this fell
+      # through to #evaluate_truthiness, which resolves the condition
+      # text as a variable NAME/literal - the call itself was never
+      # actually invoked, so its real return value never factored into
+      # the truthiness at all (verified directly: `when: lookup(...)`
+      # and `when: not lookup(...)` evaluated to the SAME result
+      # regardless of what the lookup actually returned - proof the call
+      # wasn't running, not just returning the wrong answer). Found via
+      # devsec.hardening.os_hardening's own `when: not lookup('varnames',
+      # '^' + item.key + '$')` (deciding whether to skip a `set_fact:`
+      # for a name the user already defined, looping every OS-family
+      # variable the role loads) - always treated as a no-op, so
+      # `auditd_package` (and every other OS-family package/config name)
+      # never got promoted from the loaded `os_vars` dict into a real
+      # top-level variable, leaving `{{ auditd_package }}` to render this
+      # codebase's own "undefined" sentinel and fail the role's very
+      # first real task ("Unable to locate package undefined").
+      #
+      # Delegated to Crinja via an explicit boolean ternary - not just
+      # rendering the raw expression, since a Jinja list/dict/string/int
+      # result needs real Python truthiness applied to it, not just
+      # non-empty-string-ness - rather than reimplementing every lookup
+      # plugin's own return shape by hand.
+      if condition =~ /\A\w+\s*\(.*\)\z/
+        rendered = VariableSubstitutor::CrinjaRenderer.new(vars).render("{{ 'True' if (#{condition}) else 'False' }}")
+        return rendered.strip == "True"
+      end
+
       # Handle bare variable (truthiness check)
       return evaluate_truthiness(condition, vars)
     end
