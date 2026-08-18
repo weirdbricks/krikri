@@ -731,4 +731,58 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("outer_var").should eq(%({"name":"spamassassin","state":"started"}))
     evaluator.evaluate("outer_var.name").should eq("spamassassin")
   end
+
+  describe "process-wide dispatch-shape cache (SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #4)" do
+    # #split_ternary/#split_ternary_no_else/#boolean_logic? are now
+    # memoized by literal expr text in a process-wide (not per-instance)
+    # Hash, since which of the 4 dispatch shapes a `{{ }}` body's TEXT
+    # has is a pure function of that text. These specs are the "does the
+    # shared cache generalize correctly" net: the SAME literal expr
+    # string, evaluated by DIFFERENT ExpressionEvaluator instances (each
+    # with its own @vars), must still produce each instance's own
+    # correct result - a broken cache (e.g. one that accidentally
+    # memoized a RESULT instead of just the shape) would show the first
+    # instance's answer leaking into the second.
+    it "evaluates the same literal ternary text correctly across different ExpressionEvaluator instances/values" do
+      first = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any){"flag" => JSON::Any.new(true)})
+      second = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any){"flag" => JSON::Any.new(false)})
+
+      first.evaluate("'yes' if flag else 'no'").should eq("yes")
+      second.evaluate("'yes' if flag else 'no'").should eq("no")
+      # Re-check the first AFTER the second ran, on the identical literal
+      # text - a cache keyed on the wrong thing (e.g. a memoized RESULT
+      # rather than just "this text has ternary shape") would show the
+      # second instance's answer bleeding into the first here.
+      first.evaluate("'yes' if flag else 'no'").should eq("yes")
+    end
+
+    it "evaluates the same literal else-less-ternary text correctly across different values" do
+      first = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any){"flag" => JSON::Any.new(true)})
+      second = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any){"flag" => JSON::Any.new(false)})
+
+      first.evaluate("'shown' if flag").should eq("shown")
+      second.evaluate("'shown' if flag").should eq("")
+    end
+
+    it "evaluates the same literal boolean-logic text correctly across different values" do
+      first = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any){"a" => JSON::Any.new(true), "b" => JSON::Any.new(false)})
+      second = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any){"a" => JSON::Any.new(false), "b" => JSON::Any.new(false)})
+
+      first.evaluate("a or b").should eq("True")
+      second.evaluate("a or b").should eq("False")
+    end
+
+    it "still falls through to the plain evaluator for text that has no top-level ternary/boolean-logic shape at all" do
+      # A cached "no match" (nil/false) result is the common case - most
+      # `{{ }}` bodies aren't ternaries or boolean-logic expressions -
+      # and is exactly the case a naive `||=`-based cache would fail to
+      # memoize at all (nil looks like "not cached yet" to `||=`),
+      # silently defeating most of the point of caching. Evaluated twice
+      # to exercise both the cache-miss (first call) and cache-hit
+      # (second call) path for the SAME "no match" text.
+      evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any){"x" => JSON::Any.new(5_i64)})
+      evaluator.evaluate("x + 1").should eq("6")
+      evaluator.evaluate("x + 1").should eq("6")
+    end
+  end
 end

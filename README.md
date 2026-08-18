@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.494-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.495-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -466,6 +466,24 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.495`** - `ExpressionEvaluator#evaluate`'s dispatch re-scanned
+  every `{{ }}` body's text from scratch on every call (up to 6 full
+  character-by-character passes before ever reaching the real
+  evaluation) to classify which of 4 shapes it has (ternary-with-else,
+  ternary-no-else, boolean-logic, or plain) - now memoized by literal
+  text in a process-wide cache, since the classification is a pure
+  function of the string. Deliberately narrower than this item's
+  original proposal: a prior pass (`0.9.485`) found that caching WHICH
+  BRANCH ultimately handles an expression is unsafe (Crinja's
+  success/failure can depend on a variable's runtime value, not just
+  the expression's static text), so only the shape classification is
+  cached - the actual render/fallback still runs fresh every time.
+  Differential-tested against 3080 real `{{ }}` expressions scraped
+  from `testing/roles` + 21 benchmarked Galaxy roles: 3079/3080
+  byte-identical output before/after, the 1 divergence being
+  `password_hash(...)`'s own random salt. 2000 tasks repeating the same
+  ternary/filter text: 0.19s -> 0.16s (~1.2x). `crystal spec`: 1498
+  examples, 0 failures.
 - **`0.9.494`** - `build_vars_context` (rebuilt from scratch on every
   single (task, host) pair) now caches its per-host-invariant inputs
   behind the same generation counter `0.9.491`'s `hostvars`/`groups`
@@ -558,19 +576,6 @@ for current-state detail.
   separate copies) never had an `amazon.aws.` case, so ANY task written
   as `amazon.aws.<module>:` failed at parse time with "Plugin not
   available" even for a module that otherwise existed and worked fine.
-- **`0.9.489`** - 4 new modules added, all cross-referenced against a
-  real playbook-population frequency count from a work codebase rather
-  than guessed at: `community.general.git_config` (live-verified against
-  a local repo/ad-hoc file), `community.general.sudoers` (live-verified,
-  including `visudo` validation against a real binary), `community.
-  general.dnf_versionlock` (NEVRA-matching/locklist logic implemented
-  against the real module's own source; only unit-testable on this dev
-  box - no `dnf` here - full verification needs a RHEL/Fedora host with
-  `dnf-plugin-versionlock`, deferred to a future round), and `community.
-  docker.docker_image_build` (shells out to `docker buildx build`,
-  live-verified against a real Docker-API-compatible daemon on this
-  machine). `amazon.aws.ec2_metadata_facts` from the same frequency
-  count deliberately deferred - see `KNOWN_MISSING.md`.
 ---
 
 ## 🤝 Contributing

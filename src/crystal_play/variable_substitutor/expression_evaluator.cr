@@ -211,10 +211,55 @@ module CrystalPlay
       # not trip this at the outer level (ConditionalEvaluator's own
       # recursive descent already handles that correctly once the whole
       # expression is handed to it).
+      # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #4: memoized by literal
+      # `expr` text, process-wide - the SAME `{{ var | filter }}` source
+      # commonly appears dozens-to-hundreds of times across a role, and
+      # #evaluate re-scans it from scratch on every single call (up to 6
+      # full character-by-character `top_level_keyword_index` passes -
+      # 2 from #split_ternary, 1 from #split_ternary_no_else, 3 from
+      # #boolean_logic? - before ever reaching #evaluate_expr for an
+      # expression that matches none of the 3 special shapes).
+      #
+      # Deliberately narrower than the item's original "memoize which
+      # dispatch path" framing, which a prior pass (0.9.485) investigated
+      # and did NOT implement: whether `render_via_crinja(expr)` itself
+      # raises depends on Crinja's runtime evaluation (a variable's
+      # actual TYPE, not just the expression's static text - `{{ x |
+      # first }}` can succeed or raise depending on whether `x` is
+      # empty), so caching "did Crinja end up handling this" by source
+      # text alone would be memoizing a RUNTIME-dependent outcome as if
+      # it were a pure function of the string - unsafe, per that
+      # investigation's own finding. What's cached here is narrower and
+      # provably safe: `#split_ternary`/`#split_ternary_no_else`/
+      # `#boolean_logic?` are pure string scans with no `@vars` access
+      # at all (verified by reading all 3 bodies directly - only
+      # `#top_level_keyword_index`, itself pure) - which of the 4
+      # dispatch SHAPES an expr's TEXT has is a genuine constant, and
+      # `render_via_crinja`/the hand-rolled fallback are still invoked
+      # completely fresh on every real call, exactly as before - only
+      # the shape CLASSIFICATION is reused, never the outcome of trying
+      # to render it.
+      #
+      # Differential-tested, not just spec-tested: ran all 3080 real
+      # "output"-kind `{{ }}` expressions scraped from `testing/roles` +
+      # 21 benchmarked Galaxy roles (`scripts/crinja_corpus/corpus.
+      # jsonl`) through `ExpressionEvaluator#evaluate` before and after
+      # this change - byte-identical output (or identical raised
+      # exception class) for all 3080, confirming the memoization is
+      # invisible to real-world dispatch behavior, not just this
+      # project's own spec suite.
+      @@split_ternary_cache = Hash(String, {String, String, String}?).new
+      @@split_ternary_no_else_cache = Hash(String, {String, String}?).new
+      @@boolean_logic_cache = Hash(String, Bool).new
+
       private def boolean_logic?(expr : String) : Bool
-        !top_level_keyword_index(expr, " or ").nil? ||
-          !top_level_keyword_index(expr, " and ").nil? ||
-          !top_level_keyword_index(expr, " is ").nil?
+        return @@boolean_logic_cache[expr] if @@boolean_logic_cache.has_key?(expr)
+
+        result = !top_level_keyword_index(expr, " or ").nil? ||
+                 !top_level_keyword_index(expr, " and ").nil? ||
+                 !top_level_keyword_index(expr, " is ").nil?
+        @@boolean_logic_cache[expr] = result
+        result
       end
 
       # Tokens whose presence on one side of a top-level `or`/`and` mean
@@ -821,18 +866,21 @@ module CrystalPlay
       # a condition that itself contains " if "/" else " inside quotes or
       # nested parens/brackets is left intact.
       private def split_ternary(expr : String) : {String, String, String}?
+        return @@split_ternary_cache[expr] if @@split_ternary_cache.has_key?(expr)
+
         if_idx = top_level_keyword_index(expr, " if ")
-        return nil unless if_idx
+        result = if if_idx
+                    else_idx = top_level_keyword_index(expr, " else ", if_idx + 4)
+                    if else_idx
+                      truthy = expr[0...if_idx].strip
+                      cond = expr[(if_idx + 4)...else_idx].strip
+                      falsy = expr[(else_idx + 6)..].strip
+                      (truthy.empty? || cond.empty? || falsy.empty?) ? nil : {truthy, cond, falsy}
+                    end
+                  end
 
-        else_idx = top_level_keyword_index(expr, " else ", if_idx + 4)
-        return nil unless else_idx
-
-        truthy = expr[0...if_idx].strip
-        cond = expr[(if_idx + 4)...else_idx].strip
-        falsy = expr[(else_idx + 6)..].strip
-        return nil if truthy.empty? || cond.empty? || falsy.empty?
-
-        {truthy, cond, falsy}
+        @@split_ternary_cache[expr] = result
+        result
       end
 
       # Splits *expr* on a top-level ` if ` with NO ` else ` clause at all
@@ -845,14 +893,17 @@ module CrystalPlay
       # to #evaluate_expr on the literal text `'+ent' if vault_enterprise`,
       # always resolving to the string "undefined" instead of "".
       private def split_ternary_no_else(expr : String) : {String, String}?
+        return @@split_ternary_no_else_cache[expr] if @@split_ternary_no_else_cache.has_key?(expr)
+
         if_idx = top_level_keyword_index(expr, " if ")
-        return nil unless if_idx
+        result = if if_idx
+                    truthy = expr[0...if_idx].strip
+                    cond = expr[(if_idx + 4)..].strip
+                    (truthy.empty? || cond.empty?) ? nil : {truthy, cond}
+                  end
 
-        truthy = expr[0...if_idx].strip
-        cond = expr[(if_idx + 4)..].strip
-        return nil if truthy.empty? || cond.empty?
-
-        {truthy, cond}
+        @@split_ternary_no_else_cache[expr] = result
+        result
       end
 
       private def evaluate_ternary_no_else(ternary : {String, String}) : String
