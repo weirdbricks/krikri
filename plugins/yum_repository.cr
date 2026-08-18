@@ -129,6 +129,18 @@ module CrystalPlay
         return PluginResult.new(changed: false, failed: true, msg: "state is present but any of the following are missing: baseurl, mirrorlist, metalink")
       end
 
+      # Real Ansible's own yum_repository refuses to create *reposdir*
+      # itself (`Repo directory '/etc/yum.repos.d' does not exist.`) -
+      # confirmed live against a non-RPM (Ubuntu) target, where that
+      # directory genuinely doesn't exist. Previously this plugin's own
+      # write_repo silently `Dir.mkdir_p`'d it into existence instead,
+      # which papers over the same "this host has no yum/dnf at all"
+      # signal real Ansible's own check deliberately surfaces as a
+      # module failure rather than a surprising directory creation.
+      unless Dir.exists?(reposdir)
+        return PluginResult.new(changed: false, failed: true, msg: "Repo directory '#{reposdir}' does not exist.")
+      end
+
       write_repo(name, description, path)
     end
 

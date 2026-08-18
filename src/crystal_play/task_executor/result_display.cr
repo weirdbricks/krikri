@@ -78,6 +78,44 @@ module CrystalPlay
       end
     end
 
+    # Display an ad-hoc `ansible` command's result, matching real
+    # ansible's own default ("minimal") callback: `host | STATUS | rc=N >>`
+    # followed by raw stdout for command-shaped modules (rc + stdout
+    # present - command/shell/script/raw), or `host | STATUS => {...}`
+    # pretty-printed JSON for every other module. Deliberately NOT
+    # ResultDisplay.display_result - that one renders ansible-playbook's
+    # own "ok: [host]" TASK-recap style, a different output convention
+    # ansible's ad-hoc CLI has never used.
+    def self.display_adhoc_result(host : Host, result : JSON::Any)
+      changed = result["changed"]?.try(&.as_bool) || false
+      failed = result["failed"]?.try(&.as_bool) || false
+      unreachable = result["unreachable"]?.try(&.as_bool) || false
+
+      status = if unreachable
+                 "UNREACHABLE!".colorize(:red).bold
+               elsif failed
+                 "FAILED!".colorize(:red).bold
+               elsif changed
+                 "CHANGED".colorize(:yellow)
+               else
+                 "SUCCESS".colorize(:green)
+               end
+
+      connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+
+      rc = result["rc"]?.try(&.as_i?)
+      stdout = result["stdout"]?.try(&.as_s?)
+      if rc && stdout
+        puts "#{connection_host} | #{status} | rc=#{rc} >>"
+        puts stdout
+        if (stderr = result["stderr"]?.try(&.as_s?)) && !stderr.empty?
+          puts stderr.colorize(:red)
+        end
+      else
+        puts "#{connection_host} | #{status} => #{result.to_pretty_json}"
+      end
+    end
+
     # Display diff (delegates to specific diff types)
     def self.display_diff(diff : JSON::Any)
       puts ""

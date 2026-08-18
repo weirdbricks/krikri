@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.471-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.474-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -217,6 +217,26 @@ Supports standard Ansible playbook syntax. See the
 ./bin/crystal-ansible --check --diff -i production.ini playbook.yml
 ```
 
+### Ad-hoc commands (`ansible`)
+
+A separate binary, matching real Ansible's own `ansible`/`ansible-playbook`
+split - runs exactly one module against a pattern of inventory hosts,
+reusing the same connection/become/check-mode/forks engine as the
+playbook runner:
+
+```bash
+./bin/ansible all -m ping
+./bin/ansible webservers -a 'uptime'
+./bin/ansible all -m command -a 'systemctl status nginx'
+./bin/ansible all -m copy -a 'src=foo.conf dest=/etc/foo.conf' -b
+./bin/ansible db -i inventory.ini -m service -a 'name=postgresql state=restarted' -b
+```
+
+Supports `-i`, `-m`, `-a`, `-u`, `-b`/`--become`, `--become-user`, `-C`/`--check`,
+`-f`/`--forks`, `-l`/`--limit`, `-v`. Output matches real ansible's own
+minimal callback (`host | SUCCESS => {...}` / `host | CHANGED | rc=0 >>`),
+not ansible-playbook's `ok: [host]` TASK-recap style.
+
 ---
 
 ## ⚡ Performance
@@ -297,6 +317,54 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.474` - same `ansible` ad-hoc round, RHEL-family target**: 1
+  Atlantic.net Rocky 9.6 host (dnf/mariadb/postgresql/docker-ce/EPEL
+  installed fresh), same all-87-plugins real-vs-crystal comparison as
+  0.9.473's Ubuntu round. 77/86 matched on the first pass (vs. 59/87
+  the first time - most of the earlier round's noise was the
+  comparison script's own status-line parsing, fixed here by grepping
+  the whole output instead of just the first line). 1 real bug found
+  and fixed, more serious than either 0.9.473 fix: `archive:`/
+  `mysql_db:`/`postgresql_db:` all use the `bz2` shard's real `libbz2`
+  C binding, dynamically linked - `libbz2.so.1.0` ships in Ubuntu's
+  base image but not in a base/minimal RHEL-family one, so all three
+  crashed outright at plugin-execution time on Rocky ("error while
+  loading shared libraries: libbz2.so.1.0: cannot open shared object
+  file"), even for a task never touching a `.bz2` path (a missing
+  shared library fails at process start, before `main()` runs at all).
+  Fixed by statically linking just `libbz2` (`--link-flags="-Wl,
+  -Bstatic -lbz2 -Wl,-Bdynamic"` for those 3 plugins only in
+  `build.sh` - confirmed via `ldd` that no other dynamic dependency,
+  openssl/pcre2/glibc included, was affected). The remaining diffs were
+  either genuinely RHEL-vs-Debian-only module behavior (`apt`/
+  `apt_key`/`apt_repository`/`deb822_repository`/`dpkg_selections`/
+  `ufw`/`debconf` correctly fail on both engines - no apt/dpkg/ufw on
+  RHEL), a target-side missing Python dependency real Ansible itself
+  also fails on (`expect:` needs `pexpect`, not installed), or the
+  already-documented `ansible.posix.firewalld`/`pamd: state=updated`
+  scope cuts (see `KNOWN_MISSING.md`).
+- **`0.9.473` - first real-host round for the new `ansible` ad-hoc CLI**:
+  1 Atlantic.net Ubuntu 22.04 target, all 87 plugins exercised via
+  `ansible <pattern> -m <module> -a <args>` against both real `ansible`
+  and `./bin/ansible`, resetting the module's own state between the two
+  invocations so each got a genuine first-run comparison (not "real ran
+  first, so crystal saw it already done"). 3 real bugs found and fixed:
+  `assert:`'s `that=` crashed outright on ad-hoc's plain-string form
+  (needed the same JSON-array encoding a playbook task's `that:` already
+  got - `parse_adhoc_params` now applies it too); `yum_repository:`
+  silently `mkdir -p`'d `/etc/yum.repos.d` into existence on a non-RPM
+  host instead of failing like real Ansible's own "Repo directory ...
+  does not exist." check; `dpkg_selections:` let `dpkg --set-selections`
+  record a selection for a package dpkg had never heard of, where real
+  Ansible fails outright ("Failed to find package '...' to perform
+  selection '...'"). The other ~28 apparent diffs were confirmed as
+  either output-format-only differences (mysql_info/mysql_db's own field
+  names never matched crystal's ansible_facts-shaped choices; the
+  "SUCCESS | rc=0 >>" vs "SUCCESS => {...}" wording), documented scope
+  cuts (`pamd:`'s `state=updated` mode, `openssl_dhparam:`/
+  `openssh_keypair:` never implemented), or test-harness artifacts (bad
+  reset commands for `known_hosts:`/`fetch:`/`apt_key:`, a nonexistent
+  bare module name for the `facts` test) - not crystal-ansible bugs.
 - **`0.9.471` - closes out the KNOWN_MISSING.md real-gaps list (not a
   benchmark round)**: `expect:` is now a real session leader (manual
   `fork()`+`setsid()`+`ioctl(TIOCSCTTY)`, since `Process.new`'s own

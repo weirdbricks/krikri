@@ -1485,6 +1485,42 @@ module CrystalPlay
     end
 
     # Parse module parameters into a hash
+    # Parses an `ansible` ad-hoc command's `-a` string into module params,
+    # using the exact same rules as a playbook's own bare-string task arg
+    # (the yaml.as_s? branch of #parse_module_params below - see that
+    # branch's own comment for the full rationale): command:/shell:/
+    # script:/raw: get the whole string as a command line plus any
+    # trailing key=value specials (creates=/removes=/chdir=/executable=)
+    # stripped off the end; every other module gets real Ansible's
+    # free-form `key=value key2="quoted value"` inline syntax.
+    def self.parse_adhoc_params(module_name : String, raw_args : String) : Hash(String, String)
+      params = Hash(String, String).new
+      return params if raw_args.empty?
+
+      if RAW_COMMAND_MODULES.includes?(module_name)
+        cmd, special = extract_command_special_params(raw_args)
+        params["cmd"] = cmd
+        special.each { |key, value| params[key] = value }
+      else
+        parse_inline_kv_params(raw_args).each { |key, value| params[key] = value }
+        params["_raw_params"] = raw_args
+      end
+
+      # `that=<condition>` on an ad-hoc `-a` string is a single bare
+      # condition string, same shape real Ansible accepts for assert:'s
+      # `that:` - but AssertPlugin (see plugins/assert.cr) always expects
+      # the JSON-array-encoded form #parse_module_params's own yaml.as_h?
+      # branch produces for a playbook task, not a raw string. Without
+      # this, `ansible host -m assert -a 'that="1 == 1"'` crashed outright
+      # (Array(String).from_json on a bare "1 == 1" - "Expected
+      # BeginArray but was Int").
+      if module_name == "ansible.builtin.assert" && (that = params["that"]?)
+        params["that"] = [that].to_json
+      end
+
+      params
+    end
+
     private def self.parse_module_params(yaml : YAML::Any, module_name : String) : Hash(String, String)
       params = Hash(String, String).new
 

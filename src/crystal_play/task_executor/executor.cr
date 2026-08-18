@@ -108,6 +108,14 @@ module CrystalPlay
     # time regardless of this value. A *looped* include_tasks: IS
     # forkable. See `run_task_for_hosts_in_parallel`.
     @forks : Int32
+    # True for the `ansible` ad-hoc CLI (as opposed to `crystal-ansible`
+    # running a playbook): suppresses the playbook-style "TASK [...]"
+    # banner (ad-hoc has no task name to show - it's always exactly one
+    # synthetic task) and switches finish_single_task's result display
+    # to ResultDisplay.display_adhoc_result, matching real ansible's own
+    # `host | SUCCESS => {...}` minimal-callback output instead of
+    # ansible-playbook's `ok: [host]`.
+    @adhoc : Bool
 
     def initialize(
       @hosts,
@@ -121,7 +129,8 @@ module CrystalPlay
       @batching_enabled = true,
       @forks = 5,
       @smart_gathering = false,
-      fact_store : Hash(String, Hash(String, JSON::Any))? = nil
+      fact_store : Hash(String, Hash(String, JSON::Any))? = nil,
+      @adhoc = false
     )
       @results = Hash(String, Hash(String, Int32)).new
       @registered_vars = Hash(String, Hash(String, JSON::Any)).new
@@ -268,9 +277,11 @@ module CrystalPlay
         # own convention - so a templated name is rendered against
         # whichever host will actually run first (matches this file's
         # existing `run_once`-style "first host" precedent elsewhere).
-        display_host = active_hosts.first? || hosts.first
-        puts "TASK [#{render_task_name_for_display(task, display_host)}]".colorize(:white).bold
-        puts "*" * 70
+        unless @adhoc
+          display_host = active_hosts.first? || hosts.first
+          puts "TASK [#{render_task_name_for_display(task, display_host)}]".colorize(:white).bold
+          puts "*" * 70
+        end
 
         if @forks > 1 && task_forkable?(task) && active_hosts.size > 1
           run_task_for_hosts_in_parallel(task, active_hosts)
@@ -278,7 +289,7 @@ module CrystalPlay
           active_hosts.each { |host| execute_task(task, host) }
         end
 
-        puts ""
+        puts "" unless @adhoc
       end
     end
 
@@ -2448,7 +2459,11 @@ module CrystalPlay
         notify_handlers(task, host, notify_list)
       end
 
-      ResultDisplay.display_result(host, result, @diff_mode)
+      if @adhoc
+        ResultDisplay.display_adhoc_result(host, result)
+      else
+        ResultDisplay.display_result(host, result, @diff_mode)
+      end
       ResultDisplay.update_stats(@results[host.name], result, task.ignore_errors)
       halt_if_failed(task, host, failed)
     end
@@ -2812,7 +2827,11 @@ module CrystalPlay
         notify_handlers(task, host, notify_list)
       end
 
-      ResultDisplay.display_result(host, result, @diff_mode)
+      if @adhoc
+        ResultDisplay.display_adhoc_result(host, result)
+      else
+        ResultDisplay.display_result(host, result, @diff_mode)
+      end
       ResultDisplay.update_stats(@results[host.name], result, task.ignore_errors)
       halt_if_failed(task, host, failed)
     end

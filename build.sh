@@ -176,6 +176,43 @@ else
 fi
 echo ""
 
+# Build ansible (ad-hoc CLI)
+echo -e "${YELLOW}🔨 Building ansible (ad-hoc CLI)...${NC}"
+
+ADHOC_BINARY="$OUTPUT_DIR/ansible"
+ADHOC_SOURCE="ansible.cr"
+
+NEEDS_BUILD=false
+
+if [ ! -f "$ADHOC_BINARY" ]; then
+    NEEDS_BUILD=true
+elif [ "$ADHOC_SOURCE" -nt "$ADHOC_BINARY" ]; then
+    NEEDS_BUILD=true
+elif find src -name '*.cr' -newer "$ADHOC_BINARY" -print -quit | grep -q .; then
+    NEEDS_BUILD=true
+elif [ -d lib ] && find lib -name '*.cr' -newer "$ADHOC_BINARY" -print -quit | grep -q .; then
+    NEEDS_BUILD=true
+fi
+
+if [ "$NEEDS_BUILD" = true ]; then
+    echo -n "   Building ansible... "
+    if ! OUTPUT=$(crystal build ansible.cr -o "$ADHOC_BINARY" $BUILD_FLAGS 2>&1); then
+        echo -e "${RED}✗${NC}"
+        echo ""
+        echo -e "${RED}❌ Build failed for ansible${NC}"
+        echo ""
+        echo "$OUTPUT"
+        echo ""
+        exit 1
+    fi
+    echo -e "${GREEN}✓${NC}"
+    echo -e "${GREEN}✅ ansible built: $OUTPUT_DIR/ansible${NC}"
+else
+    echo -e "   ${BLUE}✓${NC} ansible (up to date)"
+    echo -e "${GREEN}✅ ansible up to date${NC}"
+fi
+echo ""
+
 # Build plugins
 echo -e "${YELLOW}🔌 Building plugins...${NC}"
 PLUGINS=(
@@ -323,10 +360,37 @@ if [ "$REBUILT_COUNT" -gt 0 ]; then
     STATUS_DIR=$(mktemp -d)
     trap 'rm -rf "$STATUS_DIR"' EXIT
 
+    # archive/mysql_db/postgresql_db all use the bz2 shard's real
+    # libbz2 C binding (Compress::BZ2::Writer/Reader), which links
+    # -lbz2 dynamically by default. libbz2.so.1.0 ships in Ubuntu's
+    # base image but NOT in a base/minimal RHEL-family (Rocky/CentOS/
+    # Alma) one - found live benchmarking a Rocky 9.6 target (0.9.474):
+    # all three crashed at plugin-execution time with "error while
+    # loading shared libraries: libbz2.so.1.0: cannot open shared
+    # object file", even for a task never touching a .bz2 path at all
+    # (a shared-library load failure happens at process start, before
+    # main() ever runs). `-Wl,-Bstatic -lbz2 -Wl,-Bdynamic` statically
+    # links just libbz2 (confirmed via `ldd` - no libbz2.so entry
+    # remains) while leaving every other dynamic dependency (openssl,
+    # pcre2, glibc itself) untouched, matching this codebase's existing
+    # "glibc is a non-issue, no full static/musl build needed" stance -
+    # this fixes the one specific library that WAS missing rather than
+    # switching the whole build to static linking.
+    BZ2_STATIC_PLUGINS="archive mysql_db postgresql_db"
+
     build_one_plugin() {
         local plugin="$1"
         local source="plugins/$plugin.cr"
         local binary="$PLUGINS_DIR/$plugin"
+
+        local link_flags=()
+        if [[ " $BZ2_STATIC_PLUGINS " == *" $plugin "* ]]; then
+            # Must stay one argument (crystal splits --link-flags' OWN
+            # value on whitespace internally) - an unquoted expansion
+            # here would let bash split it into three separate argv
+            # entries first, breaking the build.
+            link_flags=("--link-flags=-Wl,-Bstatic -lbz2 -Wl,-Bdynamic")
+        fi
 
         # Each parallel job gets its own CRYSTAL_CACHE_DIR - concurrent
         # `crystal build` invocations sharing the default `~/.cache/crystal`
@@ -334,7 +398,7 @@ if [ "$REBUILT_COUNT" -gt 0 ]; then
         # spurious "you've found a bug in the Crystal compiler" /
         # errno.cr "No such file or directory" mid-codegen under real
         # parallel load - not an actual bug in any of these plugins).
-        if OUTPUT=$(CRYSTAL_CACHE_DIR="$STATUS_DIR/cache-$plugin" crystal build "$source" -o "$binary" $BUILD_FLAGS 2>&1); then
+        if OUTPUT=$(CRYSTAL_CACHE_DIR="$STATUS_DIR/cache-$plugin" crystal build "$source" -o "$binary" $BUILD_FLAGS "${link_flags[@]}" 2>&1); then
             chmod +x "$binary"
             echo -e "   ${GREEN}✓${NC} $plugin"
         else
@@ -343,7 +407,7 @@ if [ "$REBUILT_COUNT" -gt 0 ]; then
         fi
     }
     export -f build_one_plugin
-    export PLUGINS_DIR BUILD_FLAGS STATUS_DIR RED GREEN YELLOW NC
+    export PLUGINS_DIR BUILD_FLAGS STATUS_DIR RED GREEN YELLOW NC BZ2_STATIC_PLUGINS
 
     printf '%s\n' "${TO_BUILD[@]}" | xargs -P "$JOBS" -I{} bash -c 'build_one_plugin "$@"' _ {}
 
@@ -380,6 +444,7 @@ echo -e "${BLUE}║         Build Complete! 🎉             ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "${GREEN}Executable:${NC} $OUTPUT_DIR/crystal-ansible"
+echo -e "${GREEN}Executable:${NC} $OUTPUT_DIR/ansible"
 echo -e "${GREEN}Plugins:${NC} $PLUGINS_DIR/ ($PLUGIN_COUNT plugins)"
 echo ""
 echo -e "${YELLOW}Quick Start:${NC}"

@@ -27,6 +27,20 @@ module CrystalPlay
         return PluginResult.new(changed: false, failed: true, msg: "selection must be one of #{VALID_SELECTIONS.join(", ")}, got '#{selection}'")
       end
 
+      # Real Ansible's own module refuses to set a selection for a
+      # package dpkg has never heard of ("Failed to find package 'tree'
+      # to perform selection 'install'.", verified live against a real
+      # Ubuntu host for a package that was never installed) - `dpkg
+      # --set-selections` itself has no such guard (it happily records a
+      # selection for an unknown package name, which then has no effect
+      # until/unless that package is ever installed), so without this
+      # check this plugin silently "succeeded" at a no-op real Ansible
+      # treats as a hard error.
+      known = remote_exec("dpkg-query -W #{shell_quote(name)} 2>/dev/null")
+      if known[:exit_code] != 0
+        return PluginResult.new(changed: false, failed: true, msg: "Failed to find package '#{name}' to perform selection '#{selection}'.")
+      end
+
       current = remote_exec("dpkg --get-selections #{shell_quote(name)} 2>/dev/null")
       current_selection = current[:stdout].strip.split(/\s+/).last?
 
