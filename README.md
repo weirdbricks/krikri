@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.475-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.476-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -317,6 +317,28 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.476` - round 150, first round targeting fresh (2025/2026-updated)
+  Galaxy roles outside the robertdebock/geerlingguy catalogs** already
+  exhausted by prior rounds - queried the Galaxy API directly for
+  popular roles modified since 2025 and not already in
+  `ROLES_TESTED.md`, landing on the actively-maintained `buluma.*`
+  family (a robertdebock-style role set) plus willshersystems/
+  andrewrothstein/mrlesmithjr/Oefenweb. 1 Atlantic.net Ubuntu 22.04
+  pair, 10 roles run cold+warm on both engines. 1 real bug found and
+  fixed: `conditional_evaluator.cr`'s hand-rolled array-literal parser
+  turned an empty `[]` into a bogus 1-element array (`"".split(',')`
+  returns `[""]` in Crystal, not `[]`), so `willshersystems.sshd`'s own
+  `when: sshd_trusted_user_ca_keys_list != []` guard (default `[]`)
+  always evaluated true and crashed a certificate-copy task whose
+  `dest:` came out empty - the sibling `{{ }}`-side `parse_literal_
+  array` already had the right empty-string guard, this was the one
+  remaining unguarded copy. The other 9 roles were clean (one apt-404
+  on `buluma.python_pip`'s first run was a stale-apt-cache artifact on
+  that host, not a bug, confirmed by reproducing after a manual
+  `apt-get update`); `buluma.openssl` surfaced a cosmetic-only gap
+  (crystal-ansible's recap has no `ignored=` counter, though the
+  `ignore_errors:` behavior itself matches exactly). All idempotent on
+  warm rerun.
 - **`0.9.475` - closes out the last 2 open `KNOWN_MISSING.md` real gaps**
   (not tied to a new real-host round). `pamd:` rewritten to match
   `community.general.pamd`'s own Python model line-for-line (linked-

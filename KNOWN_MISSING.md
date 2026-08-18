@@ -10,17 +10,25 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.475`.**
+**Currently at `0.9.476`.**
 
 ---
 
 ## Real gaps (worth revisiting)
 
-(none currently open - note: 0.9.474's entry here claiming
-`openssl_dhparam:`/`openssh_keypair:` had "no plugin, no
-`AVAILABLE_PLUGINS` entry" was itself wrong; both had been implemented,
-if more simply, since `0.9.121`/`0.9.125`. 0.9.475 upgraded both to
-more fully match their real modules regardless - see `git log`.)
+- PLAY RECAP has no `ignored=` counter - a task caught by
+  `ignore_errors: true` shows up as `failed=0` (correct - the ignore
+  itself works, execution continues) but the recap line has no count of
+  how many failures were ignored, unlike real Ansible's own
+  `ignored=N`. Purely cosmetic (found via `buluma.openssl`, round 150) -
+  the actual ignore-and-continue behavior matches exactly, only the
+  summary line's field is missing.
+
+Note: 0.9.474's entry here claiming `openssl_dhparam:`/
+`openssh_keypair:` had "no plugin, no `AVAILABLE_PLUGINS` entry" was
+itself wrong; both had been implemented, if more simply, since
+`0.9.121`/`0.9.125`. 0.9.475 upgraded both to more fully match their
+real modules regardless - see `git log`.
 
 ## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 
