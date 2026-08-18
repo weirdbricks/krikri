@@ -195,6 +195,30 @@ Full writeup with the real-host verification method (including the
 nginx variance investigation) in `SUGGESTED_PERFORMANCE_IMPROVEMENTS.md`
 (gitignored local notes).
 
+**crystal-ansible 0.9.486 vs real `ansible-playbook`, same 3 real
+roles**: one Atlantic.net `G3.2GB` host per ENGINE (not per role) - real
+`ansible-playbook` always ran against one host, crystal-ansible always
+against the other, for all 3 roles in sequence, so the two engines never
+share host state:
+
+| Role (author) | Python cold | Python warm | Crystal cold | Crystal warm |
+|---|---|---|---|---|
+| `robertdebock.php_fpm` | 29.2s | 7.4s | 24.6s | **2.1s** |
+| `willshersystems.sshd` | 12.8s | 12.4s | 12.5s | **8.6s** |
+| `mrlesmithjr.chrony` | 39.0s* | 5.2s | 9.9s* | **1.8s** |
+
+(`*` chrony is a 4-5 task role, so its cold number is mostly measuring
+one `apt-get install` - real package-mirror response time, not
+particularly attributable to either engine; see the full writeup for why
+this one's flagged rather than folded into a headline number.) The
+trustworthy signal is the **warm** column: real Ansible pays a fresh
+Python-interpreter-and-module cost per task every run regardless of
+whether anything changes (its own warm barely beats its own cold - 12.4s
+vs 12.8s for sshd), while crystal-ansible's compiled-binary-plus-batching
+model is what makes ITS warm numbers drop so much further below its own
+cold - 3.6x and 1.4x faster than real Ansible's warm run, on real named
+roles, not a synthetic playbook.
+
 ---
 
 ## ✨ Features
