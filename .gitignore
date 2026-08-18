@@ -4,6 +4,10 @@
 # Crystal dependencies (installed via shards)
 /lib/
 
+# Codegen output from build.sh's build_fat_plugin - regenerated every
+# build, never hand-edited.
+/plugins/.fat_plugin_generated.cr
+
 # Shard lock file (some prefer to commit this, some don't)
 # Uncomment the next line if you want to exclude it:
 # /shard.lock

@@ -305,13 +305,154 @@ PLUGINS=(
     "expect"
 )
 
+# These 6 stay real, independent binaries instead of joining the fat
+# binary below:
+#   - facts: gathers real facts from the target - its own driver has no
+#     class/STDIN-config shape at all (top-level `gather_facts`, no
+#     config parsing), unlike every other plugin's uniform
+#     `*Plugin < BasePlugin` + `STDIN.gets_to_end` shape the fat-binary
+#     generator below depends on.
+#   - debug/assert/fail/set_fact/pause: controller-side action plugins
+#     as of 0.9.482 (see action_plugin_manager.cr) - normal task
+#     execution never dispatches these as a module at all anymore, so
+#     they'd only ever be pulled in for `async:`/manual invocation.
+#     Kept as their own binaries rather than folded in, so the fat
+#     binary doesn't have to link the whole templating engine (these 2
+#     - debug/assert - were the largest binaries in the tree) for a
+#     path that's no longer the normal one.
+STANDALONE_PLUGINS=("facts" "debug" "assert" "fail" "set_fact" "pause")
+
+# Every other plugin: one binary (see build_fat_plugin below) instead of
+# 81 separate ones. All 81 share the exact same shape - one
+# `class XPlugin < BasePlugin` + a 4-line `STDIN.gets_to_end` driver
+# trailer (verified: `grep -c 'plugin.run' plugins/*.cr` is 1 for every
+# non-facts file) - so each one re-linking its own private copy of the
+# Crystal runtime + json + base_plugin was pure waste. 372 MB -> ~15 MB
+# measured on this tree at 0.9.480, before debug/assert (the 2 largest,
+# ~27 MB combined) were pulled into STANDALONE_PLUGINS above.
+FAT_PLUGINS=()
+for plugin in "${PLUGINS[@]}"; do
+    is_standalone=false
+    for standalone in "${STANDALONE_PLUGINS[@]}"; do
+        [ "$plugin" = "$standalone" ] && is_standalone=true && break
+    done
+    [ "$is_standalone" = false ] && FAT_PLUGINS+=("$plugin")
+done
+
+# Builds (only when actually stale) ONE binary covering every plugin in
+# FAT_PLUGINS, dispatched at runtime by argv[0]'s basename (the same
+# trick busybox uses for its own multi-call binary) - see the generated
+# file's own trailer for the exact dispatch. Then hardlinks
+# $PLUGINS_DIR/<name> for every FAT_PLUGINS name onto that one binary,
+# so get_local_plugin_path/upload_plugins_to_host/remote_plugin_target
+# in plugin_manager.cr need ZERO changes: each name still resolves to a
+# real, independently-named, directly-executable file at exactly the
+# path they already expect - it just happens to share one inode with 80
+# others instead of being 80 separate copies of the runtime. Verified
+# with a real hardlinked build: `du` on the directory reports the
+# shared-inode size once, not once per name, and each hardlinked name
+# dispatches correctly via `File.basename(PROGRAM_NAME)`.
+build_fat_plugin() {
+    local fat_binary="$PLUGINS_DIR/.fat-plugin"
+    local generated="plugins/.fat_plugin_generated.cr"
+
+    local needs_build=false
+    if [ ! -f "$fat_binary" ]; then
+        needs_build=true
+    else
+        for plugin in "${FAT_PLUGINS[@]}"; do
+            if [ "plugins/$plugin.cr" -nt "$fat_binary" ]; then
+                needs_build=true
+                break
+            fi
+        done
+        if [ "$needs_build" = false ] && find src -name '*.cr' -newer "$fat_binary" -print -quit | grep -q .; then
+            needs_build=true
+        fi
+        if [ "$needs_build" = false ] && [ -d lib ] && find lib -name '*.cr' -newer "$fat_binary" -print -quit | grep -q .; then
+            needs_build=true
+        fi
+    fi
+
+    if [ "$needs_build" = true ]; then
+        echo -e "   ${YELLOW}Building fat plugin binary (${#FAT_PLUGINS[@]} modules)...${NC}"
+
+        {
+            echo 'require "json"'
+            for plugin in "${FAT_PLUGINS[@]}"; do
+                # Requires stay relative to plugins/ (unchanged) since
+                # the generated file lives there too. Strips the
+                # shebang line and everything from the shared 4-line
+                # driver trailer onward (`input = STDIN.gets_to_end` -
+                # a plain grep for the exact line every plugin's
+                # trailer starts with, see this array's own comment
+                # above for why that's safe to assume uniformly).
+                sed -e '/^#!\/usr\/bin\/env crystal/d' \
+                    -e '/^input = STDIN.gets_to_end/,$d' \
+                    "plugins/$plugin.cr"
+            done
+            echo ''
+            echo '# Dispatch by argv[0]''s basename - busybox-style multi-call binary.'
+            echo '# Every FAT_PLUGINS name is hardlinked onto this same binary below;'
+            echo '# the OS sets PROGRAM_NAME to whichever hardlinked path was actually'
+            echo '# exec'"'"'d, local or remote, batched or not - build_fat_plugin'"'"'s own'
+            echo '# comment in build.sh has the full rationale.'
+            echo 'name = File.basename(PROGRAM_NAME)'
+            echo 'input = STDIN.gets_to_end'
+            echo 'config = JSON.parse(input)'
+            echo 'case name'
+            for plugin in "${FAT_PLUGINS[@]}"; do
+                cls=$(grep -oP 'class \K\w+Plugin(?= < BasePlugin)' "plugins/$plugin.cr" | head -1)
+                echo "when \"$plugin\""
+                echo "  CrystalPlay::$cls.new(config).run"
+            done
+            echo 'else'
+            echo '  STDERR.puts "unknown plugin: #{name}"'
+            echo '  exit 1'
+            echo 'end'
+        } > "$generated"
+
+        # archive/mysql_db/postgresql_db (part of FAT_PLUGINS) need the
+        # same static-bz2 link fix their own individual builds used to
+        # apply separately (see BZ2_STATIC_PLUGINS's own comment below,
+        # still used for the STANDALONE_PLUGINS loop) - applying it to
+        # the whole fat binary is harmless for the other 78 modules and
+        # keeps the same missing-libbz2.so.1.0-on-RHEL fix intact.
+        if OUTPUT=$(crystal build "$generated" -o "$fat_binary" $BUILD_FLAGS --link-flags="-Wl,-Bstatic -lbz2 -Wl,-Bdynamic" 2>&1); then
+            chmod +x "$fat_binary"
+            echo -e "   ${GREEN}✓${NC} fat plugin binary"
+        else
+            echo -e "   ${RED}✗${NC} fat plugin binary"
+            echo "$OUTPUT"
+            exit 1
+        fi
+    else
+        echo -e "   ${BLUE}✓${NC} fat plugin binary (up to date)"
+    fi
+
+    # Cheap regardless of whether a rebuild just happened - relink any
+    # name that's missing or (rare: a previous non-fat build left a real
+    # standalone file at this path) not already hardlinked to the
+    # current fat binary.
+    local fat_inode
+    fat_inode=$(stat -c %i "$fat_binary")
+    for plugin in "${FAT_PLUGINS[@]}"; do
+        local target="$PLUGINS_DIR/$plugin"
+        if [ ! -e "$target" ] || [ "$(stat -c %i "$target" 2>/dev/null)" != "$fat_inode" ]; then
+            ln -f "$fat_binary" "$target"
+        fi
+    done
+}
+
+build_fat_plugin
+
 PLUGIN_COUNT=0
 TO_BUILD=()
 
 # First pass: figure out which plugins need a rebuild (cheap mtime checks,
 # no compilation) so the actual `crystal build` invocations below can run
 # in parallel instead of one at a time.
-for plugin in "${PLUGINS[@]}"; do
+for plugin in "${STANDALONE_PLUGINS[@]}"; do
     SOURCE="plugins/$plugin.cr"
 
     if [ -f "$SOURCE" ]; then
@@ -431,8 +572,9 @@ if [ "$REBUILT_COUNT" -gt 0 ]; then
 fi
 
 echo ""
+PLUGIN_COUNT=$((PLUGIN_COUNT + ${#FAT_PLUGINS[@]}))
 if [ $REBUILT_COUNT -gt 0 ]; then
-    echo -e "${GREEN}✅ $PLUGIN_COUNT plugins checked ($REBUILT_COUNT rebuilt)${NC}"
+    echo -e "${GREEN}✅ $PLUGIN_COUNT plugins checked ($REBUILT_COUNT standalone rebuilt, ${#FAT_PLUGINS[@]} via fat binary)${NC}"
 else
     echo -e "${GREEN}✅ All $PLUGIN_COUNT plugins up to date${NC}"
 fi

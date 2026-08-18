@@ -38,6 +38,12 @@ module CrystalPlay
     @handler_runner : HandlerRunner
     # Facts per host
     @facts : Hash(String, Hash(String, JSON::Any))
+    # The "ansible_facts.*" dict form of @facts[host.name] (unprefixed
+    # keys - `os_family` alongside the flat `ansible_os_family`), memoized
+    # per host so build_vars_context doesn't re-walk every fact on every
+    # single task - see facts_dict_for's own comment for the invalidation
+    # contract this depends on.
+    @facts_dict_cache = Hash(String, Hash(String, JSON::Any)).new
     # Hosts that hit a failed task without ignore_errors: further tasks in
     # the play are skipped for them (Ansible's default "a failure aborts
     # the rest of the play for that host" behavior). Public - crystal-
@@ -683,6 +689,7 @@ module CrystalPlay
         facts = Hash(String, JSON::Any).new
         ansible_facts.as_h.each { |key, value| facts[key] = value }
         @facts[host.name] = facts
+        @facts_dict_cache.delete(host.name)
       end
 
       {true, nil}
@@ -955,14 +962,11 @@ module CrystalPlay
       # silently evaluated false and the role skipped almost entirely.
       #
       # Derived from the same store rather than gathered separately, so
-      # the two spellings can never disagree, and rebuilt per task so a
-      # fact added mid-play (set_fact:, a re-gather) appears in both.
+      # the two spellings can never disagree, and memoized per host
+      # (facts_dict_for) rather than rebuilt on every single task - see
+      # that method's own comment for the invalidation contract.
       unless @facts[host.name].empty?
-        facts_dict = Hash(String, JSON::Any).new(initial_capacity: 128)
-        @facts[host.name].each do |key, value|
-          facts_dict[key.lchop("ansible_")] = value
-        end
-        vars_context["ansible_facts"] = JSON::Any.new(facts_dict)
+        vars_context["ansible_facts"] = JSON::Any.new(facts_dict_for(host.name))
       end
 
       vars_context["hostvars"] = JSON::Any.new(build_hostvars)
@@ -987,6 +991,36 @@ module CrystalPlay
       end
 
       vars_context
+    end
+
+    # Memoized "ansible_facts.*" dict for one host - see
+    # build_vars_context's own comment for why this dict has to exist
+    # separately from the flat `ansible_os_family`-style keys already in
+    # @facts[host.name].
+    #
+    # Invalidation contract: @facts[host.name] has exactly 3 real
+    # mutation sites in this file (audited directly, not assumed -
+    # `grep -n '@facts\[.*\]\s*=\|@facts\[.*\]\.clear' executor.cr`) -
+    # gather_facts's full replace, merge_ansible_facts's per-key write
+    # (the path set_fact:/package_facts:/etc all go through), and meta:
+    # clear_facts's #clear. Every one of the 3 deletes this host's cache
+    # entry (`@facts_dict_cache.delete(host.name)`) in the same
+    # statement that mutates @facts, so the next call here always sees a
+    # cache miss and rebuilds from the fresh @facts contents - there is
+    # no 4th mutation site to miss (unlike the general vars_context
+    # caching in item #1 of SUGGESTED_PERFORMANCE_IMPROVEMENTS.md, which
+    # this deliberately does NOT attempt: task.vars/role_vars/
+    # role_defaults vary per TASK, not just per host, and that item's own
+    # writeup flags exactly why a full-context cache needs a much more
+    # exhaustive invalidation audit than this narrow one).
+    private def facts_dict_for(host_name : String) : Hash(String, JSON::Any)
+      @facts_dict_cache[host_name] ||= begin
+        facts_dict = Hash(String, JSON::Any).new(initial_capacity: 128)
+        @facts[host_name].each do |key, value|
+          facts_dict[key.lchop("ansible_")] = value
+        end
+        facts_dict
+      end
     end
 
     # Real Ansible's `groups` magic variable - a dict of every inventory
@@ -1203,6 +1237,7 @@ module CrystalPlay
       facts_hash.each do |key, value|
         @facts[host.name][key] = value
       end
+      @facts_dict_cache.delete(host.name)
     end
 
     # with_first_found: yields exactly one item - the first candidate path
@@ -2055,6 +2090,14 @@ module CrystalPlay
           return apply_changed_failed_when(task, failed, vars_context, host)
         end
 
+        # debug:/assert:/fail:/set_fact:/pause: - the action plugin
+        # already computed the whole task result on the controller (see
+        # ActionResult#final_result's own comment). No module upload/
+        # dispatch of any kind, batched or not.
+        if final = action_result.final_result
+          return apply_changed_failed_when(task, final, vars_context, host)
+        end
+
         substituted_params = action_result.modified_params || substituted_params
       end
 
@@ -2152,6 +2195,10 @@ module CrystalPlay
             "msg"     => action_result.error_message || "Action plugin failed",
           }.to_json)
           return apply_changed_failed_when(task, result, vars_context, host)
+        end
+
+        if final = action_result.final_result
+          return apply_changed_failed_when(task, final, vars_context, host)
         end
 
         if modified_params = action_result.modified_params
@@ -3365,6 +3412,7 @@ module CrystalPlay
         # PlaybookParser.parse_meta_task), so clear_facts is the only
         # other action to dispatch on here.
         @facts[host.name].clear
+        @facts_dict_cache.delete(host.name)
       end
     end
 
@@ -4123,6 +4171,26 @@ module CrystalPlay
         final_params["_environment"] = substituted_env.to_json
       end
 
+      # Only debug:/assert: actually read the vars context inside the
+      # plugin process (BasePlugin itself only ever pulls 3 connection
+      # keys out of it - see PluginManager::NEEDS_FULL_VARS). Everyone
+      # else gets just those 3 keys instead of the full context, which
+      # for a typical templating-heavy task is tens to hundreds of KB of
+      # JSON (up to ~570 KB seen after a package_facts: task) that would
+      # otherwise be base64'd over SSH and immediately discarded by the
+      # plugin that receives it.
+      wire_vars = if PluginManager.needs_full_vars?(task.module_name)
+                    vars_context
+                  else
+                    pruned = Hash(String, JSON::Any).new
+                    {"ansible_connection", "ansible_host", "ansible_ssh_private_key_file"}.each do |key|
+                      if v = vars_context[key]?
+                        pruned[key] = v
+                      end
+                    end
+                    pruned
+                  end
+
       config = {
         "host" => {
           "name" => host.name,
@@ -4130,7 +4198,7 @@ module CrystalPlay
           "port" => host.port
         },
         "params" => final_params,
-        "vars" => vars_context,
+        "vars" => wire_vars,
         # Read by PluginManager, not by the plugin binary itself - become:
         # wraps the *whole* plugin process (local spawn or the remote SSH
         # command) in `sudo -n -u <user> --`, rather than being something
@@ -4260,12 +4328,10 @@ module CrystalPlay
       # in the same play correctly saw `ansible_facts.os_family` as
       # "RedHat".
       unless @facts[host.name].empty?
-        facts_dict = Hash(String, JSON::Any).new(initial_capacity: 128)
         @facts[host.name].each do |key, value|
           vars_context[key] = value
-          facts_dict[key.lchop("ansible_")] = value
         end
-        vars_context["ansible_facts"] = JSON::Any.new(facts_dict)
+        vars_context["ansible_facts"] = JSON::Any.new(facts_dict_for(host.name))
       end
 
       vars_context["hostvars"] = JSON::Any.new(build_hostvars)
@@ -4455,6 +4521,14 @@ module CrystalPlay
             "failed"  => true,
             "msg"     => action_result.error_message || "Action plugin failed",
           }.to_json)
+        end
+
+        if final = action_result.final_result
+          result = apply_changed_failed_when(handler, final, vars_context, host)
+          if register_name = handler.register
+            register_result(host, register_name, result) unless register_name.empty?
+          end
+          return result
         end
 
         if modified_params = action_result.modified_params

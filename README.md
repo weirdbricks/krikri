@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.480-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.485-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -131,10 +131,44 @@ instances (Ubuntu 22.04, destroyed immediately after each run), the same
 | `crystal-ansible` `--forks 1` (one-host-at-a-time) | 25.8s (1.54x) | 8.6s (3.8x) |
 | `crystal-ansible` `--forks 3` | 14.4s (2.76x) | **3.5s (9.3x)** |
 
-`--forks` defaults to `5` since `0.9.78`, matching real `ansible-playbook`'s
-own default - the rows above measured `--forks 1`/`--forks 3` explicitly,
-from before that default flip; pass `--forks 1` to restore the original
-one-host-at-a-time behavior.
+`--forks` defaulted to `5` (matching real `ansible-playbook`'s own
+default) from `0.9.78` through `0.9.483`; as of `0.9.484` it defaults to
+`25` - a "fork" here is a cheap Crystal fiber doing pure I/O wait, not a
+forked Python interpreter, so real Ansible's own resource-driven default
+isn't load-bearing for this implementation. Pass `--forks 5` to match
+real `ansible-playbook`'s default exactly (e.g. for a side-by-side
+benchmark run), or `--forks 1` to restore one-host-at-a-time behavior.
+The rows above measured `--forks 1`/`--forks 3` explicitly, from before
+either default change.
+
+**`0.9.480` -> `0.9.485` (this tool's own before/after, not vs. real
+Ansible)**: 3 fresh Atlantic.net `G3.2GB` instances (Ubuntu 22.04,
+USEAST1, destroyed immediately after), both versions built `--release`
+from the same source tree back to back, one 28-task/host play (facts +
+`package_facts:` + 10x `debug:` + 10x `assert:` + `set_fact:` + 5 real
+file/command modules) run against all 3 hosts, `--forks 5` held constant
+on both sides so the comparison isolates the engine changes from the
+forks-default bump above. `-v` used to confirm plugin upload actually
+happened on "cold" and was actually skipped on "warm" (an initial pass
+that inferred this instead of checking it turned out to be
+contaminated by an earlier single-host smoke test - re-run clean on a
+second fresh host set before trusting these numbers):
+
+| | Cold (first touch, upload confirmed via `-v`) | Warm (idempotent re-run, skip confirmed via `-v`) |
+|---|---|---|
+| `0.9.480` | 51.4s | 43.3s, 37.9s (median ~40.6s) |
+| `0.9.485` | 4.8s | 1.4s, 1.3s (median ~1.3s) |
+| Speedup | **~10.7x** | **~30x** |
+
+Driven mostly by `debug:`/`assert:`/`set_fact:` becoming real
+controller-side action plugins (matching real Ansible's own
+architecture - 21 of this play's 28 tasks never touch the wire at all
+on `0.9.485`) and no longer shipping every remaining task's full
+variable context over SSH; the `-v` log also shows the plugin-upload
+dedup directly on a real target ("Uploading 1 distinct plugin binary
+(6 names)" instead of 6 separate transfers). Full writeup with the
+real-host verification method in `SUGGESTED_PERFORMANCE_IMPROVEMENTS.md`
+(gitignored local notes).
 
 ---
 
@@ -367,6 +401,23 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.481`-`0.9.485`** - performance pass, measured before/after rather
+  than estimated (see `SUGGESTED_PERFORMANCE_IMPROVEMENTS.md`, gitignored
+  local notes): plugin config JSON no longer ships the full vars context
+  to plugins that never read it (33 KB-572 KB per task -> 215 B; ~2.4x
+  faster end-to-end on a `package_facts:`-heavy local play);
+  `debug`/`assert`/`fail`/`set_fact`/`pause` became controller-side
+  action plugins matching real Ansible's own architecture (no more
+  SSH round trip/upload for these - ~45x faster for a `debug:`-heavy
+  local play); the other 81 plugin binaries collapsed into one fat
+  binary, argv0-dispatched and hardlinked per module name (372 MB ->
+  85 MB full build, with a matching remote-upload dedup so N module
+  names sharing that binary only cross the wire once); `--forks`
+  defaults to 25 instead of 5 (a "fork" here is a cheap fiber, not a
+  forked Python interpreter - ~3.8x faster on a 20-host fan-out;
+  `--forks 5` still matches real Ansible's own default exactly); and
+  the per-task `ansible_facts.*` dict is now memoized per host with an
+  audited 3-site invalidation contract.
 - **`0.9.480`** - `meta:` gains `refresh_inventory` too, re-reading a
   dynamic inventory script's output in place - but (real Ansible's own
   documented caveat, confirmed live with a real inventory script) it
@@ -400,12 +451,6 @@ for current-state detail.
   array literal (`[]`) in a `when:`/`assert:` condition compared unequal
   to a real empty list, due to a Crystal stdlib quirk
   (`"".split(',')` returning a 1-element array, not an empty one).
-- **`0.9.475`** - closed the last 2 open real gaps at the time: `pamd:`
-  rewritten to match real `community.general.pamd`'s state machine
-  exactly (`updated`/`before`/`after`/`args_present`/`args_absent`), and
-  `openssl_dhparam:`/`openssh_keypair:` upgraded to more fully match
-  their real modules.
-
 ---
 
 ## 🤝 Contributing

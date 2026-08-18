@@ -8,6 +8,7 @@ require "./local_executor"
 require "./playbook_parser"
 require "./inventory_parser"
 require "./task_executor/output_routing"
+require "./action_plugin_manager"
 
 module CrystalPlay
   # Plugin Manager - Handles plugin execution locally or remotely
@@ -39,6 +40,11 @@ module CrystalPlay
     # plugins totalling ~100 MB, re-digesting them for every host in a
     # large inventory was the dominant cost of an otherwise no-op warm run.
     @@local_md5_cache = Hash(String, String).new
+
+    # One entry per *distinct underlying file* seen so far (path => md5) -
+    # see cached_md5's own comment for why this is separate from
+    # @@local_md5_cache above, not a duplicate of it.
+    @@local_md5_representatives = Hash(String, String).new
 
     # Verbose mode flag
     @@verbose = false
@@ -146,8 +152,7 @@ module CrystalPlay
         @@uploaded_plugins["#{host.user}@#{connection_host}:#{host.port}"] ||= Set(String).new
       end
       plugin_list.each do |plugin_name|
-        path = get_local_plugin_path(plugin_name)
-        @@local_md5_cache[path] ||= Digest::MD5.new.file(path).hexfinal
+        cached_md5(get_local_plugin_path(plugin_name))
       end
 
       # Each host's uploads are entirely disjoint and order-independent,
@@ -253,9 +258,70 @@ module CrystalPlay
         # raise outright the first time a real remote host used it.
         next if task.module_name == "ansible.builtin.reboot"
 
-        simple_name = task.module_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community\.(general|docker|mysql|postgresql|crypto))\./, "")
-        required.add(simple_name)
+        # debug:/assert:/fail:/set_fact:/pause: - now controller-side
+        # action plugins that always produce the whole result themselves
+        # (see ActionPluginManager::CONTROLLER_ONLY_MODULES) - no module
+        # ever runs, local or remote, so pre-uploading their binaries to
+        # a remote host was pure waste. Their binaries stay built for
+        # `--async`/manual invocation, just never added to a remote
+        # host's required-plugins set.
+        next if ActionPluginManager.skips_module_dispatch?(task.module_name)
+
+        required.add(simple_plugin_name(task.module_name))
       end
+    end
+
+    # Strips the FQCN collection prefix a module name may carry
+    # (`ansible.builtin.debug` -> `debug`) down to the bare name used to
+    # look up both the plugin binary and the upload/full-vars predicates
+    # below. Shared rather than inlined per call site (was duplicated
+    # once already, in collect_required_plugins, before this extraction).
+    def self.simple_plugin_name(module_name : String) : String
+      module_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community\.(general|docker|mysql|postgresql|crypto))\./, "")
+    end
+
+    # Plugins that actually read the "vars" field of their config JSON -
+    # everything else only ever reads the 3 connection keys BasePlugin
+    # itself pulls out (ansible_connection/ansible_host/
+    # ansible_ssh_private_key_file), confirmed by
+    # `grep -l '@vars\[' plugins/*.cr` -> debug.cr and assert.cr only
+    # (debug: `msg: "{{ var }}"` needs live lookup against the full vars
+    # context; assert: `that:` conditions evaluate against it the same
+    # way `when:` does). Everyone else gets a pruned config instead of
+    # the full vars_context - see build_plugin_config's use of this.
+    NEEDS_FULL_VARS = Set{"debug", "assert"}
+
+    def self.needs_full_vars?(module_name : String) : Bool
+      NEEDS_FULL_VARS.includes?(simple_plugin_name(module_name))
+    end
+
+    # Same @@local_md5_cache contract (computed once per distinct local
+    # file per process), but aware that build.sh's fat plugin binary
+    # means many DIFFERENT plugin names now resolve to the SAME
+    # underlying file (hardlinked, see build_fat_plugin's own comment in
+    # build.sh) - a naive per-path cache still re-hashes that one file
+    # once per name (measured: 81 `md5sum` calls against the same ~15 MB
+    # fat binary took ~1.6s real time - real, avoidable cost before any
+    # SSH round trip even starts). `File.same?` (a cheap stat-based
+    # device+inode comparison, no file content read) checks the small
+    # set of already-seen DISTINCT files first; only a genuinely new file
+    # pays the real `Digest::MD5` read.
+    private def self.cached_md5(path : String) : String
+      if md5 = @@local_md5_cache[path]?
+        return md5
+      end
+
+      @@local_md5_representatives.each do |repr_path, repr_md5|
+        if File.same?(path, repr_path)
+          @@local_md5_cache[path] = repr_md5
+          return repr_md5
+        end
+      end
+
+      md5 = Digest::MD5.new.file(path).hexfinal
+      @@local_md5_cache[path] = md5
+      @@local_md5_representatives[path] = md5
+      md5
     end
 
     # Upload a set of plugins to a specific host.
@@ -302,7 +368,7 @@ module CrystalPlay
       candidates.each do |plugin_name|
         path = get_local_plugin_path(plugin_name)
         local_paths[plugin_name] = path
-        local_md5s[plugin_name] = @@local_md5_cache[path] ||= Digest::MD5.new.file(path).hexfinal
+        local_md5s[plugin_name] = cached_md5(path)
       end
 
       plugins_to_upload = candidates.select do |plugin_name|
@@ -312,10 +378,24 @@ module CrystalPlay
 
       return if plugins_to_upload.empty?
 
-      # Round trip 2: transfer whatever needs uploading.
-      puts "   → Uploading #{plugins_to_upload.size} plugins to #{connection_host} via rsync".colorize(:cyan) if @@verbose
+      # Most of plugins_to_upload are typically hardlinks to the same
+      # local fat-plugin binary (build.sh's build_fat_plugin - see
+      # get_local_plugin_path, which returns whatever real path is on
+      # disk for that name, hardlink or not) and therefore share an
+      # identical md5. Uploading "N module names" used to mean "N
+      # transfers of that same multi-MB payload" - group by md5 first so
+      # only one representative name per unique md5 actually crosses the
+      # wire; every other name sharing that md5 is materialized on the
+      # remote side afterward (round trip 3) via a cheap same-filesystem
+      # `ln`, not a second transfer.
+      by_md5 = Hash(String, Array(String)).new { |hash, key| hash[key] = [] of String }
+      plugins_to_upload.each { |name| by_md5[local_md5s[name]] << name }
+      representatives = by_md5.map { |_, names| names.first }
 
-      local_plugin_paths = plugins_to_upload.map { |name| local_paths[name] }
+      # Round trip 2: transfer only the representatives.
+      puts "   → Uploading #{representatives.size} distinct plugin binar#{representatives.size == 1 ? "y" : "ies"} (#{plugins_to_upload.size} names) to #{connection_host} via rsync".colorize(:cyan) if @@verbose
+
+      local_plugin_paths = representatives.map { |name| local_paths[name] }
       rsync_ok = SSHManager.rsync_upload_batch(
         connection_host,
         user,
@@ -327,8 +407,8 @@ module CrystalPlay
       )
 
       unless rsync_ok
-        puts "   → Rsync unavailable, using scp for #{plugins_to_upload.size} plugins".colorize(:yellow) if @@verbose
-        plugins_to_upload.each do |plugin_name|
+        puts "   → Rsync unavailable, using scp for #{representatives.size} plugin binaries".colorize(:yellow) if @@verbose
+        representatives.each do |plugin_name|
           # mode: nil - the per-file `chmod 755` this used to do was a
           # whole extra SSH round trip *per plugin* (88 of them for a
           # 44-plugin cold upload). One `chmod` for the batch is folded
@@ -345,13 +425,27 @@ module CrystalPlay
         end
       end
 
-      # Round trip 3: write all the new .md5 files in one script (plus,
-      # on the scp path, the single chmod that covers everything scp just
-      # wrote - rsync already applied mode 0o755 during the transfer).
+      # Round trip 3: materialize every non-representative name from its
+      # group's representative (already on disk remotely as of round trip
+      # 2 - `ln` first, since REMOTE_PLUGIN_DIR is one directory so a
+      # hardlink always applies; `cp -p` only as a fallback for whatever
+      # non-POSIX-hardlink edge case might exist on an unusual remote
+      # filesystem), write every name's own .md5 (so a later run's
+      # remote_md5s lookup - round trip 1 above - still matches per name,
+      # not just per representative), plus, on the scp path, the single
+      # chmod that covers everything scp just wrote (rsync already
+      # applied mode 0o755 during the transfer).
       write_script = String.build do |str|
         unless rsync_ok
-          plugins_to_upload.each do |plugin_name|
+          representatives.each do |plugin_name|
             str << "chmod 755 #{remote_plugin_dir}/#{plugin_name}\n"
+          end
+        end
+        by_md5.each_value do |names|
+          representative = names.first
+          names.each do |name|
+            next if name == representative
+            str << "ln -f #{remote_plugin_dir}/#{representative} #{remote_plugin_dir}/#{name} 2>/dev/null || cp -p #{remote_plugin_dir}/#{representative} #{remote_plugin_dir}/#{name}\n"
           end
         end
         plugins_to_upload.each do |plugin_name|
@@ -364,7 +458,7 @@ module CrystalPlay
 
       verb = rsync_ok ? "Successfully uploaded" : "Uploaded"
       via = rsync_ok ? "" : " via scp"
-      puts "   ✓ #{verb} #{plugins_to_upload.size} plugins#{via}".colorize(:green) if @@verbose
+      puts "   ✓ #{verb} #{representatives.size} plugin binar#{representatives.size == 1 ? "y" : "ies"} covering #{plugins_to_upload.size} module names#{via}".colorize(:green) if @@verbose
     end
 
     # fetch: pulls a file FROM the target TO the controller - the reverse
@@ -805,6 +899,7 @@ module CrystalPlay
     def self.clear_cache
       @@uploaded_plugins.clear
       @@local_md5_cache.clear
+      @@local_md5_representatives.clear
     end
   end
 end

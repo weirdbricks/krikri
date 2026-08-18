@@ -2,7 +2,13 @@ require "../spec_helper"
 require "../../src/crystal_play/task_batcher"
 
 private def task(name : String, register : String? = nil) : CrystalPlay::Task
-  t = CrystalPlay::Task.new(name, "ansible.builtin.debug")
+  # ansible.builtin.command: a plain module with no action plugin - was
+  # ansible.builtin.debug until debug: itself became a (batching-
+  # excluded) controller-side action plugin, which broke every "generic
+  # batchable task" fixture in this file for reasons unrelated to what
+  # each spec actually tests (register:/when: run-splitting logic, not
+  # debug: semantics specifically).
+  t = CrystalPlay::Task.new(name, "ansible.builtin.command")
   t.register = register
   t
 end

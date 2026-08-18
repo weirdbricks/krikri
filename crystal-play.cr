@@ -63,7 +63,20 @@ inventory_file = "inventory.ini"
 check_mode = false
 diff_mode = false
 batching_enabled = true
-forks = 5
+# real ansible-playbook's default (5) exists because a "fork" there is a
+# forked Python interpreter per host - expensive enough that 5 concurrent
+# ones is a real resource tradeoff. Here a "fork" is a Crystal fiber
+# gated by a channel (see TaskExecutor's per-task host fan-out), doing
+# pure SSH I/O wait - nothing about 5 is load-bearing for this
+# implementation, so this default diverges from real Ansible's own
+# (unlike `gathering`, which stays "implicit" specifically to match it -
+# see SUGGESTED_PERFORMANCE_IMPROVEMENTS.md's own item on why that one
+# was rejected). The real-host benchmark workflow (CLAUDE.md) should pin
+# `--forks 5` explicitly when diffing behavior against real
+# ansible-playbook, since interleaving under -v and target-side load
+# both change with concurrency even though no single host's own output
+# does.
+forks = 25
 # "implicit" (default, matching ansible-playbook): every play re-gathers
 # facts. "smart": each host is gathered at most once per run, so a
 # multi-play playbook stops paying N_plays x N_hosts fact round trips.
@@ -94,8 +107,8 @@ begin
       batching_enabled = false
     end
 
-    parser.on("-f FORKS", "--forks=FORKS", "Run each task against up to FORKS hosts concurrently (default: 5, matching ansible-playbook's own default; --forks 1 restores one-host-at-a-time)") do |f|
-      forks = f.to_i? || 5
+    parser.on("-f FORKS", "--forks=FORKS", "Run each task against up to FORKS hosts concurrently (default: 25 - higher than ansible-playbook's own default of 5, since a \"fork\" here is a cheap fiber, not a forked Python interpreter; --forks 5 matches real ansible-playbook's default exactly, --forks 1 restores one-host-at-a-time)") do |f|
+      forks = f.to_i? || 25
     end
 
     parser.on("--gathering=MODE", "Fact gathering policy, matching ansible-playbook: implicit (default, every play re-gathers), explicit (only plays with gather_facts: true), or smart (each host gathered at most once per run; use meta: clear_facts to force a re-gather)") do |mode|
