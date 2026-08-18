@@ -10,22 +10,17 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.474`.**
+**Currently at `0.9.475`.**
 
 ---
 
 ## Real gaps (worth revisiting)
 
-- `ansible.builtin.openssl_dhparam` / `ansible.builtin.openssh_keypair` -
-  unimplemented (no plugin, no `AVAILABLE_PLUGINS` entry). Found via the
-  new `ansible` ad-hoc CLI's first real-host module round (0.9.473) -
-  neither had ever been exercised by a benchmarked role before.
-- `pamd:`'s `state=updated` (and the related `before`/`after`) modes -
-  the plugin explicitly rejects them today ("state must be 'present' or
-  'absent' ... state: updated/before/after are not implemented"), but
-  `state=updated` (modify an existing PAM stack line in place) is
-  arguably the module's most common real-world use, more so than
-  `present`/`absent`. Found via the same 0.9.473 ad-hoc round.
+(none currently open - note: 0.9.474's entry here claiming
+`openssl_dhparam:`/`openssh_keypair:` had "no plugin, no
+`AVAILABLE_PLUGINS` entry" was itself wrong; both had been implemented,
+if more simply, since `0.9.121`/`0.9.125`. 0.9.475 upgraded both to
+more fully match their real modules regardless - see `git log`.)
 
 ## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 
@@ -35,7 +30,13 @@ is the record.
 - `win_*` filters - Windows-only, irrelevant to this project's targets.
 - `community.crypto.x509_certificate` / real CA issuance - a full,
   correct X.509 CA implementation is out of scope for a single module;
-  blocks `robertdebock.ca` specifically.
+  blocks `robertdebock.ca` specifically. Note (0.9.475): the sibling
+  `dirless/x509-crystal` shard already does self-signed/CA-signed X.509
+  cert generation (ECDSA/RSA) via direct `LibCrypto` bindings - the
+  expensive part of this scope cut - so a future attempt at this module
+  should start there rather than from scratch, though it's not a
+  drop-in (still needs CSR-based issuance from arbitrary subject/SAN
+  fields, `state=absent`, revocation, etc. that shard doesn't expose).
 - `community.general.vdo` - unimplemented; untestable so far, no real
   role sets a non-empty `vdo_devices`.
 - `gluster.gluster.gluster_volume` - unimplemented; causes a cosmetic

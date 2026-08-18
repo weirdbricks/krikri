@@ -4,87 +4,107 @@ require "json"
 require "../src/crystal_play/base_plugin"
 
 module CrystalPlay
-  # openssl_dhparam plugin - generates a Diffie-Hellman parameters file.
-  # Compatible with Ansible's community.crypto.openssl_dhparam module.
+  # openssl_dhparam plugin (community.crypto.openssl_dhparam) - generates
+  # OpenSSL Diffie-Hellman parameters. Ported from the real module's
+  # `openssl` backend (shells to the `openssl dhparam` binary) - the
+  # module's own `cryptography`-library backend is skipped since this
+  # codebase has no Python runtime to lean on; the openssl CLI backend
+  # is the module's own fallback and produces byte-identical params.
   #
-  # Shells out to the target's own `openssl dhparam` binary (real
-  # Ansible's own module does the same when the `cryptography` Python
-  # library isn't available, and always did in older versions) - this
-  # codebase already has precedent for shelling to `openssl` (unarchive/
-  # authorized_key don't, but there's no vendored DH-param generation
-  # library here at all, unlike the zstd/gzip/xz/bz2 codec cases
-  # mysql_db.cr's dump/import prefers a native Crystal implementation
-  # for).
-  #
-  # Supported parameters:
-  # - path (required)
-  # - size: bit length (default 4096)
-  # - state: present (default) / absent
-  # - force: bool - regenerate even if a file of the right size already
-  #   exists (default false)
-  # - owner/group/mode
-  # - check_mode
-  #
-  # Idempotency: if the file exists and isn't force:'d, its actual
-  # bit length is read back via `openssl dhparam -in path -text -noout`
-  # and compared to size: - regenerating only on a mismatch (or a file
-  # openssl itself can't parse, e.g. corrupt/truncated).
-  #
-  # Not implemented: backup:.
+  # Parameters: path (required), size (default 4096), state (present/
+  # absent, default present), force, backup, owner/group/mode,
+  # check_mode. select_crypto_backend/return_content are accepted but
+  # only the openssl-CLI-equivalent behavior applies.
   class OpensslDhparamPlugin < BasePlugin
     def execute : PluginResult
       path = @params["path"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: path") unless path
+
       path = expand_tilde(path)
-
       state = @params["state"]? || "present"
-      check_mode = is_true?(@params["check_mode"]?)
-
-      if state == "absent"
-        return ensure_absent(path, check_mode)
-      end
-
       size = (@params["size"]? || "4096").to_i
       force = is_true?(@params["force"]?)
+      check_mode = is_true?(@params["check_mode"]?)
 
-      ensure_present(path, size, force, check_mode)
+      base_dir = File.dirname(path)
+      unless Dir.exists?(base_dir)
+        return PluginResult.new(changed: false, failed: true, msg: "The directory '#{base_dir}' does not exist or the file is not a directory")
+      end
+
+      if state == "absent"
+        return remove(path, check_mode)
+      end
+
+      valid = !force && File.exists?(path) && params_valid?(path, size)
+
+      if valid
+        changed = apply_attrs(path)
+        return PluginResult.new(changed: changed, failed: false, msg: "DH parameters already valid at #{path}", size: size, filename: path)
+      end
+
+      return PluginResult.new(changed: true, failed: false, msg: "Would generate DH parameters at #{path} (check mode)", size: size, filename: path) if check_mode
+
+      generate(path, size)
     end
 
-    private def ensure_absent(path : String, check_mode : Bool) : PluginResult
-      return PluginResult.new(changed: false, failed: false, msg: "#{path} already absent") unless File.exists?(path)
-      return PluginResult.new(changed: true, failed: false, msg: "#{path} would be removed") if check_mode
+    private def remove(path : String, check_mode : Bool) : PluginResult
+      exists = File.exists?(path)
+      return PluginResult.new(changed: exists, failed: false, msg: exists ? "Would remove #{path} (check mode)" : "#{path} already absent") if check_mode
+      return PluginResult.new(changed: false, failed: false, msg: "#{path} already absent") unless exists
 
+      backup(path)
       File.delete(path)
       PluginResult.new(changed: true, failed: false, msg: "Removed #{path}")
     end
 
-    private def ensure_present(path : String, size : Int32, force : Bool, check_mode : Bool) : PluginResult
-      if !force && File.exists?(path) && current_size(path) == size
-        apply_owner_group_mode(path, @params["owner"]?, @params["group"]?, @params["mode"]?) unless check_mode
-        return PluginResult.new(changed: false, failed: false, msg: "#{path} already contains #{size}-bit DH parameters")
-      end
+    # Mirrors DHParameterOpenSSL#_check_params_valid: `openssl dhparam
+    # -check -text -noout -in <path>`, parse "Parameters: (NNNN bit)"
+    # from stdout, reject on a non-zero exit or a WARNING in either
+    # stream.
+    private def params_valid?(path : String, size : Int32) : Bool
+      stdout = IO::Memory.new
+      err = IO::Memory.new
+      status = Process.run("openssl", ["dhparam", "-check", "-text", "-noout", "-in", path], output: stdout, error: err)
+      return false unless status.success?
 
-      return PluginResult.new(changed: true, failed: false, msg: "Would generate #{size}-bit DH parameters at #{path}") if check_mode
+      text = stdout.to_s
+      match = text.match(/Parameters:\s+\((\d+) bit\)/)
+      return false unless match
 
-      result = remote_exec("openssl dhparam -out #{path} #{size}")
-      unless result[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true, msg: "Failed to generate DH parameters", stderr: result[:stderr])
-      end
+      return false if text.includes?("WARNING") || err.to_s.includes?("WARNING")
 
-      apply_owner_group_mode(path, @params["owner"]?, @params["group"]?, @params["mode"]?)
-      PluginResult.new(changed: true, failed: false, msg: "Generated #{size}-bit DH parameters at #{path}")
+      match[1].to_i == size
     end
 
-    # Reads back the bit length of an existing DH params file, or nil if
-    # openssl can't parse it at all (missing/corrupt) - either way that's
-    # "doesn't match", so #ensure_present regenerates it.
-    private def current_size(path : String) : Int32?
-      result = remote_exec("openssl dhparam -in #{path} -text -noout")
-      return nil unless result[:exit_code] == 0
-
-      if match = result[:stdout].match(/\((\d+) bit\)/)
-        match[1].to_i
+    private def generate(path : String, size : Int32) : PluginResult
+      tmp = File.tempname("dhparam")
+      stdout = IO::Memory.new
+      err = IO::Memory.new
+      status = Process.run("openssl", ["dhparam", "-out", tmp, size.to_s], output: stdout, error: err)
+      unless status.success?
+        File.delete(tmp) if File.exists?(tmp)
+        return PluginResult.new(changed: false, failed: true, msg: "openssl dhparam failed: #{err}")
       end
+
+      backup(path)
+      File.rename(tmp, path)
+      apply_attrs(path)
+      PluginResult.new(changed: true, failed: false, msg: "Generated DH parameters at #{path}", size: size, filename: path)
+    end
+
+    private def apply_attrs(path : String) : Bool
+      before = File.info(path).permissions.value
+      apply_owner_group_mode(path, @params["owner"]?, @params["group"]?, @params["mode"]?)
+      File.info(path).permissions.value != before
+    rescue
+      false
+    end
+
+    private def backup(path : String)
+      return unless is_true?(@params["backup"]?)
+      return unless File.exists?(path)
+      timestamp = Time.local.to_s("%Y-%m-%d@%H:%M~")
+      File.copy(path, "#{path}.#{timestamp}")
     end
   end
 end

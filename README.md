@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.474-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.475-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -63,7 +63,7 @@ See [KNOWN_MISSING.md](KNOWN_MISSING.md) for what's still missing, and
   per task, on by default (`--no-batching` to disable; see the
   Performance section below and `git log`'s `0.9.61`-`0.9.63` commits)
 
-### Plugins (78 total)
+### Plugins (87 total)
 
 **Files & templates:** `copy`, `template`, `file`, `lineinfile`,
 `blockinfile`, `replace`, `ini_file`, `stat`, `find`, `archive`,
@@ -317,6 +317,26 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.475` - closes out the last 2 open `KNOWN_MISSING.md` real gaps**
+  (not tied to a new real-host round). `pamd:` rewritten to match
+  `community.general.pamd`'s own Python model line-for-line (linked-
+  list rule matching, bracketed-control normalization, comment/empty-
+  line-skipping insert-before/after) instead of the prior simplified
+  `present`/`absent`-only version - `present` wasn't even a real
+  Ansible state (the real default is `updated`, and `control:` is
+  always required, not optional for `absent`). Now implements
+  `updated`/`before`/`after`/`absent`/`args_present`/`args_absent`, all
+  verified locally against hand-built PAM stack fixtures for exact-match
+  insertion/normalization/idempotency. Also rewrote
+  `community.crypto.openssl_dhparam` and `community.crypto.
+  openssh_keypair` to more fully match their real modules (dhparam
+  gains `state=absent`/`backup:`; keypair gains `comment:`/
+  `passphrase:`/the real `regenerate:` mode set) - correcting
+  0.9.474's own `KNOWN_MISSING.md` entry, which wrongly said these two
+  had "no plugin, no `AVAILABLE_PLUGINS` entry" at all; both had been
+  implemented (more simply) since `0.9.121`/`0.9.125`, a documentation
+  slip in the prior round rather than a real gap. `KNOWN_MISSING.md`'s
+  "Real gaps" section is now empty.
 - **`0.9.474` - same `ansible` ad-hoc round, RHEL-family target**: 1
   Atlantic.net Rocky 9.6 host (dnf/mariadb/postgresql/docker-ce/EPEL
   installed fresh), same all-87-plugins real-vs-crystal comparison as
