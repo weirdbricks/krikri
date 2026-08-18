@@ -1,0 +1,46 @@
+# Regression fixture for SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #16:
+# build_hostvars is now memoized per TaskExecutor (a generation counter
+# invalidated on @facts/@registered_vars mutation), so this specifically
+# exercises that a LATER task on one host sees an EARLIER task's
+# register:/set_fact:/meta: clear_facts on a DIFFERENT host via
+# hostvars[...] - a stale cache would keep serving the pre-mutation
+# snapshot instead. Targets both h1/h2 (spec/fixtures/inventory-
+# hostvars-local.ini), both ansible_connection=local.
+- name: hostvars cache invalidation smoke test
+  hosts: hostvars_test
+  gather_facts: false
+
+  tasks:
+    - name: h1 registers a value
+      ansible.builtin.command: echo dynamic_h1_value
+      when: inventory_hostname == 'h1'
+      register: h1_out
+
+    - name: h2 reads h1's freshly-registered var via hostvars
+      ansible.builtin.debug:
+        msg: "got_register={{ hostvars['h1'].h1_out.stdout }}"
+      when: inventory_hostname == 'h2'
+
+    - name: h1 sets a fact
+      ansible.builtin.set_fact:
+        h1_fact: fact_value_one
+      when: inventory_hostname == 'h1'
+
+    - name: h2 reads h1's fact via hostvars
+      ansible.builtin.debug:
+        msg: "got_fact={{ hostvars['h1'].h1_fact }}"
+      when: inventory_hostname == 'h2'
+
+    - name: h1 clears its facts
+      ansible.builtin.meta: clear_facts
+      when: inventory_hostname == 'h1'
+
+    - name: h2 confirms h1's fact no longer visible via hostvars after clear_facts
+      ansible.builtin.debug:
+        msg: "cleared={{ hostvars['h1'].h1_fact is not defined }}"
+      when: inventory_hostname == 'h2'
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "hostvars cache invalidation smoke test complete!"
+      when: inventory_hostname == 'h2'

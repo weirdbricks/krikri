@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.490-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.491-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -466,6 +466,22 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.491`** - `build_hostvars`/`build_groups` (the `hostvars[...]`/
+  `groups[...]` magic vars) memoized per `TaskExecutor`, closing a
+  quadratic-in-host-count gap: both were previously rebuilt from scratch
+  on EVERY (task, host) pair, each rebuild walking the whole inventory -
+  30 hosts x 100 tasks measured at 2.92s before, 0.20s after (~14.5x,
+  matching `SUGGESTED_PERFORMANCE_IMPROVEMENTS.md` item #16's estimate
+  exactly). Cached behind a single generation counter bumped at every
+  real mutation site of the 3 inputs that can change it mid-play -
+  `@facts` (gather_facts/set_fact/package_facts, meta: clear_facts),
+  `@registered_vars` (register:, incl. the run_once: copy-forward path),
+  and `meta: refresh_inventory`'s in-place reload - so a later task on
+  one host still sees an earlier task's register:/set_fact:/clear_facts
+  on a DIFFERENT host via `hostvars[...]`, not a stale pre-mutation
+  snapshot. Regression spec added exercising exactly that cross-host
+  staleness risk, not just the existing single-shot hostvars/groups
+  reads. `crystal spec`: 1490 examples, 0 failures.
 - **`0.9.490`** - `amazon.aws.ec2_metadata_facts` added and live-verified
   against a real (throwaway, spot) EC2 instance: recursively walks the
   IMDSv2 meta-data/dynamic trees the same way the real module does,
@@ -537,17 +553,6 @@ for current-state detail.
   does NOT add newly-discovered hosts to the CURRENT play's own host
   loop, only to a LATER play's, since that's computed fresh from the
   shared inventory each time.
-- **`0.9.479`** - `meta:` gains `end_host`/`end_play`/`clear_host_errors`/
-  `noop`, each ported from real Ansible's own `_execute_meta` semantics
-  and live-verified - including the non-obvious parts (`end_play`/
-  `clear_host_errors` are genuinely global, affecting every currently-
-  active/every-failed host in the play even if only one host's own
-  `when:` actually reaches the task; `clear_host_errors` exempts a host
-  from later plays and the run's exit code but does NOT resume it in
-  the current play). Also fixed a real, previously-latent bug surfaced
-  while implementing this: `when:` on ANY `meta:` task (including the
-  pre-existing `clear_facts`/`flush_handlers`) was never evaluated at
-  all - a when:-gated meta task always ran unconditionally.
 ---
 
 ## 🤝 Contributing

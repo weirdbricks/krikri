@@ -961,6 +961,30 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("hostvars smoke test complete!")
   end
 
+  it "reflects a register:/set_fact:/meta: clear_facts done by one host in another host's hostvars[...] on the very next task" do
+    # Regression for SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #16:
+    # build_hostvars/build_groups got memoized per-TaskExecutor (a
+    # generation counter bumped on every @facts/@registered_vars
+    # mutation) since the unmemoized version was quadratic in host count.
+    # This is the invalidation contract's own regression spec, not just a
+    # feature test - a naive "cache once, never invalidate" version would
+    # pass every OTHER hostvars spec (single-shot reads) but silently
+    # serve a stale hostvars['h1'] snapshot here, missing h1's own
+    # register:/set_fact:/clear_facts from earlier in the SAME play.
+    hostvars_inventory = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-hostvars-local.ini")
+    status, output = run_playbook(
+      "test-hostvars-cache-invalidation-quick.yml",
+      [] of String,
+      inventory: hostvars_inventory
+    )
+
+    status.success?.should be_true
+    output.should contain("got_register=dynamic_h1_value")
+    output.should contain("got_fact=fact_value_one")
+    output.should contain("cleared=True")
+    output.should contain("hostvars cache invalidation smoke test complete!")
+  end
+
   it "resolves groups['group_name'] to that group's member host names, incl. the synthesized 'all'" do
     # Real bug found benchmarking geerlingguy.kubernetes (round 35):
     # `groups` was entirely unpopulated in the vars_context, so ANY

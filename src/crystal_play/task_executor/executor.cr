@@ -44,6 +44,23 @@ module CrystalPlay
     # single task - see facts_dict_for's own comment for the invalidation
     # contract this depends on.
     @facts_dict_cache = Hash(String, Hash(String, JSON::Any)).new
+    # build_hostvars/build_groups are rebuilt on every #build_vars_context
+    # call (once per task per host) and each rebuild walks the WHOLE
+    # inventory, unlike facts_dict_for's per-host cost - quadratic in host
+    # count (SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #16, measured 14x
+    # at 30 hosts). Shared generation counter (not a per-host cache like
+    # facts_dict_cache above, since both methods build one whole-inventory
+    # result per call, not a per-host slice) bumped at every mutation site
+    # of the 3 real inputs: @facts (same 3 sites facts_dict_for already
+    # tracks), @registered_vars (every register: write), and @inventory
+    # (meta: refresh_inventory's reload_from!). build_groups only actually
+    # depends on the inventory input, but shares the same counter per the
+    # item's own writeup - cheaper to keep correct than two separate ones.
+    @hv_generation = 0
+    @hostvars_cache : Hash(String, JSON::Any)? = nil
+    @hostvars_cache_generation = -1
+    @groups_cache : Hash(String, JSON::Any)? = nil
+    @groups_cache_generation = -1
     # Hosts that hit a failed task without ignore_errors: further tasks in
     # the play are skipped for them (Ansible's default "a failure aborts
     # the rest of the play for that host" behavior). Public - crystal-
@@ -690,6 +707,7 @@ module CrystalPlay
         ansible_facts.as_h.each { |key, value| facts[key] = value }
         @facts[host.name] = facts
         @facts_dict_cache.delete(host.name)
+        @hv_generation += 1
       end
 
       {true, nil}
@@ -850,6 +868,7 @@ module CrystalPlay
 
       if value = @registered_vars[@hosts.first.name][register_name]?
         @registered_vars[host.name][register_name] = value
+        @hv_generation += 1
       end
     end
 
@@ -1039,6 +1058,10 @@ module CrystalPlay
     # explicit group) - matches real Ansible, where 'all' always means
     # every host regardless of how the inventory file grouped things.
     private def build_groups : Hash(String, JSON::Any)
+      if (cache = @groups_cache) && @groups_cache_generation == @hv_generation
+        return cache
+      end
+
       result = Hash(String, JSON::Any).new
       if inventory = @inventory
         inventory.groups.each do |name, group|
@@ -1048,6 +1071,8 @@ module CrystalPlay
       else
         result["all"] = JSON::Any.new(@hosts.map { |other_host| JSON::Any.new(other_host.name) })
       end
+      @groups_cache = result
+      @groups_cache_generation = @hv_generation
       result
     end
 
@@ -1087,6 +1112,10 @@ module CrystalPlay
     # recursion) - inventory vars + facts + registered vars covers every
     # real-world hostvars[...] use seen so far.
     private def build_hostvars : Hash(String, JSON::Any)
+      if (cache = @hostvars_cache) && @hostvars_cache_generation == @hv_generation
+        return cache
+      end
+
       result = Hash(String, JSON::Any).new
       all_hosts = @inventory.try(&.hosts.values) || @hosts
       all_hosts.each do |other_host|
@@ -1099,6 +1128,8 @@ module CrystalPlay
         entry["ansible_host"] ||= JSON::Any.new(other_host.name)
         result[other_host.name] = JSON::Any.new(entry)
       end
+      @hostvars_cache = result
+      @hostvars_cache_generation = @hv_generation
       result
     end
 
@@ -1275,6 +1306,7 @@ module CrystalPlay
         @facts[host.name][key] = value
       end
       @facts_dict_cache.delete(host.name)
+      @hv_generation += 1
     end
 
     # with_first_found: yields exactly one item - the first candidate path
@@ -2902,6 +2934,7 @@ module CrystalPlay
             "results" => JSON::Any.new(results),
           }
           @registered_vars[host.name][register_name] = JSON::Any.new(aggregate)
+          @hv_generation += 1
         end
       end
 
@@ -3442,6 +3475,7 @@ module CrystalPlay
         # ad-hoc task has no later play to ever observe a refresh anyway.
         if (path = @inventory_path) && (inv = @inventory)
           inv.reload_from!(InventoryParser.parse(path))
+          @hv_generation += 1
         end
       else
         # Only clear_facts/flush_handlers/end_host/end_play/
@@ -3450,6 +3484,7 @@ module CrystalPlay
         # other action to dispatch on here.
         @facts[host.name].clear
         @facts_dict_cache.delete(host.name)
+        @hv_generation += 1
       end
     end
 
@@ -4291,6 +4326,7 @@ module CrystalPlay
       
       # Store the enhanced result
       @registered_vars[host.name][register_name] = JSON::Any.new(result_hash)
+      @hv_generation += 1
     end
     
     # Run all notified handlers
