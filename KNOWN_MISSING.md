@@ -26,6 +26,36 @@ real modules regardless - see `git log`.
 
 ## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 
+- Cloud provider modules (`amazon.aws`/`community.aws` - `ec2_instance`,
+  `s3_object`, IAM, security groups, etc.), `azure_rm_*`, and dynamic
+  cloud inventory *plugins* (`aws_ec2.yml` et al.) - not implemented,
+  not planned. These are a fundamentally different kind of module (HTTP
+  calls to a cloud API from the controller, needing real request
+  signing/auth, not shell commands run on a managed target) - a real
+  API client built from scratch, not "another module that shells out to
+  a CLI tool" like everything implemented so far. Revisit only if a
+  specific real-world need justifies the investment.
+- Role-private custom modules (a role's own `library/*.py`, outside the
+  `ansible.builtin`/`community.*`/etc. plugin set this engine ships as
+  native binaries) - there's no generic arbitrary-Python-module runner,
+  so these can't execute at all. The task is skipped with a
+  parse-time warning ("Plugin not available: <name>") rather than
+  crashing the run, but anything downstream depending on its result
+  sees an undefined value, which can cascade into broader task-status
+  divergence for roles that lean on this (seen repeatedly benchmarking
+  `linux-system-roles`: `sr_fingerprint`, `timesync_provider`,
+  `kernel_settings_get_config`, `blivet`).
+- `docker_*`'s `api_version:` pin - not implemented, not planned. The
+  underlying `docr` client uses unversioned endpoint URLs throughout,
+  so pinning a version means touching every endpoint in a separate
+  shard; the unversioned URLs negotiate fine against current
+  Docker/Podman. Revisit only if a real playbook actually needs the
+  pin.
+- `meta:` supports only `clear_facts` and `flush_handlers`. Real
+  Ansible's own `end_play`/`end_host`/`refresh_inventory`/
+  `clear_host_errors`/`noop` act on execution-flow machinery this
+  engine models differently, and are rejected at parse time rather than
+  silently accepted and ignored.
 - `config`/`inventory_hostnames` lookups - architecturally out of scope
   (would require modeling Ansible's own config-resolution/inventory
   internals, not just a data lookup).
