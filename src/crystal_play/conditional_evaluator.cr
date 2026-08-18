@@ -1026,9 +1026,19 @@ module CrystalPlay
       # a pattern seen in any role benchmarked so far).
       return "{}" if expr == "{}"
 
-      # Handle arrays (simple list syntax)
+      # Handle arrays (simple list syntax). An empty literal `[]`'s inner
+      # text is "", and `"".split(',')` returns `[""]` (one empty-string
+      # element), not `[]` - without this guard, `mylist != []` compared
+      # a real empty array against a bogus 1-element array and always
+      # evaluated true (and `mylist == []` always evaluated false),
+      # found via willshersystems.sshd's own `when: sshd_trusted_user_ca_
+      # keys_list != []` guard always passing regardless of the real
+      # (empty-by-default) list.
       if expr.starts_with?('[') && expr.ends_with?(']')
-        items = expr[1..-2].split(',').map(&.strip)
+        inner = expr[1..-2].strip
+        return [] of String if inner.empty?
+
+        items = inner.split(',').map(&.strip)
         return items.map { |item|
           val = evaluate_value(item, vars)
           val.is_a?(String) ? val : val.to_s
