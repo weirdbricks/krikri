@@ -1,0 +1,34 @@
+# meta: end_host - per-host variation of end_play (added alongside it).
+# Real Ansible's own doc: "causes the play to end for the current host
+# without failing it." Verified live against real ansible-playbook: a
+# SECOND host whose own when: skips this exact task entirely keeps
+# running normally afterward - unlike end_play, this does NOT affect
+# other hosts. Requires spec/fixtures/inventory-two-local-hosts.ini
+# (hostone/hosttwo) to actually exercise the per-host scoping - under
+# the default single-host inventory this just no-ops for "localhost"
+# (still safe, still completes).
+- name: meta end_host smoke test
+  hosts: all
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: notify a handler before ending
+      ansible.builtin.debug:
+        msg: "triggering on {{ inventory_hostname }}"
+      changed_when: true
+      notify: my end_host handler
+      when: inventory_hostname == "hostone"
+
+    - name: end this host only
+      ansible.builtin.meta: end_host
+      when: inventory_hostname == "hostone"
+
+    - name: only the other host should reach this
+      ansible.builtin.debug:
+        msg: "ran for {{ inventory_hostname }}"
+
+  handlers:
+    - name: my end_host handler
+      ansible.builtin.debug:
+        msg: "handler ran - should never happen, end_host suppresses it"

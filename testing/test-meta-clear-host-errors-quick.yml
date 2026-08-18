@@ -1,0 +1,40 @@
+# meta: clear_host_errors - real Ansible's own doc: "clears the failed
+# state (if any) from hosts specified in the play's list of hosts. This
+# will make them available for targeting in subsequent plays, but not
+# continue execution in the current play." Verified live against real
+# ansible-playbook (community.general docs' own example shape: a failing
+# task immediately followed by clear_host_errors in the same task list) -
+# genuinely global like end_play, not scoped to whichever host(s) happen
+# to still be active enough to individually execute this meta task (the
+# failed host itself is ALREADY excluded from this task too, so scoping
+# to `host` alone would make the feature unusable). Requires
+# spec/fixtures/inventory-two-local-hosts.ini (hostone/hosttwo) to
+# actually exercise it - under the default single-host inventory the
+# `command:` task is skipped under --check mode anyway, so this
+# harmlessly no-ops.
+- name: meta clear_host_errors smoke test, play 1
+  hosts: all
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: fail only hostone
+      ansible.builtin.command: /bin/false
+      when: inventory_hostname == "hostone"
+
+    - name: clear the error for everyone
+      ansible.builtin.meta: clear_host_errors
+
+    - name: only hosttwo should reach this - same play
+      ansible.builtin.debug:
+        msg: "same play ran for {{ inventory_hostname }}"
+
+- name: meta clear_host_errors smoke test, play 2
+  hosts: all
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: both hosts should reach this - next play
+      ansible.builtin.debug:
+        msg: "next play ran for {{ inventory_hostname }}"

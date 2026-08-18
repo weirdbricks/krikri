@@ -942,7 +942,7 @@ module CrystalPlay
       end
 
       if meta_yaml = directive(task_hash, "meta")
-        return parse_meta_task(name, meta_yaml)
+        return parse_meta_task(name, task_hash, meta_yaml)
       end
 
       if include_vars_yaml = directive(task_hash, "include_vars")
@@ -1273,9 +1273,10 @@ module CrystalPlay
     # acts on the executor's own state rather than running a plugin on a
     # target.
     #
-    # `clear_facts` and `flush_handlers` are supported. `flush_handlers`
-    # added in round 18 - found via robertdebock's own roles, several of
-    # which (mysql, selinux, zabbix_repository, zabbix_server,
+    # `clear_facts`/`flush_handlers`/`end_host`/`end_play`/
+    # `clear_host_errors`/`noop` are supported. `flush_handlers` added in
+    # round 18 - found via robertdebock's own roles, several of which
+    # (mysql, selinux, zabbix_repository, zabbix_server,
     # core_dependencies) use `ansible.builtin.meta: flush_handlers`
     # deliberately mid-role (e.g. flushing a "Update cache" handler
     # BEFORE a later task that needs the freshly-added repo's package
@@ -1284,26 +1285,47 @@ module CrystalPlay
     # functional divergence from real ansible-playbook (a package
     # install failing "Unable to locate package" because the apt cache
     # update handler ran at the very end of the play instead of
-    # mid-role). Real Ansible's own end_play/end_host/refresh_inventory/
-    # clear_host_errors/noop still act on execution-flow machinery this
-    # engine models differently, so they're rejected outright rather than
-    # silently accepted and ignored - a playbook whose `meta: end_play`
-    # quietly did nothing would be far worse than one that fails to
-    # parse. A documented scope cut: `meta:` was previously not supported
-    # at all, so this is strictly additive.
-    private def self.parse_meta_task(name : String, meta_yaml : YAML::Any) : Task
+    # mid-role). `end_host`/`end_play`/`clear_host_errors`/`noop` added
+    # after that - see TaskExecutor#execute_meta for the exact semantics
+    # (each verified against real ansible-playbook, including the
+    # non-obvious ones: end_play affects every currently-active host
+    # even if only ONE host's own `when:` actually reaches it;
+    # clear_host_errors does NOT resume execution in the current play,
+    # only exempts the host from the next one). `refresh_inventory`/
+    # `reset_connection`/`end_batch`/`end_role` still act on execution-
+    # flow machinery this engine models differently (dynamic mid-run
+    # inventory mutation, persistent-connection control, `serial:`
+    # batching, and role-scoped early-return respectively), so they're
+    # rejected outright rather than silently accepted and ignored - a
+    # playbook whose `meta: end_play` quietly did nothing would be far
+    # worse than one that fails to parse. A documented scope cut:
+    # `meta:` was previously not supported at all, so this is strictly
+    # additive.
+    SUPPORTED_META_ACTIONS = Set{"clear_facts", "flush_handlers", "end_host", "end_play", "clear_host_errors", "noop"}
+
+    private def self.parse_meta_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), meta_yaml : YAML::Any) : Task
       action = meta_yaml.as_s?.try(&.strip)
 
       if action.nil? || action.empty?
-        raise "meta: requires a string action (only 'clear_facts'/'flush_handlers' are supported)"
+        raise "meta: requires a string action (only #{SUPPORTED_META_ACTIONS.join("/")} are supported)"
       end
 
-      unless action == "clear_facts" || action == "flush_handlers"
-        raise "meta: #{action} is not supported (only 'clear_facts'/'flush_handlers' are)"
+      unless SUPPORTED_META_ACTIONS.includes?(action)
+        raise "meta: #{action} is not supported (only #{SUPPORTED_META_ACTIONS.join("/")} are)"
       end
 
       task = Task.new(name, "_meta")
       task.meta_action = action
+
+      # `when:` on a meta: task previously wasn't parsed at all - this
+      # early-return branch skipped straight past #parse_task's generic
+      # when:/register:/etc. parsing below, entirely unnoticed until
+      # end_host/end_play (whose whole point is frequently being
+      # conditional per host) surfaced it: a when:-gated `meta: end_host`
+      # silently ran for EVERY host regardless of the condition. Verified
+      # against real ansible-playbook, which does honor when: here.
+      task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
+
       task
     end
 

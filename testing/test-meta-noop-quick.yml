@@ -1,0 +1,16 @@
+# meta: noop - real Ansible's own doc: "This literally does 'nothing'.
+# It is mainly used internally and not recommended for general use." Was
+# previously rejected at parse time along with every other meta: action
+# beyond clear_facts/flush_handlers; now a real (trivial) no-op.
+- name: meta noop smoke test
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: do nothing
+      ansible.builtin.meta: noop
+
+    - name: after the noop
+      ansible.builtin.debug:
+        msg: "reached after noop"

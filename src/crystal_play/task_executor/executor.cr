@@ -47,6 +47,26 @@ module CrystalPlay
     # git log's `0.9.61`-found, `0.9.64`-fixed cross-cutting engine
     # gap commit).
     getter halted_hosts : Set(String)
+    # Subset of halted_hosts that got there via a CLEAN meta: end_host/
+    # end_play, not a real task failure. Real Ansible's own semantics:
+    # "causes the play to end WITHOUT FAILING the host(s)" - such a host
+    # must still be excluded from the REST OF THIS PLAY (the existing
+    # halted_hosts mechanism already does that for free, including
+    # correctly propagating out of block:/rescue:/always: nesting and
+    # suppressing its own pending notified handlers - both verified
+    # against real ansible-playbook to behave identically to a real
+    # failure for THIS play), but must NOT be treated as a failure by
+    # crystal-play.cr's cross-play carry-forward (permanently_failed_
+    # hosts) or count toward the run's overall failed/exit-code status.
+    getter ended_hosts : Set(String)
+    # Hosts a real failure halted in this play whose error state was
+    # since cleared via meta: clear_host_errors. Real Ansible's own
+    # documented semantics: "makes them available for targeting in
+    # subsequent plays, but not continue execution in the current
+    # play" - so, unlike ended_hosts, these stay in halted_hosts (the
+    # current play still stops for them) but are excluded from
+    # crystal-play.cr's cross-play carry-forward the same way.
+    getter cleared_error_hosts : Set(String)
     # Full inventory, used to resolve delegate_to: targets that aren't
     # necessarily in this play's own host list (e.g. "localhost" when the
     # play targets a remote group). Optional - a caller that doesn't pass
@@ -140,6 +160,8 @@ module CrystalPlay
       # default), this is per-play exactly as before.
       @facts = fact_store || Hash(String, Hash(String, JSON::Any)).new
       @halted_hosts = Set(String).new
+      @ended_hosts = Set(String).new
+      @cleared_error_hosts = Set(String).new
       @task_group = Hash(Task, Array(Task)).new
       @grouped_lists = Set(UInt64).new
       @batch_cache = Hash(String, Hash(Task, {JSON::Any?, Hash(String, JSON::Any)})).new
@@ -671,7 +693,19 @@ module CrystalPlay
       return execute_block(task, host) if task.block?
       return execute_include_tasks(task, host) if task.include_tasks?
       return execute_include_role(task, host) if task.include_role?
-      return execute_meta(task, host) if task.meta?
+      if task.meta?
+        # `when:` on a meta: task was previously never evaluated at all -
+        # latent since meta: shipped (clear_facts/flush_handlers are
+        # rarely when:-gated in practice), surfaced adding end_host/
+        # end_play, whose whole point is frequently being conditional
+        # per host. Verified against real ansible-playbook: a when:-false
+        # meta: task prints "skipping: [host]" but - like every other
+        # meta: outcome - does NOT bump the recap's skipped= counter
+        # (defer_stats: true), unlike an ordinary task's when: skip.
+        vars_context = build_vars_context(task, host)
+        execute_meta(task, host) if when_passes?(task, vars_context, host, defer_stats: true)
+        return
+      end
       return execute_include_vars(task, host) if task.include_vars?
       return execute_validate_argument_spec(task, host) if task.validate_argument_spec?
 
@@ -3249,8 +3283,60 @@ module CrystalPlay
         # for the 2nd..Nth host and #run returns immediately without
         # re-printing anything.
         run_handlers
+      when "end_host"
+        # Per-host - verified against real ansible-playbook: a 2nd host
+        # whose own `when:` makes it skip this exact task entirely keeps
+        # running normally afterward, unlike end_play below. Reuses
+        # halted_hosts (already excludes this host from every remaining
+        # task in this play, including nested block:/rescue:/always:,
+        # and - also verified live - suppresses its own pending notified
+        # handlers at the end-of-play flush, exactly like a real
+        # failure) but tracked separately in ended_hosts so it's NOT
+        # treated as a failure for the exit code or carried forward into
+        # later plays.
+        @halted_hosts.add(host.name)
+        @ended_hosts.add(host.name)
+      when "end_play"
+        # Global, NOT per-host - verified against real ansible-playbook:
+        # even a host whose own `when:` skips this exact task entirely
+        # (never itself executes this branch) still gets halted for the
+        # rest of the play the moment ANY other host does. So this halts
+        # every currently-active host in the whole play, not just
+        # `host` - @hosts is the play's own full host list, available on
+        # the executor regardless of which single host's fiber is
+        # running this code.
+        @hosts.each do |other|
+          next if @halted_hosts.includes?(other.name)
+          @halted_hosts.add(other.name)
+          @ended_hosts.add(other.name)
+        end
+      when "clear_host_errors"
+        # Global, NOT scoped to `host` - same shape as end_play above,
+        # and for the same reason: real Ansible's own doc wording
+        # ("clears the failed state from hosts specified in the PLAY'S
+        # LIST OF HOSTS") and live verification both show it acts on
+        # every failed host in the play, not just whichever host(s)
+        # happen to still be active enough to individually execute this
+        # meta task - a host that already failed earlier in this play is
+        # EXCLUDED from this task too (same halted_hosts gate as any
+        # other), so if clearing were scoped to `host` alone, the failed
+        # host itself could never reach this code to clear its own
+        # error, making the feature unusable exactly the way the
+        # community.general docs' own example uses it (a failing task
+        # immediately followed by clear_host_errors in the same task
+        # list). Also confirmed live: clears the failure for SUBSEQUENT
+        # plays (the failed host is back for play 2) but leaves
+        # halted_hosts itself untouched, so the current play still does
+        # not resume for that host - matching "does NOT continue
+        # execution in the current play" exactly.
+        @hosts.each do |other|
+          @cleared_error_hosts.add(other.name) if @halted_hosts.includes?(other.name)
+        end
+      when "noop"
+        # Real Ansible's own doc: "this literally does 'nothing'."
       else
-        # Only clear_facts/flush_handlers parse (see
+        # Only clear_facts/flush_handlers/end_host/end_play/
+        # clear_host_errors/noop parse (see
         # PlaybookParser.parse_meta_task), so clear_facts is the only
         # other action to dispatch on here.
         @facts[host.name].clear

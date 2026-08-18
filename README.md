@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.478-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.479-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -74,10 +74,13 @@ have. See **Features** below for the full list of what's implemented.
   Docker client talks unversioned API endpoints throughout, which
   negotiate fine against current Docker/Podman, but pinning a specific
   API version would mean touching every endpoint individually.
-- **`meta:` only supports `clear_facts` and `flush_handlers`** -
-  `end_play`/`end_host`/`refresh_inventory`/`clear_host_errors`/`noop`
-  act on execution-flow machinery this engine models differently, and
-  are rejected at parse time rather than silently accepted and ignored.
+- **`meta:` supports `clear_facts`/`flush_handlers`/`end_host`/
+  `end_play`/`clear_host_errors`/`noop`** - `refresh_inventory`/
+  `reset_connection`/`end_batch`/`end_role` still act on execution-flow
+  machinery this engine models differently (dynamic mid-run inventory
+  mutation, persistent-connection control, `serial:` batching, and
+  role-scoped early-return respectively), and are rejected at parse
+  time rather than silently accepted and ignored.
 
 ---
 
@@ -364,6 +367,17 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.479`** - `meta:` gains `end_host`/`end_play`/`clear_host_errors`/
+  `noop`, each ported from real Ansible's own `_execute_meta` semantics
+  and live-verified - including the non-obvious parts (`end_play`/
+  `clear_host_errors` are genuinely global, affecting every currently-
+  active/every-failed host in the play even if only one host's own
+  `when:` actually reaches the task; `clear_host_errors` exempts a host
+  from later plays and the run's exit code but does NOT resume it in
+  the current play). Also fixed a real, previously-latent bug surfaced
+  while implementing this: `when:` on ANY `meta:` task (including the
+  pre-existing `clear_facts`/`flush_handlers`) was never evaluated at
+  all - a when:-gated meta task always ran unconditionally.
 - **`0.9.478`** - `ansible.posix.firewalld`: `zone:` now defaults to the
   system default zone instead of being required, and real Ansible's own
   `permanent`/`immediate`/`offline` validation/fallback logic replaces
@@ -389,10 +403,6 @@ for current-state detail.
   9.6): fixed a missing `libbz2` shared-library dependency that crashed
   `archive:`/`mysql_db:`/`postgresql_db:` outright on any RHEL-family
   host with no other apt/dpkg-family package installed.
-- **`0.9.473`** - first real-host round for the new `ansible` ad-hoc CLI
-  (`ansible <pattern> -m <module> -a <args>`), exercising all 87
-  plugins directly against real hosts rather than through a full
-  playbook.
 
 ---
 

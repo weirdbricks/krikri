@@ -396,8 +396,15 @@ playbook.plays.each_with_index do |play, play_index|
   executor.run
 
   # Carry any host that hard-failed in this play forward - excluded from
-  # every remaining play too, not just the rest of this one.
-  permanently_failed_hosts.concat(executor.halted_hosts)
+  # every remaining play too, not just the rest of this one. halted_hosts
+  # also includes clean meta: end_host/end_play stops (ended_hosts) and
+  # failures since cleared via meta: clear_host_errors
+  # (cleared_error_hosts) - neither is a real failure, so both are
+  # excluded here: real Ansible's own documented behavior for
+  # clear_host_errors is explicitly "available for targeting in
+  # subsequent plays", and end_host/end_play's own docs are explicit
+  # that they don't fail the host either.
+  permanently_failed_hosts.concat(executor.halted_hosts - executor.ended_hosts - executor.cleared_error_hosts)
 
   # Merge this play's per-host stats into the running total (a host can
   # appear in more than one play).
@@ -437,7 +444,19 @@ if show_custom_stats && CrystalPlay::CustomStats.any?
   puts ""
 end
 
-any_failed = combined_results.values.any? { |host_stats| (host_stats["failed"]? || 0) > 0 }
+# Deliberately NOT `combined_results.values.any? { failed > 0 }` - the
+# recap's own "failed" stat is a historical count that never decreases
+# (matching real Ansible's own display stats), but the exit code follows
+# a SEPARATE, mutable signal real Ansible tracks (TaskQueueManager's own
+# `_failed_hosts` set, which `meta: clear_host_errors` literally pops a
+# host out of - see ansible/plugins/strategy/__init__.py's own
+# `_execute_meta`). Verified live: real ansible-playbook exits 0 for a
+# run whose recap shows `failed=1` on a host that was later cleared via
+# clear_host_errors. `permanently_failed_hosts` is exactly that same
+# "still failed" signal - it already excludes any host cleared via
+# clear_host_errors or cleanly ended via end_host/end_play, and
+# accumulates across every play the same way real Ansible's set does.
+any_failed = !permanently_failed_hosts.empty?
 
 if check_mode
   puts "NOTE: Running in check mode - no changes were made".colorize(:yellow).bold

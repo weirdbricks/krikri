@@ -1,0 +1,26 @@
+# meta: end_play - real Ansible's own doc: "causes the play to end
+# without failing the host(s). Note that this affects all hosts." Verified
+# live against real ansible-playbook: this is genuinely GLOBAL, not
+# per-host - a SECOND host whose own when: skips this exact task entirely
+# (never itself executes it) still gets blocked from every later task the
+# moment ANY other host does. Requires
+# spec/fixtures/inventory-two-local-hosts.ini (hostone/hosttwo) to
+# actually exercise the cross-host propagation.
+- name: meta end_play smoke test
+  hosts: all
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: only hostone reaches this task
+      ansible.builtin.debug:
+        msg: "ending the play from {{ inventory_hostname }}"
+      when: inventory_hostname == "hostone"
+
+    - name: end the whole play - only hostone's when is true, affects everyone
+      ansible.builtin.meta: end_play
+      when: inventory_hostname == "hostone"
+
+    - name: nobody should reach this - not even hosttwo
+      ansible.builtin.debug:
+        msg: "should never print for either host"

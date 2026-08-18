@@ -580,11 +580,82 @@ describe "crystal-ansible CLI (--check mode)" do
       output.scan("HANDLER [my flush handler]").size.should eq(1)
     end
 
+    it "meta: end_host stops only the current host, not others" do
+      # Real Ansible's own doc: "per-host variation of end_play... causes
+      # the play to end for the current host without failing it." Was
+      # rejected at parse time entirely before this - see git log.
+      # Verified live against real ansible-playbook for both assertions
+      # below (a 2nd host whose own when: skips this exact task keeps
+      # running afterward; the ended host's own pending notified handler
+      # is suppressed, matching a real failure's handler-skip behavior
+      # exactly even though this is NOT a failure).
+      status, output = run_playbook(
+        "test-meta-end-host-quick.yml", [] of String, inventory: TWO_LOCAL_HOSTS_INVENTORY
+      )
+
+      status.success?.should be_true
+      output.should contain("ran for hosttwo")
+      output.should_not contain("ran for hostone")
+      output.should_not contain("HANDLER [my end_host handler]")
+    end
+
+    it "meta: end_play stops every currently-active host, not just the one that triggers it" do
+      # Real Ansible's own doc: "causes the play to end without failing
+      # the host(s). Note that this affects all hosts." Verified live
+      # against real ansible-playbook: genuinely global - hosttwo's own
+      # when: skips this exact task entirely (never itself executes it)
+      # but still gets blocked from the task after it, the moment
+      # hostone's when: makes IT execute end_play.
+      status, output = run_playbook(
+        "test-meta-end-play-quick.yml", [] of String, inventory: TWO_LOCAL_HOSTS_INVENTORY
+      )
+
+      status.success?.should be_true
+      output.should_not contain("should never print")
+    end
+
+    it "meta: clear_host_errors excludes a failed host from the rest of this play but not the next one" do
+      # Real Ansible's own doc: "clears the failed state... available
+      # for targeting in subsequent plays, but not continue execution in
+      # the current play." Verified live against real ansible-playbook,
+      # including the non-obvious part: clearing is global (acts on
+      # every failed host in the play), not scoped to whichever host(s)
+      # happen to still be active enough to individually execute this
+      # meta task - the failed host itself is ALREADY excluded from this
+      # task too, so scoping to the executing host alone would make the
+      # feature unusable.
+      status, output = run_playbook(
+        "test-meta-clear-host-errors-quick.yml", [] of String, inventory: TWO_LOCAL_HOSTS_INVENTORY
+      )
+
+      status.success?.should be_true
+      # Same play: only hosttwo (never failed) reaches the task after
+      # clear_host_errors - hostone stays excluded from the REST of this
+      # play despite its error being cleared.
+      output.should contain("same play ran for hosttwo")
+      output.should_not contain("same play ran for hostone")
+      # Next play: both hosts are back, including hostone.
+      output.should contain("next play ran for hostone")
+      output.should contain("next play ran for hosttwo")
+    end
+
+    it "meta: noop does nothing and execution continues normally" do
+      status, output = run_playbook("test-meta-noop-quick.yml", [] of String)
+
+      status.success?.should be_true
+      output.should contain("reached after noop")
+    end
+
     it "reports an unsupported meta action instead of treating it as a no-op" do
       # A meta action this engine does not model is rejected at parse time
       # with a named error, rather than being accepted and silently doing
-      # nothing - a `meta: end_play` that quietly did nothing would change
-      # what the playbook means.
+      # nothing - a `meta: refresh_inventory` that quietly did nothing
+      # would change what the playbook means. (end_play/end_host/
+      # clear_host_errors/noop are all real, supported actions now - see
+      # PlaybookParser::SUPPORTED_META_ACTIONS and TaskExecutor#execute_
+      # meta, each verified against real ansible-playbook; refresh_
+      # inventory - dynamic mid-run inventory mutation - remains a
+      # documented scope cut.)
       #
       # It surfaces as a warning and the task is dropped, which is how the
       # parser handles *every* parse error (see PlaybookParser.parse_tasks'
@@ -599,15 +670,15 @@ describe "crystal-ansible CLI (--check mode)" do
           hosts: testservers
           gather_facts: false
           tasks:
-            - name: end the play early
-              ansible.builtin.meta: end_play
+            - name: refresh the inventory
+              ansible.builtin.meta: refresh_inventory
         YAML
       begin
         captured = IO::Memory.new
         Process.run(BINARY, ["-i", testservers, tmp], output: captured, error: captured)
-        captured.to_s.should contain("meta: end_play is not supported")
+        captured.to_s.should contain("meta: refresh_inventory is not supported")
         # and the task genuinely did not run
-        captured.to_s.should_not contain("end the play early")
+        captured.to_s.should_not contain("refresh the inventory")
       ensure
         File.delete(tmp) rescue nil
       end
