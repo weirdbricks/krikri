@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.477-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.478-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -317,6 +317,24 @@ The last few benchmark rounds on real Atlantic.net host pairs vs. real
 is the headline only, see `KNOWN_MISSING.md` for full reproduction
 context.
 
+- **`0.9.478` - `ansible.posix.firewalld` narrowed considerably** (not
+  tied to a new real-host round - a lower-cost pass through
+  `KNOWN_MISSING.md`'s scope-cut list, verified against a real firewalld
+  2.3.1 Debian container via podman rather than a full Atlantic.net
+  round). `zone:` now defaults to the system default zone
+  (`firewall-offline-cmd --get-default-zone`) instead of being required,
+  and real Ansible's own twisty `permanent`/`immediate`/`offline`
+  validation logic is ported exactly from `ansible/posix/plugins/
+  modules/firewalld.py`'s own `main()`, replacing the previous blanket
+  "`offline: true, permanent: true` both required" gate. What remains
+  unimplemented is now only a genuinely running firewalld daemon plus a
+  real `immediate:` runtime change actually requested/defaulted - real
+  Ansible's own live-D-Bus-only case, auto-detected the same way real
+  Ansible detects it (`firewall-cmd --state`, the CLI equivalent of its
+  own connection-attempt probe). Verified byte-identical (`ok=5
+  changed=2 failed=0 ignored=1`, task-for-task) against real
+  `ansible-playbook` across 4 scenarios including the still-unimplemented
+  case failing with real Ansible's own exact error message on both.
 - **`0.9.477` - PLAY RECAP gains a real `ignored=` counter** (not tied
   to a new real-host round - closes the cosmetic gap `0.9.476`'s round
   150 documented). Verified against real `ansible-core`'s own

@@ -9,7 +9,10 @@ module CrystalPlay
   # with Ansible's ansible.posix.firewalld module.
   #
   # Supported parameters:
-  # - zone: firewalld zone (required)
+  # - zone: firewalld zone - defaults to `firewall-offline-cmd --get-
+  #   default-zone` when omitted, matching real Ansible's own documented
+  #   behavior ("the default zone can be configured per system but
+  #   public is default from upstream") rather than requiring it.
   # - state: enabled | disabled for every "thing" below except target: -
   #   present/absent are ONLY valid for target: (a zone-level operation);
   #   using them with any other thing fails with real Ansible's own
@@ -18,10 +21,15 @@ module CrystalPlay
   #   run - this plugin previously accepted present/absent everywhere as
   #   silent synonyms, more lenient than real Ansible rather than
   #   matching it)
-  # - permanent: must be true (see below) - matches real Ansible's own
-  #   validation ("offline cannot be enabled unless permanent changes are
-  #   allowed")
-  # - offline: must be true (see below)
+  # - permanent/immediate/offline: ported real Ansible's own validation
+  #   logic exactly (see #validate_permanent_immediate) rather than
+  #   requiring `offline: true, permanent: true` explicitly - real
+  #   Ansible defaults all three false, silently forces `immediate` true
+  #   when neither permanent nor immediate is given, and only fails
+  #   outright when an `immediate` (live-daemon) action is actually
+  #   requested/defaulted against a firewalld that isn't reachable (auto-
+  #   detected via `firewall-cmd --state`, the CLI equivalent of real
+  #   Ansible's own D-Bus-connection-attempt probe).
   # - one of: service, port, rich_rule, source, masquerade, interface,
   #   icmp_block, protocol, icmp_block_inversion, forward, target -
   #   matching real Ansible's own mutually_exclusive constraint (exactly
@@ -41,16 +49,22 @@ module CrystalPlay
   #   "Reset zone %s target to default" - NOT simply "remove", since a
   #   zone's target isn't optional the way a service/port/etc entry is).
   #
-  # This only implements `offline: true, permanent: true` - i.e.
+  # This only implements permanent/offline-style changes - i.e.
   # `firewall-offline-cmd`, which edits firewalld's on-disk zone XML
-  # directly without needing a running firewalld daemon at all. The
-  # default, more common real-world usage (`offline: false`, going
-  # through `firewall-cmd`/D-Bus against a *live* firewalld) needs an
-  # actual running firewalld service - the same category of gap already
-  # documented for `service:` in this codebase (no init system in the
-  # compat harness container) - so it's not implemented here; a task
-  # without `offline: true` fails with a clear message rather than
-  # silently doing the wrong thing.
+  # directly without needing a running firewalld daemon at all. A real
+  # `immediate:` runtime change against a *live* firewalld (going
+  # through `firewall-cmd`/D-Bus) needs an actual running firewalld
+  # service - the same category of gap already documented for
+  # `service:` in this codebase (no init system in the compat harness
+  # container) - so it's not implemented here; that specific combination
+  # (firewalld genuinely running AND an immediate action actually
+  # requested/defaulted) fails with a clear message rather than silently
+  # doing the wrong thing. Every other combination - which is every
+  # combination this plugin is ever likely to see in the containerized/
+  # no-init-system hosts this project's benchmark rounds target - is
+  # serviced via `firewall-offline-cmd` regardless of the `offline:`
+  # param's own value, matching real Ansible's own auto-detected
+  # fallback.
   #
   # `firewall-offline-cmd`'s command shape and quirks (verified
   # empirically against a real firewalld 2.1.1 install, since much of
@@ -76,14 +90,18 @@ module CrystalPlay
   # Ansible's own behavior).
   class FirewalldPlugin < BasePlugin
     def execute : PluginResult
-      zone = @params["zone"]?
       state = @params["state"]?
-      unless zone && state
-        return PluginResult.new(changed: false, failed: true, msg: "missing required argument: zone and state are both required")
+      unless state
+        return PluginResult.new(changed: false, failed: true, msg: "missing required argument: state")
       end
 
-      unless is_true?(@params["offline"]?) && is_true?(@params["permanent"]?)
-        return PluginResult.new(changed: false, failed: true, msg: "only offline: true, permanent: true is implemented (no running firewalld daemon support)")
+      zone = resolve_zone
+      unless zone
+        return PluginResult.new(changed: false, failed: true, msg: "missing required argument: zone (and no default zone could be determined)")
+      end
+
+      if validation_error = validate_permanent_immediate(zone)
+        return validation_error
       end
 
       if target = @params["target"]?
@@ -179,6 +197,78 @@ module CrystalPlay
     private def query(zone : String, key : String, value : String) : Bool
       cmd = PluginHelpers::FirewalldCommand.query_command(zone, key, value)
       remote_exec(cmd)[:exit_code] == 0
+    end
+
+    # `zone:` (real Ansible's own doc: "the default zone can be
+    # configured per system but public is default from upstream") -
+    # falls back to `firewall-offline-cmd --get-default-zone`, which
+    # (like every other operation this plugin shells out to) works
+    # without a live firewalld daemon. Returns nil only if firewalld
+    # itself isn't installed at all (empty/failed output).
+    private def resolve_zone : String?
+      given = @params["zone"]?
+      return given if given
+
+      zone = remote_exec("firewall-offline-cmd --get-default-zone")[:stdout].strip
+      zone.empty? ? nil : zone
+    rescue
+      nil
+    end
+
+    # Real firewalld's own Python module_utils auto-detects "offline"
+    # by trying a live D-Bus connection first (`FirewallClient#
+    # getDefaultZone`) and only operating in permanent-only/offline mode
+    # if that fails - `firewall-cmd --state` is the CLI equivalent probe
+    # (exit 0 + "running" only when a live daemon answers).
+    private def firewalld_running? : Bool
+      result = remote_exec("firewall-cmd --state")
+      result[:exit_code] == 0 && result[:stdout].strip == "running"
+    rescue
+      false
+    end
+
+    # Ports real Ansible's own `permanent`/`immediate`/`offline` twisty
+    # validation logic (ansible/posix/plugins/modules/firewalld.py's
+    # `main()`) instead of the previous blanket "offline: true,
+    # permanent: true both required" gate - that combination isn't even
+    # a real Ansible requirement (permanent defaults false, immediate
+    # defaults false, offline defaults false; when neither permanent nor
+    # immediate is given, immediate is silently forced true). Returns a
+    # failed PluginResult exactly matching real Ansible's own error
+    # messages for the two validation failures it can raise, nil if the
+    # request is valid and this plugin can service it (permanent-only,
+    # offline-style - covers every case this plugin's own
+    # `firewall-offline-cmd`-based implementation actually supports).
+    private def validate_permanent_immediate(zone : String) : PluginResult?
+      permanent = is_true?(@params["permanent"]?)
+      immediate = is_true?(@params["immediate"]?)
+      offline_param = is_true?(@params["offline"]?)
+      fw_offline = !firewalld_running?
+
+      if offline_param
+        unless permanent
+          return PluginResult.new(changed: false, failed: true, msg: "offline cannot be enabled unless permanent changes are allowed", zone: zone)
+        end
+        immediate = false if fw_offline
+      end
+
+      immediate = true if !permanent && !immediate
+
+      if immediate && fw_offline
+        return PluginResult.new(changed: false, failed: true, msg: "firewall is not currently running, unable to perform immediate actions without a running firewall daemon", zone: zone)
+      end
+
+      # A genuinely live firewalld daemon plus a real `immediate:` runtime
+      # change - the one combination real Ansible services over a live
+      # D-Bus connection that this plugin has no implementation for at
+      # all (see this file's own header comment). Narrower than the
+      # previous blanket requirement: only reached when firewalld is
+      # actually running AND immediate was actually requested/defaulted.
+      if immediate && !fw_offline
+        return PluginResult.new(changed: false, failed: true, msg: "immediate changes against a live firewalld daemon are not implemented (only permanent/offline-style changes are supported)", zone: zone)
+      end
+
+      nil
     end
   end
 end

@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.477`.**
+**Currently at `0.9.478`.**
 
 ---
 
@@ -46,17 +46,29 @@ real modules regardless - see `git log`.
   runtime crash.
 - `community.general.zypper_repository` - unimplemented; same cosmetic
   parse-time-drop class, no zypper/openSUSE host ever tested.
-- `ansible.posix.firewalld` - only `offline: true, permanent: true`
-  (`firewall-offline-cmd`, no live daemon needed) is implemented, and
-  `zone:` is required rather than defaulting to the system default zone
-  - both already documented at length in `plugins/firewalld.cr`'s own
-  header comment. Reconfirmed live on Rocky 9.6 (0.9.474): real
-  Ansible's own module needs neither `zone:` nor `offline: true` (it
-  silently falls back to offline mode when it can't reach a live
-  firewalld D-Bus connection, and defaults `zone:` to the system
-  default zone), so a bare `port=8080/tcp permanent=yes state=enabled`
-  that real Ansible accepts still needs both spelled out for this
-  plugin.
+- `ansible.posix.firewalld` - narrowed considerably in `0.9.478`:
+  `zone:` now defaults to the system default zone
+  (`firewall-offline-cmd --get-default-zone`), and real Ansible's own
+  `permanent`/`immediate`/`offline` validation logic is ported exactly
+  (verified against `ansible/posix/plugins/modules/firewalld.py`'s own
+  `main()`) rather than requiring `offline: true, permanent: true`
+  explicitly. What's left unimplemented is now only the one combination
+  real Ansible services over a live D-Bus connection that this plugin
+  has no backend for: a genuinely running firewalld daemon (auto-
+  detected via `firewall-cmd --state`, real Ansible's own detection
+  equivalent) AND an `immediate:` runtime change actually requested (or
+  defaulted - real Ansible silently forces `immediate: true` whenever
+  neither `permanent:` nor `immediate:` is given). Every other
+  combination - which is every combination likely on the containerized/
+  no-init-system hosts this project's benchmark rounds target - is
+  serviced via `firewall-offline-cmd`, matching real Ansible's own
+  auto-fallback. Verified live in a real firewalld 2.3.1 container
+  (`firewall-cmd`/`firewall-offline-cmd`), byte-identical `ok=5
+  changed=2 failed=0 ignored=1` against real `ansible-playbook` across
+  4 scenarios (permanent-only enable, idempotent rerun, defaulted zone,
+  and the still-unimplemented bare-defaults-against-no-daemon case
+  correctly failing with real Ansible's own exact error message on
+  both).
 
 ---
 
