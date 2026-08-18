@@ -388,64 +388,100 @@ module CrystalPlay
       # wire; every other name sharing that md5 is materialized on the
       # remote side afterward (round trip 3) via a cheap same-filesystem
       # `ln`, not a second transfer.
+      #
+      # That alone isn't enough for a role using include_tasks:/
+      # import_role: (their contents - and therefore the modules inside
+      # them - are only discovered at runtime, so PluginManager.
+      # ensure_uploaded gets called separately, once per newly-discovered
+      # name, each its own upload_plugins_to_host call with a single-name
+      # candidate list). A grouping that only looks at THIS call's own
+      # candidates never learns that an earlier, separate call already
+      # uploaded byte-identical content under a different name - real bug
+      # found live-benchmarking willshersystems.sshd (round-independent
+      # of a correctness round, found chasing a perf number): 5 separate
+      # ensure_uploaded calls for one play, each re-transferring the same
+      # ~9 MB fat binary under its own new name, 8 physically distinct
+      # remote copies of identical content confirmed via `ls -i` (same
+      # size, different inodes) - worse than the pre-fat-binary baseline
+      # for exactly this role shape. Fixed by checking round trip 1's
+      # FULL remote `.md5` listing (already dumps every existing name,
+      # not just this call's candidates) for a content match first - a
+      # name whose md5 already exists remotely under ANY name needs no
+      # transfer at all, this call or any prior one.
+      remote_name_by_md5 = Hash(String, String).new
+      remote_md5s.each { |name, md5| remote_name_by_md5[md5] ||= name }
+
       by_md5 = Hash(String, Array(String)).new { |hash, key| hash[key] = [] of String }
       plugins_to_upload.each { |name| by_md5[local_md5s[name]] << name }
-      representatives = by_md5.map { |_, names| names.first }
 
-      # Round trip 2: transfer only the representatives.
-      puts "   → Uploading #{representatives.size} distinct plugin binar#{representatives.size == 1 ? "y" : "ies"} (#{plugins_to_upload.size} names) to #{connection_host} via rsync".colorize(:cyan) if @@verbose
+      # Groups whose content has no remote match anywhere yet - these are
+      # the only ones that need a real transfer; their first name becomes
+      # the source every other name (in this group, or a same-md5 group
+      # with no remote match) links from.
+      needs_transfer = by_md5.reject { |md5, _| remote_name_by_md5.has_key?(md5) }
+      representatives = needs_transfer.map { |_, names| names.first }
 
-      local_plugin_paths = representatives.map { |name| local_paths[name] }
-      rsync_ok = SSHManager.rsync_upload_batch(
-        connection_host,
-        user,
-        local_plugin_paths,
-        remote_plugin_dir,
-        host.port,
-        mode: 0o755,
-        identity_file: identity_file
-      )
+      if representatives.empty?
+        puts "   → All #{plugins_to_upload.size} module name(s) already present remotely under a different name - linking only, no transfer".colorize(:cyan) if @@verbose
+        rsync_ok = true
+      else
+        # Round trip 2: transfer only the representatives that genuinely
+        # need it.
+        puts "   → Uploading #{representatives.size} distinct plugin binar#{representatives.size == 1 ? "y" : "ies"} (#{plugins_to_upload.size} names) to #{connection_host} via rsync".colorize(:cyan) if @@verbose
 
-      unless rsync_ok
-        puts "   → Rsync unavailable, using scp for #{representatives.size} plugin binaries".colorize(:yellow) if @@verbose
-        representatives.each do |plugin_name|
-          # mode: nil - the per-file `chmod 755` this used to do was a
-          # whole extra SSH round trip *per plugin* (88 of them for a
-          # 44-plugin cold upload). One `chmod` for the batch is folded
-          # into round trip 3 below instead.
-          SSHManager.upload(
-            connection_host,
-            user,
-            local_paths[plugin_name],
-            "#{remote_plugin_dir}/#{plugin_name}",
-            host.port,
-            mode: nil,
-            identity_file: identity_file
-          )
+        local_plugin_paths = representatives.map { |name| local_paths[name] }
+        rsync_ok = SSHManager.rsync_upload_batch(
+          connection_host,
+          user,
+          local_plugin_paths,
+          remote_plugin_dir,
+          host.port,
+          mode: 0o755,
+          identity_file: identity_file
+        )
+
+        unless rsync_ok
+          puts "   → Rsync unavailable, using scp for #{representatives.size} plugin binaries".colorize(:yellow) if @@verbose
+          representatives.each do |plugin_name|
+            # mode: nil - the per-file `chmod 755` this used to do was a
+            # whole extra SSH round trip *per plugin* (88 of them for a
+            # 44-plugin cold upload). One `chmod` for the batch is folded
+            # into round trip 3 below instead.
+            SSHManager.upload(
+              connection_host,
+              user,
+              local_paths[plugin_name],
+              "#{remote_plugin_dir}/#{plugin_name}",
+              host.port,
+              mode: nil,
+              identity_file: identity_file
+            )
+          end
         end
       end
 
-      # Round trip 3: materialize every non-representative name from its
-      # group's representative (already on disk remotely as of round trip
-      # 2 - `ln` first, since REMOTE_PLUGIN_DIR is one directory so a
+      # Round trip 3: materialize every non-source name from its group's
+      # source - either a pre-existing remote name found above (no
+      # transfer needed at all) or the freshly-uploaded representative
+      # (`ln` first, since REMOTE_PLUGIN_DIR is one directory so a
       # hardlink always applies; `cp -p` only as a fallback for whatever
       # non-POSIX-hardlink edge case might exist on an unusual remote
-      # filesystem), write every name's own .md5 (so a later run's
+      # filesystem) - write every name's own .md5 (so a later run's
       # remote_md5s lookup - round trip 1 above - still matches per name,
-      # not just per representative), plus, on the scp path, the single
-      # chmod that covers everything scp just wrote (rsync already
-      # applied mode 0o755 during the transfer).
+      # not just per source), plus, on the scp path, the single chmod
+      # that covers everything scp just wrote (rsync already applied
+      # mode 0o755 during the transfer).
       write_script = String.build do |str|
-        unless rsync_ok
+        if !rsync_ok && !representatives.empty?
           representatives.each do |plugin_name|
             str << "chmod 755 #{remote_plugin_dir}/#{plugin_name}\n"
           end
         end
-        by_md5.each_value do |names|
-          representative = names.first
+        by_md5.each do |md5, names|
+          source = remote_name_by_md5[md5]? || names.first
           names.each do |name|
-            next if name == representative
-            str << "ln -f #{remote_plugin_dir}/#{representative} #{remote_plugin_dir}/#{name} 2>/dev/null || cp -p #{remote_plugin_dir}/#{representative} #{remote_plugin_dir}/#{name}\n"
+            next if name == source
+            str << "ln -f #{remote_plugin_dir}/#{source} #{remote_plugin_dir}/#{name} 2>/dev/null || cp -p #{remote_plugin_dir}/#{source} #{remote_plugin_dir}/#{name}\n"
           end
         end
         plugins_to_upload.each do |plugin_name|

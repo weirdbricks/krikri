@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.485-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.486-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -166,8 +166,33 @@ architecture - 21 of this play's 28 tasks never touch the wire at all
 on `0.9.485`) and no longer shipping every remaining task's full
 variable context over SSH; the `-v` log also shows the plugin-upload
 dedup directly on a real target ("Uploading 1 distinct plugin binary
-(6 names)" instead of 6 separate transfers). Full writeup with the
-real-host verification method in `SUGGESTED_PERFORMANCE_IMPROVEMENTS.md`
+(6 names)" instead of 6 separate transfers).
+
+**Same before/after, but with real named roles instead of a made-up
+playbook** (`0.9.480` -> `0.9.486`, 3 different Galaxy authors, each on
+its own fresh host set so a properly-idempotent role's "cold" run can't
+be contaminated by the other binary's earlier state):
+
+| Role (author) | Before cold | After cold | Before warm | After warm |
+|---|---|---|---|---|
+| `robertdebock.php_fpm` | 37.5s | 31.2s | 5.4s | 1.5s |
+| `willshersystems.sshd` | 18.5s | 14.3s | 9.7s | 6.8s |
+
+(`geerlingguy.nginx` also tested but its cold number came back
+inconclusive - real package-download variance to Atlantic.net's apt
+mirror dominated both directions; the warm numbers there were normal.)
+This pass also found and fixed a real bug: a role using `include_tasks:`
+(contents only known at runtime) triggers plugin uploads incrementally,
+once per newly-discovered module name - `willshersystems.sshd`'s 5 such
+calls each re-uploaded the same fat plugin binary under a new name,
+since the md5-dedup above only compared candidates *within one call*.
+Fixed by checking the full remote `.md5` listing (already gathered every
+round trip) for a content match under ANY name, not just this call's
+own candidates - confirmed on a real host via `ls -i` (8 distinct
+inodes, same 9,515,008-byte content, before the fix; 1 inode after).
+
+Full writeup with the real-host verification method (including the
+nginx variance investigation) in `SUGGESTED_PERFORMANCE_IMPROVEMENTS.md`
 (gitignored local notes).
 
 ---
@@ -401,7 +426,7 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
-- **`0.9.481`-`0.9.485`** - performance pass, measured before/after rather
+- **`0.9.481`-`0.9.486`** - performance pass, measured before/after rather
   than estimated (see `SUGGESTED_PERFORMANCE_IMPROVEMENTS.md`, gitignored
   local notes): plugin config JSON no longer ships the full vars context
   to plugins that never read it (33 KB-572 KB per task -> 215 B; ~2.4x
@@ -417,7 +442,14 @@ for current-state detail.
   forked Python interpreter - ~3.8x faster on a 20-host fan-out;
   `--forks 5` still matches real Ansible's own default exactly); and
   the per-task `ansible_facts.*` dict is now memoized per host with an
-  audited 3-site invalidation contract.
+  audited 3-site invalidation contract. Follow-up (`0.9.486`), found
+  chasing real-role numbers: a role using `include_tasks:` triggers the
+  plugin-upload dedup once per newly-discovered module name instead of
+  once for the whole play, so each call was blind to identical content
+  an earlier, separate call had already uploaded under a different name
+  - `willshersystems.sshd` re-uploaded the same fat binary 5 times under
+  5 names before this fix. See **Performance** below for the real-role
+  benchmark that found it.
 - **`0.9.480`** - `meta:` gains `refresh_inventory` too, re-reading a
   dynamic inventory script's output in place - but (real Ansible's own
   documented caveat, confirmed live with a real inventory script) it
