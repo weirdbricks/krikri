@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.493-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.494-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -466,6 +466,30 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.494`** - `build_vars_context` (rebuilt from scratch on every
+  single (task, host) pair) now caches its per-host-invariant inputs
+  behind the same generation counter `0.9.491`'s `hostvars`/`groups`
+  caching introduced: `base_context_a` (play_vars/host.vars/
+  registered_vars, itself now built via a bulk `Hash#dup` - measured
+  ~3.4x faster than an `.each` rebuild for a same-sized hash) and
+  `base_context_b` (included_vars/facts). 1 host/1000 tasks/500 play
+  vars after `package_facts:`: 0.33s -> 0.23s (~30%); 30 hosts/100
+  tasks/100 inventory vars each: 0.52s -> 0.48s (~8%) - both within the
+  original 20-40% estimate's range. Not a single cache: the real
+  precedence order interleaves per-task tiers (role_vars/task.vars)
+  between the two per-host groups, so preserving it needed 2 caches, not
+  1. One real precedence bug found by the existing spec suite before it
+  shipped: an early version cached the `ansible_host ||= ...` fallback
+  inside the wrong (empty) hash, which couldn't see that an inventory
+  line's real `ansible_host=` (already merged in from `host.vars`) should
+  win - fixed by leaving those 3 magic keys uncached, applied directly
+  against the real context where the old code always evaluated them. New
+  regression spec exercises every real invalidation path in one
+  sequence - `register:`/`set_fact:`/`include_vars:` each visible on the
+  very next task, a role's own `role_defaults` visible during that role
+  and gone again immediately after. `crystal spec`: 1494 examples, 0
+  failures (run 3 times - spec order is randomized by default - to rule
+  out order-dependent staleness).
 - **`0.9.493`** - `VarSubstitutor` gained a second, more specific
   constructor overload for the (extremely common) case where the
   caller already has a `Hash(String, JSON::Any)` vars_context - a bulk
@@ -547,22 +571,6 @@ for current-state detail.
   live-verified against a real Docker-API-compatible daemon on this
   machine). `amazon.aws.ec2_metadata_facts` from the same frequency
   count deliberately deferred - see `KNOWN_MISSING.md`.
-- **`0.9.487`-`0.9.488`** - 2 real bugs fixed, both found benchmarking
-  `devsec.hardening.os_hardening` (heaviest real role tested to date,
-  100+ tasks): a bare (non-`{{ }}`) `when: not lookup(...)` condition
-  never actually invoked the lookup call at all, always evaluating the
-  condition text as an undefined variable name instead - proven directly
-  (`when: lookup(...)` and `when: not lookup(...)` gave the SAME result
-  regardless of what the lookup returned), leaving every OS-family
-  variable the role loads via a dynamic `set_fact:` loop undefined; and
-  task-level `vars:` were evaluated eagerly instead of lazily like real
-  Ansible's own per-key Jinja templating, crashing a task whose `vars:`
-  block would raise even when `when:` would have skipped it first (fixed
-  with a narrow per-key rescue, not the broader lazy-Undefined redesign
-  a first attempt needed and was reverted for - see `git log`). With
-  both fixed, the full role completes cleanly and matches real
-  `ansible-playbook`'s task counts - see **Performance** below for the
-  real-host numbers.
 ---
 
 ## 🤝 Contributing

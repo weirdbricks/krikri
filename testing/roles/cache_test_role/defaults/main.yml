@@ -1,0 +1,6 @@
+# Deliberately minimal - only exists for
+# test-vars-context-cache-quick.yml's own role_defaults-visibility
+# check, which needs a role WITHOUT any filesystem side effects (unlike
+# testing/roles/greeter, whose copy: task writes to a shared /tmp path
+# other specs also depend on staying untouched).
+cache_test_role_default: from-role-defaults

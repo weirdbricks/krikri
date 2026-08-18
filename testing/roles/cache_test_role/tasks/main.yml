@@ -1,0 +1,3 @@
+- name: show the role default var
+  ansible.builtin.debug:
+    msg: "role_default_seen={{ cache_test_role_default }}"

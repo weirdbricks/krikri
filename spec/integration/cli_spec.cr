@@ -935,6 +935,38 @@ describe "crystal-ansible CLI (--check mode)" do
     (File.info(staged_command_plugin).permissions.value & 0o777).should eq(0o755)
   end
 
+  it "keeps register:/set_fact:/include_vars: visible across tasks, and role_defaults from leaking past their own role, through build_vars_context's per-host caching (SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #1)" do
+    # build_vars_context now caches its per-host-invariant inputs (baseA:
+    # play_vars/host.vars/registered_vars; baseB: included_vars/facts/
+    # host-magic) behind a shared generation counter instead of
+    # rebuilding them from scratch on every task - real risk here is
+    # exactly this project's most-repeated bug class (stale/wrong
+    # variable visibility), so this exercises every real invalidation
+    # path in one sequence on one host: register: visible on the very
+    # next task (baseA), set_fact: visible on the very next task (baseB,
+    # via @facts), include_vars: visible on the very next task (baseB,
+    # via @included_vars), a role's own role_defaults visible during
+    # that role but gone again immediately afterward (role_defaults is
+    # per-TASK, deliberately NOT part of either cached base), and all 3
+    # of the earlier register/fact/include_vars values still correct
+    # after the role ran (proving the role's own cache generation bumps
+    # - if any - didn't leave a stale base_context_a/b for THIS host).
+    hostvars_inventory = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-hostvars-local.ini")
+    status, output = run_playbook(
+      "test-vars-context-cache-quick.yml",
+      [] of String,
+      inventory: hostvars_inventory
+    )
+
+    status.success?.should be_true
+    output.should contain("reg=registered-value")
+    output.should contain("fact=from-set-fact")
+    output.should contain("included=from-os-family-file")
+    output.should contain("after_role_default=MISSING")
+    output.should contain("still_visible=reg:registered-value fact:from-set-fact included:from-os-family-file")
+    output.should contain("vars_context cache invalidation smoke test complete!")
+  end
+
   it "resolves hostvars['other_host'] to that OTHER host's own inventory vars, both bracket and dot syntax" do
     # Real bug found benchmarking a real geerlingguy.glusterfs 3-node
     # cluster: hostvars wasn't populated in the vars_context at all, so

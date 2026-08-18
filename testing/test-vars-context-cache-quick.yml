@@ -1,0 +1,53 @@
+# Regression fixture for SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #1:
+# build_vars_context now caches its per-host-invariant inputs (baseA:
+# play_vars/host.vars/registered_vars; baseB: included_vars/facts/host-
+# magic) behind a shared generation counter instead of rebuilding them
+# from scratch on every task. This exercises every real invalidation
+# path in one sequence, on one host, so a broken invalidation site (or a
+# stale-cache read) shows up as the WRONG value on the very next task -
+# not just "same value as before" which a broken invalidation could
+# accidentally still produce.
+- name: vars_context cache invalidation smoke test
+  hosts: h1
+  gather_facts: false
+
+  tasks:
+    - name: register a value
+      ansible.builtin.command: echo registered-value
+      register: reg_out
+
+    - name: read the register on the very next task (baseA)
+      ansible.builtin.debug:
+        msg: "reg={{ reg_out.stdout }}"
+
+    - name: set a fact
+      ansible.builtin.set_fact:
+        fact_marker: from-set-fact
+
+    - name: read the fact on the very next task (baseB)
+      ansible.builtin.debug:
+        msg: "fact={{ fact_marker }}"
+
+    - name: include vars from the existing varloader fixture file
+      ansible.builtin.include_vars:
+        file: testing/roles/varloader/vars/Linux.yml
+
+    - name: read the included var on the very next task (baseB)
+      ansible.builtin.debug:
+        msg: "included={{ varloader_marker }}"
+
+    - name: use a role with its own role_defaults, after all the above host-state changes
+      ansible.builtin.include_role:
+        name: cache_test_role
+
+    - name: confirm role_defaults do not leak into a later, non-role task
+      ansible.builtin.debug:
+        msg: "after_role_default={{ cache_test_role_default | default('MISSING') }}"
+
+    - name: confirm the earlier register/fact/include_vars are STILL visible after the role ran
+      ansible.builtin.debug:
+        msg: "still_visible=reg:{{ reg_out.stdout }} fact:{{ fact_marker }} included:{{ varloader_marker }}"
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "vars_context cache invalidation smoke test complete!"

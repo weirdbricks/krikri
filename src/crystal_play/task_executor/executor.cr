@@ -61,6 +61,36 @@ module CrystalPlay
     @hostvars_cache_generation = -1
     @groups_cache : Hash(String, JSON::Any)? = nil
     @groups_cache_generation = -1
+    # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #1: #build_vars_context
+    # rebuilds its ENTIRE ~150-entry context from scratch on every single
+    # (task, host) pair - most of that work is re-merging inputs that are
+    # constant across every task run against a given host within this
+    # play (@play_vars never changes after construction; host.vars never
+    # mutates mid-play; @registered_vars/@included_vars/@facts change
+    # only through the small set of mutation sites already audited for
+    # @hv_generation above and facts_dict_for's own comment). Only
+    # task.role_defaults/role_vars/task.vars and a handful of per-task
+    # magic vars (role_name, connection:, ...) genuinely vary per call.
+    #
+    # Two per-host caches, not one, because the host-invariant inputs
+    # don't sit contiguously in the real precedence order - task.vars
+    # (per-task) has to land BETWEEN registered_vars and included_vars/
+    # facts, not after all of them, or a real key collision would flip
+    # priority (see #build_vars_context's own comment for why this
+    # split exists and the exact real order it preserves). Both keyed by
+    # host_name + @hv_generation, the SAME counter #build_hostvars/
+    # #build_groups already use above - deliberately reused rather than
+    # a separate one: it already gets bumped at every real mutation site
+    # of @registered_vars/@facts (this cache's own inputs too), and one
+    # more site (#execute_include_vars, the only @included_vars writer)
+    # was added to cover this cache's one genuinely new input. A shared
+    # counter over-invalidates slightly (an include_vars: write also
+    # drops the registered_vars-only half), which is the same accepted
+    # tradeoff #16's own writeup already made for build_groups.
+    @base_context_a_cache = Hash(String, Hash(String, JSON::Any)).new
+    @base_context_a_generation = Hash(String, Int32).new
+    @base_context_b_cache = Hash(String, Hash(String, JSON::Any)).new
+    @base_context_b_generation = Hash(String, Int32).new
     # Hosts that hit a failed task without ignore_errors: further tasks in
     # the play are skipped for them (Ansible's default "a failure aborts
     # the rest of the play for that host" behavior). Public - crystal-
@@ -931,18 +961,38 @@ module CrystalPlay
     # Build the base variable context (play/host/registered/task vars + facts)
     # shared by every execution path for a task.
     private def build_vars_context(task : Task, host : Host) : Hash(String, JSON::Any)
-      vars_context = VariableContext.build(
-        @play_vars,
-        host,
-        task,
-        @registered_vars[host.name]
-      )
+      # See the @base_context_a_cache/@base_context_b_cache ivar comments
+      # above for why this is 2 caches, not 1, and exactly what real
+      # precedence order each preserves. role_defaults < baseA
+      # (play_vars/host.vars/registered_vars) < role_vars < task.vars <
+      # baseB (included_vars/facts/host-magic) is the SAME order
+      # VariableContext.build + the old included_vars/facts/magic-var
+      # block always applied - only the "did we just recompute this
+      # host's unchanging inputs again" cost changed, not what wins a
+      # same-key collision.
+      # `Hash#dup` is a bulk copy of the internal entries array - measured
+      # ~3.4x faster than rebuilding the same-sized hash via an `.each`
+      # insert loop (200-entry hash, 200k iterations: 599ms vs 176ms,
+      # `--release`). Only usable where the destination starts EMPTY,
+      # which is exactly baseA's position here - it's the first tier
+      # applied, and the one tier below it (role_defaults) is small and
+      # per-role, not per-host, so folding it in via `||=` after the dup
+      # (rather than `[]=` before it) is cheap however it's done and
+      # correctly reproduces "role_defaults only fills what baseA doesn't
+      # already have" - real Ansible's own actual precedence, unchanged
+      # from what `VariableContext.build`'s ordering used to guarantee
+      # via unconditional overwrite-in-priority-order instead.
+      vars_context = base_context_a_for(host).dup
 
-      @included_vars[host.name]?.try(&.each { |key, value| vars_context[key] = value })
-
-      @facts[host.name].each do |key, value|
-        vars_context[key] = value
+      if defaults = task.role_defaults
+        defaults.each { |key, value| vars_context[key] ||= value }
       end
+
+      if role_vars = task.role_vars
+        role_vars.each { |key, value| vars_context[key] = value }
+      end
+
+      task.vars.each { |key, value| vars_context[key] = value }
 
       # Magic variables belong in vars_context itself, not only in the
       # copy VarSubstitutor makes. Bare conditions - `when:`,
@@ -953,12 +1003,17 @@ module CrystalPlay
       # "web1"` silently skipped every task while
       # `when: "{{ inventory_hostname }} == web1"` worked.
       #
-      # Applied after facts, with the same precedence rules
+      # Applied after facts (baseB below, which the old code built this
+      # exact tier ON TOP of), with the same precedence rules
       # VarSubstitutor#add_magic_variables uses - see there for why only
-      # inventory_hostname is unconditional.
+      # inventory_hostname is unconditional. base_context_b_for covers
+      # included_vars + facts; these 3 magic keys stay uncached and
+      # applied directly here - see that method's own comment for why.
+      base_context_b_for(host).each { |key, value| vars_context[key] = value }
       vars_context["inventory_hostname"] = JSON::Any.new(host.name)
       vars_context["ansible_hostname"] ||= JSON::Any.new(host.name)
       vars_context["ansible_host"] ||= JSON::Any.new(host.name)
+
       if role_name = task.role_name
         vars_context["ansible_role_name"] = JSON::Any.new(role_name)
       end
@@ -1010,6 +1065,65 @@ module CrystalPlay
       end
 
       vars_context
+    end
+
+    # First of the 2 #build_vars_context base caches - see the
+    # @base_context_a_cache ivar's own comment for why there are 2 and
+    # what order this preserves. @play_vars is fixed for this
+    # TaskExecutor's whole lifetime (assigned once, in #initialize -
+    # `grep -n '@play_vars\s*='` finds no other write); host.vars never
+    # mutates mid-play either (audited the same way for item #16 above -
+    # every `host.vars[...]` site in this file is a READ); leaving
+    # @registered_vars[host.name] as this cache's only real input,
+    # already covered by @hv_generation's own invalidation contract.
+    private def base_context_a_for(host : Host) : Hash(String, JSON::Any)
+      if @base_context_a_generation[host.name]? == @hv_generation
+        return @base_context_a_cache[host.name]
+      end
+
+      result = Hash(String, JSON::Any).new(initial_capacity: 128)
+      @play_vars.each { |key, value| result[key] = value }
+      host.vars.each { |key, value| result[key] = value }
+      @registered_vars[host.name].each { |key, value| result[key] = value }
+
+      @base_context_a_cache[host.name] = result
+      @base_context_a_generation[host.name] = @hv_generation
+      result
+    end
+
+    # Second of the 2 #build_vars_context base caches - included_vars +
+    # facts, applied in that exact relative order so a same-key
+    # collision between them resolves identically to the pre-cache code
+    # (which merged them in this same sequence). Deliberately does NOT
+    # also cache the 3 host-magic keys (inventory_hostname/
+    # ansible_hostname/ansible_host) the old code applied right after -
+    # unlike included_vars/facts, those 2 `||=`s need to see whatever
+    # `host.vars` (baseA, merged into vars_context BEFORE this cache) may
+    # already have set for the SAME keys (an inventory line like `web1
+    # ansible_host=192.0.2.55` must win). A `||=` evaluated only against
+    # THIS method's own small hash - which has no idea what baseA already
+    # put in vars_context - would set them unconditionally instead,
+    # clobbering the real inventory value; caught by
+    # `cli_spec.cr`'s own "does not overwrite an inventory ansible_host
+    # with the inventory name" spec. Cheap enough (3 conditional
+    # assignments) to just apply directly against the real vars_context
+    # in #build_vars_context instead of caching. All real inputs here are
+    # covered by @hv_generation's existing invalidation contract -
+    # @included_vars gained a bump site at #execute_include_vars (its
+    # only writer) as part of this change; @facts was already covered by
+    # facts_dict_for above.
+    private def base_context_b_for(host : Host) : Hash(String, JSON::Any)
+      if @base_context_b_generation[host.name]? == @hv_generation
+        return @base_context_b_cache[host.name]
+      end
+
+      result = Hash(String, JSON::Any).new(initial_capacity: 128)
+      @included_vars[host.name]?.try(&.each { |key, value| result[key] = value })
+      @facts[host.name].each { |key, value| result[key] = value }
+
+      @base_context_b_cache[host.name] = result
+      @base_context_b_generation[host.name] = @hv_generation
+      result
     end
 
     # Memoized "ansible_facts.*" dict for one host - see
@@ -1448,6 +1562,7 @@ module CrystalPlay
       else
         loaded.each { |key, value| store[key] = value }
       end
+      @hv_generation += 1
 
       puts "ok: [#{host.name}]".colorize(:green)
       @results[host.name]["ok"] += 1
