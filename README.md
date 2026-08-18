@@ -133,15 +133,6 @@ own default - the rows above measured `--forks 1`/`--forks 3` explicitly,
 from before that default flip; pass `--forks 1` to restore the original
 one-host-at-a-time behavior.
 
-> Re-measured `0.9.171` (2026-08-10) with the same methodology (3 fresh
-> Atlantic.net `G3.1GB` instances, interleaved-by-row on the same 3-node
-> inventory) - see `git log` for the engine-level performance work done
-> between measurements. Treat the ratios as directionally solid, not as
-> tightly reproducible absolute numbers: this benchmark environment has
-> its own network latency/jitter that inflates every absolute timing
-> here, though before/after ratios on the same hosts in the same session
-> remain meaningful.
-
 ---
 
 ## ✨ Features
