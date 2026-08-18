@@ -174,6 +174,41 @@ describe CrystalPlay::VarSubstitutor do
     end
   end
 
+  describe "Hash(String, JSON::Any)-typed constructor overload (SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #18)" do
+    it "does not mutate the caller's own vars_context hash" do
+      # TaskExecutor constructs a VarSubstitutor straight from an
+      # already-Hash(String, JSON::Any) vars_context at 28+ call sites -
+      # the fast-path overload skips the general constructor's per-key
+      # case/when copy in favor of a bulk `Hash#dup`, but MUST still be
+      # a real private copy: #add_magic_variables mutates `@vars` in
+      # place (inventory_hostname/ansible_hostname/ansible_host), and a
+      # caller's own vars_context is very often read again after
+      # constructing a substitutor over it (e.g. the next loop
+      # iteration's `base_vars_context.dup`). A bare reference instead
+      # of a real dup would leak that mutation back into the caller,
+      # the same class of stale/wrong-variable-visibility bug this
+      # project's bug history is dominated by.
+      caller_vars = Hash(String, JSON::Any).new
+      caller_vars["greeting"] = JSON::Any.new("hi")
+
+      CrystalPlay::VarSubstitutor.new(vars: caller_vars, host_name: "real-host")
+
+      caller_vars.has_key?("inventory_hostname").should be_false
+      caller_vars.has_key?("ansible_hostname").should be_false
+      caller_vars.has_key?("ansible_host").should be_false
+      caller_vars.size.should eq(1)
+    end
+
+    it "still applies magic variables and substitutes correctly through the fast-path overload" do
+      caller_vars = Hash(String, JSON::Any).new
+      caller_vars["greeting"] = JSON::Any.new("hi")
+
+      subject = CrystalPlay::VarSubstitutor.new(vars: caller_vars, host_name: "real-host")
+
+      subject.substitute("{{ greeting }} from {{ inventory_hostname }}").should eq("hi from real-host")
+    end
+  end
+
   describe "expression-tag whitespace-trim markers" do
     it "strips a trailing '-' trim marker instead of corrupting the expression into a dangling operator" do
       # Real bug: `{{ 'x' -}}` (no surrounding {% %} block tags, so this

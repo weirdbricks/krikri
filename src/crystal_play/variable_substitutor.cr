@@ -64,6 +64,34 @@ module CrystalPlay
     @@block_tag_escalation_depth = 0
     MAX_BLOCK_TAG_ESCALATION_DEPTH = 50
 
+    # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #18: `TaskExecutor`
+    # constructs a `VarSubstitutor` from an already-`Hash(String,
+    # JSON::Any)` `vars_context` at 28+ call sites - every `when:`,
+    # param substitution, `changed_when:`/`failed_when:`, delegate_to:
+    # resolution, and (the item's own focus) once per loop iteration.
+    # The general `initialize` below exists for callers that may still
+    # be handing over mixed `String | JSON::Any` values and needs a
+    # per-key `case`/`when` to coerce each one - real, necessary work
+    # for THAT input shape, but pure waste when the input is already
+    # exactly `Hash(String, JSON::Any)` (every `TaskExecutor` call site,
+    # checked directly via `vars_context`'s own declared type), where a
+    # plain bulk `Hash#dup` produces an identical result without walking
+    # every entry through a type-dispatch branch and rebuilding the hash
+    # key-by-key. Still a full `.dup`, not a bare reference - `#add_
+    # magic_variables` below mutates `@vars` in place
+    # (`inventory_hostname`/`ansible_hostname`/`ansible_host`), so
+    # aliasing the caller's own hash would leak that mutation back into
+    # it; `.dup` keeps the identical "private copy" semantics the
+    # general path already has, just built via one bulk copy instead of
+    # N individual inserts.
+    def initialize(vars : Hash(String, JSON::Any),
+                   host_name : String? = nil,
+                   facts : Hash(String, JSON::Any) = {} of String => JSON::Any)
+      @vars = vars.dup
+      @host_name = host_name || @vars["inventory_hostname"]?.try(&.as_s?) || "localhost"
+      add_magic_variables(facts)
+    end
+
     def initialize(vars : Hash(String, String | JSON::Any) = {} of String => String | JSON::Any,
                    host_name : String? = nil,
                    facts : Hash(String, JSON::Any) = {} of String => JSON::Any)

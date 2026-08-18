@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.492-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.493-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -466,6 +466,25 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.493`** - `VarSubstitutor` gained a second, more specific
+  constructor overload for the (extremely common) case where the
+  caller already has a `Hash(String, JSON::Any)` vars_context - a bulk
+  `Hash#dup` instead of the general overload's per-key type-coercion
+  copy. `TaskExecutor` builds a fresh `VarSubstitutor` from
+  `vars_context` at 28+ call sites (`when:`, param substitution,
+  `changed_when:`/`failed_when:`, delegate_to: resolution, and once per
+  loop iteration), all already declared as exactly that type, so
+  Crystal's own overload resolution routes every one onto the fast path
+  with no call-site changes. A 200-item loop against a 1000-var context
+  measured 0.10s -> 0.02s (~5x, ~24.5x combined with `0.9.492`'s own win
+  on the same benchmark); a non-loop 300-task/2000-var play (this
+  change isn't loop-specific) dropped from 0.44s to 0.17s on top of
+  `0.9.492`'s own result. Still a real `.dup`, not a bare reference -
+  `#add_magic_variables` mutates `@vars` in place, and aliasing the
+  caller's own hash would leak that mutation back into it, this
+  project's single most-repeated bug class - covered by a new
+  regression spec asserting the caller's hash is untouched. `crystal
+  spec`: 1492 examples, 0 failures.
 - **`0.9.492`** - the Crinja variable context is now lazy: a bare `{{
   var }}` used to convert the ENTIRE variable context (`JSON::Any` ->
   `Crinja::Value`, plus a full re-templating pass and a second full copy
@@ -544,30 +563,6 @@ for current-state detail.
   both fixed, the full role completes cleanly and matches real
   `ansible-playbook`'s task counts - see **Performance** below for the
   real-host numbers.
-- **`0.9.481`-`0.9.486`** - performance pass, measured before/after rather
-  than estimated (see `SUGGESTED_PERFORMANCE_IMPROVEMENTS.md`, gitignored
-  local notes): plugin config JSON no longer ships the full vars context
-  to plugins that never read it (33 KB-572 KB per task -> 215 B; ~2.4x
-  faster end-to-end on a `package_facts:`-heavy local play);
-  `debug`/`assert`/`fail`/`set_fact`/`pause` became controller-side
-  action plugins matching real Ansible's own architecture (no more
-  SSH round trip/upload for these - ~45x faster for a `debug:`-heavy
-  local play); the other 81 plugin binaries collapsed into one fat
-  binary, argv0-dispatched and hardlinked per module name (372 MB ->
-  85 MB full build, with a matching remote-upload dedup so N module
-  names sharing that binary only cross the wire once); `--forks`
-  defaults to 25 instead of 5 (a "fork" here is a cheap fiber, not a
-  forked Python interpreter - ~3.8x faster on a 20-host fan-out;
-  `--forks 5` still matches real Ansible's own default exactly); and
-  the per-task `ansible_facts.*` dict is now memoized per host with an
-  audited 3-site invalidation contract. Follow-up (`0.9.486`), found
-  chasing real-role numbers: a role using `include_tasks:` triggers the
-  plugin-upload dedup once per newly-discovered module name instead of
-  once for the whole play, so each call was blind to identical content
-  an earlier, separate call had already uploaded under a different name
-  - `willshersystems.sshd` re-uploaded the same fat binary 5 times under
-  5 names before this fix. See **Performance** below for the real-role
-  benchmark that found it.
 ---
 
 ## 🤝 Contributing
