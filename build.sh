@@ -303,6 +303,10 @@ PLUGINS=(
     "dpkg_selections"
     "subversion"
     "expect"
+    "git_config"
+    "sudoers"
+    "dnf_versionlock"
+    "docker_image_build"
 )
 
 # These 6 stay real, independent binaries instead of joining the fat

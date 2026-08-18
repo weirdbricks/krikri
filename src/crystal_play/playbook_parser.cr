@@ -515,6 +515,10 @@ module CrystalPlay
       "ansible.builtin.dpkg_selections",
       "ansible.builtin.subversion",
       "ansible.builtin.expect",
+      "community.general.git_config",
+      "community.general.sudoers",
+      "community.general.dnf_versionlock",
+      "community.docker.docker_image_build",
     }
 
     # The collections a bare (non-FQCN) module name resolves against, in

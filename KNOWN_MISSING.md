@@ -10,13 +10,20 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.488`.**
+**Currently at `0.9.489`.**
 
 ---
 
 ## Real gaps (worth revisiting)
 
-(none currently open)
+- `amazon.aws.ec2_metadata_facts` - not implemented yet. Deferred
+  deliberately (not a scope cut like the AWS API modules below): unlike
+  those, it only makes plain HTTP requests to the target's own
+  link-local IMDS endpoint (`http://169.254.169.254`), no AWS
+  credentials/API auth involved, so it's implementable the same way as
+  every other shell-out module here. Needs a real EC2 host to verify
+  against (IMDS doesn't exist off-EC2) - picked up once one's
+  available.
 
 Note: 0.9.474's entry here claiming `openssl_dhparam:`/
 `openssh_keypair:` had "no plugin, no `AVAILABLE_PLUGINS` entry" was

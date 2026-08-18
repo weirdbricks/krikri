@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.488-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.489-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -466,6 +466,19 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.489`** - 4 new modules added, all cross-referenced against a
+  real playbook-population frequency count from a work codebase rather
+  than guessed at: `community.general.git_config` (live-verified against
+  a local repo/ad-hoc file), `community.general.sudoers` (live-verified,
+  including `visudo` validation against a real binary), `community.
+  general.dnf_versionlock` (NEVRA-matching/locklist logic implemented
+  against the real module's own source; only unit-testable on this dev
+  box - no `dnf` here - full verification needs a RHEL/Fedora host with
+  `dnf-plugin-versionlock`, deferred to a future round), and `community.
+  docker.docker_image_build` (shells out to `docker buildx build`,
+  live-verified against a real Docker-API-compatible daemon on this
+  machine). `amazon.aws.ec2_metadata_facts` from the same frequency
+  count deliberately deferred - see `KNOWN_MISSING.md`.
 - **`0.9.487`-`0.9.488`** - 2 real bugs fixed, both found benchmarking
   `devsec.hardening.os_hardening` (heaviest real role tested to date,
   100+ tasks): a bare (non-`{{ }}`) `when: not lookup(...)` condition
@@ -529,9 +542,6 @@ for current-state detail.
   the previous blanket requirement. What's left unimplemented narrowed
   to one case: a genuinely running firewalld daemon plus a real
   `immediate:` (live D-Bus) change.
-- **`0.9.477`** - PLAY RECAP gained a real `ignored=` counter for tasks
-  caught by `ignore_errors:`, matching real Ansible's recap fields
-  exactly.
 ---
 
 ## 🤝 Contributing
