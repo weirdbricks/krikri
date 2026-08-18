@@ -649,13 +649,13 @@ describe "crystal-ansible CLI (--check mode)" do
     it "reports an unsupported meta action instead of treating it as a no-op" do
       # A meta action this engine does not model is rejected at parse time
       # with a named error, rather than being accepted and silently doing
-      # nothing - a `meta: refresh_inventory` that quietly did nothing
+      # nothing - a `meta: reset_connection` that quietly did nothing
       # would change what the playbook means. (end_play/end_host/
-      # clear_host_errors/noop are all real, supported actions now - see
-      # PlaybookParser::SUPPORTED_META_ACTIONS and TaskExecutor#execute_
-      # meta, each verified against real ansible-playbook; refresh_
-      # inventory - dynamic mid-run inventory mutation - remains a
-      # documented scope cut.)
+      # clear_host_errors/noop/refresh_inventory are all real, supported
+      # actions now - see PlaybookParser::SUPPORTED_META_ACTIONS and
+      # TaskExecutor#execute_meta, each verified against real
+      # ansible-playbook; reset_connection - persistent-connection
+      # control - remains a documented scope cut.)
       #
       # It surfaces as a warning and the task is dropped, which is how the
       # parser handles *every* parse error (see PlaybookParser.parse_tasks'
@@ -670,17 +670,77 @@ describe "crystal-ansible CLI (--check mode)" do
           hosts: testservers
           gather_facts: false
           tasks:
-            - name: refresh the inventory
-              ansible.builtin.meta: refresh_inventory
+            - name: reset the connection
+              ansible.builtin.meta: reset_connection
         YAML
       begin
         captured = IO::Memory.new
         Process.run(BINARY, ["-i", testservers, tmp], output: captured, error: captured)
-        captured.to_s.should contain("meta: refresh_inventory is not supported")
+        captured.to_s.should contain("meta: reset_connection is not supported")
         # and the task genuinely did not run
-        captured.to_s.should_not contain("refresh the inventory")
+        captured.to_s.should_not contain("reset the connection")
       ensure
         File.delete(tmp) rescue nil
+      end
+    end
+
+    it "meta: refresh_inventory re-reads a dynamic inventory script without adding hosts to the current play" do
+      # Real Ansible's own doc, verified live: "neither refresh_inventory
+      # nor add_host add hosts to the hosts the current play iterates
+      # over" - only a LATER play's own hosts: pattern match sees newly-
+      # appeared hosts. The dynamic inventory script here reports 1 host
+      # normally, 2 once a marker file exists - play 1 creates that
+      # marker then refreshes, but must still only see the original
+      # host; play 2 must see both.
+      script = File.tempname("dynamic-inventory-refresh", ".sh")
+      marker = File.tempname("dynamic-inventory-refresh-marker")
+      File.delete(marker) rescue nil
+      File.write(script, <<-SH)
+        #!/bin/sh
+        if [ -f #{marker} ]; then
+          echo '{"all":{"hosts":["hostone","hosttwo"]},"_meta":{"hostvars":{"hostone":{"ansible_connection":"local"},"hosttwo":{"ansible_connection":"local"}}}}'
+        else
+          echo '{"all":{"hosts":["hostone"]},"_meta":{"hostvars":{"hostone":{"ansible_connection":"local"}}}}'
+        fi
+        SH
+      File.chmod(script, 0o755)
+
+      tmp = File.tempname("meta-refresh-inventory", ".yml")
+      File.write(tmp, <<-YAML)
+        - hosts: all
+          gather_facts: false
+          tasks:
+            - name: create marker
+              ansible.builtin.file:
+                path: #{marker}
+                state: touch
+              delegate_to: localhost
+            - name: refresh
+              ansible.builtin.meta: refresh_inventory
+            - name: play1 saw it
+              ansible.builtin.debug:
+                msg: "play1 saw {{ inventory_hostname }}"
+        - hosts: all
+          gather_facts: false
+          tasks:
+            - name: play2 saw it
+              ansible.builtin.debug:
+                msg: "play2 saw {{ inventory_hostname }}"
+        YAML
+      begin
+        captured = IO::Memory.new
+        status = Process.run(BINARY, ["-i", script, tmp], output: captured, error: captured)
+        output = captured.to_s
+
+        status.success?.should be_true
+        output.should contain("play1 saw hostone")
+        output.should_not contain("play1 saw hosttwo")
+        output.should contain("play2 saw hostone")
+        output.should contain("play2 saw hosttwo")
+      ensure
+        File.delete(tmp) rescue nil
+        File.delete(script) rescue nil
+        File.delete(marker) rescue nil
       end
     end
 

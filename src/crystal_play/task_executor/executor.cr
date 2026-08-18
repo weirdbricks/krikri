@@ -74,6 +74,13 @@ module CrystalPlay
     # Host constructed from the target name, same as Inventory#get_hosts's
     # own implicit-localhost behavior.
     @inventory : Inventory?
+    # Path/script the current @inventory was parsed from - needed only by
+    # meta: refresh_inventory, to know what to re-parse. Optional the
+    # same way @inventory is: the `ansible` ad-hoc CLI's own TaskExecutor
+    # never passes one (a single synthetic task, no plays to refresh
+    # between), so refresh_inventory there is a documented no-op rather
+    # than a crash.
+    @inventory_path : String?
     # Batches consecutive independent tasks bound for the same remote
     # host into a single SSH round trip instead of one round trip per
     # task - default on since 0.9.63; --no-batching opts out. See
@@ -146,6 +153,7 @@ module CrystalPlay
       @play_vars = {} of String => JSON::Any,
       @gather_facts = true,
       @inventory = nil,
+      @inventory_path = nil,
       @batching_enabled = true,
       @forks = 5,
       @smart_gathering = false,
@@ -3334,9 +3342,26 @@ module CrystalPlay
         end
       when "noop"
         # Real Ansible's own doc: "this literally does 'nothing'."
+      when "refresh_inventory"
+        # Real Ansible's own doc, verified live: refreshing does NOT add
+        # hosts to (or remove them from) the CURRENT play's own host
+        # loop - only a LATER play's own `hosts:` pattern match sees the
+        # new data, since that's computed fresh from the shared
+        # Inventory object each time (crystal-play.cr's own per-play
+        # `matched_hosts = inventory.get_hosts(...)`). Re-parsing and
+        # reload_from!-ing in place (rather than just swapping in a new
+        # Inventory reference) is what makes that "shared object" premise
+        # true without any callback plumbing back up to crystal-play.cr -
+        # see Inventory#reload_from!'s own comment. A no-op (not an
+        # error) when no inventory_path was given - the `ansible` ad-hoc
+        # CLI's own TaskExecutor never passes one, and a single synthetic
+        # ad-hoc task has no later play to ever observe a refresh anyway.
+        if (path = @inventory_path) && (inv = @inventory)
+          inv.reload_from!(InventoryParser.parse(path))
+        end
       else
         # Only clear_facts/flush_handlers/end_host/end_play/
-        # clear_host_errors/noop parse (see
+        # clear_host_errors/noop/refresh_inventory parse (see
         # PlaybookParser.parse_meta_task), so clear_facts is the only
         # other action to dispatch on here.
         @facts[host.name].clear

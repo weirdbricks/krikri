@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.479`.**
+**Currently at `0.9.480`.**
 
 ---
 
@@ -51,9 +51,9 @@ real modules regardless - see `git log`.
   shard; the unversioned URLs negotiate fine against current
   Docker/Podman. Revisit only if a real playbook actually needs the
   pin.
-- `meta:` narrowed considerably in `0.9.479`: now supports
-  `clear_facts`/`flush_handlers`/`end_host`/`end_play`/
-  `clear_host_errors`/`noop`, each ported from real Ansible's own exact
+- `meta:` narrowed further in `0.9.480`: now also supports
+  `refresh_inventory` (0.9.479 added `end_host`/`end_play`/
+  `clear_host_errors`/`noop`), each ported from real Ansible's own exact
   semantics (`ansible/plugins/strategy/__init__.py`'s `_execute_meta`)
   and live-verified, including the non-obvious ones - `end_play` and
   `clear_host_errors` are genuinely GLOBAL (affect every currently-
@@ -62,14 +62,17 @@ real modules regardless - see `git log`.
   skips that specific task), while `end_host` is per-host only;
   `clear_host_errors` exempts a host from later plays and from the
   run's own exit code, but does NOT resume execution for it in the
-  CURRENT play. Fixing this also surfaced and fixed a real, previously
+  CURRENT play; `refresh_inventory` re-reads a dynamic inventory
+  script's output in place, but (real Ansible's own documented caveat,
+  also verified live) does NOT add newly-discovered hosts to the
+  CURRENT play's own host loop, only to a LATER play's. Implementing
+  `end_host`/`end_play` also surfaced and fixed a real, previously
   latent bug: `when:` on any `meta:` task (including the pre-existing
   `clear_facts`/`flush_handlers`) was never evaluated at all - parsed
   and silently dropped - so a when:-gated meta task always ran
   unconditionally regardless of the condition. What's left
-  unimplemented: `refresh_inventory`/`reset_connection`/`end_batch`/
-  `end_role` still act on execution-flow machinery this engine models
-  differently (dynamic mid-run inventory mutation, persistent-
+  unimplemented: `reset_connection`/`end_batch`/`end_role` still act on
+  execution-flow machinery this engine models differently (persistent-
   connection control, `serial:` batching, and role-scoped early-return
   respectively), and are rejected at parse time rather than silently
   accepted and ignored.

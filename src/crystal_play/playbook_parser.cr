@@ -1274,34 +1274,35 @@ module CrystalPlay
     # target.
     #
     # `clear_facts`/`flush_handlers`/`end_host`/`end_play`/
-    # `clear_host_errors`/`noop` are supported. `flush_handlers` added in
-    # round 18 - found via robertdebock's own roles, several of which
-    # (mysql, selinux, zabbix_repository, zabbix_server,
-    # core_dependencies) use `ansible.builtin.meta: flush_handlers`
-    # deliberately mid-role (e.g. flushing a "Update cache" handler
-    # BEFORE a later task that needs the freshly-added repo's package
-    # list) - skipping the task entirely, the previous behavior, isn't
-    # just a display-order cosmetic gap here: it caused a genuine
-    # functional divergence from real ansible-playbook (a package
-    # install failing "Unable to locate package" because the apt cache
-    # update handler ran at the very end of the play instead of
-    # mid-role). `end_host`/`end_play`/`clear_host_errors`/`noop` added
-    # after that - see TaskExecutor#execute_meta for the exact semantics
-    # (each verified against real ansible-playbook, including the
-    # non-obvious ones: end_play affects every currently-active host
-    # even if only ONE host's own `when:` actually reaches it;
-    # clear_host_errors does NOT resume execution in the current play,
-    # only exempts the host from the next one). `refresh_inventory`/
-    # `reset_connection`/`end_batch`/`end_role` still act on execution-
-    # flow machinery this engine models differently (dynamic mid-run
-    # inventory mutation, persistent-connection control, `serial:`
-    # batching, and role-scoped early-return respectively), so they're
-    # rejected outright rather than silently accepted and ignored - a
-    # playbook whose `meta: end_play` quietly did nothing would be far
-    # worse than one that fails to parse. A documented scope cut:
-    # `meta:` was previously not supported at all, so this is strictly
-    # additive.
-    SUPPORTED_META_ACTIONS = Set{"clear_facts", "flush_handlers", "end_host", "end_play", "clear_host_errors", "noop"}
+    # `clear_host_errors`/`noop`/`refresh_inventory` are supported.
+    # `flush_handlers` added in round 18 - found via robertdebock's own
+    # roles, several of which (mysql, selinux, zabbix_repository,
+    # zabbix_server, core_dependencies) use `ansible.builtin.meta:
+    # flush_handlers` deliberately mid-role (e.g. flushing a "Update
+    # cache" handler BEFORE a later task that needs the freshly-added
+    # repo's package list) - skipping the task entirely, the previous
+    # behavior, isn't just a display-order cosmetic gap here: it caused a
+    # genuine functional divergence from real ansible-playbook (a
+    # package install failing "Unable to locate package" because the apt
+    # cache update handler ran at the very end of the play instead of
+    # mid-role). `end_host`/`end_play`/`clear_host_errors`/`noop`/
+    # `refresh_inventory` added after that - see TaskExecutor#execute_
+    # meta for the exact semantics (each verified against real
+    # ansible-playbook, including the non-obvious ones: end_play affects
+    # every currently-active host even if only ONE host's own `when:`
+    # actually reaches it; clear_host_errors does NOT resume execution
+    # in the current play, only exempts the host from the next one;
+    # refresh_inventory does NOT add hosts to the CURRENT play's own
+    # host loop either, only to a LATER play's - real Ansible's own
+    # documented caveat). `reset_connection`/`end_batch`/`end_role`
+    # still act on execution-flow machinery this engine models
+    # differently (persistent-connection control, `serial:` batching,
+    # and role-scoped early-return respectively), so they're rejected
+    # outright rather than silently accepted and ignored - a playbook
+    # whose `meta: end_play` quietly did nothing would be far worse than
+    # one that fails to parse. A documented scope cut: `meta:` was
+    # previously not supported at all, so this is strictly additive.
+    SUPPORTED_META_ACTIONS = Set{"clear_facts", "flush_handlers", "end_host", "end_play", "clear_host_errors", "noop", "refresh_inventory"}
 
     private def self.parse_meta_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), meta_yaml : YAML::Any) : Task
       action = meta_yaml.as_s?.try(&.strip)

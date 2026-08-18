@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.479-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.480-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -75,12 +75,12 @@ have. See **Features** below for the full list of what's implemented.
   negotiate fine against current Docker/Podman, but pinning a specific
   API version would mean touching every endpoint individually.
 - **`meta:` supports `clear_facts`/`flush_handlers`/`end_host`/
-  `end_play`/`clear_host_errors`/`noop`** - `refresh_inventory`/
+  `end_play`/`clear_host_errors`/`noop`/`refresh_inventory`** -
   `reset_connection`/`end_batch`/`end_role` still act on execution-flow
-  machinery this engine models differently (dynamic mid-run inventory
-  mutation, persistent-connection control, `serial:` batching, and
-  role-scoped early-return respectively), and are rejected at parse
-  time rather than silently accepted and ignored.
+  machinery this engine models differently (persistent-connection
+  control, `serial:` batching, and role-scoped early-return
+  respectively), and are rejected at parse time rather than silently
+  accepted and ignored.
 
 ---
 
@@ -367,6 +367,12 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.480`** - `meta:` gains `refresh_inventory` too, re-reading a
+  dynamic inventory script's output in place - but (real Ansible's own
+  documented caveat, confirmed live with a real inventory script) it
+  does NOT add newly-discovered hosts to the CURRENT play's own host
+  loop, only to a LATER play's, since that's computed fresh from the
+  shared inventory each time.
 - **`0.9.479`** - `meta:` gains `end_host`/`end_play`/`clear_host_errors`/
   `noop`, each ported from real Ansible's own `_execute_meta` semantics
   and live-verified - including the non-obvious parts (`end_play`/
@@ -399,10 +405,6 @@ for current-state detail.
   exactly (`updated`/`before`/`after`/`args_present`/`args_absent`), and
   `openssl_dhparam:`/`openssh_keypair:` upgraded to more fully match
   their real modules.
-- **`0.9.474`** - first real-host round for RHEL-family targets (Rocky
-  9.6): fixed a missing `libbz2` shared-library dependency that crashed
-  `archive:`/`mysql_db:`/`postgresql_db:` outright on any RHEL-family
-  host with no other apt/dpkg-family package installed.
 
 ---
 

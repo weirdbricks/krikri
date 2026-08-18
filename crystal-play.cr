@@ -386,6 +386,7 @@ playbook.plays.each_with_index do |play, play_index|
     # under implicit/smart) means "don't" here.
     gather_facts: gathering == "explicit" ? (play.gather_facts_set && play.gather_facts) : play.gather_facts,
     inventory: inventory,
+    inventory_path: inventory_file,
     batching_enabled: batching_enabled,
     forks: forks,
     smart_gathering: gathering == "smart",

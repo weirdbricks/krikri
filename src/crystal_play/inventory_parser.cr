@@ -66,6 +66,23 @@ module CrystalPlay
     def get_or_create_group(name : String) : HostGroup
       @groups[name] ||= HostGroup.new(name)
     end
+
+    # Replaces this inventory's own hosts/groups with a freshly-parsed
+    # inventory's data, in place - used by `meta: refresh_inventory`
+    # (see TaskExecutor#execute_meta). Mutating in place, rather than
+    # having the caller just swap in the new Inventory object wholesale,
+    # is what lets a single shared instance (crystal-play.cr's own
+    # `inventory` local plus every play's TaskExecutor `@inventory`, all
+    # the SAME object) see the refresh without any callback/reference-
+    # cell plumbing between the two - matches real Ansible's own
+    # documented behavior, verified live: refreshing does NOT change
+    # which hosts the CURRENT play iterates over (already fixed before
+    # this runs), only what a LATER play's own `hosts:` pattern match
+    # sees.
+    def reload_from!(fresh : Inventory)
+      @hosts = fresh.hosts
+      @groups = fresh.groups
+    end
   end
   
   # Host group
