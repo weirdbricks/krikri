@@ -52,9 +52,50 @@ module CrystalPlay
     # Resolved path of the running binary - see get_local_plugin_path.
     @@executable_path : String?
 
+    # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15 - opt-in only, set
+    # by `--persistent-daemon` on the CLI (crystal-play.cr). Default
+    # `false` means #execute_remote_plugin's behavior is byte-for-byte
+    # unchanged from before this item landed - nothing here is reached
+    # unless a user explicitly asks for it.
+    @@daemon_enabled = false
+
     # Set verbose mode
     def self.verbose=(value : Bool)
       @@verbose = value
+    end
+
+    def self.daemon_enabled=(value : Bool)
+      @@daemon_enabled = value
+    end
+
+    def self.daemon_enabled? : Bool
+      @@daemon_enabled
+    end
+
+    # `facts` (gather_facts) is the one real remote module that isn't
+    # part of the fat plugin binary's own dispatch table
+    # (`build.sh`'s STANDALONE_PLUGINS) - a daemon request for it would
+    # only ever hit the generated dispatcher's "unknown plugin" fallback,
+    # so it's excluded up front rather than paying a round trip to learn
+    # that. `debug`/`assert`/`fail`/`set_fact`/`pause` need no entry here
+    # at all: `ActionPluginManager.skips_module_dispatch?` already keeps
+    # every one of them from ever reaching #execute_remote_plugin in the
+    # first place (verified directly - they're controller-side action
+    # plugins as of item #12, no target-side module dispatch ever
+    # happens for them, remote or local).
+    #
+    # `become:` is excluded unconditionally - this first landing's own
+    # documented scope cut (SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item
+    # #15's own "story for become:" open question): a daemon holds one
+    # open SSH session as a single fixed user, and per-task `sudo -n -u
+    # <user> --` currently wraps the whole target invocation
+    # (#remote_plugin_target) - replicating that inside a long-lived
+    # daemon process is real, separate design work, not attempted here.
+    DAEMON_INELIGIBLE_PLUGINS = Set{"facts"}
+
+    def self.daemon_eligible?(plugin_name : String, become : Bool) : Bool
+      return false if become
+      !DAEMON_INELIGIBLE_PLUGINS.includes?(simple_plugin_name(plugin_name))
     end
 
     # Pre-upload all plugins needed for a playbook to all remote hosts
@@ -664,6 +705,48 @@ module CrystalPlay
       connection_host = get_connection_host(host, vars)
 
       ensure_uploaded(host, plugin_name, vars)
+
+      # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15: try the
+      # persistent daemon connection first when opted in and eligible -
+      # on ANY failure (never established, broken pipe, timed out,
+      # target rebooted mid-play and the old pipe is stale) this rescues
+      # and falls through to the proven per-task path below unchanged,
+      # for THIS one call - see SSHManager.daemon_send's own comment for
+      # why that's the entire reconnect story, not just a stopgap.
+      #
+      # The path handed to `daemon_send` as "where to start the daemon
+      # FROM" is deliberately THIS plugin's own already-uploaded
+      # hardlink (`ensure_uploaded` above just guaranteed it exists),
+      # not a separate literal `.fat-plugin` name - that name is a
+      # LOCAL build artifact only (`build.sh`'s own canonical filename
+      # before per-module hardlinks get materialized); nothing ever
+      # uploads or names a remote file that literally - confirmed live,
+      # not assumed, chasing a real regression this exact mistake caused
+      # (every daemon start failed against a nonexistent remote path,
+      # paying a wasted SSH attempt on top of the normal per-task
+      # fallback on EVERY call). Once started, the SAME daemon process
+      # can dispatch ANY of the 81 fat-plugin modules regardless of
+      # which hardlink name launched it - the dispatch table is compiled
+      # into the binary itself, not read off the filesystem - so this
+      # path only matters the very first time a host needs a daemon;
+      # every later call for a DIFFERENT module on the same host reuses
+      # the cached process without re-touching this argument at all.
+      if @@daemon_enabled && daemon_eligible?(plugin_name, become)
+        begin
+          return SSHManager.daemon_send(
+            connection_host,
+            host.user || "root",
+            host.port,
+            "#{REMOTE_PLUGIN_DIR}/#{simple_plugin_name(plugin_name)}",
+            simple_plugin_name(plugin_name),
+            JSON.parse(config),
+            identity_file: vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
+          )
+        rescue
+          # Fall through to the per-task path below.
+        end
+      end
+
       target = remote_plugin_target(plugin_name, become, become_user)
 
       # Execute plugin remotely with config via stdin. *config* embeds the

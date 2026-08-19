@@ -92,18 +92,29 @@ module CrystalPlay
     
     # Run the plugin and output JSON result
     def run
-      begin
-        result = execute
-        puts result.to_json
-      rescue ex
-        error_result = PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Plugin execution failed: #{ex.message}"
-        )
-        puts error_result.to_json
-        STDERR.puts ex.backtrace.join("\n")
-      end
+      puts run_and_capture
+    end
+
+    # Same as #run, but returns the JSON result as a String instead of
+    # printing it - the piece #run itself needs, and also what the
+    # persistent daemon dispatch (SUGGESTED_PERFORMANCE_IMPROVEMENTS.md
+    # item #15 - see plugin_daemon.cr) needs: a daemon serves many
+    # requests over one long-lived process, so it can never rely on
+    # #run's "print to the real STDOUT" behavior - each response has to
+    # be framed and written by the daemon loop itself, not by the
+    # plugin. Behavior-preserving split: #run is now a one-line wrapper
+    # around this, so every existing one-shot call site (every plugin's
+    # own driver trailer) is unaffected.
+    def run_and_capture : String
+      execute.to_json
+    rescue ex
+      error_result = PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: "Plugin execution failed: #{ex.message}"
+      )
+      STDERR.puts ex.backtrace.join("\n")
+      error_result.to_json
     end
     
     # Helper methods for remote execution

@@ -384,6 +384,7 @@ build_fat_plugin() {
 
         {
             echo 'require "json"'
+            echo 'require "../src/crystal_play/plugin_daemon"'
             for plugin in "${FAT_PLUGINS[@]}"; do
                 # Requires stay relative to plugins/ (unchanged) since
                 # the generated file lives there too. Strips the
@@ -397,23 +398,62 @@ build_fat_plugin() {
                     "plugins/$plugin.cr"
             done
             echo ''
-            echo '# Dispatch by argv[0]''s basename - busybox-style multi-call binary.'
-            echo '# Every FAT_PLUGINS name is hardlinked onto this same binary below;'
-            echo '# the OS sets PROGRAM_NAME to whichever hardlinked path was actually'
-            echo '# exec'"'"'d, local or remote, batched or not - build_fat_plugin'"'"'s own'
-            echo '# comment in build.sh has the full rationale.'
-            echo 'name = File.basename(PROGRAM_NAME)'
-            echo 'input = STDIN.gets_to_end'
-            echo 'config = JSON.parse(input)'
-            echo 'case name'
+            echo '# Dispatch table shared by both entry paths below - the one-shot'
+            echo '# path (argv[0]-basename-selected, busybox-style multi-call binary)'
+            echo '# and the persistent --daemon path (SUGGESTED_PERFORMANCE_'
+            echo '# IMPROVEMENTS.md item #15, plugin_daemon.cr) - a daemon request'
+            echo '# carries its own module name in the wire protocol instead of'
+            echo '# relying on argv[0], since one daemon process serves every module'
+            echo '# a host needs, not just the one name it happened to be exec'"'"'d as.'
+            echo '# #run_and_capture (not #run) so this returns the JSON String'
+            echo '# instead of printing it - required for the daemon path, which'
+            echo '# frames and writes the response itself; harmless for the one-shot'
+            echo '# path below, which just puts() the returned string same as before.'
+            echo '# Returns nil (not a JSON error) for an unrecognized name -'
+            echo '# deliberately, so each entry path below can keep its own prior'
+            echo '# "unknown module" behavior rather than this refactor silently'
+            echo '# changing either one: the one-shot path'"'"'s STDERR+exit(1) (matches'
+            echo '# every hardlinked name always being a real FAT_PLUGINS entry, so'
+            echo '# this has always been unreachable in practice, not something worth'
+            echo '# changing as a side effect of an unrelated refactor) versus the'
+            echo '# daemon path, which must never exit the whole long-lived process'
+            echo '# over one bad request - it turns a nil into a normal JSON failed'
+            echo '# result instead, so an unknown module fails just that ONE task.'
+            echo 'module CrystalPlay::FatPluginDispatch'
+            echo '  def self.call(name : String, config : JSON::Any) : String?'
+            echo '    case name'
             for plugin in "${FAT_PLUGINS[@]}"; do
                 cls=$(grep -oP 'class \K\w+Plugin(?= < BasePlugin)' "plugins/$plugin.cr" | head -1)
-                echo "when \"$plugin\""
-                echo "  CrystalPlay::$cls.new(config).run"
+                echo "    when \"$plugin\""
+                echo "      CrystalPlay::$cls.new(config).run_and_capture"
             done
+            echo '    else'
+            echo '      nil'
+            echo '    end'
+            echo '  end'
+            echo 'end'
+            echo ''
+            echo '# argv[0]'"'"'s basename picks the module for the one-shot path (the OS'
+            echo '# sets PROGRAM_NAME to whichever hardlinked path was actually exec'"'"'d,'
+            echo '# local or remote, batched or not - build_fat_plugin'"'"'s own comment in'
+            echo '# build.sh has the full rationale); `--daemon` is a distinct,'
+            echo '# additional invocation shape of this SAME binary (started via its'
+            echo '# real `.fat-plugin` path, not a per-module hardlink, so PROGRAM_NAME'
+            echo '# is irrelevant to it), not a new file to upload/dedupe.'
+            echo 'if ARGV[0]? == "--daemon"'
+            echo '  CrystalPlay::PluginDaemon.serve do |name, config|'
+            echo '    CrystalPlay::FatPluginDispatch.call(name, config) ||'
+            echo '      {"changed" => false, "failed" => true, "msg" => "unknown plugin: #{name}"}.to_json'
+            echo '  end'
             echo 'else'
-            echo '  STDERR.puts "unknown plugin: #{name}"'
-            echo '  exit 1'
+            echo '  name = File.basename(PROGRAM_NAME)'
+            echo '  config = JSON.parse(STDIN.gets_to_end)'
+            echo '  if result = CrystalPlay::FatPluginDispatch.call(name, config)'
+            echo '    puts result'
+            echo '  else'
+            echo '    STDERR.puts "unknown plugin: #{name}"'
+            echo '    exit 1'
+            echo '  end'
             echo 'end'
         } > "$generated"
 

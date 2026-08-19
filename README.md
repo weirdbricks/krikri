@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.495-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.496-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -466,6 +466,24 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.496`** - new experimental `--persistent-daemon` flag: for
+  solo (non-batched, non-`become:`) remote tasks, keeps one long-lived
+  `ssh ... -- <plugin binary> --daemon` connection per host instead of
+  forking a fresh `ssh`+`bash`+`exec` per task, speaking a small
+  length-prefixed JSON protocol over that session's stdin/stdout. Off
+  by default - `become:` tasks, batched task groups, and remote fact-
+  gathering always use the existing per-task path regardless of the
+  flag. Live-verified on a real host, not just spec-tested: a real
+  `ansible.builtin.reboot` mid-play correctly invalidates the stale
+  daemon connection and falls back to the proven per-task path for the
+  very next task, re-establishing a fresh daemon afterward, with no
+  explicit reboot-handling code anywhere in the new daemon logic -
+  that's the entire reconnect story. `become: true` and `gather_facts:
+  true` were both confirmed to correctly bypass the daemon path
+  end-to-end. New automated coverage
+  (`spec/unit/plugin_daemon_spec.cr`) drives the real compiled daemon
+  binary as a local subprocess. `crystal spec`: 1501 examples, 0
+  failures.
 - **`0.9.495`** - `ExpressionEvaluator#evaluate`'s dispatch re-scanned
   every `{{ }}` body's text from scratch on every call (up to 6 full
   character-by-character passes before ever reaching the real
@@ -564,18 +582,6 @@ for current-state detail.
   snapshot. Regression spec added exercising exactly that cross-host
   staleness risk, not just the existing single-shot hostvars/groups
   reads. `crystal spec`: 1490 examples, 0 failures.
-- **`0.9.490`** - `amazon.aws.ec2_metadata_facts` added and live-verified
-  against a real (throwaway, spot) EC2 instance: recursively walks the
-  IMDSv2 meta-data/dynamic trees the same way the real module does,
-  including flattening nested JSON leaves (e.g. the instance identity
-  document's own `accountId` key) into their own facts. A structural
-  diff against the SAME host's real-`ansible-playbook` output matched
-  on all 80 fact keys (excluding inherently-volatile session
-  credentials/timestamps that regenerate per fetch). Also fixed a real
-  bug found getting there: `PluginManager`'s FQCN-stripping regex (4
-  separate copies) never had an `amazon.aws.` case, so ANY task written
-  as `amazon.aws.<module>:` failed at parse time with "Plugin not
-  available" even for a module that otherwise existed and worked fine.
 ---
 
 ## 🤝 Contributing

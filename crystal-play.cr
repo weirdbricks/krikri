@@ -63,6 +63,7 @@ inventory_file = "inventory.ini"
 check_mode = false
 diff_mode = false
 batching_enabled = true
+persistent_daemon = false
 # real ansible-playbook's default (5) exists because a "fork" there is a
 # forked Python interpreter per host - expensive enough that 5 concurrent
 # ones is a real resource tradeoff. Here a "fork" is a Crystal fiber
@@ -105,6 +106,10 @@ begin
 
     parser.on("--no-batching", "Disable batching consecutive independent tasks into fewer SSH round trips (on by default since 0.9.63)") do
       batching_enabled = false
+    end
+
+    parser.on("--persistent-daemon", "EXPERIMENTAL (SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15): keep one persistent connection per remote host instead of forking ssh+exec per task, for solo (non-batched, non-become:) remote tasks. Off by default. become:/batched tasks and remote fact-gathering always use the existing per-task path regardless of this flag.") do
+      persistent_daemon = true
     end
 
     parser.on("-f FORKS", "--forks=FORKS", "Run each task against up to FORKS hosts concurrently (default: 25 - higher than ansible-playbook's own default of 5, since a \"fork\" here is a cheap fiber, not a forked Python interpreter; --forks 5 matches real ansible-playbook's default exactly, --forks 1 restores one-host-at-a-time)") do |f|
@@ -299,6 +304,7 @@ end
 
 # Set verbose mode for plugin manager
 CrystalPlay::PluginManager.verbose = verbose
+CrystalPlay::PluginManager.daemon_enabled = persistent_daemon
 
 # Batch upload plugins to all remote hosts before execution
 # This is much more efficient than uploading during task execution
@@ -471,6 +477,12 @@ end
 # clear_host_errors or cleanly ended via end_host/end_play, and
 # accumulates across every play the same way real Ansible's set does.
 any_failed = !permanently_failed_hosts.empty?
+
+# SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15: close any persistent
+# daemon connections before either exit path below - a no-op when
+# --persistent-daemon was never passed (the Hash it iterates is simply
+# empty), so this is safe to call unconditionally.
+CrystalPlay::SSHManager.close_all_daemons
 
 if check_mode
   puts "NOTE: Running in check mode - no changes were made".colorize(:yellow).bold

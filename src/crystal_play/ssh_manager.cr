@@ -1,5 +1,6 @@
 require "process"
 require "file_utils"
+require "json"
 
 # SSH Manager - CLI-based implementation
 # Uses native SSH command with ControlMaster for connection pooling
@@ -235,6 +236,197 @@ module CrystalPlay
       end
     end
     
+    # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15 - the persistent
+    # remote executor's controller half. `exec`/`exec_script` above pay
+    # a fresh local `ssh` fork + remote process spawn on EVERY call,
+    # multiplexed over the same ControlMaster TCP session but never
+    # reusing the actual spawned processes. This instead keeps ONE
+    # `ssh ... -- <fat-plugin> --daemon` `Process` alive per (host,
+    # user, port) and speaks the length-prefixed protocol
+    # `plugin_daemon.cr` implements on the remote end directly over that
+    # process's own stdin/stdout pipes - every subsequent call is a
+    # plain write+read on an already-open pipe, no new process on
+    # either side.
+    #
+    # Deliberately opt-in (only reached when `PluginManager.
+    # daemon_enabled?` is true) and only used for the SOLO, non-become
+    # remote-dispatch path - see `PluginManager.daemon_eligible?`'s own
+    # comment for exactly what's excluded and why. Keyed identically to
+    # `@@control_path_cache` above, same one-fiber-per-host safety
+    # argument `executor.cr`'s own `run_task_for_hosts_in_parallel`
+    # comment already documents - a given host's daemon connection is
+    # never touched by two fibers at once, so no correlation ID or lock
+    # is needed on top of this Hash.
+    @@daemon_processes = Hash({String, String, Int32}, Process).new
+
+    # Sends one request and returns the plugin's own JSON result,
+    # unwrapped - unlike `exec`/`exec_script`, there is no exit-code-vs-
+    # stdout arbitration to do here (that was a one-shot-process
+    # concept; `interpret_remote_result` doesn't apply to a persistent
+    # pipe), the daemon's response IS the plugin's real output.
+    #
+    # On ANY failure (spawn error, broken pipe, timeout, malformed
+    # response) the connection is torn down and NOT retried here - the
+    # exception propagates to `PluginManager`, whose job is to catch it
+    # and fall back to `execute_remote_plugin`'s existing, already-
+    # proven per-task path for that one call. This is deliberately the
+    # WHOLE reconnect story: a stale daemon (e.g. after `ansible.
+    # builtin.reboot` killed the SSH session mid-play) fails exactly
+    # once, falls back safely for that one task, and a fresh daemon gets
+    # lazily spawned the next time this host needs one - no explicit
+    # reboot-awareness needed anywhere in this method.
+    def self.daemon_send(
+      host : String,
+      user : String,
+      port : Int32,
+      remote_binary_path : String,
+      module_name : String,
+      config : JSON::Any,
+      identity_file : String? = nil,
+      timeout : Int32 = 300
+    ) : JSON::Any
+      init
+      key = {host, user, port}
+      process = @@daemon_processes[key]? || spawn_daemon(host, user, port, remote_binary_path, identity_file)
+
+      request = {"module" => module_name, "config" => config}.to_json
+
+      response = run_io_with_timeout(timeout) do
+        write_daemon_frame(process.input, request)
+        read_daemon_frame(process.output)
+      end
+
+      JSON.parse(response)
+    rescue ex
+      kill_daemon(host, user, port)
+      raise ex
+    end
+
+    private def self.spawn_daemon(host : String, user : String, port : Int32, remote_binary_path : String, identity_file : String?) : Process
+      control_path = get_control_path(host, user, port)
+
+      ssh_cmd = [
+        "ssh",
+        "-o", "ControlMaster=auto",
+        "-o", "ControlPath=#{control_path}",
+        "-o", "ControlPersist=600",
+        "-o", "ConnectTimeout=10",
+        "-o", "ServerAliveInterval=60",
+        "-o", "ServerAliveCountMax=3",
+        "-o", "StrictHostKeyChecking=accept-new",
+      ] + identity_args(identity_file) + [
+        "-p", port.to_s,
+        "#{user}@#{host}",
+        "#{remote_binary_path} --daemon",
+      ]
+
+      process = Process.new(
+        ssh_cmd[0],
+        ssh_cmd[1..],
+        input: Process::Redirect::Pipe,
+        output: Process::Redirect::Pipe,
+        error: Process::Redirect::Close
+      )
+      @@daemon_processes[{host, user, port}] = process
+      process
+    end
+
+    private def self.write_daemon_frame(io : IO, payload : String) : Nil
+      bytes = payload.to_slice
+      io.write_bytes(bytes.size.to_u32, IO::ByteFormat::BigEndian)
+      io.write(bytes)
+      io.flush
+    end
+
+    private def self.read_daemon_frame(io : IO) : String
+      length = io.read_bytes(UInt32, IO::ByteFormat::BigEndian)
+      bytes = Bytes.new(length)
+      io.read_fully(bytes)
+      String.new(bytes)
+    end
+
+    # Same "bound a blocking local pipe op to a wall-clock timeout on a
+    # separate fiber" shape as `run_with_timeout` above (see that
+    # method's own comment for why `ServerAliveInterval`/
+    # `ServerAliveCountMax` can't cover this - a local pipe read/write
+    # with nothing on the other end is invisible to SSH's own keepalive
+    # machinery), generalized over the return type since a daemon
+    # request returns a plain `String`, not the `exec`/`exec_script`-
+    # specific `NamedTuple`. No SIGKILL escalation here - unlike a
+    # one-shot process, a daemon `Process` is meant to outlive this one
+    # call, so a timeout just raises and lets the `rescue` in
+    # `#daemon_send` tear the connection down through the normal
+    # `#kill_daemon` path instead of a bespoke kill sequence here.
+    private def self.run_io_with_timeout(timeout_seconds : Int32, &block : -> String) : String
+      result_channel = Channel(String).new(1)
+      error_channel = Channel(Exception).new(1)
+
+      spawn do
+        begin
+          result_channel.send(block.call)
+        rescue ex
+          error_channel.send(ex)
+        end
+      end
+
+      select
+      when result = result_channel.receive
+        result
+      when ex = error_channel.receive
+        raise ex
+      when timeout(timeout_seconds.seconds)
+        raise "daemon request timed out after #{timeout_seconds}s (host likely unreachable)"
+      end
+    end
+
+    # Best-effort, no grace period - used from #daemon_send's own
+    # rescue, where something has already gone wrong and the priority is
+    # dropping the stale connection so the NEXT call spawns a fresh one,
+    # not waiting around for a clean exit that may never come.
+    private def self.kill_daemon(host : String, user : String, port : Int32) : Nil
+      process = @@daemon_processes.delete({host, user, port})
+      return unless process
+
+      begin
+        process.input.close
+      rescue
+      end
+      begin
+        process.terminate(graceful: false) unless process.terminated?
+      rescue
+      end
+    end
+
+    # Graceful shutdown for every still-open daemon connection, called
+    # once at the end of a run. Closes every daemon's stdin first (each
+    # one sees EOF and exits cleanly via `plugin_daemon.cr`'s own
+    # `rescue IO::EOFError` - no explicit "goodbye" message needed),
+    # THEN waits once for the whole batch rather than once per
+    # connection, force-killing stragglers only after that single grace
+    # period - materially faster than `#kill_daemon`'s per-connection
+    # path would be for a multi-host run.
+    def self.close_all_daemons : Nil
+      processes = @@daemon_processes.values
+      @@daemon_processes.clear
+      return if processes.empty?
+
+      processes.each do |process|
+        begin
+          process.input.close
+        rescue
+        end
+      end
+
+      sleep 1.second
+
+      processes.each do |process|
+        begin
+          process.terminate(graceful: false) unless process.terminated?
+        rescue
+        end
+      end
+    end
+
     # Upload file to remote host via SCP
     def self.upload(
       host : String,
