@@ -113,127 +113,51 @@ file (searchable, e.g. `git log --all --grep=auth_socket`).
 
 ## ⚡ Performance
 
-Native compiled modules plus batched SSH round trips make the biggest
-difference on **idempotent re-runs** - the common case for a
-config-management tool running on a schedule, where most tasks find
-nothing to change but Python still pays a fresh interpreter-and-module
-cost per task regardless.
+Native compiled modules, one persistent SSH connection per host, and
+batched round trips make the biggest difference on **idempotent
+re-runs** - the common case for a config-management tool running on a
+schedule, where most tasks find nothing to change but Python still pays
+a fresh interpreter-and-module cost per task regardless.
 
-Measured against real `ansible-playbook` on 3 fresh Atlantic.net
-instances (Ubuntu 22.04, destroyed immediately after each run), the same
-12-task mixed playbook (`file`, `copy`+loop x10, `lineinfile`+loop x10,
-`shell`+`register`, `command`+`register`, `changed_when`/`failed_when`,
-`stat`, `assert`, `find`, `set_fact`, `debug`) run against both tools:
+Measured against real `ansible-playbook` (`ansible-core` 2.19.4): 10
+real Galaxy roles drawn at random from the project's verified-clean
+list, each on its own **fresh** Atlantic.net `G3.2GB` Ubuntu-22.04 host
+pair (one host per engine, never reused, destroyed immediately after),
+cold (first touch) and warm (idempotent re-run) on both engines,
+`--forks 1` on both sides. crystal-ansible was built `--release` and
+stripped, and ran with `--persistent-daemon --no-batching` (one
+long-lived `ssh ... -- <plugin binary> --daemon` connection per host
+instead of a fresh `ssh`+`bash`+exec per task; batching is disabled
+during measurement because it routes around that path). `PLAY RECAP`
+parity with real Ansible (`ok=`/`changed=`/`failed=`/`skipped=`) was
+checked per role, cold AND warm, and matched exactly on all 10:
 
-| | Fresh run | Idempotent re-run (median of 3) |
-|---|---|---|
-| Python `ansible-core` 2.19.4 (`forks=5` default) | 39.6s | 32.5s |
-| `crystal-ansible` `--forks 1` (one-host-at-a-time) | 25.8s (1.54x) | 8.6s (3.8x) |
-| `crystal-ansible` `--forks 3` | 14.4s (2.76x) | **3.5s (9.3x)** |
-
-`--forks` defaulted to `5` (matching real `ansible-playbook`'s own
-default) from `0.9.78` through `0.9.483`; as of `0.9.484` it defaults to
-`25` - a "fork" here is a cheap Crystal fiber doing pure I/O wait, not a
-forked Python interpreter, so real Ansible's own resource-driven default
-isn't load-bearing for this implementation. Pass `--forks 5` to match
-real `ansible-playbook`'s default exactly (e.g. for a side-by-side
-benchmark run), or `--forks 1` to restore one-host-at-a-time behavior.
-The rows above measured `--forks 1`/`--forks 3` explicitly, from before
-either default change.
-
-**`0.9.480` -> `0.9.485` (this tool's own before/after, not vs. real
-Ansible)**: 3 fresh Atlantic.net `G3.2GB` instances (Ubuntu 22.04,
-USEAST1, destroyed immediately after), both versions built `--release`
-from the same source tree back to back, one 28-task/host play (facts +
-`package_facts:` + 10x `debug:` + 10x `assert:` + `set_fact:` + 5 real
-file/command modules) run against all 3 hosts, `--forks 5` held constant
-on both sides so the comparison isolates the engine changes from the
-forks-default bump above. `-v` used to confirm plugin upload actually
-happened on "cold" and was actually skipped on "warm" (an initial pass
-that inferred this instead of checking it turned out to be
-contaminated by an earlier single-host smoke test - re-run clean on a
-second fresh host set before trusting these numbers):
-
-| | Cold (first touch, upload confirmed via `-v`) | Warm (idempotent re-run, skip confirmed via `-v`) |
-|---|---|---|
-| `0.9.480` | 51.4s | 43.3s, 37.9s (median ~40.6s) |
-| `0.9.485` | 4.8s | 1.4s, 1.3s (median ~1.3s) |
-| Speedup | **~10.7x** | **~30x** |
-
-Driven mostly by `debug:`/`assert:`/`set_fact:` becoming real
-controller-side action plugins (matching real Ansible's own
-architecture - 21 of this play's 28 tasks never touch the wire at all
-on `0.9.485`) and no longer shipping every remaining task's full
-variable context over SSH; the `-v` log also shows the plugin-upload
-dedup directly on a real target ("Uploading 1 distinct plugin binary
-(6 names)" instead of 6 separate transfers).
-
-**Same before/after, but with real named roles instead of a made-up
-playbook** (`0.9.480` -> `0.9.486`, 3 different Galaxy authors, each on
-its own fresh host set so a properly-idempotent role's "cold" run can't
-be contaminated by the other binary's earlier state):
-
-| Role (author) | Before cold | After cold | Before warm | After warm |
+| Role (author) | Python cold | Crystal cold | Python warm | Crystal warm |
 |---|---|---|---|---|
-| `robertdebock.php_fpm` | 37.5s | 31.2s | 5.4s | 1.5s |
-| `willshersystems.sshd` | 18.5s | 14.3s | 9.7s | 6.8s |
+| `robertdebock.remi` | 4.39s | 3.55s | 2.82s | **0.72s** |
+| `geerlingguy.helm` | 27.28s | **9.74s** | 5.81s | **1.66s** |
+| `geerlingguy.clamav` | 74.15s | **52.19s** | 29.53s | **2.49s** |
+| `geerlingguy.node_exporter` | 54.64s | **8.16s** | 19.56s | **2.32s** |
+| `robertdebock.types` | 5.34s | 3.34s | 3.15s | **0.65s** |
+| `robertdebock.docker_ce` | 81.13s | **50.45s** | 15.56s | **2.54s** |
+| `robertdebock.digitalocean_agent` | 37.22s | **23.29s** | 17.60s | **2.37s** |
+| `geerlingguy.adminer` | 15.79s | **9.50s** | 9.00s | **2.01s** |
+| `robertdebock.upgrade` | 9.24s | **4.84s** | 6.90s | **1.59s** |
+| `robertdebock.fail2ban` | 39.62s | **21.63s** | 22.33s | **2.65s** |
 
-(`geerlingguy.nginx` also tested but its cold number came back
-inconclusive - real package-download variance to Atlantic.net's apt
-mirror dominated both directions; the warm numbers there were normal.)
-This pass also found and fixed a real bug: a role using `include_tasks:`
-(contents only known at runtime) triggers plugin uploads incrementally,
-once per newly-discovered module name - `willshersystems.sshd`'s 5 such
-calls each re-uploaded the same fat plugin binary under a new name,
-since the md5-dedup above only compared candidates *within one call*.
-Fixed by checking the full remote `.md5` listing (already gathered every
-round trip) for a content match under ANY name, not just this call's
-own candidates - confirmed on a real host via `ls -i` (8 distinct
-inodes, same 9,515,008-byte content, before the fix; 1 inode after).
+Cold runs are dominated by real apt/download time (both engines wait on
+the same mirrors), so the trustworthy signal is the warm column:
+crystal warm runs are **3.5x-11.9x faster (mean ~6.3x)**, cold runs
+1.2x-6.7x faster (mean ~2.2x). Real Ansible pays a fresh Python-
+interpreter-and-module cost per task on every run regardless of whether
+anything changes; crystal-ansible's compiled-binary-plus-persistent-
+connection model is why its warm numbers drop so far below its own
+cold.
 
-Full writeup with the real-host verification method (including the
-nginx variance investigation) in `SUGGESTED_PERFORMANCE_IMPROVEMENTS.md`
-(gitignored local notes).
-
-**crystal-ansible 0.9.486 vs real `ansible-playbook`, same 3 real
-roles**: one Atlantic.net `G3.2GB` host per ENGINE (not per role) - real
-`ansible-playbook` always ran against one host, crystal-ansible always
-against the other, for all 3 roles in sequence, so the two engines never
-share host state:
-
-| Role (author) | Python cold | Python warm | Crystal cold | Crystal warm |
-|---|---|---|---|---|
-| `robertdebock.php_fpm` | 29.2s | 7.4s | 24.6s | **2.1s** |
-| `willshersystems.sshd` | 12.8s | 12.4s | 12.5s | **8.6s** |
-| `mrlesmithjr.chrony` | 39.0s* | 5.2s | 9.9s* | **1.8s** |
-
-(`*` chrony is a 4-5 task role, so its cold number is mostly measuring
-one `apt-get install` - real package-mirror response time, not
-particularly attributable to either engine; see the full writeup for why
-this one's flagged rather than folded into a headline number.) The
-trustworthy signal is the **warm** column: real Ansible pays a fresh
-Python-interpreter-and-module cost per task every run regardless of
-whether anything changes (its own warm barely beats its own cold - 12.4s
-vs 12.8s for sshd), while crystal-ansible's compiled-binary-plus-batching
-model is what makes ITS warm numbers drop so much further below its own
-cold - 3.6x and 1.4x faster than real Ansible's warm run, on real named
-roles, not a synthetic playbook.
-
-**`devsec.hardening.os_hardening`** - the heaviest, most templating-dense
-role tested to date (100+ tasks) - needed 2 real engine bugs fixed
-before it could complete at all (a bare `when: not lookup(...)` that
-never actually invoked the lookup, and task-level `vars:` being
-evaluated eagerly instead of lazily like real Ansible's own per-key
-Jinja templating - see `KNOWN_MISSING.md`/`git log` `0.9.487`-`0.9.488`).
-With both fixed, on its own fresh host pair (same method, `--release`):
-
-| | Python `ansible-playbook` | crystal-ansible |
-|---|---|---|
-| Cold | `ok=101 changed=36 failed=0` - 210.3s | `ok=102 changed=36 failed=0` - **63.3s (3.3x)** |
-| Warm | `ok=93 changed=0` - 180.1s | `ok=95 changed=0` - **33.8s (5.3x)** |
-
-Real state verified on both hosts (`auditd`, sysctl hardening, `/etc/
-passwd` permissions), not just the recap.
+(One substitution: `robertdebock.zabbix_server` was in the random pick
+but its upstream apt repo no longer ships `zabbix-sql-scripts`, so it
+fails identically on BOTH engines - an upstream breakage, not engine
+behavior - and `robertdebock.fail2ban` ran in its place.)
 
 ---
 
@@ -483,7 +407,10 @@ for current-state detail.
   end-to-end. New automated coverage
   (`spec/unit/plugin_daemon_spec.cr`) drives the real compiled daemon
   binary as a local subprocess. `crystal spec`: 1501 examples, 0
-  failures.
+  failures. A 10-role live benchmark (fresh host pair per role,
+  `--persistent-daemon --no-batching` vs `ansible-core` 2.19.4)
+  measured warm idempotent replays 3.5x-11.9x faster with the daemon
+  on - see **Performance** for the full table.
 - **`0.9.495`** - `ExpressionEvaluator#evaluate`'s dispatch re-scanned
   every `{{ }}` body's text from scratch on every call (up to 6 full
   character-by-character passes before ever reaching the real
