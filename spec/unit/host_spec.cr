@@ -36,4 +36,35 @@ describe CrystalPlay::Host do
       host.port.should eq(22)
     end
   end
+
+  describe "#connection_host" do
+    it "returns the inventory hostname when no ansible_host is set" do
+      host = CrystalPlay::Host.new("web1")
+      host.connection_host.should eq("web1")
+    end
+
+    it "returns ansible_host when set in vars" do
+      host = CrystalPlay::Host.new("web1")
+      host.vars["ansible_host"] = JSON::Any.new("10.0.0.1")
+      host.connection_host.should eq("10.0.0.1")
+    end
+
+    it "returns ansible_host even when it matches the inventory name" do
+      host = CrystalPlay::Host.new("web1")
+      host.vars["ansible_host"] = JSON::Any.new("web1")
+      host.connection_host.should eq("web1")
+    end
+
+    it "prefers ansible_host over the inventory name when both exist" do
+      host = CrystalPlay::Host.new("db.internal")
+      host.vars["ansible_host"] = JSON::Any.new("192.168.1.50")
+      host.connection_host.should eq("192.168.1.50")
+    end
+
+    it "handles an ansible_host that is set but null gracefully" do
+      host = CrystalPlay::Host.new("web1")
+      host.vars["ansible_host"] = JSON::Any.new(nil)
+      host.connection_host.should eq("web1")
+    end
+  end
 end

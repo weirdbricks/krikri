@@ -312,9 +312,7 @@ inventory = inventory.not_nil!
 if verbose
   puts "Available Hosts:".colorize(:cyan).bold
   inventory.hosts.each do |name, host|
-    # Show ansible_host (IP) if set, otherwise show hostname
-    connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-    puts "  - #{host.user}@#{connection_host}:#{host.port}".colorize(:white)
+    puts "  - #{host.user}@#{host.connection_host}:#{host.port}".colorize(:white)
   end
   puts ""
 end

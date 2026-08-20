@@ -22,11 +22,8 @@ module CrystalPlay
                  "ok".colorize(:green)
                end
 
-      # Show connection host (IP) if different from inventory name
-      connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-
       suffix = item_label ? " => (item=#{item_label})" : ""
-      puts "#{status}: [#{connection_host}]#{suffix}"
+      puts "#{status}: [#{host.connection_host}]#{suffix}"
 
       # Show message for successful tasks if msg is present and meaningful
       # This allows debug plugin output to be visible

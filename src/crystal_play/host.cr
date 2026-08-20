@@ -26,5 +26,12 @@ module CrystalPlay
         port: json["port"]?.try(&.as_i?) || 22
       )
     end
+
+    # The address the SSH/transport layer actually connects to — either
+    # `ansible_host` (if set in the inventory) or the inventory hostname.
+    # Used for display and connection routing throughout the codebase.
+    def connection_host : String
+      @vars["ansible_host"]?.try(&.as_s?) || @name
+    end
   end
 end

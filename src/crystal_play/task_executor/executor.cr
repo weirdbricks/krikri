@@ -531,8 +531,7 @@ module CrystalPlay
       run_hosts, skip_hosts = partition_by_when(task, hosts)
 
       skip_hosts.each do |host|
-        connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-        puts "skipping: [#{connection_host}]".colorize(:cyan)
+        puts "skipping: [#{host.connection_host}]".colorize(:cyan)
         @results[host.name]["skipped"] += 1
       end
 
@@ -2093,9 +2092,8 @@ module CrystalPlay
       # print is deferred and emitted by execute_task when it consumes the
       # nil (skipped) result from the batch cache, in proper task order.
       unless defer_display
-        connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
         suffix = item_label ? " => (item=#{item_label})" : ""
-        puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
+        puts "skipping: [#{host.connection_host}]#{suffix}".colorize(:cyan)
       end
       register_skip_result(task, host)
       false
@@ -2126,8 +2124,7 @@ module CrystalPlay
     # them here, as execute_task consumes each member in task order. Mirrors
     # what when_passes? does for the solo path.
     private def print_batched_skip(task : Task, host : Host, vars_context : Hash(String, JSON::Any)) : Nil
-      connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-      puts "skipping: [#{connection_host}]".colorize(:cyan)
+      puts "skipping: [#{host.connection_host}]".colorize(:cyan)
       @results[host.name]["skipped"] += 1
     end
 
