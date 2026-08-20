@@ -188,7 +188,24 @@ module CrystalPlay
         end
       end
 
-      result = expand_mustache_spans(text) { |inner| evaluator.evaluate(inner.strip) }
+      # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #20 (narrow sub-scope):
+      # the previous `inner.strip` allocated a new String for every `{{ }}`
+      # span, even when there was no whitespace to strip (e.g. `{{var}}` -
+      # common after the `-` trim-marker handling in #expand_mustache_spans
+      # already removed any leading/trailing "-"). The hand-rolled
+      # ExpressionEvaluator#evaluate internally strips what it needs
+      # (split_ternary/split_ternary_no_else/.looks_like_condition? all call
+      # `.strip` themselves before use), so passing the un-stripped inner
+      # through here is safe. Real Ansible evaluates `{{ var }}` and
+      # `{{var}}` identically, so this is behavior-preserving by
+      # construction.
+      result = expand_mustache_spans(text) do |inner|
+        if inner.empty? || (!inner[0].whitespace? && !inner[-1].whitespace?)
+          evaluator.evaluate(inner)
+        else
+          evaluator.evaluate(inner.strip)
+        end
+      end
 
       # Ansible re-templates a rendered result that still contains "{{" -
       # this happens whenever a variable's own value is itself a template
@@ -298,7 +315,15 @@ module CrystalPlay
     # scanning loop itself stays a single branch, and the "is this `}` the
     # real close, an inner literal `}`, or the start of a nested `{...}`"
     # decision lives in one place.
-    private class MustacheScanState
+    #
+    # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #20 (narrow sub-scope):
+    # a `struct` (not `class`) so it lives on the stack in
+    # #find_mustache_close's caller frame instead of being a per-call heap
+    # allocation. The mutating methods (`closes_at?`, `brace_closes?`) work
+    # correctly because #find_mustache_close holds `state` as a local
+    # variable (not a temporary), which is exactly the case Crystal's
+    # struct-method-mutates-caller semantics applies to.
+    private struct MustacheScanState
       property depth = 0
       property quote : Char? = nil
 
