@@ -196,6 +196,40 @@ module CrystalPlay
     # `host | SUCCESS => {...}` minimal-callback output instead of
     # ansible-playbook's `ok: [host]`.
     @adhoc : Bool
+    # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #22: one persistent
+    # worker fiber per host, created lazily on first need, lives for
+    # the executor's lifetime. Each worker loops receiving
+    # `WorkMessage`s (task + host + per-call results/done_signal/gate),
+    # executes the task against that host, writes the result, and
+    # signals done. Eliminates the spawn-per-task fiber churn the old
+    # `run_task_for_hosts_in_parallel` / `gather_facts_for_all_hosts`
+    # patterns paid: 100 hosts x 100 tasks used to be 10,000 spawn/destroy
+    # cycles, now one spawn per host (100 total).
+    #
+    # No explicit cleanup: workers loop on `receive` for the executor's
+    # lifetime and are killed when the process exits. Crystal's runtime
+    # reaps them. Safe here because crystal-ansible is a CLI tool (one
+    # process per play invocation) - if it ever becomes a long-running
+    # server, this would need explicit shutdown signaling.
+    @host_worker_pool : Hash(String, Channel(WorkMessage)) = {} of String => Channel(WorkMessage)
+
+    # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #22: message payload
+    # sent through each host's persistent worker channel. A class (not
+    # a record) because the worker mutates state via the shared
+    # `results` and `done_signal` references - both are reference types,
+    # so even though the message itself is passed by value through the
+    # Channel, the inner references are shared with the dispatcher's
+    # own copies, which is exactly the sync we want.
+    private class WorkMessage
+      getter task : Task
+      getter host : Host
+      getter results : Hash(String, IO::Memory)
+      getter done_signal : Channel(Nil)
+      getter gate : Channel(Nil)
+
+      def initialize(@task : Task, @host : Host, @results : Hash(String, IO::Memory), @done_signal : Channel(Nil), @gate : Channel(Nil))
+      end
+    end
 
     def initialize(
       @hosts,
@@ -586,28 +620,24 @@ module CrystalPlay
     # lines never interleave), then every buffer is flushed in *hosts*
     # order only after every fiber has finished - output stays stable
     # regardless of which host's SSH round trip actually finished first.
+    # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #22: dispatch via the
+    # `@host_worker_pool`'s persistent per-host fibers (one spawn per
+    # host for the executor's lifetime) instead of spawning a fresh
+    # fiber per (task, host) pair. The per-call gate is preserved so
+    # `@forks` still bounds concurrency - the gate lives INSIDE the
+    # worker loop now, so workers serialize on it the same way the old
+    # per-call spawn pattern did, but the worker fiber itself survives
+    # across tasks.
     private def run_task_for_hosts_in_parallel(task : Task, hosts : Array(Host))
       max_parallel = Math.min(hosts.size, @forks)
+      pool = ensure_host_worker_pool(hosts)
       gate = Channel(Nil).new(max_parallel)
       max_parallel.times { gate.send(nil) }
-      done = Channel(Nil).new
       buffers = Hash(String, IO::Memory).new
+      done = Channel(Nil).new(hosts.size)
 
       hosts.each do |host|
-        spawn do
-          gate.receive
-          buffer = IO::Memory.new
-          OutputRouting.redirect_current_fiber_to(buffer)
-          begin
-            execute_task(task, host)
-          ensure
-            OutputRouting.clear_current_fiber_redirect
-          end
-          buffers[host.name] = buffer
-        ensure
-          gate.send(nil)
-          done.send(nil)
-        end
+        pool[host.name].send(WorkMessage.new(task, host, buffers, done, gate))
       end
 
       hosts.size.times { done.receive }
@@ -617,6 +647,40 @@ module CrystalPlay
           print buffer.to_s
         end
       end
+    end
+
+    # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #22: ensure a
+    # persistent worker fiber exists for every host in `hosts`,
+    # creating any missing entries in `@host_worker_pool` on demand.
+    # Idempotent: callers can invoke this freely without spawning
+    # duplicate workers. The worker loop is `receive -> gate.receive ->
+    # execute_task -> store result -> signal done -> gate.send`, which
+    # preserves the same parallelism-bounded-by-`@forks` semantics the
+    # old per-call `spawn` pattern had (gate is consulted per-task, not
+    # per-host).
+    private def ensure_host_worker_pool(hosts : Array(Host)) : Hash(String, Channel(WorkMessage))
+      hosts.each do |host|
+        next if @host_worker_pool.has_key?(host.name)
+        channel = Channel(WorkMessage).new
+        @host_worker_pool[host.name] = channel
+        spawn do
+          loop do
+            msg = channel.receive
+            msg.gate.receive
+            buffer = IO::Memory.new
+            OutputRouting.redirect_current_fiber_to(buffer)
+            begin
+              execute_task(msg.task, msg.host)
+            ensure
+              OutputRouting.clear_current_fiber_redirect
+            end
+            msg.results[msg.host.name] = buffer
+            msg.done_signal.send(nil)
+            msg.gate.send(nil)
+          end
+        end
+      end
+      @host_worker_pool
     end
     
     # Gather facts for all hosts using the facts plugin
