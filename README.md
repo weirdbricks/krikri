@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.496-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.501-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,46 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.501`** - `--persistent-daemon` is now the default (was opt-in
+  behind a flag since `0.9.496`). New `--no-persistent-daemon` flag
+  restores the old per-task ssh-fork path. Promotion is based on the
+  `0.9.496` 10-role real-host benchmark (`--persistent-daemon` vs
+  ansible-core 2.19.4, ~6.3× mean warm speedup) and the absence of
+  regressions across the per-role rounds since. The per-task path is
+  still in place as the fallback for `become:`, `gather_facts:`,
+  batched task groups, remote `async:`, and any daemon-connection
+  failure - so dropping the flag never reduces functionality, only
+  throughput. The doc's "what would re-open #19 (libssh2)" question
+  is also closed for the same reason: with daemon mode default,
+  ssh-process overhead is amortized to ~once per play per host, and
+  re-measurement would need to happen against a real `--forks 50`
+  inventory on `0.9.501`, not the pre-`0.9.496` per-task fork+exec
+  cycle the original 3-10× estimate was based on.
+- **`0.9.500`** - `TaskExecutor` runs persistent host worker fibers:
+  one fiber per host for the executor's lifetime (vs the old
+  spawn-per-(task, host) pattern). Per-task dispatch overhead: 88.6%
+  wall-clock reduction + ~60× allocation reduction (microbench;
+  real-task wall-clock is smaller since SSH round trips dominate).
+  `gather_facts_for_all_hosts` left as-is (one-shot per-play, no
+  churn issue). 1501 specs, 0 failures.
+- **`0.9.499`** - `VarSubstitutor.new`'s `vars.dup` is now lazy:
+  triggered only on first mutation (magic-var insertion or
+  `set_variable`), not eagerly at construction. Per-call bytes in the
+  templated substitute path drops 26%, in the no-placeholder
+  early-exit path drops 99.7%. For a 300-task hardening role against
+  1 host with ~6 plain-string params per task, this saves ~48 MB of
+  allocation per run. Aliasing-safety contract from `0.9.494`/`0.9.485`
+  preserved (writes still trigger a private copy). 1501 specs, 0
+  failures.
+- **`0.9.498`** - narrow sub-scope of `0.9.494` (#20): `substitute()`
+  skips its `.strip` allocation when `{{ ... }}` has no leading or
+  trailing whitespace, and `MustacheScanState` (the brace/quote
+  tracker inside `expand_mustache_spans`) is now a struct, so it lives
+  on the worker's stack frame instead of being a per-call heap object.
+  Per-task bytes in the templated substitute path drop 2.5-9%
+  depending on template shape (whitespace templates get only the
+  struct saving; no-whitespace templates get both). 1501 specs, 0
+  failures.
 - **`0.9.496`** - new experimental `--persistent-daemon` flag: for
   solo (non-batched, non-`become:`) remote tasks, keeps one long-lived
   `ssh ... -- <plugin binary> --daemon` connection per host instead of

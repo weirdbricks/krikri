@@ -63,7 +63,20 @@ inventory_file = "inventory.ini"
 check_mode = false
 diff_mode = false
 batching_enabled = true
-persistent_daemon = false
+# SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15: persistent remote
+# executor - one long-lived ssh+plugin-daemon session per host instead
+# of forking ssh+exec per task. Was opt-in behind --persistent-daemon
+# from 0.9.496 through 0.9.499; promoted to default at 0.9.501 based
+# on the 10-role real-host benchmark (commit 54da326, ~6.3× mean warm
+# speedup) and the absence of regressions across the per-role round
+# work documented in README.md / KNOWN_MISSING.md. --no-persistent-daemon
+# remains available for parity benchmarking against the old path or
+# for hitting specific debug/edge-case scenarios where the per-task
+# ssh fork is actually wanted. The per-task path is still used as
+# fallback for become:, gather_facts:, batched task groups, remote
+# async, and any daemon-connection failure - so dropping the flag never
+# reduces functionality, only throughput.
+persistent_daemon = true
 # real ansible-playbook's default (5) exists because a "fork" there is a
 # forked Python interpreter per host - expensive enough that 5 concurrent
 # ones is a real resource tradeoff. Here a "fork" is a Crystal fiber
@@ -108,8 +121,12 @@ begin
       batching_enabled = false
     end
 
-    parser.on("--persistent-daemon", "EXPERIMENTAL (SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15): keep one persistent connection per remote host instead of forking ssh+exec per task, for solo (non-batched, non-become:) remote tasks. Off by default. become:/batched tasks and remote fact-gathering always use the existing per-task path regardless of this flag.") do
+    parser.on("--persistent-daemon", "(SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15, on by default since 0.9.501): keep one persistent ssh+plugin-daemon connection per remote host instead of forking ssh+exec per task, for solo (non-batched, non-become:) remote tasks. become:/batched tasks and remote fact-gathering always use the existing per-task path regardless of this flag. Equivalent to the default; accepted for backward compatibility with playbooks/aliases that set it explicitly.") do
       persistent_daemon = true
+    end
+
+    parser.on("--no-persistent-daemon", "Opt out of the default persistent-daemon mode (item #15) and use the per-task ssh-fork path instead. Provided for parity benchmarking against the pre-0.9.501 architecture and for hitting specific edge-case scenarios where the per-task path is actually wanted. The per-task path remains in place as the fallback for become:, gather_facts:, batched task groups, and remote async regardless of this flag.") do
+      persistent_daemon = false
     end
 
     parser.on("-f FORKS", "--forks=FORKS", "Run each task against up to FORKS hosts concurrently (default: 25 - higher than ansible-playbook's own default of 5, since a \"fork\" here is a cheap fiber, not a forked Python interpreter; --forks 5 matches real ansible-playbook's default exactly, --forks 1 restores one-host-at-a-time)") do |f|
