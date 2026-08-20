@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.501-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.502-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,17 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.502`** - `apt:` module now retries dpkg lock contention
+  (round 153 follow-up, 0.9.502): `lock_timeout` (default 60s) on
+  install/remove/upgrade, `update_cache_retries` (default 5) +
+  `update_cache_retry_max_delay` (default 12s, exponential backoff)
+  on `apt-get update` - matching real Ansible's `apt` module
+  parameter names and behavior. Round 153 found that crystal-ansible
+  failed fast on a fresh Atlantic.net Ubuntu host when Ubuntu's
+  unattended-upgr held the lock during `apt:`; real Ansible's apt
+  module waited it out via `lock_timeout: 60`. New regression spec
+  exercises the retry helpers via a stubbed proc; full suite 1519
+  examples, 0 failures.
 - **`0.9.501`** - `--persistent-daemon` is now the default (was opt-in
   behind a flag since `0.9.496`). New `--no-persistent-daemon` flag
   restores the old per-task ssh-fork path. Promotion is based on the
