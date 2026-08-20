@@ -24,6 +24,15 @@ module CrystalPlay
     # string, not a real array) fed straight into `join`, which had no
     # array to actually join - chained filters were silently broken.
     class FilterEngine
+      # Precompiled regexes and process-wide dynamic regex cache.
+      REGEX_FILTER_CALL = /^(\w+)\s*\((.*)\)$/m
+      @@compiled_regex_cache = Hash(Tuple(String, Regex::Options), Regex).new
+
+      def self.cached_regex(pattern : String, options : Regex::Options = Regex::Options::None) : Regex
+        key = {pattern, options}
+        @@compiled_regex_cache[key] ||= Regex.new(pattern, options)
+      end
+
       # Optional variable context, needed only to resolve a `default(...)`
       # filter's argument when it's itself a variable reference rather
       # than a literal (see the "default" case in #apply below) - every
@@ -108,7 +117,7 @@ module CrystalPlay
         # matches either spelling.
         filter_expr = filter_expr.lchop("ansible.builtin.") if filter_expr.starts_with?("ansible.builtin.")
 
-        if match = filter_expr.match(/^(\w+)\s*\((.*)\)$/m)
+        if match = filter_expr.match(REGEX_FILTER_CALL)
           filter_name = match[1]
           filter_args = match[2]
         else
@@ -532,7 +541,7 @@ module CrystalPlay
           pattern = args[0]?.try { |arg| as_string(resolve_expression(arg)) } || ""
           group_ref = args[1]?.try { |arg| as_string(resolve_expression(arg)) }
 
-          if match = as_string(value).match(Regex.new(pattern))
+          if match = as_string(value).match(self.class.cached_regex(pattern))
             if group_ref
               JSON::Any.new(group_ref.gsub(/\\(\d)/) { match[$1.to_i]? || "" })
             else
@@ -563,7 +572,7 @@ module CrystalPlay
           options = Regex::Options::None
           options |= Regex::Options::MULTILINE if args[1]?.try { |arg| truthy?(resolve_expression(arg)) }
           options |= Regex::Options::IGNORE_CASE if args[2]?.try { |arg| truthy?(resolve_expression(arg)) }
-          regex = Regex.new(pattern, options)
+          regex = self.class.cached_regex(pattern, options)
 
           matches = as_string(value).scan(regex).map do |match|
             if match.size > 1
@@ -592,7 +601,7 @@ module CrystalPlay
           pattern = args[0]?.try { |arg| as_string(resolve_expression(arg)) } || ""
           replacement = args[1]?.try { |arg| as_string(resolve_expression(arg)) } || ""
 
-          result = as_string(value).gsub(Regex.new(pattern)) do |_, match|
+          result = as_string(value).gsub(self.class.cached_regex(pattern)) do |_, match|
             replacement.gsub(/\\(\d)/) { match[$1.to_i]? || "" }
           end
           JSON::Any.new(result)
@@ -1198,7 +1207,7 @@ module CrystalPlay
           str = item.as_s?
           pattern = compare_value.try(&.as_s?)
           return false unless str && pattern
-          regex = Regex.new(test == "match" ? "^(?:#{pattern})" : pattern)
+          regex = self.class.cached_regex(test == "match" ? "^(?:#{pattern})" : pattern)
           !!(str =~ regex)
         when "in"
           compare_value.try(&.raw.as?(Array)).try(&.includes?(item)) || false

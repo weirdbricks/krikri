@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "../../src/crystal_play/conditional_evaluator"
+require "../../src/crystal_play/jinja_filters"
 
 private def vars(hash : Hash(String, JSON::Any::Type)) : Hash(String, JSON::Any)
   result = Hash(String, JSON::Any).new

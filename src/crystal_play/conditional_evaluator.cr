@@ -16,6 +16,24 @@ module CrystalPlay
   # - Truthiness: bare variable names
 
   module ConditionalEvaluator
+    # Precompiled regular expressions for condition parsing.
+    # Eliminates runtime regex compilation in hot `when:` and test paths.
+    REGEX_VERSION_TEST     = /\A(.+?)\s+is\s+version\(\s*(.+?)\s*,\s*(.+?)\s*\)\z/
+    REGEX_MATCH_SEARCH_TEST = /^(.+?)\s+is\s+(not\s+)?(match|search)\((.+)\)\s*$/
+    REGEX_SUBSET_TEST      = /^(.+?)\s+is\s+(not\s+)?(subset|superset|contains)\((.+)\)\s*$/
+    REGEX_SAME_FILE_TEST   = /^(.+?)\s+is\s+(not\s+)?same_file\((.+)\)\s*$/
+    REGEX_GENERIC_IS_TEST  = /\bis\s+(not\s+)?\w/
+    REGEX_BARE_CALL        = /\A\w+\s*\(.*\)\z/
+    REGEX_DIGITS           = /\d+/
+
+    # Process-wide compiled regex cache for dynamic `is match(...)` / `is search(...)` patterns.
+    @@compiled_regex_cache = Hash(String, Regex).new
+
+    def self.cached_regex(pattern : String, anchored : Bool) : Regex
+      key = anchored ? "^(?:#{pattern})" : pattern
+      @@compiled_regex_cache[key] ||= Regex.new(key)
+    end
+
     # Evaluate a when: condition against a variable context
     # Returns true if condition passes, false otherwise
     def self.evaluate(condition : String, vars : Hash(String, JSON::Any)) : Bool
@@ -96,7 +114,7 @@ module CrystalPlay
       # so the version-appropriate host key list was never set, leaving
       # a `loop:` over a genuinely undefined variable three tasks later
       # (surfacing as `item` = the literal string "undefined").
-      if version_test = condition.match(/\A(.+?)\s+is\s+version\(\s*(.+?)\s*,\s*(.+?)\s*\)\z/)
+      if version_test = condition.match(REGEX_VERSION_TEST)
         return evaluate_version_test(version_test[1], version_test[2], version_test[3], vars)
       end
 
@@ -239,7 +257,7 @@ module CrystalPlay
       # Ansible's own test, os.path.samefile (same device+inode, not
       # just equal path strings - true for two different paths to the
       # same hardlinked file).
-      if test_match = condition.match(/^(.+?)\s+is\s+(not\s+)?same_file\((.+)\)\s*$/)
+      if test_match = condition.match(REGEX_SAME_FILE_TEST)
         var_expr = test_match[1].strip
         negate = !test_match[2]?.nil?
         arg_expr = test_match[3].strip
@@ -335,7 +353,7 @@ module CrystalPlay
       # building a download URL for a release that doesn't exist
       # ("vlatest"/"node_exporter-latest..."), failing the download
       # outright.
-      if test_match = condition.match(/^(.+?)\s+is\s+(not\s+)?(match|search)\((.+)\)\s*$/)
+      if test_match = condition.match(REGEX_MATCH_SEARCH_TEST)
         var_expr = test_match[1].strip
         negate = !test_match[2]?.nil?
         anchored = test_match[3] == "match"
@@ -347,7 +365,7 @@ module CrystalPlay
                     else             value.to_s
                     end
 
-        matched = !!(str_value =~ Regex.new(anchored ? "^(?:#{pattern})" : pattern))
+        matched = !!(str_value =~ cached_regex(pattern, anchored))
         return negate ? !matched : matched
       end
 
@@ -359,7 +377,7 @@ module CrystalPlay
       # below, which has no notion of these test names either and always
       # evaluated the whole condition as an undefined (falsy) bare
       # variable lookup.
-      if test_match = condition.match(/^(.+?)\s+is\s+(not\s+)?(subset|superset|contains)\((.+)\)\s*$/)
+      if test_match = condition.match(REGEX_SUBSET_TEST)
         var_expr = test_match[1].strip
         negate = !test_match[2]?.nil?
         test_name = test_match[3]
@@ -414,7 +432,7 @@ module CrystalPlay
       # test correctly by construction, verified directly here to
       # produce the right True/False) rather than reimplementing every
       # possible built-in test's own semantics by hand.
-      if condition.match(/\bis\s+(not\s+)?\w/)
+      if condition.match(REGEX_GENERIC_IS_TEST)
         rendered = VariableSubstitutor::CrinjaRenderer.new(vars).render("{{ (#{condition}) }}")
         return rendered.strip == "True"
       end
@@ -444,7 +462,7 @@ module CrystalPlay
       # result needs real Python truthiness applied to it, not just
       # non-empty-string-ness - rather than reimplementing every lookup
       # plugin's own return shape by hand.
-      if condition =~ /\A\w+\s*\(.*\)\z/
+      if condition =~ REGEX_BARE_CALL
         rendered = VariableSubstitutor::CrinjaRenderer.new(vars).render("{{ 'True' if (#{condition}) else 'False' }}")
         return rendered.strip == "True"
       end
@@ -868,8 +886,8 @@ module CrystalPlay
     # regardless of whether any template rendering is even involved) for
     # ten lines of arithmetic.
     private def self.compare_versions(a : String, b : String) : Int32
-      a_parts = a.scan(/\d+/).map(&.[0].to_i)
-      b_parts = b.scan(/\d+/).map(&.[0].to_i)
+      a_parts = a.scan(REGEX_DIGITS).map(&.[0].to_i)
+      b_parts = b.scan(REGEX_DIGITS).map(&.[0].to_i)
       [a_parts.size, b_parts.size].max.times do |i|
         a_val = a_parts[i]? || 0
         b_val = b_parts[i]? || 0

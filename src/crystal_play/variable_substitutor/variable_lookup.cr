@@ -9,6 +9,9 @@ module CrystalPlay
     # - Nested: {{ user.name.first }}
     # - Indexed: {{ array[0] }}, {{ dict['key'] }}
     class VariableLookup
+      REGEX_METHOD_SPLIT = /^split\(\s*(['"])(.*)\1\s*\)$/
+      REGEX_METHOD_FIND  = /^find\(\s*(['"])(.*)\1\s*\)$/
+
       @vars : Hash(String, JSON::Any)
 
       def initialize(@vars : Hash(String, JSON::Any))
@@ -325,13 +328,13 @@ module CrystalPlay
           return JSON::Any.new(current.as_s.split.map { |piece| JSON::Any.new(piece) })
         end
 
-        if match = part.match(/^split\(\s*(['"])(.*)\1\s*\)$/)
+        if match = part.match(REGEX_METHOD_SPLIT)
           sep = match[2]
           pieces = sep.empty? ? current.as_s.chars.map(&.to_s) : current.as_s.split(sep)
           return JSON::Any.new(pieces.map { |piece| JSON::Any.new(piece) })
         end
 
-        if match = part.match(/^find\(\s*(['"])(.*)\1\s*\)$/)
+        if match = part.match(REGEX_METHOD_FIND)
           index = current.as_s.index(match[2])
           return JSON::Any.new((index ? index : -1).to_i64)
         end

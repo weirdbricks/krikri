@@ -6,6 +6,8 @@ module CrystalPlay
     # Supports: array[:5], array[2:], array[1:3], array[-3:], array[:-2]
     # NOW SUPPORTS NESTED VARIABLES: result.stdout_lines[:5]
     class ArraySlicer
+      REGEX_SLICE = /^([^\[]+)\[([^:]*):([^\]]*)\]/
+
       @vars : Hash(String, JSON::Any)
 
       def initialize(@vars : Hash(String, JSON::Any))
@@ -15,7 +17,7 @@ module CrystalPlay
       # Example: numbers.stdout_lines[:5]
       def slice(expr : String) : String
         # Match pattern: variable[start:end]
-        if match = expr.match(/^([^\[]+)\[([^:]*):([^\]]*)\]/)
+        if match = expr.match(REGEX_SLICE)
           var_name = match[1].strip
           start_str = match[2].strip
           end_str = match[3].strip
