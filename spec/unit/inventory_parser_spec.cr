@@ -20,6 +20,133 @@ describe CrystalPlay::InventoryParser do
     Dir.mkdir_p(ROOT)
   end
 
+  describe "INI value parsing" do
+    it "parses an unquoted integer as a number" do
+      write(File.join(ROOT, "inventory.ini"), <<-INI)
+        [web]
+        web1 port=8080
+        INI
+
+      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory.hosts["web1"].vars["port"].should eq(JSON::Any.new(8080_i64))
+    end
+
+    it "parses an unquoted float as a number" do
+      write(File.join(ROOT, "inventory.ini"), <<-INI)
+        [web]
+        web1 version=2.5
+        INI
+
+      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory.hosts["web1"].vars["version"].should eq(JSON::Any.new(2.5))
+    end
+
+    it "parses unquoted true/yes as boolean true" do
+      write(File.join(ROOT, "inventory.ini"), <<-INI)
+        [web]
+        web1 active=true enabled=yes
+        INI
+
+      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory.hosts["web1"].vars["active"].should eq(JSON::Any.new(true))
+      inventory.hosts["web1"].vars["enabled"].should eq(JSON::Any.new(true))
+    end
+
+    it "parses unquoted false/no as boolean false" do
+      write(File.join(ROOT, "inventory.ini"), <<-INI)
+        [web]
+        web1 active=false enabled=no
+        INI
+
+      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory.hosts["web1"].vars["active"].should eq(JSON::Any.new(false))
+      inventory.hosts["web1"].vars["enabled"].should eq(JSON::Any.new(false))
+    end
+
+    it "keeps a quoted integer as a string (preserving leading zeros)" do
+      write(File.join(ROOT, "inventory.ini"), <<-INI)
+        [web]
+        web1 version="0123"
+        INI
+
+      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory.hosts["web1"].vars["version"].should eq(JSON::Any.new("0123"))
+    end
+
+    it "keeps a quoted boolean as a string" do
+      write(File.join(ROOT, "inventory.ini"), <<-INI)
+        [web]
+        web1 flag="true"
+        INI
+
+      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory.hosts["web1"].vars["flag"].should eq(JSON::Any.new("true"))
+    end
+
+    it "keeps a single-quoted integer as a string" do
+      write(File.join(ROOT, "inventory.ini"), <<-INI)
+        [web]
+        web1 code='007'
+        INI
+
+      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory.hosts["web1"].vars["code"].should eq(JSON::Any.new("007"))
+    end
+
+    it "parses unquoted null as JSON null" do
+      write(File.join(ROOT, "inventory.ini"), <<-INI)
+        [web]
+        web1 myvar=null
+        INI
+
+      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory.hosts["web1"].vars["myvar"].should eq(JSON::Any.new(nil))
+    end
+
+    it "parses unquoted None as JSON null" do
+      write(File.join(ROOT, "inventory.ini"), <<-INI)
+        [web]
+        web1 myvar=None
+        INI
+
+      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory.hosts["web1"].vars["myvar"].should eq(JSON::Any.new(nil))
+    end
+
+    it "parses bare ~ as JSON null" do
+      write(File.join(ROOT, "inventory.ini"), <<-INI)
+        [web]
+        web1 myvar=~
+        INI
+
+      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory.hosts["web1"].vars["myvar"].should eq(JSON::Any.new(nil))
+    end
+
+    it "is case-insensitive for null and None" do
+      write(File.join(ROOT, "inventory.ini"), <<-INI)
+        [web]
+        web1 a=NULL b=Null c=none d=NONE
+        INI
+
+      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory.hosts["web1"].vars["a"].should eq(JSON::Any.new(nil))
+      inventory.hosts["web1"].vars["b"].should eq(JSON::Any.new(nil))
+      inventory.hosts["web1"].vars["c"].should eq(JSON::Any.new(nil))
+      inventory.hosts["web1"].vars["d"].should eq(JSON::Any.new(nil))
+    end
+
+    it "keeps an unquoted plain string as a string" do
+      write(File.join(ROOT, "inventory.ini"), <<-INI)
+        [web]
+        web1 env=staging
+        INI
+
+      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory.hosts["web1"].vars["env"].should eq(JSON::Any.new("staging"))
+    end
+  end
+
   describe "basic INI parsing" do
     it "parses hosts, inline vars, and group membership" do
       write(File.join(ROOT, "inventory.ini"), <<-INI)

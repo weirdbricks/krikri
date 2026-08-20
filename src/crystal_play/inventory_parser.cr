@@ -554,31 +554,43 @@ module CrystalPlay
       end
     end
     
-    # Parse a value (attempt to infer type)
+    # Parse a value (attempt to infer type). Matches real Ansible's INI parser:
+    # - Quoted values are always strings (no type inference).
+    # - Unquoted `true`/`false`/`yes`/`no` → boolean.
+    # - Unquoted integers/floats → numeric.
+    # - Unquoted `null`/`None` (case-insensitive) or bare `~` → JSON null.
+    # - Everything else → string.
     private def self.parse_value(value : String) : JSON::Any
-      # Remove quotes if present
+      # Quoted values are always strings — strip the quotes and return as-is,
+      # without any type inference. Matches real Ansible's INI parser.
       if (value.starts_with?('"') && value.ends_with?('"')) ||
          (value.starts_with?("'") && value.ends_with?("'"))
-        value = value[1..-2]
+        return JSON::Any.new(value[1..-2])
       end
-      
+
+      # Bare ~ is the YAML null alias, always JSON null.
+      return JSON::Any.new(nil) if value == "~"
+
       # Try to parse as number
       if int_value = value.to_i?
         return JSON::Any.new(int_value.to_i64)
       end
-      
+
       if float_value = value.to_f?
         return JSON::Any.new(float_value)
       end
-      
-      # Try to parse as boolean
+
+      # Try to parse as boolean, then null (checking case-insensitively
+      # for words, matching Ansible's own Python `value.lower()` behavior).
       case value.downcase
       when "true", "yes"
         return JSON::Any.new(true)
       when "false", "no"
         return JSON::Any.new(false)
+      when "null", "none"
+        return JSON::Any.new(nil)
       end
-      
+
       # Default to string
       JSON::Any.new(value)
     end
