@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/crystal_play/base_plugin"
+require "../src/crystal_play/plugin_helpers/apt_lock_retry"
 
 module CrystalPlay
   # APT Plugin - Debian/Ubuntu package management
@@ -29,6 +30,8 @@ module CrystalPlay
   #   apt:
   #     update_cache: yes
   class AptPlugin < BasePlugin
+    include AptLockRetry
+
     property check_mode : Bool
 
     def initialize(config : JSON::Any)
@@ -41,6 +44,19 @@ module CrystalPlay
       state = @params["state"]? || "present"
       update_cache = is_true?(@params["update_cache"]?)
       cache_valid_time = @params["cache_valid_time"]?.try(&.to_i) || 0
+      # Real Ansible's apt module exposes `lock_timeout` (default 60s) for
+      # install/remove/upgrade operations and `update_cache_retries`
+      # (default 5) + `update_cache_retry_max_delay` (default 12s) for
+      # `apt-get update`. Found missing in round 153 (2026-08-20) when a
+      # fresh Atlantic.net Ubuntu host's unattended-upgr held the dpkg
+      # lock during `apt:`; real Ansible's apt module waited up to 60s
+      # for the lock and succeeded, crystal-ansible failed fast. See
+      # `KNOWN_MISSING.md` / round 153 results for the full trace.
+      # Wire the same parameter names here so user playbooks that
+      # override them on either engine work identically.
+      lock_timeout = @params["lock_timeout"]?.try(&.to_i) || 60
+      update_cache_retries = @params["update_cache_retries"]?.try(&.to_i) || 5
+      update_cache_retry_max_delay = @params["update_cache_retry_max_delay"]?.try(&.to_i) || 12
 
       changed = false
       messages = [] of String
@@ -69,7 +85,14 @@ module CrystalPlay
             messages << "Would update apt cache"
             changed = true if cache_update_is_sole_operation
           else
-            update_result = remote_exec("apt-get update")
+            # Real Ansible's apt module wraps `apt-get update` with
+            # `update_cache_retries` + `update_cache_retry_max_delay`
+            # (defaults 5 and 12): retries on failure with exponential
+            # backoff, doubled each attempt, capped at the max delay. We
+            # approximate the same retry-on-lock-contention behavior;
+            # non-lock errors (broken repo, network failure, signature
+            # mismatch) still fail-fast on the first attempt.
+            update_result = apt_get_update_with_retry("apt-get update", update_cache_retries, update_cache_retry_max_delay, ->remote_exec(String))
             if update_result[:exit_code] == 0
               messages << "APT cache updated"
               changed = true if cache_update_is_sole_operation
@@ -109,7 +132,11 @@ module CrystalPlay
             next
           end
 
-          result = remote_exec(cmd)
+          # `autoremove`/`autoclean` are apt-get operations that contend
+          # for the dpkg lock - wrap with lock_timeout retry, matching
+          # real Ansible's `apt` module behavior (see execute's param
+          # parsing comment for the full trace).
+          result = apt_with_lock_retry(cmd, lock_timeout, ->remote_exec(String))
           if result[:exit_code] != 0
             return PluginResult.new(changed: false, failed: true, msg: "#{cmd} failed: #{result[:stderr]}")
           end
@@ -162,7 +189,10 @@ module CrystalPlay
           messages << "Would run: #{cmd}"
           changed = true
         else
-          result = remote_exec(cmd)
+          # `apt-get upgrade`/`dist-upgrade` contend for the dpkg lock -
+          # wrap with lock_timeout retry (same rationale as the
+          # autoremove/autoclean wrap above).
+          result = apt_with_lock_retry(cmd, lock_timeout, ->remote_exec(String))
           if result[:exit_code] != 0
             return PluginResult.new(changed: false, failed: true, msg: "#{cmd} failed: #{result[:stderr]}", stdout: result[:stdout], stderr: result[:stderr])
           end
@@ -188,7 +218,7 @@ module CrystalPlay
       # though a real install target (`deb:`) was given.
       deb_param = @params["deb"]?
       if deb_param
-        return handle_deb(deb_param, messages, changed)
+        return handle_deb(deb_param, messages, changed, lock_timeout)
       end
 
       # If no package name provided, just return cache update result
@@ -227,11 +257,11 @@ module CrystalPlay
       # changed: true on every single rerun.
       case state
       when "present"
-        handle_install(packages, messages, false)
+        handle_install(packages, messages, false, lock_timeout)
       when "absent"
-        handle_remove(packages, messages, false)
+        handle_remove(packages, messages, false, lock_timeout)
       when "latest"
-        handle_latest(packages, messages, false)
+        handle_latest(packages, messages, false, lock_timeout)
       else
         return PluginResult.new(
           changed: false,
@@ -332,7 +362,7 @@ module CrystalPlay
     # read the package's own name+version out of the .deb's control
     # metadata via `dpkg-deb -f`, and skip the install if that exact
     # name/version is already installed.
-    private def handle_deb(deb_source : String, messages : Array(String), changed : Bool) : PluginResult
+    private def handle_deb(deb_source : String, messages : Array(String), changed : Bool, lock_timeout : Int32) : PluginResult
       path = deb_source
 
       if deb_source.starts_with?("http://") || deb_source.starts_with?("https://")
@@ -385,7 +415,9 @@ module CrystalPlay
         return PluginResult.new(changed: true, failed: false, msg: "Would install #{path}")
       end
 
-      install_result = remote_exec("apt-get -y install #{path}")
+      # `apt-get install` of a .deb contends for the dpkg lock - wrap
+      # with lock_timeout retry, matching real Ansible's behavior.
+      install_result = apt_with_lock_retry("apt-get -y install #{path}", lock_timeout, ->remote_exec(String))
       if install_result[:exit_code] != 0
         return PluginResult.new(
           changed: false,
@@ -398,7 +430,7 @@ module CrystalPlay
     end
 
     # Handle installing packages
-    private def handle_install(packages : Array(String), messages : Array(String), changed : Bool) : PluginResult
+    private def handle_install(packages : Array(String), messages : Array(String), changed : Bool, lock_timeout : Int32) : PluginResult
       to_install = [] of String
       already_installed = [] of String
 
@@ -420,7 +452,14 @@ module CrystalPlay
           changed = true
         else
           pkg_list = to_install.join(" ")
-          install_result = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold #{pkg_list}")
+          # `apt-get install` of named packages contends for the dpkg lock
+          # - wrap with lock_timeout retry, matching real Ansible's
+          # `apt` module behavior. The DEBIAN_FRONTEND=noninteractive +
+          # force-confdef/force-confold flags carry over verbatim; the
+          # retry layer only governs lock contention and leaves the
+          # actual install behavior untouched.
+          install_cmd = "DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold #{pkg_list}"
+          install_result = apt_with_lock_retry(install_cmd, lock_timeout, ->remote_exec(String))
           if install_result[:exit_code] == 0
             # A requested name can be a virtual package already satisfied
             # by something else installed (`rubygems` - not a real
@@ -473,7 +512,7 @@ module CrystalPlay
     end
 
     # Handle removing packages
-    private def handle_remove(packages : Array(String), messages : Array(String), changed : Bool) : PluginResult
+    private def handle_remove(packages : Array(String), messages : Array(String), changed : Bool, lock_timeout : Int32) : PluginResult
       to_remove = [] of String
       already_absent = [] of String
 
@@ -497,7 +536,9 @@ module CrystalPlay
           changed = true
         else
           pkg_list = to_remove.join(" ")
-          remove_result = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get remove -y #{pkg_list}")
+          # `apt-get remove` contends for the dpkg lock - wrap with
+          # lock_timeout retry, matching real Ansible's behavior.
+          remove_result = apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive apt-get remove -y #{pkg_list}", lock_timeout, ->remote_exec(String))
           if remove_result[:exit_code] == 0
             messages << "Package#{to_remove.size > 1 ? "s" : ""} #{to_remove.join(", ")} removed"
             changed = true
@@ -529,7 +570,7 @@ module CrystalPlay
     end
 
     # Handle upgrading packages to latest
-    private def handle_latest(packages : Array(String), messages : Array(String), changed : Bool) : PluginResult
+    private def handle_latest(packages : Array(String), messages : Array(String), changed : Bool, lock_timeout : Int32) : PluginResult
       if @check_mode
         # Check if any upgrades are available
         check_cmds = packages.map { |pkg| "apt-get install --simulate #{pkg} 2>&1 | grep -i upgrade" }
@@ -554,7 +595,9 @@ module CrystalPlay
         # version == 'latest') | ternary('latest', 'present') }}") -
         # reported "changed: Package grafana upgraded to latest" while
         # the package was never actually installed at all.
-        upgrade_result = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold #{pkg_list}")
+        # `state: latest` (apt-get install for upgrade-or-install)
+        # contends for the dpkg lock - wrap with lock_timeout retry.
+        upgrade_result = apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold #{pkg_list}", lock_timeout, ->remote_exec(String))
 
         # "N upgraded, M newly installed, ..." is apt's own reliable,
         # locale-stable summary line - checking for the English phrase
@@ -603,6 +646,13 @@ module CrystalPlay
       value_str = value.to_s.downcase
       value_str == "true" || value_str == "yes" || value_str == "1"
     end
+
+    # The lock-contention retry helpers (apt_with_lock_retry,
+    # apt_get_update_with_retry, apt_lock_held?) live in
+    # `src/crystal_play/plugin_helpers/apt_lock_retry.cr` and are
+    # mixed in via `include AptLockRetry` at the top of this class -
+    # one canonical implementation, exercised by the regression spec
+    # without needing the plugin's entry point.
   end
 end
 
