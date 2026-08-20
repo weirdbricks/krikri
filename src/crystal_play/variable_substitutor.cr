@@ -26,6 +26,17 @@ module CrystalPlay
     @vars : Hash(String, JSON::Any)
     @host_name : String
     getter vars
+    # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #20 (the 74% slice):
+    # the constructor's `vars.dup` was the single largest allocation in
+    # the templating path (~74% of per-call bytes per the item-20
+    # profile). It's now lazy: `@vars_owned`/`@magic_vars_added` track
+    # whether we've actually needed to dup + insert magic vars yet, and
+    # `#ensure_owned!` / `#ensure_magic_vars!` trigger only on first
+    # mutation/read-of-magic-vars. A `substitute(text)` that returns on
+    # the no-placeholder early-exit never dup's @vars at all.
+    @facts : Hash(String, JSON::Any)
+    @vars_owned : Bool
+    @magic_vars_added : Bool
     # Both are built on first use rather than in the constructor. A
     # VarSubstitutor is constructed 2-4x per task per host (when:,
     # execute_task_once, apply_changed_failed_when, delegate_to:), but
@@ -87,9 +98,11 @@ module CrystalPlay
     def initialize(vars : Hash(String, JSON::Any),
                    host_name : String? = nil,
                    facts : Hash(String, JSON::Any) = {} of String => JSON::Any)
-      @vars = vars.dup
+      @vars = vars
       @host_name = host_name || @vars["inventory_hostname"]?.try(&.as_s?) || "localhost"
-      add_magic_variables(facts)
+      @facts = facts
+      @vars_owned = false
+      @magic_vars_added = false
     end
 
     def initialize(vars : Hash(String, String | JSON::Any) = {} of String => String | JSON::Any,
@@ -128,18 +141,44 @@ module CrystalPlay
       # thread host_name: through each of them individually.
       @host_name = host_name || @vars["inventory_hostname"]?.try(&.as_s?) || "localhost"
 
-      # Add magic variables
-      add_magic_variables(facts)
+      # This constructor builds a fresh @vars from scratch, so the
+      # aliasing concern #18/#20 raise doesn't apply: we own this hash
+      # from the start, no dup ever needed.
+      @facts = facts
+      @vars_owned = true
+      @magic_vars_added = false
     end
 
+    # Lazy: dup @vars the first time we need to mutate it. Preserves
+    # the aliasing-safety contract #18 documents - if anything ever
+    # needs to write to @vars, this runs first and dups before
+    # mutating. Subsequent calls are a no-op.
+    private def ensure_owned!
+      return if @vars_owned
+      @vars = @vars.dup
+      @vars_owned = true
+    end
+
+    # Lazy: build the ExpressionEvaluator / CrinjaRenderer only after
+    # magic variables have been added to @vars. The dup happens here if
+    # and only if any of these private getters is reached, which is the
+    # case for every templated substitute() call - but explicitly NOT
+    # the case for a substitute() that returns on the no-placeholder
+    # early-exit, which is the win #20 targets.
     private def evaluator : VariableSubstitutor::ExpressionEvaluator
-      @evaluator ||= VariableSubstitutor::ExpressionEvaluator.new(@vars)
+      @evaluator ||= begin
+        ensure_magic_vars!
+        VariableSubstitutor::ExpressionEvaluator.new(@vars)
+      end
     end
 
     private def renderer : VariableSubstitutor::CrinjaRenderer
-      @renderer ||= VariableSubstitutor::CrinjaRenderer.new(@vars)
+      @renderer ||= begin
+        ensure_magic_vars!
+        VariableSubstitutor::CrinjaRenderer.new(@vars)
+      end
     end
-    
+
     # Magic variables, using the same precedence TaskExecutor#
     # build_vars_context applies, so a bare `when:` and a `{{ }}`
     # expression can never disagree about what they mean.
@@ -155,14 +194,21 @@ module CrystalPlay
     # - `ansible_hostname` is a *fact* - the target's own hostname, which
     #   is frequently not the inventory name at all (ansible-core reports
     #   the real hostname). A gathered fact must win over this fallback.
-    private def add_magic_variables(facts : Hash(String, JSON::Any))
+    #
+    # Lazy: only fires when first needed (evaluator/renderer build).
+    # #ensure_owned! runs first, so this can safely mutate @vars
+    # without aliasing back to the caller.
+    private def ensure_magic_vars!
+      return if @magic_vars_added
+      ensure_owned!
       @vars["inventory_hostname"] = JSON::Any.new(@host_name)
       @vars["ansible_hostname"] ||= JSON::Any.new(@host_name)
       @vars["ansible_host"] ||= JSON::Any.new(@host_name)
 
-      facts.each do |key, value|
+      @facts.each do |key, value|
         @vars["ansible_#{key}"] = value
       end
+      @magic_vars_added = true
     end
     
     def substitute(text : String) : String
@@ -369,6 +415,7 @@ module CrystalPlay
     end
     
     def set_variable(name : String, value : String | JSON::Any)
+      ensure_owned!
       @vars[name] = value.is_a?(JSON::Any) ? value : JSON::Any.new(value)
       # Invalidate rather than eagerly rebuild - same semantics, and the
       # next `substitute` rebuilds only whichever component it actually
