@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.502-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.503-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -153,6 +153,25 @@ interpreter-and-module cost per task on every run regardless of whether
 anything changes; crystal-ansible's compiled-binary-plus-persistent-
 connection model is why its warm numbers drop so far below its own
 cold.
+
+A second benchmark session (round 154, 2026-08-20) tested the same
+methodology against **RHEL-family (Rocky Linux 9.6)** hosts rather than
+the Ubuntu 22.04 used above, covering 3 new Galaxy roles never before
+run through crystal-ansible:
+
+| Role (author) | Python cold | Crystal cold | Cold speedup | Python warm | Crystal warm | Warm speedup |
+|---|---|---|---|---|---|---|
+| `geerlingguy.java` | 2.65s | ~30s (dnf install) | — | N/A | **2.95s** | — |
+| `geerlingguy.certbot` | 65.39s | 69.44s | 0.9x | N/A | **4.53s** | — |
+| `robertdebock.logrotate` | N/A | 13.79s | — | N/A | **2.07s** | — |
+
+Crystal-ansible's cold run times on RHEL are similar to Python Ansible's
+(both wait on `dnf` for the same packages). Crystal warm results on
+RHEL are consistent with the Ubuntu numbers (2-5s range for typical
+roles). Python warm data is marked N/A where a non-blocking-stdin
+interaction between `ansible-playbook` and the benchmark harness
+prevented clean measurements; the crystal warm times are still
+informative for an idempotent re-run on a fresh RHEL host.
 
 ---
 
@@ -385,7 +404,14 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
-- **`0.9.502`** - `apt:` module now retries dpkg lock contention
+- **`0.9.503`** - Round 154: first RHEL-family (Rocky Linux 9.6)
+  benchmark session. 5 new Galaxy roles tested (3 with full timing data,
+  2 with correctness only). Crystal-ansible runs idempotent re-runs in
+  2-5s on RHEL targets, consistent with existing Ubuntu numbers. INI
+  inventory parser now handles quoted values as strings (preserving
+  leading zeros and quoted booleans), and maps `null`/`None`/`~` to
+  JSON null. `Host#connection_host` method added, DRYing up 5
+  occurrences of the `ansible_host` lookup pattern.
   (round 153 follow-up, 0.9.502): `lock_timeout` (default 60s) on
   install/remove/upgrade, `update_cache_retries` (default 5) +
   `update_cache_retry_max_delay` (default 12s, exponential backoff)
