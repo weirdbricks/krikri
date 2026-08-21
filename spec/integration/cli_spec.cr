@@ -265,6 +265,22 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("include_role smoke test complete!")
   end
 
+  it "counts a non-looped include_role: task itself as one `ok` in the PLAY RECAP, matching real Ansible" do
+    # Real bug found benchmarking andrewrothstein.terraform (round 154
+    # v3): execute_include_tasks's run_include_tasks_once already
+    # credited a non-looped include_tasks: with its own `ok`, but the
+    # equivalent fix was never mirrored onto include_role:'s
+    # run_include_role_once - every include_role: call silently
+    # undercounted the recap's ok= tally by 1, verified against real
+    # ansible-playbook (both give ok=5 changed=1 for this fixture: the
+    # include_role: itself, its 2 tasks, the SUCCESS task, and the
+    # notified handler).
+    status, output = run_playbook("test-include-role-okcount-quick.yml")
+
+    status.success?.should be_true
+    output.should contain("ok=5  changed=1")
+  end
+
   it "propagates ansible_parent_role_names through a role's own include_tasks: -> include_role: chain" do
     # Real bug found benchmarking prometheus.prometheus.node_exporter (a
     # real Ansible Collection): its own tasks/main.yml reaches a nested

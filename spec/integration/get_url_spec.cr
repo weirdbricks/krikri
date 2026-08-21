@@ -25,6 +25,12 @@ get_url_test_server = HTTP::Server.new do |context|
   when "/redirect.txt"
     context.response.status_code = 302
     context.response.headers["Location"] = "/file.txt"
+  when "/sha256sums.txt"
+    context.response.status_code = 200
+    context.response.print("#{FILE_CHECKSUM}  file.txt\n0000000000000000000000000000000000000000000000000000000000000000  other.txt\n")
+  when "/sha256sums-no-match.txt"
+    context.response.status_code = 200
+    context.response.print("0000000000000000000000000000000000000000000000000000000000000000  other.txt\n")
   else
     context.response.status_code = 404
   end
@@ -167,6 +173,36 @@ describe "get_url plugin" do
 
     result["changed"].as_bool.should be_true
     File.read(dest).should eq(FILE_CONTENT)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "resolves a checksum URL by parsing the per-file hash from a sha256sums file" do
+    # Real bug found benchmarking andrewrothstein.terraform (round 154 v3):
+    # real Ansible's get_url documents checksum: as accepting a URL
+    # pointing at a sha256sums-format file, not just a literal hash -
+    # parse_checksum stored the URL string itself as the "expected" hash,
+    # which could never match a real download.
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {
+      "url" => "#{get_url_base}/file.txt", "dest" => dest, "checksum" => "sha256:#{get_url_base}/sha256sums.txt",
+    })
+
+    result["changed"].as_bool.should be_true
+    result["failed"].as_bool.should be_false
+    File.read(dest).should eq(FILE_CONTENT)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "fails when the checksum URL points to a sha256sums file with no matching entry" do
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {
+      "url" => "#{get_url_base}/file.txt", "dest" => dest, "checksum" => "sha256:#{get_url_base}/sha256sums-no-match.txt",
+    })
+
+    result["failed"].as_bool.should be_true
+    File.exists?(dest).should be_false
   ensure
     File.delete(dest) if dest && File.exists?(dest)
   end

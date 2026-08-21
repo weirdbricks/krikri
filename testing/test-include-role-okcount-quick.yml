@@ -1,0 +1,17 @@
+# Regression fixture for the include_role: ok= undercount bug (round 154
+# v3, andrewrothstein.terraform): a non-looped include_role: task must
+# itself count as one `ok` in the PLAY RECAP, matching real Ansible -
+# verified against real ansible-core 2.19.4, not assumed.
+
+- name: include_role ok-count smoke test
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - include_role:
+        name: include_role_target
+      vars:
+        target: crystal-ansible
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "include_role ok-count smoke test complete!"

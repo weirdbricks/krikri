@@ -28,7 +28,16 @@ module CrystalPlay
 
       dest = expand_tilde(dest)
       dest = File.directory?(dest) ? File.join(dest, File.basename(URI.parse(url).path)) : dest
-      checksum = @params["checksum"]?.try { |checksum_param| parse_checksum(checksum_param) }
+
+      checksum = nil
+      if checksum_param = @params["checksum"]?
+        begin
+          checksum = parse_checksum(checksum_param, url)
+        rescue ex
+          return PluginResult.new(changed: false, failed: true, msg: "failed to resolve checksum: #{ex.message}")
+        end
+      end
+
       force = is_true?(@params["force"]?, default: false)
 
       if File.exists?(dest) && !force
@@ -119,9 +128,40 @@ module CrystalPlay
       PluginResult.new(changed: true, failed: false, msg: "OK", dest: dest, checksum_src: native_checksum(dest, "sha1"), checksum_dest: nil)
     end
 
-    private def parse_checksum(checksum_param : String) : {String, String}
+    # checksum: "<algo>:<value>" where value is either a literal hex hash or,
+    # per real Ansible's documented get_url behavior, a URL pointing to a
+    # sha*sums-format file (one "<hash>  <filename>" line per file) - in
+    # which case the hash for `url`'s own basename is looked up within it.
+    private def parse_checksum(checksum_param : String, url : String) : {String, String}
       algorithm, _, value = checksum_param.partition(":")
-      {algorithm.downcase, value.downcase}
+      algorithm = algorithm.downcase
+
+      if value.starts_with?("http://") || value.starts_with?("https://")
+        {algorithm, resolve_checksum_url(value, url)}
+      else
+        {algorithm, value.downcase}
+      end
+    end
+
+    private def resolve_checksum_url(checksum_url : String, target_url : String) : String
+      tmp_path = "#{Dir.tempdir}/get_url_checksum_#{Process.pid}_#{Random.rand(1_000_000)}.tmp"
+      begin
+        PluginHelpers::HTTPDownload.download(checksum_url, tmp_path, download_options)
+
+        target_basename = File.basename(URI.parse(target_url).path)
+        File.each_line(tmp_path) do |line|
+          # sha*sums format: "<hex-hash> [*]<filename>" (the optional "*"
+          # marks binary mode, per sha256sum(1)).
+          hash, _, filename = line.strip.partition(/\s+/)
+          next if hash.empty? || filename.empty?
+          filename = filename.lstrip('*')
+          return hash.downcase if File.basename(filename) == target_basename
+        end
+
+        raise "no checksum entry for #{target_basename} found in #{checksum_url}"
+      ensure
+        File.delete(tmp_path) if File.exists?(tmp_path)
+      end
     end
 
     private def download(url : String, tmp_path : String) : Nil
@@ -130,7 +170,11 @@ module CrystalPlay
       # binary-safe download implementation. get_url's own extra knobs
       # (timeout, validate_certs, basic auth, custom headers) map onto the
       # helper's Options.
-      options = PluginHelpers::HTTPDownload::Options.new(
+      PluginHelpers::HTTPDownload.download(url, tmp_path, download_options)
+    end
+
+    private def download_options : PluginHelpers::HTTPDownload::Options
+      PluginHelpers::HTTPDownload::Options.new(
         max_redirects: MAX_REDIRECTS,
         connect_timeout: timeout_span,
         read_timeout: timeout_span,
@@ -139,7 +183,6 @@ module CrystalPlay
         username: @params["url_username"]?,
         password: @params["url_password"]?,
       )
-      PluginHelpers::HTTPDownload.download(url, tmp_path, options)
     end
 
     private def timeout_span : Time::Span

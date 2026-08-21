@@ -3701,6 +3701,21 @@ module CrystalPlay
         end
       end
 
+      # The include_role: task itself counts as one `ok` in the recap,
+      # matching real Ansible (verified against ansible-core 2.19.4's
+      # own strategy/__init__.py: an IncludeRole result still hits the
+      # same `self._tqm._stats.increment('ok', ...)` as a plain task) -
+      # same fix already applied to execute_include_tasks's
+      # run_include_tasks_once (see its own comment) but never mirrored
+      # here. Placed after the when: check, like that one, so a
+      # when:-gated include_role: that skips isn't double-counted as
+      # both `ok` and `skipped`. Found benchmarking andrewrothstein.
+      # terraform (round 154 v3): real Ansible's cold-run recap was
+      # `ok=12`, crystal's was `ok=10` - both `include_role:` calls in
+      # the role (andrewrothstein.hashi, andrewrothstein.unarchivedeps)
+      # were silently undercounted despite running correctly.
+      @results[host.name]["ok"] += 1
+
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       role_name = substitutor.substitute(task.include_role_name.as(String))
 

@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.503-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.504-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,18 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.504`** - two real bugs found benchmarking `andrewrothstein.terraform`
+  on Rocky Linux 9.6 (round 154 v3): `get_url:`'s `checksum:` param now
+  resolves a URL pointing at a sha256sums-format file (a documented
+  Ansible feature) by fetching it and looking up the per-file hash,
+  instead of storing the URL string itself as the "expected" hash;
+  `include_role:`'s single-host path now credits itself with the one
+  `ok` real Ansible always counts for a non-looped `include_role:` call
+  (the equivalent fix had only ever been applied to `include_tasks:`).
+  Both live-reverified: byte-identical `ok=12 changed=6 failed=0
+  skipped=2` cold and `ok=6 changed=0 failed=0 skipped=6` warm against
+  real `ansible-playbook` 2.19.4. `crystal spec`: 1540 examples, 0
+  failures.
 - **`0.9.503`** - INI inventory parser now handles quoted values as
   strings (preserving leading zeros and quoted booleans), and maps
   `null`/`None`/`~` to JSON null. `Host#connection_host` method added,
@@ -439,125 +451,6 @@ for current-state detail.
   depending on template shape (whitespace templates get only the
   struct saving; no-whitespace templates get both). 1501 specs, 0
   failures.
-- **`0.9.496`** - new experimental `--persistent-daemon` flag: for
-  solo (non-batched, non-`become:`) remote tasks, keeps one long-lived
-  `ssh ... -- <plugin binary> --daemon` connection per host instead of
-  forking a fresh `ssh`+`bash`+`exec` per task, speaking a small
-  length-prefixed JSON protocol over that session's stdin/stdout. Off
-  by default - `become:` tasks, batched task groups, and remote fact-
-  gathering always use the existing per-task path regardless of the
-  flag. Live-verified on a real host, not just spec-tested: a real
-  `ansible.builtin.reboot` mid-play correctly invalidates the stale
-  daemon connection and falls back to the proven per-task path for the
-  very next task, re-establishing a fresh daemon afterward, with no
-  explicit reboot-handling code anywhere in the new daemon logic -
-  that's the entire reconnect story. `become: true` and `gather_facts:
-  true` were both confirmed to correctly bypass the daemon path
-  end-to-end. New automated coverage
-  (`spec/unit/plugin_daemon_spec.cr`) drives the real compiled daemon
-  binary as a local subprocess. `crystal spec`: 1501 examples, 0
-  failures. A 10-role live benchmark (fresh host pair per role,
-  `--persistent-daemon --no-batching` vs `ansible-core` 2.19.4)
-  measured warm idempotent replays 3.5x-11.9x faster with the daemon
-  on - see **Performance** for the full table.
-- **`0.9.495`** - `ExpressionEvaluator#evaluate`'s dispatch re-scanned
-  every `{{ }}` body's text from scratch on every call (up to 6 full
-  character-by-character passes before ever reaching the real
-  evaluation) to classify which of 4 shapes it has (ternary-with-else,
-  ternary-no-else, boolean-logic, or plain) - now memoized by literal
-  text in a process-wide cache, since the classification is a pure
-  function of the string. Deliberately narrower than this item's
-  original proposal: a prior pass (`0.9.485`) found that caching WHICH
-  BRANCH ultimately handles an expression is unsafe (Crinja's
-  success/failure can depend on a variable's runtime value, not just
-  the expression's static text), so only the shape classification is
-  cached - the actual render/fallback still runs fresh every time.
-  Differential-tested against 3080 real `{{ }}` expressions scraped
-  from `testing/roles` + 21 benchmarked Galaxy roles: 3079/3080
-  byte-identical output before/after, the 1 divergence being
-  `password_hash(...)`'s own random salt. 2000 tasks repeating the same
-  ternary/filter text: 0.19s -> 0.16s (~1.2x). `crystal spec`: 1498
-  examples, 0 failures.
-- **`0.9.494`** - `build_vars_context` (rebuilt from scratch on every
-  single (task, host) pair) now caches its per-host-invariant inputs
-  behind the same generation counter `0.9.491`'s `hostvars`/`groups`
-  caching introduced: `base_context_a` (play_vars/host.vars/
-  registered_vars, itself now built via a bulk `Hash#dup` - measured
-  ~3.4x faster than an `.each` rebuild for a same-sized hash) and
-  `base_context_b` (included_vars/facts). 1 host/1000 tasks/500 play
-  vars after `package_facts:`: 0.33s -> 0.23s (~30%); 30 hosts/100
-  tasks/100 inventory vars each: 0.52s -> 0.48s (~8%) - both within the
-  original 20-40% estimate's range. Not a single cache: the real
-  precedence order interleaves per-task tiers (role_vars/task.vars)
-  between the two per-host groups, so preserving it needed 2 caches, not
-  1. One real precedence bug found by the existing spec suite before it
-  shipped: an early version cached the `ansible_host ||= ...` fallback
-  inside the wrong (empty) hash, which couldn't see that an inventory
-  line's real `ansible_host=` (already merged in from `host.vars`) should
-  win - fixed by leaving those 3 magic keys uncached, applied directly
-  against the real context where the old code always evaluated them. New
-  regression spec exercises every real invalidation path in one
-  sequence - `register:`/`set_fact:`/`include_vars:` each visible on the
-  very next task, a role's own `role_defaults` visible during that role
-  and gone again immediately after. `crystal spec`: 1494 examples, 0
-  failures (run 3 times - spec order is randomized by default - to rule
-  out order-dependent staleness).
-- **`0.9.493`** - `VarSubstitutor` gained a second, more specific
-  constructor overload for the (extremely common) case where the
-  caller already has a `Hash(String, JSON::Any)` vars_context - a bulk
-  `Hash#dup` instead of the general overload's per-key type-coercion
-  copy. `TaskExecutor` builds a fresh `VarSubstitutor` from
-  `vars_context` at 28+ call sites (`when:`, param substitution,
-  `changed_when:`/`failed_when:`, delegate_to: resolution, and once per
-  loop iteration), all already declared as exactly that type, so
-  Crystal's own overload resolution routes every one onto the fast path
-  with no call-site changes. A 200-item loop against a 1000-var context
-  measured 0.10s -> 0.02s (~5x, ~24.5x combined with `0.9.492`'s own win
-  on the same benchmark); a non-loop 300-task/2000-var play (this
-  change isn't loop-specific) dropped from 0.44s to 0.17s on top of
-  `0.9.492`'s own result. Still a real `.dup`, not a bare reference -
-  `#add_magic_variables` mutates `@vars` in place, and aliasing the
-  caller's own hash would leak that mutation back into it, this
-  project's single most-repeated bug class - covered by a new
-  regression spec asserting the caller's hash is untouched. `crystal
-  spec`: 1492 examples, 0 failures.
-- **`0.9.492`** - the Crinja variable context is now lazy: a bare `{{
-  var }}` used to convert the ENTIRE variable context (`JSON::Any` ->
-  `Crinja::Value`, plus a full re-templating pass and a second full copy
-  for the `vars` magic dict) regardless of how many variables the
-  template actually read. A new `LazyCrinjaContext` converts one entry
-  on first access, memoizing into the same `Crinja::Context` scope
-  `lib/crinja` already provides - 300 tasks x 2000 play vars reading one
-  var each measured at 1.22s before, 0.44s after (~2.75x). Each render
-  still gets a fresh child context (parented to the shared lazy one) so
-  a template's own `{% set %}` bindings can't leak into a later render
-  off the same renderer - verified directly, not just by spec. Found and
-  fixed one real gap in the design along the way: `lookup('varnames',
-  pattern)` needs every variable NAME in scope, not just the ones
-  already accessed - missed by the original investigation's `lib/
-  crinja`-only grep for `context.keys` callers, since the actual caller
-  lives in this codebase's own `jinja_filters.cr`; fixed with a cheap
-  `#keys` override (names only, no value conversion) that the full
-  `crystal spec` suite's 2 `varnames`-dependent specs caught immediately
-  (masked in the file's own isolated run by the project's pre-existing,
-  documented require-ordering artifact). `crystal spec`: 1490 examples,
-  0 failures.
-- **`0.9.491`** - `build_hostvars`/`build_groups` (the `hostvars[...]`/
-  `groups[...]` magic vars) memoized per `TaskExecutor`, closing a
-  quadratic-in-host-count gap: both were previously rebuilt from scratch
-  on EVERY (task, host) pair, each rebuild walking the whole inventory -
-  30 hosts x 100 tasks measured at 2.92s before, 0.20s after (~14.5x,
-  matching `SUGGESTED_PERFORMANCE_IMPROVEMENTS.md` item #16's estimate
-  exactly). Cached behind a single generation counter bumped at every
-  real mutation site of the 3 inputs that can change it mid-play -
-  `@facts` (gather_facts/set_fact/package_facts, meta: clear_facts),
-  `@registered_vars` (register:, incl. the run_once: copy-forward path),
-  and `meta: refresh_inventory`'s in-place reload - so a later task on
-  one host still sees an earlier task's register:/set_fact:/clear_facts
-  on a DIFFERENT host via `hostvars[...]`, not a stale pre-mutation
-  snapshot. Regression spec added exercising exactly that cross-host
-  staleness risk, not just the existing single-shot hostvars/groups
-  reads. `crystal spec`: 1490 examples, 0 failures.
 ---
 
 ## 🤝 Contributing
