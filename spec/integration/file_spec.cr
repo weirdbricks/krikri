@@ -244,6 +244,26 @@ describe "file plugin" do
       result["changed"].as_bool.should be_false
     end
 
+    it "accepts a raw numeric uid/gid string for owner:/group: (not just a name)" do
+      # Real bug found benchmarking buluma.maven (round 165): `group:
+      # "0"` (a real, common numeric-ID idiom - real Ansible resolves it
+      # directly rather than treating it as a name lookup) always raised
+      # "chown failed: failed to look up group 0" - round162's 0.9.519
+      # owner:/group: strict-lookup fix only ever tried a NAME lookup.
+      # Uses our own real uid/gid (no root needed) so both the "already
+      # correct, changed: false" idempotency-comparison path AND the
+      # "would attempt a real chown" path are exercised without failing
+      # for lack of privilege.
+      path = tmp_path("numeric-owner-group-file.txt")
+      File.write(path, "x")
+      my_uid = LibC.getuid.to_s
+      my_gid = `id -g`.strip
+
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "file", "owner" => my_uid, "group" => my_gid})
+      result["failed"].as_bool.should be_false
+      result["changed"].as_bool.should be_false
+    end
+
     it "fails (matching real Ansible's own 'chown failed: failed to look up user') when owner: names a nonexistent user" do
       # Real bug found benchmarking robertdebock.openbao_agent on Rocky
       # 9.6 (round 162): a directory-creation task with `owner: openbao`

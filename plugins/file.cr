@@ -639,16 +639,21 @@ module CrystalPlay
       info = follow ? stat_follow(path) : lstat(path)
       return false unless info
 
-      # Check owner
+      # Check owner - owner: accepts a numeric uid string directly
+      # (real Ansible tolerates this, e.g. buluma.maven's own `group:
+      # "0"` - see apply_single_file_attributes's identical numeric
+      # fallback), which must compare against the raw numeric uid, not
+      # a resolved name - otherwise an already-correct numeric owner/
+      # group (e.g. already gid 0, requested "0") never matched
+      # `owner_name(...)`'s own resolved NAME ("root" != "0"), reporting
+      # changed: true forever on an already-idempotent directory.
       if owner = @params["owner"]?
-        current_owner = owner_name(info.st_uid)
-        changed = true if current_owner != owner
+        changed = true if owner.matches?(/\A\d+\z/) ? info.st_uid != owner.to_u32 : owner_name(info.st_uid) != owner
       end
 
-      # Check group
+      # Check group - same numeric-vs-name comparison as owner: above.
       if group = @params["group"]?
-        current_group = group_name(info.st_gid)
-        changed = true if current_group != group
+        changed = true if group.matches?(/\A\d+\z/) ? info.st_gid != group.to_u32 : group_name(info.st_gid) != group
       end
 
       # Check mode - skipped for a symlink (handle_link's skip_mode: true).
@@ -785,9 +790,24 @@ module CrystalPlay
       # at its -1 sentinel (never set, never looked at again) and simply
       # never called File.chown for the owner at all, silently leaving
       # the directory root:root and reporting success.
+      # owner:/group: accept EITHER a name (the common case, looked up
+      # above) OR a real Ansible-tolerated raw numeric uid/gid string
+      # (`group: "0"` - buluma.maven's own "Create Maven installation
+      # directory" task, real Ansible resolves this directly to gid 0
+      # rather than treating it as a name lookup at all). Only falls
+      # back to the numeric form when the name lookup genuinely finds
+      # nothing AND the string is purely digits - a role using a real
+      # group NAME that happens to not exist still raises exactly as
+      # before. Found live benchmarking buluma.maven (round 165): the
+      # owner:/group: strict-lookup-failure fix from round162 (0.9.519)
+      # only tried a name lookup, so `group: "0"` (a real, common,
+      # numeric-ID idiom) always raised "failed to look up group 0"
+      # even though the id itself is perfectly valid.
       if owner = @params["owner"]?
         if user = System::User.find_by?(name: owner)
           uid = user.id.to_i
+        elsif owner.matches?(/\A\d+\z/)
+          uid = owner.to_i
         else
           raise "chown failed: failed to look up user #{owner}"
         end
@@ -796,6 +816,8 @@ module CrystalPlay
       if group = @params["group"]?
         if grp = System::Group.find_by?(name: group)
           gid = grp.id.to_i
+        elsif group.matches?(/\A\d+\z/)
+          gid = group.to_i
         else
           raise "chown failed: failed to look up group #{group}"
         end
