@@ -134,7 +134,7 @@ module CrystalPlay
       # include_role: call is.
       load_meta_dependencies(role_dir, play, playbook_dir, seen, tasks, handlers, parent_names, parent_paths, parent_defaults)
 
-      defaults = load_vars_file(File.join(role_dir, "defaults", "main.yml"))
+      defaults = load_vars_file_main(File.join(role_dir, "defaults"))
       # Real Ansible keeps a role's defaults visible for the rest of the
       # PLAY once that role has run, not just for tasks physically inside
       # that role's own files - a role invoked via `include_role:` from
@@ -154,7 +154,7 @@ module CrystalPlay
       # always just THIS role's own defaults, discarding the whole
       # ancestor chain.
       defaults = parent_defaults.merge(defaults)
-      role_vars = load_vars_file(File.join(role_dir, "vars", "main.yml"))
+      role_vars = load_vars_file_main(File.join(role_dir, "vars"))
       invocation_vars.each { |key, value| role_vars[key] = value } # invocation vars win over vars/main.yml
 
       files_dir = existing_dir(File.join(role_dir, "files"))
@@ -387,6 +387,36 @@ module CrystalPlay
         hash.each { |key, value| result[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value)) }
       end
 
+      result
+    end
+
+    # Loads a role's defaults/ or vars/ - real Ansible supports EITHER a
+    # single `main.yml` file OR a `main/` directory of multiple `*.yml`
+    # files (same convention `tasks/main/` uses), merged together in
+    # alphabetical filename order (later files win on a key collision -
+    # matching real Ansible's own `main/` directory loading, which reads
+    # files in sorted order and merges each into the accumulated dict).
+    # Only ONE of the two forms is ever present for a given role.
+    # Real bug found benchmarking kyl191.openvpn (round 160): its own
+    # `defaults/main/openvpn.yml` (no `defaults/main.yml` at all) was
+    # never read - `load_vars_file` alone always looked for exactly
+    # `defaults/main.yml`, silently returning an empty hash for a role
+    # using the directory form - every one of its own defaults
+    # (`openvpn_server_network`, `openvpn_server_ipv6_network`, ...)
+    # came back undefined, tripping the role's own "fail if both
+    # tunnel networks are disabled" validation check that real Ansible
+    # never reaches (both are non-empty by default).
+    def self.load_vars_file_main(dir : String) : Hash(String, JSON::Any)
+      single = File.join(dir, "main.yml")
+      return load_vars_file(single) if File.exists?(single)
+
+      main_dir = File.join(dir, "main")
+      return Hash(String, JSON::Any).new unless Dir.exists?(main_dir)
+
+      result = Hash(String, JSON::Any).new
+      Dir.glob(File.join(main_dir, "*.yml")).sort.each do |path|
+        load_vars_file(path).each { |key, value| result[key] = value }
+      end
       result
     end
 

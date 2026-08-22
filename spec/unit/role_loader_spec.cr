@@ -451,4 +451,24 @@ describe CrystalPlay::RoleLoader do
     bare_tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- bare_role"), fresh_play, ROLES_ROOT)
     bare_tasks[0].ansible_collection_name.should be_nil
   end
+
+  it "loads defaults/main/*.yml (a directory of files) the same as a single defaults/main.yml" do
+    # Real bug found benchmarking kyl191.openvpn (round 160): its own
+    # `defaults/main/openvpn.yml` (no `defaults/main.yml` at all - the
+    # `main/` directory form is a real, documented Ansible convention,
+    # same as `tasks/main/`) was never read at all -
+    # RoleLoader#load_vars_file only ever looked for exactly
+    # `defaults/main.yml`, so a role using the directory form got NONE
+    # of its own defaults, tripping validation checks that depend on
+    # them being set.
+    role_dir = File.join(ROLES_ROOT, "roles", "dir_defaults_role")
+    write(File.join(role_dir, "defaults", "main", "network.yml"), "my_network: 10.9.0.0\n")
+    write(File.join(role_dir, "defaults", "main", "other.yml"), "my_other: hello\n")
+    write(File.join(role_dir, "tasks", "main.yml"), "- name: t\n  ansible.builtin.debug:\n    msg: hi\n")
+
+    tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- dir_defaults_role"), fresh_play, ROLES_ROOT)
+    defaults = tasks[0].role_defaults.not_nil!
+    defaults["my_network"]?.try(&.as_s).should eq("10.9.0.0")
+    defaults["my_other"]?.try(&.as_s).should eq("hello")
+  end
 end

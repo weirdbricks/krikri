@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/crystal_play/base_plugin"
+require "../src/crystal_play/plugin_helpers/service_facts_parser"
 
 module CrystalPlay
   # ServiceFacts plugin - populates the ansible_facts.services dict,
@@ -43,28 +44,16 @@ module CrystalPlay
       )
     end
 
-    # "UNIT_FILE STATE [VENDOR PRESET]" per line, e.g.
-    # "sshd.service enabled enabled".
     private def list_unit_files : Hash(String, String)
-      result = Hash(String, String).new
-      capture("systemctl", ["list-unit-files", "--type=service", "--no-legend", "--no-pager"]).each_line do |line|
-        parts = line.split(/\s+/)
-        next if parts.size < 2
-        result[parts[0]] = parts[1]
-      end
-      result
+      PluginHelpers::ServiceFactsParser.parse_unit_files(
+        capture("systemctl", ["list-unit-files", "--type=service", "--no-legend", "--no-pager"])
+      )
     end
 
-    # "UNIT LOAD ACTIVE SUB DESCRIPTION" per line, e.g.
-    # "sshd.service loaded active running OpenSSH server".
     private def list_active_states : Hash(String, String)
-      result = Hash(String, String).new
-      capture("systemctl", ["list-units", "--type=service", "--all", "--no-legend", "--no-pager"]).each_line do |line|
-        parts = line.split(/\s+/)
-        next if parts.size < 4
-        result[parts[0]] = parts[3] == "running" ? "running" : "stopped"
-      end
-      result
+      PluginHelpers::ServiceFactsParser.parse_active_states(
+        capture("systemctl", ["list-units", "--type=service", "--all", "--no-legend", "--no-pager"])
+      )
     end
 
     private def capture(command : String, args : Array(String)) : String

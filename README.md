@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.513-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.514-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,22 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.514`** - 2 more real bugs found benchmarking 10 more roles
+  (linux-system-roles.* plus mixed authors, round 160, Rocky 9.6):
+  `service_facts:` (backing `ansible_facts.services`) split each
+  `systemctl` output line WITHOUT stripping leading indentation first,
+  producing a leading empty-string element that shifted every column
+  one field early - service state came back `"stopped"` for EVERY
+  service on the host regardless of reality, breaking
+  `linux-system-roles.network`'s own NetworkManager-vs-initscripts
+  provider autodetection (it always fell back to `initscripts`,
+  installing packages Rocky 9 doesn't have); `defaults/main/` and
+  `vars/main/` as a DIRECTORY of files (the same convention
+  `tasks/main/` already supported) was never read at all - only a
+  single `defaults/main.yml` was ever looked for - so a role using the
+  directory form (`kyl191.openvpn`) got none of its own defaults,
+  tripping a validation check real Ansible never reaches. Both fixed
+  and live-reverified. `crystal spec`: 1560 examples, 0 failures.
 - **`0.9.510`-`0.9.513`** (+ crinja `crystal-play-0.9.15`) - 4 real bugs
   found benchmarking 10 more roles across `linux-system-roles.*` and
   other non-`buluma` authors on Rocky Linux 9.6 (round 159): `{% for %}`
@@ -479,18 +495,6 @@ for current-state detail.
   `ok=14 changed=11 failed=0 skipped=7` cold and `ok=13 changed=0
   failed=0 skipped=7` warm against real ansible-playbook 2.19.4.
   `crystal spec`: 1542 examples, 0 failures.
-- **`0.9.504`** - two real bugs found benchmarking `andrewrothstein.terraform`
-  on Rocky Linux 9.6 (round 154 v3): `get_url:`'s `checksum:` param now
-  resolves a URL pointing at a sha256sums-format file (a documented
-  Ansible feature) by fetching it and looking up the per-file hash,
-  instead of storing the URL string itself as the "expected" hash;
-  `include_role:`'s single-host path now credits itself with the one
-  `ok` real Ansible always counts for a non-looped `include_role:` call
-  (the equivalent fix had only ever been applied to `include_tasks:`).
-  Both live-reverified: byte-identical `ok=12 changed=6 failed=0
-  skipped=2` cold and `ok=6 changed=0 failed=0 skipped=6` warm against
-  real `ansible-playbook` 2.19.4. `crystal spec`: 1540 examples, 0
-  failures.
 ---
 
 ## 🤝 Contributing
