@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.519-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.522-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,29 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.522`** - fixed another missing magic var found benchmarking 20
+  new `geerlingguy.*` roles on Ubuntu 22.04 (round 164): `ansible_check_
+  mode` (true under `--check`, false on a real run) was entirely
+  unimplemented - same class as `ansible_version` below. Also fixed a
+  benchmark-harness gap (not a crystal bug): real ansible-core 2.19's
+  own stricter `when:` conditional enforcement (rejects any non-boolean
+  result, even a common bare-truthy-variable check) needed its
+  documented `ANSIBLE_ALLOW_BROKEN_CONDITIONALS=true` escape hatch,
+  which this round's harness had omitted - a "divergence" that turned
+  out to be a missing env var, not an engine bug (and retroactively
+  explains round 163's own `geerlingguy.jenkins` finding the same way).
+  `crystal spec`: 1581 examples, 0 failures.
+- **`0.9.520`/`0.9.521`** - a user-requested regression check (round
+  163: 20 roles resampled at random from ones already verified clean,
+  across authors/distros) found 2 real gaps introduced or exposed by
+  the previous 5 fixes: `ansible_version` (real Ansible magic var) was
+  entirely unimplemented, surfaced by 0.9.517's own strict-undefined
+  fix; `SSHManager`'s hardcoded 300s per-command SSH timeout was too
+  short for legitimately slow real-world tasks (a source compile
+  measured at 1536s against real ansible-playbook), raised to 1 hour -
+  this also retroactively explained 2 earlier incidents mis-diagnosed
+  as one-off cloud flakiness. Zero unexplained regressions across the
+  other 18 roles sampled. `crystal spec`: 1580 examples, 0 failures.
 - **`0.9.518`/`0.9.519`** - 2 real bugs found benchmarking 20 more
   previously-untested `robertdebock.*` roles on Rocky Linux 9.6 (round
   162): real ansible-core's `ansible.builtin.include:` action was
@@ -460,50 +483,6 @@ for current-state detail.
   directory form (`kyl191.openvpn`) got none of its own defaults,
   tripping a validation check real Ansible never reaches. Both fixed
   and live-reverified. `crystal spec`: 1560 examples, 0 failures.
-- **`0.9.510`-`0.9.513`** (+ crinja `crystal-play-0.9.15`) - 4 real bugs
-  found benchmarking 10 more roles across `linux-system-roles.*` and
-  other non-`buluma` authors on Rocky Linux 9.6 (round 159): `{% for %}`
-  iterating an undefined variable silently rendered zero iterations
-  instead of raising (Crinja's plain `Undefined` only raised for the
-  strict variant; real Ansible raises for either - `ahuffman.resolv`'s
-  own unguarded `{% for ns in resolv_nameservers %}`), fixed upstream in
-  the crinja fork; `include_vars:` with a real `loop:` (not
-  `with_first_found:`) ran once with `item` never bound at all
-  (`linux-system-roles.storage`'s own per-OS `vars/` file loader);
-  `include_role: vars:` rendered each entry one at a time against the
-  original context, so one entry couldn't see a SIBLING entry from the
-  same `vars:` block declared later in the YAML (`linux-system-roles.
-  logging`'s own `rsyslog_custom_config_files` computed from
-  `__custom_config_files`, declared after it - silently mis-rendered to
-  the STRING `"[]"`, which `| flatten` then split into two bogus
-  character loop items); `lineinfile:`'s `backrefs: true` used
-  `String#gsub` to replace only the regexp-MATCHED span instead of the
-  whole line (real Ansible's own `match.expand(line)` semantics),
-  corrupting `riemers.gitlab-runner`'s own `config.toml` on any regexp
-  that doesn't span the full line. All 4 fixed and reverified; `rvm.ruby`
-  confirmed broken on both engines for an unrelated host/role mismatch
-  (hardcoded `ubuntu` become-user on a Rocky host), not an engine bug.
-  `crystal spec`: 1556 examples, 0 failures.
-- **`0.9.508`/`0.9.509`** - 5 real bugs found benchmarking 10 RHEL Galaxy
-  roles from 9 DIFFERENT authors on Rocky Linux 9.6 (round 158,
-  deliberately diversifying beyond the `buluma`-heavy prior rounds):
-  `role_path` (documented as always-absolute in real Ansible) could be
-  left relative, causing `first_found`/`template:` src: resolution to
-  double-prepend it and silently fail (found via `linux-system-roles.
-  timesync` and `ajsalminen.hosts` - one fix resolved both, plus a third
-  role); `ansible_play_hosts`/`ansible_play_hosts_all` were entirely
-  unimplemented, silently zero-iterating any `{% for host in
-  ansible_play_hosts %}` loop (`xanmanning.k3s`); a plugin-reported
-  `skipped: true` result (`debug: verbosity:`'s own gate) had nowhere
-  to go - `PluginResult` has no real `skipped` field - so it displayed
-  as a confusing "ok" with the literal text "skipped" printed, never
-  counted under `skipped=` (`evrardjp.keepalived`); `rpm -q
-  --whatprovides` (round 156's own virtual-package fix) regressed
-  NEVRA-style "name-version" package pins (`dj-wasabi.telegraf`'s own
-  `telegraf-{{ version }}`) - fixed by trying a plain `rpm -q <name>`
-  first, falling back to `--whatprovides` only when that fails. All 5
-  live-reverified on fresh pairs. `crystal spec`: 1552 examples, 0
-  failures.
 ---
 
 ## 🤝 Contributing
