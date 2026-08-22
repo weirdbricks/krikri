@@ -531,27 +531,33 @@ module CrystalPlay
       # Strip version specifiers for checking
       base_name = name.split(/[<>=]/).first.strip
 
-      # `--whatprovides`, not a plain name lookup - real Ansible's dnf
-      # backend queries through python-dnf's own dependency-resolution
-      # API, which correctly recognizes a VIRTUAL package name (a real
-      # RPM's `Provides:`, not a package of its own) as already
-      # satisfied. `dnf list installed <name>` (the previous check here)
-      # only ever matches a REAL package literally named that - on RHEL
-      # 9's php 8.0 packaging, `php-json` is pure `Provides:` from
-      # `php-common` (JSON is bundled into PHP core as of 8.0) with no
-      # `php-json` RPM of its own at all, so BOTH `rpm -q php-json` and
-      # `dnf list installed php-json` report "not installed" even
-      # immediately after a successful `dnf install php-json` - every
-      # rerun re-"installed" it and reported changed: true forever,
-      # never converging. `rpm -q --whatprovides <name>` matches this
-      # exactly the way real Ansible does (verified live: resolves to
-      # the providing `php-common` package) while still matching a
-      # literal package name normally (a package always provides
-      # itself). Found benchmarking buluma.mediawiki's own `package:
-      # name: [php-intl, php-json, php-mbstring, php-mysqlnd, php-xml]`
-      # - the SAME bug class already independently present in
-      # package.cr's handle_dnf (plain `rpm -q`) and yum.cr's own copy
-      # of this exact function.
+      # Try a plain `rpm -q <name>` FIRST - this is the form that
+      # correctly matches a NEVRA-style "name-version" specifier (e.g.
+      # dj-wasabi.telegraf's own `telegraf-{{ telegraf_agent_version }}`
+      # pin), which real rpm resolves via partial-NEVRA matching. Only
+      # fall back to `--whatprovides` (a Provides:/capability lookup,
+      # NOT a name-version match - `rpm -q --whatprovides telegraf-1.18.2`
+      # fails outright even when that exact NEVRA is installed, verified
+      # live) for a VIRTUAL package name (a real RPM's `Provides:`, not
+      # a package of its own) - on RHEL 9's php 8.0 packaging, `php-json`
+      # is pure `Provides:` from `php-common` (JSON is bundled into PHP
+      # core as of 8.0) with no `php-json` RPM of its own at all, so
+      # `rpm -q php-json` alone reports "not installed" even immediately
+      # after a successful `dnf install php-json`. Trying both in this
+      # ORDER (plain name/NEVRA match first, capability match as
+      # fallback) is what avoids regressing one case while fixing the
+      # other - `--whatprovides` alone (this function's own prior fix)
+      # correctly solved buluma.mediawiki's php-json case but broke
+      # dj-wasabi.telegraf's version-pinned case, since NEVRA name-
+      # version strings essentially never match as a literal Provides:
+      # capability - every warm rerun re-"installed" it and reported
+      # changed: true forever, never converging, found benchmarking
+      # that role in round 158. Same bug class already independently
+      # present in package.cr's handle_dnf and yum.cr's own copy of
+      # this exact function.
+      result = remote_exec("rpm -q #{base_name} 2>/dev/null")
+      return true if result[:exit_code] == 0
+
       result = remote_exec("rpm -q --whatprovides #{base_name} 2>/dev/null")
       result[:exit_code] == 0
     end

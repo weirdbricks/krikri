@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.507-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.509-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,26 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.508`/`0.9.509`** - 5 real bugs found benchmarking 10 RHEL Galaxy
+  roles from 9 DIFFERENT authors on Rocky Linux 9.6 (round 158,
+  deliberately diversifying beyond the `buluma`-heavy prior rounds):
+  `role_path` (documented as always-absolute in real Ansible) could be
+  left relative, causing `first_found`/`template:` src: resolution to
+  double-prepend it and silently fail (found via `linux-system-roles.
+  timesync` and `ajsalminen.hosts` - one fix resolved both, plus a third
+  role); `ansible_play_hosts`/`ansible_play_hosts_all` were entirely
+  unimplemented, silently zero-iterating any `{% for host in
+  ansible_play_hosts %}` loop (`xanmanning.k3s`); a plugin-reported
+  `skipped: true` result (`debug: verbosity:`'s own gate) had nowhere
+  to go - `PluginResult` has no real `skipped` field - so it displayed
+  as a confusing "ok" with the literal text "skipped" printed, never
+  counted under `skipped=` (`evrardjp.keepalived`); `rpm -q
+  --whatprovides` (round 156's own virtual-package fix) regressed
+  NEVRA-style "name-version" package pins (`dj-wasabi.telegraf`'s own
+  `telegraf-{{ version }}`) - fixed by trying a plain `rpm -q <name>`
+  first, falling back to `--whatprovides` only when that fails. All 5
+  live-reverified on fresh pairs. `crystal spec`: 1552 examples, 0
+  failures.
 - **`0.9.507`** - 4 real bugs found benchmarking 10 more new RHEL Galaxy
   roles on Rocky Linux 9.6 (round 157): `package:`/`dnf:`/`yum:` only
   read the `name:` param, never the documented `pkg:` alias (real
@@ -461,21 +481,6 @@ for current-state detail.
   module waited it out via `lock_timeout: 60`. New regression spec
   exercises the retry helpers via a stubbed proc; full suite 1519
   examples, 0 failures.
-- **`0.9.501`** - `--persistent-daemon` is now the default (was opt-in
-  behind a flag since `0.9.496`). New `--no-persistent-daemon` flag
-  restores the old per-task ssh-fork path. Promotion is based on the
-  `0.9.496` 10-role real-host benchmark (`--persistent-daemon` vs
-  ansible-core 2.19.4, ~6.3× mean warm speedup) and the absence of
-  regressions across the per-role rounds since. The per-task path is
-  still in place as the fallback for `become:`, `gather_facts:`,
-  batched task groups, remote `async:`, and any daemon-connection
-  failure - so dropping the flag never reduces functionality, only
-  throughput. The doc's "what would re-open #19 (libssh2)" question
-  is also closed for the same reason: with daemon mode default,
-  ssh-process overhead is amortized to ~once per play per host, and
-  re-measurement would need to happen against a real `--forks 50`
-  inventory on `0.9.501`, not the pre-`0.9.496` per-task fork+exec
-  cycle the original 3-10× estimate was based on.
 ---
 
 ## 🤝 Contributing

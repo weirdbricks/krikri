@@ -279,23 +279,26 @@ module CrystalPlay
         elsif pkg.starts_with?('@')
           dnf_group_installed?(pkg)
         else
-          # `--whatprovides`, not a plain name lookup - a VIRTUAL
-          # package name (a real RPM's `Provides:`, not a package of
-          # its own - e.g. RHEL 9's `php-json`, bundled into
-          # `php-common` since PHP 8.0) never has an entry of its own
-          # for a bare `rpm -q <name>` to find, even though it's
-          # genuinely already satisfied - every rerun re-"installed"
-          # it and reported changed: true forever, never converging.
-          # `--whatprovides` matches this the way real Ansible's
-          # python-dnf-backed resolution does (verified live: resolves
-          # `php-json` to the providing `php-common` package) while
-          # still matching a literal package name normally (a package
-          # always provides itself). Found benchmarking buluma.
-          # mediawiki's own `package: name: [php-intl, php-json,
-          # php-mbstring, php-mysqlnd, php-xml]` - the SAME bug class
-          # already independently present (and separately fixed) in
-          # dnf.cr's and yum.cr's own copies of this exact check.
-          remote_exec("rpm -q --whatprovides #{pkg}")[:exit_code] == 0
+          # Try a plain `rpm -q <name>` first - correctly matches both
+          # a bare name and a NEVRA-style "name-version" specifier
+          # (e.g. dj-wasabi.telegraf's own `telegraf-{{
+          # telegraf_agent_version }}` pin). Only fall back to
+          # `--whatprovides` (a Provides:/capability lookup) for a
+          # VIRTUAL package name (a real RPM's `Provides:`, not a
+          # package of its own - e.g. RHEL 9's `php-json`, bundled
+          # into `php-common` since PHP 8.0), which a bare `rpm -q
+          # <name>` never has an entry of its own to find even though
+          # it's genuinely satisfied. `--whatprovides` ALONE regresses
+          # the NEVRA case (`rpm -q --whatprovides telegraf-1.18.2`
+          # fails even when that exact NEVRA is installed, verified
+          # live) - both checks, in this order, are needed. Found
+          # benchmarking buluma.mediawiki's own `package: name:
+          # [php-intl, php-json, ...]` (the virtual-package case) and
+          # dj-wasabi.telegraf's version-pinned case (round 158) - the
+          # SAME bug class already independently present in dnf.cr's
+          # and yum.cr's own copies of this exact check.
+          remote_exec("rpm -q #{pkg}")[:exit_code] == 0 ||
+            remote_exec("rpm -q --whatprovides #{pkg}")[:exit_code] == 0
         end
       end
       shell_pkg = shell_name(name, single_name)

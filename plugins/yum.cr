@@ -546,13 +546,19 @@ module CrystalPlay
       # Strip version specifiers for checking
       base_name = name.split(/[<>=]/).first.strip
 
-      # See dnf.cr's own identical fix/comment for the full story: a
-      # plain `yum list installed <name>` (like `rpm -q <name>`) only
-      # matches a REAL package literally named that, not a VIRTUAL
-      # package name satisfied purely via another real package's
-      # `Provides:` (e.g. RHEL 9's `php-json`, bundled into
-      # `php-common` since PHP 8.0) - `--whatprovides` matches both,
-      # the same way real Ansible's python-dnf-backed resolution does.
+      # See dnf.cr's own identical fix/comment for the full story: try
+      # a plain `rpm -q <name>` first (correctly matches both a bare
+      # name and a NEVRA-style "name-version" specifier), falling back
+      # to `--whatprovides` (a Provides:/capability lookup) only for a
+      # VIRTUAL package name satisfied purely via another real
+      # package's `Provides:` (e.g. RHEL 9's `php-json`, bundled into
+      # `php-common` since PHP 8.0) - `--whatprovides` ALONE regresses
+      # any version-pinned NEVRA name (`rpm -q --whatprovides
+      # telegraf-1.18.2` fails even when that exact NEVRA is installed,
+      # verified live), so both checks are needed, in this order.
+      result = remote_exec("rpm -q #{base_name} 2>/dev/null")
+      return true if result[:exit_code] == 0
+
       result = remote_exec("rpm -q --whatprovides #{base_name} 2>/dev/null")
       result[:exit_code] == 0
     end

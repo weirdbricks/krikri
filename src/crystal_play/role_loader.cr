@@ -101,6 +101,25 @@ module CrystalPlay
       unless role_dir
         raise "Role not found: #{name} (looked under #{File.join(playbook_dir, "roles", name)} and #{File.join("roles", name)})"
       end
+      # Real Ansible's `role_path` magic var is always an ABSOLUTE path -
+      # resolve_role_dir's own search dirs can be relative (a bare "roles"
+      # search root, or a relative ANSIBLE_ROLES_PATH entry), and that
+      # relative-ness was leaking straight into task.role_path below.
+      # Found benchmarking linux-system-roles.timesync's own `paths:
+      # ["{{ role_path }}/vars"]` first_found idiom (real Ansible's own
+      # convention, since role_path is documented as always-absolute):
+      # resolve_first_found_root's `return path if path.starts_with?("/")`
+      # early-return never fired for a relative role_path, so it went on
+      # to prepend role_path a SECOND time on top of the already-
+      # role_path-prefixed string Jinja had just substituted, producing
+      # a doubled, nonexistent path ("./roles/x/./roles/x/vars/...") -
+      # every candidate "not found", the whole lookup silently resolving
+      # to "undefined" instead of the real vars file. Only reproduced
+      # against a real remote host (a local/no-op connection's own
+      # working directory setup happened to make the relative role_path
+      # already effectively absolute-equivalent for File.exists?, masking
+      # this everywhere else it's been benchmarked so far).
+      role_dir = File.expand_path(role_dir)
 
       # ansible_collection_name - only set when this role was actually
       # invoked via its full `namespace.collection.role` FQCN (a real

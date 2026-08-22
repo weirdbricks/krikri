@@ -184,6 +184,44 @@ describe CrystalPlay::RoleLoader do
     tasks[0].role_templates_dir.should be_nil
   end
 
+  it "sets role_path (and the derived role_files_dir/role_templates_dir/role_vars_dir) to an ABSOLUTE path even when playbook_dir is given as relative" do
+    # Real bug found benchmarking linux-system-roles.timesync (round
+    # 158): resolve_role_dir's own search dirs can be relative (a bare
+    # "roles" search root, or a relative ANSIBLE_ROLES_PATH entry), and
+    # that relative-ness leaked straight into task.role_path - but real
+    # Ansible's own role_path magic var is documented as always
+    # absolute. The role's own `paths: ["{{ role_path }}/vars"]`
+    # first_found idiom (a real Ansible convention, since role_path is
+    # supposed to always be absolute already) relies on
+    # resolve_first_found_root's `return path if path.starts_with?("/")`
+    # early return - with a relative role_path, that never fired, so it
+    # went on to prepend role_path a SECOND time on top of the already-
+    # role_path-prefixed string Jinja had just substituted, producing a
+    # doubled, nonexistent path - every first_found candidate "not
+    # found", silently resolving to "undefined" instead of the real
+    # vars file. Only reproduced against a genuinely relative
+    # playbook_dir (a real remote-host benchmark run's own working
+    # directory setup) - this spec's own ROLES_ROOT fixture is already
+    # absolute, which is exactly why this class of bug survived
+    # undetected here until now.
+    build_role("with_files") do |role|
+      role.tasks(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+      role.file("hello.txt", "hi\n")
+    end
+
+    relative_dir = Path.new(ROLES_ROOT).relative_to(Dir.current).to_s
+    tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- with_files"), fresh_play, relative_dir)
+
+    role_path = tasks[0].role_path.not_nil!
+    role_path.should start_with("/")
+    role_path.should eq(File.join(ROLES_ROOT, "roles", "with_files"))
+    tasks[0].role_files_dir.not_nil!.should start_with("/")
+  end
+
   it "runs meta/main.yml dependencies before the role's own tasks" do
     build_role("base") { |role| role.tasks(<<-YAML) }
       - name: base task

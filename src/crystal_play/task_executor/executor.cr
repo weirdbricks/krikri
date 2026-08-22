@@ -1109,6 +1109,28 @@ module CrystalPlay
       vars_context["hostvars"] = JSON::Any.new(build_hostvars)
       vars_context["groups"] = JSON::Any.new(build_groups)
 
+      # ansible_play_hosts_all/ansible_play_hosts - real Ansible magic
+      # vars: the former is every host still active in the CURRENT play
+      # (not the whole inventory - `groups['all']` is inventory-wide,
+      # this is play-scoped), the latter is the subset not yet run in
+      # the current serial: batch (equal to the former whenever serial:
+      # isn't in play, the overwhelming common case, and the only one
+      # this engine models). Neither existed at all before - any {%
+      # for host in ansible_play_hosts %} loop (a common idiom for
+      # writing a peer-list file, e.g. xanmanning.k3s's own control-
+      # node registration step) silently iterated ZERO times instead of
+      # raising or erroring, so the loop's own file/output ended up
+      # empty rather than failing loudly - found benchmarking exactly
+      # that role's "Ensure ansible_facts['host'] is mapped to
+      # inventory_hostname" (blockinfile: with a `{% for host in
+      # ansible_play_hosts %}` block) writing an empty /tmp/inventory.txt,
+      # which a LATER task's `grep ... /tmp/inventory.txt` then failed
+      # against (no match in an empty file) - while real ansible-
+      # playbook, which has always populated this var, succeeded.
+      play_host_names = @hosts.map { |h| JSON::Any.new(h.name) }
+      vars_context["ansible_play_hosts_all"] = JSON::Any.new(play_host_names)
+      vars_context["ansible_play_hosts"] = JSON::Any.new(play_host_names)
+
       render_task_vars(task, vars_context, host.name)
 
       # connection: local (or any other connection: override) on this
@@ -2810,6 +2832,27 @@ module CrystalPlay
 
       if register_name = task.register
         register_result(host, register_name, result) unless register_name.empty?
+      end
+
+      # A plugin can voluntarily report itself skipped via a "skipped"
+      # key in its own result JSON (currently only debug.cr's own
+      # verbosity: gate: `verbosity: 2` with a run below that level).
+      # PluginResult has no real `skipped` FIELD - the plugin's own
+      # `skipped: true` kwarg just lands in its generic `@extra` bag
+      # and gets serialized as an ordinary top-level JSON key - but
+      # nothing downstream of THIS point ever checked for it: since
+      # changed/failed both stay false, it fell straight into the
+      # normal "ok" display/stats path, with the plugin's own literal
+      # msg text ("skipped") printed as if it were real debug output,
+      # and counted as `ok=`, never `skipped=`. Found benchmarking
+      # evrardjp.keepalived's own `debug: var: keepalived_scripts
+      # verbosity: 2` tasks (a standard verbosity-gated debug idiom) -
+      # real Ansible correctly shows these as `skipping:` and counts
+      # them under `skipped=`, not `ok=`.
+      if result["skipped"]?.try(&.as_bool) == true
+        puts "skipping: [#{host.connection_host}]".colorize(:cyan)
+        @results[host.name]["skipped"] += 1
+        return
       end
 
       changed = result["changed"]?.try(&.as_bool) || false
@@ -4624,6 +4667,12 @@ module CrystalPlay
 
       vars_context["hostvars"] = JSON::Any.new(build_hostvars)
       vars_context["groups"] = JSON::Any.new(build_groups)
+
+      # ansible_play_hosts_all/ansible_play_hosts - see #build_vars_context's
+      # own identical comment (the regular-task path) for the full story.
+      play_host_names = @hosts.map { |h| JSON::Any.new(h.name) }
+      vars_context["ansible_play_hosts_all"] = JSON::Any.new(play_host_names)
+      vars_context["ansible_play_hosts"] = JSON::Any.new(play_host_names)
 
       # Evaluate the handler's own when: - real Ansible skips a notified
       # handler whose condition is false (e.g. os_hardening's "Restart
