@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.517-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.519-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,27 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.518`/`0.9.519`** - 2 real bugs found benchmarking 20 more
+  previously-untested `robertdebock.*` roles on Rocky Linux 9.6 (round
+  162): real ansible-core's `ansible.builtin.include:` action was
+  removed entirely after 2023-05-16 and real ansible-playbook refuses to
+  even start a run using it (`rc=1`, zero tasks) - this engine treated
+  it as merely "not yet implemented" and skipped just that one task,
+  continuing to run (and eventually fail differently for an unrelated
+  reason) (`awx`); the `file:` module silently skipped the chown
+  entirely when `owner:`/`group:` named a system user/group that
+  doesn't exist yet, instead of failing the task the way real Ansible's
+  own "chown failed: failed to look up user/group" does - a directory
+  got silently created `root:root` instead of the intended owner, and
+  the role continued as if nothing were wrong (`openbao_agent`). Both
+  fixed and live-reverified byte-identical against real ansible-
+  playbook 2.19.4. 13 of the 20 roles hit external/environmental
+  blockers identical on both engines (missing repo packages, dead
+  pinned download URLs, no python2/pip3 on Rocky 9), not engine bugs;
+  one flagged anomaly (`luks` - a 300s SSH timeout installing a trivial
+  package on one host) did NOT reproduce on an independent single-host
+  re-test, confirmed as one-off cloud-provider flakiness. `crystal
+  spec`: 1578 examples, 0 failures.
 - **`0.9.517`** - fixed a real, pervasive architectural gap found in round
   161's own `robertdebock.bios_update` result (below): real Ansible's
   module-arg templating is strict-undefined by default - a `debug: msg:`
@@ -483,23 +504,6 @@ for current-state detail.
   first, falling back to `--whatprovides` only when that fails. All 5
   live-reverified on fresh pairs. `crystal spec`: 1552 examples, 0
   failures.
-- **`0.9.507`** - 4 real bugs found benchmarking 10 more new RHEL Galaxy
-  roles on Rocky Linux 9.6 (round 157): `package:`/`dnf:`/`yum:` only
-  read the `name:` param, never the documented `pkg:` alias (real
-  Ansible's own argument_spec); a genuine Crinja lexer bug where a
-  U+00A0 NO-BREAK SPACE right after `{{` (a real-world copy/paste
-  artifact) broke expression parsing, fixed upstream in the crystal-play
-  fork of the crinja shard (tag bumped to `crystal-play-0.9.14`) by
-  switching to Unicode-aware whitespace detection; a multi-statement
-  `shell:`/`command:` string had its internal newlines collapsed into
-  single spaces by trailing-special-param extraction, turning `set -euo
-  pipefail\ncmd1 | cmd2` into one broken line; `lookup('url', ...)`
-  silently returned `"undefined"` on an HTTP error instead of failing,
-  which - once fixed to raise, matching real Ansible - exposed a second
-  bug where nothing caught that exception, crashing the whole process
-  instead of failing just the one task (also fixed). All 4 live-
-  reverified on fresh Atlantic.net Rocky 9.6 host pairs. `crystal spec`:
-  1549 examples, 0 failures.
 ---
 
 ## 🤝 Contributing
