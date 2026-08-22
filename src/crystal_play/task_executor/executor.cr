@@ -2464,7 +2464,24 @@ module CrystalPlay
 
     private def prepare_batch_step(task : Task, host : Host, vars_context : Hash(String, JSON::Any), shared : VarSubstitutor? = nil) : JSON::Any | BatchScript::Step
       substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
-      substituted_params = substitute_task_params(task.params, substitutor)
+
+      begin
+        substituted_params = substitute_task_params(task.params, substitutor)
+      rescue ex
+        # Same "finalization of task args failed" handling as
+        # execute_task_once's own identical rescue (see there) - this
+        # batched-path call site had no equivalent before, so a strict:
+        # UndefinedVariableError (or a lookup('url', ...) HTTP failure,
+        # the pre-existing case this class of rescue was built for) would
+        # have crashed the whole run instead of failing just this task.
+        failed = JSON.parse({
+          "changed" => false,
+          "failed"  => true,
+          "msg"     => ex.message || "Failed to resolve task arguments",
+        }.to_json)
+        return apply_changed_failed_when(task, failed, vars_context, host)
+      end
+
       substituted_params = resolve_role_relative_src(task, substituted_params)
       substituted_params = inline_copy_source_content(task, substituted_params, host, vars_context)
       substituted_params = stage_unarchive_remote_src(task, substituted_params, host, vars_context)
@@ -4080,7 +4097,13 @@ module CrystalPlay
         # the value used to register the fact under the literal key
         # `{{ item.key }}`, making `{{ auditd_package }}` resolve undefined
         # in the next task.
-        substituted_value = substitutor.substitute(value)
+        # strict: true - real Ansible's module-arg templating is
+        # strict-undefined by default and raises when a `{{ }}` span
+        # references a genuinely undefined variable, failing the task
+        # ("Finalization of task args ... failed"). See
+        # UndefinedVariableError's own comment for the narrow, bare-
+        # reference-only scope of what actually raises here.
+        substituted_value = substitutor.substitute(value, strict: true)
 
         # `mode:` piped through a variable (`mode: "{{ redis_conf_dir_mode
         # }}"`, geerlingguy.redis's own style) loses its octal-ness the
@@ -4940,8 +4963,24 @@ module CrystalPlay
         host_name: host.name
       )
 
-      # Substitute variables in handler parameters
-      substituted_params = substitute_task_params(handler.params, substitutor)
+      # Substitute variables in handler parameters. Same "finalization of
+      # task args failed" rescue as execute_task_once/prepare_batch_step
+      # (see there) - a handler has no equivalent before this, so a
+      # strict: UndefinedVariableError would have crashed the whole run.
+      begin
+        substituted_params = substitute_task_params(handler.params, substitutor)
+      rescue ex
+        result = JSON.parse({
+          "changed" => false,
+          "failed"  => true,
+          "msg"     => ex.message || "Failed to resolve task arguments",
+        }.to_json)
+        result = apply_changed_failed_when(handler, result, vars_context, host)
+        if register_name = handler.register
+          register_result(host, register_name, result) unless register_name.empty?
+        end
+        return result
+      end
 
       if handler.module_name == "ansible.builtin.reboot"
         result = execute_reboot(substituted_params, host, vars_context)

@@ -1,0 +1,11 @@
+# Real bug found benchmarking robertdebock.bios_update on Rocky 9.6
+# (round 161): real Ansible's module-arg templating is strict-undefined
+# by default - a debug: msg: referencing a genuinely undefined variable
+# (inside a rescue: block, same as bios_update's own shape) fails the
+# task ("Finalization of task args ... failed"), it does not silently
+# continue.
+- name: strict undefined module arg
+  hosts: testservers
+  gather_facts: false
+  roles:
+    - undef_rescue

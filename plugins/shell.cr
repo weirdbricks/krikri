@@ -68,12 +68,33 @@ module CrystalPlay
         end
       end
 
-      # Shell commands don't support check mode (Ansible behavior)
+      # Shell commands don't support check mode (Ansible behavior). Real
+      # Ansible's own command/shell action plugin still populates the
+      # FULL normal result shape (cmd/rc/stdout/stdout_lines/stderr/
+      # stderr_lines/start/end/delta, all empty/zero/null) rather than a
+      # bare skip marker - `register:`-ing this and referencing e.g.
+      # `{{ result.stdout }}` downstream (a real, common check-mode-
+      # tolerant pattern) needs `stdout` to genuinely be `""`, not
+      # missing entirely, or strict module-arg templating (see
+      # VarSubstitutor::UndefinedVariableError) now correctly fails the
+      # referencing task exactly like real Ansible would if the KEY were
+      # actually missing - it just isn't, here. Verified live against
+      # ansible-core 2.19.4's own `--check` output for this exact case.
       if @check_mode
         return PluginResult.new(
           changed: false,
           failed: false,
-          msg: "Skipped: shell module does not support check mode"
+          msg: "Command would have run if not in check mode",
+          skipped: true,
+          cmd: cmd,
+          rc: 0,
+          stdout: "",
+          stdout_lines: [] of String,
+          stderr: "",
+          stderr_lines: [] of String,
+          start: nil,
+          end: nil,
+          delta: nil
         )
       end
 

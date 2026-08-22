@@ -1,0 +1,10 @@
+- name: block
+  block:
+    - name: force failure
+      ansible.builtin.fail:
+        msg: forced
+  rescue:
+    - name: Show problem
+      ansible.builtin.debug:
+        msg:
+          - "Error: {{ some_var_never_set }}"

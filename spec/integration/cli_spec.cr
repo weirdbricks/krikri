@@ -64,7 +64,17 @@ describe "crystal-ansible CLI (--check mode)" do
     status.success?.should be_true
     output.should contain("Mode: CHECK (dry-run)")
     output.should contain("ok: [localhost]")
-    output.should contain("does not support check mode")
+    # shell.cr's check-mode skip now sets skipped: true (matching real
+    # Ansible's own recap - `skipped=1`, verified against ansible-core
+    # 2.19.4's own `--check` output for this exact fixture) and populates
+    # the full normal result shape (cmd/rc/stdout/stdout_lines/stderr/
+    # stderr_lines/start/end/delta), so it displays as a genuine
+    # "skipping:" line rather than a disguised "ok:" with the message
+    # text inline - see VarSubstitutor::UndefinedVariableError's own
+    # comment for why the result-shape fix mattered once module-arg
+    # templating became strict (`test_result.stdout` must resolve to a
+    # real empty string, not a missing key).
+    output.should contain("skipping: [localhost]")
     output.should contain("NOTE: Running in check mode - no changes were made")
   end
 
@@ -433,6 +443,27 @@ describe "crystal-ansible CLI (--check mode)" do
 
       status.success?.should be_false
       output.should contain("The lookup plugin 'first_found' failed")
+    end
+  end
+
+  describe "strict-undefined module-arg templating" do
+    testservers = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-testservers-local.ini")
+
+    it "fails (not silently continues) when a bare module-arg reference is genuinely undefined" do
+      # Real bug found benchmarking robertdebock.bios_update on Rocky 9.6
+      # (round 161): real Ansible's module-arg templating is
+      # strict-undefined by default - a debug: msg: inside a rescue:
+      # block referencing a variable that's genuinely never set anywhere
+      # fails the task ("Finalization of task args ... failed") rather
+      # than silently rendering the literal text "undefined" and
+      # continuing. Verified live against ansible-core 2.19.4: both
+      # engines now fail at the same task with the same message.
+      status, output = run_playbook(
+        "test-strict-undefined-module-arg.yml", [] of String, inventory: testservers
+      )
+
+      status.success?.should be_false
+      output.should contain("'some_var_never_set' is undefined")
     end
   end
 

@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.516-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.517-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,23 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.517`** - fixed a real, pervasive architectural gap found in round
+  161's own `robertdebock.bios_update` result (below): real Ansible's
+  module-arg templating is strict-undefined by default - a `debug: msg:`
+  (including inside a `rescue:` block) referencing a genuinely undefined
+  variable fails the task; this engine instead rendered the literal text
+  `"undefined"` and continued. `VarSubstitutor#substitute` gained a
+  `strict:` parameter, used only at module-arg finalization, that raises
+  for a BARE variable reference (`foo`/`foo.bar`/`foo['bar']` - no
+  filters/operators) resolving to nothing - deliberately narrow, so an
+  evaluator syntax-coverage gap elsewhere can't masquerade as a spurious
+  task failure; `when:`/filter-chain expressions/Crinja block tags stay
+  fully lenient by design (see `KNOWN_MISSING.md`). Surfaced and fixed a
+  dependency bug along the way: `shell:`/`command:`'s check-mode-skip
+  result was missing `stdout`/`stderr`/`rc`/etc. entirely instead of
+  populating them empty/zero/null the way real Ansible's own check-mode
+  skip does - verified live against ansible-core 2.19.4. `crystal spec`:
+  1573 examples, 0 failures.
 - **`0.9.515`/`0.9.516`** - 2 real bugs found benchmarking 20 previously-
   untested `robertdebock.*` roles on Rocky Linux 9.6 (round 161):
   `changed_when:`/`failed_when:` never enforced real Ansible's
@@ -483,25 +500,6 @@ for current-state detail.
   instead of failing just the one task (also fixed). All 4 live-
   reverified on fresh Atlantic.net Rocky 9.6 host pairs. `crystal spec`:
   1549 examples, 0 failures.
-- **`0.9.506`** - 4 real bugs found benchmarking 10 new RHEL Galaxy roles
-  on Rocky Linux 9.6 (round 156): no String method-call handling existed
-  for Python's `.lstrip()`/`.rstrip()`/`.strip()` at all (`buluma.
-  ssh_keys`'s `path.lstrip('/')` collapsed to "undefined"), added with
-  correct char-SET semantics, not prefix removal; `git:`'s `clone`
-  shallow-cloned only the default branch and then tried to check out an
-  arbitrary tag/branch against that limited history (`buluma.netdata`'s
-  `depth: 1, version: v1.44.0`) - fixed via `--branch <version>` at
-  clone time, confirmed against `ansible-core`'s own `git.py` fetch()
-  logic; `ansible_facts['default_ipv4']` never included `gateway`
-  (`buluma.checkmk_agent`'s `when: ...gateway is defined` always false);
-  `rpm -q`/`dnf list installed`/`yum list installed` (3 independent
-  copies across `package.cr`/`dnf.cr`/`yum.cr`) never recognized a
-  VIRTUAL package (a real RPM's `Provides:`, not a package of its own -
-  RHEL 9's `php-json`, bundled into `php-common` since PHP 8.0) as
-  installed, so `buluma.mediawiki`'s own package install never
-  converged - fixed via `rpm -q --whatprovides`, matching real Ansible's
-  python-dnf-backed resolution. All 4 live-reverified on fresh pairs.
-  `crystal spec`: 1546 examples, 0 failures.
 ---
 
 ## 🤝 Contributing

@@ -20,6 +20,34 @@ module CrystalPlay
   # param hash) strips any key whose fully-substituted value equals it.
   OMIT_SENTINEL = "__crystal_ansible_omit__"
 
+  # Raised only from #substitute's `strict:` path (module-arg/param
+  # finalization - see #substitute_task_params) when a `{{ }}` span whose
+  # ENTIRE content is a plain variable reference (`foo`, `foo.bar`,
+  # `foo['bar'][0]` - no filters/operators/function calls) resolves to
+  # nothing. Real Ansible's Jinja2 templating is strict-undefined by
+  # default for module-arg rendering and raises in exactly this shape of
+  # case ("'foo' is undefined"); this engine otherwise renders a missing
+  # lookup as the literal string "undefined" and continues (a deliberate,
+  # pervasive leniency used throughout the rest of the templating/
+  # conditional-evaluation code, see ConditionalEvaluator's own comments -
+  # NOT changed here). Deliberately narrow: only a *bare* reference is
+  # checked here, not any expression using a filter/function/operator -
+  # those still go through the lenient evaluator regardless of `strict:`,
+  # since this hand-rolled evaluator's own known syntax-coverage gaps
+  # (documented throughout expression_evaluator.cr) already fall back to
+  # the same "undefined" sentinel for reasons that have nothing to do
+  # with the variable genuinely being undefined, and conflating the two
+  # would turn an evaluator limitation into a spurious task failure.
+  class UndefinedVariableError < Exception
+  end
+
+  # Conservative "pure variable reference" shape - letters/digits/
+  # underscore, `.field` and `[0]`/`['key']` access only. No spaces,
+  # pipes, parens, quotes outside of a bracket index, or keywords - those
+  # all indicate a real expression, not a plain lookup, and stay on the
+  # lenient path.
+  REGEX_BARE_VAR_REF = /\A[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[(?:-?\d+|'[^']*'|"[^"]*")\])*\z/
+
   # VariableSubstitutor - Main class for variable substitution
   # Uses modular components from variable_substitutor/ directory
   class VarSubstitutor
@@ -211,7 +239,7 @@ module CrystalPlay
       @magic_vars_added = true
     end
     
-    def substitute(text : String) : String
+    def substitute(text : String, strict : Bool = false) : String
       # A task param whose ENTIRE value is block-tag Jinja with no `{{
       # }}` interpolation anywhere at all (`{% if x %}a{% else %}b{%
       # endif %}`, no braces-braces span) - real, valid Ansible/Jinja2
@@ -246,11 +274,9 @@ module CrystalPlay
       # `{{var}}` identically, so this is behavior-preserving by
       # construction.
       result = expand_mustache_spans(text) do |inner|
-        if inner.empty? || (!inner[0].whitespace? && !inner[-1].whitespace?)
-          evaluator.evaluate(inner)
-        else
-          evaluator.evaluate(inner.strip)
-        end
+        stripped = inner.empty? || (!inner[0].whitespace? && !inner[-1].whitespace?) ? inner : inner.strip
+        raise_if_strict_undefined(stripped) if strict
+        evaluator.evaluate(stripped)
       end
 
       # Ansible re-templates a rendered result that still contains "{{" -
@@ -289,7 +315,11 @@ module CrystalPlay
                           @@block_tag_escalation_depth -= 1
                         end
                       else
-                        expand_mustache_spans(result) { |inner| evaluator.evaluate(inner.strip) }
+                        expand_mustache_spans(result) do |inner|
+                          stripped = inner.strip
+                          raise_if_strict_undefined(stripped) if strict
+                          evaluator.evaluate(stripped)
+                        end
                       end
         break if next_result == result
         result = next_result
@@ -297,6 +327,18 @@ module CrystalPlay
       end
 
       result
+    end
+
+    # strict: helper - raises UndefinedVariableError when *inner* (a single
+    # `{{ }}` span's full content, already stripped) is a BARE variable
+    # reference (see REGEX_BARE_VAR_REF) that resolves to nothing. Any
+    # other shape (filters, operators, function calls, literals) is left
+    # alone regardless of strict: - see UndefinedVariableError's own
+    # comment for why that's deliberate, not a gap in this check.
+    private def raise_if_strict_undefined(inner : String) : Nil
+      return unless inner.matches?(REGEX_BARE_VAR_REF)
+      return if VariableSubstitutor::VariableLookup.new(@vars).resolve(inner)
+      raise UndefinedVariableError.new("'#{inner}' is undefined")
     end
 
     # Finds each `{{ ... }}` span in *text* and replaces it with the
