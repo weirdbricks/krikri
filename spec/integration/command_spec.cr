@@ -26,6 +26,41 @@ describe "command plugin" do
     result["stdout"].as_s.should eq("no-newline")
   end
 
+  it "treats a standalone backslash (whitespace on both sides) as a line-continuation marker, not a space-escape" do
+    # Real bug found benchmarking buluma.influxdb2 (round 155): the
+    # role's own task is `command: influx ping \ --host "{{ influxdb_host
+    # }}"` - a documented, intentional Ansible authoring convention for
+    # writing a long command: as if it were multiple lines. Real
+    # Ansible's task-arg parser (ansible.parsing.splitter.split_args,
+    # which runs BEFORE Jinja templating) treats a bare `\` token
+    # (delimited by whitespace/string-boundaries on both sides) as a
+    # line-continuation marker and drops it entirely, then rejoins the
+    # remaining words with single spaces - `influx ping --host <url>`.
+    # parse_command previously treated every unquoted `\` uniformly as
+    # "escape the next character", so `\ ` became "escape this space
+    # into the current token", producing a malformed ` --host` argv
+    # element (stray leading space) that real influx's cobra-based CLI
+    # parser rejected as an unknown subcommand - while real
+    # ansible-playbook succeeded, a genuine engine divergence live on
+    # Rocky Linux 9.6.
+    result = PluginSpecHelper.run("command", {"cmd" => %q(printf '[%s]' hi \ --world there)})
+
+    result["stdout"].as_s.should eq("[hi][--world][there]")
+  end
+
+  it "still decodes a backslash that escapes a specific adjacent character (not whitespace-delimited)" do
+    # Regression guard for the fix above: a backslash immediately
+    # followed by a non-whitespace character (e.g. find's own `\;`
+    # exec terminator) must still be decoded to that literal character,
+    # matching real Ansible's shlex.split() - only a backslash that is
+    # its OWN whitespace-delimited token is a line-continuation marker.
+    result = PluginSpecHelper.run("command", {
+      "cmd" => %q(find /tmp -maxdepth 0 -exec /usr/bin/printf '[%s]' {} \;),
+    })
+
+    result["stdout"].as_s.should eq("[/tmp]")
+  end
+
   it "does not try to restore the original working directory afterwards (and so can't crash if that directory becomes inaccessible)" do
     # Real bug found benchmarking robertdebock.nextcloud's own
     # `Configure nextcloud` task (`chdir: /var/www/html/nextcloud,

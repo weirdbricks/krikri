@@ -228,24 +228,49 @@ module CrystalPlay
             in_double = true
             started = true
           when '\\'
-            # Unquoted backslash-escape (shlex/POSIX shell semantics,
-            # not just a literal character) - the char immediately
-            # after is taken verbatim and the backslash itself dropped.
-            # Real Ansible's command module parses `cmd:` the same way
-            # (Python's shlex.split). Found via konstruktoid-hardening's
-            # own `find ... -exec aa-enforce {} \;` - without this, the
-            # final argv token was the two characters `\;` instead of
-            # find's actual required terminator `;`, and find rejected
-            # it outright ("missing argument to `-exec'"). A trailing
-            # backslash with nothing after it is kept as a literal
-            # backslash rather than silently dropped.
-            if i + 1 < chars.size
+            next_is_space_or_end = i + 1 >= chars.size || {' ', '\t', '\n'}.includes?(chars[i + 1])
+            if !started && next_is_space_or_end
+              # Real Ansible's task-arg parser (ansible.parsing.splitter.
+              # split_args, run BEFORE Jinja templating on the whole `cmd:`/
+              # `command:` string) treats a bare `\` - a whole token on its
+              # own, delimited by whitespace or string boundaries on both
+              # sides, exactly like split(' ')'s `token == '\\'` check -
+              # as a line-continuation marker: dropped entirely, not an
+              # escape of the following character. This is a documented,
+              # intentional Ansible authoring convention for writing a
+              # long `command:` as if it were multiple lines. Found
+              # benchmarking buluma.influxdb2's own `influx ping \ --host
+              # "{{ influxdb_host }}"` task: treating this `\ ` as "escape
+              # this space into the current token" (the old, uniform
+              # behavior below) produced a malformed `" --host"` argv
+              # element (stray leading space) that real `influx`'s cobra-
+              # based CLI parser rejects outright as an unknown
+              # subcommand - while real ansible-playbook strips the lone
+              # `\` and rejoins the remaining words with single spaces,
+              # producing the well-formed `influx ping --host <url>` and
+              # succeeding.
+              i += 1 if i + 1 < chars.size
+            elsif i + 1 < chars.size
+              # Unquoted backslash-escape (shlex/POSIX shell semantics,
+              # not just a literal character) - the char immediately
+              # after is taken verbatim and the backslash itself dropped.
+              # Real Ansible's command module parses `cmd:` the same way
+              # (Python's shlex.split). Found via konstruktoid-hardening's
+              # own `find ... -exec aa-enforce {} \;` - without this, the
+              # final argv token was the two characters `\;` instead of
+              # find's actual required terminator `;`, and find rejected
+              # it outright ("missing argument to `-exec'"). This branch
+              # only fires when the backslash is NOT a standalone token
+              # (already part of a word, or followed by a non-whitespace
+              # char) - see the line-continuation case above for the
+              # whitespace-delimited case.
               current << chars[i + 1]
               i += 1
+              started = true
             else
               current << char
+              started = true
             end
-            started = true
           when ' ', '\t', '\n'
             if started
               parts << current.to_s

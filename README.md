@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.504-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.505-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,20 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.505`** - real bug found benchmarking `buluma.influxdb2` on Rocky
+  Linux 9.6 (round 155): `command:`'s `parse_command` treated every
+  unquoted `\` uniformly as "escape the next character," but a bare `\`
+  token (whitespace on both sides) is a documented, intentional Ansible
+  line-continuation convention - real Ansible's task-arg parser drops it
+  entirely and rejoins the remaining words with single spaces, before
+  Jinja templating even runs. The old uniform rule instead absorbed the
+  escaped space into the current token, producing a malformed argv
+  element with a stray leading space that a real CLI's flag parser
+  rejected outright - confirmed against `ansible.parsing.splitter`'s own
+  source and a real binary before fixing. Live-reverified byte-identical
+  `ok=14 changed=11 failed=0 skipped=7` cold and `ok=13 changed=0
+  failed=0 skipped=7` warm against real ansible-playbook 2.19.4.
+  `crystal spec`: 1542 examples, 0 failures.
 - **`0.9.504`** - two real bugs found benchmarking `andrewrothstein.terraform`
   on Rocky Linux 9.6 (round 154 v3): `get_url:`'s `checksum:` param now
   resolves a URL pointing at a sha256sums-format file (a documented
@@ -441,15 +455,6 @@ for current-state detail.
   1 host with ~6 plain-string params per task, this saves ~48 MB of
   allocation per run. Aliasing-safety contract from `0.9.494`/`0.9.485`
   preserved (writes still trigger a private copy). 1501 specs, 0
-  failures.
-- **`0.9.498`** - narrow sub-scope of `0.9.494` (#20): `substitute()`
-  skips its `.strip` allocation when `{{ ... }}` has no leading or
-  trailing whitespace, and `MustacheScanState` (the brace/quote
-  tracker inside `expand_mustache_spans`) is now a struct, so it lives
-  on the worker's stack frame instead of being a per-call heap object.
-  Per-task bytes in the templated substitute path drop 2.5-9%
-  depending on template shape (whitespace templates get only the
-  struct saving; no-whitespace templates get both). 1501 specs, 0
   failures.
 ---
 
