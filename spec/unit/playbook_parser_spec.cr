@@ -288,6 +288,51 @@ describe CrystalPlay::PlaybookParser do
       end
     end
 
+    it "aborts the whole playbook parse for a removed ansible.builtin.include: task, not just skips it" do
+      # Real bug found benchmarking robertdebock.awx (round 162): real
+      # ansible-core removed the `include:` action entirely after
+      # 2023-05-16 and refuses to even START the run when a playbook
+      # uses it (rc=1, zero tasks execute) - this previously treated it
+      # as merely "Plugin not available: include" (the same soft
+      # per-task skip as any not-yet-implemented module) and kept
+      # executing every task after it. Verified live against real
+      # ansible-playbook 2.19.4: byte-identical error message.
+      expect_raises(CrystalPlay::RemovedActionError, /has been removed/) do
+        CrystalPlay::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: legacy include
+                ansible.builtin.include:
+                  file: something.yml
+          YAML
+        )
+      end
+    end
+
+    it "also aborts for the bare (non-FQCN) include: spelling" do
+      expect_raises(CrystalPlay::RemovedActionError, /has been removed/) do
+        CrystalPlay::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: legacy include
+                include: something.yml
+          YAML
+        )
+      end
+    end
+
+    it "does NOT treat include_vars: (a real, still-valid directive) as the removed include: action" do
+      result = CrystalPlay::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: real task
+              ansible.builtin.include_vars:
+                file: something.yml
+        YAML
+      )
+      result.plays[0].tasks.size.should eq(1)
+    end
+
     it "skips a task that uses an unimplemented plugin instead of failing the play" do
       playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML
         - name: Uses unavailable plugin

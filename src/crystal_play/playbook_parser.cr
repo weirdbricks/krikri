@@ -381,6 +381,31 @@ module CrystalPlay
     end
   end
 
+  # Raised for a playbook construct real ansible-core rejects at PARSE
+  # time (before any task anywhere runs), not just one this engine hasn't
+  # implemented yet. Deliberately bypasses the per-task (#parse_tasks) and
+  # per-play (#parse_string) graceful-degradation rescues that swallow
+  # ordinary parse errors into a "Warning: Skipping ..."/"Warning: Failed
+  # to parse play ..." and keep going - those are correct for "this
+  # engine doesn't support X yet" (an engine limitation), but wrong for
+  # "real Ansible itself refuses to even start the run" (a playbook
+  # written for a version of ansible-core this role no longer supports).
+  # Propagates all the way to crystal-play.cr's own top-level "Error
+  # parsing playbook:" handler (rc=1, nothing executes) - matching real
+  # Ansible's own behavior exactly instead of executing PART of the play
+  # and failing partway through for an unrelated reason. Found live
+  # benchmarking robertdebock.awx (round 162): its own tasks/main.yml
+  # uses `ansible.builtin.include:`, an action plugin real ansible-core
+  # removed entirely after 2023-05-16 - real ansible-playbook 2.19.4
+  # rejects the whole playbook immediately (rc=1, 0 tasks run); this
+  # engine treated it as merely "Plugin not available: include" (the
+  # same soft per-task skip as any not-yet-implemented module) and kept
+  # executing every task after it, one of which then failed for a
+  # completely different, real reason (insufficient host resources) -
+  # visibly different final state, not just a cosmetic message mismatch.
+  class RemovedActionError < Exception
+  end
+
   # Parser for Ansible YAML playbooks
   class PlaybookParser
     # List of available (implemented) plugins - using FQCN. Almost all of
@@ -630,6 +655,8 @@ module CrystalPlay
           begin
             imported = parse(File.expand_path(import_path, playbook_dir))
             playbook.plays.concat(imported.plays)
+          rescue ex : RemovedActionError
+            raise ex
           rescue ex
             puts "Warning: Failed to import playbook '#{import_path}': #{ex.message}".colorize(:yellow)
           end
@@ -639,6 +666,11 @@ module CrystalPlay
         begin
           play = parse_play(play_yaml, index, playbook_dir)
           playbook.plays << play
+        rescue ex : RemovedActionError
+          # Bypasses the graceful per-play degradation below - see its
+          # own comment. Propagates to the top-level "Error parsing
+          # playbook:" handler, matching real Ansible's whole-run abort.
+          raise ex
         rescue ex
           puts "Warning: Failed to parse play #{index + 1}: #{ex.message}".colorize(:yellow)
         end
@@ -766,6 +798,11 @@ module CrystalPlay
           else
             tasks << parse_task(task_yaml, index, play, file_dir)
           end
+        rescue ex : RemovedActionError
+          # Bypasses the graceful per-task degradation below - see its
+          # own comment. Propagates all the way up to abort the whole
+          # playbook, matching real Ansible.
+          raise ex
         rescue ex
           puts "Warning: Skipping #{context} #{index + 1}: #{ex.message}".colorize(:yellow)
         end
@@ -984,6 +1021,21 @@ module CrystalPlay
 
       unless module_name
         raise "No module found in task '#{name}'"
+      end
+
+      # `include:` (bare, ansible.builtin.include, or ansible.legacy.
+      # include - NOT include_tasks:/include_role:/include_vars:, which
+      # are unrelated, still-valid directives already excluded via
+      # special_keys above) was removed from ansible-core entirely after
+      # 2023-05-16 - real ansible-playbook refuses to even START the run
+      # when a playbook uses it, rather than skipping just that one task.
+      # See RemovedActionError's own comment for why this needs to
+      # bypass the normal graceful-degradation rescues.
+      if module_name == "include" || module_name == "ansible.builtin.include" || module_name == "ansible.legacy.include"
+        raise RemovedActionError.new(
+          "The 'ansible.builtin.include' action plugin has been removed. " \
+          "Use include_tasks or import_tasks instead. This feature was " \
+          "removed from ansible-core in a release after 2023-05-16.")
       end
 
       # Check if plugin is available - resolving a bare (non-FQCN) name
