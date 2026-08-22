@@ -1155,6 +1155,18 @@ module CrystalPlay
       vars_context["ansible_play_hosts_all"] = JSON::Any.new(play_host_names)
       vars_context["ansible_play_hosts"] = JSON::Any.new(play_host_names)
       vars_context["ansible_version"] = ANSIBLE_VERSION_MAGIC_VAR
+      # ansible_check_mode - real Ansible magic var (true under --check,
+      # false on a real run), entirely unimplemented before. Real
+      # ansible-role idioms reference it directly (`when: not ansible_
+      # check_mode`, `changed_when: not ansible_check_mode` for a task
+      # whose action can't run at all in check mode) - a bare dotted-
+      # free lookup, same "undefined" gap class as ansible_version.
+      # Found live benchmarking geerlingguy.apache-php-fpm (round 164):
+      # `ansible.builtin.file`'s own module-arg handling (via the
+      # apache role's "Remove default vhost" task) references it and
+      # hard-failed ("'ansible_check_mode' is undefined") under 0.9.517's
+      # strict module-arg templating.
+      vars_context["ansible_check_mode"] = JSON::Any.new(@check_mode)
 
       render_task_vars(task, vars_context, host.name)
 
@@ -4857,6 +4869,7 @@ module CrystalPlay
       vars_context["ansible_play_hosts_all"] = JSON::Any.new(play_host_names)
       vars_context["ansible_play_hosts"] = JSON::Any.new(play_host_names)
       vars_context["ansible_version"] = ANSIBLE_VERSION_MAGIC_VAR
+      vars_context["ansible_check_mode"] = JSON::Any.new(@check_mode)
 
       # Evaluate the handler's own when: - real Ansible skips a notified
       # handler whose condition is false (e.g. os_hardening's "Restart
