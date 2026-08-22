@@ -1561,8 +1561,13 @@ module CrystalPlay
       end
 
       # No candidate matched. `skip: true` makes that a skipped task;
-      # without it real Ansible errors, which this engine approximates by
-      # skipping too rather than inventing a second failure path.
+      # without it real Ansible errors ("The lookup plugin 'first_found'
+      # failed: No file was found when using first_found."). Callers
+      # decide how to surface that - execute_include_vars (the confirmed,
+      # live-verified case: robertdebock.release on Rocky 9.6) now fails
+      # the task via task.loop_first_found_skip; the general with_first_found
+      # loop path (any other module) still treats this the old
+      # skip-regardless-of-skip: way, undocumented/unverified so far.
       [] of JSON::Any
     end
 
@@ -1724,8 +1729,24 @@ module CrystalPlay
       # given directly; either way it is templated.
       if items = resolve_first_found(task, host, vars_context)
         if items.empty?
-          puts "skipping: [#{host.name}]".colorize(:cyan)
-          @results[host.name]["skipped"] += 1
+          # Real Ansible's first_found lookup plugin defaults `skip:` to
+          # false - with no candidate found, it raises ("The lookup
+          # plugin 'first_found' failed: No file was found when using
+          # first_found.") and the task FAILS, it does not silently skip.
+          # `skip: true` (parsed into loop_first_found_skip) is the only
+          # thing that makes real Ansible tolerate a miss. Found live
+          # benchmarking robertdebock.release on Rocky 9.6: no `CentOS-9.
+          # yml`/`Rocky-9.yml` vars file exists in the role at all - real
+          # ansible-playbook correctly fails at "load release_packages";
+          # this previously always skipped instead, silently continuing
+          # past a role whose OS-specific package list was never loaded.
+          if task.loop_first_found_skip
+            puts "skipping: [#{host.name}]".colorize(:cyan)
+            @results[host.name]["skipped"] += 1
+          else
+            finish_include_vars_failure(task, host,
+              "The lookup plugin 'first_found' failed: No file was found when using first_found.")
+          end
           return
         end
         vars_context["item"] = items.first
@@ -2915,12 +2936,20 @@ module CrystalPlay
       if changed_when || failed_when
         substitutor = VarSubstitutor.new(vars: eval_context, host_name: host.name)
 
-        if changed_when
-          hash["changed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitutor.substitute(changed_when), eval_context))
-        end
+        begin
+          if changed_when
+            hash["changed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitutor.substitute(changed_when), eval_context, strict: true))
+          end
 
-        if failed_when
-          hash["failed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitutor.substitute(failed_when), eval_context))
+          if failed_when
+            hash["failed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitutor.substitute(failed_when), eval_context, strict: true))
+          end
+        rescue e : ConditionalEvaluator::ConditionalBooleanError
+          # Matches real Ansible: a changed_when:/failed_when: whose value
+          # resolves to None (not a real boolean) fails the task outright
+          # rather than being silently truthy-converted to false.
+          hash["failed"] = JSON::Any.new(true)
+          hash["msg"] = JSON::Any.new(e.message || "")
         end
       end
 

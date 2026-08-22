@@ -1,0 +1,9 @@
+# include_vars: + with_first_found: with no matching candidate and no
+# skip: true - real Ansible's first_found lookup plugin defaults skip to
+# false, so this must FAIL the task ("The lookup plugin 'first_found'
+# failed: No file was found when using first_found."), not silently skip.
+- name: include_vars no-skip failure
+  hosts: testservers
+  gather_facts: false
+  roles:
+    - varloader_noskip

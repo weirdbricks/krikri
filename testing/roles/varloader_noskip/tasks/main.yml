@@ -1,0 +1,6 @@
+- name: no candidate matches and skip is NOT set (defaults to false)
+  ansible.builtin.include_vars:
+    file: "{{ item }}"
+    name: unused
+  with_first_found:
+    - NoSuchVarsFileAtAll.yml

@@ -803,4 +803,51 @@ describe CrystalPlay::ConditionalEvaluator do
       ).should be_true
     end
   end
+
+  describe "strict: true (changed_when:/failed_when: semantics)" do
+    # Real bug found benchmarking robertdebock.cve_2024_3094:
+    # `failed_when: xz_version.stdout | ansible.builtin.regex_search("5\.6\.(0|1)")`
+    # on an unaffected xz version (no regex match, regex_search returns
+    # None). Real Ansible's changed_when:/failed_when: (unlike when:,
+    # which freely truthy-converts) require the templated result to
+    # already be a real boolean - a None specifically raises "Conditional
+    # result (...) was derived from value of type 'NoneType'.
+    # Conditionals must have a boolean result." and fails the task,
+    # rather than being silently truthy-converted to false. Verified live
+    # against real ansible-playbook (Rocky 9.6): py failed rc=2, crystal
+    # (pre-fix) silently passed rc=0.
+    it "raises on a bare filter expression that resolves to None" do
+      v = Hash(String, JSON::Any).new
+      v["xz_version"] = JSON.parse(%({"stdout": "xz (XZ Utils) 5.2.5"}))
+      expect_raises(CrystalPlay::ConditionalEvaluator::ConditionalBooleanError) do
+        CrystalPlay::ConditionalEvaluator.evaluate(
+          %(xz_version.stdout | regex_search("5\\.6\\.(0|1)")), v, strict: true
+        )
+      end
+    end
+
+    it "does not raise for the same expression under when: semantics (strict: false)" do
+      v = Hash(String, JSON::Any).new
+      v["xz_version"] = JSON.parse(%({"stdout": "xz (XZ Utils) 5.2.5"}))
+      CrystalPlay::ConditionalEvaluator.evaluate(
+        %(xz_version.stdout | regex_search("5\\.6\\.(0|1)")), v
+      ).should be_false
+    end
+
+    it "does not raise when the filter actually matches (real boolean-shaped truthy result)" do
+      v = Hash(String, JSON::Any).new
+      v["xz_version"] = JSON.parse(%({"stdout": "xz (XZ Utils) 5.6.1"}))
+      CrystalPlay::ConditionalEvaluator.evaluate(
+        %(xz_version.stdout | regex_search("5\\.6\\.(0|1)")), v, strict: true
+      ).should be_true
+    end
+
+    it "does not raise for `not` over a None-yielding filter (Python `not` always yields a real bool)" do
+      v = Hash(String, JSON::Any).new
+      v["xz_version"] = JSON.parse(%({"stdout": "xz (XZ Utils) 5.2.5"}))
+      CrystalPlay::ConditionalEvaluator.evaluate(
+        %(not xz_version.stdout | regex_search("5\\.6\\.(0|1)")), v, strict: true
+      ).should be_true
+    end
+  end
 end

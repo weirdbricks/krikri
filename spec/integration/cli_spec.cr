@@ -420,6 +420,20 @@ describe "crystal-ansible CLI (--check mode)" do
       status.success?.should be_true
       output.should contain("prefixed=from-os-family-file")
     end
+
+    it "fails (not skips) when no with_first_found candidate exists and skip: true is NOT given" do
+      # Real bug found benchmarking robertdebock.release on Rocky 9.6:
+      # real Ansible's first_found lookup plugin defaults `skip:` to
+      # false - with no candidate found it raises and the include_vars:
+      # task FAILS, it does not silently skip. Only explicit `skip: true`
+      # (already covered by the specs above) tolerates a miss.
+      status, output = run_playbook(
+        "test-include-vars-noskip-fail.yml", [] of String, inventory: testservers
+      )
+
+      status.success?.should be_false
+      output.should contain("The lookup plugin 'first_found' failed")
+    end
   end
 
   describe "magic variables" do

@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.514-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.516-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,27 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.515`/`0.9.516`** - 2 real bugs found benchmarking 20 previously-
+  untested `robertdebock.*` roles on Rocky Linux 9.6 (round 161):
+  `changed_when:`/`failed_when:` never enforced real Ansible's
+  strict-boolean requirement for those two keywords specifically (unlike
+  `when:`, which correctly truthy-converts) - a bare filter chain like
+  `xz_version.stdout | regex_search("5\.6\.(0|1)")` returning `None` (no
+  match) silently passed instead of failing the task the way real
+  Ansible does (`cve_2024_3094`); `include_vars:` + `with_first_found:`
+  with no matching candidate and no `skip: true` always silently
+  skipped, when real Ansible's `first_found` lookup defaults `skip:` to
+  false and RAISES (`release` - the role's own OS-specific vars file
+  genuinely doesn't exist for Rocky 9, and real Ansible correctly fails
+  loading it while crystal silently continued with no package list at
+  all). Both fixed and live-reverified; 13 of the 20 roles hit external/
+  environmental blockers identical on both engines (missing repo
+  packages, 404'd pinned download URLs, GitLab-omnibus resource
+  flakiness), not engine bugs. One real architectural gap found and
+  documented but NOT fixed (`bios_update` - undefined-variable rendering
+  is lenient everywhere in this engine vs. real Ansible's strict-by-
+  default Jinja2, see `KNOWN_MISSING.md`). `crystal spec`: 1566
+  examples, 0 failures.
 - **`0.9.514`** - 2 more real bugs found benchmarking 10 more roles
   (linux-system-roles.* plus mixed authors, round 160, Rocky 9.6):
   `service_facts:` (backing `ansible_facts.services`) split each
@@ -481,20 +502,6 @@ for current-state detail.
   converged - fixed via `rpm -q --whatprovides`, matching real Ansible's
   python-dnf-backed resolution. All 4 live-reverified on fresh pairs.
   `crystal spec`: 1546 examples, 0 failures.
-- **`0.9.505`** - real bug found benchmarking `buluma.influxdb2` on Rocky
-  Linux 9.6 (round 155): `command:`'s `parse_command` treated every
-  unquoted `\` uniformly as "escape the next character," but a bare `\`
-  token (whitespace on both sides) is a documented, intentional Ansible
-  line-continuation convention - real Ansible's task-arg parser drops it
-  entirely and rejoins the remaining words with single spaces, before
-  Jinja templating even runs. The old uniform rule instead absorbed the
-  escaped space into the current token, producing a malformed argv
-  element with a stray leading space that a real CLI's flag parser
-  rejected outright - confirmed against `ansible.parsing.splitter`'s own
-  source and a real binary before fixing. Live-reverified byte-identical
-  `ok=14 changed=11 failed=0 skipped=7` cold and `ok=13 changed=0
-  failed=0 skipped=7` warm against real ansible-playbook 2.19.4.
-  `crystal spec`: 1542 examples, 0 failures.
 ---
 
 ## 🤝 Contributing

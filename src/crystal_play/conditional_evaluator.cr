@@ -36,7 +36,19 @@ module CrystalPlay
 
     # Evaluate a when: condition against a variable context
     # Returns true if condition passes, false otherwise
-    def self.evaluate(condition : String, vars : Hash(String, JSON::Any)) : Bool
+    # Raised only from the `strict:` path (changed_when:/failed_when:) when
+    # the condition's own value - not one produced by a real boolean
+    # operator (==, in, is defined, and/or/not, ...) - resolves to a
+    # genuine None/null (e.g. a filter like `regex_search()` finding no
+    # match). Real Ansible's changed_when/failed_when (unlike when:, which
+    # freely truthy-converts) requires the templated result to already be
+    # a literal boolean; a None specifically raises "Conditional result
+    # (...) was derived from value of type 'NoneType'. Conditionals must
+    # have a boolean result." rather than being silently treated as false.
+    class ConditionalBooleanError < Exception
+    end
+
+    def self.evaluate(condition : String, vars : Hash(String, JSON::Any), strict : Bool = false) : Bool
       # Strip whitespace, then unwrap a fully-parenthesized expression.
       # condition_to_string wraps each list-`when:` clause in parens
       # (`(a != 'x') and (b != 'y')`), and the recursion here hands each
@@ -72,7 +84,7 @@ module CrystalPlay
       # Handle 'or' operator (split and evaluate any part)
       if condition.includes?(" or ")
         parts = split_by_operator(condition, " or ")
-        return parts.any? { |part| evaluate(part.strip, vars) } if split_progressed?(parts, condition)
+        return parts.any? { |part| evaluate(part.strip, vars, strict) } if split_progressed?(parts, condition)
       end
 
       # Handle 'and' operator (split and evaluate all parts).
@@ -88,14 +100,18 @@ module CrystalPlay
       # evaluate/evaluate_truthiness deal with it, which terminates.
       if condition.includes?(" and ")
         parts = split_by_operator(condition, " and ")
-        return parts.all? { |part| evaluate(part.strip, vars) } if split_progressed?(parts, condition)
+        return parts.all? { |part| evaluate(part.strip, vars, strict) } if split_progressed?(parts, condition)
       end
 
       # Handle 'not' at the beginning - checked last (highest
       # precedence), after both boolean-operator splits above have had
       # a chance to peel off any top-level `and`/`or` first.
+      # Deliberately NOT strict here: Python/Jinja's `not x` always
+      # produces a real bool regardless of x's own type, so a None-typed
+      # operand under `not` is exactly as safe in real Ansible as under
+      # crystal's existing truthy conversion - no divergence to guard.
       if condition.starts_with?("not ")
-        return !evaluate(condition[4..-1].strip, vars)
+        return !evaluate(condition[4..-1].strip, vars, false)
       end
 
       # Handle 'is version(comparison_version, operator)' - Ansible's own
@@ -468,7 +484,7 @@ module CrystalPlay
       end
 
       # Handle bare variable (truthiness check)
-      return evaluate_truthiness(condition, vars)
+      return evaluate_truthiness(condition, vars, strict)
     end
 
     # If *expr* is entirely wrapped in one matching pair of outer parens
@@ -941,7 +957,7 @@ module CrystalPlay
     end
 
     # Evaluate truthiness of a value
-    private def self.evaluate_truthiness(condition : String, vars : Hash(String, JSON::Any)) : Bool
+    private def self.evaluate_truthiness(condition : String, vars : Hash(String, JSON::Any), strict : Bool = false) : Bool
       # Real Ansible/Python `bool([])` and `bool({})` are both False -
       # but #evaluate_value's own return union (String | Int64 | Bool |
       # Nil | Array(String)) has no Hash case at all (an empty Hash's
@@ -984,10 +1000,18 @@ module CrystalPlay
         # "False" - a non-empty, not-literally-"false" string is truthy
         # by the general rule, so the handler fired unconditionally
         # regardless of whether `mount_requests` actually mentioned swap.
+        if strict && value == "undefined"
+          raise ConditionalBooleanError.new(
+            "Conditional result (False) was derived from value of type 'NoneType'. " \
+            "Conditionals must have a boolean result.")
+        end
         !value.empty? && value != "false" && value != "False" && value != "undefined"
       when Int32, Int64
         value != 0
       when Nil
+        raise ConditionalBooleanError.new(
+          "Conditional result (False) was derived from value of type 'NoneType'. " \
+          "Conditionals must have a boolean result.") if strict
         false
       else
         true

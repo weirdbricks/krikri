@@ -10,14 +10,35 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.514`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.515`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.15` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
 
-(none currently open)
+- **Undefined-variable rendering is lenient everywhere, real Ansible is
+  strict by default.** Real `ansible-playbook` uses Jinja2
+  `StrictUndefined` for template resolution of module args (including
+  inside `debug:`/`rescue:` blocks) - referencing an undefined variable
+  in a `{{ }}` raises `AnsibleUndefinedVariable` and fails the task.
+  This engine instead renders undefined lookups as the literal string
+  `"undefined"` (a deliberate, pervasive sentinel used throughout the
+  codebase - see `ConditionalEvaluator`'s own truthiness handling) and
+  continues. Usually harmless (both engines end up erroring somewhere
+  downstream regardless), but not always: found live benchmarking
+  `robertdebock.bios_update` on Rocky 9.6 (round 161, 0.9.516) - the
+  role's own `rescue:` block references `bios_update_download_
+  bios_update_bootable_cd`, a variable that's genuinely never set on
+  this failure path. Real Ansible fails a SECOND time trying to render
+  that rescue's own `debug: msg:` (`'...' is undefined`), so the whole
+  play ends `failed`; crystal renders `msg: "...Error: undefined"` and
+  reports success. Fixing this properly means threading real
+  strict-undefined semantics through every module-arg substitution
+  path in the engine (`VariableSubstitutor`/`VarSubstitutor`/Crinja
+  alike) - a broad, high-regression-risk change affecting nearly every
+  task in every existing round, not a scoped fix. Revisit only with a
+  dedicated pass and full re-verification budget, not as a drive-by.
 
 Note: 0.9.474's entry here claiming `openssl_dhparam:`/
 `openssh_keypair:` had "no plugin, no `AVAILABLE_PLUGINS` entry" was
