@@ -184,6 +184,7 @@ module CrystalPlay
       # subdirectory - which needs WRITE permission on its parent
       # (collection1), and a root-owned 0755 ancestor denies that to a
       # non-root user ("Unable to delete file").
+      create_failure_msg = nil
       created = begin
         missing_components = [] of String
         cursor = path
@@ -196,14 +197,21 @@ module CrystalPlay
           apply_file_attributes(component, recursive: false)
         end
         true
-      rescue
+      rescue ex
+        # apply_file_attributes -> apply_single_file_attributes can raise
+        # a real, specific failure (owner:/group: naming a system user/
+        # group that doesn't exist - see that method's own comment) that
+        # must reach the user, not be discarded behind a generic "Failed
+        # to create directory" the way an actual Dir.mkdir permission
+        # failure is - keep ex.message when there is one.
+        create_failure_msg = ex.message
         false
       end
       unless created
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Failed to create directory"
+          msg: create_failure_msg || "Failed to create directory"
         )
       end
 
@@ -766,15 +774,30 @@ module CrystalPlay
       uid = -1
       gid = -1
 
+      # A requested owner:/group: that doesn't resolve to a real system
+      # user/group must FAIL the task - real Ansible's own file module
+      # raises "chown failed: failed to look up user/group <name>"
+      # immediately (before ever attempting the chown syscall). Real bug
+      # found benchmarking robertdebock.openbao_agent on Rocky 9.6 (round
+      # 162): `owner: openbao` on a directory-creation task, before any
+      # earlier task in the role creates that system user - real
+      # ansible-playbook correctly fails there; this previously left uid
+      # at its -1 sentinel (never set, never looked at again) and simply
+      # never called File.chown for the owner at all, silently leaving
+      # the directory root:root and reporting success.
       if owner = @params["owner"]?
         if user = System::User.find_by?(name: owner)
           uid = user.id.to_i
+        else
+          raise "chown failed: failed to look up user #{owner}"
         end
       end
 
       if group = @params["group"]?
         if grp = System::Group.find_by?(name: group)
           gid = grp.id.to_i
+        else
+          raise "chown failed: failed to look up group #{group}"
         end
       end
 
@@ -793,15 +816,23 @@ module CrystalPlay
       # downstream comparisons via the unfixed lstat read path then
       # always reported changed on warm rerun. With follow_symlinks
       # passed through here, the chown now reaches the target.
-      File.chown(path, uid: uid, gid: gid, follow_symlinks: follow) if uid != -1 || gid != -1
+      # Only the actual syscalls are swallowed below (e.g. a chown/chmod
+      # failing because this process isn't running as root/owner) - the
+      # owner:/group: LOOKUP failures above are real ansible-equivalent
+      # task failures and must propagate past this method, not be
+      # silently absorbed by the same blanket rescue.
+      begin
+        File.chown(path, uid: uid, gid: gid, follow_symlinks: follow) if uid != -1 || gid != -1
 
-      if mode = @params["mode"]?
-        apply_mode(path, mode)
+        if mode = @params["mode"]?
+          apply_mode(path, mode)
+        end
+      rescue
+        # A chmod/chown SYSCALL failure (e.g. not running as root/owner)
+        # shouldn't fail the whole task - matches the previous shell
+        # implementation's behavior of not checking these commands' exit
+        # codes either.
       end
-    rescue
-      # A chmod/chown failure (e.g. not running as root/owner) shouldn't
-      # fail the whole task - matches the previous shell implementation's
-      # behavior of not checking these commands' exit codes either.
     end
 
     private def apply_mode(path : String, mode : String)

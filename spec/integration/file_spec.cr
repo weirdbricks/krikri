@@ -243,6 +243,30 @@ describe "file plugin" do
       result = PluginSpecHelper.run("file", {"path" => path, "state" => "file", "owner" => me})
       result["changed"].as_bool.should be_false
     end
+
+    it "fails (matching real Ansible's own 'chown failed: failed to look up user') when owner: names a nonexistent user" do
+      # Real bug found benchmarking robertdebock.openbao_agent on Rocky
+      # 9.6 (round 162): a directory-creation task with `owner: openbao`
+      # BEFORE any earlier task creates that system user - real
+      # ansible-playbook correctly fails ("chown failed: failed to look
+      # up user openbao"); this previously left the chown uid at its -1
+      # sentinel (never set, never checked) and simply never attempted
+      # the chown at all, silently creating the directory as root:root
+      # and reporting success.
+      path = tmp_path("nonexistent-owner-dir")
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "directory", "owner" => "nonexistent_user_xyz_abc"})
+
+      result["failed"].as_bool.should be_true
+      result["msg"].as_s.should contain("chown failed: failed to look up user nonexistent_user_xyz_abc")
+    end
+
+    it "fails when group: names a nonexistent group" do
+      path = tmp_path("nonexistent-group-dir")
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "directory", "group" => "nonexistent_group_xyz_abc"})
+
+      result["failed"].as_bool.should be_true
+      result["msg"].as_s.should contain("chown failed: failed to look up group nonexistent_group_xyz_abc")
+    end
   end
 
   describe "recurse" do
