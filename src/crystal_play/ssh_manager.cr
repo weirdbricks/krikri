@@ -6,6 +6,33 @@ require "json"
 # Uses native SSH command with ControlMaster for connection pooling
 module CrystalPlay
   class SSHManager
+    # Default per-command execution timeout for #exec/#exec_script/
+    # #daemon_send. Real Ansible has NO default command-duration limit
+    # at all - a foreground task runs until it completes, however long
+    # that takes (only `async:` tasks get an explicit max duration);
+    # what actually detects a genuinely dead/unreachable host is the SSH
+    # connection's own keepalive (ServerAliveInterval=60 x
+    # ServerAliveCountMax=3 below, ~180s to a hard disconnect), which
+    # this timeout duplicates and undercuts. Previously 300s (5 minutes)
+    # - too short for entirely ordinary, legitimately slow real-world
+    # tasks: found live re-benchmarking buluma.netdata (round 163
+    # regression check) - its own installer genuinely compiles from
+    # source and took a confirmed 1536s (~25.6 minutes) on the real
+    # ansible-playbook side; crystal's identical task was killed at
+    # exactly 300s ("SSH command timed out... did not exit even after
+    # being killed") despite the remote command still actively running
+    # and eventually would have succeeded. The same 300s cap likely also
+    # explains 2 earlier "flaky"-looking incidents this session
+    # (robertdebock.luks, geerlingguy.java - both ordinary `dnf install`
+    # calls that occasionally took a bit over 300s on a slow mirror/cold
+    # host, not a genuine hang) that were chased down as one-off infra
+    # flakiness via isolated re-tests rather than recognized as this
+    # same root cause at the time. Raised to a generous but still-bounded
+    # 1 hour - long enough for realistic compile-from-source/large-
+    # package-install tasks, while the SSH keepalive above still catches
+    # a truly dead connection in ~3 minutes regardless of this value.
+    DEFAULT_EXEC_TIMEOUT_SECONDS = 3600
+
     # Control socket directory
     @@control_path_dir = "/tmp/.crystal-play-ssh"
     
@@ -107,7 +134,7 @@ module CrystalPlay
       user : String,
       command : String,
       port : Int32 = 22,
-      timeout : Int32 = 300,
+      timeout : Int32 = DEFAULT_EXEC_TIMEOUT_SECONDS,
       identity_file : String? = nil
     ) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
 
@@ -181,7 +208,7 @@ module CrystalPlay
       user : String,
       script : String,
       port : Int32 = 22,
-      timeout : Int32 = 300,
+      timeout : Int32 = DEFAULT_EXEC_TIMEOUT_SECONDS,
       identity_file : String? = nil
     ) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       init
@@ -283,7 +310,7 @@ module CrystalPlay
       module_name : String,
       config : JSON::Any,
       identity_file : String? = nil,
-      timeout : Int32 = 300
+      timeout : Int32 = DEFAULT_EXEC_TIMEOUT_SECONDS
     ) : JSON::Any
       init
       key = {host, user, port}
