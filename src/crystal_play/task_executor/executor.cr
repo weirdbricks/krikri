@@ -19,6 +19,30 @@ require "../custom_stats"
 require "random/secure"
 
 module CrystalPlay
+  # `ansible_version` - a real Ansible magic var (`{full, major, minor,
+  # revision, string}`) giving the CONTROLLER's ansible-core version, used
+  # by real roles for feature-detection (`ansible_version.string is
+  # version_compare(min_version, '>=')`). Entirely unimplemented before -
+  # any reference to it (even the common `ansible_version.string is
+  # version_compare(...)` idiom, a BARE dotted lookup) resolved to this
+  # engine's own "undefined" sentinel and either silently mis-evaluated
+  # the comparison or (since 0.9.517's strict module-arg templating) hard
+  # failed the task outright. Found live re-benchmarking xanmanning.k3s
+  # (round 163 regression check) - its own `pre_checks.yml` gates on
+  # exactly this pattern before doing anything else, so the WHOLE role
+  # failed at task 1 on every rerun. Reports a real ansible-core version
+  # (not this project's own "0.9.x" version number) deliberately: this
+  # engine's whole design goal is behavioral parity with real Ansible, and
+  # every version-gated role feature in the wild was written expecting a
+  # 2.x-shaped comparison target, not a sub-1.0 one - reporting crystal's
+  # own version here would make EVERY such min-version check fail
+  # unconditionally, a worse outcome than picking one fixed real version.
+  # 2.19.4 matches the exact ansible-core release this project's own
+  # benchmark rounds compare against (see CLAUDE.md/ROLES_TESTED.md).
+  ANSIBLE_VERSION_MAGIC_VAR = JSON.parse(%({
+    "full": "2.19.4", "major": 2, "minor": 19, "revision": 4, "string": "2.19.4"
+  }))
+
   # TaskExecutor - Executes tasks on hosts
   # Orchestrates task execution, variable substitution, and handler management
   class TaskExecutor
@@ -1130,6 +1154,7 @@ module CrystalPlay
       play_host_names = @hosts.map { |h| JSON::Any.new(h.name) }
       vars_context["ansible_play_hosts_all"] = JSON::Any.new(play_host_names)
       vars_context["ansible_play_hosts"] = JSON::Any.new(play_host_names)
+      vars_context["ansible_version"] = ANSIBLE_VERSION_MAGIC_VAR
 
       render_task_vars(task, vars_context, host.name)
 
@@ -4831,6 +4856,7 @@ module CrystalPlay
       play_host_names = @hosts.map { |h| JSON::Any.new(h.name) }
       vars_context["ansible_play_hosts_all"] = JSON::Any.new(play_host_names)
       vars_context["ansible_play_hosts"] = JSON::Any.new(play_host_names)
+      vars_context["ansible_version"] = ANSIBLE_VERSION_MAGIC_VAR
 
       # Evaluate the handler's own when: - real Ansible skips a notified
       # handler whose condition is false (e.g. os_hardening's "Restart
