@@ -1627,7 +1627,7 @@ module CrystalPlay
         files = (files_val && files_val.sequence?) ? files_val.to_a : [] of Crinja::Value
         paths = (paths_val && paths_val.sequence?) ? paths_val.to_a : ["files", "templates", "vars", "."].map { |root| Crinja::Value.new(root) }
 
-        rendered_paths = paths.map { |path_entry| JinjaFilters.resolve_first_found_root(env.from_string(path_entry.to_s).render, role_path) }
+        rendered_paths = paths.flat_map { |path_entry| JinjaFilters.resolve_first_found_roots(env.from_string(path_entry.to_s).render, role_path) }
 
         found = nil
         files.each do |file_entry|
@@ -1665,12 +1665,19 @@ module CrystalPlay
       role_path ? File.join(role_path, "files", path) : path
     end
 
-    # A relative first_found `paths:` entry resolves against the current
-    # role's own directory, not the process's cwd - same rule
-    # ExpressionEvaluator's own #resolve_first_found_root applies.
-    def self.resolve_first_found_root(path : String, role_path : String?) : String
-      return path if path.starts_with?('/')
-      role_path ? File.join(role_path, path) : path
+    # A relative first_found `paths:` entry can resolve against either
+    # the role's own ROOT directory OR (buluma.confluence's own `paths:
+    # ['../vars']` idiom, real Ansible resolves this relative to tasks/,
+    # not role_path itself) its tasks/ subdirectory - same two-root
+    # search ExpressionEvaluator's own #resolve_first_found_roots
+    # applies (see that method's comment for the full story and the
+    # round165 repro that found this gap independently on this,
+    # separate, Crinja-backed evaluator).
+    def self.resolve_first_found_roots(path : String, role_path : String?) : Array(String)
+      return [path] if path.starts_with?('/')
+      return [path] unless role_path
+
+      [File.join(role_path, path), Path.new(role_path, "tasks", path).normalize.to_s]
     end
 
     # Mirrors ExpressionEvaluator's own #fetch_url_lines (redirect-

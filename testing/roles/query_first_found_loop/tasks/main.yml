@@ -1,0 +1,15 @@
+- name: Include release specific variables
+  ansible.builtin.include_vars: "{{ _loop_var }}"
+  loop: "{{ query('first_found', _params) }}"
+  loop_control:
+    loop_var: _loop_var
+  vars:
+    _params:
+      files:
+        - "{{ inventory_hostname }}.yml"
+      paths:
+        - "../vars"
+
+- name: show it
+  ansible.builtin.debug:
+    msg: "confluence_marker={{ confluence_marker | default('MISSING') }}"

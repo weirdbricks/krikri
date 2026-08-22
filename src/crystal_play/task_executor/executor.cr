@@ -1698,13 +1698,33 @@ module CrystalPlay
       # gated by `when: __vars_file is file`) silently resolved `item`
       # as undefined and skipped every candidate - found live
       # benchmarking linux-system-roles.storage (round 159).
-      if loop_items = task.loop_items
+      # A TEMPLATED loop: (`loop: "{{ query('first_found', params) }}"` -
+      # buluma.confluence's own style, the modern idiom real ansible
+      # roles increasingly use in place of the with_first_found: keyword
+      # below) isn't a literal YAML list, so task.loop_items is nil for
+      # it - resolve_loop_template (the SAME general-purpose resolver
+      # #execute_task's own loop handling uses) is the fallback. Without
+      # this, a templated loop: fell all the way through to the single-
+      # invocation path below with NO item ever bound, so `include_vars:
+      # "{{ _loop_var }}"` (whatever the role names its loop_control:
+      # loop_var:) always resolved to this engine's own "undefined"
+      # sentinel regardless of what the template actually evaluated to.
+      # Found live benchmarking buluma.confluence (round 165).
+      if loop_items = task.loop_items || resolve_loop_template(task, vars_context)
         executed = false
         failed = false
         rendered_items = loop_items.map { |item| deep_render_item(item, vars_context, host.name) }
         rendered_items.each do |item|
           item_context = vars_context.dup
           item_context["item"] = item
+          # loop_control: { loop_var: some_name } exposes the item under
+          # a CUSTOM name instead of (real Ansible: in addition to) the
+          # default "item" - previously ignored entirely here, always
+          # binding only "item" regardless. buluma.confluence's own
+          # `loop_control: { loop_var: _loop_var }` needs `_loop_var`
+          # bound for its own `include_vars: "{{ _loop_var }}"` to
+          # resolve at all (round165).
+          item_context[task.loop_var.not_nil!] = item if task.loop_var
           # task.vars (e.g. `__vars_file: "{{ role_path }}/vars/{{ item
           # }}"`) is stored unrendered in vars_context - it must be
           # re-rendered against THIS item before when: (which reads it

@@ -163,6 +163,52 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("lookup('first_found', params)").should eq(File.join(role_dir, "vars", "Debian.yml"))
   end
 
+  it "supports query('first_found', ...) as a real list, not just lookup()" do
+    # Real bug found benchmarking buluma.confluence (round 165):
+    # `query(...)` (real Ansible's lookup(..., wantlist=True) shorthand,
+    # the standard idiom for `loop: "{{ query('first_found', params)
+    # }}"`) was entirely unrecognized - only `lookup(` was matched,
+    # so `query(...)` fell through to a plain variable-name lookup on
+    # the literal call text, always "undefined".
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "query_first_found_spec")
+    `rm -rf #{role_dir}`
+    Dir.mkdir_p(File.join(role_dir, "vars"))
+    File.write(File.join(role_dir, "vars", "Debian.yml"), "greeting: hello\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    v["params"] = JSON.parse(%({"files": ["Debian.yml"], "paths": ["vars"]}))
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("query('first_found', params)").should eq(%([#{File.join(role_dir, "vars", "Debian.yml").to_json}]))
+  end
+
+  it "query('first_found', ...) with no match returns an empty list, not a single undefined item" do
+    v = Hash(String, JSON::Any).new
+    v["params"] = JSON.parse(%({"files": ["NoSuchFile.yml"], "paths": ["/nonexistent"]}))
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("query('first_found', params)").should eq("[]")
+  end
+
+  it "resolves a first_found paths: entry relative to the role's tasks/ dir, not just role_path itself" do
+    # buluma.confluence's own idiom: `paths: ['../vars']`, meant to be
+    # interpreted relative to the INCLUDING TASK FILE's own directory
+    # (tasks/main.yml -> tasks/../vars == role_dir/vars) - real
+    # ansible-playbook resolves it this way; this engine previously only
+    # ever tried role_path itself as the base (role_dir/../vars, one
+    # level too far up), never finding the real file.
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_tasks_relative_spec")
+    `rm -rf #{role_dir}`
+    Dir.mkdir_p(File.join(role_dir, "vars"))
+    Dir.mkdir_p(File.join(role_dir, "tasks"))
+    File.write(File.join(role_dir, "vars", "Debian.yml"), "greeting: hello\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    v["params"] = JSON.parse(%({"files": ["Debian.yml"], "paths": ["../vars"]}))
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("lookup('first_found', params)").should eq(File.join(role_dir, "vars", "Debian.yml"))
+  end
+
   it "evaluates lookup('env', 'VAR') for both a set and an unset environment variable" do
     # Real bug found benchmarking ansible-community.ansible-vault's own
     # `vault_version: "{{ lookup('env', 'VAULT_VERSION') | default(

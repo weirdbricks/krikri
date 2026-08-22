@@ -444,6 +444,28 @@ describe "crystal-ansible CLI (--check mode)" do
       status.success?.should be_false
       output.should contain("The lookup plugin 'first_found' failed")
     end
+
+    it "resolves query('first_found', ...) as a real include_vars: loop source, with a custom loop_var and a tasks/-relative paths: entry" do
+      # Real bug found benchmarking buluma.confluence (round 165) -
+      # three independent gaps in one common modern idiom:
+      #  1. query(...) (real Ansible's lookup(..., wantlist=True)
+      #     shorthand) was entirely unrecognized as a function call.
+      #  2. parse_include_vars_task (a dedicated parser, not the
+      #     general task-parsing path) never called #find_loop_template
+      #     at all, so a TEMPLATED loop: (as opposed to a literal list
+      #     or with_first_found:) left task.loop_template nil.
+      #  3. The same dedicated parser never read loop_control: either,
+      #     so a custom loop_var (`_loop_var` here) never got bound -
+      #     Also: a `paths: ['../vars']` entry resolves against the
+      #     including task file's own directory (tasks/), not just
+      #     role_path itself.
+      status, output = run_playbook(
+        "test-query-first-found-loop.yml", [] of String, inventory: testservers
+      )
+
+      status.success?.should be_true
+      output.should contain("confluence_marker=found-via-query")
+    end
   end
 
   describe "strict-undefined module-arg templating" do

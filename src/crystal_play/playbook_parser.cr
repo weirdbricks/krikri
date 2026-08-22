@@ -1321,6 +1321,29 @@ module CrystalPlay
         task.loop_first_found_skip = first_found_skip?(with_first_found)
       elsif loop_yaml = task_hash["loop"]?.try(&.as_a?)
         task.loop_items = loop_yaml.map { |item| JSON.parse(item.to_json) }
+      elsif template_loop = find_loop_template(task_hash)
+        # A TEMPLATED loop: (`loop: "{{ query('first_found', params)
+        # }}"` - buluma.confluence's own style, the modern idiom real
+        # roles increasingly use instead of with_first_found: above)
+        # isn't a literal YAML list, so the `.as_a?` branch above misses
+        # it entirely - this parser never called the generic #find_loop_
+        # template every OTHER task-parsing path already uses, so
+        # task.loop_template stayed nil and the executor's own loop
+        # resolution had nothing to fall back to. Found live
+        # benchmarking buluma.confluence (round 165).
+        task.loop_template_kind = template_loop[0]
+        task.loop_template = template_loop[1]
+      end
+
+      # loop_control.loop_var - exposes the loop item under a custom
+      # name (real Ansible default "item"). Previously never parsed
+      # here at all (unlike every other task-parsing branch) - a role
+      # using `loop_control: { loop_var: _loop_var }` on an
+      # include_vars: task had `_loop_var` stay unbound regardless of
+      # what the loop actually resolved to (round165).
+      if loop_control = task_hash["loop_control"]?.try(&.as_h?)
+        task.loop_var = loop_control["loop_var"]?.try(&.as_s?)
+        task.index_var = loop_control["index_var"]?.try(&.as_s?)
       end
 
       task

@@ -1,0 +1,11 @@
+# Real bug found benchmarking buluma.confluence (round 165): loop: "{{
+# query('first_found', params) }}" combined with loop_control: {
+# loop_var: _loop_var } and a paths: ['../vars'] entry (relative to the
+# role's own tasks/ dir, not role_path itself) - three independent gaps
+# in one idiom (query() unrecognized, loop_control ignored by include_
+# vars:'s own dedicated parser, and single-root path resolution).
+- name: "query('first_found') as an include_vars: loop source"
+  hosts: testservers
+  gather_facts: false
+  roles:
+    - query_first_found_loop

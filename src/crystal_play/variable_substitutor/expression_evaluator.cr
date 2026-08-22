@@ -439,6 +439,28 @@ module CrystalPlay
           return evaluate_lookup(expr[7..-2])
         end
 
+        # `query('first_found', params)` - real Ansible's OTHER lookup-
+        # invocation syntax; unlike `lookup(...)` (which comma-joins a
+        # multi-result lookup into a scalar string unless `wantlist=True`
+        # is passed explicitly), `query(...)` is real Ansible's own
+        # `lookup(..., wantlist=True)` shorthand and ALWAYS returns a
+        # real list - the standard modern idiom for `loop: "{{
+        # query('first_found', params) }}"` (picking an OS-specific vars
+        # file to include, one candidate per iteration). Previously
+        # entirely unrecognized - `bare_call?` only ever matched
+        # "lookup(", so this fell through to a plain variable-name
+        # lookup on the literal text "query('first_found', _params)",
+        # always "undefined" - #resolve_loop_template's `loop:` then ran
+        # once with a bogus `_loop_var`, so `include_vars: "{{ _loop_var
+        # }}"` failed with "file not found: undefined" instead of the
+        # real per-OS vars file. Found live benchmarking buluma.confluence
+        # (round 165): real ansible-playbook resolved the loop to the
+        # real candidate (`ubuntu-22.04.yml`) and continued; crystal
+        # failed at the very first real task.
+        if bare_call?(expr, "query(")
+          return evaluate_query(expr[6..-2])
+        end
+
         # `range(...)` - real Jinja2/Python's function-call range syntax,
         # commonly used as a `loop:` source (`loop: "{{ range(1, 11) |
         # list }}"`) rather than the engine's own `with_sequence:`
@@ -1664,6 +1686,32 @@ module CrystalPlay
         end
       end
 
+      # `query(lookup_type, args)` - real Ansible's list-forcing sibling
+      # of `lookup(...)` (see the call site's own comment for why this
+      # exists as a separate entry point rather than just an alias).
+      # `first_found` is the only lookup type real playbooks are known
+      # to actually invoke this way in this codebase's own benchmark
+      # history so far - anything else best-effort delegates to
+      # #evaluate_lookup and wraps a non-list result in a single-element
+      # JSON array (an already-list-shaped result, e.g. `url` with
+      # `wantlist=True`, passes through unchanged).
+      private def evaluate_query(args : String) : String
+        parts = split_top_level_commas(args)
+        lookup_type = parts[0]?.try { |part| quoted_string_literal(part.strip) }.try(&.as_s?)
+
+        if lookup_type == "first_found"
+          params = parts[1]?.try { |part| resolve_plus_operand(part.strip) }
+          return "[]" unless params
+          result = evaluate_first_found(params)
+          return "[]" if result == "undefined"
+          return [result].to_json
+        end
+
+        raw = evaluate_lookup(args)
+        parsed = (JSON.parse(raw) rescue nil)
+        parsed.try(&.as_a?) ? raw : [raw].to_json
+      end
+
       private def evaluate_csvfile_lookup(raw_arg : String) : String
         tokens = raw_arg.strip.split(/\s+/)
         key = tokens[0]?
@@ -1915,7 +1963,7 @@ module CrystalPlay
         paths = paths_raw ? lookup_array(paths_raw) : default_first_found_paths
 
         renderer = VarSubstitutor.new(vars: @vars, host_name: "localhost")
-        rendered_paths = paths.map { |path_entry| resolve_first_found_root(renderer.substitute(path_entry.as_s? || "")) }
+        rendered_paths = paths.flat_map { |path_entry| resolve_first_found_roots(renderer.substitute(path_entry.as_s? || "")) }
 
         files.each do |file_entry|
           rendered_file = renderer.substitute(file_entry.as_s? || "")
@@ -1940,16 +1988,38 @@ module CrystalPlay
         [JSON::Any.new("files"), JSON::Any.new("templates"), JSON::Any.new("vars"), JSON::Any.new(".")]
       end
 
-      # A relative first_found `paths:` entry resolves against the
-      # current role's own directory (`role_path`, set as a magic var
-      # whenever the current task came from a role - see
-      # TaskExecutor#build_vars_context), not the process's cwd. An
-      # absolute entry, or any entry when there's no enclosing role,
-      # passes through unchanged.
-      private def resolve_first_found_root(path : String) : String
-        return path if path.starts_with?("/")
+      # A relative first_found `paths:` entry can resolve against EITHER
+      # of two different real-Ansible bases depending on the idiom a
+      # role happens to use, and there's no way to tell which from the
+      # path text alone - both are tried, in this order, first match
+      # wins:
+      #  1. The current role's own ROOT directory (`role_path`, a magic
+      #     var - see TaskExecutor#build_vars_context) - correct for
+      #     `paths: ['vars']`/`paths: ['files']` (geerlingguy.docker/
+      #     mysql/postgresql/php's own style).
+      #  2. The directory of the task file that's DOING the lookup -
+      #     approximated here as `role_path/tasks` (the overwhelmingly
+      #     common location for a role's own tasks/main.yml; a deeper
+      #     included tasks file would need the actual including file's
+      #     directory, not available to this evaluator - not chased
+      #     further without a real repro needing it) - correct for
+      #     `paths: ['../vars']` (buluma.confluence's own style, real
+      #     Ansible resolves this relative to tasks/, one level BELOW
+      #     role_path, not relative to role_path itself). Found live
+      #     benchmarking buluma.confluence (round 165): `paths: ['../
+      #     vars']` against `role_path` alone resolved to role_path's
+      #     own PARENT's "vars" dir (one level too far up) - never
+      #     found the real per-OS vars file real ansible-playbook found
+      #     via base 2, so include_vars: always got "undefined".
+      # An absolute entry, or any entry when there's no enclosing role,
+      # passes through unchanged (base 1 only, base 2 skipped - normalizing
+      # `role_path` itself as ".." there would be meaningless without one).
+      private def resolve_first_found_roots(path : String) : Array(String)
+        return [path] if path.starts_with?("/")
         role_path = @vars["role_path"]?.try(&.as_s?)
-        role_path ? File.join(role_path, path) : path
+        return [path] unless role_path
+
+        [File.join(role_path, path), Path.new(role_path, "tasks", path).normalize.to_s]
       end
 
       # Python/Jinja2 `range(stop)` / `range(start, stop)` /
