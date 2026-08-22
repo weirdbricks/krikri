@@ -78,6 +78,25 @@ describe LineEditor do
       changed.should be_true
     end
 
+    it "backrefs replace the WHOLE line, not just the regexp-matched span" do
+      # Real bug found benchmarking riemers.gitlab-runner's own "Set
+      # concurrent option": `regexp: ^(\s*)concurrent =`, `line:
+      # \1concurrent = 5`, backrefs: true against "concurrent = 1" -
+      # the regexp only matches the "concurrent =" prefix, not the
+      # whole line. Real Ansible's backrefs mode expands `line:`'s own
+      # backreferences and uses that as the COMPLETE new line
+      # (Python's `match.expand(line)`); this previously used
+      # `String#gsub(Regex, String)`, which replaces only the matched
+      # SPAN and leaves whatever wasn't matched (here, the " 1" value
+      # after the matched "concurrent =" prefix) appended verbatim -
+      # producing the corrupt "concurrent = 5 1" (invalid TOML;
+      # gitlab-runner itself then failed to parse its own config on
+      # every later run).
+      lines, changed = LineEditor.ensure_present(["concurrent = 1"], "\\1concurrent = 5", "^(\\s*)concurrent =", true, nil, nil)
+      lines.should eq(["concurrent = 5"])
+      changed.should be_true
+    end
+
     it "inserts after a matching insertafter pattern" do
       lines, changed = LineEditor.ensure_present(["[section]", "a=1"], "b=2", nil, false, "^a=", nil)
       lines.should eq(["[section]", "a=1", "b=2"])

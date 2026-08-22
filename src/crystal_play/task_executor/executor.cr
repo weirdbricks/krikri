@@ -1361,9 +1361,38 @@ module CrystalPlay
     private def render_include_role_vars(vars : Hash(String, JSON::Any)?, vars_context : Hash(String, JSON::Any), host_name : String) : Hash(String, JSON::Any)
       return Hash(String, JSON::Any).new unless vars
 
+      # The fix above (rendering each entry via
+      # render_include_role_var_value) still only worked when a vars:
+      # entry referenced something ALREADY in vars_context - a sibling
+      # entry from the SAME vars: block wasn't visible yet, because
+      # each was rendered one at a time straight against the original
+      # (unmodified) vars_context. A Hash has no meaningful evaluation
+      # order to Jinja - real Ansible's per-key lazy templating lets a
+      # vars: entry reference another regardless of which is written
+      # first in the YAML - but this did: linux-system-roles.logging's
+      # own `vars:` declares `rsyslog_custom_config_files: "{{
+      # __custom_config_files + logging_custom_config_files }}"`
+      # BEFORE the `__custom_config_files:` entry it depends on, so
+      # `__custom_config_files` looked up as whatever vars_context
+      # already had for that name (nothing) instead of this same
+      # include_role's own sibling definition - `rsyslog_custom_config_files`
+      # ended up "{{ }}" (undefined) concatenated with logging_custom_
+      # config_files, silently mis-rendering to the empty list's own
+      # STRING representation "[]" rather than a real empty array
+      # (surfaced when `| flatten` then split that 2-character string
+      # into two bogus loop items "[" and "]", each fed to `copy: src:`
+      # as a nonexistent file path). Mirrors build_vars_context +
+      # render_task_vars's own pattern for a regular task's vars: -
+      # seed every sibling's raw value into a scratch context FIRST,
+      # then render each key against that (so a forward reference sees
+      # the other's raw text and recursively re-renders it, the same
+      # way render_task_vars's substitutor lookups already do).
+      scratch = vars_context.dup
+      vars.each { |key, value| scratch[key] = value }
+
       rendered_vars = Hash(String, JSON::Any).new
-      vars.each do |key, value|
-        rendered_vars[key] = render_include_role_var_value(value, vars_context, host_name)
+      vars.each_key do |key|
+        rendered_vars[key] = render_include_role_var_value(scratch[key], scratch, host_name)
       end
       rendered_vars
     end
@@ -1612,6 +1641,83 @@ module CrystalPlay
     # individually.
     private def execute_include_vars(task : Task, host : Host)
       vars_context = build_vars_context(task, host)
+
+      # A real `loop:` (as opposed to with_first_found, handled below)
+      # was previously ignored entirely here - include_vars: was
+      # dispatched to this method before the generic loop-handling in
+      # #execute_task ever ran (see the `return
+      # execute_include_vars(task, host) if task.include_vars?` early
+      # return there), so the task ran once with no `item` bound at
+      # all. Any `vars:`/`when:` referencing `{{ item }}` (the
+      # linux-system-roles.* "Set platform/version specific
+      # variables" pattern: `include_vars: "{{ role_path }}/vars/{{
+      # item }}"` looped over os_family/distribution/distribution_
+      # major_version/distribution_version candidate filenames, each
+      # gated by `when: __vars_file is file`) silently resolved `item`
+      # as undefined and skipped every candidate - found live
+      # benchmarking linux-system-roles.storage (round 159).
+      if loop_items = task.loop_items
+        executed = false
+        failed = false
+        rendered_items = loop_items.map { |item| deep_render_item(item, vars_context, host.name) }
+        rendered_items.each do |item|
+          item_context = vars_context.dup
+          item_context["item"] = item
+          # task.vars (e.g. `__vars_file: "{{ role_path }}/vars/{{ item
+          # }}"`) is stored unrendered in vars_context - it must be
+          # re-rendered against THIS item before when: (which reads it
+          # as a bare variable, not a "{{ }}" expression) can see the
+          # real path, matching execute_looped_task's own identical
+          # per-iteration re-render.
+          task.vars.each { |key, raw_value| item_context[key] = raw_value unless key == "item" }
+          render_task_vars(task, item_context, host.name)
+          item_label = item.to_s
+          next unless when_passes?(task, item_context, host, item_label: item_label, defer_stats: true)
+
+          substitutor = VarSubstitutor.new(vars: item_context, host_name: host.name)
+          candidate = substitutor.substitute(task.include_vars_file || "").strip
+          path = resolve_include_vars_path(task, candidate)
+
+          unless path
+            puts "failed: [#{host.connection_host}] => (item=#{item_label})".colorize(:red)
+            puts "  Message: include_vars: file not found: #{candidate}".colorize(:red)
+            failed = true
+            next
+          end
+
+          loaded = begin
+            RoleLoader.load_vars_file(path)
+          rescue ex
+            puts "failed: [#{host.connection_host}] => (item=#{item_label})".colorize(:red)
+            puts "  Message: include_vars: could not parse #{path}: #{ex.message}".colorize(:red)
+            failed = true
+            next
+          end
+
+          store = (@included_vars[host.name] ||= Hash(String, JSON::Any).new)
+          if name = task.include_vars_name
+            store[name] = JSON::Any.new(loaded)
+          else
+            loaded.each { |key, value| store[key] = value }
+          end
+          @hv_generation += 1
+          vars_context = item_context
+
+          puts "ok: [#{host.connection_host}] => (item=#{item_label})".colorize(:green)
+          executed = true
+        end
+
+        if failed
+          @results[host.name]["failed"] += 1
+          @halted_hosts.add(host.name) unless task.ignore_errors
+        elsif executed
+          @results[host.name]["ok"] += 1
+        else
+          @results[host.name]["skipped"] += 1
+        end
+        return
+      end
+
       return unless when_passes?(task, vars_context, host)
 
       # The file may be chosen by with_first_found (exposed as `item`) or

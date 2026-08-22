@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.509-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.513-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,30 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.510`-`0.9.513`** (+ crinja `crystal-play-0.9.15`) - 4 real bugs
+  found benchmarking 10 more roles across `linux-system-roles.*` and
+  other non-`buluma` authors on Rocky Linux 9.6 (round 159): `{% for %}`
+  iterating an undefined variable silently rendered zero iterations
+  instead of raising (Crinja's plain `Undefined` only raised for the
+  strict variant; real Ansible raises for either - `ahuffman.resolv`'s
+  own unguarded `{% for ns in resolv_nameservers %}`), fixed upstream in
+  the crinja fork; `include_vars:` with a real `loop:` (not
+  `with_first_found:`) ran once with `item` never bound at all
+  (`linux-system-roles.storage`'s own per-OS `vars/` file loader);
+  `include_role: vars:` rendered each entry one at a time against the
+  original context, so one entry couldn't see a SIBLING entry from the
+  same `vars:` block declared later in the YAML (`linux-system-roles.
+  logging`'s own `rsyslog_custom_config_files` computed from
+  `__custom_config_files`, declared after it - silently mis-rendered to
+  the STRING `"[]"`, which `| flatten` then split into two bogus
+  character loop items); `lineinfile:`'s `backrefs: true` used
+  `String#gsub` to replace only the regexp-MATCHED span instead of the
+  whole line (real Ansible's own `match.expand(line)` semantics),
+  corrupting `riemers.gitlab-runner`'s own `config.toml` on any regexp
+  that doesn't span the full line. All 4 fixed and reverified; `rvm.ruby`
+  confirmed broken on both engines for an unrelated host/role mismatch
+  (hardcoded `ubuntu` become-user on a Rocky host), not an engine bug.
+  `crystal spec`: 1556 examples, 0 failures.
 - **`0.9.508`/`0.9.509`** - 5 real bugs found benchmarking 10 RHEL Galaxy
   roles from 9 DIFFERENT authors on Rocky Linux 9.6 (round 158,
   deliberately diversifying beyond the `buluma`-heavy prior rounds):
@@ -467,20 +491,6 @@ for current-state detail.
   skipped=2` cold and `ok=6 changed=0 failed=0 skipped=6` warm against
   real `ansible-playbook` 2.19.4. `crystal spec`: 1540 examples, 0
   failures.
-- **`0.9.503`** - INI inventory parser now handles quoted values as
-  strings (preserving leading zeros and quoted booleans), and maps
-  `null`/`None`/`~` to JSON null. `Host#connection_host` method added,
-  DRYing up 5 occurrences of the `ansible_host` lookup pattern.
-  (round 153 follow-up, 0.9.502): `lock_timeout` (default 60s) on
-  install/remove/upgrade, `update_cache_retries` (default 5) +
-  `update_cache_retry_max_delay` (default 12s, exponential backoff)
-  on `apt-get update` - matching real Ansible's `apt` module
-  parameter names and behavior. Round 153 found that crystal-ansible
-  failed fast on a fresh Atlantic.net Ubuntu host when Ubuntu's
-  unattended-upgr held the lock during `apt:`; real Ansible's apt
-  module waited it out via `lock_timeout: 60`. New regression spec
-  exercises the retry helpers via a stubbed proc; full suite 1519
-  examples, 0 failures.
 ---
 
 ## 🤝 Contributing

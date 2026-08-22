@@ -66,9 +66,33 @@ module CrystalPlay
 
         if found_index && pattern
           if backrefs
-            substituted = new_lines[found_index].gsub(Regex.new(pattern), line)
-            changed = substituted != new_lines[found_index]
-            new_lines[found_index] = substituted
+            # Real Ansible's lineinfile backrefs mode treats `line:` as
+            # a REPLACEMENT TEMPLATE for the WHOLE line (Python's
+            # `match.expand(line)`, then the entire existing line is
+            # overwritten by that expanded text) - not a per-match
+            # substring substitution. `String#gsub(Regex, String)`
+            # does the latter: it only replaces the SPAN the regexp
+            # actually matched and leaves whatever wasn't matched
+            # (e.g. the rest of the line after a regexp that only
+            # matches a line's leading portion) appended verbatim.
+            # Real bug found benchmarking riemers.gitlab-runner's own
+            # "Set concurrent option": `regexp: ^(\s*)concurrent =`,
+            # `line: \1concurrent = 5`, backrefs: true against the
+            # existing "concurrent = 1" - the regexp only matches the
+            # "concurrent =" prefix, so gsub replaced just that span
+            # and left the un-matched " 1" tail in place, producing
+            # the corrupt "concurrent = 5 1" (invalid TOML - gitlab-
+            # runner itself then failed to parse its own config on
+            # every later run: "expected a top-level item to end with
+            # a newline, comment, or EOF, but got '1' instead").
+            match = Regex.new(pattern).match(new_lines[found_index])
+            expanded = if match
+                         line.gsub(/\\(\d)/) { match[$~[1].to_i]? || "" }
+                       else
+                         line
+                       end
+            changed = expanded != new_lines[found_index]
+            new_lines[found_index] = expanded
             return {new_lines, changed}
           else
             changed = new_lines[found_index] != line
