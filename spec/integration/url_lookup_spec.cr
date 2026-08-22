@@ -76,10 +76,24 @@ describe "lookup('url', ...)" do
     result.should eq("line one,line two,line three")
   end
 
-  it "resolves to \"undefined\" for a 404, rather than raising" do
+  it "raises on a 404, matching real Ansible's own url lookup plugin" do
+    # Real bug found benchmarking buluma.victoriametrics (round 157): a
+    # stale `victoriametrics_version` default whose GitHub release
+    # checksums file has since been removed (404). Real ansible-playbook
+    # fails the whole enclosing set_fact: task right at the lookup
+    # ("The lookup plugin 'url' failed: Received HTTP error for <url> :
+    # HTTP Error 404: Not Found") - this previously degraded silently
+    # to "undefined" instead (this spec's own prior assertion, written
+    # without live verification against real Ansible), letting
+    # execution continue into a `with_items:` loop over a single bogus
+    # "undefined" item and only fail several tasks later for an
+    # unrelated reason - a real ok=/skipped= recap divergence from real
+    # Ansible even though both engines ultimately failed the
+    # broken-upstream role overall.
     v = Hash(String, JSON::Any).new
     evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
-    result = evaluator.evaluate(%(lookup('url', '#{url_lookup_base}/missing.txt', wantlist=True)))
-    result.should eq("undefined")
+    expect_raises(Exception, /HTTP Error 404/) do
+      evaluator.evaluate(%(lookup('url', '#{url_lookup_base}/missing.txt', wantlist=True)))
+    end
   end
 end

@@ -76,7 +76,7 @@ module CrystalPlay
       # found "0 upgraded, 0 newly installed, 0 to remove" and real
       # Ansible correctly reported `ok`. Found benchmarking robertdebock.
       # update's own "Update all software (apt)" task.
-      cache_update_is_sole_operation = !@params["name"]? && !@params["upgrade"]? && !@params["deb"]?
+      cache_update_is_sole_operation = !name_or_pkg_param? && !@params["upgrade"]? && !@params["deb"]?
 
       # Handle cache update
       if update_cache
@@ -113,7 +113,7 @@ module CrystalPlay
       # own "Run apt-get autoremove"/"Run apt-get clean" handlers do
       # exactly `autoremove: true` and `autoclean: true, clean: true`
       # with no name).
-      name_param = @params["name"]?
+      name_param = name_or_pkg_param?
       autoremove = is_true?(@params["autoremove"]?)
       autoclean = is_true?(@params["autoclean"]?)
       clean = is_true?(@params["clean"]?)
@@ -269,6 +269,12 @@ module CrystalPlay
           msg: "Invalid state: #{state}. Must be present, absent, or latest"
         )
       end
+    end
+
+    # `package:`/`pkg:` are documented aliases of `name:` for real
+    # Ansible's apt module (`aliases: [package, pkg]`).
+    private def name_or_pkg_param? : String?
+      @params["name"]? || @params["package"]? || @params["pkg"]?
     end
 
     # Parse package names from parameter (handles comma-separated, single,

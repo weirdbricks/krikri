@@ -33,7 +33,12 @@ module CrystalPlay
       # package cache" task does exactly this: `package: {update_cache:
       # true}`, no name: at all). Matches apt.cr's own identical
       # exception for the same case.
-      name = @params["name"]?
+      # `pkg:` is a documented alias of `name:` for real Ansible's
+      # package:/dnf:/yum: modules (this module's own list of aliases
+      # includes it) - buluma.bind's own `package: {pkg: "{{ item }}",
+      # state: present}` always failed "Missing required parameter:
+      # name" here, since only the literal `name:` key was ever read.
+      name = @params["name"]? || @params["pkg"]?
       update_cache = is_true?(@params["update_cache"]?)
       unless name
         return update_cache ? update_cache_only : PluginResult.new(

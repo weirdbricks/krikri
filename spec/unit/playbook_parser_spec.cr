@@ -1521,6 +1521,29 @@ describe CrystalPlay::PlaybookParser do
       task.params["creates"].should eq("{{ svn_repository_home }}/testrepo/README.txt")
     end
 
+    it "preserves internal newlines in a multi-statement shell: command, not just a trailing chdir/creates" do
+      # Real bug found benchmarking buluma.consul_ca (round 157):
+      # extract_command_special_params tokenized the WHOLE raw string
+      # via split_shell_like and rejoined the surviving tokens with
+      # `.join(" ")` - unconditionally, even when there were no
+      # trailing key=value params to strip at all. That collapsed every
+      # real newline in a multi-line `shell:` string (a common idiom
+      # for readability: `"set -euo pipefail\ncmd1 | cmd2\n"`) into a
+      # single space. `set -euo pipefail cmd1 | cmd2` on ONE line means
+      # something completely different from real Ansible's two
+      # sequential statements: `set` just assigns its trailing words as
+      # positional parameters ($1, $2, ...) and does NOT execute them -
+      # the actual `cmd1 | cmd2` pipeline the role intended never ran
+      # at all, while real ansible-playbook (which never rejoins/
+      # re-tokenizes the command string this way) ran it correctly.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.shell: "echo one\\necho two\\n"
+        YAML
+
+      task.params["cmd"].should eq("echo one\necho two\n")
+    end
+
     it "does not corrupt a command containing its own unrelated = text" do
       task = single_task(<<-YAML)
         - name: t

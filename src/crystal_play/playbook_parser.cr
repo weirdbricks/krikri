@@ -1702,7 +1702,7 @@ module CrystalPlay
     # case.
     private def self.parse_inline_kv_params(s : String) : Hash(String, String)
       params = Hash(String, String).new
-      split_shell_like(s).each do |token|
+      split_shell_like(s).each do |token, _end_offset|
         key, sep, value = token.partition('=')
         next if sep.empty? || key.empty?
         params[key] = unquote_inline_value(value)
@@ -1710,8 +1710,15 @@ module CrystalPlay
       params
     end
 
-    private def self.split_shell_like(s : String) : Array(String)
-      tokens = [] of String
+    # Returns each whitespace-delimited token alongside its END offset
+    # (exclusive, chars index) in *s* - callers that only need to strip
+    # a bounded number of trailing tokens (extract_command_special_params)
+    # use the offset to slice the ORIGINAL string for what remains,
+    # rather than reassembling it from the token array with a fixed
+    # single-space separator, which would destroy any real newlines a
+    # multi-line `shell:`/`command:` string had between statements.
+    private def self.split_shell_like(s : String) : Array({String, Int32})
+      tokens = [] of {String, Int32}
       current = String::Builder.new
       quote : Char? = nil
       brace_depth = 0
@@ -1744,7 +1751,7 @@ module CrystalPlay
           current << char
         elsif char.whitespace?
           if current.bytesize > 0
-            tokens << current.to_s
+            tokens << {current.to_s, i}
             current = String::Builder.new
           end
         else
@@ -1752,7 +1759,7 @@ module CrystalPlay
         end
         i += 1
       end
-      tokens << current.to_s if current.bytesize > 0
+      tokens << {current.to_s, chars.size} if current.bytesize > 0
       tokens
     end
 
@@ -1805,17 +1812,52 @@ module CrystalPlay
     private def self.extract_command_special_params(raw : String) : {String, Hash(String, String)}
       special = Hash(String, String).new
       tokens = split_shell_like(raw)
+      # End offset (exclusive) of the last token still kept as part of
+      # the command, or 0 if every token gets stripped as a special
+      # param - used to slice the ORIGINAL string below instead of
+      # `tokens.map(&.first).join(" ")`, which would collapse any real
+      # newlines a multi-line `shell:`/`command:` string had between
+      # statements into single spaces. Real bug found benchmarking
+      # buluma.consul_ca's own multi-statement `shell: "set -euo
+      # pipefail\n{{ cfssl_bin_directory }}/cfssl gencert ... | ...\n"`
+      # - collapsed onto one line, `set -euo pipefail <path>/cfssl
+      # gencert ...` became a single `set` invocation (which just
+      # assigns its trailing words as positional parameters and does
+      # NOT run them as a command), so the actual `cfssl gencert |
+      # cfssljson` pipeline never ran at all; `cfssljson` then read
+      # empty stdin and failed with "unexpected end of JSON input" -
+      # while real ansible-playbook, which never rejoins/re-tokenizes
+      # the command string this way, ran it correctly.
+      keep_end = raw.size
+      stripped_any = false
 
-      while token = tokens.last?
+      while pair = tokens.last?
+        token, end_offset = pair
         match = token.match(/\A(creates|removes|chdir|executable)=(.*)\z/m)
         break unless match
 
         tokens.pop
+        keep_end = end_offset - token.size
+        stripped_any = true
         key = match[1]
         special[key] ||= unquote_inline_value(match[2])
       end
 
-      {tokens.join(" "), special}
+      # Only rstrip when something was actually stripped (removing the
+      # single separator run right before the first stripped trailing
+      # token - any internal newlines are further left in the string,
+      # untouched either way). When nothing matched, `raw` is returned
+      # completely untouched, byte-for-byte - real Ansible never trims
+      # a `command:`/`shell:` string that has no trailing key=value
+      # params at all.
+      cmd = if tokens.empty?
+              ""
+            elsif stripped_any
+              raw[0...keep_end].rstrip
+            else
+              raw
+            end
+      {cmd, special}
     end
 
     # Helper: Safely convert any YAML value to string

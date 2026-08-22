@@ -2397,7 +2397,31 @@ module CrystalPlay
       substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
       return nil unless when_passes?(task, vars_context, host, item_label, shared: substitutor, defer_stats: defer_loop_stats)
-      substituted_params = substitute_task_params(task.params, substitutor)
+
+      begin
+        substituted_params = substitute_task_params(task.params, substitutor)
+      rescue ex
+        # A raised exception during param substitution (e.g. lookup('url',
+        # ...) hitting a real HTTP error - see ExpressionEvaluator#
+        # fetch_url_lines's own comment) means real Ansible's own
+        # "finalization of task args failed" hard stop: it fails the
+        # ENCLOSING TASK cleanly (one recap entry, playbook continues to
+        # whatever's next per normal when:/rescue: semantics), not the
+        # whole run. Before this rescue existed, nothing in the call
+        # chain up through crystal-play.cr's own top-level `run` caught
+        # such an exception at all, so it crashed the entire process
+        # with an unhandled-exception stack trace instead - found
+        # benchmarking buluma.victoriametrics's own `set_fact: _checksums:
+        # "{{ lookup('url', ...) }}"` against a 404'd release checksums
+        # file (a broken-upstream default, but real Ansible still
+        # degrades to one clean failed task, not a crash).
+        result = JSON.parse({
+          "changed" => false,
+          "failed"  => true,
+          "msg"     => ex.message || "Failed to resolve task arguments",
+        }.to_json)
+        return apply_changed_failed_when(task, result, vars_context, host)
+      end
 
       if task.module_name == "ansible.builtin.reboot"
         result = execute_reboot(substituted_params, exec_host, vars_context)

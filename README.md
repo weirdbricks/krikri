@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.506-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.507-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,23 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.507`** - 4 real bugs found benchmarking 10 more new RHEL Galaxy
+  roles on Rocky Linux 9.6 (round 157): `package:`/`dnf:`/`yum:` only
+  read the `name:` param, never the documented `pkg:` alias (real
+  Ansible's own argument_spec); a genuine Crinja lexer bug where a
+  U+00A0 NO-BREAK SPACE right after `{{` (a real-world copy/paste
+  artifact) broke expression parsing, fixed upstream in the crystal-play
+  fork of the crinja shard (tag bumped to `crystal-play-0.9.14`) by
+  switching to Unicode-aware whitespace detection; a multi-statement
+  `shell:`/`command:` string had its internal newlines collapsed into
+  single spaces by trailing-special-param extraction, turning `set -euo
+  pipefail\ncmd1 | cmd2` into one broken line; `lookup('url', ...)`
+  silently returned `"undefined"` on an HTTP error instead of failing,
+  which - once fixed to raise, matching real Ansible - exposed a second
+  bug where nothing caught that exception, crashing the whole process
+  instead of failing just the one task (also fixed). All 4 live-
+  reverified on fresh Atlantic.net Rocky 9.6 host pairs. `crystal spec`:
+  1549 examples, 0 failures.
 - **`0.9.506`** - 4 real bugs found benchmarking 10 new RHEL Galaxy roles
   on Rocky Linux 9.6 (round 156): no String method-call handling existed
   for Python's `.lstrip()`/`.rstrip()`/`.strip()` at all (`buluma.
@@ -459,13 +476,6 @@ for current-state detail.
   re-measurement would need to happen against a real `--forks 50`
   inventory on `0.9.501`, not the pre-`0.9.496` per-task fork+exec
   cycle the original 3-10× estimate was based on.
-- **`0.9.500`** - `TaskExecutor` runs persistent host worker fibers:
-  one fiber per host for the executor's lifetime (vs the old
-  spawn-per-(task, host) pattern). Per-task dispatch overhead: 88.6%
-  wall-clock reduction + ~60× allocation reduction (microbench;
-  real-task wall-clock is smaller since SSH round trips dominate).
-  `gather_facts_for_all_hosts` left as-is (one-shot per-play, no
-  churn issue). 1501 specs, 0 failures.
 ---
 
 ## 🤝 Contributing

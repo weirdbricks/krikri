@@ -1836,11 +1836,41 @@ module CrystalPlay
           return fetch_url_lines(resolved, redirects_left - 1)
         end
 
-        return "undefined" unless response.success?
+        unless response.success?
+          # Real Ansible's own url lookup plugin raises a hard
+          # AnsibleError (failing the whole enclosing task, e.g. a
+          # set_fact:) on ANY non-2xx response - verified against its
+          # exact live error message ("Received HTTP error for <url> :
+          # HTTP Error <code>: <reason>"). Found benchmarking buluma.
+          # victoriametrics's own checksum-lookup task: a stale
+          # `victoriametrics_version` default whose GitHub release
+          # checksums file has since been removed (404 - a broken-
+          # upstream default, not this engine's doing). Silently
+          # degrading to "undefined" here (the old behavior) let
+          # execution continue into a `with_items:` loop over a single
+          # bogus "undefined" item instead of failing right at the
+          # lookup, producing a real ok=/skipped= recap divergence from
+          # real Ansible even though both engines ultimately fail this
+          # broken-upstream role identically overall. A raised
+          # exception here propagates up through #evaluate/#substitute
+          # to the task executor's own generic rescue, which converts
+          # it into a normal failed PluginResult - the same path
+          # `subelements:`'s own `raise` (elsewhere in this file)
+          # already relies on for "fail the enclosing task", not a new
+          # mechanism.
+          raise "The lookup plugin 'url' failed: Received HTTP error for #{url} : HTTP Error #{response.status_code}: #{response.status.description}"
+        end
 
         lines = response.body.lines.map(&.strip).reject(&.empty?)
         lines.to_json
-      rescue ex
+      rescue ex : Socket::Error | IO::Error
+        # Genuine connection-level failures (DNS resolution, connection
+        # refused, timeout) still degrade softly to "undefined" rather
+        # than failing outright - only a real HTTP-level error response
+        # (raised explicitly above) matches real Ansible's hard-fail
+        # behavior; this project has no live evidence either way for
+        # the connection-error case, so it's left at its prior,
+        # conservative behavior rather than guessed at.
         "undefined"
       end
 

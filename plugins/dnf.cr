@@ -122,8 +122,10 @@ module CrystalPlay
     private def parse_package_names : Array(String)
       names = [] of String
       
-      # Try 'name' parameter (can be string or list)
-      if name_param = @params["name"]?
+      # Try 'name' parameter (can be string or list) - `pkg:` is a
+      # documented alias of `name:` for real Ansible's dnf module (see
+      # its own argument_spec: `aliases: [pkg]`).
+      if name_param = @params["name"]? || @params["pkg"]?
         trimmed = name_param.strip
         # `name: "{{ some_list_var }}"` templates a *list* var through a
         # plain `{{ }}` substitution - since @params values are always
