@@ -528,8 +528,29 @@ module CrystalPlay
     private def package_installed?(name : String) : Bool
       # Strip version specifiers for checking
       base_name = name.split(/[<>=]/).first.strip
-      
-      result = remote_exec("dnf list installed #{base_name} 2>/dev/null")
+
+      # `--whatprovides`, not a plain name lookup - real Ansible's dnf
+      # backend queries through python-dnf's own dependency-resolution
+      # API, which correctly recognizes a VIRTUAL package name (a real
+      # RPM's `Provides:`, not a package of its own) as already
+      # satisfied. `dnf list installed <name>` (the previous check here)
+      # only ever matches a REAL package literally named that - on RHEL
+      # 9's php 8.0 packaging, `php-json` is pure `Provides:` from
+      # `php-common` (JSON is bundled into PHP core as of 8.0) with no
+      # `php-json` RPM of its own at all, so BOTH `rpm -q php-json` and
+      # `dnf list installed php-json` report "not installed" even
+      # immediately after a successful `dnf install php-json` - every
+      # rerun re-"installed" it and reported changed: true forever,
+      # never converging. `rpm -q --whatprovides <name>` matches this
+      # exactly the way real Ansible does (verified live: resolves to
+      # the providing `php-common` package) while still matching a
+      # literal package name normally (a package always provides
+      # itself). Found benchmarking buluma.mediawiki's own `package:
+      # name: [php-intl, php-json, php-mbstring, php-mysqlnd, php-xml]`
+      # - the SAME bug class already independently present in
+      # package.cr's handle_dnf (plain `rpm -q`) and yum.cr's own copy
+      # of this exact function.
+      result = remote_exec("rpm -q --whatprovides #{base_name} 2>/dev/null")
       result[:exit_code] == 0
     end
     

@@ -1,6 +1,7 @@
 #!/usr/bin/env crystal
 
 require "json"
+require "file_utils"
 require "../src/crystal_play/base_plugin"
 
 module CrystalPlay
@@ -43,6 +44,38 @@ module CrystalPlay
 
       depth = @params["depth"]?
       depth_flag = depth ? "--depth #{depth} " : ""
+
+      if depth && version != "HEAD"
+        # Real Ansible's git module, when depth: is set and version:
+        # isn't HEAD, does NOT just shallow-clone the default branch and
+        # then try to check out an arbitrary ref against that limited
+        # history - its own fetch() computes a targeted refspec for the
+        # requested branch/tag (`+refs/tags/<version>:refs/tags/<version>`
+        # or the `refs/heads/` equivalent) and fetches THAT at the given
+        # depth, so the ref is actually present to check out. `git
+        # clone --branch <version>` achieves the same practical outcome
+        # in one step for a branch or tag version - it falls through to
+        # the plain shallow-clone-then-checkout path below only when
+        # *version* isn't a fetchable branch/tag name (e.g. a commit
+        # SHA), matching real Ansible's own "version is something that
+        # can't be fetched directly" fallback. Found benchmarking
+        # buluma.netdata's own `depth: 1, version: v1.44.0`: the naive
+        # `clone --depth 1` (default branch only) followed by `checkout
+        # v1.44.0` failed with "pathspec 'v1.44.0' did not match any
+        # file(s) known to git" - the tag was never fetched at all -
+        # while real ansible-playbook succeeded.
+        branch_clone_result = remote_exec("git clone --depth #{depth} --branch #{version} #{repo} #{dest}")
+        if branch_clone_result[:exit_code] == 0
+          return PluginResult.new(changed: true, failed: false, msg: "Cloned repository", after: current_commit(dest))
+        end
+        # version wasn't a directly-fetchable branch/tag name (e.g. a
+        # commit sha) - fall through to a normal shallow clone + checkout,
+        # same as real Ansible falling back to fetching everything.
+        # Clean up whatever partial state the failed attempt left behind
+        # so the plain `git clone` below isn't refused for cloning into
+        # a non-empty directory.
+        FileUtils.rm_rf(dest) if Dir.exists?(dest)
+      end
 
       clone_result = remote_exec("git clone #{depth_flag}#{repo} #{dest}")
       return git_failure("clone repository", clone_result) unless clone_result[:exit_code] == 0

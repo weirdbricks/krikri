@@ -355,23 +355,32 @@ end
 
 def gather_network_facts(facts)
   # `ip -4 route get 1` prints one line shaped like
-  # "1.0.0.0 via 192.168.1.1 dev eth0 src 192.168.1.50 uid 0" - $7 is the
-  # source address (this host's own IP on the default route), $5 the
+  # "1.0.0.0 via 192.168.1.1 dev eth0 src 192.168.1.50 uid 0" - $3 is the
+  # gateway (only present when the route actually has a "via" hop), $7
+  # the source address (this host's own IP on the default route), $5 the
   # outbound interface name. Real Ansible's `ansible_default_ipv4` fact
-  # includes both (plus more fields this doesn't bother gathering) -
+  # includes all three (plus more fields this doesn't bother gathering) -
   # `interface` specifically is what konstruktoid-hardening's
   # sysctl.ipv6.conf.j2 template reads (`ansible_facts.default_ipv4.
   # interface`) to scope an IPv6 sysctl key to the default route's own
   # interface. Omitting it left that lookup undefined, which the
   # `regex_replace` filter downstream can't operate on - failing the
-  # whole template render.
+  # whole template render. `gateway` was missing entirely (not just
+  # incomplete) until found benchmarking buluma.checkmk_agent's own
+  # `when: ansible_facts['default_ipv4'].gateway is defined` - real
+  # Ansible's `is defined` check was true (every routable host has a
+  # default gateway), crystal's was always false since the key never
+  # existed, so the gated debug task was silently skipped instead of
+  # run.
   default_route = `ip -4 route get 1 2>/dev/null | head -1`.strip
   route_fields = default_route.split(/\s+/)
   ipv4 = route_fields[6]?.to_s
   interface = route_fields[4]?.to_s
+  gateway = route_fields[1]? == "via" ? route_fields[2]?.to_s : ""
   if !ipv4.empty?
     default_ipv4 = {"address" => ipv4}
     default_ipv4["interface"] = interface unless interface.empty?
+    default_ipv4["gateway"] = gateway unless gateway.empty?
     facts["ansible_default_ipv4"] = default_ipv4
   end
   

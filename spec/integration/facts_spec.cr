@@ -42,4 +42,27 @@ describe "facts plugin" do
       version.should match(/^\d+\.\d+\.\d+$/)
     end
   end
+
+  describe "ansible_default_ipv4 fact" do
+    # Real bug found benchmarking buluma.checkmk_agent's own `when:
+    # ansible_facts['default_ipv4'].gateway is defined`: gather_network_
+    # facts parsed `ip -4 route get 1`'s "1.0.0.0 via 192.168.1.1 dev
+    # eth0 src 192.168.1.50 uid 0" output for `address` and `interface`
+    # (added for an earlier bug, see that fix's own comment) but never
+    # for `gateway` at all - the key genuinely didn't exist, so real
+    # Ansible's `is defined` check (true - every routable host has a
+    # default gateway) evaluated false here, and a `when:`-gated task
+    # relying on it was silently skipped instead of run. This spec runs
+    # against THIS machine's real network state (skipped if it has no
+    # default route at all, e.g. a fully offline sandbox).
+    it "includes gateway alongside address/interface, parsed from the real default route" do
+      result = PluginSpecHelper.run("facts", {} of String => String)
+
+      default_ipv4 = result["ansible_facts"]["ansible_default_ipv4"]?
+      pending! "no default route on this host" unless default_ipv4 && default_ipv4["address"]?
+
+      default_ipv4["gateway"]?.should_not be_nil
+      default_ipv4["gateway"].as_s.should match(/^\d+\.\d+\.\d+\.\d+$/)
+    end
+  end
 end

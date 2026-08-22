@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.505-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.506-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,25 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.506`** - 4 real bugs found benchmarking 10 new RHEL Galaxy roles
+  on Rocky Linux 9.6 (round 156): no String method-call handling existed
+  for Python's `.lstrip()`/`.rstrip()`/`.strip()` at all (`buluma.
+  ssh_keys`'s `path.lstrip('/')` collapsed to "undefined"), added with
+  correct char-SET semantics, not prefix removal; `git:`'s `clone`
+  shallow-cloned only the default branch and then tried to check out an
+  arbitrary tag/branch against that limited history (`buluma.netdata`'s
+  `depth: 1, version: v1.44.0`) - fixed via `--branch <version>` at
+  clone time, confirmed against `ansible-core`'s own `git.py` fetch()
+  logic; `ansible_facts['default_ipv4']` never included `gateway`
+  (`buluma.checkmk_agent`'s `when: ...gateway is defined` always false);
+  `rpm -q`/`dnf list installed`/`yum list installed` (3 independent
+  copies across `package.cr`/`dnf.cr`/`yum.cr`) never recognized a
+  VIRTUAL package (a real RPM's `Provides:`, not a package of its own -
+  RHEL 9's `php-json`, bundled into `php-common` since PHP 8.0) as
+  installed, so `buluma.mediawiki`'s own package install never
+  converged - fixed via `rpm -q --whatprovides`, matching real Ansible's
+  python-dnf-backed resolution. All 4 live-reverified on fresh pairs.
+  `crystal spec`: 1546 examples, 0 failures.
 - **`0.9.505`** - real bug found benchmarking `buluma.influxdb2` on Rocky
   Linux 9.6 (round 155): `command:`'s `parse_command` treated every
   unquoted `\` uniformly as "escape the next character," but a bare `\`
@@ -447,15 +466,6 @@ for current-state detail.
   real-task wall-clock is smaller since SSH round trips dominate).
   `gather_facts_for_all_hosts` left as-is (one-shot per-play, no
   churn issue). 1501 specs, 0 failures.
-- **`0.9.499`** - `VarSubstitutor.new`'s `vars.dup` is now lazy:
-  triggered only on first mutation (magic-var insertion or
-  `set_variable`), not eagerly at construction. Per-call bytes in the
-  templated substitute path drops 26%, in the no-placeholder
-  early-exit path drops 99.7%. For a 300-task hardening role against
-  1 host with ~6 plain-string params per task, this saves ~48 MB of
-  allocation per run. Aliasing-safety contract from `0.9.494`/`0.9.485`
-  preserved (writes still trigger a private copy). 1501 specs, 0
-  failures.
 ---
 
 ## 🤝 Contributing

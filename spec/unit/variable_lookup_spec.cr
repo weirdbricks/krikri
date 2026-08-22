@@ -124,6 +124,26 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     lookup.indexed("ansible_facts.distribution_version.split('.')[1]").should eq("04")
   end
 
+  it "resolves Python-style .lstrip()/.rstrip()/.strip() method calls on a string, char-set not prefix semantics" do
+    # Real bug found benchmarking buluma.ssh_keys's own known-hosts.yml:
+    # `src: "{{ ssh_keys_known_hosts_path.lstrip('/') }}.j2"` - no
+    # String method-call handling existed for lstrip/rstrip/strip at
+    # all, so the whole `{{ }}` collapsed to "undefined" and
+    # `template:`'s `src:` became the nonexistent path "undefined.j2".
+    # Python's str.lstrip(chars) strips a CHARACTER SET, not a prefix
+    # string - "xxyx".lstrip("xy") strips every leading x/y regardless
+    # of order, not just a literal "xy" prefix - verified against real
+    # Python, not assumed.
+    v = Hash(String, JSON::Any).new
+    v["path"] = JSON::Any.new("/etc/ssh/ssh_known_hosts")
+    v["padded"] = JSON::Any.new("xxyx-hello-yxxy")
+    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup.nested("path.lstrip('/')").should eq("etc/ssh/ssh_known_hosts")
+    lookup.nested("padded.lstrip('xy')").should eq("-hello-yxxy")
+    lookup.nested("padded.rstrip('xy')").should eq("xxyx-hello-")
+    lookup.nested("padded.strip('xy')").should eq("-hello-")
+  end
+
   it "resolves a Python-style .find(substring) method call on a string" do
     # Real bug found benchmarking geerlingguy.clamav's own "Run freshclam
     # after ClamAV packages change." task: `failed_when: - freshclam_

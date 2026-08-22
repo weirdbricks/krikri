@@ -172,6 +172,43 @@ describe "git plugin" do
     File.read(File.join(dest, "file.txt")).strip.should eq("one")
   end
 
+  it "checks out a tag correctly when depth: is also given (shallow clone)" do
+    # Real bug found benchmarking buluma.netdata (round 156): `clone`
+    # shallow-cloned only the default branch's tip (`git clone --depth
+    # N <repo>`) and then tried `git checkout <version>` against that
+    # limited history - a tag/branch other than the default branch's
+    # current tip was never fetched at all, failing with "pathspec
+    # '<version>' did not match any file(s) known to git", while real
+    # ansible-playbook succeeded (its own git module fetches a targeted
+    # refspec for the requested ref at the given depth instead of just
+    # shallow-cloning the default branch). v1 here is NOT on main's
+    # current tip (main has since moved to "commit 2") - exactly the
+    # shape that reproduces the bug.
+    repo = tmp_path("git-fixture-tag-depth")
+    build_fixture_repo(repo)
+    dest = tmp_path("git-clone-tag-depth-dest")
+    `rm -rf #{dest}`
+
+    result = PluginSpecHelper.run("git", {"repo" => repo, "dest" => dest, "version" => "v1", "depth" => "1"})
+
+    result["changed"].as_bool.should be_true
+    result["failed"].as_bool.should be_false
+    File.read(File.join(dest, "file.txt")).strip.should eq("one")
+  end
+
+  it "falls back to a full clone + checkout when depth: is given but version: is a commit sha (not directly fetchable)" do
+    repo = tmp_path("git-fixture-sha-depth")
+    shas = build_fixture_repo(repo)
+    dest = tmp_path("git-clone-sha-depth-dest")
+    `rm -rf #{dest}`
+
+    result = PluginSpecHelper.run("git", {"repo" => repo, "dest" => dest, "version" => shas["first_sha"], "depth" => "1"})
+
+    result["changed"].as_bool.should be_true
+    result["failed"].as_bool.should be_false
+    File.read(File.join(dest, "file.txt")).strip.should eq("one")
+  end
+
   it "fails with a clear message for an unresolvable version" do
     repo = tmp_path("git-fixture-badversion")
     build_fixture_repo(repo)

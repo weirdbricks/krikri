@@ -543,8 +543,15 @@ module CrystalPlay
     private def package_installed?(name : String) : Bool
       # Strip version specifiers for checking
       base_name = name.split(/[<>=]/).first.strip
-      
-      result = remote_exec("yum list installed #{base_name} 2>/dev/null")
+
+      # See dnf.cr's own identical fix/comment for the full story: a
+      # plain `yum list installed <name>` (like `rpm -q <name>`) only
+      # matches a REAL package literally named that, not a VIRTUAL
+      # package name satisfied purely via another real package's
+      # `Provides:` (e.g. RHEL 9's `php-json`, bundled into
+      # `php-common` since PHP 8.0) - `--whatprovides` matches both,
+      # the same way real Ansible's python-dnf-backed resolution does.
+      result = remote_exec("rpm -q --whatprovides #{base_name} 2>/dev/null")
       result[:exit_code] == 0
     end
     

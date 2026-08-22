@@ -9,8 +9,11 @@ module CrystalPlay
     # - Nested: {{ user.name.first }}
     # - Indexed: {{ array[0] }}, {{ dict['key'] }}
     class VariableLookup
-      REGEX_METHOD_SPLIT = /^split\(\s*(['"])(.*)\1\s*\)$/
-      REGEX_METHOD_FIND  = /^find\(\s*(['"])(.*)\1\s*\)$/
+      REGEX_METHOD_SPLIT  = /^split\(\s*(['"])(.*)\1\s*\)$/
+      REGEX_METHOD_FIND   = /^find\(\s*(['"])(.*)\1\s*\)$/
+      REGEX_METHOD_LSTRIP = /^lstrip\(\s*(?:(['"])(.*)\1\s*)?\)$/
+      REGEX_METHOD_RSTRIP = /^rstrip\(\s*(?:(['"])(.*)\1\s*)?\)$/
+      REGEX_METHOD_STRIP  = /^strip\(\s*(?:(['"])(.*)\1\s*)?\)$/
 
       @vars : Hash(String, JSON::Any)
 
@@ -339,6 +342,33 @@ module CrystalPlay
           return JSON::Any.new((index ? index : -1).to_i64)
         end
 
+        if match = part.match(REGEX_METHOD_LSTRIP)
+          # Python's str.lstrip(chars) strips any LEADING character that
+          # is a MEMBER of chars (a character set, not a prefix-string
+          # match) - repeated until a non-member is hit; no argument
+          # strips whitespace, matching Python's default. Real Ansible's
+          # Jinja2 environment calls this straight through as a native
+          # Python string method (not a `| filter`), so any string
+          # variable can use it directly in a plain `{{ }}` expression.
+          # Found benchmarking buluma.ssh_keys's own known-hosts.yml:
+          # `src: "{{ ssh_keys_known_hosts_path.lstrip('/') }}.j2"` -
+          # unimplemented here, the whole `{{ }}` collapsed to the
+          # literal text "undefined", and `template:`'s `src:` became
+          # the nonexistent path "undefined.j2".
+          chars = match[2]?
+          return JSON::Any.new(strip_chars(current.as_s, chars, left: true, right: false))
+        end
+
+        if match = part.match(REGEX_METHOD_RSTRIP)
+          chars = match[2]?
+          return JSON::Any.new(strip_chars(current.as_s, chars, left: false, right: true))
+        end
+
+        if match = part.match(REGEX_METHOD_STRIP)
+          chars = match[2]?
+          return JSON::Any.new(strip_chars(current.as_s, chars, left: true, right: true))
+        end
+
         if part == "splitlines()"
           # Real bug found live-verifying prometheus.prometheus.
           # node_exporter (round 22): its own _common role's checksum-
@@ -392,6 +422,19 @@ module CrystalPlay
         end
 
         nil
+      end
+
+      # Python's str.lstrip/rstrip/strip(chars) semantics: chars (nil ==
+      # whitespace) is a CHARACTER SET, not a prefix/suffix string - each
+      # leading/trailing character that's a member of the set is removed,
+      # repeated until a non-member character is hit (or the string is
+      # exhausted). Crystal's own String#lstrip/rstrip/strip(String) take
+      # a single string arg as a char set already, matching this exactly.
+      private def strip_chars(text : String, chars : String?, left : Bool, right : Bool) : String
+        result = text
+        result = chars ? result.lstrip(chars) : result.lstrip if left
+        result = chars ? result.rstrip(chars) : result.rstrip if right
+        result
       end
 
       # A whole-string quoted literal (`'sep'`, `"sep"`) - nil for
