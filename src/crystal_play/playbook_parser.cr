@@ -1319,6 +1319,20 @@ module CrystalPlay
       if with_first_found = task_hash["with_first_found"]?
         task.loop_first_found = parse_first_found(with_first_found)
         task.loop_first_found_skip = first_found_skip?(with_first_found)
+      elsif with_fileglob = task_hash["with_fileglob"]?
+        # `with_fileglob:` (geerlingguy.php_versions' own "Include OS-
+        # specific variables." - `include_vars: "{{ item }}" with_
+        # fileglob: ["{{ role_path }}/vars/{{ ansible_facts.os_family
+        # }}.yml", ...]`) was never recognized here at all - unlike the
+        # generic task parser (which sets task.loop_fileglob for every
+        # OTHER module), this dedicated include_vars: parser only ever
+        # checked with_first_found:/loop:. `item` stayed completely
+        # unbound, so `include_vars: "{{ item }}"` rendered to the
+        # literal text "undefined" - failing with "include_vars: file
+        # not found: undefined" instead of globbing the vars/ directory
+        # the way real Ansible does. Found benchmarking round168's
+        # geerlingguy.php_versions on Ubuntu 22.04.
+        task.loop_fileglob = with_fileglob.as_a?.try(&.map(&.as_s)) || [with_fileglob.as_s]
       elsif loop_yaml = task_hash["loop"]?.try(&.as_a?)
         task.loop_items = loop_yaml.map { |item| JSON.parse(item.to_json) }
       elsif template_loop = find_loop_template(task_hash)

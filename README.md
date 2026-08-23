@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.529-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.532-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,25 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.530`-`0.9.532`** - 3 real bugs found benchmarking 20 new
+  `geerlingguy.*` roles on Ubuntu 22.04 (round 168, full defaults again -
+  batching stayed clean a fourth consecutive round): `ansible_ssh_user`
+  (real Ansible's deprecated-but-still-honored alias of `ansible_user`)
+  was never populated as a template variable, only the canonical
+  spelling was - fixed generically by synthesizing `ansible_ssh_user`/
+  `ansible_ssh_host`/`ansible_ssh_port` as bidirectional aliases of
+  `ansible_user`/`ansible_host`/`ansible_port` (`phergie`); `include_
+  vars:` paired with `with_fileglob:` (not `with_first_found:`/`loop:`)
+  was never recognized by the dedicated include_vars: parser, unlike the
+  generic task parser which already handles `with_fileglob:` for every
+  other module - `item` stayed unbound, failing with "file not found:
+  undefined" instead of globbing the vars/ directory (`php_versions`); a
+  LOOPED handler's own `when:` (referencing `item`) was evaluated ONCE,
+  before the loop even resolved - with no `item` bound, a condition like
+  `item.l2chroot is not defined or item.l2chroot` was trivially true
+  regardless of any individual item's real value, so every item ran
+  unconditionally (`ssh-chroot-jail`). All three fixed and live-
+  verified. `crystal spec`: 1594 examples, 0 failures.
 - **`0.9.528`/`0.9.529`** - 2 real bugs found benchmarking 20 new
   `buluma.*` roles on Ubuntu 22.04 (round 167, full defaults again -
   batching stayed clean a third consecutive round): `ansible.builtin.
@@ -471,23 +490,6 @@ for current-state detail.
   this also retroactively explained 2 earlier incidents mis-diagnosed
   as one-off cloud flakiness. Zero unexplained regressions across the
   other 18 roles sampled. `crystal spec`: 1580 examples, 0 failures.
-- **`0.9.517`** - fixed a real, pervasive architectural gap found in round
-  161's own `robertdebock.bios_update` result (below): real Ansible's
-  module-arg templating is strict-undefined by default - a `debug: msg:`
-  (including inside a `rescue:` block) referencing a genuinely undefined
-  variable fails the task; this engine instead rendered the literal text
-  `"undefined"` and continued. `VarSubstitutor#substitute` gained a
-  `strict:` parameter, used only at module-arg finalization, that raises
-  for a BARE variable reference (`foo`/`foo.bar`/`foo['bar']` - no
-  filters/operators) resolving to nothing - deliberately narrow, so an
-  evaluator syntax-coverage gap elsewhere can't masquerade as a spurious
-  task failure; `when:`/filter-chain expressions/Crinja block tags stay
-  fully lenient by design (see `KNOWN_MISSING.md`). Surfaced and fixed a
-  dependency bug along the way: `shell:`/`command:`'s check-mode-skip
-  result was missing `stdout`/`stderr`/`rc`/etc. entirely instead of
-  populating them empty/zero/null the way real Ansible's own check-mode
-  skip does - verified live against ansible-core 2.19.4. `crystal spec`:
-  1573 examples, 0 failures.
 ---
 
 ## 🤝 Contributing

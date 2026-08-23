@@ -1208,6 +1208,37 @@ module CrystalPlay
       host.vars.each { |key, value| result[key] = value }
       @registered_vars[host.name].each { |key, value| result[key] = value }
 
+      # Real Ansible's variable manager treats `ansible_ssh_user`/
+      # `ansible_ssh_host`/`ansible_ssh_port` as deprecated-but-still-
+      # honored aliases of `ansible_user`/`ansible_host`/`ansible_port` -
+      # a role referencing the legacy spelling (geerlingguy.phergie's own
+      # `phergie_user: "{{ ansible_ssh_user }}"` default) sees the SAME
+      # value either way. This engine only ever populated the canonical
+      # spelling (naturally, since that's the literal inventory var name
+      # in the overwhelmingly common case) - the legacy alias resolved to
+      # nothing, rendering "undefined" wherever a role's own default used
+      # it (here: `file: {owner: "{{ phergie_user }}"}` -> "chown failed:
+      # failed to look up user undefined"). Synthesized both ways (`||=`,
+      # so an inventory line that already sets the legacy spelling
+      # explicitly still wins) so either spelling always resolves to
+      # whichever one is actually present. Found benchmarking round168's
+      # geerlingguy.phergie on Ubuntu 22.04.
+      if user = result["ansible_user"]?
+        result["ansible_ssh_user"] ||= user
+      elsif ssh_user = result["ansible_ssh_user"]?
+        result["ansible_user"] ||= ssh_user
+      end
+      if host_val = result["ansible_host"]?
+        result["ansible_ssh_host"] ||= host_val
+      elsif ssh_host = result["ansible_ssh_host"]?
+        result["ansible_host"] ||= ssh_host
+      end
+      if port = result["ansible_port"]?
+        result["ansible_ssh_port"] ||= port
+      elsif ssh_port = result["ansible_ssh_port"]?
+        result["ansible_port"] ||= ssh_port
+      end
+
       @base_context_a_cache[host.name] = result
       @base_context_a_generation[host.name] = @hv_generation
       result
@@ -1710,7 +1741,7 @@ module CrystalPlay
       # loop_var:) always resolved to this engine's own "undefined"
       # sentinel regardless of what the template actually evaluated to.
       # Found live benchmarking buluma.confluence (round 165).
-      if loop_items = task.loop_items || resolve_loop_template(task, vars_context)
+      if loop_items = task.loop_items || resolve_loop_template(task, vars_context) || resolve_fileglob(task, host, vars_context)
         executed = false
         failed = false
         rendered_items = loop_items.map { |item| deep_render_item(item, vars_context, host.name) }
@@ -4931,29 +4962,16 @@ module CrystalPlay
       vars_context["ansible_version"] = ANSIBLE_VERSION_MAGIC_VAR
       vars_context["ansible_check_mode"] = JSON::Any.new(@check_mode)
 
-      # Evaluate the handler's own when: - real Ansible skips a notified
-      # handler whose condition is false (e.g. os_hardening's "Restart
-      # auditd via service" handler is gated on os_family == 'RedHat', so
-      # it never runs on Debian/Ubuntu). Previously a notified handler ran
-      # unconditionally, which both did the wrong work and, when that work
-      # failed (service not present on the family), could halt the play.
-      # A skipped handler is not shown as changed/failed and isn't counted
-      # in the recap, matching real Ansible, which prints `skipping:` and
-      # moves on.
-      if when_condition = handler.when_condition
-        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
-        substituted_condition = substitutor.substitute(when_condition)
-
-        unless ConditionalEvaluator.evaluate(substituted_condition, vars_context)
-          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-          puts "skipping: [#{connection_host}]".colorize(:cyan)
-          return JSON.parse({
-            "changed" => false,
-            "failed"  => false,
-            "skipped" => true,
-          }.to_json)
-        end
-      end
+      # The handler's own when: is now checked inside #execute_handler_
+      # plugin_once instead of here - see that method's own comment for
+      # why: checking it here, before loop resolution, evaluated it with
+      # NO `item` bound at all, which mattered for a LOOPED handler whose
+      # own when: references `item` (e.g. geerlingguy.ssh-chroot-jail's
+      # own "add binary libs via l2chroot" handler: `when: item.l2chroot
+      # is not defined or item.l2chroot`). Deferring to per-item
+      # evaluation there covers both the looped and non-looped case
+      # identically (the non-looped call there gets a vars_context with
+      # no `item` either, same as before).
 
       # loop:/with_*: on a handler (e.g. linux-system-roles' journald
       # role: `loop: "{{ __journald_services }}"`, restarting each
@@ -5057,6 +5075,39 @@ module CrystalPlay
     # goes through - unchanged from before loop: support was added, just
     # extracted so execute_handler_loop can call it once per item.
     private def execute_handler_plugin_once(handler : Task, host : Host, vars_context : Hash(String, JSON::Any)) : JSON::Any
+      # Evaluate the handler's own when: here (not in #execute_handler_
+      # internal, before loop resolution) - real Ansible skips a
+      # notified handler whose condition is false (e.g. os_hardening's
+      # "Restart auditd via service" handler is gated on os_family ==
+      # 'RedHat'), and for a LOOPED handler, evaluates that condition
+      # ONCE PER ITEM with `item` bound, exactly like a regular task's
+      # own per-iteration when:. Checking it earlier (before the loop
+      # even resolved) meant a per-item condition referencing `item`
+      # (`when: item.l2chroot is not defined or item.l2chroot`) always
+      # saw an UNBOUND item, so `item.l2chroot is not defined` was
+      # trivially true regardless of any individual item's real value -
+      # every item ran unconditionally. Found benchmarking round168's
+      # geerlingguy.ssh-chroot-jail on Ubuntu 22.04 ("add binary libs via
+      # l2chroot" ran l2chroot against /usr/bin/which despite its own
+      # `l2chroot: false` flag, which failed since `which` isn't a
+      # dynamic executable). A skipped handler is not shown as changed/
+      # failed and isn't counted in the recap, matching real Ansible.
+      if when_condition = handler.when_condition
+        when_substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+        substituted_condition = when_substitutor.substitute(when_condition)
+
+        unless ConditionalEvaluator.evaluate(substituted_condition, vars_context)
+          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+          suffix = (item = vars_context["item"]?) ? " => (item=#{item_display(item)})" : ""
+          puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
+          return JSON.parse({
+            "changed" => false,
+            "failed"  => false,
+            "skipped" => true,
+          }.to_json)
+        end
+      end
+
       substitutor = VarSubstitutor.new(
         vars: vars_context,
         host_name: host.name

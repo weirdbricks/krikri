@@ -60,3 +60,51 @@ describe "include_vars: with a literal loop: (not with_first_found:)" do
     FileUtils.rm_rf(src_dir) if src_dir
   end
 end
+
+describe "include_vars: with with_fileglob: (not with_first_found:/loop:)" do
+  it "globs the pattern and includes every match, instead of running once with item unbound" do
+    # Real bug found benchmarking round168's geerlingguy.php_versions on
+    # Ubuntu 22.04: `include_vars: "{{ item }}" with_fileglob: ["{{
+    # role_path }}/vars/{{ ansible_facts.os_family }}.yml", ...]` -
+    # parse_include_vars_task only ever recognized with_first_found:/
+    # loop: as this module's loop forms, unlike the generic task parser
+    # (which sets task.loop_fileglob for every other module). `item`
+    # stayed completely unbound, rendering the literal text "undefined"
+    # and failing with "include_vars: file not found: undefined"
+    # instead of globbing the vars/ directory the way real Ansible does.
+    src_dir = File.tempname("include-vars-fileglob-role")
+    Dir.mkdir_p(File.join(src_dir, "roles", "myrole", "vars"))
+    Dir.mkdir_p(File.join(src_dir, "roles", "myrole", "tasks"))
+    File.write(File.join(src_dir, "roles", "myrole", "vars", "match.yml"), "myvar: hello\n")
+    File.write(File.join(src_dir, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+      - name: Include OS-specific variables.
+        include_vars: "{{ item }}"
+        with_fileglob:
+          - "{{ role_path }}/vars/*.yml"
+      - name: show it
+        debug:
+          var: myvar
+      YAML
+
+    playbook = File.join(src_dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - myrole
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: src_dir)
+
+    status.success?.should be_true
+    output.to_s.should contain("ok: [localhost] => (item=")
+    output.to_s.should contain("match.yml)")
+    output.to_s.should contain("myvar")
+    output.to_s.should contain("hello")
+    output.to_s.should_not contain("file not found: undefined")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+end
