@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.527-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.529-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,24 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.528`/`0.9.529`** - 2 real bugs found benchmarking 20 new
+  `buluma.*` roles on Ubuntu 22.04 (round 167, full defaults again -
+  batching stayed clean a third consecutive round): `ansible.builtin.
+  apt_key`'s idempotency check ran `apt-key --keyring X list` against a
+  keyring file that didn't exist yet, which as an undocumented side
+  effect creates it in GnuPG's modern "keybox" format instead of the
+  classic OpenPGP binary format apt's own `trusted.gpg.d` reader
+  requires - the later `apt-key add` inherited that wrong format,
+  producing a keyring apt rejected outright (`buluma.gitlab_ce`); `user:`
+  with `groups:` (not `group:`) on a brand-new user, where a group of
+  the same name as the user already exists, needed `useradd`'s `-N` flag
+  to stop its own default private-group-creation from colliding with
+  that group (`buluma.zeppelin`). Both fixed and live-verified against
+  real hosts. Also fixed a benchmark-harness false positive (not a
+  crystal-ansible bug): the env-fail detector's "Failed to fetch"
+  pattern matched a stale apt-mirror 404 and aborted the rest of the
+  round - narrowed to genuine connectivity-failure patterns only.
+  `crystal spec`: 1591 examples, 0 failures.
 - **`0.9.527`** - 2 real bugs found benchmarking 20 new `buluma.*` roles
   on Rocky 9.6 (round 166, the first round run with FULL defaults - no
   `--no-batching` flag at all - now that round 165 confirmed batching
@@ -453,27 +471,6 @@ for current-state detail.
   this also retroactively explained 2 earlier incidents mis-diagnosed
   as one-off cloud flakiness. Zero unexplained regressions across the
   other 18 roles sampled. `crystal spec`: 1580 examples, 0 failures.
-- **`0.9.518`/`0.9.519`** - 2 real bugs found benchmarking 20 more
-  previously-untested `robertdebock.*` roles on Rocky Linux 9.6 (round
-  162): real ansible-core's `ansible.builtin.include:` action was
-  removed entirely after 2023-05-16 and real ansible-playbook refuses to
-  even start a run using it (`rc=1`, zero tasks) - this engine treated
-  it as merely "not yet implemented" and skipped just that one task,
-  continuing to run (and eventually fail differently for an unrelated
-  reason) (`awx`); the `file:` module silently skipped the chown
-  entirely when `owner:`/`group:` named a system user/group that
-  doesn't exist yet, instead of failing the task the way real Ansible's
-  own "chown failed: failed to look up user/group" does - a directory
-  got silently created `root:root` instead of the intended owner, and
-  the role continued as if nothing were wrong (`openbao_agent`). Both
-  fixed and live-reverified byte-identical against real ansible-
-  playbook 2.19.4. 13 of the 20 roles hit external/environmental
-  blockers identical on both engines (missing repo packages, dead
-  pinned download URLs, no python2/pip3 on Rocky 9), not engine bugs;
-  one flagged anomaly (`luks` - a 300s SSH timeout installing a trivial
-  package on one host) did NOT reproduce on an independent single-host
-  re-test, confirmed as one-off cloud-provider flakiness. `crystal
-  spec`: 1578 examples, 0 failures.
 - **`0.9.517`** - fixed a real, pervasive architectural gap found in round
   161's own `robertdebock.bios_update` result (below): real Ansible's
   module-arg templating is strict-undefined by default - a `debug: msg:`

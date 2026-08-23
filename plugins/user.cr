@@ -150,6 +150,22 @@ module CrystalPlay
         create_home
       ) + quote_password_flag(PluginHelpers::UserState.useradd_password_args(@params["password"]?, locked))
 
+      # Real ansible.builtin.user's own create_user_useradd (see its
+      # source): when group: isn't given AND a group already exists with
+      # the SAME NAME as the user being created (e.g. a role's own prior
+      # `group: {name: zeppelin}` task before `user: {name: zeppelin,
+      # groups: zeppelin}` - the "add this user to its own like-named
+      # group via groups:/append:, not as a primary group" idiom), it
+      # passes `-N` (no-user-group) to stop useradd's own DEFAULT
+      # private-group-creation behavior (USERGROUPS_ENAB in /etc/
+      # login.defs) from colliding with that already-existing group.
+      # Without this, useradd fails outright: "group X exists - if you
+      # want to add this user to that group, use -g." - found
+      # benchmarking round167's buluma.zeppelin on Ubuntu 22.04.
+      if @params["group"]?.nil? && group_exists?(name)
+        args.unshift("-N")
+      end
+
       if expires = @params["expires"]?.try(&.to_i64?)
         name_arg = args.pop
         args << "-e" << "'#{PluginHelpers::UserState.expires_date(expires)}'" << name_arg
@@ -209,6 +225,10 @@ module CrystalPlay
     # numeric input is passed through unchanged, and usermod itself
     # accepts a GID just as well as a name, so this resolved value is
     # correct for both the comparison and the eventual usermod call.
+    private def group_exists?(group : String) : Bool
+      remote_exec("getent group #{group}")[:exit_code] == 0
+    end
+
     private def resolve_gid(group : String?) : String?
       return nil unless group
       return group if group.matches?(/\A\d+\z/)

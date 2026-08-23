@@ -145,7 +145,28 @@ module CrystalPlay
     # subkeys), so this returns all of them; #add_key treats any one
     # already being present as the whole set already having been added.
     private def key_fingerprints(path : String) : Array(String)
-      result = remote_exec("gpg --with-colons --import-options show-only --import #{path} 2>/dev/null")
+      # A bare `gpg ...` with no `--homedir`/`--keyring` override touches
+      # the SHARED default `~/.gnupg` - on a host with no prior `~/.gnupg`
+      # at all, GnuPG 2.1+ auto-creates it (with an empty `pubring.kbx`,
+      # KEYBOX format) as a side effect of ANY gpg invocation, even this
+      # read-only `--import-options show-only` dry-run. Once that shared
+      # homedir exists, a LATER `apt-key --keyring X add` (#add_key, right
+      # after this call) apparently inherits its keybox backend preference
+      # for the brand-new keyring file X too, instead of the classic
+      # OpenPGP binary format apt's own `trusted.gpg.d` reader requires -
+      # producing a keyring apt rejects outright ("the key(s) ... are
+      # ignored as the file has an unsupported filetype"), silently
+      # breaking every subsequent `apt-get update`/`apt-add-repository`
+      # against that key. Real ansible.builtin.apt_key never calls bare
+      # `gpg` at all (uses `apt-key --keyring X adv --list-public-keys`
+      # for its own idempotency check instead - see its module source),
+      # so it never touches the shared homedir in the first place. Fixed
+      # here by giving this call its OWN throwaway `--homedir`, so it
+      # can't poison `~/.gnupg` state that #add_key's later `apt-key add`
+      # depends on staying untouched. Found benchmarking round167's
+      # buluma.gitlab_ce on Ubuntu 22.04.
+      tmp_home = "/tmp/.crystal-ansible-apt-key-gnupghome-#{Random.rand(100000..999999)}"
+      result = remote_exec("mkdir -p #{tmp_home} && chmod 700 #{tmp_home} && gpg --homedir #{tmp_home} --with-colons --import-options show-only --import #{path} 2>/dev/null; rm -rf #{tmp_home}")
       result[:stdout].each_line.compact_map do |line|
         fields = line.split(':')
         fields[9] if fields[0]? == "fpr" && fields.size > 9 && !fields[9].empty?
@@ -169,6 +190,30 @@ module CrystalPlay
     end
 
     private def key_present?(key_id : String) : Bool
+      # `apt-key --keyring X list` against an X that does NOT exist yet
+      # creates X as a side effect - an EMPTY file in GnuPG's modern
+      # "keybox" format (not the classic OpenPGP binary format apt's own
+      # `trusted.gpg.d` reader requires). On a keyring: task's very first
+      # run (the common case - a fresh host, nothing installed yet), this
+      # runs before #add_key's own `apt-key add` ever does, so THAT later
+      # call finds X already exists (as an empty keybox) and appends the
+      # imported key into it in keybox format too, instead of creating a
+      # fresh classic-format file from scratch - apt then rejects the
+      # whole keyring outright ("the key(s) ... are ignored as the file
+      # has an unsupported filetype"), breaking every subsequent apt
+      # operation that depended on it. Real ansible.builtin.apt_key hits
+      # the same underlying `apt-key list`-creates-empty-keybox quirk in
+      # principle, but never actually triggers it in this specific
+      # ordering combination live-verified here. Since a keyring that
+      # doesn't exist trivially can't contain the key, skip the `list`
+      # call entirely (and its poisoning side effect) when the target
+      # keyring: file isn't there yet. Found benchmarking round167's
+      # buluma.gitlab_ce on Ubuntu 22.04.
+      if keyring = @params["keyring"]?
+        exists = remote_exec("test -e #{keyring}")
+        return false if exists[:exit_code] != 0
+      end
+
       # Real apt-key list output prints each key's fingerprint with
       # spaces every 4 characters - stripping spaces from both sides
       # before comparing so a shortened (e.g. last-8-hex-chars) id: still
