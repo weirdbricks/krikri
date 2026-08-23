@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.522-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.526-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,30 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.523`-`0.9.526`** - 3 real bugs found benchmarking 20 new
+  `buluma.*` roles on Ubuntu 22.04 (round 165, run WITH task batching
+  enabled - the default - specifically to close a coverage gap: every
+  round since 160 had run with `--no-batching` to isolate the
+  persistent-daemon path's own timing, leaving batching itself
+  unexercised against real roles for a long time): `query('first_found',
+  ...)` (real Ansible's list-forcing `lookup(..., wantlist=True)`
+  shorthand) as an `include_vars:` loop source was entirely broken -
+  three compounding gaps (the function itself unrecognized,
+  `include_vars:`'s own dedicated parser never handling a templated
+  `loop:`, and never parsing `loop_control:` either); a `loop:` item
+  needing TWO levels of variable indirection (the common `release ->
+  version -> download-dict` pattern) lost its native Hash type in a
+  2+-element loop, extensively live-bisected and confirmed NOT
+  batching-specific; `template:`/`copy:` `src:` doubled the subdir when
+  a role baked the `files`/`templates` prefix into `src:` itself. All
+  found via `buluma.confluence`, whose whole role now runs to
+  completion after all three fixes. Also: `file:` `owner:`/`group:`
+  didn't accept a raw numeric uid/gid string, only a name (`buluma.
+  maven`'s own `group: "0"`). Task batching itself checked out clean -
+  none of the bugs found were batching-specific; two (confluence's
+  item-typing bug, and a benchmark-harness gap fixed the same session)
+  were independently confirmed to reproduce identically with
+  `--no-batching` too. `crystal spec`: 1590 examples, 0 failures.
 - **`0.9.522`** - fixed another missing magic var found benchmarking 20
   new `geerlingguy.*` roles on Ubuntu 22.04 (round 164): `ansible_check_
   mode` (true under `--check`, false on a real run) was entirely
@@ -467,22 +491,6 @@ for current-state detail.
   is lenient everywhere in this engine vs. real Ansible's strict-by-
   default Jinja2, see `KNOWN_MISSING.md`). `crystal spec`: 1566
   examples, 0 failures.
-- **`0.9.514`** - 2 more real bugs found benchmarking 10 more roles
-  (linux-system-roles.* plus mixed authors, round 160, Rocky 9.6):
-  `service_facts:` (backing `ansible_facts.services`) split each
-  `systemctl` output line WITHOUT stripping leading indentation first,
-  producing a leading empty-string element that shifted every column
-  one field early - service state came back `"stopped"` for EVERY
-  service on the host regardless of reality, breaking
-  `linux-system-roles.network`'s own NetworkManager-vs-initscripts
-  provider autodetection (it always fell back to `initscripts`,
-  installing packages Rocky 9 doesn't have); `defaults/main/` and
-  `vars/main/` as a DIRECTORY of files (the same convention
-  `tasks/main/` already supported) was never read at all - only a
-  single `defaults/main.yml` was ever looked for - so a role using the
-  directory form (`kyl191.openvpn`) got none of its own defaults,
-  tripping a validation check real Ansible never reaches. Both fixed
-  and live-reverified. `crystal spec`: 1560 examples, 0 failures.
 ---
 
 ## 🤝 Contributing
