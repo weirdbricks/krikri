@@ -10,8 +10,8 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.535`.** Vendored `crinja` fork now at tag
-`crystal-play-0.9.15` (see `shard.yml`).
+**Currently at `0.9.536`.** Vendored `crinja` fork now at tag
+`crystal-play-0.9.16` (see `shard.yml`).
 
 ---
 
@@ -43,31 +43,44 @@ is the record.
   an open gap - revisit with a dedicated pass if a live round finds one
   that changes final task-pass/fail state, the same way this one did.
 
-- **Vendored Crinja's explicit-dash whitespace control (`{% for -%}`/
-  `{%- endfor %}`) doesn't strip a full multi-line whitespace run -
-  only the first line plus at most one newline.** Real Jinja2 strips
-  ALL contiguous whitespace on that side, unbounded. Root cause in
-  `~/git_work/crinja/src/util/string_trimmer.cr`'s `trim()`: its
-  "newline present in this text segment" branch only `lstrip`s the
-  first line, never touching subsequent lines' own leading whitespace;
-  `~/git_work/crinja/src/runtime/renderer.cr`'s `trim_text` conflates
-  the explicit-dash case with the much narrower config-driven implicit
-  `trim_blocks`/`lstrip_blocks` case via one shared left/right boolean
-  pair. First found round85 (`robertdebock.collectd` - cosmetic only
-  there, `Filter "*.conf"` still parsed fine with the extra
-  whitespace); round170 hit the same gap on `buluma.collectd`, where
-  it's NOT cosmetic - the stray blank lines/misindented directives are
-  enough to make the real `collectd` binary refuse to start. A round85
-  fix attempt (4 distinct flags: `explicit_left`/`explicit_right`/
-  `implicit_trim_blocks`/`implicit_lstrip_blocks`) regressed 21
-  previously-passing Crinja specs and was reverted - the existing
-  `trim()`'s default-argument behavior turned out more load-bearing
-  than a first read of the `renderer.cr` call site suggested. Properly
-  fixing this needs a spec-first pass inside the Crinja repo (add
-  failing specs for the exact multi-line explicit-dash case first,
-  audit every existing caller/spec of `trim()`/`trim_simple` before
-  touching signatures) - not a quick inline patch during a benchmark
-  round.
+- **Crinja parser can leak a stale `trim_left`/`left_is_block` state
+  across a nested block's own end-tag boundary.** Found while verifying
+  the explicit-dash whitespace-control fix (round170, `crystal-play-
+  0.9.16`): the sibling text immediately AFTER certain nested blocks
+  can come back with a spurious `trim_left = true` it never earned from
+  an actual adjacent `-` or the implicit `trim_blocks` config, silently
+  eating a real newline real Jinja2 keeps. Minimal repro (in the Crinja
+  repo, not crystal-ansible): `<div>\n    {% if true -%}\n\n
+  yay\n    {% endif %}\n</div>` (the `endif` has NO dash at all) still
+  loses the newline before `</div>`. Confirmed pre-existing, not a
+  0.9.16 regression. Root cause is in `~/git_work/crinja/src/parser/
+  template_parser.cr` - `@trim_left`/`@left_is_block` are shared
+  instance variables that likely need saving/restoring around the
+  recursive `parse_node_list(true)` call for a tag's own block, the
+  same class of fix `parse_fixed_string`'s own reset-after-use already
+  applies for the non-nested case. See that fork's own `PATCHES.md`
+  (0.9.16 entry) for the full writeup. Not attempted yet - needs its
+  own dedicated parser-state trace.
+
+- **A `None`/null Jinja value can render as the literal string `"none"`
+  (with a missing preceding newline) instead of an empty string, in a
+  specific end-of-template position.** Found round170 verifying the
+  whitespace-control fix against `buluma.collectd`'s real
+  `collectd.conf.j2`: a bare `{{ collectd_conf_extra }}` (default
+  `null`) at the very end of the template, immediately after a `{%
+  for %}...{% endfor %}` block and some static text, rendered as
+  `none` glued directly onto the preceding line with no newline -
+  real Ansible renders it as nothing at all (the blank line stays
+  blank). NOT reproducible in isolation (a bare `{{ null_var }}` alone,
+  or even the same var referenced via a role's own defaults with a
+  trivial one-task role, both correctly render as empty) - only shows
+  up in this specific "after a completed for-loop, at true end of a
+  large multi-hundred-line template" shape, so likely related to (but
+  not confirmed identical to) the Crinja parser leak above rather than
+  crystal-ansible's own value-formatting code. Needs a dedicated
+  isolated repro built up incrementally from the working one-line case
+  toward the full template shape to pin down exactly which construct
+  triggers it, before attempting a fix.
 
 Note: 0.9.474's entry here claiming `openssl_dhparam:`/
 `openssh_keypair:` had "no plugin, no `AVAILABLE_PLUGINS` entry" was

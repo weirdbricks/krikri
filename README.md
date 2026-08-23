@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.535-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.536-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,22 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.536`** - fixed the vendored Crinja fork's explicit-dash
+  whitespace-control gap (`{% for -%}`/`{%- endfor %}` only stripped
+  the first line of a multi-line whitespace run, not the whole thing -
+  round85/round170's `collectd.conf.j2` finding) for good this time:
+  spec-first in the Crinja repo itself (`crystal-play-0.9.16`), fixed
+  in `renderer.cr`'s `trim_text` dispatch without touching `String
+  Trimmer.trim`'s own logic/specs at all, and 9 pre-existing Crinja
+  specs that had baked in the old narrow-trim bug as "correct" were
+  each re-verified against a real `jinja2.Environment` render before
+  updating. Bonus: 3 "KNOWN DIVERGENCE from real Python jinja2"
+  recursive-for + `trim_blocks` cases now match real Jinja2 exactly
+  too. Found (and left open, for a future pass) two SEPARATE gaps
+  while verifying: a Crinja parser state leak across nested block
+  end-tags, and a `None`-renders-as-`"none"` case specific to a
+  trailing `{{ var }}` at true end-of-template. Crinja's own suite:
+  546 examples, 0 failures. `crystal spec`: 1601 examples, 0 failures.
 - **`0.9.533`-`0.9.535`** - 3 real bugs found benchmarking 40 new
   `buluma.*` roles on Ubuntu 22.04 (round 170, full defaults, two
   20-role batches with a fresh host pair per role): the `package:`
@@ -492,18 +508,6 @@ for current-state detail.
   item-typing bug, and a benchmark-harness gap fixed the same session)
   were independently confirmed to reproduce identically with
   `--no-batching` too. `crystal spec`: 1590 examples, 0 failures.
-- **`0.9.522`** - fixed another missing magic var found benchmarking 20
-  new `geerlingguy.*` roles on Ubuntu 22.04 (round 164): `ansible_check_
-  mode` (true under `--check`, false on a real run) was entirely
-  unimplemented - same class as `ansible_version` below. Also fixed a
-  benchmark-harness gap (not a crystal bug): real ansible-core 2.19's
-  own stricter `when:` conditional enforcement (rejects any non-boolean
-  result, even a common bare-truthy-variable check) needed its
-  documented `ANSIBLE_ALLOW_BROKEN_CONDITIONALS=true` escape hatch,
-  which this round's harness had omitted - a "divergence" that turned
-  out to be a missing env var, not an engine bug (and retroactively
-  explains round 163's own `geerlingguy.jenkins` finding the same way).
-  `crystal spec`: 1581 examples, 0 failures.
 ---
 
 ## 🤝 Contributing
