@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.542-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.543-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,7 +385,7 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
-- **`0.9.542`** - fixed a real recap divergence found live benchmarking
+- **`0.9.542`-`0.9.543`** - fixed a real recap divergence found live benchmarking
   RHEL/Rocky 9.6 (round 171, 40 new `robertdebock.*`/`buluma.*` roles):
   a task using a module this engine doesn't implement raised "Plugin
   not available" at PARSE time and was dropped entirely - including
@@ -403,8 +403,17 @@ for current-state detail.
   its own `when:` (or lack of one) - matching real Ansible whenever the
   condition is genuinely false (every case found so far), and a
   smaller, more visible divergence than vanishing entirely in the rare
-  case the condition would have been true. `crystal spec`: 1613
-  examples, 0 failures.
+  case the condition would have been true. This surfaced a direct
+  regression of its own (`0.9.543`): keeping the task instead of
+  dropping it meant the pre-flight plugin-upload pass now tried to
+  resolve/upload a binary for it too, crashing outright ("Plugin
+  binary not found") for any remote-host run - found immediately via
+  `robertdebock.php`'s own `community.general.apache2_module` task.
+  Fixed the same way this codebase already handles every other
+  pseudo-module with no plugin binary (`_block`/`_meta`/
+  `_include_tasks`/`ansible.builtin.reboot`): excluded from the
+  pre-flight required-plugins set. `crystal spec`: 1613 examples, 0
+  failures.
 - **`0.9.540`-`0.9.541`** - closed the last 2 items from the backlog
   pass below: a looped `when:` that raises an exception now correctly
   aggregates to `failed=1` in the recap (not `skipped=1`), and real

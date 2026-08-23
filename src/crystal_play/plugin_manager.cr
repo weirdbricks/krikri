@@ -291,6 +291,16 @@ module CrystalPlay
         # the whole run before a single task executed.
         next if task.include_tasks? || task.include_role? || task.include_vars? || task.validate_argument_spec? || task.meta?
 
+        # unavailable_module (see Task's own doc) has no plugin binary by
+        # definition - it's unconditionally skipped at run time via
+        # when_passes?, so pre-uploading it would crash the same way the
+        # pseudo-modules above used to: get_local_plugin_path would raise
+        # "Plugin binary not found" for a module this engine never built
+        # (found live benchmarking round171's robertdebock.php - apache2_
+        # module - right after unavailable_module started keeping these
+        # tasks instead of dropping them at parse time).
+        next if task.unavailable_module
+
         # ansible.builtin.reboot has no plugin binary at all (see
         # TaskExecutor#execute_reboot's own comment - it can't run ON
         # the target, since the target is about to reboot). Same crash
