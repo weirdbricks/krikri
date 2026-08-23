@@ -2352,15 +2352,22 @@ module CrystalPlay
     end
 
     private def when_passes?(task : Task, vars_context : Hash(String, JSON::Any), host : Host, item_label : String? = nil, shared : VarSubstitutor? = nil, defer_stats : Bool = false, defer_display : Bool = false) : Bool
-      return true unless when_condition = task.when_condition
+      # An unavailable-module task (see Task#unavailable_module) always
+      # takes the skip path below, regardless of its own when: (or lack
+      # of one) - it can never actually run, so it's treated the same as
+      # a when:-false task rather than reached via real conditional
+      # evaluation.
+      unless task.unavailable_module
+        return true unless when_condition = task.when_condition
 
-      substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
-      substituted_condition = substitutor.substitute(when_condition)
+        substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
+        substituted_condition = substitutor.substitute(when_condition)
 
-      begin
-        return true if ConditionalEvaluator.evaluate(substituted_condition, vars_context)
-      rescue ex
-        raise WhenEvaluationError.new("Error while evaluating conditional: #{ex.message}")
+        begin
+          return true if ConditionalEvaluator.evaluate(substituted_condition, vars_context)
+        rescue ex
+          raise WhenEvaluationError.new("Error while evaluating conditional: #{ex.message}")
+        end
       end
 
       # defer_stats: loop items and batch members pass this to only skip

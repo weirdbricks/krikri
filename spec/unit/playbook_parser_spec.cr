@@ -333,7 +333,7 @@ describe CrystalPlay::PlaybookParser do
       result.plays[0].tasks.size.should eq(1)
     end
 
-    it "skips a task that uses an unimplemented plugin instead of failing the play" do
+    it "keeps a task that uses an unimplemented plugin (marked unavailable_module) instead of dropping it or failing the play" do
       playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML
         - name: Uses unavailable plugin
           hosts: all
@@ -344,7 +344,8 @@ describe CrystalPlay::PlaybookParser do
         YAML
       )
 
-      playbook.plays[0].tasks.size.should eq(0)
+      playbook.plays[0].tasks.size.should eq(1)
+      playbook.plays[0].tasks[0].unavailable_module.should eq("ansible.builtin.mount")
     end
 
     it "raises when no plays parse successfully" do
@@ -1026,7 +1027,7 @@ describe CrystalPlay::PlaybookParser do
       inner_block.block_tasks.as(Array(CrystalPlay::Task)).map(&.name).should eq(["innermost"])
     end
 
-    it "skips (with a warning) an individual bad task inside a block without failing the whole block" do
+    it "keeps an individual bad task inside a block (marked unavailable_module) without failing the whole block" do
       task = single_task(<<-YAML)
         - name: my block
           block:
@@ -1037,18 +1038,21 @@ describe CrystalPlay::PlaybookParser do
               ansible.builtin.nope: {}
         YAML
 
-      task.block_tasks.as(Array(CrystalPlay::Task)).map(&.name).should eq(["good"])
+      children = task.block_tasks.as(Array(CrystalPlay::Task))
+      children.map(&.name).should eq(["good", "bad"])
+      children[1].unavailable_module.should eq("ansible.builtin.nope")
     end
   end
 
   describe "block/rescue/always in .validate and .stats" do
-    it "counts nested block/rescue tasks in .stats, not the block pseudo-task itself" do
+    it "counts nested block/rescue/always tasks in .stats, not the block pseudo-task itself" do
       stats = CrystalPlay::PlaybookParser.stats(CrystalPlay::PlaybookParser.parse_string(PLAYBOOK_WITH_BLOCK))
-      # inner one + inner two = 2 real tasks; "inner three" fails to parse
-      # (unimplemented plugin) so it's dropped before stats ever sees it,
-      # same as any other unparseable task.
-      stats["tasks"].should eq(2)
-      stats["modules_used"].should eq(1)
+      # inner one + inner two + inner three = 3 real tasks; "inner three"
+      # uses an unimplemented plugin (ansible.builtin.nope) but is kept
+      # (marked unavailable_module) rather than dropped, so it's still
+      # counted here same as any other task.
+      stats["tasks"].should eq(3)
+      stats["modules_used"].should eq(2)
     end
 
     it "does not flag the block pseudo-module itself as an unimplemented plugin" do

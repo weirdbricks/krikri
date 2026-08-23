@@ -9,6 +9,24 @@ module CrystalPlay
   class Task
     property name : String
     property module_name : String
+    # Set when the task's module didn't resolve to any plugin this engine
+    # ships (module_name above keeps the raw requested name, e.g.
+    # "community.general.zypper_repository"). Previously such a task
+    # raised "Plugin not available" at PARSE time and was dropped
+    # entirely - before its own when: was ever evaluated - so a task
+    # gated behind e.g. `when: ansible_facts['pkg_mgr'] == "zypper"`
+    # (always false on RHEL/Ubuntu) vanished from the recap/task list
+    # completely instead of printing "skipping" like real Ansible would
+    # (real ansible-playbook also evaluates when: before resolving the
+    # action). Found via round171's robertdebock.haproxy (seport, now a
+    # real plugin) and robertdebock.jenkins (zypper_repository, SUSE-only,
+    # out of this project's scope). `when_passes?` now funnels a task
+    # with this set through the same skip path unconditionally,
+    # regardless of what its own when: would evaluate to - matching real
+    # Ansible whenever the condition is genuinely false (every case found
+    # so far), and a smaller, more visible divergence than vanishing
+    # entirely in the rare case the condition would have been true.
+    property unavailable_module : String?
     property params : Hash(String, String)
     property vars : Hash(String, JSON::Any)
     # environment: - per-task env vars (real Ansible keyword). Raw,
@@ -486,6 +504,7 @@ module CrystalPlay
       "ansible.builtin.apt_key",
       "ansible.builtin.rpm_key",
       "ansible.posix.seboolean",
+      "community.general.seport",
       "ansible.builtin.deb822_repository",
       "ansible.posix.mount",
       "ansible.posix.sysctl",
@@ -1101,15 +1120,18 @@ module CrystalPlay
       # like `getent:` against ansible.builtin/etc first, same as real
       # Ansible's own module search path.
       resolved_module_name = resolve_module_name(module_name)
-      unless resolved_module_name
-        raise "Plugin not available: #{module_name}"
-      end
-      module_name = resolved_module_name
+      unavailable_module_name = resolved_module_name ? nil : module_name
+      module_name = resolved_module_name || module_name
 
       task = Task.new(name, module_name)
+      task.unavailable_module = unavailable_module_name
 
-      # Parse module parameters
-      task.params = parse_module_params(module_params.not_nil!, module_name)
+      # Parse module parameters - skipped for an unavailable module: this
+      # task can only ever end up skipped (see `unavailable_module`'s own
+      # doc), so its params are never read, and `parse_module_params`
+      # dispatches its own shaping (list-vs-scalar, etc) on module_name,
+      # which isn't meaningful for a module this engine doesn't recognize.
+      task.params = unavailable_module_name ? Hash(String, String).new : parse_module_params(module_params.not_nil!, module_name)
 
       # args: - a sibling keyword (not nested inside the module's own
       # key) for extra params on a free-form module, real Ansible's own

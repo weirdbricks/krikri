@@ -355,6 +355,7 @@ PLUGINS=(
     "apt_key"
     "rpm_key"
     "seboolean"
+    "seport"
     "deb822_repository"
     "mount"
     "sysctl"

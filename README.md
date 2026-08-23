@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.541-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.542-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,26 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.542`** - fixed a real recap divergence found live benchmarking
+  RHEL/Rocky 9.6 (round 171, 40 new `robertdebock.*`/`buluma.*` roles):
+  a task using a module this engine doesn't implement raised "Plugin
+  not available" at PARSE time and was dropped entirely - including
+  its `when:` never being evaluated - so a task correctly gated behind
+  an OS-family/package-manager check (e.g. `when: ansible_facts
+  ['pkg_mgr'] == "zypper"`, always false on RHEL/Ubuntu) vanished
+  completely from the task list/recap instead of printing "skipping"
+  like real Ansible (which also evaluates `when:` before resolving the
+  action). Found via `robertdebock.haproxy` (`community.general.
+  seport`, now a real plugin - manages SELinux port-type mappings via
+  `semanage port`) and `robertdebock.jenkins` (`community.general.
+  zypper_repository`, SUSE-only, out of scope). Fixed at the single
+  shared `when_passes?` choke point (all 7 call sites): a task whose
+  module never resolved now always takes the skip path, regardless of
+  its own `when:` (or lack of one) - matching real Ansible whenever the
+  condition is genuinely false (every case found so far), and a
+  smaller, more visible divergence than vanishing entirely in the rare
+  case the condition would have been true. `crystal spec`: 1613
+  examples, 0 failures.
 - **`0.9.540`-`0.9.541`** - closed the last 2 items from the backlog
   pass below: a looped `when:` that raises an exception now correctly
   aggregates to `failed=1` in the recap (not `skipped=1`), and real
@@ -486,24 +506,6 @@ for current-state detail.
   regardless of any individual item's real value, so every item ran
   unconditionally (`ssh-chroot-jail`). All three fixed and live-
   verified. `crystal spec`: 1594 examples, 0 failures.
-- **`0.9.528`/`0.9.529`** - 2 real bugs found benchmarking 20 new
-  `buluma.*` roles on Ubuntu 22.04 (round 167, full defaults again -
-  batching stayed clean a third consecutive round): `ansible.builtin.
-  apt_key`'s idempotency check ran `apt-key --keyring X list` against a
-  keyring file that didn't exist yet, which as an undocumented side
-  effect creates it in GnuPG's modern "keybox" format instead of the
-  classic OpenPGP binary format apt's own `trusted.gpg.d` reader
-  requires - the later `apt-key add` inherited that wrong format,
-  producing a keyring apt rejected outright (`buluma.gitlab_ce`); `user:`
-  with `groups:` (not `group:`) on a brand-new user, where a group of
-  the same name as the user already exists, needed `useradd`'s `-N` flag
-  to stop its own default private-group-creation from colliding with
-  that group (`buluma.zeppelin`). Both fixed and live-verified against
-  real hosts. Also fixed a benchmark-harness false positive (not a
-  crystal-ansible bug): the env-fail detector's "Failed to fetch"
-  pattern matched a stale apt-mirror 404 and aborted the rest of the
-  round - narrowed to genuine connectivity-failure patterns only.
-  `crystal spec`: 1591 examples, 0 failures.
 ---
 
 ## 🤝 Contributing
