@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.543-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.544-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,18 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.544`** - fixed `ansible.builtin.systemd` rejecting its own
+  documented hyphenated param aliases (`name`'s `service`/`unit`,
+  `daemon_reload`'s `daemon-reload`, `daemon_reexec`'s `daemon-reexec` -
+  per `ansible-doc ansible.builtin.systemd`) - only the canonical
+  underscored names were ever read. Found live benchmarking RHEL/Rocky
+  9.6 (round171, `buluma.gitea`): its own "Systemctl daemon-reload"
+  handler writes `daemon-reload: true` (the alias spelling), which hit
+  this plugin's "Must specify at least one of..." guard and failed
+  outright on any run where the notifying task actually changed
+  something - masked on an idempotent rerun (nothing changed, handler
+  never notified), so only cold showed it. `crystal spec`: 1613
+  examples, 0 failures.
 - **`0.9.542`-`0.9.543`** - fixed a real recap divergence found live benchmarking
   RHEL/Rocky 9.6 (round 171, 40 new `robertdebock.*`/`buluma.*` roles):
   a task using a module this engine doesn't implement raised "Plugin
@@ -496,25 +508,6 @@ for current-state detail.
   control gap first found (and left unfixed) in round85 - see
   `KNOWN_MISSING.md` for current status. `crystal spec`: 1601
   examples, 0 failures.
-- **`0.9.530`-`0.9.532`** - 3 real bugs found benchmarking 20 new
-  `geerlingguy.*` roles on Ubuntu 22.04 (round 168, full defaults again -
-  batching stayed clean a fourth consecutive round): `ansible_ssh_user`
-  (real Ansible's deprecated-but-still-honored alias of `ansible_user`)
-  was never populated as a template variable, only the canonical
-  spelling was - fixed generically by synthesizing `ansible_ssh_user`/
-  `ansible_ssh_host`/`ansible_ssh_port` as bidirectional aliases of
-  `ansible_user`/`ansible_host`/`ansible_port` (`phergie`); `include_
-  vars:` paired with `with_fileglob:` (not `with_first_found:`/`loop:`)
-  was never recognized by the dedicated include_vars: parser, unlike the
-  generic task parser which already handles `with_fileglob:` for every
-  other module - `item` stayed unbound, failing with "file not found:
-  undefined" instead of globbing the vars/ directory (`php_versions`); a
-  LOOPED handler's own `when:` (referencing `item`) was evaluated ONCE,
-  before the loop even resolved - with no `item` bound, a condition like
-  `item.l2chroot is not defined or item.l2chroot` was trivially true
-  regardless of any individual item's real value, so every item ran
-  unconditionally (`ssh-chroot-jail`). All three fixed and live-
-  verified. `crystal spec`: 1594 examples, 0 failures.
 ---
 
 ## 🤝 Contributing

@@ -36,11 +36,21 @@ module CrystalPlay
     end
 
     def execute : PluginResult
-      name = @params["name"]?
+      # name/daemon_reload/daemon_reexec all have real Ansible-documented
+      # hyphenated aliases (`ansible-doc ansible.builtin.systemd`: name's
+      # are service/unit; daemon_reload's is daemon-reload; daemon_
+      # reexec's is daemon-reexec) - found via round171's buluma.gitea,
+      # whose own "Systemctl daemon-reload" handler writes `daemon-
+      # reload: true` (the alias spelling, not the canonical param name).
+      # Previously only the canonical name was read, so this handler hit
+      # the "no action" guard below and failed outright every time its
+      # notifying task actually changed something, instead of running
+      # the reload real ansible-playbook performs.
+      name = @params["name"]? || @params["service"]? || @params["unit"]?
       state = @params["state"]?
       enabled = @params["enabled"]?
       masked = @params["masked"]?
-      daemon_reload = is_true?(@params["daemon_reload"]?)
+      daemon_reload = is_true?(@params["daemon_reload"]? || @params["daemon-reload"]?)
       # daemon_reexec: yes/no - `systemctl daemon-reexec`, re-executing
       # systemd itself (distinct from daemon-reload). Entirely
       # unimplemented before - fell into the "no action" guard below,
@@ -48,7 +58,7 @@ module CrystalPlay
       # handler (`ansible.builtin.systemd: {daemon_reexec: true}`, no
       # other params at all - round 18), which failed outright instead
       # of running the reexec real ansible-playbook performs.
-      daemon_reexec = is_true?(@params["daemon_reexec"]?)
+      daemon_reexec = is_true?(@params["daemon_reexec"]? || @params["daemon-reexec"]?)
 
       # Must have at least one action. Unlike `service`, name is optional
       # (a task may only want daemon_reload/daemon_reexec), so the "no
