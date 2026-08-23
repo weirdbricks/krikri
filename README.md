@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.536-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.539-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,29 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.537`-`0.9.539`** - a "clear the backlog" pass through every
+  documented-but-unfixed gap found across `KNOWN_MISSING.md`/
+  `ROLES_TESTED.md`/session history, user-requested after the Crinja
+  whitespace fix below showed a gap could linger for many rounds once
+  called "not a quick fix": PLAY RECAP now always prints all 7 counters
+  (`ok=`/`changed=`/`unreachable=`/`failed=`/`skipped=`/`rescued=`/
+  `ignored=`) even at 0, matching real `ansible-playbook` exactly
+  (previously omitted several whenever they were 0, and never printed
+  `unreachable=` at all); `notify:` targets are now statically validated
+  against the play's own handlers at parse time, matching real Ansible's
+  "ERROR! The requested handler was not found" upfront refusal instead
+  of silently no-op'ing an unresolvable notify: and completing "successfully"
+  (`robertdebock.roundcubemail`, round93); a `when:` condition that
+  raises an exception (`mounts | selectattr(...) | first` on an empty
+  match, `robertdebock.mount_options`) used to crash the ENTIRE process
+  with an unhandled-exception stack trace instead of failing just the
+  one task - fixed centrally so all 7 `when:` evaluation call sites
+  (solo/looped/batched tasks, `meta:`) are covered, including
+  `ignore_errors:` semantics. Also found (auditing, not new bugs): 3
+  older "documented not fixed" rows (`robertdebock.postfix`/`.podman`/
+  `.openbao`) turned out to already be fixed by later, unrelated rounds
+  without the docs being updated - corrected, no code change needed.
+  `crystal spec`: 1611 examples, 0 failures.
 - **`0.9.536`** - fixed the vendored Crinja fork's explicit-dash
   whitespace-control gap (`{% for -%}`/`{%- endfor %}` only stripped
   the first line of a multi-line whitespace run, not the whole thing -
@@ -484,30 +507,6 @@ for current-state detail.
   packages, a Debian-only role picked in error, a role precondition
   never met on a fresh host), not engine bugs. `crystal spec`: 1591
   examples, 0 failures.
-- **`0.9.523`-`0.9.526`** - 3 real bugs found benchmarking 20 new
-  `buluma.*` roles on Ubuntu 22.04 (round 165, run WITH task batching
-  enabled - the default - specifically to close a coverage gap: every
-  round since 160 had run with `--no-batching` to isolate the
-  persistent-daemon path's own timing, leaving batching itself
-  unexercised against real roles for a long time): `query('first_found',
-  ...)` (real Ansible's list-forcing `lookup(..., wantlist=True)`
-  shorthand) as an `include_vars:` loop source was entirely broken -
-  three compounding gaps (the function itself unrecognized,
-  `include_vars:`'s own dedicated parser never handling a templated
-  `loop:`, and never parsing `loop_control:` either); a `loop:` item
-  needing TWO levels of variable indirection (the common `release ->
-  version -> download-dict` pattern) lost its native Hash type in a
-  2+-element loop, extensively live-bisected and confirmed NOT
-  batching-specific; `template:`/`copy:` `src:` doubled the subdir when
-  a role baked the `files`/`templates` prefix into `src:` itself. All
-  found via `buluma.confluence`, whose whole role now runs to
-  completion after all three fixes. Also: `file:` `owner:`/`group:`
-  didn't accept a raw numeric uid/gid string, only a name (`buluma.
-  maven`'s own `group: "0"`). Task batching itself checked out clean -
-  none of the bugs found were batching-specific; two (confluence's
-  item-typing bug, and a benchmark-harness gap fixed the same session)
-  were independently confirmed to reproduce identically with
-  `--no-batching` too. `crystal spec`: 1590 examples, 0 failures.
 ---
 
 ## 🤝 Contributing
