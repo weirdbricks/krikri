@@ -854,7 +854,11 @@ module CrystalPlay
         # meta: outcome - does NOT bump the recap's skipped= counter
         # (defer_stats: true), unlike an ordinary task's when: skip.
         vars_context = build_vars_context(task, host)
-        execute_meta(task, host) if when_passes?(task, vars_context, host, defer_stats: true)
+        begin
+          execute_meta(task, host) if when_passes?(task, vars_context, host, defer_stats: true)
+        rescue ex : WhenEvaluationError
+          swallow_when_error(task, host, ex, defer_stats: true)
+        end
         return
       end
       return execute_include_vars(task, host) if task.include_vars?
@@ -1766,7 +1770,14 @@ module CrystalPlay
           task.vars.each { |key, raw_value| item_context[key] = raw_value unless key == "item" }
           render_task_vars(task, item_context, host.name)
           item_label = item.to_s
-          next unless when_passes?(task, item_context, host, item_label: item_label, defer_stats: true)
+          begin
+            next unless when_passes?(task, item_context, host, item_label: item_label, defer_stats: true)
+          rescue ex : WhenEvaluationError
+            puts "failed: [#{host.connection_host}] => (item=#{item_label})".colorize(:red)
+            puts "  Message: #{ex.message}".colorize(:red)
+            failed = true
+            next
+          end
 
           substitutor = VarSubstitutor.new(vars: item_context, host_name: host.name)
           candidate = substitutor.substitute(task.include_vars_file || "").strip
@@ -1812,7 +1823,12 @@ module CrystalPlay
         return
       end
 
-      return unless when_passes?(task, vars_context, host)
+      begin
+        return unless when_passes?(task, vars_context, host)
+      rescue ex : WhenEvaluationError
+        swallow_when_error(task, host, ex)
+        return
+      end
 
       # The file may be chosen by with_first_found (exposed as `item`) or
       # given directly; either way it is templated.
@@ -2306,6 +2322,35 @@ module CrystalPlay
     # finish_looped_task, so a loop that ends up with zero executed items is
     # recorded as a single "skipped". Deferring avoids per-item skipped
     # inflation (a 5-item all-skipped loop must be skipped=1, not skipped=5).
+    # Raised by `when_passes?` when evaluating a `when:` condition itself
+    # raises (e.g. `mounts | selectattr(...) | first` on an empty match -
+    # FilterEngine's own `first`/`last` raise "No first item, sequence
+    # was empty." rather than silently returning nil, matching real
+    # Jinja2's `do_first`). This used to crash the ENTIRE process with an
+    # unhandled-exception stack trace - `when_passes?` has 7 call sites
+    # across solo/looped/batched task execution and `meta:`, none of
+    # which caught it. Real Ansible degrades to one clean failed task
+    # ("Task failed: Error while evaluating conditional: ...") and
+    # continues the run, not a crash.
+    #
+    # `when_passes?` itself raises rather than swallowing so each call
+    # site can decide how to represent the failure in ITS OWN result
+    # shape - a solo/looped task (`execute_task_once`,
+    # `execute_looped_task_batched`) can turn this into a real `failed:
+    # true` result that flows through the exact same
+    # `finish_single_task`/`finish_looped_task` aggregation a normal
+    # task failure does (so a looped `when:` failure correctly shows
+    # `failed=1`, not `skipped=1`, in the recap - matching real
+    # Ansible's own "One or more items failed"); a bare `meta:`/
+    # `include_vars:`/batch-group-member check that has no such result
+    # pipeline falls back to `swallow_when_error`, which replicates
+    # exactly what this method used to do inline (stats/halt/register/
+    # print, respecting `ignore_errors:`) and returns `false` - reusing
+    # the same "don't run this task" signal every caller already treats
+    # a when:-skip as.
+    class WhenEvaluationError < Exception
+    end
+
     private def when_passes?(task : Task, vars_context : Hash(String, JSON::Any), host : Host, item_label : String? = nil, shared : VarSubstitutor? = nil, defer_stats : Bool = false, defer_display : Bool = false) : Bool
       return true unless when_condition = task.when_condition
 
@@ -2315,61 +2360,7 @@ module CrystalPlay
       begin
         return true if ConditionalEvaluator.evaluate(substituted_condition, vars_context)
       rescue ex
-        # A raised exception evaluating when: (e.g. `mounts | selectattr
-        # (...) | first` on an empty match - FilterEngine's own `first`/
-        # `last` raise "No first item, sequence was empty." rather than
-        # silently returning nil, matching real Jinja2's `do_first`) used
-        # to crash the ENTIRE process with an unhandled-exception stack
-        # trace - `when_passes?` has 7 call sites across solo/looped/
-        # batched task execution and meta:, none of which caught this,
-        # unlike the identical-shaped `substitute_task_params` rescue a
-        # few lines below execute_task_once's own call site (added for a
-        # different raise site - see its own comment). Real Ansible
-        # degrades to one clean failed task ("Task failed: Error while
-        # evaluating conditional: ...") and continues the run, not a
-        # crash. Centralized here (not duplicated at each call site) so
-        # every caller gets this for free: marks the task FAILED (not
-        # skipped - `stats["failed"]`, a `failed: true` register: result,
-        # no notify: firing, matching what a real failed task does) and
-        # returns `false`, reusing the same "don't run this task" signal
-        # every caller already treats a when:-skip as.
-        #
-        # ignore_errors: is honored the same way `ResultDisplay.
-        # update_stats` already treats an ignored failure elsewhere in
-        # this codebase (ok+=1 AND ignored+=1, not failed+=1, host not
-        # halted) - verified directly against a real ansible-playbook
-        # run: `ignore_errors: true` on a when:-raising task prints
-        # "...ignoring" and continues with `ok=2 ... ignored=1`, exit 0.
-        msg = "Error while evaluating conditional: #{ex.message}"
-        unless defer_stats
-          if task.ignore_errors
-            @results[host.name]["ok"] += 1
-            @results[host.name]["ignored"] += 1
-          else
-            @results[host.name]["failed"] += 1
-          end
-        end
-        # Same halt/exit-code bookkeeping a normal task failure gets
-        # (see the other `@halted_hosts.add` call sites) - without this,
-        # a when:-evaluation failure would correctly print as failed and
-        # bump the recap's failed= counter, but the overall run would
-        # still exit 0 / print "Playbook execution complete", since
-        # nothing else marks this host as having failed.
-        @halted_hosts.add(host.name) unless task.ignore_errors
-        unless defer_display
-          suffix = item_label ? " => (item=#{item_label})" : ""
-          puts "fatal: [#{host.connection_host}]#{suffix}: FAILED! => #{msg}".colorize(:red)
-          puts "...ignoring".colorize(:red) if task.ignore_errors
-        end
-        register_name = task.register
-        unless register_name.nil? || register_name.empty?
-          register_result(host, register_name, JSON.parse({
-            "changed" => false,
-            "failed"  => true,
-            "msg"     => msg,
-          }.to_json))
-        end
-        return false
+        raise WhenEvaluationError.new("Error while evaluating conditional: #{ex.message}")
       end
 
       # defer_stats: loop items and batch members pass this to only skip
@@ -2392,6 +2383,58 @@ module CrystalPlay
         puts "skipping: [#{host.connection_host}]#{suffix}".colorize(:cyan)
       end
       register_skip_result(task, host)
+      false
+    end
+
+    # Builds the `failed: true` result shape a raised when: evaluation
+    # produces, matching real Ansible's own "Task failed: Error while
+    # evaluating conditional: ..." - for callers (execute_task_once,
+    # execute_looped_task_batched) whose return value flows through the
+    # normal result pipeline (finish_single_task/finish_looped_task),
+    # which already knows how to apply stats/register/halt/ignore_errors:
+    # correctly for a real failed result, so building one here instead of
+    # hand-rolling that bookkeeping a second time keeps it consistent
+    # with every other failure path.
+    private def when_error_result(ex : WhenEvaluationError) : JSON::Any
+      JSON.parse({"changed" => false, "failed" => true, "msg" => ex.message || "Error while evaluating conditional"}.to_json)
+    end
+
+    # For a `when_passes?` call site with no real per-item result
+    # pipeline to flow a `WhenEvaluationError` through (a bare `meta:`
+    # check, an `include_vars:` solo check, a mixed-task batch group
+    # member) - replicates exactly what `when_passes?` itself used to do
+    # inline before it started raising instead: stats/halt/register/
+    # print, respecting `ignore_errors:` the same way `ResultDisplay.
+    # update_stats` treats an ignored failure everywhere else (ok+=1 AND
+    # ignored+=1, not failed+=1, host not halted - verified directly
+    # against a real ansible-playbook run: `ignore_errors: true` on a
+    # when:-raising task prints "...ignoring" and continues with `ok=2
+    # ... ignored=1`, exit 0). Always returns `false`, the same "don't
+    # run this task" signal every caller already treats a when:-skip as.
+    private def swallow_when_error(task : Task, host : Host, ex : WhenEvaluationError, item_label : String? = nil, defer_stats : Bool = false, defer_display : Bool = false) : Bool
+      msg = ex.message || "Error while evaluating conditional"
+      unless defer_stats
+        if task.ignore_errors
+          @results[host.name]["ok"] += 1
+          @results[host.name]["ignored"] += 1
+        else
+          @results[host.name]["failed"] += 1
+        end
+      end
+      @halted_hosts.add(host.name) unless task.ignore_errors
+      unless defer_display
+        suffix = item_label ? " => (item=#{item_label})" : ""
+        puts "fatal: [#{host.connection_host}]#{suffix}: FAILED! => #{msg}".colorize(:red)
+        puts "...ignoring".colorize(:red) if task.ignore_errors
+      end
+      register_name = task.register
+      unless register_name.nil? || register_name.empty?
+        register_result(host, register_name, JSON.parse({
+          "changed" => false,
+          "failed"  => true,
+          "msg"     => msg,
+        }.to_json))
+      end
       false
     end
 
@@ -2540,8 +2583,13 @@ module CrystalPlay
         # execute_task when it consumes this nil from the cache, so each
         # group member's skip prints under its own banner rather than all
         # at once here during batch-build.
-        unless when_passes?(task, vars_context, host, shared: member_substitutor, defer_stats: true, defer_display: true)
-          cache[task] = {nil, vars_context}
+        begin
+          unless when_passes?(task, vars_context, host, shared: member_substitutor, defer_stats: true, defer_display: true)
+            cache[task] = {nil, vars_context}
+            next
+          end
+        rescue ex : WhenEvaluationError
+          cache[task] = {when_error_result(ex), vars_context}
           next
         end
 
@@ -2709,7 +2757,21 @@ module CrystalPlay
     ) : JSON::Any?
       substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
-      return nil unless when_passes?(task, vars_context, host, item_label, shared: substitutor, defer_stats: defer_loop_stats)
+      begin
+        return nil unless when_passes?(task, vars_context, host, item_label, shared: substitutor, defer_stats: defer_loop_stats)
+      rescue ex : WhenEvaluationError
+        # Returning a real `failed: true` result here (not swallowing
+        # and returning `false`/nil) lets it flow through the exact same
+        # pipeline a normal task failure does: the solo caller passes it
+        # to `finish_single_task` (register/notify/display/stats/halt,
+        # ignore_errors: and all), and - critically - a LOOPED caller
+        # collects it into `finish_looped_task`'s per-item results array,
+        # so a looped when: failure correctly aggregates to `failed=1`
+        # in the recap (matching real Ansible's "One or more items
+        # failed"), not `skipped=1` the way silently returning nil here
+        # used to.
+        return when_error_result(ex)
+      end
 
       begin
         substituted_params = substitute_task_params(task.params, substitutor)
@@ -3163,7 +3225,7 @@ module CrystalPlay
       if @adhoc
         ResultDisplay.display_adhoc_result(host, result)
       else
-        ResultDisplay.display_result(host, result, @diff_mode)
+        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: task.ignore_errors)
       end
       ResultDisplay.update_stats(@results[host.name], result, task.ignore_errors)
       halt_if_failed(task, host, failed)
@@ -3370,7 +3432,16 @@ module CrystalPlay
         # read that same one.
         item_substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
-        next unless when_passes?(task, vars_context, host, item_label: item_display(item), shared: item_substitutor, defer_stats: true)
+        begin
+          next unless when_passes?(task, vars_context, host, item_label: item_display(item), shared: item_substitutor, defer_stats: true)
+        rescue ex : WhenEvaluationError
+          # Same rationale as execute_task_once's own identical rescue -
+          # a real failed result here (not a silent skip) lets
+          # finish_looped_task's aggregation correctly count this as
+          # failed=1, not skipped=1.
+          item_results[idx] = when_error_result(ex)
+          next
+        end
 
         case outcome = prepare_batch_step(task, host, vars_context, shared: item_substitutor)
         when JSON::Any
@@ -3428,7 +3499,7 @@ module CrystalPlay
         any_changed ||= changed
         any_failed ||= failed
 
-        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item))
+        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item), ignore_errors: task.ignore_errors)
 
         result_hash = result.as_h.dup
         result_hash["item"] = item
@@ -3532,7 +3603,7 @@ module CrystalPlay
       if @adhoc
         ResultDisplay.display_adhoc_result(host, result)
       else
-        ResultDisplay.display_result(host, result, @diff_mode)
+        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: task.ignore_errors)
       end
       ResultDisplay.update_stats(@results[host.name], result, task.ignore_errors)
       halt_if_failed(task, host, failed)
@@ -5120,7 +5191,7 @@ module CrystalPlay
 
         any_changed ||= result["changed"]?.try(&.as_bool) || false
         any_failed ||= result["failed"]?.try(&.as_bool) || false
-        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item))
+        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item), ignore_errors: handler.ignore_errors)
       end
 
       JSON.parse({

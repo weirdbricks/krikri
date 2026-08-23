@@ -8,7 +8,7 @@ module CrystalPlay
     # Display task result with appropriate formatting.
     # item_label is set for looped tasks, rendering `ok: [host] => (item=x)`
     # to match how Ansible annotates per-iteration output.
-    def self.display_result(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil)
+    def self.display_result(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false)
       changed = result["changed"]?.try(&.as_bool) || false
       failed = result["failed"]?.try(&.as_bool) || false
       msg = result["msg"]?.try(&.as_s) || ""
@@ -67,6 +67,16 @@ module CrystalPlay
         if rc = result["rc"]?.try(&.as_i)
           puts "  Exit code: #{rc}".colorize(:red)
         end
+
+        # Real ansible-playbook always prints a bare "...ignoring" line
+        # right after a failed task's own output when ignore_errors:
+        # caught it - verified directly against a real ansible-playbook
+        # run. This was previously never printed at all for a normal
+        # ignored failure (only added, narrowly, for the when:-raises-
+        # an-exception case - see WhenEvaluationError's own history);
+        # fixed here so every ignored failure gets it, matching real
+        # Ansible regardless of why the task failed.
+        puts "...ignoring".colorize(:red) if ignore_errors
       end
 
       # Display diff if present and diff_mode enabled
