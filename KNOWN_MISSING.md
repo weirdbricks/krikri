@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.532`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.535`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.15` (see `shard.yml`).
 
 ---
@@ -42,6 +42,32 @@ is the record.
   variable reached through a filter chain, or through `when:`, is still
   an open gap - revisit with a dedicated pass if a live round finds one
   that changes final task-pass/fail state, the same way this one did.
+
+- **Vendored Crinja's explicit-dash whitespace control (`{% for -%}`/
+  `{%- endfor %}`) doesn't strip a full multi-line whitespace run -
+  only the first line plus at most one newline.** Real Jinja2 strips
+  ALL contiguous whitespace on that side, unbounded. Root cause in
+  `~/git_work/crinja/src/util/string_trimmer.cr`'s `trim()`: its
+  "newline present in this text segment" branch only `lstrip`s the
+  first line, never touching subsequent lines' own leading whitespace;
+  `~/git_work/crinja/src/runtime/renderer.cr`'s `trim_text` conflates
+  the explicit-dash case with the much narrower config-driven implicit
+  `trim_blocks`/`lstrip_blocks` case via one shared left/right boolean
+  pair. First found round85 (`robertdebock.collectd` - cosmetic only
+  there, `Filter "*.conf"` still parsed fine with the extra
+  whitespace); round170 hit the same gap on `buluma.collectd`, where
+  it's NOT cosmetic - the stray blank lines/misindented directives are
+  enough to make the real `collectd` binary refuse to start. A round85
+  fix attempt (4 distinct flags: `explicit_left`/`explicit_right`/
+  `implicit_trim_blocks`/`implicit_lstrip_blocks`) regressed 21
+  previously-passing Crinja specs and was reverted - the existing
+  `trim()`'s default-argument behavior turned out more load-bearing
+  than a first read of the `renderer.cr` call site suggested. Properly
+  fixing this needs a spec-first pass inside the Crinja repo (add
+  failing specs for the exact multi-line explicit-dash case first,
+  audit every existing caller/spec of `trim()`/`trim_simple` before
+  touching signatures) - not a quick inline patch during a benchmark
+  round.
 
 Note: 0.9.474's entry here claiming `openssl_dhparam:`/
 `openssh_keypair:` had "no plugin, no `AVAILABLE_PLUGINS` entry" was

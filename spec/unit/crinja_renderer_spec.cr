@@ -894,3 +894,38 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     elapsed.should be < 3.seconds
   end
 end
+
+# Round 170 (2026-08-23): found via buluma.bind's own vars/Debian.yml.
+# `CrinjaRenderer.rerender_nested_templates` used to JSON.parse-back
+# EVERY re-rendered nested-template scalar, not just container-shaped
+# (array/dict) results - so a purely numeric-looking role default like
+# `bind_python_version: "{{ bind_default_python_version }}"` (where the
+# referenced var is the quoted YAML STRING "3") silently became the
+# INTEGER 3 here, diverging from real (non-jinja2_native) Ansible, which
+# preserves the string type through any number of `{{ var }}`-only
+# indirections. `bind_python_version == '3'` then compared Int64(3)
+# against String("3") and came back false, picking the wrong branch of a
+# `| ternary(...)` and installing the removed python2-era
+# `python-netaddr`/`python-dnspython` package names on every real
+# Debian/Ubuntu target instead of `python3-*`.
+describe "CrinjaRenderer.rerender_nested_templates (round 170 - scalar-vs-container parse-back)" do
+  it "keeps a purely-numeric-looking nested template as a string, not an int" do
+    v = Hash(String, JSON::Any).new
+    v["bind_default_python_version"] = JSON::Any.new("3")
+    v["bind_python_version"] = JSON::Any.new("{{ bind_default_python_version }}")
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render("{{ bind_python_version }}").should eq("3")
+    renderer.render("{{ 'True' if (bind_python_version == '3') else 'False' }}").should eq("True")
+  end
+
+  it "still parses a container-shaped ('[...]') nested template back to a real array" do
+    v = Hash(String, JSON::Any).new
+    v["_docker_pip_packages"] = JSON.parse(%({"Debian": ["docker"]}))
+    v["ansible_facts"] = JSON.parse(%({"os_family": "Debian"}))
+    v["docker_pip_packages"] = JSON::Any.new("{{ _docker_pip_packages[ansible_facts['os_family']] }}")
+    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render("{{ docker_pip_packages | length }}").should eq("1")
+  end
+end

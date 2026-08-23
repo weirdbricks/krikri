@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.532-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.535-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,31 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.533`-`0.9.535`** - 3 real bugs found benchmarking 40 new
+  `buluma.*` roles on Ubuntu 22.04 (round 170, full defaults, two
+  20-role batches with a fresh host pair per role): the `package:`
+  module's own separate `apt-get install/remove/upgrade` call sites
+  were never wrapped with the existing dpkg-lock-contention retry
+  helper (`apt.cr` already had it since round153/0.9.502) - a fresh
+  host's `unattended-upgr` holding the lock made `package:` fail fast
+  where real Ansible waits it out (`buluma.aide`); the hand-rolled
+  conditional evaluator had NO handling at all for a Python/Jinja
+  ternary (`X if COND else Y`) - even the trivial `true if true else
+  false` was broken, since an embedded comparison operator in the
+  true-branch got misparsed as a top-level comparison spanning the
+  whole ternary string (`buluma.auditd`); nested-template re-rendering
+  blindly re-parsed EVERY rendered scalar as JSON, not just
+  container-shaped (array/dict) results, so a purely numeric-looking
+  STRING default silently became a real integer and broke a `== '3'`
+  string-literal comparison two levels of indirection later
+  (`buluma.bind`). All three fixed and live-reverified. Also confirmed
+  (not new bugs): `buluma.ca` blocked by the pre-existing `community.
+  crypto.openssl_csr` gap (round138 precedent); `buluma.fail2ban` hit
+  a one-host dpkg-lock timing flake past the 60s retry budget;
+  `buluma.collectd` exposed the same Crinja explicit-dash whitespace-
+  control gap first found (and left unfixed) in round85 - see
+  `KNOWN_MISSING.md` for current status. `crystal spec`: 1601
+  examples, 0 failures.
 - **`0.9.530`-`0.9.532`** - 3 real bugs found benchmarking 20 new
   `geerlingguy.*` roles on Ubuntu 22.04 (round 168, full defaults again -
   batching stayed clean a fourth consecutive round): `ansible_ssh_user`
@@ -479,17 +504,6 @@ for current-state detail.
   out to be a missing env var, not an engine bug (and retroactively
   explains round 163's own `geerlingguy.jenkins` finding the same way).
   `crystal spec`: 1581 examples, 0 failures.
-- **`0.9.520`/`0.9.521`** - a user-requested regression check (round
-  163: 20 roles resampled at random from ones already verified clean,
-  across authors/distros) found 2 real gaps introduced or exposed by
-  the previous 5 fixes: `ansible_version` (real Ansible magic var) was
-  entirely unimplemented, surfaced by 0.9.517's own strict-undefined
-  fix; `SSHManager`'s hardcoded 300s per-command SSH timeout was too
-  short for legitimately slow real-world tasks (a source compile
-  measured at 1536s against real ansible-playbook), raised to 1 hour -
-  this also retroactively explained 2 earlier incidents mis-diagnosed
-  as one-off cloud flakiness. Zero unexplained regressions across the
-  other 18 roles sampled. `crystal spec`: 1580 examples, 0 failures.
 ---
 
 ## 🤝 Contributing

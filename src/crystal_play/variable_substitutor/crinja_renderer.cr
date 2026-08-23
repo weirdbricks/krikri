@@ -379,7 +379,33 @@ module CrystalPlay
               # entirely one `{{ }}` span) is what
               # VariableLookup#rerender_if_templated already uses to
               # draw the same line.
-              (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+              #
+              # Only attempt the parse-back when the rendered text is
+              # container-SHAPED (`[...]`/`{...}`) - real Ansible's
+              # default (non-jinja2_native) templating renders a `{{ }}`
+              # expression to plain text and does NOT re-infer a scalar
+              # type from it: a role default like `bind_python_version:
+              # "{{ bind_default_python_version }}"` where the referenced
+              # var is the quoted YAML STRING "3" stays the string "3"
+              # through any number of indirections in real Ansible - it
+              # never becomes the integer 3. Blindly JSON-parsing EVERY
+              # rendered scalar here silently reinterpreted any purely
+              # numeric-looking string ("3", "0700", a version string
+              # missing its middle segment...) as a real number, breaking
+              # `==`/`!=` string comparisons against a quoted literal
+              # elsewhere (`bind_python_version == '3'` went from True to
+              # False - the comparison operands ended up Int64(3) vs
+              # String("3"), which real Jinja/Python correctly refuses to
+              # treat as equal). Found via buluma.bind's own vars/Debian.
+              # yml: `(bind_python_version == '3') | ternary(...)` always
+              # picked the FALSE branch, installing the removed python2-
+              # era `python-netaddr`/`python-dnspython` package names
+              # instead of `python3-*` on every real Debian/Ubuntu target.
+              if rendered.strip.starts_with?('[') || rendered.strip.starts_with?('{')
+                (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+              else
+                JSON::Any.new(rendered)
+              end
             else
               JSON::Any.new(rendered)
             end

@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/crystal_play/base_plugin"
+require "../src/crystal_play/plugin_helpers/apt_lock_retry"
 
 module CrystalPlay
   # Package Plugin - OS-agnostic package management
@@ -18,6 +19,7 @@ module CrystalPlay
   #     name: nginx
   #     state: present
   class PackagePlugin < BasePlugin
+    include AptLockRetry
     property check_mode : Bool
     
     def initialize(config : JSON::Any)
@@ -211,7 +213,7 @@ module CrystalPlay
                 else            "apt-get update"
                 end
 
-      result = remote_exec(command)
+      result = package_manager == "apt" ? apt_get_update_with_retry(command, AptLockRetry::DEFAULT_UPDATE_CACHE_RETRIES, AptLockRetry::DEFAULT_UPDATE_CACHE_RETRY_MAX_DELAY, ->remote_exec(String)) : remote_exec(command)
       return PluginResult.new(changed: false, failed: true, msg: "Failed to update package cache: #{result[:stderr]}") unless result[:exit_code] == 0
 
       # apt's own `update_cache: true` always reports changed: true
@@ -425,6 +427,15 @@ module CrystalPlay
       # installed, not all of them).
       is_installed = all_packages_installed?(name, single_name) { |pkg| remote_exec("dpkg -l #{pkg} 2>/dev/null | grep '^ii'")[:exit_code] == 0 }
       shell_pkg = shell_name(name, single_name)
+      # Matches apt.cr's own lock_timeout retry (default 60s, same
+      # param name as real Ansible's apt module) - this OS-agnostic
+      # package: module has its own separate apt-get call sites that
+      # weren't wrapped, so a dpkg-lock held by unattended-upgrades on a
+      # freshly-booted Ubuntu host (a common real-world race, not
+      # induced by this harness) failed fast here while real Ansible's
+      # package:/apt: module waited it out. Found via buluma.aide's
+      # `package: {name: aide}` task, round170.
+      lock_timeout = @params["lock_timeout"]?.try(&.to_i) || 60
 
       case state
       when "present"
@@ -443,7 +454,7 @@ module CrystalPlay
             )
           end
           
-          install_result = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get install -y #{shell_pkg}")
+          install_result = apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive apt-get install -y #{shell_pkg}", lock_timeout, ->remote_exec(String))
           if install_result[:exit_code] == 0
             # A requested name can be a virtual package already
             # satisfied by something else installed (`php-dom`/
@@ -496,7 +507,7 @@ module CrystalPlay
             )
           end
           
-          remove_result = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get remove -y #{shell_pkg}")
+          remove_result = apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive apt-get remove -y #{shell_pkg}", lock_timeout, ->remote_exec(String))
           if remove_result[:exit_code] == 0
             return PluginResult.new(
               changed: true,
@@ -541,7 +552,7 @@ module CrystalPlay
         # }}", state: "{{ ... | ternary('latest', 'present') }}") -
         # reported "changed: Package grafana upgraded to latest" while
         # the package was never actually installed at all.
-        upgrade_result = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get install -y #{shell_pkg}")
+        upgrade_result = apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive apt-get install -y #{shell_pkg}", lock_timeout, ->remote_exec(String))
 
         # "N upgraded, M newly installed, ..." is apt's own reliable,
         # locale-stable summary line - checking for the English phrase

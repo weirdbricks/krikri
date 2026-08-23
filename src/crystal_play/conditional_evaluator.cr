@@ -59,6 +59,40 @@ module CrystalPlay
       condition = condition.strip
       condition = unwrap_outer_parens(condition)
 
+      # Handle the Python/Jinja2 conditional (ternary) expression `X if
+      # COND else Y` - grammatically the LOWEST-precedence construct
+      # (lower even than `or`/`and`: `conditional_expression ::= or_test
+      # ["if" or_test "else" expression]`), so it must be detected before
+      # the `or`/`and` splitting below or a bare `<`/`==`/etc. inside the
+      # `X` branch gets misparsed as a top-level comparison spanning the
+      # whole ternary (`1 < 2 if true else true` previously hit the `<`
+      # comparison check first, splitting into "1 " and " 2 if true else
+      # true" - nonsensical). Delegated whole to Crinja (matching the
+      # REGEX_BARE_CALL/REGEX_GENERIC_IS_TEST fallbacks just below, both
+      # of which exist for the identical reason: don't reimplement a
+      # sub-grammar this hand-rolled evaluator was never built to parse)
+      # rather than attempting to hand-evaluate the branches - a ternary
+      # branch is an arbitrary expression, not necessarily a bare
+      # condition. `split_by_operator` is paren/quote-depth aware, so a
+      # ternary nested inside parens (`a and (b if c else d)`) is left
+      # alone here and only found after the outer parens are unwrapped by
+      # recursion. Found via buluma.auditd's own assert.yml: `(auditd_
+      # admin_space_left | int < auditd_space_left | int) if (auditd_
+      # space_left | string is not match(".*%")) else true` failed
+      # outright (misread as a bare truthiness check on the whole
+      # unparsed string) while real Ansible passed - even the trivial
+      # `true if true else false` was broken, this had no working case.
+      if condition.includes?(" if ") && condition.includes?(" else ")
+        if_parts = split_by_operator(condition, " if ")
+        if if_parts.size == 2
+          else_parts = split_by_operator(if_parts[1], " else ")
+          if else_parts.size == 2
+            rendered = VariableSubstitutor::CrinjaRenderer.new(vars).render("{{ 'True' if (#{condition}) else 'False' }}")
+            return rendered.strip == "True"
+          end
+        end
+      end
+
       # Operator precedence (matching real Python/Jinja2): `or` binds
       # loosest, then `and`, then `not` binds tightest. Splitting on the
       # LOWEST-precedence operator first and recursing into each side is

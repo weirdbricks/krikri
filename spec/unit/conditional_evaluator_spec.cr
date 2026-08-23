@@ -850,4 +850,45 @@ describe CrystalPlay::ConditionalEvaluator do
       ).should be_true
     end
   end
+
+  # Round 170 (2026-08-23): found via buluma.auditd's assert.yml. A bare
+  # ternary (`X if COND else Y`) previously fell all the way through to
+  # comparison-operator/truthiness handling since nothing recognized the
+  # `if`/`else` syntax - a `<`/`==`/etc. inside the `X` branch got
+  # misparsed as a top-level comparison spanning the WHOLE ternary
+  # string, and even the branch-free `true if true else false` was wrong
+  # (read as a bare-variable-name truthiness lookup on the literal text).
+  describe "ternary (conditional) expressions" do
+    it "evaluates the trivial true/false literal case" do
+      v = Hash(String, JSON::Any).new
+      CrystalPlay::ConditionalEvaluator.evaluate("true if true else false", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("false if true else true", v).should be_false
+      CrystalPlay::ConditionalEvaluator.evaluate("true if false else false", v).should be_false
+    end
+
+    it "does not misparse a comparison inside the true-branch as a top-level comparison" do
+      v = Hash(String, JSON::Any).new
+      CrystalPlay::ConditionalEvaluator.evaluate("1 < 2 if true else true", v).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("1 > 2 if true else true", v).should be_false
+    end
+
+    it "matches buluma.auditd's real assert.yml expression" do
+      v = Hash(String, JSON::Any).new
+      v["auditd_admin_space_left"] = JSON::Any.new(50_i64)
+      v["auditd_space_left"] = JSON::Any.new("75")
+      CrystalPlay::ConditionalEvaluator.evaluate(
+        %((auditd_admin_space_left | int < auditd_space_left | int) if (auditd_space_left | string is not match(".*%")) else true), v
+      ).should be_true
+    end
+
+    it "respects real Jinja precedence when the branches contain and/or" do
+      v = Hash(String, JSON::Any).new
+      CrystalPlay::ConditionalEvaluator.evaluate("true and false if true else true and true", v).should be_false
+    end
+
+    it "leaves a ternary nested inside parens for the recursive outer-paren unwrap" do
+      v = Hash(String, JSON::Any).new
+      CrystalPlay::ConditionalEvaluator.evaluate("true and (false if true else true)", v).should be_false
+    end
+  end
 end
