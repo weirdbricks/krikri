@@ -4086,7 +4086,8 @@ module CrystalPlay
     # containing "{{" is substituted through *vars_context*, everything
     # else is returned unchanged) - see execute_include_tasks for why
     # this matters for bare (non-`{{ }}`) when: conditions.
-    private def deep_render_item(item : JSON::Any, vars_context : Hash(String, JSON::Any), host_name : String) : JSON::Any
+    private def deep_render_item(item : JSON::Any, vars_context : Hash(String, JSON::Any), host_name : String, depth : Int32 = 0) : JSON::Any
+      return item if depth > 10
       case raw = item.raw
       when Hash
         rendered = raw.each_with_object({} of String => JSON::Any) do |(key, value), acc|
@@ -4122,11 +4123,33 @@ module CrystalPlay
           # still unrendered Jinja (a role default computed from
           # another default) must NOT be returned directly here - that
           # would hand back the literal, unparsed "{{ ... }}" text as
-          # the loop item's "native" value instead of falling through
-          # to the #substitute path below, which actually renders it
-          # (at the cost of losing native typing, same tradeoff every
-          # other fallback in this codebase makes for this case).
-          if native && !((raw2 = native.raw).is_a?(String) && raw2.includes?("{{"))
+          # the loop item's "native" value.
+          if native
+            if (raw2 = native.raw).is_a?(String) && raw2.includes?("{{")
+              # RECURSE (round165: buluma.confluence) rather than
+              # falling through to the generic #substitute path below,
+              # which always stringifies - correct for exactly ONE
+              # level of indirection (`role_var: "{{ inner_var }}"`,
+              # the common case), but a SECOND level (`role_var: "{{
+              # _lookup[some_key] }}"`, itself resolving to another
+              # unrendered "{{ }}" string, geerlingguy/buluma's own
+              # release -> version -> download-dict indirection chain)
+              # needs another #deep_render_item pass to preserve the
+              # final dict's native Hash type instead of collapsing it
+              # to a JSON-text STRING. Found live benchmarking buluma.
+              # confluence: `loop: ["{{ confluence_download }}", "{{
+              # postgresql_jdbc_download }}"]` (a real 2+-element loop -
+              # a SINGLE-element array of one bare `{{ }}` expression
+              # takes an entirely different, already-correct path via
+              # #find_loop_template's own single-element special case,
+              # which is why this only ever surfaced with 2+ items) -
+              # `item` ended up bound to the STRINGIFIED dict text
+              # instead of a real Hash, so `item.checksum` (a genuine
+              # nested-hash dotted lookup) correctly reported
+              # "undefined" against a value that was never actually a
+              # Hash to begin with.
+              return deep_render_item(JSON::Any.new(raw2), vars_context, host_name, depth + 1)
+            end
             return native
           end
         end
