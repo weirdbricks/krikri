@@ -1,0 +1,6 @@
+- name: template with subdir prefix already baked into src
+  ansible.builtin.template:
+    src: "./templates/nested/dir/file.j2"
+    dest: "/tmp/template_src_prefix_test_output.txt"
+  vars:
+    marker: baked-in-prefix-works

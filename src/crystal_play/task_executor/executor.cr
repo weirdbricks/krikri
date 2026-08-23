@@ -4295,6 +4295,23 @@ module CrystalPlay
       # unchanged (even if the file doesn't exist there either) so the
       # existing "not found" error still names the expected location.
       candidate = File.join(role_dir, src)
+      # Some roles bake the subdir prefix into src: itself (buluma.
+      # confluence's own `src: "./templates/opt/atlassian/confluence/
+      # bin/setenv.sh.j2"` - "templates/" already there, meant to
+      # resolve against the ROLE ROOT, not role_templates_dir/role_
+      # files_dir again) - the same "prefix already baked in" idiom
+      # already handled for first_found's own paths: entries
+      # (ExpressionEvaluator#resolve_first_found_roots). Without this,
+      # `File.join(role_dir, src)` doubled the subdir
+      # (".../templates/templates/opt/...", never existing), while real
+      # ansible-playbook correctly resolves it against the role root.
+      # Tried only as a fallback (role_dir/src checked first, matching
+      # every existing role using the plain "opt/atlassian/..." form
+      # without the prefix) so neither idiom regresses the other.
+      unless File.exists?(candidate)
+        role_root_candidate = task.role_path.try { |root| File.join(root, src) }
+        candidate = role_root_candidate if role_root_candidate && File.exists?(role_root_candidate)
+      end
       unless File.exists?(candidate)
         if parent_paths = task.role_parent_paths
           parent_paths.reverse_each do |parent_path|

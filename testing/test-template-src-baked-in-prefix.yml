@@ -1,0 +1,11 @@
+# Real bug found benchmarking buluma.confluence (round 165): src: "./
+# templates/nested/dir/file.j2" (the "templates/" subdir prefix already
+# baked into the src: value itself, real Ansible resolves this against
+# the ROLE ROOT) - resolve_role_relative_src previously only ever
+# joined src: against role_templates_dir directly, doubling the
+# subdir ("templates/templates/nested/...", never existing).
+- name: "template src: with the subdir prefix already baked in"
+  hosts: testservers
+  gather_facts: false
+  roles:
+    - template_src_prefix

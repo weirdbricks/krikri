@@ -489,6 +489,29 @@ describe "crystal-ansible CLI (--check mode)" do
     end
   end
 
+  describe "template:/copy: src: with the subdir prefix already baked in" do
+    testservers = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-testservers-local.ini")
+
+    it "resolves src: against the role ROOT, not role_templates_dir again, when src: already bakes in the subdir prefix" do
+      # Real bug found benchmarking buluma.confluence (round 165):
+      # `src: "./templates/nested/dir/file.j2"` (the "templates/" subdir
+      # prefix already baked into src: itself - real Ansible resolves
+      # this against the role ROOT) previously always joined against
+      # role_templates_dir directly, doubling the subdir
+      # (".../templates/templates/nested/...", never existing) - "Template
+      # file not found on controller" for every role using this idiom.
+      status, output = run_playbook(
+        "test-template-src-baked-in-prefix.yml", [] of String, inventory: testservers
+      )
+
+      status.success?.should be_true
+      output.should_not contain("Template file not found")
+      File.read("/tmp/template_src_prefix_test_output.txt").should contain("value=baked-in-prefix-works")
+    ensure
+      File.delete("/tmp/template_src_prefix_test_output.txt") if File.exists?("/tmp/template_src_prefix_test_output.txt")
+    end
+  end
+
   describe "magic variables" do
     magicvars = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-ansible-host.ini")
 
