@@ -10,8 +10,8 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.540`.** Vendored `crinja` fork now at tag
-`crystal-play-0.9.16` (see `shard.yml`).
+**Currently at `0.9.541`.** Vendored `crinja` fork now at tag
+`crystal-play-0.9.17` (see `shard.yml`).
 
 ---
 
@@ -42,45 +42,6 @@ is the record.
   variable reached through a filter chain, or through `when:`, is still
   an open gap - revisit with a dedicated pass if a live round finds one
   that changes final task-pass/fail state, the same way this one did.
-
-- **Crinja parser can leak a stale `trim_left`/`left_is_block` state
-  across a nested block's own end-tag boundary.** Found while verifying
-  the explicit-dash whitespace-control fix (round170, `crystal-play-
-  0.9.16`): the sibling text immediately AFTER certain nested blocks
-  can come back with a spurious `trim_left = true` it never earned from
-  an actual adjacent `-` or the implicit `trim_blocks` config, silently
-  eating a real newline real Jinja2 keeps. Minimal repro (in the Crinja
-  repo, not crystal-ansible): `<div>\n    {% if true -%}\n\n
-  yay\n    {% endif %}\n</div>` (the `endif` has NO dash at all) still
-  loses the newline before `</div>`. Confirmed pre-existing, not a
-  0.9.16 regression. Root cause is in `~/git_work/crinja/src/parser/
-  template_parser.cr` - `@trim_left`/`@left_is_block` are shared
-  instance variables that likely need saving/restoring around the
-  recursive `parse_node_list(true)` call for a tag's own block, the
-  same class of fix `parse_fixed_string`'s own reset-after-use already
-  applies for the non-nested case. See that fork's own `PATCHES.md`
-  (0.9.16 entry) for the full writeup. Not attempted yet - needs its
-  own dedicated parser-state trace.
-
-- **A `None`/null Jinja value can render as the literal string `"none"`
-  (with a missing preceding newline) instead of an empty string, in a
-  specific end-of-template position.** Found round170 verifying the
-  whitespace-control fix against `buluma.collectd`'s real
-  `collectd.conf.j2`: a bare `{{ collectd_conf_extra }}` (default
-  `null`) at the very end of the template, immediately after a `{%
-  for %}...{% endfor %}` block and some static text, rendered as
-  `none` glued directly onto the preceding line with no newline -
-  real Ansible renders it as nothing at all (the blank line stays
-  blank). NOT reproducible in isolation (a bare `{{ null_var }}` alone,
-  or even the same var referenced via a role's own defaults with a
-  trivial one-task role, both correctly render as empty) - only shows
-  up in this specific "after a completed for-loop, at true end of a
-  large multi-hundred-line template" shape, so likely related to (but
-  not confirmed identical to) the Crinja parser leak above rather than
-  crystal-ansible's own value-formatting code. Needs a dedicated
-  isolated repro built up incrementally from the working one-line case
-  toward the full template shape to pin down exactly which construct
-  triggers it, before attempting a fix.
 
 Note: 0.9.474's entry here claiming `openssl_dhparam:`/
 `openssh_keypair:` had "no plugin, no `AVAILABLE_PLUGINS` entry" was

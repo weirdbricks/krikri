@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.539-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.541-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,24 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.540`-`0.9.541`** - closed the last 2 items from the backlog
+  pass below: a looped `when:` that raises an exception now correctly
+  aggregates to `failed=1` in the recap (not `skipped=1`), and real
+  Ansible's `...ignoring` line - previously never printed for ANY
+  ignored task failure, not just a `when:`-raise - now is, generally.
+  Also root-caused and fixed the 2 Crinja-fork-level gaps found while
+  verifying the whitespace fix (`crystal-play-0.9.17`): the lexer's
+  shared `Token` was never resetting `trim_left`/`trim_right` between
+  tokens, so a reused token silently carried a stale dash flag from an
+  earlier tag onto a later plain one - fixed at the real root
+  (`Token#reset`), not a workaround; and `None` finalizing
+  inconsistently depending on context - real Ansible's own `finalize`
+  hook converts `None` to `""` ONLY at a template's own top-level `{{
+  }}` output, while the same `None` through a filter (`join`, etc.)
+  still renders as Python's real `"None"` - fixed at the correct
+  narrow layer. `buluma.collectd`'s real `collectd.conf.j2` now
+  renders byte-identical to real Ansible. Crinja spec: 550 examples, 0
+  failures. `crystal spec`: 1613 examples, 0 failures.
 - **`0.9.537`-`0.9.539`** - a "clear the backlog" pass through every
   documented-but-unfixed gap found across `KNOWN_MISSING.md`/
   `ROLES_TESTED.md`/session history, user-requested after the Crinja
@@ -486,27 +504,6 @@ for current-state detail.
   pattern matched a stale apt-mirror 404 and aborted the rest of the
   round - narrowed to genuine connectivity-failure patterns only.
   `crystal spec`: 1591 examples, 0 failures.
-- **`0.9.527`** - 2 real bugs found benchmarking 20 new `buluma.*` roles
-  on Rocky 9.6 (round 166, the first round run with FULL defaults - no
-  `--no-batching` flag at all - now that round 165 confirmed batching
-  itself is clean): `include_tasks: loop: query('first_found', ...)`
-  with a `vars:` block on the SAME include statement never saw those
-  vars when resolving its own `loop:` - only `task.include_vars`
-  (propagated to the *included* file's tasks) was populated, while
-  `task.vars` (read by the include's own loop resolution) stayed empty,
-  so the whole include silently skipped instead of running
-  (`bitbucket`); `ansible.builtin.yum`/`dnf` with `enablerepo:` naming a
-  repo that isn't configured on the host (e.g. `enablerepo: epel` with
-  no EPEL installed) hard-failed the task via the underlying `dnf`/`yum`
-  CLI's strict "Unknown repo" error, where real Ansible's module (via
-  dnf's Python API) just warns and continues with whatever repos ARE
-  available (`elasticsearch_curator`). Both fixed and live-reverified
-  against a real Rocky 9.6 host. Batching remained clean again - neither
-  bug was batching-specific. 11 of the 20 roles clean, 7 hit external/
-  environmental blockers identical on both engines (missing repo
-  packages, a Debian-only role picked in error, a role precondition
-  never met on a fresh host), not engine bugs. `crystal spec`: 1591
-  examples, 0 failures.
 ---
 
 ## 🤝 Contributing
