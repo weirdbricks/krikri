@@ -357,6 +357,141 @@ describe CrystalPlay::PlaybookParser do
     end
   end
 
+  describe "notify: static handler-name validation" do
+    # Real bug found benchmarking robertdebock.roundcubemail (round93):
+    # a role's own `notify: restart httpd` had no matching Debian
+    # handler at all - real ansible-playbook refuses to run the whole
+    # play upfront ("ERROR! The requested handler 'restart httpd' was
+    # not found..."), while this engine's own handler dispatch just
+    # silently no-op'd the unmatched notify, completing "successfully"
+    # with the intended restart never happening. Fixed with a static
+    # pre-flight check (`HandlerNotFoundError`, bypasses graceful
+    # per-play degradation the same way `RemovedActionError` does).
+    it "aborts the whole playbook parse for a bare literal notify: target with no matching handler" do
+      expect_raises(CrystalPlay::HandlerNotFoundError, /restart httpd.*was not found/) do
+        CrystalPlay::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: touch a file
+                ansible.builtin.file:
+                  path: /tmp/x
+                  state: touch
+                notify: restart httpd
+            handlers:
+              - name: restart apache2
+                ansible.builtin.debug:
+                  msg: restarted
+          YAML
+        )
+      end
+    end
+
+    it "does not raise when the notify: target matches a real handler name" do
+      result = CrystalPlay::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: touch a file
+              ansible.builtin.file:
+                path: /tmp/x
+                state: touch
+              notify: restart httpd
+          handlers:
+            - name: restart httpd
+              ansible.builtin.debug:
+                msg: restarted
+        YAML
+      )
+      result.plays[0].tasks.size.should eq(1)
+    end
+
+    it "does not raise when the notify: target matches a handler's listen: topic" do
+      result = CrystalPlay::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: touch a file
+              ansible.builtin.file:
+                path: /tmp/x
+                state: touch
+              notify: webserver restarted
+          handlers:
+            - name: restart httpd
+              listen: webserver restarted
+              ansible.builtin.debug:
+                msg: restarted
+        YAML
+      )
+      result.plays[0].tasks.size.should eq(1)
+    end
+
+    it "does not raise for a templated notify: target (unresolvable statically)" do
+      result = CrystalPlay::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: touch a file
+              ansible.builtin.file:
+                path: /tmp/x
+                state: touch
+              notify: "{{ some_handler_var }}"
+          handlers:
+            - name: unrelated handler
+              ansible.builtin.debug:
+                msg: restarted
+        YAML
+      )
+      result.plays[0].tasks.size.should eq(1)
+    end
+
+    it "does not raise for a role-qualified (' : '-shaped) notify: target" do
+      result = CrystalPlay::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: touch a file
+              ansible.builtin.file:
+                path: /tmp/x
+                state: touch
+              notify: "some_role : restart httpd"
+          handlers:
+            - name: restart httpd
+              ansible.builtin.debug:
+                msg: restarted
+        YAML
+      )
+      result.plays[0].tasks.size.should eq(1)
+    end
+
+    it "does not raise when a play has no handlers: and no tasks notify: anything" do
+      result = CrystalPlay::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: plain task
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+      )
+      result.plays[0].tasks.size.should eq(1)
+    end
+
+    it "finds a matching handler nested inside a block:" do
+      result = CrystalPlay::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - block:
+                - name: touch a file
+                  ansible.builtin.file:
+                    path: /tmp/x
+                    state: touch
+                  notify: restart httpd
+          handlers:
+            - block:
+                - name: restart httpd
+                  ansible.builtin.debug:
+                    msg: restarted
+        YAML
+      )
+      result.plays[0].tasks.size.should eq(1)
+    end
+  end
+
   describe ".validate" do
     it "warns about plays with no tasks" do
       playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML

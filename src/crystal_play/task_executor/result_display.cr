@@ -242,10 +242,24 @@ module CrystalPlay
         # here with `Missing hash key`. Zeroes are the honest recap for a
         # host nothing ran on, and match what real ansible-playbook prints.
         stats = results[host.name]? || {
-          "ok" => 0, "changed" => 0, "failed" => 0, "skipped" => 0, "rescued" => 0, "ignored" => 0,
+          "ok" => 0, "changed" => 0, "unreachable" => 0, "failed" => 0, "skipped" => 0, "rescued" => 0, "ignored" => 0,
         }
 
         status_parts = [] of String
+
+        # Real ansible-playbook's own recap ALWAYS prints all 7 counters,
+        # in this exact order, even when a given counter is 0 - never
+        # conditionally omitted. Verified directly against a real
+        # ansible-playbook run: `ok=44   changed=6    unreachable=0
+        # failed=0    skipped=5    rescued=0    ignored=0`. This recap
+        # used to omit `skipped=`/`rescued=`/`ignored=` entirely whenever
+        # they were 0, and never printed `unreachable=` at all (no key
+        # for it existed in the stats hash) - a purely cosmetic
+        # difference (the underlying pass/fail/skip behavior always
+        # matched), but one that made an otherwise byte-identical recap
+        # diff from real Ansible on every single run. Found repeatedly
+        # across benchmark rounds (buluma.openssl, geerlingguy.helm,
+        # robertdebock.types) and never fixed in one place before.
 
         # OK count (green)
         status_parts << "ok=#{stats["ok"]}".colorize(:green).to_s
@@ -257,6 +271,17 @@ module CrystalPlay
           status_parts << "changed=#{stats["changed"]}".colorize(:green).to_s
         end
 
+        # Unreachable count (red if any) - always printed; this engine
+        # doesn't yet distinguish a genuinely unreachable host from an
+        # ordinary task failure (see KNOWN_MISSING.md), so this is
+        # currently always 0, matching what's actually true today.
+        unreachable = stats["unreachable"]? || 0
+        if unreachable > 0
+          status_parts << "unreachable=#{unreachable}".colorize(:red).to_s
+        else
+          status_parts << "unreachable=#{unreachable}".colorize(:green).to_s
+        end
+
         # Failed count (red if any)
         if stats["failed"] > 0
           status_parts << "failed=#{stats["failed"]}".colorize(:red).to_s
@@ -264,21 +289,32 @@ module CrystalPlay
           status_parts << "failed=#{stats["failed"]}".colorize(:green).to_s
         end
 
-        # Skipped count (cyan if any)
-        if stats["skipped"]? && stats["skipped"] > 0
-          status_parts << "skipped=#{stats["skipped"]}".colorize(:cyan).to_s
+        # Skipped count (cyan if any, green at 0 - always printed)
+        skipped = stats["skipped"]? || 0
+        if skipped > 0
+          status_parts << "skipped=#{skipped}".colorize(:cyan).to_s
+        else
+          status_parts << "skipped=#{skipped}".colorize(:green).to_s
         end
 
-        # Rescued count (yellow if any) - block: failures recovered by rescue:
-        if stats["rescued"]? && stats["rescued"] > 0
-          status_parts << "rescued=#{stats["rescued"]}".colorize(:yellow).to_s
+        # Rescued count (yellow if any, green at 0 - always printed) -
+        # block: failures recovered by rescue:
+        rescued = stats["rescued"]? || 0
+        if rescued > 0
+          status_parts << "rescued=#{rescued}".colorize(:yellow).to_s
+        else
+          status_parts << "rescued=#{rescued}".colorize(:green).to_s
         end
 
-        # Ignored count (yellow if any) - tasks that failed but were
-        # caught by ignore_errors:, matching real ansible-playbook's own
-        # ignored=N field (see #update_stats for the increment logic).
-        if stats["ignored"]? && stats["ignored"] > 0
-          status_parts << "ignored=#{stats["ignored"]}".colorize(:yellow).to_s
+        # Ignored count (yellow if any, green at 0 - always printed) -
+        # tasks that failed but were caught by ignore_errors:, matching
+        # real ansible-playbook's own ignored=N field (see #update_stats
+        # for the increment logic).
+        ignored = stats["ignored"]? || 0
+        if ignored > 0
+          status_parts << "ignored=#{ignored}".colorize(:yellow).to_s
+        else
+          status_parts << "ignored=#{ignored}".colorize(:green).to_s
         end
 
         puts "#{host.name.ljust(20)} : #{status_parts.join("  ")}"

@@ -406,6 +406,24 @@ module CrystalPlay
   class RemovedActionError < Exception
   end
 
+  # Real Ansible statically validates every `notify:` target against the
+  # play's own handler names/`listen:` topics BEFORE running a single
+  # task, and refuses to run the play at all if one doesn't resolve
+  # ("ERROR! The requested handler '...' was not found") - not a
+  # per-task runtime skip. This engine's own handler dispatch
+  # (`HandlerRunner#should_run_handler?`) already silently no-ops an
+  # unmatched notify: - correct AT RUN TIME for a genuinely templated or
+  # role-qualified name it can't resolve until then, but for a bare
+  # LITERAL name real Ansible would have already rejected outright, so
+  # the role's own bug (a typo'd/stale `notify:` target) went completely
+  # unnoticed instead of aborting the run. Found via robertdebock.
+  # roundcubemail (round93): `notify: restart httpd` had no matching
+  # Debian handler at all - real Ansible refuses to run; this engine
+  # ran the whole role "successfully" with apache's new vhost never
+  # activated.
+  class HandlerNotFoundError < Exception
+  end
+
   # Parser for Ansible YAML playbooks
   class PlaybookParser
     # List of available (implemented) plugins - using FQCN. Almost all of
@@ -657,6 +675,8 @@ module CrystalPlay
             playbook.plays.concat(imported.plays)
           rescue ex : RemovedActionError
             raise ex
+          rescue ex : HandlerNotFoundError
+            raise ex
           rescue ex
             puts "Warning: Failed to import playbook '#{import_path}': #{ex.message}".colorize(:yellow)
           end
@@ -670,6 +690,10 @@ module CrystalPlay
           # Bypasses the graceful per-play degradation below - see its
           # own comment. Propagates to the top-level "Error parsing
           # playbook:" handler, matching real Ansible's whole-run abort.
+          raise ex
+        rescue ex : HandlerNotFoundError
+          # Same bypass as RemovedActionError above - see that class's
+          # own comment and HandlerNotFoundError's own comment.
           raise ex
         rescue ex
           puts "Warning: Failed to parse play #{index + 1}: #{ex.message}".colorize(:yellow)
@@ -776,7 +800,42 @@ module CrystalPlay
       end
       play.handlers = role_handlers + own_handlers
 
+      validate_notify_targets(play)
+
       play
+    end
+
+    # Static "does every literal notify: target resolve to a real
+    # handler" check - see `HandlerNotFoundError`'s own comment for the
+    # full rationale. Deliberately conservative: skips any notify: name
+    # that's templated (`{{`) or role-qualified (`" : "`-shaped, real
+    # Ansible's own auto-namespacing form for role-loaded handlers,
+    # replicated at RUN time by `HandlerRunner#should_run_handler?` -
+    # not worth re-deriving the exact qualifier here just to validate
+    # it early) - only a bare literal name real Ansible could ALSO have
+    # validated statically is checked, so this never false-positives on
+    # a name that's legitimately only resolvable once real values/role
+    # context are known.
+    private def self.validate_notify_targets(play : Play) : Nil
+      handler_names = Set(String).new
+      flatten_tasks(play.handlers).each do |handler|
+        handler_names << handler.name unless handler.name.includes?("{{")
+        if listen_topic = handler.listen
+          handler_names << listen_topic unless listen_topic.includes?("{{")
+        end
+      end
+
+      flatten_tasks(play.tasks).each do |task|
+        next unless notify_list = task.notify
+        notify_list.each do |notify_name|
+          next if notify_name.includes?("{{") || notify_name.includes?(" : ")
+          unless handler_names.includes?(notify_name)
+            raise HandlerNotFoundError.new(
+              "The requested handler '#{notify_name}' was not found in any of the search paths for play '#{play.name}'."
+            )
+          end
+        end
+      end
     end
 
     # Parse a list of task-shaped YAML nodes, skipping (with a warning) any

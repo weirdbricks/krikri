@@ -115,7 +115,21 @@ describe "crystal-ansible CLI (--check mode)" do
     status, output = run_playbook("test-loop-counting.yml", [] of String)
 
     status.success?.should be_true
-    output.should contain(%(localhost            : ok=1  changed=1  failed=0))
+    output.should contain(%(localhost            : ok=1  changed=1  unreachable=0  failed=0))
+  end
+
+  it "always prints all 7 PLAY RECAP counters, even when 0, matching real ansible-playbook" do
+    # Real ansible-playbook's recap always prints ok=/changed=/
+    # unreachable=/failed=/skipped=/rescued=/ignored= in that exact
+    # order, never conditionally omitting a 0-valued counter - verified
+    # directly against a real ansible-playbook run. This used to omit
+    # skipped=/rescued=/ignored= whenever they were 0, and never printed
+    # unreachable= at all - a purely cosmetic recap-line divergence from
+    # real Ansible found repeatedly across benchmark rounds.
+    status, output = run_playbook("test-loop-counting.yml", [] of String)
+
+    status.success?.should be_true
+    output.should contain(%(unreachable=0  failed=0  skipped=0  rescued=0  ignored=0))
   end
 
   it "runs a role: meta dependency first, applies defaults/vars/invocation-var precedence, resolves src: relative to the role's files/ dir, fires role handlers, then runs the play's own tasks" do
