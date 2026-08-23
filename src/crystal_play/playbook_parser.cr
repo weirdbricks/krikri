@@ -1491,6 +1491,22 @@ module CrystalPlay
         vars = Hash(String, JSON::Any).new
         vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
         task.include_vars = vars
+        # Also into task.vars (build_vars_context's normal task-vars tier) -
+        # real Ansible's `vars:` on an include_tasks: is visible to the
+        # include statement's OWN loop:/when: resolution too, not just
+        # propagated into the included file's tasks (which task.include_vars
+        # above already handles, at the executor's run_include_tasks_once
+        # call site). Previously only the propagation half was wired up:
+        # `loop: "{{ query('first_found', _params) }}"` with `vars: {_params:
+        # ...}` on the SAME include_tasks: task (buluma.bitbucket's own
+        # "Include release specific tasks") never saw `_params` when
+        # resolving its own loop, since build_vars_context reads task.vars,
+        # not task.include_vars - the loop silently resolved to zero items
+        # and the whole include was skipped, even though the identically-
+        # shaped `include_vars:` sibling task with the same `_params` vars:
+        # block worked fine (parse_include_vars_task never had this split).
+        # Found benchmarking round166's buluma.bitbucket on Rocky 9.6.
+        task.vars = vars
       end
 
       # loop:/with_items: repeats the whole include once per item (unlike

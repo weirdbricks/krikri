@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.526-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.527-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,27 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.527`** - 2 real bugs found benchmarking 20 new `buluma.*` roles
+  on Rocky 9.6 (round 166, the first round run with FULL defaults - no
+  `--no-batching` flag at all - now that round 165 confirmed batching
+  itself is clean): `include_tasks: loop: query('first_found', ...)`
+  with a `vars:` block on the SAME include statement never saw those
+  vars when resolving its own `loop:` - only `task.include_vars`
+  (propagated to the *included* file's tasks) was populated, while
+  `task.vars` (read by the include's own loop resolution) stayed empty,
+  so the whole include silently skipped instead of running
+  (`bitbucket`); `ansible.builtin.yum`/`dnf` with `enablerepo:` naming a
+  repo that isn't configured on the host (e.g. `enablerepo: epel` with
+  no EPEL installed) hard-failed the task via the underlying `dnf`/`yum`
+  CLI's strict "Unknown repo" error, where real Ansible's module (via
+  dnf's Python API) just warns and continues with whatever repos ARE
+  available (`elasticsearch_curator`). Both fixed and live-reverified
+  against a real Rocky 9.6 host. Batching remained clean again - neither
+  bug was batching-specific. 11 of the 20 roles clean, 7 hit external/
+  environmental blockers identical on both engines (missing repo
+  packages, a Debian-only role picked in error, a role precondition
+  never met on a fresh host), not engine bugs. `crystal spec`: 1591
+  examples, 0 failures.
 - **`0.9.523`-`0.9.526`** - 3 real bugs found benchmarking 20 new
   `buluma.*` roles on Ubuntu 22.04 (round 165, run WITH task batching
   enabled - the default - specifically to close a coverage gap: every
@@ -470,27 +491,6 @@ for current-state detail.
   populating them empty/zero/null the way real Ansible's own check-mode
   skip does - verified live against ansible-core 2.19.4. `crystal spec`:
   1573 examples, 0 failures.
-- **`0.9.515`/`0.9.516`** - 2 real bugs found benchmarking 20 previously-
-  untested `robertdebock.*` roles on Rocky Linux 9.6 (round 161):
-  `changed_when:`/`failed_when:` never enforced real Ansible's
-  strict-boolean requirement for those two keywords specifically (unlike
-  `when:`, which correctly truthy-converts) - a bare filter chain like
-  `xz_version.stdout | regex_search("5\.6\.(0|1)")` returning `None` (no
-  match) silently passed instead of failing the task the way real
-  Ansible does (`cve_2024_3094`); `include_vars:` + `with_first_found:`
-  with no matching candidate and no `skip: true` always silently
-  skipped, when real Ansible's `first_found` lookup defaults `skip:` to
-  false and RAISES (`release` - the role's own OS-specific vars file
-  genuinely doesn't exist for Rocky 9, and real Ansible correctly fails
-  loading it while crystal silently continued with no package list at
-  all). Both fixed and live-reverified; 13 of the 20 roles hit external/
-  environmental blockers identical on both engines (missing repo
-  packages, 404'd pinned download URLs, GitLab-omnibus resource
-  flakiness), not engine bugs. One real architectural gap found and
-  documented but NOT fixed (`bios_update` - undefined-variable rendering
-  is lenient everywhere in this engine vs. real Ansible's strict-by-
-  default Jinja2, see `KNOWN_MISSING.md`). `crystal spec`: 1566
-  examples, 0 failures.
 ---
 
 ## 🤝 Contributing

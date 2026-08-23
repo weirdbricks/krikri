@@ -200,6 +200,21 @@ module CrystalPlay
       names.uniq
     end
     
+    # See dnf.cr's identical helper for the full rationale - this plugin
+    # shells out to the same underlying `dnf` binary on modern RHEL-family
+    # hosts (yum is a dnf shim there), so it hits the same "Error: Unknown
+    # repo: 'X'" hard-failure for an `enablerepo:` naming a repo that isn't
+    # configured, where real ansible.builtin.yum's own dnf-API-based
+    # implementation just warns and continues.
+    private def remote_exec_tolerating_unknown_repo(cmd : String) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
+      result = remote_exec(cmd)
+      if result[:exit_code] != 0 && (m = result[:stderr].match(/Unknown repo: '([^']+)'/))
+        stripped_cmd = cmd.gsub("--enablerepo=#{m[1]}", "").gsub(/  +/, " ")
+        return remote_exec_tolerating_unknown_repo(stripped_cmd) if stripped_cmd != cmd
+      end
+      result
+    end
+
     # Build DNF command line options
     private def build_dnf_options : String
       options = [] of String
@@ -300,7 +315,7 @@ module CrystalPlay
         pkg_list = to_install.map { |p| quote_package(p) }.join(" ")
         cmd = "yum install #{options} #{pkg_list}"
         
-        result = remote_exec(cmd)
+        result = remote_exec_tolerating_unknown_repo(cmd)
         all_output << result[:stdout]
 
         if result[:exit_code] == 0
@@ -340,7 +355,7 @@ module CrystalPlay
         pkg_list = to_update.map { |p| quote_package(p) }.join(" ")
         cmd = "yum update #{options} #{pkg_list}"
         
-        result = remote_exec(cmd)
+        result = remote_exec_tolerating_unknown_repo(cmd)
         all_output << result[:stdout]
         
         if result[:exit_code] == 0
@@ -411,7 +426,7 @@ module CrystalPlay
       pkg_list = to_remove.map { |p| quote_package(p) }.join(" ")
       cmd = "yum remove #{options} #{autoremove_flag} #{pkg_list}"
       
-      result = remote_exec(cmd)
+      result = remote_exec_tolerating_unknown_repo(cmd)
       
       success = result[:exit_code] == 0
       
@@ -443,7 +458,7 @@ module CrystalPlay
       pkg_list = names.map { |p| quote_package(p) }.join(" ")
       cmd = "yum update #{options} #{pkg_list}"
       
-      result = remote_exec(cmd)
+      result = remote_exec_tolerating_unknown_repo(cmd)
       
       success = result[:exit_code] == 0
       
@@ -479,7 +494,7 @@ module CrystalPlay
       options = build_dnf_options
       cmd = "yum upgrade #{options}"
       
-      result = remote_exec(cmd)
+      result = remote_exec_tolerating_unknown_repo(cmd)
       
       success = result[:exit_code] == 0
       
@@ -513,7 +528,7 @@ module CrystalPlay
       options = build_dnf_options
       cmd = "yum autoremove #{options}"
       
-      result = remote_exec(cmd)
+      result = remote_exec_tolerating_unknown_repo(cmd)
       
       success = result[:exit_code] == 0
       

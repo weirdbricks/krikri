@@ -1255,6 +1255,31 @@ describe CrystalPlay::PlaybookParser do
       # only resolved when this task actually executes.
       task.include_tasks?.should be_true
     end
+
+    it "puts vars: into BOTH task.vars (the include's own loop:/when: scope) and task.include_vars (propagated to the included file)" do
+      # Real bug found benchmarking round166's buluma.bitbucket on Rocky
+      # 9.6: `loop: "{{ query('first_found', _params) }}"` with `vars:
+      # {_params: ...}` on the SAME include_tasks: task ("Include release
+      # specific tasks") - task.vars stayed empty (only task.include_vars
+      # was populated), so build_vars_context never saw `_params` when
+      # resolving the include's own loop, which silently resolved to zero
+      # items and skipped the whole include - even though the identically-
+      # shaped `include_vars:` sibling task with the same `_params` vars:
+      # block worked fine.
+      task = single_task(<<-YAML)
+        - include_tasks: "{{ _loop_var }}"
+          loop: "{{ query('first_found', _params) }}"
+          loop_control:
+            loop_var: _loop_var
+          vars:
+            _params:
+              files: [redhat.yml]
+              paths: ["."]
+        YAML
+
+      task.vars["_params"]?.should_not be_nil
+      task.include_vars.try(&.["_params"]?).should_not be_nil
+    end
   end
 
   describe "include_role: parsing" do

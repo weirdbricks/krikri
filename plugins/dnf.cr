@@ -185,6 +185,27 @@ module CrystalPlay
       names.uniq
     end
     
+    # Real ansible.builtin.dnf's module code goes through dnf's Python API
+    # directly, which treats an `enablerepo:` naming a repo ID that isn't
+    # configured on the host (e.g. `enablerepo: epel` with no epel-release
+    # installed - buluma.elasticsearch_curator's own setup-RedHat.yml does
+    # exactly this) as a warning, not a fatal error, and proceeds with
+    # whatever repos ARE available. The raw `dnf` CLI this plugin shells
+    # out to is stricter and hard-fails with "Error: Unknown repo: 'X'"
+    # instead - found benchmarking round166's buluma.elasticsearch_curator
+    # on Rocky 9.6 (crystal-ansible failed the task, real ansible-playbook
+    # installed successfully via whatever repos were already present).
+    # Strip the offending --enablerepo=X flag(s) and retry rather than
+    # failing the task, matching real Ansible's lenient behavior.
+    private def remote_exec_tolerating_unknown_repo(cmd : String) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
+      result = remote_exec(cmd)
+      if result[:exit_code] != 0 && (m = result[:stderr].match(/Unknown repo: '([^']+)'/))
+        stripped_cmd = cmd.gsub("--enablerepo=#{m[1]}", "").gsub(/  +/, " ")
+        return remote_exec_tolerating_unknown_repo(stripped_cmd) if stripped_cmd != cmd
+      end
+      result
+    end
+
     # Build DNF command line options
     private def build_dnf_options : String
       options = [] of String
@@ -285,7 +306,7 @@ module CrystalPlay
         pkg_list = to_install.map { |p| quote_package(p) }.join(" ")
         cmd = "dnf install #{options} #{pkg_list}"
         
-        result = remote_exec(cmd)
+        result = remote_exec_tolerating_unknown_repo(cmd)
         all_output << result[:stdout]
 
         if result[:exit_code] == 0
@@ -325,7 +346,7 @@ module CrystalPlay
         pkg_list = to_update.map { |p| quote_package(p) }.join(" ")
         cmd = "dnf update #{options} #{pkg_list}"
         
-        result = remote_exec(cmd)
+        result = remote_exec_tolerating_unknown_repo(cmd)
         all_output << result[:stdout]
         
         if result[:exit_code] == 0
@@ -396,7 +417,7 @@ module CrystalPlay
       pkg_list = to_remove.map { |p| quote_package(p) }.join(" ")
       cmd = "dnf remove #{options} #{autoremove_flag} #{pkg_list}"
       
-      result = remote_exec(cmd)
+      result = remote_exec_tolerating_unknown_repo(cmd)
       
       success = result[:exit_code] == 0
       
@@ -428,7 +449,7 @@ module CrystalPlay
       pkg_list = names.map { |p| quote_package(p) }.join(" ")
       cmd = "dnf update #{options} #{pkg_list}"
       
-      result = remote_exec(cmd)
+      result = remote_exec_tolerating_unknown_repo(cmd)
       
       success = result[:exit_code] == 0
       
@@ -464,7 +485,7 @@ module CrystalPlay
       options = build_dnf_options
       cmd = "dnf upgrade #{options}"
       
-      result = remote_exec(cmd)
+      result = remote_exec_tolerating_unknown_repo(cmd)
       
       success = result[:exit_code] == 0
       
@@ -498,7 +519,7 @@ module CrystalPlay
       options = build_dnf_options
       cmd = "dnf autoremove #{options}"
       
-      result = remote_exec(cmd)
+      result = remote_exec_tolerating_unknown_repo(cmd)
       
       success = result[:exit_code] == 0
       
