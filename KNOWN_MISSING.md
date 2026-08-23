@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.536`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.539`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.16` (see `shard.yml`).
 
 ---
@@ -81,6 +81,26 @@ is the record.
   isolated repro built up incrementally from the working one-line case
   toward the full template shape to pin down exactly which construct
   triggers it, before attempting a fix.
+
+- **A LOOPED task whose `when:` raises an exception (e.g. `mounts |
+  selectattr(...) | first` on an empty match) shows `skipped=1` in the
+  recap instead of real Ansible's `failed=1`.** Fixed in 0.9.539: the
+  solo-task case (no `loop:`) now matches real Ansible exactly (`Error
+  while evaluating conditional: ...`, `failed=1`, exit 2 - or `ok`/
+  `ignored` if `ignore_errors:` is set), and critically the crash this
+  used to cause (an unhandled exception killing the whole process,
+  regardless of loop:) is gone everywhere. Only the LOOPED case's exact
+  recap wording is still off - `execute_looped_task`'s own stats
+  aggregation treats every `when_passes? == false` per-item result as
+  an ordinary skip, with no way yet to distinguish "this item's when:
+  raised" from "this item's when: was false". The real fix needs
+  `when_passes?`'s failure path to signal a per-item FAILURE distinctly
+  (not just `false`) up through the loop aggregator, which doesn't
+  currently have a channel for that. Not attempted - `when_passes?`'s
+  own 0.9.539 fix already covers the crash (the important part) and the
+  exit code is still correct either way; only the displayed counter
+  differs, for this fairly rare combination (a when: that raises AND is
+  inside a loop:).
 
 Note: 0.9.474's entry here claiming `openssl_dhparam:`/
 `openssh_keypair:` had "no plugin, no `AVAILABLE_PLUGINS` entry" was

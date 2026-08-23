@@ -2312,7 +2312,65 @@ module CrystalPlay
       substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
       substituted_condition = substitutor.substitute(when_condition)
 
-      return true if ConditionalEvaluator.evaluate(substituted_condition, vars_context)
+      begin
+        return true if ConditionalEvaluator.evaluate(substituted_condition, vars_context)
+      rescue ex
+        # A raised exception evaluating when: (e.g. `mounts | selectattr
+        # (...) | first` on an empty match - FilterEngine's own `first`/
+        # `last` raise "No first item, sequence was empty." rather than
+        # silently returning nil, matching real Jinja2's `do_first`) used
+        # to crash the ENTIRE process with an unhandled-exception stack
+        # trace - `when_passes?` has 7 call sites across solo/looped/
+        # batched task execution and meta:, none of which caught this,
+        # unlike the identical-shaped `substitute_task_params` rescue a
+        # few lines below execute_task_once's own call site (added for a
+        # different raise site - see its own comment). Real Ansible
+        # degrades to one clean failed task ("Task failed: Error while
+        # evaluating conditional: ...") and continues the run, not a
+        # crash. Centralized here (not duplicated at each call site) so
+        # every caller gets this for free: marks the task FAILED (not
+        # skipped - `stats["failed"]`, a `failed: true` register: result,
+        # no notify: firing, matching what a real failed task does) and
+        # returns `false`, reusing the same "don't run this task" signal
+        # every caller already treats a when:-skip as.
+        #
+        # ignore_errors: is honored the same way `ResultDisplay.
+        # update_stats` already treats an ignored failure elsewhere in
+        # this codebase (ok+=1 AND ignored+=1, not failed+=1, host not
+        # halted) - verified directly against a real ansible-playbook
+        # run: `ignore_errors: true` on a when:-raising task prints
+        # "...ignoring" and continues with `ok=2 ... ignored=1`, exit 0.
+        msg = "Error while evaluating conditional: #{ex.message}"
+        unless defer_stats
+          if task.ignore_errors
+            @results[host.name]["ok"] += 1
+            @results[host.name]["ignored"] += 1
+          else
+            @results[host.name]["failed"] += 1
+          end
+        end
+        # Same halt/exit-code bookkeeping a normal task failure gets
+        # (see the other `@halted_hosts.add` call sites) - without this,
+        # a when:-evaluation failure would correctly print as failed and
+        # bump the recap's failed= counter, but the overall run would
+        # still exit 0 / print "Playbook execution complete", since
+        # nothing else marks this host as having failed.
+        @halted_hosts.add(host.name) unless task.ignore_errors
+        unless defer_display
+          suffix = item_label ? " => (item=#{item_label})" : ""
+          puts "fatal: [#{host.connection_host}]#{suffix}: FAILED! => #{msg}".colorize(:red)
+          puts "...ignoring".colorize(:red) if task.ignore_errors
+        end
+        register_name = task.register
+        unless register_name.nil? || register_name.empty?
+          register_result(host, register_name, JSON.parse({
+            "changed" => false,
+            "failed"  => true,
+            "msg"     => msg,
+          }.to_json))
+        end
+        return false
+      end
 
       # defer_stats: loop items and batch members pass this to only skip
       # the *counter* bump (aggregation happens once at the task level).
