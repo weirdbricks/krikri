@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.560`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.561`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -85,8 +85,12 @@ real modules regardless - see `git log`.
 
   Ranked by how often real playbooks/CI actually use them:
 
-  * `--syntax-check`, `--list-tasks`, `--list-hosts`, `--list-tags` -
-    cheap informational modes, common in CI lint stages.
+  * `--list-hosts`, `--list-tags` - the two informational modes still
+    missing (`--syntax-check` and `--list-tasks` landed in 0.9.561).
+    Note `--syntax-check`'s FAILURE output is terser than real
+    Ansible's: the exit code matches (4) but real Ansible's YAML
+    diagnostics carry an origin line, a column marker and a worked
+    example that this engine's parser does not produce.
   * `--start-at-task`, `--step`, `--force-handlers`, `--flush-cache`.
   * Connection/become flags: `-u`/`--user`, `--private-key`, `-k`,
     `-K`/`--ask-become-pass`, `-b`/`--become`, `--become-user`,
@@ -100,8 +104,8 @@ real modules regardless - see `git log`.
     gap went unnoticed.
 
   `--skip-tags` was in this list until 0.9.559 implemented it alongside
-  the rest of the tag-selection fix, and `-e`/`--extra-vars` until
-  0.9.560. Note extra-vars are still CLI-only: a static import path
+  the rest of the tag-selection fix, `-e`/`--extra-vars` until 0.9.560,
+  and `--syntax-check`/`--list-tasks` until 0.9.561. Note extra-vars are still CLI-only: a static import path
   (`import_tasks: "{{ x }}.yml"`) resolved at parse time does not yet see
   them, even though real Ansible's own error message for that case names
   extra-vars as one of the scopes that WOULD satisfy it.

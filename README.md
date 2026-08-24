@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.560-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.561-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,11 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.561`** - implemented `--syntax-check` and `--list-tasks`,
+  byte-for-byte against real `ansible-playbook` (tabs, alphabetical tag
+  sort, `role : task` prefixes, `--tags` filtering of the listing, and
+  the quirk that a block's `always:` tasks are not listed). Both suppress
+  this engine's own banner, since that output is routinely machine-read.
 - **`0.9.560`** - implemented `-e`/`--extra-vars`, previously missing
   entirely: all four input forms (`key=value` pairs, inline JSON,
   `@file` YAML or JSON, repeated flags with later winning) and real
@@ -421,13 +426,6 @@ for current-state detail.
   this now does too. Deliberately scoped to this program's own stdout
   writes rather than restoring the default SIGPIPE disposition, which
   would also kill the process on an EPIPE writing to a subprocess stdin.
-- **`0.9.555`** - a `loop:` source that IS defined but isn't a list is a
-  hard type error in real Ansible, with its own wording (``The `loop`
-  value must resolve to a 'list', not 'NoneType'.`` / `...not 'str'.`);
-  this engine ran the task once with `item` bound to the non-list value.
-  The legacy array-wrapped form (`with_items: ["{{ var }}"]`) keeps its
-  documented flatten-a-scalar-to-one-item leniency, which is a different
-  source shape.
 
 ## 🤝 Contributing
 

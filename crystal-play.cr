@@ -17,6 +17,7 @@ require "./src/crystal_play/version"
 require "./src/crystal_play/playbook_parser"
 require "./src/crystal_play/tag_filter"
 require "./src/crystal_play/extra_vars_parser"
+require "./src/crystal_play/task_lister"
 require "./src/crystal_play/inventory_parser"
 require "./src/crystal_play/task_executor"
 require "./src/crystal_play/vault"
@@ -102,6 +103,8 @@ limit_hosts = ""
 tags = [] of String
 skip_tags = [] of String
 extra_vars_args = [] of String
+syntax_check_only = false
+list_tasks_only = false
 vault_password_file = nil
 ask_vault_pass = false
 
@@ -154,6 +157,12 @@ begin
       limit_hosts = subset
     end
 
+    parser.on("--syntax-check", "Parse the playbook and report any syntax errors, without running it") do
+      syntax_check_only = true
+    end
+    parser.on("--list-tasks", "List the tasks that would run, without running them") do
+      list_tasks_only = true
+    end
     parser.on("-e EXTRA_VARS", "--extra-vars=EXTRA_VARS", "Set additional variables as key=value, JSON, or @file (highest precedence; repeatable)") do |e|
       extra_vars_args << e
     end
@@ -244,7 +253,12 @@ elsif ask_vault_pass
   CrystalPlay::Vault.password = CrystalPlay::VaultCli.prompt_password
 end
 
-# Display banner
+# Display banner. Skipped for --syntax-check/--list-tasks: real
+# ansible-playbook prints nothing but the listing itself in those modes,
+# and that output is routinely machine-read in CI, so this engine's own
+# banner/warnings would be noise in the middle of it.
+quiet_listing_mode = syntax_check_only || list_tasks_only
+unless quiet_listing_mode
 puts ""
 puts CrystalPlay.banner.colorize(:cyan).bold
 puts "=" * 70
@@ -266,11 +280,26 @@ if skip_tags.any?
 end
 puts "=" * 70
 puts ""
+end
 
 # Parse playbook
 playbook = nil
 begin
   playbook = CrystalPlay::PlaybookParser.parse(playbook_file)
+
+  # Reaching here means the playbook parsed. A parse failure was already
+  # reported and exited 4 by this block's own rescue - which is exactly
+  # what real ansible-playbook does for --syntax-check on a broken
+  # playbook, so the failure path needs nothing extra here.
+  if syntax_check_only
+    CrystalPlay::TaskLister.syntax_check(playbook)
+    exit 0
+  end
+
+  if list_tasks_only
+    CrystalPlay::TaskLister.list_tasks(playbook, tags, skip_tags)
+    exit 0
+  end
 
   if verbose
     stats = CrystalPlay::PlaybookParser.stats(playbook)
