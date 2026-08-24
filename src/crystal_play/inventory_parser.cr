@@ -80,13 +80,15 @@ module CrystalPlay
     # group's own `hosts` hash holds only hosts declared directly under
     # it, so a group defined purely as a parent (`[prod:children]`)
     # otherwise resolved to nothing at all.
-    private def group_hosts(name : String, seen = Set(String).new) : Array(Host)
+    # Public so the executor can build the `groups` magic var with the
+    # same transitive view (a parent group's own hosts hash is empty).
+    def hosts_in_group(name : String, seen = Set(String).new) : Array(Host)
       return [] of Host unless group = @groups[name]?
       return [] of Host unless seen.add?(name)
 
       hosts = group.hosts.values.dup
       group.children.each do |child|
-        group_hosts(child, seen).each do |host|
+        hosts_in_group(child, seen).each do |host|
           hosts << host unless hosts.any? { |existing| existing.name == host.name }
         end
       end
@@ -111,7 +113,7 @@ module CrystalPlay
       else
         # Check if it's a group (children resolved transitively)
         if @groups.has_key?(pattern)
-          group_hosts(pattern)
+          hosts_in_group(pattern)
         # Check if it's a host
         elsif host = @hosts[pattern]?
           [host]
@@ -128,6 +130,17 @@ module CrystalPlay
       end
     end
     
+    # Every group *host_name* belongs to, following :children upward, in
+    # the sorted order real Ansible's `group_names` uses. "all" is
+    # excluded, matching real Ansible (verified: a host in [web] under
+    # [prod:children] reports exactly "prod, web").
+    def groups_for(host_name : String) : Array(String)
+      @groups.keys.select do |group_name|
+        next false if group_name == "all" || group_name == "ungrouped"
+        hosts_in_group(group_name).any? { |host| host.name == host_name }
+      end.sort!
+    end
+
     # Add a host
     def add_host(host : Host)
       @hosts[host.name] = host
@@ -425,32 +438,82 @@ module CrystalPlay
       inventory
     end
     
+    # Expands one inventory host entry into every hostname it names.
+    # Numeric bounds keep the zero-padding of the FIRST bound
+    # (`web[01:03]` -> web01..web03), alphabetic bounds step through
+    # letters, and an optional third field is the step
+    # (`x[01:10:3]` -> x01 x04 x07 x10). Text on either side of the
+    # bracket is preserved, so `srv[1:2].ex.com` works. Anything that is
+    # not a well-formed range is returned unchanged - including a plain
+    # hostname, which is the overwhelming common case.
+    def self.expand_host_range(entry : String) : Array(String)
+      match = entry.match(/\A(.*)\[([^\[\]:]+):([^\[\]:]+)(?::([0-9]+))?\](.*)\z/)
+      return [entry] unless match
+
+      prefix, from, to, step_raw, suffix = match[1], match[2], match[3], match[4]?, match[5]
+      step = (step_raw.try(&.to_i?) || 1)
+      step = 1 if step < 1
+
+      names = [] of String
+
+      if (from_i = from.to_i?) && (to_i = to.to_i?)
+        # Zero-padding comes from how the FIRST bound was written.
+        width = from.starts_with?('0') ? from.size : 0
+        value = from_i
+        while value <= to_i
+          rendered = width > 0 ? value.to_s.rjust(width, '0') : value.to_s
+          names << "#{prefix}#{rendered}#{suffix}"
+          value += step
+        end
+      elsif from.size == 1 && to.size == 1 && from[0].ascii_letter? && to[0].ascii_letter?
+        value = from[0].ord
+        while value <= to[0].ord
+          names << "#{prefix}#{value.chr}#{suffix}"
+          value += step
+        end
+      else
+        return [entry]
+      end
+
+      names.empty? ? [entry] : names
+    end
+
     # Parse host line from INI
     private def self.parse_host_line(line : String, group_name : String, inventory : Inventory)
       # Format: hostname key=value key=value
       parts = line.split(/\s+/)
       return if parts.empty?
       
+      # A host entry may be a RANGE standing for several hosts -
+      # `web[01:03]`, `n[1:3]`, `h[a:c]`, `x[01:10:3]`,
+      # `srv[1:2].ex.com`. Previously the whole thing was taken as one
+      # literal hostname, so an inventory using the ordinary
+      # `web[01:03]` form defined a single host actually NAMED
+      # "web[01:03]" and every real host in it was invisible.
+      expand_host_range(parts[0]).each do |hostname|
+        # Get or create host
+        host = inventory.hosts[hostname]?
+        unless host
+          host = Host.new(hostname)
+          inventory.add_host(host)
+        end
+
+        # Parse host variables
+        parts[1..-1].each do |part|
+          next unless part.includes?("=")
+
+          key, value = part.split("=", 2)
+          host.vars[key] = parse_value(value)
+        end
+
+        # Add host to group
+        group = inventory.get_or_create_group(group_name)
+        group.add_host(host)
+      end
+
       hostname = parts[0]
-      
-      # Get or create host
       host = inventory.hosts[hostname]?
-      unless host
-        host = Host.new(hostname)
-        inventory.add_host(host)
-      end
-      
-      # Parse host variables
-      parts[1..-1].each do |part|
-        next unless part.includes?("=")
-        
-        key, value = part.split("=", 2)
-        host.vars[key] = parse_value(value)
-      end
-      
-      # Add host to group
-      group = inventory.get_or_create_group(group_name)
-      group.add_host(host)
+      return unless host
       
       # Special handling for ansible_host
       if ansible_host = host.vars["ansible_host"]?

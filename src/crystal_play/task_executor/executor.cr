@@ -1193,6 +1193,14 @@ module CrystalPlay
       # applied directly here - see that method's own comment for why.
       base_context_b_for(host).each { |key, value| vars_context[key] = value }
       vars_context["inventory_hostname"] = JSON::Any.new(host.name)
+      # inventory_hostname_short - everything before the first dot. Was
+      # entirely missing, so `{{ inventory_hostname_short }}` raised.
+      vars_context["inventory_hostname_short"] = JSON::Any.new(host.name.split('.').first)
+      # group_names - the groups this host belongs to, parents included,
+      # sorted. Was missing too (rendered empty).
+      if inv = @inventory
+        vars_context["group_names"] = JSON::Any.new(inv.groups_for(host.name).map { |name| JSON::Any.new(name) })
+      end
       vars_context["ansible_hostname"] ||= JSON::Any.new(host.name)
       vars_context["ansible_host"] ||= JSON::Any.new(host.name)
 
@@ -1433,8 +1441,11 @@ module CrystalPlay
 
       result = Hash(String, JSON::Any).new
       if inventory = @inventory
-        inventory.groups.each do |name, group|
-          result[name] = JSON::Any.new(group.hosts.keys.map { |hostname| JSON::Any.new(hostname) })
+        inventory.groups.each do |name, _group|
+          # hosts_in_group, not group.hosts: a parent group defined via
+          # :children has an empty hosts hash of its own, so groups['prod']
+          # came back as [] for every such group.
+          result[name] = JSON::Any.new(inventory.hosts_in_group(name).map { |host| JSON::Any.new(host.name) })
         end
         result["all"] = JSON::Any.new(inventory.hosts.keys.map { |hostname| JSON::Any.new(hostname) })
       else

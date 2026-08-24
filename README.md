@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.568-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.569-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,16 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.569`** - inventory host RANGES (`web[01:03]`, `n[1:3]`,
+  `h[a:c]`, `x[01:10:3]`, `srv[1:2].ex.com`) are expanded instead of
+  being taken as one literal hostname - an inventory written the
+  ordinary way previously defined a host actually named `web[01:03]` and
+  every real host in it was invisible. Also added the missing
+  `inventory_hostname_short` (which RAISED as undefined) and
+  `group_names` (which rendered empty), and fixed `groups['parent']`
+  returning [] for a `:children` group. `group_vars/` and `host_vars/`
+  loading and their whole precedence chain were verified against real
+  Ansible and already correct.
 - **`0.9.568`** - implemented real Ansible's host-pattern language for
   both `hosts:` and `--limit`. Only a bare group/host/glob was understood
   before, so a `[prod:children]` parent group, a `web:db` union, a `!web`
@@ -421,11 +431,6 @@ for current-state detail.
   a task nested inside a `block:`, and reports a name that matches
   nothing while still exiting 0) and `--force-handlers`, along with the
   `force_handlers: true` play keyword it shares semantics with.
-- **`0.9.563`** - implemented `--list-hosts` and `--list-tags`,
-  completing ansible-playbook's four informational modes. Layout matches
-  real Ansible; the one deliberate difference is host ORDER for a
-  multi-group pattern, which real Ansible emits differently on every run
-  (Python hash iteration) and this engine sorts.
 
 ## 🤝 Contributing
 
