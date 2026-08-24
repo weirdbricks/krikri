@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.545-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.546-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,17 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.546`** - fixed `ansible.builtin.dnf`/`ansible.builtin.yum`'s
+  own cache-refresh-only invocation (`update_cache: true`, no `name:`)
+  always reporting `changed: true` on success - real Ansible's dnf/yum
+  module never reports changed for this (no reliable "was the cache
+  actually stale" signal), verified live: `buluma.rpmfusion`'s own "Yum
+  update cache" handler recap'd `ok:` on real Ansible, `changed:` on
+  this engine (found round172, `ok=8` matched but `changed=4` vs `5`).
+  The generic `package:` module's own identical cache-only path
+  (`package.cr`) already had this right; `dnf.cr`/`yum.cr`'s own
+  separate branches (reached when a role calls `dnf:`/`yum:` directly)
+  never got the same fix. `crystal spec`: 1613 examples, 0 failures.
 - **`0.9.545`** - fixed `import_role:` producing its own visible "TASK
   [...]" banner and `ok` recap count, which real Ansible's genuinely
   static, parse-time splice never does (only `include_role:`'s dynamic
@@ -479,22 +490,6 @@ for current-state detail.
   `.openbao`) turned out to already be fixed by later, unrelated rounds
   without the docs being updated - corrected, no code change needed.
   `crystal spec`: 1611 examples, 0 failures.
-- **`0.9.536`** - fixed the vendored Crinja fork's explicit-dash
-  whitespace-control gap (`{% for -%}`/`{%- endfor %}` only stripped
-  the first line of a multi-line whitespace run, not the whole thing -
-  round85/round170's `collectd.conf.j2` finding) for good this time:
-  spec-first in the Crinja repo itself (`crystal-play-0.9.16`), fixed
-  in `renderer.cr`'s `trim_text` dispatch without touching `String
-  Trimmer.trim`'s own logic/specs at all, and 9 pre-existing Crinja
-  specs that had baked in the old narrow-trim bug as "correct" were
-  each re-verified against a real `jinja2.Environment` render before
-  updating. Bonus: 3 "KNOWN DIVERGENCE from real Python jinja2"
-  recursive-for + `trim_blocks` cases now match real Jinja2 exactly
-  too. Found (and left open, for a future pass) two SEPARATE gaps
-  while verifying: a Crinja parser state leak across nested block
-  end-tags, and a `None`-renders-as-`"none"` case specific to a
-  trailing `{{ var }}` at true end-of-template. Crinja's own suite:
-  546 examples, 0 failures. `crystal spec`: 1601 examples, 0 failures.
 ---
 
 ## 🤝 Contributing

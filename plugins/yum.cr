@@ -67,8 +67,12 @@ module CrystalPlay
       if names.empty?
         if is_true?(@params["update_cache"]?)
           result = remote_exec("yum makecache")
+          # changed: false even on success - same fix as dnf.cr's
+          # identical branch (see its own comment): real ansible-core's
+          # dnf/yum module never reports changed for a cache-only
+          # refresh. Found via round172's buluma.rpmfusion.
           return PluginResult.new(
-            changed: result[:exit_code] == 0,
+            changed: false,
             failed: result[:exit_code] != 0,
             msg: result[:exit_code] == 0 ? "Package cache updated" : "Failed to update package cache: #{result[:stderr]}"
           )

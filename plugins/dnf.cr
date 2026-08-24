@@ -52,8 +52,22 @@ module CrystalPlay
       if names.empty?
         if is_true?(@params["update_cache"]?)
           result = remote_exec("dnf makecache")
+          # changed: false even on success - real ansible-core's dnf.py
+          # `update_cache_only` reports `changed=result.get('changed',
+          # False)` from its libdnf5-backed helper, which never actually
+          # sets a `changed` key in practice (verified live on Rocky 9.6:
+          # ansible-core's own recap for this exact handler shape -
+          # `dnf: {update_cache: true}`, no name: - shows `ok:`, never
+          # `changed:`). Not visible from `dnf makecache`'s own CLI
+          # stdout, which prints the same repo-listing whether the cache
+          # was actually stale or not - see package.cr's own
+          # update_cache_only, which already got this right; this
+          # module's separate cache-only branch (reached only when a
+          # role calls dnf:/ansible.builtin.dnf directly, not the
+          # generic package:) never got the same fix. Found via round172's
+          # buluma.rpmfusion.
           return PluginResult.new(
-            changed: result[:exit_code] == 0,
+            changed: false,
             failed: result[:exit_code] != 0,
             msg: result[:exit_code] == 0 ? "Package cache updated" : "Failed to update package cache: #{result[:stderr]}"
           )
