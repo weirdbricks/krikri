@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.563`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.564`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -94,7 +94,15 @@ real modules regardless - see `git log`.
     web2,web1,db1 across five consecutive identical runs, i.e. Python
     hash iteration order - so there is no byte-order to match. This
     engine sorts them, which is deterministic and diffable.)
-  * `--start-at-task`, `--step`, `--force-handlers`, `--flush-cache`.
+  * `--step`, `--flush-cache` (`--start-at-task` and `--force-handlers`
+    landed in 0.9.564). One deliberate divergence in `--start-at-task`:
+    when the matched task lives in a LATER play, real Ansible runs that
+    play's `Gathering Facts` even though the play sets
+    `gather_facts: false` (reproduced three times; it does not do this
+    when the same play runs on its own). That looks like an upstream
+    bug, and replicating it would mean gathering facts a playbook
+    explicitly disabled, so this engine does not - the recap differs by
+    that one `ok` in that specific case.
   * Connection/become flags: `-u`/`--user`, `--private-key`, `-k`,
     `-K`/`--ask-become-pass`, `-b`/`--become`, `--become-user`,
     `--become-method`, `-C` is taken (`--check` here is `-c`),

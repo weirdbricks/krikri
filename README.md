@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.563-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.564-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,10 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.564`** - implemented `--start-at-task` (playbook-wide, matches
+  a task nested inside a `block:`, and reports a name that matches
+  nothing while still exiting 0) and `--force-handlers`, along with the
+  `force_handlers: true` play keyword it shares semantics with.
 - **`0.9.563`** - implemented `--list-hosts` and `--list-tags`,
   completing ansible-playbook's four informational modes. Layout matches
   real Ansible; the one deliberate difference is host ORDER for a
@@ -418,13 +422,6 @@ for current-state detail.
   children were never filtered individually; and `--skip-tags` did not
   exist. All of it now matches real `ansible-playbook` across 15
   scenarios.
-- **`0.9.558`** - a task using a module with no plugin behind it (a
-  typo, or a role's own `library/*.py`) is still skipped rather than
-  aborting the play - that scope cut is deliberate - but the run no
-  longer ends `✓ Playbook execution complete` with exit 0. It now exits
-  4, real Ansible's own code for a playbook whose module it can't
-  resolve, so CI stops seeing a green light for a playbook real
-  `ansible-playbook` rejects outright.
 
 ## 🤝 Contributing
 

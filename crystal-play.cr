@@ -18,6 +18,7 @@ require "./src/crystal_play/playbook_parser"
 require "./src/crystal_play/tag_filter"
 require "./src/crystal_play/extra_vars_parser"
 require "./src/crystal_play/task_lister"
+require "./src/crystal_play/start_at_filter"
 require "./src/crystal_play/inventory_parser"
 require "./src/crystal_play/task_executor"
 require "./src/crystal_play/vault"
@@ -107,6 +108,8 @@ syntax_check_only = false
 list_tasks_only = false
 list_hosts_only = false
 list_tags_only = false
+start_at_task = nil.as(String?)
+force_handlers = false
 vault_password_file = nil
 ask_vault_pass = false
 
@@ -161,6 +164,12 @@ begin
 
     parser.on("--syntax-check", "Parse the playbook and report any syntax errors, without running it") do
       syntax_check_only = true
+    end
+    parser.on("--start-at-task=NAME", "Start the playbook at the task with this name, skipping everything before it") do |n|
+      start_at_task = n
+    end
+    parser.on("--force-handlers", "Run handlers even if a task fails, instead of dropping them") do
+      force_handlers = true
     end
     parser.on("--list-hosts", "List the hosts each play would target, without running anything") do
       list_hosts_only = true
@@ -286,6 +295,9 @@ end
 if skip_tags.any?
   puts "Skip tags: #{skip_tags.join(", ")}".colorize(:cyan)
 end
+if start_at = start_at_task
+  puts "Start at task: #{start_at}".colorize(:cyan)
+end
 puts "=" * 70
 puts ""
 end
@@ -397,6 +409,8 @@ rescue ex
   exit 1
 end
 
+start_at_pending = !start_at_task.nil?
+
 # At this point inventory is guaranteed to be set
 inventory = inventory.not_nil!
 
@@ -498,6 +512,18 @@ playbook.plays.each_with_index do |play, play_index|
   tasks_before_tag_filter = tasks_to_run.size
   tasks_to_run = CrystalPlay::TagFilter.apply(tasks_to_run, tags, skip_tags)
 
+  # --start-at-task: playbook-wide, so the "still looking" state carries
+  # across plays and this stops filtering once the match is found.
+  if (start_at = start_at_task) && start_at_pending
+    tasks_to_run, start_at_found = CrystalPlay::StartAtFilter.apply(tasks_to_run, start_at)
+    start_at_pending = false if start_at_found
+
+    # A play with nothing left before the match contributes nothing and
+    # prints nothing - real ansible-playbook shows its PLAY banner and no
+    # tasks; this engine simply moves on.
+    next if tasks_to_run.empty?
+  end
+
   if tasks_to_run.empty? && tasks_before_tag_filter > 0
     if tags.any? || skip_tags.any?
       puts "Skipping play - no tasks match tags: #{(tags + skip_tags).join(", ")}".colorize(:yellow)
@@ -530,7 +556,8 @@ playbook.plays.each_with_index do |play, play_index|
     forks: forks,
     smart_gathering: gathering == "smart",
     fact_store: run_fact_store,
-    extra_vars: extra_vars
+    extra_vars: extra_vars,
+    force_handlers: force_handlers || play.force_handlers
   )
 
   # Run tasks
@@ -626,6 +653,15 @@ if any_failed
   puts "✗ Playbook execution completed with failures".colorize(:red).bold
   puts ""
   exit 2
+end
+
+# --start-at-task that never matched: real ansible-playbook reports it
+# after the recap and still exits 0 (verified against ansible-core
+# 2.19.4) - it is a "nothing to do" outcome, not an error code.
+if (start_at = start_at_task) && start_at_pending
+  puts %([ERROR]: No matching task "#{start_at}" found. Note: --start-at-task can only follow static includes.).colorize(:red)
+  puts ""
+  exit 0
 end
 
 puts "✓ Playbook execution complete".colorize(:green).bold

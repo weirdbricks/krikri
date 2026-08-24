@@ -397,6 +397,10 @@ module CrystalPlay
     property gather_facts_set : Bool = false
     property tags : Array(String)
     property handlers : Array(Task)
+    # `force_handlers: true` play keyword - run notified handlers even
+    # when a task failed on the host, exactly like the --force-handlers
+    # CLI flag (real Ansible honors both).
+    property force_handlers : Bool = false
 
     def initialize(@name : String, @hosts : String | Array(String))
       @tasks = [] of Task
@@ -956,6 +960,7 @@ module CrystalPlay
       gather_facts_yaml = yaml["gather_facts"]?
       play.gather_facts = gather_facts_yaml ? gather_facts_yaml.as_bool : true
       play.gather_facts_set = !gather_facts_yaml.nil?
+      play.force_handlers = parse_become_value(yaml["force_handlers"]?) || false
 
       # Parse play-level vars
       if vars_yaml = yaml["vars"]?.try(&.as_h?)

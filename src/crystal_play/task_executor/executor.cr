@@ -275,7 +275,10 @@ module CrystalPlay
       # (verified against ansible-core 2.19.4) a later `set_fact` cannot
       # override one either - which is why these are applied at the very
       # END of build_vars_context rather than as a base layer.
-      @extra_vars = {} of String => JSON::Any
+      @extra_vars = {} of String => JSON::Any,
+      # --force-handlers / the `force_handlers: true` play keyword: run
+      # notified handlers even for a host a task already failed on.
+      @force_handlers = false
     )
       @results = Hash(String, Hash(String, Int32)).new
       @registered_vars = Hash(String, Hash(String, JSON::Any)).new
@@ -5379,7 +5382,13 @@ module CrystalPlay
         render_task_name_for_display(handler, host)
       }
 
-      @handler_runner.run(execute_callback, @results, @diff_mode, name_resolver, @halted_hosts)
+      # Passing nil instead of @halted_hosts is what --force-handlers
+      # means: HandlerRunner skips a notified handler for any host in
+      # that set, so withholding it lets a failed host still flush its
+      # handlers. Real Ansible keeps failed=1 and rc=2 either way - the
+      # flag only decides whether the handler runs.
+      @handler_runner.run(execute_callback, @results, @diff_mode, name_resolver,
+        @force_handlers ? nil : @halted_hosts)
     end
     
     # Execute a handler (internal - called via callback)
