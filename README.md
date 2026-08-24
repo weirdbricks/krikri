@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.555-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.556-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,14 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.556`** - piping output to a reader that exits early
+  (`crystal-ansible playbook.yml | head -2`, `--version | head -1`,
+  quitting a pager) dumped a Crystal stack trace to stderr and exited 1.
+  Crystal ignores SIGPIPE, so the write surfaced as an unrescued
+  `IO::Error`. Real `ansible-playbook` is silent and exits 0 here, so
+  this now does too. Deliberately scoped to this program's own stdout
+  writes rather than restoring the default SIGPIPE disposition, which
+  would also kill the process on an EPIPE writing to a subprocess stdin.
 - **`0.9.555`** - a `loop:` source that IS defined but isn't a list is a
   hard type error in real Ansible, with its own wording (``The `loop`
   value must resolve to a 'list', not 'NoneType'.`` / `...not 'str'.`);
@@ -429,55 +437,6 @@ for current-state detail.
   rescue then succeeds: a failing block task plus a failing `rescue:`
   recaps as `failed=1 rescued=1`, not `failed=2 rescued=0`. Pre-existing
   and unrelated to the `when:` work; found live in round173.
-- **`0.9.550`** - closed KNOWN_MISSING.md's remaining `when:`
-  strict-undefined gap: 0.9.548 wired real Ansible's strict-undefined
-  semantics into task-level `when:` only, since that was the sole call
-  site already exception-safe (`WhenEvaluationError`, see 0.9.539). The
-  other five - `block:`/`include_tasks:`'s multi-host `partition_by_
-  when`, `execute_block`'s single-host `when:`, `run_include_tasks_
-  once`, `run_include_role_once`, and a handler's own `when:` - now get
-  the same strictness through one shared `evaluate_when` helper that
-  owns the substitute+evaluate+rescue sequence, so a genuinely undefined
-  bare/dotted variable in any of these positions fails cleanly for the
-  affected host (or just one host of a multi-host partition) instead of
-  either crashing the process or silently resolving as false. A filter/
-  default()/lookup() chain in the same position stays lenient, same
-  scope as 0.9.548. Note a `block:`'s own `when:` is INHERITED by its
-  children rather than failing the block as a unit, so the first task of
-  `block:`, of `rescue:` and of `always:` each fail on it - corrected
-  against real `ansible-playbook` in round173. `crystal spec`: 1644
-  examples, 0 failures.
-- **`0.9.549`** - closed KNOWN_MISSING.md's `import_tasks:`/`import_role:`
-  fact-in-static-import gap: a templated import path referencing a fact
-  (e.g. `import_tasks: "setup-{{ ansible_os_family }}.yml"` with no
-  matching default/var) now raises `StaticImportUndefinedError` and
-  aborts the whole playbook load, matching real Ansible's own "Static
-  imports cannot use variables from facts" refusal (rc=4-equivalent, 0
-  tasks run) instead of silently rendering the missing var as
-  `"undefined"`, failing to resolve the file, and continuing with a soft
-  warning (`ok=0`, exit 0 - a genuinely different pass/fail outcome, not
-  cosmetic). Found live via round172's `buluma.php_versions` (Rocky
-  9.6), reduced to a minimal repro and verified byte-identical against
-  real `ansible-playbook`'s error message. `import_role:`/`import_tasks:`
-  reached dynamically (a task-level `import_role:` mid-play, not a
-  top-level `roles:` list) now raises the same correct error too, but
-  only fails that one task rather than aborting the whole run - see
-  KNOWN_MISSING.md for that narrower remaining scope.
-  `crystal spec`: 1625 examples, 0 failures.
-- **`0.9.548`** - closed KNOWN_MISSING.md's `when:` strict-undefined gap:
-  a task-level `when:` reaching a genuinely undefined bare/dotted
-  variable (e.g. `when: git_remote != '' and git_remote != None` with
-  `git_remote` never set) now raises and fails the task (`failed=1`),
-  matching real Ansible byte-for-byte, instead of silently resolving the
-  comparison and skipping. Found live via round172's `buluma.git_tag`
-  (Rocky 9.6). `ConditionalEvaluator.evaluate` gained a `raise_undefined:`
-  flag, wired only into `Executor#when_passes?` (already exception-safe
-  via `WhenEvaluationError`, see 0.9.539) - a filter/function chain
-  (`| default(...)`, `lookup(...)`, any `is <test>`) still falls back to
-  the lenient `"undefined"` sentinel, same narrow scope as 0.9.517's
-  matching module-arg fix. `block:`/`include_tasks:`/`include_role:`/
-  handler `when:` deliberately not touched yet (see KNOWN_MISSING.md).
-  `crystal spec`: 1623 examples, 0 failures.
 
 ## 🤝 Contributing
 

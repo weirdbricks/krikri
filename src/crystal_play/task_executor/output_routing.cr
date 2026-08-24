@@ -26,6 +26,36 @@ module CrystalPlay
     def self.current_io : IO
       @@buffers[Fiber.current]? || STDOUT
     end
+
+    # Crystal sets SIGPIPE to ignore, so writing to a pipe whose reader
+    # has already exited (`crystal-ansible playbook.yml | head -2`,
+    # `--version | head -1`, quitting out of a pager) surfaces as an
+    # IO::Error instead of quietly killing the process - and, with
+    # nothing rescuing it, dumped a full Crystal stack trace to stderr
+    # and exited 1.
+    #
+    # Real ansible-playbook is silent here and exits 0 (verified against
+    # ansible-playbook/ansible: `--help | head -1` and
+    # `--version | head -1` both produce no stderr and PIPESTATUS[0]=0),
+    # so match that. Note this is deliberately NOT fixed by restoring the
+    # default SIGPIPE disposition (`Signal::PIPE.reset`): that would let
+    # the kernel kill the whole process on ANY EPIPE, including a write
+    # to a subprocess stdin that closed early, turning a currently
+    # catchable error deep in the SSH/plugin paths into an abrupt death.
+    # Scoping it to this program's own stdout writes keeps that behavior
+    # unchanged.
+    #
+    # Every output path in this codebase goes through the puts/print
+    # below (there is exactly one other STDOUT reference in the whole
+    # tree - current_io above), so this is the complete set of places a
+    # stdout EPIPE can originate.
+    def self.exit_quietly_if_broken_pipe(ex : IO::Error) : Nil
+      raise ex unless ex.os_error == Errno::EPIPE
+
+      # Don't flush-on-exit into the same dead pipe (that would raise
+      # again, from at_exit, where nothing can rescue it).
+      LibC._exit(0)
+    end
   end
 end
 
@@ -37,8 +67,12 @@ end
 # other require, for exactly that reason.
 def puts(*objects) : Nil
   CrystalPlay::OutputRouting.current_io.puts(*objects)
+rescue ex : IO::Error
+  CrystalPlay::OutputRouting.exit_quietly_if_broken_pipe(ex)
 end
 
 def print(*objects) : Nil
   CrystalPlay::OutputRouting.current_io.print(*objects)
+rescue ex : IO::Error
+  CrystalPlay::OutputRouting.exit_quietly_if_broken_pipe(ex)
 end
