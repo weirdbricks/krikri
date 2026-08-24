@@ -2440,6 +2440,32 @@ module CrystalPlay
     # Expands block: tasks into their nested tasks (recursively, through
     # block/rescue/always), dropping the "_block" pseudo-task entries
     # themselves so callers only see real module invocations.
+    # Every distinct module name in *playbook* that has no plugin binary
+    # behind it (Task#unavailable_module), in first-seen order.
+    #
+    # Such a task is deliberately skipped rather than aborting the run -
+    # see KNOWN_MISSING.md's role-private-custom-modules scope cut, which
+    # exists so a role leaning on its own `library/*.py` can still be
+    # benchmarked for everything else it does. But the skip was entirely
+    # SILENT: a typo'd or unavailable module rendered as an ordinary
+    # "skipping: [host]" line, then "Playbook execution complete" and
+    # exit 0 - indistinguishable from a deliberate when:-false skip, and
+    # a green light to CI. Real ansible-playbook refuses the playbook
+    # outright ("couldn't resolve module/action") and exits 4.
+    #
+    # crystal-play.cr uses this to name the modules up front and to exit
+    # 4 at the end of the run.
+    def self.unavailable_modules(playbook : Playbook) : Array(String)
+      names = [] of String
+      playbook.plays.each do |play|
+        (flatten_tasks(play.tasks) + flatten_tasks(play.handlers)).each do |task|
+          next unless name = task.unavailable_module
+          names << name unless names.includes?(name)
+        end
+      end
+      names
+    end
+
     private def self.flatten_tasks(tasks : Array(Task)) : Array(Task)
       tasks.flat_map do |task|
         if task.block?

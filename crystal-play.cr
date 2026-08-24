@@ -259,6 +259,16 @@ begin
     puts ""
   end
 
+  # A module with no plugin binary behind it is skipped rather than
+  # aborting the run (KNOWN_MISSING.md's role-private-custom-modules
+  # scope cut, so a role leaning on its own library/*.py stays
+  # benchmarkable). The `validate` warnings below already NAME it ("uses
+  # unimplemented plugin: x"), but the run still ended "Playbook
+  # execution complete" with exit 0 - a green light to CI for what real
+  # ansible-playbook refuses outright with rc=4. Collected here, acted on
+  # at the end of the run (see unavailable_modules_found below).
+  unavailable_modules_found = CrystalPlay::PlaybookParser.unavailable_modules(playbook)
+
   # Show warnings
   warnings = CrystalPlay::PlaybookParser.validate(playbook)
   if warnings.any?
@@ -510,6 +520,18 @@ CrystalPlay::SSHManager.close_all_daemons
 if check_mode
   puts "NOTE: Running in check mode - no changes were made".colorize(:yellow).bold
   puts ""
+end
+
+# An unavailable module outranks a failed host: real ansible-playbook
+# would have refused the playbook at parse time with rc=4 and never run
+# anything, so 4 is the more fundamental signal. This engine still RUNS
+# the rest of the play (the scope cut's whole point - a role using its
+# own library/*.py stays benchmarkable), so the divergence that remains
+# is "which tasks ran", not the exit status a caller sees.
+unless unavailable_modules_found.empty?
+  puts "✗ Playbook execution completed with unavailable modules: #{unavailable_modules_found.join(", ")}".colorize(:red).bold
+  puts ""
+  exit 4
 end
 
 if any_failed

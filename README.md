@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.557-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.558-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,13 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.558`** - a task using a module with no plugin behind it (a
+  typo, or a role's own `library/*.py`) is still skipped rather than
+  aborting the play - that scope cut is deliberate - but the run no
+  longer ends `✓ Playbook execution complete` with exit 0. It now exits
+  4, real Ansible's own code for a playbook whose module it can't
+  resolve, so CI stops seeing a green light for a playbook real
+  `ansible-playbook` rejects outright.
 - **`0.9.557`** - real Ansible reserves exit code 4 for PARSER errors,
   distinct from 1 (generic), 2 (failed hosts) and 3 (unreachable); this
   engine exited 1 for both an unparseable playbook and a static import
@@ -423,20 +430,6 @@ for current-state detail.
   conditional: 'x' is undefined` message a `when:` gets, not a generic
   `Assertion failed`. Fixed in both the action-plugin and standalone
   `plugins/assert.cr` copies.
-- **`0.9.552`** - two bugs in the `version`/`version_compare` test,
-  both found live in round173. `version_compare` (real Ansible's older
-  alias for `version`, still accepted by ansible-core 2.19) was never
-  recognized, so `x is version_compare(min, '>=')` fell through to the
-  generic comparison splitter, which mistook the `>=` *inside the quoted
-  operator argument* for a real operator. That was silently benign while
-  conditionals were lenient - but 0.9.548's strict-undefined change
-  turned the same misparse into a hard task failure (`'')' is
-  undefined`), breaking the single most common version-gate idiom in
-  real roles. Separately, the test's compare-to argument was only ever
-  unquoted, never resolved, so a VARIABLE argument
-  (`is version(role_min_version, '>=')`) was version-compared against
-  its own literal name. Both verified byte-identical against real
-  `ansible-playbook` afterwards.
 
 ## 🤝 Contributing
 

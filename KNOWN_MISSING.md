@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.557`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.558`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -90,12 +90,20 @@ real modules regardless - see `git log`.
   `ansible.builtin`/`community.*`/etc. plugin set this engine ships as
   native binaries) - there's no generic arbitrary-Python-module runner,
   so these can't execute at all. The task is skipped with a
-  parse-time warning ("Plugin not available: <name>") rather than
-  crashing the run, but anything downstream depending on its result
-  sees an undefined value, which can cascade into broader task-status
-  divergence for roles that lean on this (seen repeatedly benchmarking
-  `linux-system-roles`: `sr_fingerprint`, `timesync_provider`,
-  `kernel_settings_get_config`, `blivet`).
+  parse-time warning ("uses unimplemented plugin: <name>") rather than
+  crashing the run - deliberately, so a role leaning on its own
+  `library/*.py` stays benchmarkable for everything else it does - but
+  anything downstream depending on its result sees an undefined value,
+  which can cascade into broader task-status divergence for roles that
+  lean on this (seen repeatedly benchmarking `linux-system-roles`:
+  `sr_fingerprint`, `timesync_provider`, `kernel_settings_get_config`,
+  `blivet`). Since `0.9.558` such a run **exits 4**, real Ansible's own
+  code for refusing a playbook it can't resolve a module for, instead of
+  the previous 0 - which reported a green run to CI for a playbook real
+  `ansible-playbook` rejects outright. What remains divergent here is
+  only WHICH TASKS RUN (real Ansible refuses at parse time and runs
+  nothing; this engine runs the rest of the play), not the exit status a
+  caller sees.
 - `docker_*`'s `api_version:` pin - not implemented, not planned. The
   underlying `docr` client uses unversioned endpoint URLs throughout,
   so pinning a version means touching every endpoint in a separate
