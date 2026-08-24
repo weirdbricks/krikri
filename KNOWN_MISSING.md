@@ -43,6 +43,24 @@ is the record.
   an open gap - revisit with a dedicated pass if a live round finds one
   that changes final task-pass/fail state, the same way this one did.
 
+  **This has now happened**: round172's `buluma.git_tag` (Rocky 9.6) hit
+  `when: git_remote != '' and git_remote != None` with `git_remote`
+  genuinely undefined (no default, never set). Real Ansible raises
+  ("'git_remote' is undefined") and the task fails, `failed=1`; this
+  engine's lenient `ConditionalEvaluator` resolves the comparison anyway
+  and treats the whole `when:` as false, `skipped=1` instead - the exact
+  "changes final task-pass/fail state" trigger this entry called for,
+  through `when:` specifically (not a filter chain). Confirmed
+  deterministic, not a flake (identical cold and warm). Still not fixed
+  here - a real fix needs the "dedicated pass and full re-verification
+  budget" already called for above (extending `ConditionalEvaluator`'s
+  truthiness/comparison handling to distinguish a genuinely-undefined
+  operand from its own syntax-coverage-gap fallback is the same
+  conflation risk described above, now for `when:` instead of module-arg
+  templating - broader blast radius, since `when:` is used far more
+  pervasively than the narrow bare-var-ref module-arg case 0.9.517
+  fixed).
+
 - **`package:`/`dnf:` install may fail to resolve a `name-version`
   partial-NEVRA spec real Ansible's own dnf module resolves fine.**
   Found live benchmarking round171's `buluma.gitlab` on Rocky 9.6: its
