@@ -571,8 +571,15 @@ CrystalPlay::PluginManager.daemon_enabled = persistent_daemon
 
 # Batch upload plugins to all remote hosts before execution
 # This is much more efficient than uploading during task execution
+unreachable_hosts = Set(String).new
 if playbook && inventory
-  CrystalPlay::PluginManager.batch_upload_plugins_for_playbook(playbook, inventory, forks)
+  # A host that cannot be reached is reported and EXCLUDED, not fatal:
+  # real ansible-playbook carries on with every other host and exits 4.
+  # This used to raise, uncaught, killing the run with a stack trace and
+  # discarding the reachable hosts' results entirely.
+  CrystalPlay::PluginManager.batch_upload_plugins_for_playbook(playbook, inventory, forks).each do |name|
+    unreachable_hosts << name
+  end
 end
 
 # Execute playbook
@@ -606,7 +613,7 @@ playbook.plays.each_with_index do |play, play_index|
 
   # Get hosts for this play from inventory, excluding any host that
   # already hard-failed in an earlier play this run.
-  matched_hosts = inventory.get_hosts(play.hosts.to_s)
+  matched_hosts = inventory.get_hosts(play.hosts.to_s).reject { |host| unreachable_hosts.includes?(host.name) }
 
   # --limit further restricts the play's own hosts: pattern to the
   # intersection with whatever it matches - real ansible-playbook's
@@ -737,6 +744,19 @@ puts "=" * 70
 puts "PLAY RECAP".colorize(:cyan).bold
 puts "=" * 70
 
+# An unreachable host still gets a recap line - `unreachable=1`, all
+# other counters zero - exactly as real ansible-playbook reports it.
+unreachable_hosts.each do |name|
+  next if combined_results.has_key?(name)
+  combined_results[name] = {
+    "ok" => 0, "changed" => 0, "unreachable" => 1, "failed" => 0,
+    "skipped" => 0, "rescued" => 0, "ignored" => 0,
+  }
+  if host = inventory.hosts[name]?
+    all_hosts << host
+  end
+end
+
 CrystalPlay::ResultDisplay.show_recap(all_hosts.uniq { |h| h.name }, combined_results)
 
 puts ""
@@ -789,6 +809,16 @@ end
 # the rest of the play (the scope cut's whole point - a role using its
 # own library/*.py stays benchmarkable), so the divergence that remains
 # is "which tasks ran", not the exit status a caller sees.
+# Any unreachable host makes the run exit 4, ahead of a failed host's 2 -
+# real ansible-playbook returns 4 whenever a host was unreachable,
+# whether or not other hosts also failed (verified against ansible-core
+# 2.19.4 for all-unreachable, mixed-with-ok, and mixed-with-failed).
+unless unreachable_hosts.empty?
+  puts "✗ Playbook execution completed with unreachable hosts: #{unreachable_hosts.to_a.sort.join(", ")}".colorize(:red).bold
+  puts ""
+  exit 4
+end
+
 unless unavailable_modules_found.empty?
   puts "✗ Playbook execution completed with unavailable modules: #{unavailable_modules_found.join(", ")}".colorize(:red).bold
   puts ""

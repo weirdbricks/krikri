@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.569-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.570-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,14 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.570`** - an unreachable host no longer kills the run. One host
+  that could not be connected to crashed the whole process with a raw
+  Crystal stack trace, printed no recap at all, discarded every
+  REACHABLE host's results, and exited 1. It is now reported
+  `UNREACHABLE!`, recapped as `unreachable=1`, every other host still
+  runs, and the run exits 4 - real Ansible's code whenever any host was
+  unreachable, ahead of a failed host's 2. The recap is also now sorted
+  by host name, as real Ansible prints it.
 - **`0.9.569`** - inventory host RANGES (`web[01:03]`, `n[1:3]`,
   `h[a:c]`, `x[01:10:3]`, `srv[1:2].ex.com`) are expanded instead of
   being taken as one literal hostname - an inventory written the
@@ -427,10 +435,6 @@ for current-state detail.
   Four are accepted-and-inert by design (`-M`, `--vault-id`,
   `--scp-extra-args`, `--sftp-extra-args`) - see KNOWN_MISSING.md, which
   also documents the deliberate `-c`/`-d` short-form difference.
-- **`0.9.564`** - implemented `--start-at-task` (playbook-wide, matches
-  a task nested inside a `block:`, and reports a name that matches
-  nothing while still exiting 0) and `--force-handlers`, along with the
-  `force_handlers: true` play keyword it shares semantics with.
 
 ## 🤝 Contributing
 

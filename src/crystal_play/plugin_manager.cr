@@ -105,7 +105,7 @@ module CrystalPlay
       playbook : Playbook,
       inventory : Inventory,
       forks : Int32 = 5,
-    )
+    ) : Array(String)
       # Collect all unique module names used in the playbook
       required_plugins = Set(String).new
 
@@ -133,7 +133,7 @@ module CrystalPlay
       # Add facts plugin if any play needs it
       required_plugins.add("facts") if needs_facts
 
-      return if required_plugins.empty?
+      return [] of String if required_plugins.empty?
 
       # Collect all unique remote hosts from the playbook
       remote_hosts = [] of Host
@@ -176,7 +176,7 @@ module CrystalPlay
         end
       end
 
-      return if remote_hosts.empty?
+      return [] of String if remote_hosts.empty?
 
       puts "Preparing plugins for remote execution...".colorize(:cyan) if @@verbose
 
@@ -245,13 +245,22 @@ module CrystalPlay
         end
       end
 
+      # An upload failure means the host could not be reached at all.
+      # Previously this re-raised, and nothing up the call chain caught
+      # it - so ONE unreachable host in an inventory killed the whole
+      # process with a raw Crystal stack trace, no recap at all, and the
+      # results of every reachable host were lost. Real ansible-playbook
+      # reports the host UNREACHABLE!, keeps going for the others, and
+      # exits 4. Returning the names lets the caller do the same.
+      unreachable = [] of String
       remote_hosts.each do |host|
-        if ex = failures[host.name]?
-          raise ex
-        end
+        next unless ex = failures[host.name]?
+        unreachable << host.name
+        puts %(fatal: [#{host.name}]: UNREACHABLE! => {"changed": false, "msg": "#{ex.message.to_s.lines.first?.to_s.gsub('"', "'")}", "unreachable": true}).colorize(:red)
       end
 
       puts "" if @@verbose
+      unreachable
     end
 
     # Walks *tasks*, adding every real plugin module name to *required*,
