@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.559`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.560`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -85,10 +85,6 @@ real modules regardless - see `git log`.
 
   Ranked by how often real playbooks/CI actually use them:
 
-  * `-e` / `--extra-vars` - the significant one. Extremely common, and
-    it carries the highest-precedence variable scope, so nothing else
-    substitutes for it. Not implemented at all (`grep extra_vars src/`
-    finds only comments).
   * `--syntax-check`, `--list-tasks`, `--list-hosts`, `--list-tags` -
     cheap informational modes, common in CI lint stages.
   * `--start-at-task`, `--step`, `--force-handlers`, `--flush-cache`.
@@ -104,7 +100,11 @@ real modules regardless - see `git log`.
     gap went unnoticed.
 
   `--skip-tags` was in this list until 0.9.559 implemented it alongside
-  the rest of the tag-selection fix.
+  the rest of the tag-selection fix, and `-e`/`--extra-vars` until
+  0.9.560. Note extra-vars are still CLI-only: a static import path
+  (`import_tasks: "{{ x }}.yml"`) resolved at parse time does not yet see
+  them, even though real Ansible's own error message for that case names
+  extra-vars as one of the scopes that WOULD satisfy it.
 
 ## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 

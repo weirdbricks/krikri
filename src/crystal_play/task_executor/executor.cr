@@ -269,7 +269,13 @@ module CrystalPlay
       @forks = 5,
       @smart_gathering = false,
       fact_store : Hash(String, Hash(String, JSON::Any))? = nil,
-      @adhoc = false
+      @adhoc = false,
+      # -e/--extra-vars. Real Ansible's HIGHEST-precedence scope: they
+      # beat play vars, role vars, task vars, inventory and facts, and
+      # (verified against ansible-core 2.19.4) a later `set_fact` cannot
+      # override one either - which is why these are applied at the very
+      # END of build_vars_context rather than as a base layer.
+      @extra_vars = {} of String => JSON::Any
     )
       @results = Hash(String, Hash(String, Int32)).new
       @registered_vars = Hash(String, Hash(String, JSON::Any)).new
@@ -1238,6 +1244,13 @@ module CrystalPlay
       if task_connection = task.connection
         vars_context["ansible_connection"] = JSON::Any.new(task_connection)
       end
+
+      # Last word, deliberately: -e/--extra-vars outranks every other
+      # scope, including a `set_fact` executed earlier in the same play
+      # (facts arrive via base_context_b above, so applying these after
+      # it is what reproduces real Ansible's "you cannot set_fact over an
+      # extra-var" behavior).
+      @extra_vars.each { |key, value| vars_context[key] = value }
 
       vars_context
     end

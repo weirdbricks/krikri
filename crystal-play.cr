@@ -16,6 +16,7 @@ require "colorize"
 require "./src/crystal_play/version"
 require "./src/crystal_play/playbook_parser"
 require "./src/crystal_play/tag_filter"
+require "./src/crystal_play/extra_vars_parser"
 require "./src/crystal_play/inventory_parser"
 require "./src/crystal_play/task_executor"
 require "./src/crystal_play/vault"
@@ -100,6 +101,7 @@ verbose = false
 limit_hosts = ""
 tags = [] of String
 skip_tags = [] of String
+extra_vars_args = [] of String
 vault_password_file = nil
 ask_vault_pass = false
 
@@ -152,6 +154,9 @@ begin
       limit_hosts = subset
     end
 
+    parser.on("-e EXTRA_VARS", "--extra-vars=EXTRA_VARS", "Set additional variables as key=value, JSON, or @file (highest precedence; repeatable)") do |e|
+      extra_vars_args << e
+    end
     parser.on("--skip-tags=TAGS", "Only run tasks whose tags do NOT match these") do |t|
       skip_tags = t.split(",").map(&.strip).reject(&.empty?)
     end
@@ -208,6 +213,16 @@ rescue ex : OptionParser::InvalidOption
 rescue ex : Exception
   puts "Error: #{ex.message}".colorize(:red)
   exit 1
+end
+
+extra_vars = {} of String => JSON::Any
+unless extra_vars_args.empty?
+  begin
+    extra_vars = CrystalPlay::ExtraVarsParser.parse(extra_vars_args)
+  rescue ex : CrystalPlay::ExtraVarsParser::Error
+    puts "Error: #{ex.message}".colorize(:red)
+    exit 1
+  end
 end
 
 # Validate args
@@ -454,7 +469,8 @@ playbook.plays.each_with_index do |play, play_index|
     batching_enabled: batching_enabled,
     forks: forks,
     smart_gathering: gathering == "smart",
-    fact_store: run_fact_store
+    fact_store: run_fact_store,
+    extra_vars: extra_vars
   )
 
   # Run tasks
