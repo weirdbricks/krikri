@@ -2169,7 +2169,28 @@ module CrystalPlay
         # as `item`, identically - not just with_items:'s own
         # documented legacy flatten behavior.
         #
-        value.as_a? || [value]
+        # BUT that flatten-to-one-item leniency is only real for the
+        # array-wrapped source form above - task.loop_template_array_
+        # wrapped is false for the DIRECT scalar form (`loop: "{{ var
+        # }}"`, no square brackets in the YAML at all), and there real
+        # Ansible hard-fails a non-list resolution instead: round174
+        # differential matrix scenarios 11a (`null`) / 11c (a scalar
+        # string), live-verified against ansible-core 2.19.12 -
+        # `The \`loop\` value must resolve to a 'list', not 'NoneType'.`
+        # / `...not 'str'.`. Reuses UndefinedVariableError (not a new
+        # exception type) purely so it flows through the exact same
+        # resolve_loop_items_or_raise -> WhenEvaluationError rescue
+        # plumbing every other loop-source failure already does - it
+        # isn't really an "undefined variable" here, just a convenient
+        # existing raise-and-get-rescued channel.
+        if list = value.as_a?
+          list
+        elsif task.loop_template_array_wrapped
+          [value]
+        else
+          raise UndefinedVariableError.new(
+            "The `loop` value must resolve to a 'list', not '#{python_type_name(value)}'.")
+        end
       when "with_dict"
         hash = value.as_h?
         return nil unless hash
@@ -2190,6 +2211,23 @@ module CrystalPlay
     # a loop template that carries a filter chain).
     private def expression_evaluator_for(vars_context : Hash(String, JSON::Any))
       VariableSubstitutor::ExpressionEvaluator.new(vars_context)
+    end
+
+    # Python's own type name for a resolved loop-source value, matching
+    # real Ansible's own error wording exactly ("not 'NoneType'", "not
+    # 'str'"). Only 'NoneType' and 'str' were live-verified (round174
+    # matrix scenarios 11a/11c); 'int'/'float'/'bool'/'dict' are inferred
+    # from the same CPython type()/__name__ convention, not independently
+    # verified against a real ansible-playbook run.
+    private def python_type_name(value : JSON::Any) : String
+      case value.raw
+      when Nil    then "NoneType"
+      when Bool   then "bool"
+      when Int64  then "int"
+      when Float64 then "float"
+      when Hash   then "dict"
+      else "str"
+      end
     end
 
     # Parse *result* (the string output of evaluating a loop template) into a

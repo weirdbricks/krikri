@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.553-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.555-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,26 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.555`** - a `loop:` source that IS defined but isn't a list is a
+  hard type error in real Ansible, with its own wording (``The `loop`
+  value must resolve to a 'list', not 'NoneType'.`` / `...not 'str'.`);
+  this engine ran the task once with `item` bound to the non-list value.
+  The legacy array-wrapped form (`with_items: ["{{ var }}"]`) keeps its
+  documented flatten-a-scalar-to-one-item leniency, which is a different
+  source shape.
+- **`0.9.554`** - closed KNOWN_MISSING.md's last documented gap: a
+  genuinely undefined `loop:` source now fails the task at
+  loop-resolution time instead of silently succeeding. The gap was worse
+  than previously recorded - a task body referencing `{{ item }}` failed
+  with the wrong message (`'item' is undefined`), which masked it, while
+  a body NOT referencing `item` ran once and succeeded outright. All five
+  loop-resolution sites now share one `resolve_loop_items_or_raise` that
+  reuses the existing `when:` failure plumbing;
+  `with_fileglob:`/`with_first_found:` no longer skip instead of failing;
+  `include_tasks:`/`include_role:` no longer enter the included content
+  first; `include_vars:` no longer leaks the literal string `undefined`
+  as a filename. Established as an 18-scenario differential matrix
+  against real `ansible-playbook`, all byte-identical afterwards.
 - **`0.9.553`** - `assert:`'s own `that:` is strict-undefined too, and
   real Ansible reports it with the same `Error while evaluating
   conditional: 'x' is undefined` message a `when:` gets, not a generic

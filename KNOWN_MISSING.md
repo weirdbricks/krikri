@@ -10,37 +10,12 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.553`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.555`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
-
-- **An undefined `loop:` source is still rendered leniently; real
-  Ansible is strict about it.** Round173 (Rocky 9.6, ansible-core
-  2.19.12) characterized this precisely via `buluma.mount`, whose
-  `assert | Test if item.path in mount_requests is set correctly` does
-  `loop: "{{ mount_requests }}"` with `mount_requests` genuinely
-  undefined. Real Ansible fails that task with `Error while evaluating
-  conditional: 'mount_requests' is undefined` *before* evaluating the
-  `that:` at all; this engine renders the undefined loop source
-  leniently, runs the `assert:` once with an unbound `item`, and so
-  reports the generic `Assertion failed` instead. **Final task-pass/fail
-  state and the whole recap are identical** (`ok=4 changed=0 failed=1
-  skipped=4` on both, same failing task) - this is a message-only
-  divergence today, which is why it is documented rather than rushed.
-  0.9.553 closed the sibling `assert:`-`that:` case (a bare undefined
-  var *inside* `that:` now reports the real conditional error), but the
-  `loop:`-source case goes through the loop-rendering path, not
-  `ConditionalEvaluator`, and strictness there has a far wider blast
-  radius than the conditional sites: plenty of real roles loop over a
-  var that may legitimately be undefined and currently rely on that
-  being a no-op. Revisit with its own live round rather than as a
-  drive-by: the fix needs the same real-Ansible differential treatment
-  the six `when:` sites got (does an undefined loop source fail, or
-  skip, when the task also has a `when:` that would have skipped it?
-  what about `loop:` vs `with_items:` vs `query()`?), not an assumption.
 
 Note: the round171 `buluma.gitlab` "`package:`/`dnf:` can't resolve a
 name-version partial-NEVRA spec" entry that used to be here (`Error:

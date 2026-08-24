@@ -74,6 +74,18 @@ module CrystalPlay
     # resolve at execution time (mirrors loop_fileglob).
     property loop_template_kind : String?
     property loop_template : String?
+    # true only for the single-element-array template form (`with_items:
+    # ["{{ some_list }}"]`) - see #find_loop_template's own comment for why
+    # that shape deliberately flattens a resolved-to-scalar value into one
+    # loop item instead of raising. The direct scalar form (`loop: "{{ var
+    # }}"`, false here) does NOT get that legacy flattening: real Ansible
+    # hard-fails a `loop:`/`with_items:` source that resolves to anything
+    # other than a real list ("The `loop` value must resolve to a 'list',
+    # not '<type>'.") - round174 differential matrix scenarios 11a/11c,
+    # live-verified against ansible-core 2.19.12. Only the array-wrapped
+    # form keeps the old lenient single-item behavior
+    # (loop_scalar_flatten_spec.cr).
+    property loop_template_array_wrapped : Bool = false
     # with_community.general.flattened sources, kept as their raw task
     # strings. Each is ordinarily a `{{ some_list_var }}` reference to a
     # list; like loop_fileglob/loop_first_found they can only be resolved at
@@ -1046,13 +1058,13 @@ module CrystalPlay
     # If task_hash has one of the loop-source keywords set to a scalar
     # string that looks like a Jinja variable reference (rather than a
     # literal inline list/dict), return {keyword, template string}.
-    private def self.find_loop_template(task_hash : Hash(YAML::Any, YAML::Any)) : {String, String}?
+    private def self.find_loop_template(task_hash : Hash(YAML::Any, YAML::Any)) : {String, String, Bool}?
       LOOP_TEMPLATE_KEYS.each do |key|
         value = task_hash[key]?
         next unless value
         # Direct scalar form: `with_items: "{{ some_list | ... }}"`
         if str = value.as_s?
-          return {key, str} if str.includes?("{{")
+          return {key, str, false} if str.includes?("{{")
           next
         end
         # Single-element array form: `with_items: ["{{ some_list | ... }}"]`.
@@ -1077,7 +1089,7 @@ module CrystalPlay
           if arr.size == 1
             inner = arr.first?.try(&.as_s?)
             stripped = inner.try(&.strip)
-            return {key, inner} if inner && stripped && stripped.starts_with?("{{") && stripped.ends_with?("}}")
+            return {key, inner, true} if inner && stripped && stripped.starts_with?("{{") && stripped.ends_with?("}}")
           end
         end
       end
@@ -1280,6 +1292,7 @@ module CrystalPlay
       if template_loop = find_loop_template(task_hash)
         task.loop_template_kind = template_loop[0]
         task.loop_template = template_loop[1]
+        task.loop_template_array_wrapped = template_loop[2]
       elsif loop_yaml = task_hash["loop"]?.try(&.as_a?)
         task.loop = loop_yaml.map { |item| JSON.parse(item.to_json) }
         task.loop_items = task.loop
@@ -1355,6 +1368,7 @@ module CrystalPlay
         # to resolve once the variable context exists.
         task.loop_template_kind = template_source[0]
         task.loop_template = template_source[1]
+        task.loop_template_array_wrapped = template_source[2]
       end
 
       # loop_control.loop_var - exposes the loop item under a custom name
@@ -1505,6 +1519,7 @@ module CrystalPlay
         # benchmarking buluma.confluence (round 165).
         task.loop_template_kind = template_loop[0]
         task.loop_template = template_loop[1]
+        task.loop_template_array_wrapped = template_loop[2]
       end
 
       # loop_control.loop_var - exposes the loop item under a custom
@@ -1703,6 +1718,7 @@ module CrystalPlay
         # included file.
         task.loop_template_kind = template_loop[0]
         task.loop_template = template_loop[1]
+        task.loop_template_array_wrapped = template_loop[2]
       elsif loop_yaml = task_hash["loop"]?.try(&.as_a?)
         task.loop_items = loop_yaml.map { |item| JSON.parse(item.to_json) }
       elsif with_items = task_hash["with_items"]?.try(&.as_a?)
@@ -1762,6 +1778,7 @@ module CrystalPlay
       if template_loop = find_loop_template(task_hash)
         task.loop_template_kind = template_loop[0]
         task.loop_template = template_loop[1]
+        task.loop_template_array_wrapped = template_loop[2]
       elsif loop_yaml = task_hash["loop"]?.try(&.as_a?)
         task.loop_items = loop_yaml.map { |item| JSON.parse(item.to_json) }
       elsif with_items = task_hash["with_items"]?.try(&.as_a?)
