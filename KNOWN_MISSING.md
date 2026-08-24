@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.564`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.565`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -75,51 +75,31 @@ itself wrong; both had been implemented, if more simply, since
 `0.9.121`/`0.9.125`. 0.9.475 upgraded both to more fully match their
 real modules regardless - see `git log`.
 
-- **Much of `ansible-playbook`'s CLI flag surface is unimplemented, and
-  was never written down here.** Found by a 2026-08-24 re-scan diffing
-  `--help` against a real ansible-core 2.19.4: this engine implements 15
-  flags to real Ansible's 38. Unimplemented ones are REJECTED, never
-  silently ignored - but with a misleading "Please specify exactly one
-  playbook file" (they fall through to the positional-argument check
-  rather than being reported as an unrecognized option).
+- **`ansible-playbook`'s CLI flag surface is now fully covered by name
+  (0.9.565), but four flags are accepted-and-inert and two short forms
+  differ.** `--help` lists every flag real ansible-core 2.19.4 does.
+  What is NOT fully behavioral:
 
-  Ranked by how often real playbooks/CI actually use them:
-
-  * (All four informational modes now exist: `--syntax-check` and
-    `--list-tasks` in 0.9.561, its failure output matched byte-for-byte
-    in 0.9.562, and `--list-hosts`/`--list-tags` in 0.9.563. One
-    deliberate divergence remains in `--list-hosts`: real Ansible emits
-    the hosts of a multi-group pattern like `all` in a DIFFERENT ORDER
-    on every run - observed as web2,db1,web1 / web1,web2,db1 /
-    web2,web1,db1 across five consecutive identical runs, i.e. Python
-    hash iteration order - so there is no byte-order to match. This
-    engine sorts them, which is deterministic and diffable.)
-  * `--step`, `--flush-cache` (`--start-at-task` and `--force-handlers`
-    landed in 0.9.564). One deliberate divergence in `--start-at-task`:
-    when the matched task lives in a LATER play, real Ansible runs that
-    play's `Gathering Facts` even though the play sets
-    `gather_facts: false` (reproduced three times; it does not do this
-    when the same play runs on its own). That looks like an upstream
-    bug, and replicating it would mean gathering facts a playbook
-    explicitly disabled, so this engine does not - the recap differs by
-    that one `ok` in that specific case.
-  * Connection/become flags: `-u`/`--user`, `--private-key`, `-k`,
-    `-K`/`--ask-become-pass`, `-b`/`--become`, `--become-user`,
-    `--become-method`, `-C` is taken (`--check` here is `-c`),
-    `--connection`, `--timeout`, `--ssh-common-args`,
-    `--ssh-extra-args`, `--scp-extra-args`, `--sftp-extra-args`,
-    `--module-path`, `--vault-id`. Most of these have an inventory-var
-    equivalent this engine DOES honor (`ansible_user`,
-    `ansible_ssh_private_key_file`, `ansible_connection`, ...), which is
-    how the benchmark rounds have always driven them - which is why the
-    gap went unnoticed.
-
-  `--skip-tags` was in this list until 0.9.559 implemented it alongside
-  the rest of the tag-selection fix, `-e`/`--extra-vars` until 0.9.560,
-  and `--syntax-check`/`--list-tasks` until 0.9.561. Note extra-vars are still CLI-only: a static import path
-  (`import_tasks: "{{ x }}.yml"`) resolved at parse time does not yet see
-  them, even though real Ansible's own error message for that case names
-  extra-vars as one of the scopes that WOULD satisfy it.
+  * `-M`/`--module-path` and `--vault-id` are accepted and ignored.
+    Module path is meaningless here (modules are compiled binaries
+    shipped with the engine, not a Python search path), and only a
+    single vault password is supported, so a vault identity has nothing
+    to select.
+  * `--scp-extra-args`/`--sftp-extra-args` are accepted and stored but
+    have nothing to attach to: this engine moves files over `ssh` plus a
+    piped stream rather than shelling out to scp/sftp.
+    `--ssh-common-args`/`--ssh-extra-args` DO take effect.
+  * `--flush-cache` is accepted and correct-by-construction: facts live
+    only in a run-scoped store, so there is no on-disk cache to
+    invalidate.
+  * **Short-form conflict, deliberate:** real Ansible uses `-C` for
+    `--check`, `-D` for `--diff` and `-c` for `--connection`. This
+    engine has always used `-c`/`-d` for check/diff. `-C`/`-D` now work
+    as real Ansible's, but `-c`/`-d` keep their existing meaning rather
+    than silently changing under anyone's scripts - so `-c local` copied
+    from an ansible command line sets CHECK MODE here and leaves
+    `local` as a stray argument (an error, not silent misbehavior).
+    Use `--connection local`.
 
 ## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 

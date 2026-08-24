@@ -4,6 +4,8 @@ require "json"
 
 # SSH Manager - CLI-based implementation
 # Uses native SSH command with ControlMaster for connection pooling
+require "./cli_options"
+
 module CrystalPlay
   class SSHManager
     # Default per-command execution timeout for #exec/#exec_script/
@@ -155,7 +157,7 @@ module CrystalPlay
         "-o", "ControlMaster=auto",
         "-o", "ControlPath=#{control_path}",
         "-o", "ControlPersist=600",  # Keep connection alive for 10 minutes
-        "-o", "ConnectTimeout=10",
+        "-o", "ConnectTimeout=#{CliOptions.timeout}",
         "-o", "ServerAliveInterval=60",
         "-o", "ServerAliveCountMax=3",
         "-o", "StrictHostKeyChecking=accept-new",  # Auto-accept new host keys
@@ -221,7 +223,7 @@ module CrystalPlay
         "-o", "ControlMaster=auto",
         "-o", "ControlPath=#{control_path}",
         "-o", "ControlPersist=600",
-        "-o", "ConnectTimeout=10",
+        "-o", "ConnectTimeout=#{CliOptions.timeout}",
         "-o", "ServerAliveInterval=60",
         "-o", "ServerAliveCountMax=3",
         "-o", "StrictHostKeyChecking=accept-new",
@@ -337,7 +339,7 @@ module CrystalPlay
         "-o", "ControlMaster=auto",
         "-o", "ControlPath=#{control_path}",
         "-o", "ControlPersist=600",
-        "-o", "ConnectTimeout=10",
+        "-o", "ConnectTimeout=#{CliOptions.timeout}",
         "-o", "ServerAliveInterval=60",
         "-o", "ServerAliveCountMax=3",
         "-o", "StrictHostKeyChecking=accept-new",
@@ -698,15 +700,23 @@ module CrystalPlay
     # ansible_ssh_private_key_file - omitted entirely so ssh falls back to
     # its own default identities/agent, matching real Ansible/OpenSSH
     # behavior when no key is given.
+    # Also carries --ssh-common-args/--ssh-extra-args, because every ssh
+    # (and scp) invocation in this file already routes through here -
+    # making this the one place a CLI-supplied ssh argument has to be
+    # added, rather than five.
     private def self.identity_args(identity_file : String?) : Array(String)
-      identity_file ? ["-i", identity_file] : [] of String
+      base = identity_file ? ["-i", identity_file] : [] of String
+      base + CliOptions.extra_ssh_args
     end
 
     # Same as identity_args, but as a string fragment for rsync's `-e`
     # ssh command line (which is a single shell-quoted string, not an
     # argv array).
     private def self.identity_ssh_opt(identity_file : String?) : String
-      identity_file ? " -i #{shell_quote(identity_file)}" : ""
+      parts = [] of String
+      parts << " -i #{shell_quote(identity_file)}" if identity_file
+      CliOptions.extra_ssh_args.each { |arg| parts << " #{shell_quote(arg)}" }
+      parts.join
     end
 
     # Properly quote a string for shell execution

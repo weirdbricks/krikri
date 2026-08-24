@@ -18,6 +18,8 @@ require "../ssh_manager"
 require "../custom_stats"
 require "random/secure"
 
+require "../cli_options"
+
 module CrystalPlay
   # `ansible_version` - a real Ansible magic var (`{full, major, minor,
   # revision, string}`) giving the CONTROLLER's ansible-core version, used
@@ -409,10 +411,41 @@ module CrystalPlay
     # (247.4s/252.1s vs a stable ~137s/135s for real ansible-playbook on
     # the same playbook) - not host-to-host jitter, since both engines'
     # own repeated measurements were reproducible within ~2%.
+    # --step: ask before each task. Real ansible-playbook prompts
+    # "Perform task: TASK: <name> (N)o/(y)es/(c)ontinue: " and treats
+    # anything other than y/c as No (the capital N is the default), with
+    # `c` disabling every later prompt for the rest of the run. Answering
+    # No skips the task outright - it does not run and is not counted.
+    #
+    # Not reproduced: real Ansible prints the prompt line TWICE, once
+    # plain and once padded out with asterisks, which is an artifact of
+    # routing it through its display banner rather than intended output.
+    @step_continue = false
+
+    private def step_allows?(task : Task) : Bool
+      return true unless CliOptions.step?
+      return true if @step_continue
+
+      print "Perform task: TASK: #{task.name} (N)o/(y)es/(c)ontinue: "
+      answer = (STDIN.gets || "").strip.downcase
+
+      case answer
+      when "c"
+        @step_continue = true
+        true
+      when "y"
+        true
+      else
+        false
+      end
+    end
+
     private def run_task_batch(tasks : Array(Task), hosts : Array(Host))
       ensure_grouped(tasks)
 
       tasks.each do |task|
+        next unless step_allows?(task)
+
         active_hosts = hosts.reject { |host| @halted_hosts.includes?(host.name) }
 
         if task.block? && !active_hosts.empty?

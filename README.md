@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.564-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.565-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,15 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.565`** - completed the CLI flag surface: `-u`/`--user`,
+  `--private-key`, `--connection`, `-b`/`--become`, `--become-user`,
+  `--become-method`, `-T`/`--timeout`, `--ssh-common-args`/
+  `--ssh-extra-args`, `-k`/`-K` and their `--*-password-file` forms,
+  `--step`, `--flush-cache`, plus real Ansible's own `-C`/`-D`/`-J`
+  short forms. `--help` now lists every flag real ansible-playbook does.
+  Four are accepted-and-inert by design (`-M`, `--vault-id`,
+  `--scp-extra-args`, `--sftp-extra-args`) - see KNOWN_MISSING.md, which
+  also documents the deliberate `-c`/`-d` short-form difference.
 - **`0.9.564`** - implemented `--start-at-task` (playbook-wide, matches
   a task nested inside a `block:`, and reports a name that matches
   nothing while still exiting 0) and `--force-handlers`, along with the
@@ -413,15 +422,6 @@ for current-state detail.
   play/role/task vars and inventory, and a later `set_fact` cannot
   override one. `key=value` yields a string (`-e num=5` is `"5"`) while
   the JSON form preserves real types, matching real Ansible exactly.
-- **`0.9.559`** - real Ansible's tag selection was substantially wrong.
-  `tags: never` was ignored, so a task explicitly guarded as
-  never-run-unless-asked RAN on an ordinary invocation; `tags: always`
-  was ignored under an unrelated `--tags`; `--tags all`/`tagged`/
-  `untagged` were treated as literal tag names (so `--tags all` ran
-  nothing); a block's tags were not inherited by its children and the
-  children were never filtered individually; and `--skip-tags` did not
-  exist. All of it now matches real `ansible-playbook` across 15
-  scenarios.
 
 ## 🤝 Contributing
 

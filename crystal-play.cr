@@ -19,6 +19,7 @@ require "./src/crystal_play/tag_filter"
 require "./src/crystal_play/extra_vars_parser"
 require "./src/crystal_play/task_lister"
 require "./src/crystal_play/start_at_filter"
+require "./src/crystal_play/cli_options"
 require "./src/crystal_play/inventory_parser"
 require "./src/crystal_play/task_executor"
 require "./src/crystal_play/vault"
@@ -110,6 +111,19 @@ list_hosts_only = false
 list_tags_only = false
 start_at_task = nil.as(String?)
 force_handlers = false
+remote_user = nil.as(String?)
+private_key_file = nil.as(String?)
+connection_override = nil.as(String?)
+become_flag = false
+become_user_override = nil.as(String?)
+become_method_override = nil.as(String?)
+ask_pass = false
+ask_become_pass = false
+connection_password_file = nil.as(String?)
+become_password_file = nil.as(String?)
+flush_cache = false
+module_path_args = [] of String
+vault_id_args = [] of String
 vault_password_file = nil
 ask_vault_pass = false
 
@@ -164,6 +178,72 @@ begin
 
     parser.on("--syntax-check", "Parse the playbook and report any syntax errors, without running it") do
       syntax_check_only = true
+    end
+    parser.on("-u USER", "--user=USER", "Connect as this user (sets ansible_user for every host)") do |u|
+      remote_user = u
+    end
+    parser.on("--private-key=FILE", "--key-file=FILE", "SSH private key to connect with (sets ansible_ssh_private_key_file)") do |f|
+      private_key_file = f
+    end
+    parser.on("--connection=TYPE", "Connection type to use (sets ansible_connection)") do |c|
+      connection_override = c
+    end
+    parser.on("-b", "--become", "Run operations with become") do
+      become_flag = true
+    end
+    parser.on("--become-user=USER", "Become this user (default root)") do |u|
+      become_user_override = u
+    end
+    parser.on("--become-method=METHOD", "Privilege escalation method to use") do |m|
+      become_method_override = m
+    end
+    parser.on("-T SECONDS", "--timeout=SECONDS", "SSH connection timeout in seconds (default 10)") do |t|
+      CrystalPlay::CliOptions.timeout = t.to_i? || 10
+    end
+    parser.on("--ssh-common-args=ARGS", "Extra arguments appended to every ssh invocation") do |a|
+      CrystalPlay::CliOptions.ssh_common_args = a
+    end
+    parser.on("--ssh-extra-args=ARGS", "Extra arguments appended to every ssh invocation") do |a|
+      CrystalPlay::CliOptions.ssh_extra_args = a
+    end
+    parser.on("--scp-extra-args=ARGS", "Accepted for compatibility; this engine does not shell out to scp") do |a|
+      CrystalPlay::CliOptions.scp_extra_args = a
+    end
+    parser.on("--sftp-extra-args=ARGS", "Accepted for compatibility; this engine does not shell out to sftp") do |a|
+      CrystalPlay::CliOptions.sftp_extra_args = a
+    end
+    parser.on("-k", "--ask-pass", "Prompt for the connection password") do
+      ask_pass = true
+    end
+    parser.on("-K", "--ask-become-pass", "Prompt for the privilege escalation password") do
+      ask_become_pass = true
+    end
+    parser.on("--step", "Confirm each task before running it") do
+      CrystalPlay::CliOptions.step = true
+    end
+    parser.on("--connection-password-file=FILE", "--conn-pass-file=FILE", "Read the connection password from this file") do |f|
+      connection_password_file = f
+    end
+    parser.on("--become-password-file=FILE", "--become-pass-file=FILE", "Read the privilege escalation password from this file") do |f|
+      become_password_file = f
+    end
+    parser.on("--flush-cache", "Clear the fact cache before running") do
+      flush_cache = true
+    end
+    parser.on("-M PATH", "--module-path=PATH", "Accepted for compatibility; modules here are compiled binaries, not a search path") do |m|
+      module_path_args << m
+    end
+    parser.on("--vault-id=ID", "Accepted for compatibility; only a single vault password is supported") do |v|
+      vault_id_args << v
+    end
+    parser.on("-C", "--check", "Don't make changes; predict them instead (real Ansible's short form)") do
+      check_mode = true
+    end
+    parser.on("-D", "--diff", "Show file differences when changing files (real Ansible's short form)") do
+      diff_mode = true
+    end
+    parser.on("-J", "--ask-vault-password", "Prompt for the vault password") do
+      ask_vault_pass = true
     end
     parser.on("--start-at-task=NAME", "Start the playbook at the task with this name, skipping everything before it") do |n|
       start_at_task = n
@@ -409,6 +489,53 @@ rescue ex
   exit 1
 end
 
+# The connection/become flags are, in real Ansible, exactly "set this
+# connection variable for every host" - so that is how they are applied,
+# on top of whatever the inventory said. A play/task that sets the same
+# thing explicitly still wins for become:, matching real Ansible's own
+# precedence (the CLI only supplies the default).
+if user = remote_user
+  inventory.hosts.each_value { |host| host.vars["ansible_user"] = JSON::Any.new(user) }
+end
+if key_file = private_key_file
+  inventory.hosts.each_value { |host| host.vars["ansible_ssh_private_key_file"] = JSON::Any.new(key_file) }
+end
+if conn = connection_override
+  inventory.hosts.each_value { |host| host.vars["ansible_connection"] = JSON::Any.new(conn) }
+end
+# -b/--become and --become-user are deliberately NOT applied as
+# `ansible_become`/`ansible_become_user` host vars: real Ansible's -b
+# sets an internal default, and leaves the VARIABLE unset (verified -
+# `{{ ansible_become | default(false) }}` still renders False under -b).
+# Setting the var would be visible to any playbook that reads it. They
+# are applied to each play instead, which is the same "supply the
+# default, let the playbook override" position the CLI actually holds -
+# see the play loop below. --become-method has no play field, and
+# ansible_become_method IS a documented Ansible variable, so it stays a
+# host var.
+if become_method_value = become_method_override
+  inventory.hosts.each_value { |host| host.vars["ansible_become_method"] = JSON::Any.new(become_method_value) }
+end
+
+# The *-password-file flags are the non-interactive form of -k/-K.
+if conn_pw_file = connection_password_file
+  inventory.hosts.each_value { |host| host.vars["ansible_password"] = JSON::Any.new(File.read(conn_pw_file).strip) }
+end
+if become_pw_file = become_password_file
+  inventory.hosts.each_value { |host| host.vars["ansible_become_password"] = JSON::Any.new(File.read(become_pw_file).strip) }
+end
+
+if ask_pass
+  print "SSH password: "
+  password = CrystalPlay::VaultCli.prompt_password
+  inventory.hosts.each_value { |host| host.vars["ansible_password"] = JSON::Any.new(password) }
+end
+if ask_become_pass
+  print "BECOME password: "
+  password = CrystalPlay::VaultCli.prompt_password
+  inventory.hosts.each_value { |host| host.vars["ansible_become_password"] = JSON::Any.new(password) }
+end
+
 start_at_pending = !start_at_task.nil?
 
 # At this point inventory is guaranteed to be set
@@ -449,6 +576,12 @@ combined_results = Hash(String, Hash(String, Int32)).new
 # --gathering smart so a host gathered in one play isn't re-queried in
 # the next. nil under the default implicit mode, where each executor
 # builds its own per-play store exactly as before.
+# --flush-cache clears any persisted fact cache before the run. This
+# engine keeps facts only in the run-scoped store below (there is no
+# on-disk fact cache to invalidate), so a fresh store IS a flushed one -
+# the flag is accepted and correct here, it simply has nothing older to
+# discard.
+_ = flush_cache
 run_fact_store = gathering == "smart" ? Hash(String, Hash(String, JSON::Any)).new : nil
 # Hosts that hard-failed (a task failed without ignore_errors:) in an
 # earlier play this run - excluded from every *remaining* play's host
@@ -509,6 +642,13 @@ playbook.plays.each_with_index do |play, play_index|
   # magic `always`/`never` task tags. Note this runs even with NEITHER
   # flag passed, because `tags: never` must be honored on an ordinary
   # invocation - see TagFilter's own comment.
+  # -b/--become and --become-user supply a default for the play, exactly
+  # as real Ansible does; a play that sets become: itself still wins.
+  play.become = true if become_flag
+  if become_user_value = become_user_override
+    play.become_user ||= become_user_value
+  end
+
   tasks_before_tag_filter = tasks_to_run.size
   tasks_to_run = CrystalPlay::TagFilter.apply(tasks_to_run, tags, skip_tags)
 
