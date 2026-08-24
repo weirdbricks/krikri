@@ -1139,6 +1139,73 @@ describe CrystalPlay::PlaybookParser do
       playbook.plays[0].tasks.map(&.name).should eq(["stig task"])
     end
 
+    it "raises a fatal StaticImportUndefinedError (aborts the whole playbook) when an import_tasks: path references a fact, not a var/default" do
+      # Round172's buluma.php_versions repro (Rocky 9.6), reduced to a
+      # minimal case and verified directly against real ansible-playbook:
+      # `import_tasks: "setup-{{ ansible_os_family }}.yml"` with no
+      # default/var providing ansible_os_family (a facts-only magic var)
+      # - real Ansible refuses the WHOLE PLAYBOOK at parse time ("Error
+      # when evaluating variable in import path... Static imports cannot
+      # use variables from facts... 'ansible_os_family' is undefined",
+      # rc=4, zero tasks run). Previously this engine's non-strict
+      # substitution silently rendered the missing var as its own
+      # "undefined" sentinel ("setup-undefined.yml"), which then just
+      # failed to resolve as a file path and was swallowed into a soft
+      # "Warning: ... not found" - the play "succeeded" with the import
+      # simply missing (ok=0, exit 0) instead of a hard parse failure.
+      root = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "playbook_parser_import_tasks_fact_path_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "defaults"))
+      File.write(File.join(root, "roles", "myrole", "defaults", "main.yml"), "---\n")
+      File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - import_tasks: "setup-{{ ansible_os_family }}.yml"
+        YAML
+      File.write(File.join(root, "roles", "myrole", "tasks", "setup-RedHat.yml"), <<-YAML)
+        - name: redhat branch
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+
+      playbook_yaml = <<-YAML
+        - name: play
+          hosts: all
+          roles:
+            - myrole
+        YAML
+
+      expect_raises(CrystalPlay::StaticImportUndefinedError, /'ansible_os_family' is undefined/) do
+        CrystalPlay::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
+      end
+    end
+
+    it "still resolves an import_tasks: path templated against a real role default (not a fact)" do
+      root = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "playbook_parser_import_tasks_default_path_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "defaults"))
+      File.write(File.join(root, "roles", "myrole", "defaults", "main.yml"), "my_variant: Debian\n")
+      File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - import_tasks: "setup-{{ my_variant }}.yml"
+        YAML
+      File.write(File.join(root, "roles", "myrole", "tasks", "setup-Debian.yml"), <<-YAML)
+        - name: debian branch
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+
+      playbook_yaml = <<-YAML
+        - name: play
+          hosts: all
+          roles:
+            - myrole
+        YAML
+
+      playbook = CrystalPlay::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
+
+      playbook.plays[0].tasks.map(&.name).should eq(["debian branch"])
+    end
+
     it "raises a warning (not a hard failure) when a role can't be found, matching other unparseable-task handling" do
       root = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "playbook_parser_missing_role_spec")
       FileUtils.rm_rf(root) if Dir.exists?(root)

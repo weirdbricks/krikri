@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.548`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.549`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -74,28 +74,33 @@ is the record.
   not the full `buluma.gitlab` role) rather than guessing a fix from
   this one observation.
 
-- **`import_tasks:`/`import_role:` resolve a templated file/role name at
-  EXECUTION time (facts already gathered), not real Ansible's true
-  parse-time (before facts exist).** Found live benchmarking round172's
-  `buluma.php_versions` (Rocky 9.6): `import_tasks: file: "setup-{{
-  ansible_os_family }}.yml"` - real Ansible refuses the WHOLE playbook
-  at parse time ("Error when evaluating variable in import path...
-  Static imports cannot use variables from facts... 'ansible_os_family'
-  is undefined", 0 tasks run, rc=4) since static imports are documented
-  to only ever see vars/vars_files/extra-vars, never facts (which don't
-  exist yet at parse time). This engine instead resolves the templated
-  path once facts ARE available (at/after Gathering Facts), so it
-  successfully imports `setup-RedHat.yml` and keeps running several
-  more tasks before eventually failing for an unrelated reason (missing
-  `pip3` binary) - both engines end up `failed=1`, but via completely
-  different task paths, not a cosmetic difference. Not fixed here:
-  enforcing real Ansible's restriction means detecting, at TRUE parse
-  time, whether a templated import path references anything other than
-  vars/vars_files/extra-vars (facts specifically must be rejected) -
-  real roles essentially never write a static import this way (since
-  it's documented as always broken in real Ansible), so low real-world
-  impact; revisit if a live round finds a role where this changes
-  whether the run succeeds vs fails outright, not just how it fails.
+- **A task-level `import_role:`/`import_tasks:` that hits the
+  fact-in-static-import restriction (see 0.9.549 below) still only
+  fails that ONE task, not the whole playbook at true parse time.**
+  0.9.549 fixed the exact round172 `buluma.php_versions` repro (a
+  templated `import_tasks:` path used via a top-level `roles:` list,
+  parsed eagerly before any execution starts) to raise
+  `StaticImportUndefinedError` and abort the whole playbook load,
+  matching real Ansible's `rc=4`/zero-tasks-run exactly. The SAME
+  detection now also fires correctly for `import_role:`/`import_tasks:`
+  reached dynamically (a task-level `import_role:` mid-play) - verified
+  directly: the error message is byte-identical to real Ansible's - but
+  because this engine's `include_role:`/`import_role:` share one
+  runtime-loading code path (`Executor#run_include_role_once` ->
+  `RoleLoader.load_single_role`, a documented pragmatic approximation,
+  see `Task#is_static_import`'s own comment), the raise there is caught
+  by that call site's generic `rescue ex` and turned into an ordinary
+  failed-task result instead of propagating to abort the whole run.
+  Verified live: real Ansible refuses to run ANYTHING (rc=4, "before"
+  task never even reached); this engine now runs "Gathering Facts" and
+  any earlier tasks first, then fails the `import_role:` task itself
+  with the correct message (`failed=1`) - the right diagnosis, wrong
+  blast radius. Revisit only if a live round finds a role where tasks
+  BEFORE the static import having already run (vs. real Ansible's
+  nothing-runs-at-all) changes observable end state beyond the task
+  list itself (e.g. a side-effecting earlier task, file writes,
+  notifications) - unlikely, since a real role hitting this restriction
+  at all is already a broken role by real Ansible's own rules.
 
 Note: 0.9.474's entry here claiming `openssl_dhparam:`/
 `openssh_keypair:` had "no plugin, no `AVAILABLE_PLUGINS` entry" was

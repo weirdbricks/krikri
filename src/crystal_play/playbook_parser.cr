@@ -440,6 +440,34 @@ module CrystalPlay
   class RemovedActionError < Exception
   end
 
+  # Real Ansible's `import_tasks:`/`import_role:` are genuinely STATIC,
+  # parse-time constructs - the templated file/role path may reference
+  # vars/vars_files/extra-vars only, never facts (which don't exist yet
+  # at parse time) or inventory sources. Referencing one anyway is a
+  # FATAL playbook-load error ("Error when evaluating variable in import
+  # path... Static imports cannot use variables from facts...  '<var>' is
+  # undefined", rc=4, zero tasks run) - not a per-task skip. This engine
+  # already resolves a templated import_tasks: path using `known_vars`
+  # (role defaults/vars/invocation vars only, deliberately never merged
+  # with facts - see RoleLoader#load_role's own "Known at parse time,
+  # before facts gathering" comment), so a fact-only reference here
+  # simply resolves to nothing - previously #try_parse_import_tasks's
+  # non-strict substitution silently rendered that as the "undefined"
+  # sentinel (`"setup-undefined.yml"`), which then just failed to
+  # resolve as a path and was swallowed by #parse_tasks's own generic
+  # per-task rescue into a soft "Warning: ... not found" - the play
+  # continued with the import task simply missing, `ok=0` and exit 0,
+  # not real Ansible's hard `rc=4` refusal. Verified directly against
+  # real ansible-playbook with a minimal repro (`import_tasks: "setup-{{
+  # ansible_os_family }}.yml"`, no default/vars value for
+  # ansible_os_family): identical message shape, `'ansible_os_family' is
+  # undefined`. Bypasses #parse_tasks's generic per-task rescue (same
+  # mechanism as RemovedActionError above) so it propagates all the way
+  # to crystal-play.cr's own top-level "Error parsing playbook:" handler
+  # instead of being swallowed as a soft warning.
+  class StaticImportUndefinedError < Exception
+  end
+
   # Real Ansible statically validates every `notify:` target against the
   # play's own handler names/`listen:` topics BEFORE running a single
   # task, and refuses to run the play at all if one doesn't resolve
@@ -712,6 +740,8 @@ module CrystalPlay
             raise ex
           rescue ex : HandlerNotFoundError
             raise ex
+          rescue ex : StaticImportUndefinedError
+            raise ex
           rescue ex
             puts "Warning: Failed to import playbook '#{import_path}': #{ex.message}".colorize(:yellow)
           end
@@ -729,6 +759,10 @@ module CrystalPlay
         rescue ex : HandlerNotFoundError
           # Same bypass as RemovedActionError above - see that class's
           # own comment and HandlerNotFoundError's own comment.
+          raise ex
+        rescue ex : StaticImportUndefinedError
+          # Same bypass, same reason - see StaticImportUndefinedError's
+          # own comment.
           raise ex
         rescue ex
           puts "Warning: Failed to parse play #{index + 1}: #{ex.message}".colorize(:yellow)
@@ -897,6 +931,10 @@ module CrystalPlay
           # own comment. Propagates all the way up to abort the whole
           # playbook, matching real Ansible.
           raise ex
+        rescue ex : StaticImportUndefinedError
+          # Same bypass as RemovedActionError above, same reason - see
+          # that class's own comment and StaticImportUndefinedError's.
+          raise ex
         rescue ex
           puts "Warning: Skipping #{context} #{index + 1}: #{ex.message}".colorize(:yellow)
         end
@@ -961,7 +999,16 @@ module CrystalPlay
       # always "file not found" and silently skipping the entire STIG
       # control set with just a warning.
       if known_vars && file_rel.includes?("{{")
-        file_rel = VarSubstitutor.new(vars: known_vars).substitute(file_rel)
+        original_file_rel = file_rel
+        begin
+          file_rel = VarSubstitutor.new(vars: known_vars).substitute(file_rel, strict: true)
+        rescue ex : UndefinedVariableError
+          raise StaticImportUndefinedError.new(
+            "Error when evaluating variable in import path '#{original_file_rel}': #{ex.message}\n" \
+            "When using static imports, ensure that any variables used in their names are defined in " \
+            "vars/vars_files or extra-vars passed in from the command line. Static imports cannot use " \
+            "variables from facts or inventory sources like group or host vars.")
+        end
       end
 
       resolved_path = resolve_include_path(file_rel, file_dir)

@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.548-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.549-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,23 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.549`** - closed KNOWN_MISSING.md's `import_tasks:`/`import_role:`
+  fact-in-static-import gap: a templated import path referencing a fact
+  (e.g. `import_tasks: "setup-{{ ansible_os_family }}.yml"` with no
+  matching default/var) now raises `StaticImportUndefinedError` and
+  aborts the whole playbook load, matching real Ansible's own "Static
+  imports cannot use variables from facts" refusal (rc=4-equivalent, 0
+  tasks run) instead of silently rendering the missing var as
+  `"undefined"`, failing to resolve the file, and continuing with a soft
+  warning (`ok=0`, exit 0 - a genuinely different pass/fail outcome, not
+  cosmetic). Found live via round172's `buluma.php_versions` (Rocky
+  9.6), reduced to a minimal repro and verified byte-identical against
+  real `ansible-playbook`'s error message. `import_role:`/`import_tasks:`
+  reached dynamically (a task-level `import_role:` mid-play, not a
+  top-level `roles:` list) now raises the same correct error too, but
+  only fails that one task rather than aborting the whole run - see
+  KNOWN_MISSING.md for that narrower remaining scope.
+  `crystal spec`: 1625 examples, 0 failures.
 - **`0.9.548`** - closed KNOWN_MISSING.md's `when:` strict-undefined gap:
   a task-level `when:` reaching a genuinely undefined bare/dotted
   variable (e.g. `when: git_remote != '' and git_remote != None` with
@@ -447,35 +464,6 @@ for current-state detail.
   something - masked on an idempotent rerun (nothing changed, handler
   never notified), so only cold showed it. `crystal spec`: 1613
   examples, 0 failures.
-- **`0.9.542`-`0.9.543`** - fixed a real recap divergence found live benchmarking
-  RHEL/Rocky 9.6 (round 171, 40 new `robertdebock.*`/`buluma.*` roles):
-  a task using a module this engine doesn't implement raised "Plugin
-  not available" at PARSE time and was dropped entirely - including
-  its `when:` never being evaluated - so a task correctly gated behind
-  an OS-family/package-manager check (e.g. `when: ansible_facts
-  ['pkg_mgr'] == "zypper"`, always false on RHEL/Ubuntu) vanished
-  completely from the task list/recap instead of printing "skipping"
-  like real Ansible (which also evaluates `when:` before resolving the
-  action). Found via `robertdebock.haproxy` (`community.general.
-  seport`, now a real plugin - manages SELinux port-type mappings via
-  `semanage port`) and `robertdebock.jenkins` (`community.general.
-  zypper_repository`, SUSE-only, out of scope). Fixed at the single
-  shared `when_passes?` choke point (all 7 call sites): a task whose
-  module never resolved now always takes the skip path, regardless of
-  its own `when:` (or lack of one) - matching real Ansible whenever the
-  condition is genuinely false (every case found so far), and a
-  smaller, more visible divergence than vanishing entirely in the rare
-  case the condition would have been true. This surfaced a direct
-  regression of its own (`0.9.543`): keeping the task instead of
-  dropping it meant the pre-flight plugin-upload pass now tried to
-  resolve/upload a binary for it too, crashing outright ("Plugin
-  binary not found") for any remote-host run - found immediately via
-  `robertdebock.php`'s own `community.general.apache2_module` task.
-  Fixed the same way this codebase already handles every other
-  pseudo-module with no plugin binary (`_block`/`_meta`/
-  `_include_tasks`/`ansible.builtin.reboot`): excluded from the
-  pre-flight required-plugins set. `crystal spec`: 1613 examples, 0
-  failures.
 ---
 
 ## 🤝 Contributing
