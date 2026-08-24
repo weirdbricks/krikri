@@ -330,6 +330,12 @@ begin
     end
     puts ""
   end
+rescue ex : CrystalPlay::YamlSyntaxError
+  # Rendered the way real ansible-playbook renders a YAML syntax error -
+  # [ERROR]: line, Origin: path:line:col, then the offending source line
+  # with a caret. See YamlSyntaxError#render.
+  print ex.render
+  exit 4
 rescue ex
   puts "Error parsing playbook:".colorize(:red).bold
   puts "  #{ex.message}".colorize(:red)

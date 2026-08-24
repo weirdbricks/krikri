@@ -414,6 +414,138 @@ module CrystalPlay
   end
 
   # Represents an entire playbook
+  # A YAML syntax error in a playbook, carrying enough structure to be
+  # rendered the way real ansible-playbook renders one (see #render).
+  # Previously this was a bare `raise "Invalid YAML in ..."`, which lost
+  # the position and printed nothing like real Ansible's output.
+  class YamlSyntaxError < Exception
+    getter path : String
+    getter line : Int32
+    getter column : Int32
+    getter detail : String
+
+    # libyaml's own wording for the single most common playbook YAML
+    # mistake (an unquoted value containing ": "), mapped to real
+    # Ansible's phrasing and its worked-example hint. Any other error
+    # keeps our YAML library's own message - real Ansible's prose for
+    # those comes from ITS parser and cannot be reproduced verbatim.
+    COLON_DETAIL   = "mapping values are not allowed in this context"
+    COLON_MESSAGE  = "Colons in unquoted values must be followed by a non-space character."
+    TAB_DETAIL     = "found a tab character"
+    TAB_MESSAGE    = "Tabs are usually invalid in YAML."
+    TRUNCATED_NOTE = "(source not shown: file truncated)"
+
+    # Crystal's YAML::ParseException message inlines the position and puts
+    # libyaml's CONTEXT last:
+    #
+    #   "did not find expected ',' or ']' at line 3, column 1, while parsing a flow sequence"
+    #
+    # real Ansible renders libyaml's two halves the other way round,
+    # capitalized and full-stopped:
+    #
+    #   "While parsing a flow sequence did not find expected ',' or ']'."
+    #
+    # (verified against ansible-core 2.19.4). Reorder to match.
+    def self.normalize(message : String) : String
+      if match = message.match(/\A(.+?) at line \d+, column \d+, (while .+)\z/)
+        problem = match[1]
+        # libyaml appends a position to the context half as well
+        # ("while parsing a flow sequence at line 2, column 10") - real
+        # Ansible shows the context without it.
+        context = match[2].sub(/ at line \d+, column \d+\z/, "")
+        "#{context[0].upcase}#{context[1..]} #{problem}."
+      else
+        stripped = message.sub(/ at line \d+, column \d+\z/, "")
+        stripped.ends_with?(".") ? stripped : "#{stripped}."
+      end
+    end
+
+    def initialize(@path : String, @content : String, cause : YAML::ParseException)
+      @line = cause.line_number.to_i
+      @column = cause.column_number.to_i
+      @detail = self.class.normalize(cause.message || "invalid YAML")
+      super("Invalid YAML in #{@path}: #{@detail} at line #{@line}, column #{@column}")
+    end
+
+    # Real Ansible echoes a tab in the offending source line as a single
+    # space (verified by byte-diffing its output for a tab-indented file).
+    private def echo(line : String) : String
+      line.chomp.gsub('\t', ' ')
+    end
+
+    def colon_error? : Bool
+      detail.downcase.includes?(COLON_DETAIL)
+    end
+
+    def tab_error? : Bool
+      detail.downcase.includes?(TAB_DETAIL)
+    end
+
+    # Real ansible-playbook's own layout, verified against ansible-core
+    # 2.19.4:
+    #
+    #     [ERROR]: YAML parsing failed: <message>
+    #     Origin: /abs/path.yml:1:9
+    #
+    #     1 this: is: bad: [
+    #               ^ column 9
+    #
+    def render : String
+      message = if colon_error?
+                  COLON_MESSAGE
+                elsif tab_error?
+                  TAB_MESSAGE
+                else
+                  detail
+                end
+
+      lines = @content.lines
+
+      String.build do |io|
+        io << "[ERROR]: YAML parsing failed: " << message << "\n"
+        io << "Origin: " << File.expand_path(@path) << ":" << @line << ":" << @column << "\n"
+        io << "\n"
+
+        if @line > lines.size
+          # Real Ansible's wording when the reported position is past the
+          # end of the file (an unterminated flow sequence reports the
+          # line AFTER the last one).
+          io << TRUNCATED_NOTE << "\n"
+        else
+          # One line of leading context, when there is one - real Ansible
+          # prints the preceding source line before the offending one.
+          if @line > 1 && (previous = lines[@line - 2]?)
+            io << @line - 1 << " " << echo(previous) << "\n"
+          end
+
+          prefix = "#{@line} "
+          io << prefix << echo(lines[@line - 1]) << "\n"
+          io << " " * (prefix.size + @column - 1) << "^ column " << @column << "\n"
+        end
+
+        unless colon_error?
+          # Real Ansible closes the block with a blank line. The colon
+          # case below has its own trailing newline after the hint.
+          io << "\n"
+        end
+
+        if colon_error?
+          io << "\n\n"
+          io << "For example:\n"
+          io << "\n"
+          io << "    raw: echo 'name: ansible'\n"
+          io << "\n"
+          io << "Should be:\n"
+          io << "\n"
+          io << "    raw: \"echo 'name: ansible'\"\n"
+          # Real ansible-playbook emits one further blank line after the
+          # hint block - verified by byte-diffing its output.
+          io << "\n"
+        end
+      end
+    end
+  end
+
   class Playbook
     property plays : Array(Play)
     property path : String
@@ -733,7 +865,7 @@ module CrystalPlay
       begin
         yaml = YAML.parse(content)
       rescue ex : YAML::ParseException
-        raise "Invalid YAML in #{path}: #{ex.message}"
+        raise YamlSyntaxError.new(path, content, ex)
       end
 
       # Playbook is an array of plays
@@ -1354,10 +1486,10 @@ module CrystalPlay
         # source is still exactly one source, so it's wrapped in a
         # one-element array rather than needing a separate code path.
         task.loop_flattened = if arr = with_flattened.as_a?
-                                 arr.map { |item| safe_yaml_to_string(item) }
-                               else
-                                 [safe_yaml_to_string(with_flattened)]
-                               end
+                                arr.map { |item| safe_yaml_to_string(item) }
+                              else
+                                [safe_yaml_to_string(with_flattened)]
+                              end
       elsif with_subelements = task_hash["with_subelements"]?.try(&.as_a?)
         task.loop_subelements_list = with_subelements[0]?.try { |v| safe_yaml_to_string(v) }
         task.loop_subelements_key = with_subelements[1]?.try { |v| safe_yaml_to_string(v) }

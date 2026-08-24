@@ -1295,7 +1295,13 @@ describe "crystal-ansible CLI (--check mode)" do
     status, output = run_playbook(File.join("..", "spec", "tmp", "invalid.yml"))
 
     status.success?.should be_false
-    output.should contain("Error parsing playbook")
+    # Since 0.9.562 a YAML syntax error is reported in real
+    # ansible-playbook's own shape rather than this engine's old
+    # "Error parsing playbook:" wording - see YamlSyntaxError#render and
+    # yaml_syntax_error_spec.cr, which byte-compares the whole block.
+    output.should contain("[ERROR]: YAML parsing failed:")
+    output.should contain("Origin: ")
+    status.exit_code.should eq(4)
 
     File.delete(bad_playbook)
   end

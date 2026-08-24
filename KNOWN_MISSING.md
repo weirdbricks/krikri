@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.561`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.562`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -87,10 +87,8 @@ real modules regardless - see `git log`.
 
   * `--list-hosts`, `--list-tags` - the two informational modes still
     missing (`--syntax-check` and `--list-tasks` landed in 0.9.561).
-    Note `--syntax-check`'s FAILURE output is terser than real
-    Ansible's: the exit code matches (4) but real Ansible's YAML
-    diagnostics carry an origin line, a column marker and a worked
-    example that this engine's parser does not produce.
+    (`--syntax-check`'s failure output matched real Ansible's
+    byte-for-byte as of 0.9.562.)
   * `--start-at-task`, `--step`, `--force-handlers`, `--flush-cache`.
   * Connection/become flags: `-u`/`--user`, `--private-key`, `-k`,
     `-K`/`--ask-become-pass`, `-b`/`--become`, `--become-user`,

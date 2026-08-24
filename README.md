@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.561-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.562-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,13 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.562`** - a YAML syntax error is now reported in real
+  ansible-playbook's own shape - `[ERROR]: YAML parsing failed: ...`, an
+  `Origin: path:line:col` line, the offending source line with a caret
+  and one line of leading context - instead of this engine's own terse
+  one-liner. Byte-identical to real Ansible across three error shapes,
+  including its rewordings of libyaml (colons in an unquoted value, tab
+  indentation) and its truncated-file note.
 - **`0.9.561`** - implemented `--syntax-check` and `--list-tasks`,
   byte-for-byte against real `ansible-playbook` (tabs, alphabetical tag
   sort, `role : task` prefixes, `--tags` filtering of the listing, and
@@ -418,14 +425,6 @@ for current-state detail.
   engine exited 1 for both an unparseable playbook and a static import
   whose path references a fact. A missing playbook file stays 1, matching
   real Ansible there too.
-- **`0.9.556`** - piping output to a reader that exits early
-  (`crystal-ansible playbook.yml | head -2`, `--version | head -1`,
-  quitting a pager) dumped a Crystal stack trace to stderr and exited 1.
-  Crystal ignores SIGPIPE, so the write surfaced as an unrescued
-  `IO::Error`. Real `ansible-playbook` is silent and exits 0 here, so
-  this now does too. Deliberately scoped to this program's own stdout
-  writes rather than restoring the default SIGPIPE disposition, which
-  would also kill the process on an EPIPE writing to a subprocess stdin.
 
 ## 🤝 Contributing
 
