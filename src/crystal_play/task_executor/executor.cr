@@ -444,18 +444,42 @@ module CrystalPlay
     # Shared by execute_block_multi and execute_include_tasks_multi,
     # both of which need to separate hosts that skip the whole nested
     # list from ones that actually run it before batching the latter.
-    private def partition_by_when(task : Task, hosts : Array(Host)) : {Array(Host), Array(Host)}
+    # *inherit_on_error*: a block:'s when: is inherited by its children,
+    # so a condition that RAISES must be pushed down and re-raised once
+    # per child task rather than failing the block as a unit - see
+    # execute_block's own rescue for the live-verified semantics. The
+    # include_tasks: caller leaves this false: there, real Ansible fails
+    # the single include task itself (verified live, round173), so the
+    # swallow path below is already correct for it.
+    private def partition_by_when(task : Task, hosts : Array(Host), inherit_on_error : Bool = false) : {Array(Host), Array(Host)}
       return {hosts, [] of Host} unless when_condition = task.when_condition
 
       run_hosts = [] of Host
       skip_hosts = [] of Host
       hosts.each do |host|
         vars_context = build_vars_context(task, host)
-        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
-        if ConditionalEvaluator.evaluate(substitutor.substitute(when_condition), vars_context)
-          run_hosts << host
-        else
-          skip_hosts << host
+        begin
+          if evaluate_when(when_condition, vars_context, host)
+            run_hosts << host
+          else
+            skip_hosts << host
+          end
+        rescue ex : WhenEvaluationError
+          # A raise here only affects THIS host - every other host in
+          # *hosts* still gets partitioned normally.
+          if inherit_on_error
+            inherit_when_condition(when_condition, task.block_tasks)
+            inherit_when_condition(when_condition, task.rescue_tasks)
+            inherit_when_condition(when_condition, task.always_tasks)
+            run_hosts << host
+          else
+            # Fails cleanly for this one host (stats/halt/register/print
+            # via swallow_when_error, respecting its own ignore_errors:).
+            # The failed host is excluded from both run_hosts and
+            # skip_hosts - it's already been fully accounted for, unlike
+            # a genuine skip.
+            swallow_when_error(task, host, ex)
+          end
         end
       end
       {run_hosts, skip_hosts}
@@ -468,7 +492,7 @@ module CrystalPlay
     # mirrors execute_block's own single-host logic exactly, just driven
     # off host sets instead of one host.
     private def execute_block_multi(task : Task, hosts : Array(Host))
-      run_hosts, skip_hosts = partition_by_when(task, hosts)
+      run_hosts, skip_hosts = partition_by_when(task, hosts, inherit_on_error: true)
 
       skip_hosts.each do |host|
         # A block's when: is inherited by every task inside block: and
@@ -496,6 +520,7 @@ module CrystalPlay
       if (rescue_tasks = task.rescue_tasks) && block_failed.any? { |_, failed| failed }
         rescue_hosts = run_hosts.select { |host| block_failed[host.name] }
         rescue_hosts.each { |host| @halted_hosts.delete(host.name) }
+
         propagate_role_context(task, rescue_tasks)
         run_task_batch(rescue_tasks, rescue_hosts)
 
@@ -2354,6 +2379,28 @@ module CrystalPlay
     class WhenEvaluationError < Exception
     end
 
+    # Shared substitute+evaluate+strict-undefined-rescue sequence for a
+    # when: condition - the one place that owns `raise_undefined: true`
+    # (real Ansible's strict-undefined case for when:, see
+    # ConditionalEvaluator::UndefinedVariableError) so that adding a new
+    # strict call site is structurally impossible without also getting
+    # this rescue: any raise here (the strict undefined case, or any
+    # other - e.g. FilterEngine's `first`/`last` on an empty sequence)
+    # is converted into a WhenEvaluationError, which EVERY caller below
+    # rescues into a clean failed result for the affected host/item -
+    # never left to propagate uncaught (that crashed the whole process
+    # before 40671ba).
+    private def evaluate_when(when_condition : String, vars_context : Hash(String, JSON::Any), host : Host, substitutor : VarSubstitutor? = nil) : Bool
+      sub = substitutor || VarSubstitutor.new(vars: vars_context, host_name: host.name)
+      substituted_condition = sub.substitute(when_condition)
+
+      begin
+        ConditionalEvaluator.evaluate(substituted_condition, vars_context, raise_undefined: true)
+      rescue ex
+        raise WhenEvaluationError.new("Error while evaluating conditional: #{ex.message}")
+      end
+    end
+
     private def when_passes?(task : Task, vars_context : Hash(String, JSON::Any), host : Host, item_label : String? = nil, shared : VarSubstitutor? = nil, defer_stats : Bool = false, defer_display : Bool = false) : Bool
       # An unavailable-module task (see Task#unavailable_module) always
       # takes the skip path below, regardless of its own when: (or lack
@@ -2363,22 +2410,7 @@ module CrystalPlay
       unless task.unavailable_module
         return true unless when_condition = task.when_condition
 
-        substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
-        substituted_condition = substitutor.substitute(when_condition)
-
-        begin
-          # raise_undefined: true - a task-level when: is real Ansible's
-          # strict-undefined case (see ConditionalEvaluator::
-          # UndefinedVariableError). Any raise here (this one or any
-          # other) is caught immediately below and converted into a
-          # WhenEvaluationError, which every call site already turns into
-          # a clean failed-task result instead of a crash - so widening
-          # what can raise here doesn't add a new failure mode, just a
-          # new correctly-classified reason for an existing one.
-          return true if ConditionalEvaluator.evaluate(substituted_condition, vars_context, raise_undefined: true)
-        rescue ex
-          raise WhenEvaluationError.new("Error while evaluating conditional: #{ex.message}")
-        end
+        return true if evaluate_when(when_condition, vars_context, host, shared)
       end
 
       # defer_stats: loop items and batch members pass this to only skip
@@ -3633,6 +3665,34 @@ module CrystalPlay
     # skip for the block itself. Recurses into a nested block so its own
     # members are reported individually too, matching how a nested
     # block's when: (false or not) would otherwise be evaluated.
+    # AND a block's own when: onto each of its children, so a condition
+    # that raised at the block level is re-evaluated (and re-raised) once
+    # per child task the way real Ansible's own when: inheritance does.
+    # Idempotent: the Task objects are shared across hosts in a
+    # multi-host play, so a second host reaching the same failing block
+    # must not wrap the condition twice.
+    private def inherit_when_condition(condition : String, tasks : Array(Task)?) : Nil
+      return unless tasks
+
+      tasks.each do |nested_task|
+        existing = nested_task.when_condition
+
+        if existing.nil? || existing.empty?
+          nested_task.when_condition = condition
+        elsif existing != condition && !existing.starts_with?("(#{condition}) and ")
+          nested_task.when_condition = "(#{condition}) and (#{existing})"
+        end
+
+        # A nested block: is transparent - push through to its own
+        # children, same as print_skipped_tasks does for the skip path.
+        if nested_task.block?
+          inherit_when_condition(condition, nested_task.block_tasks)
+          inherit_when_condition(condition, nested_task.rescue_tasks)
+          inherit_when_condition(condition, nested_task.always_tasks)
+        end
+      end
+    end
+
     private def print_skipped_tasks(tasks : Array(Task), host : Host)
       tasks.each do |nested_task|
         # A nested block is transparent - like real Ansible, it gets no
@@ -3672,10 +3732,31 @@ module CrystalPlay
     private def execute_block(task : Task, host : Host)
       if when_condition = task.when_condition
         vars_context = build_vars_context(task, host)
-        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
-        substituted_condition = substitutor.substitute(when_condition)
+        when_result = false
+        when_errored = false
 
-        unless ConditionalEvaluator.evaluate(substituted_condition, vars_context)
+        begin
+          when_result = evaluate_when(when_condition, vars_context, host)
+        rescue WhenEvaluationError
+          # Real Ansible does NOT fail the block as a unit here. A
+          # block's when: is inherited by each child task, so the SAME
+          # failing condition is re-evaluated once per task: the first
+          # task of block: fails on it (halting the rest of that list),
+          # and then rescue: and always: still run, their own first
+          # tasks failing the same way. Verified live against
+          # ansible-core 2.19.12 (round173, Rocky 9.6): 2 block: + 2
+          # always: tasks => failed=2 (only "block one" and "always
+          # one" ever run); adding a rescue: => failed=2 rescued=1.
+          # Emulated by pushing the condition down onto the children and
+          # falling through to the normal flow below, so the standard
+          # halt/rescue/always/rescued accounting applies unchanged.
+          inherit_when_condition(when_condition, task.block_tasks)
+          inherit_when_condition(when_condition, task.rescue_tasks)
+          inherit_when_condition(when_condition, task.always_tasks)
+          when_errored = true
+        end
+
+        unless when_errored || when_result
           # A block's when: is inherited by every task inside block: and
           # always: (verified against real ansible-playbook: each gets
           # its own "skipping: [host]" line and recap count, not one
@@ -3704,6 +3785,7 @@ module CrystalPlay
 
       if block_failed && (rescue_tasks = task.rescue_tasks)
         @halted_hosts.delete(host.name)
+
         propagate_role_context(task, rescue_tasks)
         run_task_list(rescue_tasks, host)
         block_failed = @halted_hosts.includes?(host.name)
@@ -3934,10 +4016,14 @@ module CrystalPlay
 
     private def run_include_tasks_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?)
       if when_condition = task.when_condition
-        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
-        substituted_condition = substitutor.substitute(when_condition)
+        begin
+          when_result = evaluate_when(when_condition, vars_context, host)
+        rescue ex : WhenEvaluationError
+          swallow_when_error(task, host, ex, item_label: item_label)
+          return
+        end
 
-        unless ConditionalEvaluator.evaluate(substituted_condition, vars_context)
+        unless when_result
           connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
           suffix = item_label ? " => (item=#{item_label})" : ""
           puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
@@ -4163,10 +4249,14 @@ module CrystalPlay
 
     private def run_include_role_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?)
       if when_condition = task.when_condition
-        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
-        substituted_condition = substitutor.substitute(when_condition)
+        begin
+          when_result = evaluate_when(when_condition, vars_context, host)
+        rescue ex : WhenEvaluationError
+          swallow_when_error(task, host, ex, item_label: item_label)
+          return
+        end
 
-        unless ConditionalEvaluator.evaluate(substituted_condition, vars_context)
+        unless when_result
           # A static import_role: (Task#is_static_import) produces no
           # result at all when skipped, same as its "ok" path below - the
           # banner is already suppressed by run_task_batch/run_task_list,
@@ -5274,10 +5364,19 @@ module CrystalPlay
       # dynamic executable). A skipped handler is not shown as changed/
       # failed and isn't counted in the recap, matching real Ansible.
       if when_condition = handler.when_condition
-        when_substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
-        substituted_condition = when_substitutor.substitute(when_condition)
+        begin
+          when_result = evaluate_when(when_condition, vars_context, host)
+        rescue ex : WhenEvaluationError
+          # Flows through the normal handler result pipeline (#execute_
+          # handler's own halt_if_failed/notify/display, or
+          # execute_handler_loop's per-item aggregation for a looped
+          # handler) exactly like the substitute_task_params rescue just
+          # below - same shape when_error_result already builds for
+          # execute_task_once.
+          return when_error_result(ex)
+        end
 
-        unless ConditionalEvaluator.evaluate(substituted_condition, vars_context)
+        unless when_result
           connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
           suffix = (item = vars_context["item"]?) ? " => (item=#{item_display(item)})" : ""
           puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
