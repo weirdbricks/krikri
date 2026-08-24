@@ -18,7 +18,17 @@ module CrystalPlay
   module ConditionalEvaluator
     # Precompiled regular expressions for condition parsing.
     # Eliminates runtime regex compilation in hot `when:` and test paths.
-    REGEX_VERSION_TEST     = /\A(.+?)\s+is\s+version\(\s*(.+?)\s*,\s*(.+?)\s*\)\z/
+    # `version_compare` is real Ansible's older alias for the `version`
+    # test and is still accepted by ansible-core 2.19 (verified live,
+    # round173). Missing it here was benign while conditionals were
+    # lenient - the expression fell through to the generic comparison
+    # splitter, which mistook the `>=` INSIDE the quoted operator
+    # argument for a real comparison operator and quietly evaluated
+    # false. Once 0.9.548 made a bare undefined reference RAISE, that
+    # same misparse started hard-failing the task ("'')' is undefined")
+    # for the extremely common `x is version_compare(min, '>=')`
+    # version-gate idiom.
+    REGEX_VERSION_TEST     = /\A(.+?)\s+is\s+version(?:_compare)?\(\s*(.+?)\s*,\s*(.+?)\s*\)\z/
     REGEX_MATCH_SEARCH_TEST = /^(.+?)\s+is\s+(not\s+)?(match|search)\((.+)\)\s*$/
     REGEX_SUBSET_TEST      = /^(.+?)\s+is\s+(not\s+)?(subset|superset|contains)\((.+)\)\s*$/
     REGEX_SAME_FILE_TEST   = /^(.+?)\s+is\s+(not\s+)?same_file\((.+)\)\s*$/
@@ -930,7 +940,23 @@ module CrystalPlay
 
     private def self.evaluate_version_test(left_expr : String, compare_to_expr : String, operator_expr : String, vars : Hash(String, JSON::Any), raise_undefined : Bool = false) : Bool
       left = evaluate_value(left_expr.strip, vars, raise_undefined).to_s
-      compare_to = unquote_literal(compare_to_expr.strip)
+      # The compare-to argument may be a VARIABLE, not just a quoted
+      # literal - `x is version(role_min_version, '>=')` is the standard
+      # version-gate idiom in real roles. Previously this was only
+      # unquoted, so a variable argument stayed the literal string
+      # "role_min_version" and got version-compared as garbage (which,
+      # depending on the name, silently produced either answer).
+      # Live-verified against ansible-core 2.19.12 (round173): a var
+      # compare-to resolves and compares exactly like the equivalent
+      # literal. The operator argument is left as a literal - real
+      # playbooks always spell it inline ('>=', 'ge', ...), and
+      # resolving it would make an unquoted `ge` look like a variable.
+      compare_to_raw = compare_to_expr.strip
+      compare_to = if quoted_literal?(compare_to_raw)
+                     unquote_literal(compare_to_raw)
+                   else
+                     evaluate_value(compare_to_raw, vars, raise_undefined).to_s
+                   end
       operator = unquote_literal(operator_expr.strip)
       cmp = compare_versions(left, compare_to)
 
@@ -950,6 +976,11 @@ module CrystalPlay
       else
         false
       end
+    end
+
+    private def self.quoted_literal?(expr : String) : Bool
+      (expr.starts_with?('\'') && expr.ends_with?('\'')) ||
+        (expr.starts_with?('"') && expr.ends_with?('"'))
     end
 
     private def self.unquote_literal(expr : String) : String
