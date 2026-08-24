@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.558-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.559-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,15 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.559`** - real Ansible's tag selection was substantially wrong.
+  `tags: never` was ignored, so a task explicitly guarded as
+  never-run-unless-asked RAN on an ordinary invocation; `tags: always`
+  was ignored under an unrelated `--tags`; `--tags all`/`tagged`/
+  `untagged` were treated as literal tag names (so `--tags all` ran
+  nothing); a block's tags were not inherited by its children and the
+  children were never filtered individually; and `--skip-tags` did not
+  exist. All of it now matches real `ansible-playbook` across 15
+  scenarios.
 - **`0.9.558`** - a task using a module with no plugin behind it (a
   typo, or a role's own `library/*.py`) is still skipped rather than
   aborting the play - that scope cut is deliberate - but the run no
@@ -425,11 +434,6 @@ for current-state detail.
   first; `include_vars:` no longer leaks the literal string `undefined`
   as a filename. Established as an 18-scenario differential matrix
   against real `ansible-playbook`, all byte-identical afterwards.
-- **`0.9.553`** - `assert:`'s own `that:` is strict-undefined too, and
-  real Ansible reports it with the same `Error while evaluating
-  conditional: 'x' is undefined` message a `when:` gets, not a generic
-  `Assertion failed`. Fixed in both the action-plugin and standalone
-  `plugins/assert.cr` copies.
 
 ## 🤝 Contributing
 

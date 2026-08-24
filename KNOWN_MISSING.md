@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.558`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.559`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -74,6 +74,37 @@ Note: 0.9.474's entry here claiming `openssl_dhparam:`/
 itself wrong; both had been implemented, if more simply, since
 `0.9.121`/`0.9.125`. 0.9.475 upgraded both to more fully match their
 real modules regardless - see `git log`.
+
+- **Much of `ansible-playbook`'s CLI flag surface is unimplemented, and
+  was never written down here.** Found by a 2026-08-24 re-scan diffing
+  `--help` against a real ansible-core 2.19.4: this engine implements 15
+  flags to real Ansible's 38. Unimplemented ones are REJECTED, never
+  silently ignored - but with a misleading "Please specify exactly one
+  playbook file" (they fall through to the positional-argument check
+  rather than being reported as an unrecognized option).
+
+  Ranked by how often real playbooks/CI actually use them:
+
+  * `-e` / `--extra-vars` - the significant one. Extremely common, and
+    it carries the highest-precedence variable scope, so nothing else
+    substitutes for it. Not implemented at all (`grep extra_vars src/`
+    finds only comments).
+  * `--syntax-check`, `--list-tasks`, `--list-hosts`, `--list-tags` -
+    cheap informational modes, common in CI lint stages.
+  * `--start-at-task`, `--step`, `--force-handlers`, `--flush-cache`.
+  * Connection/become flags: `-u`/`--user`, `--private-key`, `-k`,
+    `-K`/`--ask-become-pass`, `-b`/`--become`, `--become-user`,
+    `--become-method`, `-C` is taken (`--check` here is `-c`),
+    `--connection`, `--timeout`, `--ssh-common-args`,
+    `--ssh-extra-args`, `--scp-extra-args`, `--sftp-extra-args`,
+    `--module-path`, `--vault-id`. Most of these have an inventory-var
+    equivalent this engine DOES honor (`ansible_user`,
+    `ansible_ssh_private_key_file`, `ansible_connection`, ...), which is
+    how the benchmark rounds have always driven them - which is why the
+    gap went unnoticed.
+
+  `--skip-tags` was in this list until 0.9.559 implemented it alongside
+  the rest of the tag-selection fix.
 
 ## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 

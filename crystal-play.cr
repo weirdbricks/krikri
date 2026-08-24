@@ -15,6 +15,7 @@ require "option_parser"
 require "colorize"
 require "./src/crystal_play/version"
 require "./src/crystal_play/playbook_parser"
+require "./src/crystal_play/tag_filter"
 require "./src/crystal_play/inventory_parser"
 require "./src/crystal_play/task_executor"
 require "./src/crystal_play/vault"
@@ -98,6 +99,7 @@ gathering = "implicit"
 verbose = false
 limit_hosts = ""
 tags = [] of String
+skip_tags = [] of String
 vault_password_file = nil
 ask_vault_pass = false
 
@@ -150,8 +152,11 @@ begin
       limit_hosts = subset
     end
 
+    parser.on("--skip-tags=TAGS", "Only run tasks whose tags do NOT match these") do |t|
+      skip_tags = t.split(",").map(&.strip).reject(&.empty?)
+    end
     parser.on("-t TAGS", "--tags=TAGS", "Only run tasks with these tags") do |t|
-      tags = t.split(",")
+      tags = t.split(",").map(&.strip).reject(&.empty?)
     end
 
     parser.on("--vault-password-file=FILE", "Vault password file") do |file|
@@ -240,6 +245,9 @@ unless batching_enabled
 end
 if tags.any?
   puts "Tags: #{tags.join(", ")}".colorize(:cyan)
+end
+if skip_tags.any?
+  puts "Skip tags: #{skip_tags.join(", ")}".colorize(:cyan)
 end
 puts "=" * 70
 puts ""
@@ -408,16 +416,20 @@ playbook.plays.each_with_index do |play, play_index|
   # Get tasks for this play
   tasks_to_run = play.tasks
 
-  # Filter by tags if specified
-  if tags.any?
-    tasks_to_run = tasks_to_run.select do |task|
-      task.tags.any? { |tag| tags.includes?(tag) }
-    end
+  # Tag selection: --tags/--skip-tags plus the special tag names and the
+  # magic `always`/`never` task tags. Note this runs even with NEITHER
+  # flag passed, because `tags: never` must be honored on an ordinary
+  # invocation - see TagFilter's own comment.
+  tasks_before_tag_filter = tasks_to_run.size
+  tasks_to_run = CrystalPlay::TagFilter.apply(tasks_to_run, tags, skip_tags)
 
-    if tasks_to_run.empty?
-      puts "Skipping play - no tasks match tags: #{tags.join(", ")}".colorize(:yellow)
-      next
+  if tasks_to_run.empty? && tasks_before_tag_filter > 0
+    if tags.any? || skip_tags.any?
+      puts "Skipping play - no tasks match tags: #{(tags + skip_tags).join(", ")}".colorize(:yellow)
+    else
+      puts "Skipping play - every task is tagged 'never'".colorize(:yellow)
     end
+    next
   end
 
   if tasks_to_run.empty?
