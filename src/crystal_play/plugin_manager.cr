@@ -598,6 +598,22 @@ module CrystalPlay
     ) : JSON::Any
       if remote_execution?(plugin_name, host, vars)
         execute_remote_plugin(plugin_name, config, host, vars, become, become_user)
+      elsif controller_only?(plugin_name)
+        # A controller-only plugin (fetch, see CONTROLLER_ONLY_PLUGINS'
+        # own comment) always runs unprivileged on the controller itself,
+        # regardless of the task's own become: - real Ansible's fetch
+        # never needs local privilege escalation to write its own
+        # download to disk; only the REMOTE read of a privileged source
+        # file would need become, which fetch.cr's own remote_exec/
+        # remote_download already handle by connecting as the inventory
+        # user over SSH, entirely independent of this local process spawn.
+        # Found live benchmarking round172's buluma.sosreport (connecting
+        # as root already, so no become was even needed for the read, yet
+        # the LOCAL fetch process spawn was still wrapped in `sudo -n -u
+        # root --`, which fails outright with "sudo: a password is
+        # required" on any controller account without passwordless sudo
+        # configured for itself - unrelated to the actual remote target).
+        execute_local_plugin(plugin_name, config, false, nil)
       else
         execute_local_plugin(plugin_name, config, become, become_user)
       end
@@ -618,6 +634,9 @@ module CrystalPlay
 
       if remote_execution?(plugin_name, host, vars)
         execute_remote_plugin(plugin_name, with_local_connection(config), host, vars, become, become_user)
+      elsif controller_only?(plugin_name)
+        # See the other execute_plugin overload's own comment.
+        execute_local_plugin(plugin_name, config.to_json, false, nil)
       else
         execute_local_plugin(plugin_name, config.to_json, become, become_user)
       end

@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.546-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.547-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,19 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.547`** - fixed `fetch:` spawning its own LOCAL controller
+  process wrapped in `sudo -n -u <user> --` whenever `become:` was
+  active, crashing outright with "sudo: a password is required" on any
+  controller account without passwordless sudo configured for itself -
+  entirely unrelated to the actual remote target, since real Ansible's
+  `fetch:` never needs local privilege escalation (only the REMOTE read
+  of a privileged source file would, and this engine's own `fetch.cr`
+  already handles that independently, over SSH as the inventory user).
+  Found live benchmarking round172's `buluma.sosreport` on Rocky 9.6
+  (even connecting as root already - `become:` still unconditionally
+  wrapped the local spawn). `execute_plugin` now skips the `sudo`
+  wrap for any controller-only plugin (`fetch`) regardless of the
+  task's own `become:`. `crystal spec`: 1613 examples, 0 failures.
 - **`0.9.546`** - fixed `ansible.builtin.dnf`/`ansible.builtin.yum`'s
   own cache-refresh-only invocation (`update_cache: true`, no `name:`)
   always reporting `changed: true` on success - real Ansible's dnf/yum
@@ -467,29 +480,6 @@ for current-state detail.
   narrow layer. `buluma.collectd`'s real `collectd.conf.j2` now
   renders byte-identical to real Ansible. Crinja spec: 550 examples, 0
   failures. `crystal spec`: 1613 examples, 0 failures.
-- **`0.9.537`-`0.9.539`** - a "clear the backlog" pass through every
-  documented-but-unfixed gap found across `KNOWN_MISSING.md`/
-  `ROLES_TESTED.md`/session history, user-requested after the Crinja
-  whitespace fix below showed a gap could linger for many rounds once
-  called "not a quick fix": PLAY RECAP now always prints all 7 counters
-  (`ok=`/`changed=`/`unreachable=`/`failed=`/`skipped=`/`rescued=`/
-  `ignored=`) even at 0, matching real `ansible-playbook` exactly
-  (previously omitted several whenever they were 0, and never printed
-  `unreachable=` at all); `notify:` targets are now statically validated
-  against the play's own handlers at parse time, matching real Ansible's
-  "ERROR! The requested handler was not found" upfront refusal instead
-  of silently no-op'ing an unresolvable notify: and completing "successfully"
-  (`robertdebock.roundcubemail`, round93); a `when:` condition that
-  raises an exception (`mounts | selectattr(...) | first` on an empty
-  match, `robertdebock.mount_options`) used to crash the ENTIRE process
-  with an unhandled-exception stack trace instead of failing just the
-  one task - fixed centrally so all 7 `when:` evaluation call sites
-  (solo/looped/batched tasks, `meta:`) are covered, including
-  `ignore_errors:` semantics. Also found (auditing, not new bugs): 3
-  older "documented not fixed" rows (`robertdebock.postfix`/`.podman`/
-  `.openbao`) turned out to already be fixed by later, unrelated rounds
-  without the docs being updated - corrected, no code change needed.
-  `crystal spec`: 1611 examples, 0 failures.
 ---
 
 ## 🤝 Contributing
