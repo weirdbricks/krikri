@@ -401,6 +401,10 @@ module CrystalPlay
     # when a task failed on the host, exactly like the --force-handlers
     # CLI flag (real Ansible honors both).
     property force_handlers : Bool = false
+    # `serial:` - raw batch tokens, each either a count ("2") or a
+    # percentage ("50%"). Empty means the play runs against every host at
+    # once, which is what this engine always did.
+    property serial : Array(String) = [] of String
 
     def initialize(@name : String, @hosts : String | Array(String))
       @tasks = [] of Task
@@ -973,6 +977,18 @@ module CrystalPlay
       play.gather_facts = gather_facts_yaml ? gather_facts_yaml.as_bool : true
       play.gather_facts_set = !gather_facts_yaml.nil?
       play.force_handlers = parse_become_value(yaml["force_handlers"]?) || false
+
+      # serial: accepts a scalar (`serial: 2`, `serial: "50%"`) or a list
+      # of them (`serial: [1, 2]`), where each entry sizes one batch and
+      # the LAST entry sizes every remaining batch.
+      if serial_yaml = yaml["serial"]?
+        if list = serial_yaml.as_a?
+          play.serial = list.map { |entry| safe_yaml_to_string(entry) }
+        else
+          play.serial = [safe_yaml_to_string(serial_yaml)]
+        end
+        play.serial = play.serial.map(&.strip).reject(&.empty?)
+      end
 
       # Parse play-level vars
       if vars_yaml = yaml["vars"]?.try(&.as_h?)

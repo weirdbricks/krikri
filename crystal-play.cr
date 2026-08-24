@@ -20,6 +20,7 @@ require "./src/crystal_play/extra_vars_parser"
 require "./src/crystal_play/task_lister"
 require "./src/crystal_play/start_at_filter"
 require "./src/crystal_play/cli_options"
+require "./src/crystal_play/serial_batches"
 require "./src/crystal_play/inventory_parser"
 require "./src/crystal_play/task_executor"
 require "./src/crystal_play/vault"
@@ -691,9 +692,13 @@ playbook.plays.each_with_index do |play, play_index|
     next
   end
 
+  # serial: runs the WHOLE play against one batch of hosts at a time.
+  # With no serial: this is a single batch of every host, exactly as
+  # before.
+  CrystalPlay::SerialBatches.split(hosts, play.serial).each do |batch_hosts|
   # Create task executor with handlers and play vars
   executor = CrystalPlay::TaskExecutor.new(
-    hosts: hosts,
+    hosts: batch_hosts,
     tasks: tasks_to_run,
     handlers: play.handlers,
     check_mode: check_mode,
@@ -735,6 +740,7 @@ playbook.plays.each_with_index do |play, play_index|
     else
       combined_results[host_name] = host_stats.dup
     end
+  end
   end
 end
 

@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.570-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.571-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,14 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.571`** - implemented `serial:`, which was ignored entirely. Real
+  Ansible runs the whole play against one batch of hosts at a time -
+  that is what makes a rolling restart rolling - while this engine still
+  hit every host simultaneously, so the batching a playbook used to
+  protect a fleet silently did nothing. Counts, percentages and lists of
+  batch sizes all supported, matching real Ansible over four hosts.
+  (`run_once`, `delegate_to` and `delegate_facts` were checked in the
+  same pass and were already correct.)
 - **`0.9.570`** - an unreachable host no longer kills the run. One host
   that could not be connected to crashed the whole process with a raw
   Crystal stack trace, printed no recap at all, discarded every
@@ -426,15 +434,6 @@ for current-state detail.
   `-C` is the short form for check mode (`--check` is unchanged), and
   `-D`/`-d` both mean `--diff`. A command line copied from
   `ansible-playbook` now behaves the same here.
-- **`0.9.565`** - completed the CLI flag surface: `-u`/`--user`,
-  `--private-key`, `--connection`, `-b`/`--become`, `--become-user`,
-  `--become-method`, `-T`/`--timeout`, `--ssh-common-args`/
-  `--ssh-extra-args`, `-k`/`-K` and their `--*-password-file` forms,
-  `--step`, `--flush-cache`, plus real Ansible's own `-C`/`-D`/`-J`
-  short forms. `--help` now lists every flag real ansible-playbook does.
-  Four are accepted-and-inert by design (`-M`, `--vault-id`,
-  `--scp-extra-args`, `--sftp-extra-args`) - see KNOWN_MISSING.md, which
-  also documents the deliberate `-c`/`-d` short-form difference.
 
 ## 🤝 Contributing
 
