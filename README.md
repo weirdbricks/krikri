@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.566-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.567-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,15 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.567`** - closed KNOWN_MISSING.md's last non-scope-cut gap: a
+  static import whose target can only be known from a FACT is now
+  refused before anything runs, matching real Ansible's blast radius.
+  A task-level `import_tasks:` with a fact-templated path used to be
+  dropped SILENTLY (no banner, no failure, exit 0); an `import_role:`
+  with a fact-templated name failed only that one task, mid-play, after
+  earlier tasks had already run. Both now abort the load with real
+  Ansible's own exit codes - 4 for an import_tasks path, 1 for an
+  import_role name.
 - **`0.9.566`** - **breaking:** `-c` now means `--connection`, matching
   real Ansible, where it previously meant `--check` in this engine.
   `-C` is the short form for check mode (`--check` is unchanged), and
@@ -415,11 +424,6 @@ for current-state detail.
   one-liner. Byte-identical to real Ansible across three error shapes,
   including its rewordings of libyaml (colons in an unquoted value, tab
   indentation) and its truncated-file note.
-- **`0.9.561`** - implemented `--syntax-check` and `--list-tasks`,
-  byte-for-byte against real `ansible-playbook` (tabs, alphabetical tag
-  sort, `role : task` prefixes, `--tags` filtering of the listing, and
-  the quirk that a block's `always:` tasks are not listed). Both suppress
-  this engine's own banner, since that output is routinely machine-read.
 
 ## 🤝 Contributing
 

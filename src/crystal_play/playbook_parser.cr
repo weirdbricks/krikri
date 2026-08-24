@@ -613,6 +613,14 @@ module CrystalPlay
   # mechanism as RemovedActionError above) so it propagates all the way
   # to crystal-play.cr's own top-level "Error parsing playbook:" handler
   # instead of being swallowed as a soft warning.
+  # import_role:'s NAME failing to resolve is reported by real Ansible
+  # as a plain undefined-variable error with exit code 1, NOT the
+  # parser-error 4 it uses for an import_tasks: PATH (verified against
+  # ansible-core 2.19.4). Separate class so crystal-play.cr can honor
+  # that difference.
+  class StaticImportRoleUndefinedError < Exception
+  end
+
   class StaticImportUndefinedError < Exception
   end
 
@@ -888,6 +896,8 @@ module CrystalPlay
             raise ex
           rescue ex : HandlerNotFoundError
             raise ex
+          rescue ex : StaticImportRoleUndefinedError
+            raise ex
           rescue ex : StaticImportUndefinedError
             raise ex
           rescue ex
@@ -907,6 +917,8 @@ module CrystalPlay
         rescue ex : HandlerNotFoundError
           # Same bypass as RemovedActionError above - see that class's
           # own comment and HandlerNotFoundError's own comment.
+          raise ex
+        rescue ex : StaticImportRoleUndefinedError
           raise ex
         rescue ex : StaticImportUndefinedError
           # Same bypass, same reason - see StaticImportUndefinedError's
@@ -1080,6 +1092,8 @@ module CrystalPlay
           # own comment. Propagates all the way up to abort the whole
           # playbook, matching real Ansible.
           raise ex
+        rescue ex : StaticImportRoleUndefinedError
+          raise ex
         rescue ex : StaticImportUndefinedError
           # Same bypass as RemovedActionError above, same reason - see
           # that class's own comment and StaticImportUndefinedError's.
@@ -1147,10 +1161,19 @@ module CrystalPlay
       # unrendered "{{ stig_version }}stig/main.yml" as the path,
       # always "file not found" and silently skipping the entire STIG
       # control set with just a warning.
-      if known_vars && file_rel.includes?("{{")
+      # NB: this runs whether or not *known_vars* was supplied. A
+      # task-level `import_tasks:` in a plain play has no role context,
+      # so known_vars is nil there - and gating on it meant the path kept
+      # its literal "{{ ... }}", missed the file, and the task was
+      # silently DROPPED: no banner, no failure, exit 0, while real
+      # ansible-playbook refuses the whole playbook (rc=4). An empty
+      # context still resolves anything defined in vars/extra-vars, and
+      # still raises for a fact, which is exactly the distinction real
+      # Ansible draws.
+      if file_rel.includes?("{{")
         original_file_rel = file_rel
         begin
-          file_rel = VarSubstitutor.new(vars: known_vars).substitute(file_rel, strict: true)
+          file_rel = VarSubstitutor.new(vars: known_vars || Hash(String, JSON::Any).new).substitute(file_rel, strict: true)
         rescue ex : UndefinedVariableError
           raise StaticImportUndefinedError.new(
             "Error when evaluating variable in import path '#{original_file_rel}': #{ex.message}\n" \
@@ -1270,6 +1293,42 @@ module CrystalPlay
       # header, no error surfaced in the run) - a role using it appeared
       # to just skip a step instead of failing loudly.
       if import_role_yaml = directive(task_hash, "import_role").try(&.as_h?)
+        # Like import_tasks:'s path, import_role:'s NAME is static - real
+        # Ansible resolves it before the run and refuses the whole
+        # playbook if it can only be known from a fact. This engine
+        # reused include_role's runtime path for import_role (see the
+        # comment above), so the failure landed on that one task
+        # mid-play, after earlier tasks had already run, instead of
+        # stopping everything. Detecting it here restores real Ansible's
+        # blast radius: nothing runs at all.
+        if role_name_raw = import_role_yaml["name"]?.try(&.as_s?)
+          if role_name_raw.includes?("{{")
+            # Resolved against the play's OWN vars, which real Ansible
+            # allows for a static import - only facts are off limits.
+            # Substituting against an empty context would wrongly reject
+            # `name: "{{ some_play_var }}"`.
+            rendered = begin
+              VarSubstitutor.new(vars: play.vars).substitute(role_name_raw, strict: true)
+            rescue ex : UndefinedVariableError
+              raise StaticImportRoleUndefinedError.new(ex.message || "role name is undefined")
+            end
+
+            # A bare reference raises above; a FILTER CHAIN
+            # (`{{ ansible_os_family | lower }}`) stays lenient by design
+            # and comes back either still-templated or as the engine's
+            # "undefined" sentinel. Either way the name could not be
+            # known before the run, which is what real Ansible refuses.
+            # An EMPTY result counts too: `{{ x | lower }}` with x
+            # undefined renders to "" here, not to the sentinel and not
+            # still-templated. A role name can never legitimately be
+            # empty, so this is safe as well as necessary.
+            if rendered.includes?("{{") || rendered.strip == "undefined" || rendered.strip.empty?
+              first_var = role_name_raw.match(/\{\{\s*([A-Za-z_][A-Za-z0-9_]*)/).try(&.[1]) || role_name_raw
+              raise StaticImportRoleUndefinedError.new("'#{first_var}' is undefined")
+            end
+          end
+        end
+
         return parse_include_role(name, task_hash, import_role_yaml, play, file_dir, is_static: true)
       end
 

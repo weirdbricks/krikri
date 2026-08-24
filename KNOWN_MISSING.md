@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.566`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.567`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -38,36 +38,6 @@ either way. Revisit only if a live round hits this again, this time
 capturing `dnf --debuglevel=10 install -y <spec>` output and the exact
 package/repo before the host is destroyed, rather than reconstructing
 from a recap diff after the fact.
-
-- **A task-level `import_role:`/`import_tasks:` that hits the
-  fact-in-static-import restriction (see 0.9.549 below) still only
-  fails that ONE task, not the whole playbook at true parse time.**
-  0.9.549 fixed the exact round172 `buluma.php_versions` repro (a
-  templated `import_tasks:` path used via a top-level `roles:` list,
-  parsed eagerly before any execution starts) to raise
-  `StaticImportUndefinedError` and abort the whole playbook load with
-  zero tasks run. (0.9.549's own claim that this matched real Ansible's
-  `rc=4` "exactly" was wrong - it aborted with `rc=1`; the parser-error
-  exit code was only actually corrected to 4 in 0.9.557.) The SAME
-  detection now also fires correctly for `import_role:`/`import_tasks:`
-  reached dynamically (a task-level `import_role:` mid-play) - verified
-  directly: the error message is byte-identical to real Ansible's - but
-  because this engine's `include_role:`/`import_role:` share one
-  runtime-loading code path (`Executor#run_include_role_once` ->
-  `RoleLoader.load_single_role`, a documented pragmatic approximation,
-  see `Task#is_static_import`'s own comment), the raise there is caught
-  by that call site's generic `rescue ex` and turned into an ordinary
-  failed-task result instead of propagating to abort the whole run.
-  Verified live: real Ansible refuses to run ANYTHING (rc=4, "before"
-  task never even reached); this engine now runs "Gathering Facts" and
-  any earlier tasks first, then fails the `import_role:` task itself
-  with the correct message (`failed=1`) - the right diagnosis, wrong
-  blast radius. Revisit only if a live round finds a role where tasks
-  BEFORE the static import having already run (vs. real Ansible's
-  nothing-runs-at-all) changes observable end state beyond the task
-  list itself (e.g. a side-effecting earlier task, file writes,
-  notifications) - unlikely, since a real role hitting this restriction
-  at all is already a broken role by real Ansible's own rules.
 
 Note: 0.9.474's entry here claiming `openssl_dhparam:`/
 `openssh_keypair:` had "no plugin, no `AVAILABLE_PLUGINS` entry" was

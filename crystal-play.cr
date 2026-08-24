@@ -435,6 +435,12 @@ begin
     end
     puts ""
   end
+rescue ex : CrystalPlay::StaticImportRoleUndefinedError
+  # Real Ansible reports an unresolvable import_role: NAME as a plain
+  # undefined-variable error with exit code 1 - not the parser-error 4
+  # it uses for an import_tasks: PATH.
+  puts "[ERROR]: #{ex.message}".colorize(:red)
+  exit 1
 rescue ex : CrystalPlay::YamlSyntaxError
   # Rendered the way real ansible-playbook renders a YAML syntax error -
   # [ERROR]: line, Origin: path:line:col, then the offending source line
