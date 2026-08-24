@@ -51,9 +51,17 @@ module CrystalPlay
       conditions = Array(String).from_json(that_json)
       substitutor = VarSubstitutor.new(vars: @vars, host_name: @host.name)
 
-      failing = conditions.find do |condition|
-        substituted = substitutor.substitute(condition)
-        !ConditionalEvaluator.evaluate(substituted, @vars)
+      # Strict-undefined, mirroring AssertActionPlugin (the copy that
+      # actually runs for a normal assert: task) - see its comment for
+      # the live-verified real-Ansible behavior this matches.
+      begin
+        failing = conditions.find do |condition|
+          substituted = substitutor.substitute(condition)
+          !ConditionalEvaluator.evaluate(substituted, @vars, raise_undefined: true)
+        end
+      rescue ex : ConditionalEvaluator::UndefinedVariableError
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Error while evaluating conditional: #{ex.message}")
       end
 
       if failing

@@ -10,47 +10,37 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.549`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.553`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
 
-- **Undefined-variable rendering is lenient almost everywhere; real
-  Ansible is strict by default for module-arg templating and `when:`.**
-  0.9.517 raised `VarSubstitutor::UndefinedVariableError` for a bare
-  module-arg reference; 0.9.548 (round172's `buluma.git_tag` repro,
-  Rocky 9.6 - `when: git_remote != '' and git_remote != None` with
-  `git_remote` genuinely undefined) closed the matching gap for
-  **task-level `when:`**: `ConditionalEvaluator.evaluate`'s new
-  `raise_undefined:` flag (passed only from `Executor#when_passes?`,
-  which already converts any raised exception into a clean failed-task
-  result via `WhenEvaluationError`) raises
-  `ConditionalEvaluator::UndefinedVariableError` when evaluation reaches
-  a bare/dotted variable reference that resolves to nothing - same
-  narrow REGEX_BARE_VAR_REF-shaped scope as 0.9.517, verified
-  byte-identical against real `ansible-playbook`'s own error message,
-  `failed=1`, and exit code 2. A filter/function chain (`| default(...)`,
-  `lookup(...)`, any `is <test>`) still falls back to the lenient
-  `"undefined"` sentinel regardless, for the same reason 0.9.517 didn't
-  touch those either.
-
-  **Still NOT covered** (0.9.548 only wired `raise_undefined:` into the
-  single task-level `when_passes?` call site, which is exception-safe
-  by construction): `block:`/`include_tasks:`'s own multi-host
-  `partition_by_when`, `execute_block`'s single-host `when:`,
-  `run_include_tasks_once`/`run_include_role_once`, and
-  `execute_handler_plugin_once`'s handler `when:` - none of these five
-  call sites currently rescue an exception out of
-  `ConditionalEvaluator.evaluate` at all, so passing `raise_undefined:
-  true` there today would resurrect the exact "crashes the whole
-  process" regression 0.9.539 fixed for the main path, not fail cleanly.
-  Revisit by giving each its own `WhenEvaluationError`-shaped rescue (or
-  routing them through `when_passes?` itself) if a live round finds a
-  genuinely-undefined variable inside a `block:`/`include_tasks:`/
-  `include_role:`/handler `when:` that changes final task-pass/fail
-  state, the same way round172 did for the plain-task case.
+- **An undefined `loop:` source is still rendered leniently; real
+  Ansible is strict about it.** Round173 (Rocky 9.6, ansible-core
+  2.19.12) characterized this precisely via `buluma.mount`, whose
+  `assert | Test if item.path in mount_requests is set correctly` does
+  `loop: "{{ mount_requests }}"` with `mount_requests` genuinely
+  undefined. Real Ansible fails that task with `Error while evaluating
+  conditional: 'mount_requests' is undefined` *before* evaluating the
+  `that:` at all; this engine renders the undefined loop source
+  leniently, runs the `assert:` once with an unbound `item`, and so
+  reports the generic `Assertion failed` instead. **Final task-pass/fail
+  state and the whole recap are identical** (`ok=4 changed=0 failed=1
+  skipped=4` on both, same failing task) - this is a message-only
+  divergence today, which is why it is documented rather than rushed.
+  0.9.553 closed the sibling `assert:`-`that:` case (a bare undefined
+  var *inside* `that:` now reports the real conditional error), but the
+  `loop:`-source case goes through the loop-rendering path, not
+  `ConditionalEvaluator`, and strictness there has a far wider blast
+  radius than the conditional sites: plenty of real roles loop over a
+  var that may legitimately be undefined and currently rely on that
+  being a no-op. Revisit with its own live round rather than as a
+  drive-by: the fix needs the same real-Ansible differential treatment
+  the six `when:` sites got (does an undefined loop source fail, or
+  skip, when the task also has a `when:` that would have skipped it?
+  what about `loop:` vs `with_items:` vs `query()`?), not an assumption.
 
 Note: the round171 `buluma.gitlab` "`package:`/`dnf:` can't resolve a
 name-version partial-NEVRA spec" entry that used to be here (`Error:

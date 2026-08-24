@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.549-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.553-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,48 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.553`** - `assert:`'s own `that:` is strict-undefined too, and
+  real Ansible reports it with the same `Error while evaluating
+  conditional: 'x' is undefined` message a `when:` gets, not a generic
+  `Assertion failed`. Fixed in both the action-plugin and standalone
+  `plugins/assert.cr` copies.
+- **`0.9.552`** - two bugs in the `version`/`version_compare` test,
+  both found live in round173. `version_compare` (real Ansible's older
+  alias for `version`, still accepted by ansible-core 2.19) was never
+  recognized, so `x is version_compare(min, '>=')` fell through to the
+  generic comparison splitter, which mistook the `>=` *inside the quoted
+  operator argument* for a real operator. That was silently benign while
+  conditionals were lenient - but 0.9.548's strict-undefined change
+  turned the same misparse into a hard task failure (`'')' is
+  undefined`), breaking the single most common version-gate idiom in
+  real roles. Separately, the test's compare-to argument was only ever
+  unquoted, never resolved, so a VARIABLE argument
+  (`is version(role_min_version, '>=')`) was version-compared against
+  its own literal name. Both verified byte-identical against real
+  `ansible-playbook` afterwards.
+- **`0.9.551`** - a block:'s body failures move into the recap's
+  `rescued` counter as soon as `rescue:` is *entered*, not only when the
+  rescue then succeeds: a failing block task plus a failing `rescue:`
+  recaps as `failed=1 rescued=1`, not `failed=2 rescued=0`. Pre-existing
+  and unrelated to the `when:` work; found live in round173.
+- **`0.9.550`** - closed KNOWN_MISSING.md's remaining `when:`
+  strict-undefined gap: 0.9.548 wired real Ansible's strict-undefined
+  semantics into task-level `when:` only, since that was the sole call
+  site already exception-safe (`WhenEvaluationError`, see 0.9.539). The
+  other five - `block:`/`include_tasks:`'s multi-host `partition_by_
+  when`, `execute_block`'s single-host `when:`, `run_include_tasks_
+  once`, `run_include_role_once`, and a handler's own `when:` - now get
+  the same strictness through one shared `evaluate_when` helper that
+  owns the substitute+evaluate+rescue sequence, so a genuinely undefined
+  bare/dotted variable in any of these positions fails cleanly for the
+  affected host (or just one host of a multi-host partition) instead of
+  either crashing the process or silently resolving as false. A filter/
+  default()/lookup() chain in the same position stays lenient, same
+  scope as 0.9.548. Note a `block:`'s own `when:` is INHERITED by its
+  children rather than failing the block as a unit, so the first task of
+  `block:`, of `rescue:` and of `always:` each fail on it - corrected
+  against real `ansible-playbook` in round173. `crystal spec`: 1644
+  examples, 0 failures.
 - **`0.9.549`** - closed KNOWN_MISSING.md's `import_tasks:`/`import_role:`
   fact-in-static-import gap: a templated import path referencing a fact
   (e.g. `import_tasks: "setup-{{ ansible_os_family }}.yml"` with no
@@ -416,55 +458,6 @@ for current-state detail.
   matching module-arg fix. `block:`/`include_tasks:`/`include_role:`/
   handler `when:` deliberately not touched yet (see KNOWN_MISSING.md).
   `crystal spec`: 1623 examples, 0 failures.
-- **`0.9.547`** - fixed `fetch:` spawning its own LOCAL controller
-  process wrapped in `sudo -n -u <user> --` whenever `become:` was
-  active, crashing outright with "sudo: a password is required" on any
-  controller account without passwordless sudo configured for itself -
-  entirely unrelated to the actual remote target, since real Ansible's
-  `fetch:` never needs local privilege escalation (only the REMOTE read
-  of a privileged source file would, and this engine's own `fetch.cr`
-  already handles that independently, over SSH as the inventory user).
-  Found live benchmarking round172's `buluma.sosreport` on Rocky 9.6
-  (even connecting as root already - `become:` still unconditionally
-  wrapped the local spawn). `execute_plugin` now skips the `sudo`
-  wrap for any controller-only plugin (`fetch`) regardless of the
-  task's own `become:`. `crystal spec`: 1613 examples, 0 failures.
-- **`0.9.546`** - fixed `ansible.builtin.dnf`/`ansible.builtin.yum`'s
-  own cache-refresh-only invocation (`update_cache: true`, no `name:`)
-  always reporting `changed: true` on success - real Ansible's dnf/yum
-  module never reports changed for this (no reliable "was the cache
-  actually stale" signal), verified live: `buluma.rpmfusion`'s own "Yum
-  update cache" handler recap'd `ok:` on real Ansible, `changed:` on
-  this engine (found round172, `ok=8` matched but `changed=4` vs `5`).
-  The generic `package:` module's own identical cache-only path
-  (`package.cr`) already had this right; `dnf.cr`/`yum.cr`'s own
-  separate branches (reached when a role calls `dnf:`/`yum:` directly)
-  never got the same fix. `crystal spec`: 1613 examples, 0 failures.
-- **`0.9.545`** - fixed `import_role:` producing its own visible "TASK
-  [...]" banner and `ok` recap count, which real Ansible's genuinely
-  static, parse-time splice never does (only `include_role:`'s dynamic
-  runtime inclusion does) - found live benchmarking round171's
-  `robertdebock.revealmd` on Rocky 9.6 (real `ok=17`, crystal's `ok=18`,
-  one extra "Create revealmd service" task). This engine reuses
-  `include_role:`'s runtime machinery for both directives (a documented
-  pragmatic approximation); fixed by threading a new `Task#is_
-  static_import` flag through the 3 executor call sites that print a
-  banner or count a result, so a static import shows nothing of its own
-  while the included role's own tasks still get normal banners either
-  way. `crystal spec`: 1613 examples, 0 failures.
-- **`0.9.544`** - fixed `ansible.builtin.systemd` rejecting its own
-  documented hyphenated param aliases (`name`'s `service`/`unit`,
-  `daemon_reload`'s `daemon-reload`, `daemon_reexec`'s `daemon-reexec` -
-  per `ansible-doc ansible.builtin.systemd`) - only the canonical
-  underscored names were ever read. Found live benchmarking RHEL/Rocky
-  9.6 (round171, `buluma.gitea`): its own "Systemctl daemon-reload"
-  handler writes `daemon-reload: true` (the alias spelling), which hit
-  this plugin's "Must specify at least one of..." guard and failed
-  outright on any run where the notifying task actually changed
-  something - masked on an idempotent rerun (nothing changed, handler
-  never notified), so only cold showed it. `crystal spec`: 1613
-  examples, 0 failures.
----
 
 ## 🤝 Contributing
 
