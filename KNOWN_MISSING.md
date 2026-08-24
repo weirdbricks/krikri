@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.556`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.557`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -45,8 +45,10 @@ from a recap diff after the fact.
   0.9.549 fixed the exact round172 `buluma.php_versions` repro (a
   templated `import_tasks:` path used via a top-level `roles:` list,
   parsed eagerly before any execution starts) to raise
-  `StaticImportUndefinedError` and abort the whole playbook load,
-  matching real Ansible's `rc=4`/zero-tasks-run exactly. The SAME
+  `StaticImportUndefinedError` and abort the whole playbook load with
+  zero tasks run. (0.9.549's own claim that this matched real Ansible's
+  `rc=4` "exactly" was wrong - it aborted with `rc=1`; the parser-error
+  exit code was only actually corrected to 4 in 0.9.557.) The SAME
   detection now also fires correctly for `import_role:`/`import_tasks:`
   reached dynamically (a task-level `import_role:` mid-play) - verified
   directly: the error message is byte-identical to real Ansible's - but

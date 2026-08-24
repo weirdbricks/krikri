@@ -271,7 +271,15 @@ begin
 rescue ex
   puts "Error parsing playbook:".colorize(:red).bold
   puts "  #{ex.message}".colorize(:red)
-  exit 1
+  # rc=4 is real Ansible's dedicated PARSER-ERROR exit code, distinct
+  # from 1 (generic error), 2 (failed hosts) and 3 (unreachable).
+  # Verified against ansible-core 2.19.4: both an unparseable playbook
+  # and a static import whose path references a fact (0.9.549's
+  # StaticImportUndefinedError) exit 4, where this engine exited 1.
+  # Note the separate "Playbook file not found" check earlier exits 1,
+  # matching real Ansible's own 1 for a missing playbook - that case
+  # deliberately does NOT come through here.
+  exit 4
 end
 
 # Parse inventory

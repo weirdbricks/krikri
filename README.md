@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.556-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.557-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,11 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.557`** - real Ansible reserves exit code 4 for PARSER errors,
+  distinct from 1 (generic), 2 (failed hosts) and 3 (unreachable); this
+  engine exited 1 for both an unparseable playbook and a static import
+  whose path references a fact. A missing playbook file stays 1, matching
+  real Ansible there too.
 - **`0.9.556`** - piping output to a reader that exits early
   (`crystal-ansible playbook.yml | head -2`, `--version | head -1`,
   quitting a pager) dumped a Crystal stack trace to stderr and exited 1.
@@ -432,11 +437,6 @@ for current-state detail.
   (`is version(role_min_version, '>=')`) was version-compared against
   its own literal name. Both verified byte-identical against real
   `ansible-playbook` afterwards.
-- **`0.9.551`** - a block:'s body failures move into the recap's
-  `rescued` counter as soon as `rescue:` is *entered*, not only when the
-  rescue then succeeds: a failing block task plus a failing `rescue:`
-  recaps as `failed=1 rescued=1`, not `failed=2 rescued=0`. Pre-existing
-  and unrelated to the `when:` work; found live in round173.
 
 ## 🤝 Contributing
 
