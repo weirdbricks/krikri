@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.544`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.545`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -42,6 +42,28 @@ is the record.
   variable reached through a filter chain, or through `when:`, is still
   an open gap - revisit with a dedicated pass if a live round finds one
   that changes final task-pass/fail state, the same way this one did.
+
+- **`package:`/`dnf:` install may fail to resolve a `name-version`
+  partial-NEVRA spec real Ansible's own dnf module resolves fine.**
+  Found live benchmarking round171's `buluma.gitlab` on Rocky 9.6: its
+  own `Install gitlab` task installs `"gitlab-ce-19.2.0"` (name-version,
+  no release/arch) from a repo added earlier in the SAME play. Real
+  `ansible-playbook` (via python-dnf's native bindings, not the `dnf`
+  CLI) installed it successfully; this engine's `package.cr`/`dnf.cr`
+  (which shell out to plain `dnf install -y <spec>`) failed with `Error:
+  Unable to find a match: gitlab-ce-19.2.0` - reproduced identically on
+  a COLD run and again on a WARM rerun of the same host over 15+ minutes
+  later (rules out a repo-metadata-freshness race - the failure is
+  deterministic, not a timing flake). Likely cause: the real dnf
+  *library* API's NEVRA-partial matching is more lenient than what the
+  bare `dnf install` *CLI* verb accepts for a name-version-only spec
+  with no release/arch component - not yet confirmed by direct
+  reproduction against a real dnf CLI outside Ansible entirely (the
+  round171 host pair was destroyed before this could be isolated
+  further). Revisit with a dedicated, cheaper repro (a minimal playbook
+  installing a real name-version-pinned RPM from a small test repo,
+  not the full `buluma.gitlab` role) rather than guessing a fix from
+  this one observation.
 
 Note: 0.9.474's entry here claiming `openssl_dhparam:`/
 `openssh_keypair:` had "no plugin, no `AVAILABLE_PLUGINS` entry" was

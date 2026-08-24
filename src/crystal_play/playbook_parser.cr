@@ -336,6 +336,22 @@ module CrystalPlay
       @module_name == "_include_role"
     end
 
+    # True when this `_include_role` task actually came from `import_role:`
+    # (statically resolved), not `include_role:` (dynamic). Both currently
+    # share the same runtime inclusion machinery (see `parse_include_role`'s
+    # own comment on that pragmatic approximation), but real Ansible's
+    # `import_role:` produces NO task result of its own at all - no "TASK
+    # [...]" banner, no `ok`/`skipped` recap increment - since it's a true
+    # parse-time splice; only `include_role:` (genuinely dynamic) does.
+    # Used by the executor to suppress the wrapper's own display/counting
+    # for the import_role: case while still running the included role's
+    # own tasks (each gets its own normal banner) exactly the same way
+    # either directive reaches them. Found via round171's robertdebock.
+    # revealmd (`import_role: name: robertdebock.service`): real Ansible's
+    # recap was `ok=17`, crystal's was `ok=18` - an extra "Create revealmd
+    # service" TASK banner + ok that real Ansible never shows at all.
+    property is_static_import : Bool = false
+
     def meta? : Bool
       @module_name == "_meta"
     end
@@ -1058,7 +1074,7 @@ module CrystalPlay
       # header, no error surfaced in the run) - a role using it appeared
       # to just skip a step instead of failing loudly.
       if import_role_yaml = directive(task_hash, "import_role").try(&.as_h?)
-        return parse_include_role(name, task_hash, import_role_yaml, play, file_dir)
+        return parse_include_role(name, task_hash, import_role_yaml, play, file_dir, is_static: true)
       end
 
       if meta_yaml = directive(task_hash, "meta")
@@ -1656,11 +1672,12 @@ module CrystalPlay
     # allow_duplicates: isn't implemented either - every include_role call
     # loads the role fresh, matching its default (true) but not honoring
     # an explicit false.
-    private def self.parse_include_role(name : String, task_hash : Hash(YAML::Any, YAML::Any), include_role_yaml : Hash(YAML::Any, YAML::Any), play : Play, file_dir : String) : Task
+    private def self.parse_include_role(name : String, task_hash : Hash(YAML::Any, YAML::Any), include_role_yaml : Hash(YAML::Any, YAML::Any), play : Play, file_dir : String, is_static : Bool = false) : Task
       role_name = include_role_yaml["name"]?.try(&.as_s)
       raise "include_role: missing required 'name'" unless role_name
 
       task = Task.new(name, "_include_role")
+      task.is_static_import = is_static
       task.include_role_name = role_name
       task.include_role_dir = file_dir
       task.include_role_tasks_from = include_role_yaml["tasks_from"]?.try(&.as_s)

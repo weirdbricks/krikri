@@ -420,7 +420,10 @@ module CrystalPlay
         # own convention - so a templated name is rendered against
         # whichever host will actually run first (matches this file's
         # existing `run_once`-style "first host" precedent elsewhere).
-        unless @adhoc
+        # A static import_role: (Task#is_static_import) gets no banner of
+        # its own, same as block: above - only the included role's own
+        # tasks do (see is_static_import's own comment).
+        unless @adhoc || (task.include_role? && task.is_static_import)
           display_host = active_hosts.first? || hosts.first
           puts "TASK [#{render_task_name_for_display(task, display_host)}]".colorize(:white).bold
           puts "*" * 70
@@ -3632,9 +3635,20 @@ module CrystalPlay
           next
         end
 
+        connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+
+        # A static import_role: (Task#is_static_import), like a block:,
+        # produces no result of its own when skipped either - real
+        # Ansible's static splice means there's nothing here to show
+        # "skipping" for (see is_static_import's own comment). The
+        # included role's own tasks simply never got spliced in, with no
+        # trace of the import_role: statement itself in the recap.
+        if nested_task.include_role? && nested_task.is_static_import
+          next
+        end
+
         puts "TASK [#{render_task_name_for_display(nested_task, host)}]".colorize(:white).bold
         puts "*" * 70
-        connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
         puts "skipping: [#{connection_host}]".colorize(:cyan)
         @results[host.name]["skipped"] += 1
         register_skip_result(nested_task, host)
@@ -3802,6 +3816,14 @@ module CrystalPlay
         # lacked the same block? dispatch run_task_batch (the multi-host
         # counterpart) already had.
         if nested_task.block?
+          execute_task(nested_task, host)
+          next
+        end
+
+        # A static import_role: (Task#is_static_import) is likewise
+        # transparent - no banner of its own, only the included role's
+        # own tasks (see is_static_import's own comment).
+        if nested_task.include_role? && nested_task.is_static_import
           execute_task(nested_task, host)
           next
         end
@@ -4137,10 +4159,17 @@ module CrystalPlay
         substituted_condition = substitutor.substitute(when_condition)
 
         unless ConditionalEvaluator.evaluate(substituted_condition, vars_context)
-          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-          suffix = item_label ? " => (item=#{item_label})" : ""
-          puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
-          @results[host.name]["skipped"] += 1
+          # A static import_role: (Task#is_static_import) produces no
+          # result at all when skipped, same as its "ok" path below - the
+          # banner is already suppressed by run_task_batch/run_task_list,
+          # so printing "skipping:" here with no banner above it would be
+          # an orphaned line (see is_static_import's own comment).
+          unless task.is_static_import
+            connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+            suffix = item_label ? " => (item=#{item_label})" : ""
+            puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
+            @results[host.name]["skipped"] += 1
+          end
           return
         end
       end
@@ -4158,7 +4187,14 @@ module CrystalPlay
       # `ok=12`, crystal's was `ok=10` - both `include_role:` calls in
       # the role (andrewrothstein.hashi, andrewrothstein.unarchivedeps)
       # were silently undercounted despite running correctly.
-      @results[host.name]["ok"] += 1
+      #
+      # NOT applied for a static import_role: (Task#is_static_import) -
+      # real Ansible's own IncludeRole result/stats increment only fires
+      # for the genuinely dynamic include_role:; import_role: is resolved
+      # at parse time and produces no task result of its own at all (see
+      # is_static_import's own comment - found via round171's
+      # robertdebock.revealmd).
+      @results[host.name]["ok"] += 1 unless task.is_static_import
 
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       role_name = substitutor.substitute(task.include_role_name.as(String))

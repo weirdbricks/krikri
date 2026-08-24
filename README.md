@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.544-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.545-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,18 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.545`** - fixed `import_role:` producing its own visible "TASK
+  [...]" banner and `ok` recap count, which real Ansible's genuinely
+  static, parse-time splice never does (only `include_role:`'s dynamic
+  runtime inclusion does) - found live benchmarking round171's
+  `robertdebock.revealmd` on Rocky 9.6 (real `ok=17`, crystal's `ok=18`,
+  one extra "Create revealmd service" task). This engine reuses
+  `include_role:`'s runtime machinery for both directives (a documented
+  pragmatic approximation); fixed by threading a new `Task#is_
+  static_import` flag through the 3 executor call sites that print a
+  banner or count a result, so a static import shows nothing of its own
+  while the included role's own tasks still get normal banners either
+  way. `crystal spec`: 1613 examples, 0 failures.
 - **`0.9.544`** - fixed `ansible.builtin.systemd` rejecting its own
   documented hyphenated param aliases (`name`'s `service`/`unit`,
   `daemon_reload`'s `daemon-reload`, `daemon_reexec`'s `daemon-reexec` -
@@ -483,31 +495,6 @@ for current-state detail.
   end-tags, and a `None`-renders-as-`"none"` case specific to a
   trailing `{{ var }}` at true end-of-template. Crinja's own suite:
   546 examples, 0 failures. `crystal spec`: 1601 examples, 0 failures.
-- **`0.9.533`-`0.9.535`** - 3 real bugs found benchmarking 40 new
-  `buluma.*` roles on Ubuntu 22.04 (round 170, full defaults, two
-  20-role batches with a fresh host pair per role): the `package:`
-  module's own separate `apt-get install/remove/upgrade` call sites
-  were never wrapped with the existing dpkg-lock-contention retry
-  helper (`apt.cr` already had it since round153/0.9.502) - a fresh
-  host's `unattended-upgr` holding the lock made `package:` fail fast
-  where real Ansible waits it out (`buluma.aide`); the hand-rolled
-  conditional evaluator had NO handling at all for a Python/Jinja
-  ternary (`X if COND else Y`) - even the trivial `true if true else
-  false` was broken, since an embedded comparison operator in the
-  true-branch got misparsed as a top-level comparison spanning the
-  whole ternary string (`buluma.auditd`); nested-template re-rendering
-  blindly re-parsed EVERY rendered scalar as JSON, not just
-  container-shaped (array/dict) results, so a purely numeric-looking
-  STRING default silently became a real integer and broke a `== '3'`
-  string-literal comparison two levels of indirection later
-  (`buluma.bind`). All three fixed and live-reverified. Also confirmed
-  (not new bugs): `buluma.ca` blocked by the pre-existing `community.
-  crypto.openssl_csr` gap (round138 precedent); `buluma.fail2ban` hit
-  a one-host dpkg-lock timing flake past the 60s retry budget;
-  `buluma.collectd` exposed the same Crinja explicit-dash whitespace-
-  control gap first found (and left unfixed) in round85 - see
-  `KNOWN_MISSING.md` for current status. `crystal spec`: 1601
-  examples, 0 failures.
 ---
 
 ## 🤝 Contributing
