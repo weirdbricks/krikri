@@ -105,6 +105,8 @@ skip_tags = [] of String
 extra_vars_args = [] of String
 syntax_check_only = false
 list_tasks_only = false
+list_hosts_only = false
+list_tags_only = false
 vault_password_file = nil
 ask_vault_pass = false
 
@@ -159,6 +161,12 @@ begin
 
     parser.on("--syntax-check", "Parse the playbook and report any syntax errors, without running it") do
       syntax_check_only = true
+    end
+    parser.on("--list-hosts", "List the hosts each play would target, without running anything") do
+      list_hosts_only = true
+    end
+    parser.on("--list-tags", "List the tags available in the playbook, without running anything") do
+      list_tags_only = true
     end
     parser.on("--list-tasks", "List the tasks that would run, without running them") do
       list_tasks_only = true
@@ -257,7 +265,7 @@ end
 # ansible-playbook prints nothing but the listing itself in those modes,
 # and that output is routinely machine-read in CI, so this engine's own
 # banner/warnings would be noise in the middle of it.
-quiet_listing_mode = syntax_check_only || list_tasks_only
+quiet_listing_mode = syntax_check_only || list_tasks_only || list_hosts_only || list_tags_only
 unless quiet_listing_mode
 puts ""
 puts CrystalPlay.banner.colorize(:cyan).bold
@@ -298,6 +306,11 @@ begin
 
   if list_tasks_only
     CrystalPlay::TaskLister.list_tasks(playbook, tags, skip_tags)
+    exit 0
+  end
+
+  if list_tags_only
+    CrystalPlay::TaskLister.list_tags(playbook, tags, skip_tags)
     exit 0
   end
 
@@ -364,8 +377,10 @@ begin
     puts ""
   end
 
-  # Show inventory warnings
-  inv_warnings = CrystalPlay::InventoryParser.validate(inventory)
+  # Show inventory warnings. Suppressed for the listing modes for the
+  # same reason the banner is - real ansible-playbook emits nothing but
+  # the listing there, and this output gets machine-read.
+  inv_warnings = quiet_listing_mode ? [] of String : CrystalPlay::InventoryParser.validate(inventory)
   if inv_warnings.any?
     puts "Inventory Warnings:".colorize(:yellow).bold
     inv_warnings.each do |warning|
@@ -384,6 +399,16 @@ end
 
 # At this point inventory is guaranteed to be set
 inventory = inventory.not_nil!
+
+# --list-hosts needs the inventory (unlike --list-tasks/--list-tags),
+# so it runs here rather than straight after the parse.
+if list_hosts_only
+  resolved = inventory.not_nil!
+  CrystalPlay::TaskLister.list_hosts(playbook.not_nil!) do |play|
+    resolved.get_hosts(play.hosts.to_s).map(&.name)
+  end
+  exit 0
+end
 
 if verbose
   puts "Available Hosts:".colorize(:cyan).bold

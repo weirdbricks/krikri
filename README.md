@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.562-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.563-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,11 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.563`** - implemented `--list-hosts` and `--list-tags`,
+  completing ansible-playbook's four informational modes. Layout matches
+  real Ansible; the one deliberate difference is host ORDER for a
+  multi-group pattern, which real Ansible emits differently on every run
+  (Python hash iteration) and this engine sorts.
 - **`0.9.562`** - a YAML syntax error is now reported in real
   ansible-playbook's own shape - `[ERROR]: YAML parsing failed: ...`, an
   `Origin: path:line:col` line, the offending source line with a caret
@@ -420,11 +425,6 @@ for current-state detail.
   4, real Ansible's own code for a playbook whose module it can't
   resolve, so CI stops seeing a green light for a playbook real
   `ansible-playbook` rejects outright.
-- **`0.9.557`** - real Ansible reserves exit code 4 for PARSER errors,
-  distinct from 1 (generic), 2 (failed hosts) and 3 (unreachable); this
-  engine exited 1 for both an unparseable playbook and a static import
-  whose path references a fact. A missing playbook file stays 1, matching
-  real Ansible there too.
 
 ## 🤝 Contributing
 

@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.562`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.563`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -85,10 +85,15 @@ real modules regardless - see `git log`.
 
   Ranked by how often real playbooks/CI actually use them:
 
-  * `--list-hosts`, `--list-tags` - the two informational modes still
-    missing (`--syntax-check` and `--list-tasks` landed in 0.9.561).
-    (`--syntax-check`'s failure output matched real Ansible's
-    byte-for-byte as of 0.9.562.)
+  * (All four informational modes now exist: `--syntax-check` and
+    `--list-tasks` in 0.9.561, its failure output matched byte-for-byte
+    in 0.9.562, and `--list-hosts`/`--list-tags` in 0.9.563. One
+    deliberate divergence remains in `--list-hosts`: real Ansible emits
+    the hosts of a multi-group pattern like `all` in a DIFFERENT ORDER
+    on every run - observed as web2,db1,web1 / web1,web2,db1 /
+    web2,web1,db1 across five consecutive identical runs, i.e. Python
+    hash iteration order - so there is no byte-order to match. This
+    engine sorts them, which is deterministic and diffable.)
   * `--start-at-task`, `--step`, `--force-handlers`, `--flush-cache`.
   * Connection/become flags: `-u`/`--user`, `--private-key`, `-k`,
     `-K`/`--ask-become-pass`, `-b`/`--become`, `--become-user`,

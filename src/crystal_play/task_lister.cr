@@ -47,6 +47,63 @@ module CrystalPlay
       end
     end
 
+    # --list-tags: one line per play with the sorted union of every tag
+    # on every task in it (block tags included, via the same inheritance
+    # --list-tasks uses).
+    def self.list_tags(playbook : Playbook, only : Array(String), skip : Array(String)) : Nil
+      puts ""
+      puts "playbook: #{playbook.path}"
+
+      playbook.plays.each_with_index do |play, index|
+        puts ""
+        puts "  play ##{index + 1} (#{host_pattern(play)}): #{play.name}\tTAGS: [#{play.tags.sort.join(", ")}]"
+
+        tags = [] of String
+        TagFilter.apply(play.tasks, only, skip).each do |task|
+          collect_tags(task, [] of String, tags)
+        end
+        puts "      TASK TAGS: [#{tags.uniq.sort!.join(", ")}]"
+      end
+    end
+
+    # --list-hosts: the play's host pattern, then the hosts it matches,
+    # sorted. *resolve* is handed in rather than an Inventory so this
+    # module keeps its single dependency on the parser.
+    def self.list_hosts(playbook : Playbook, & : Play -> Array(String)) : Nil
+      puts ""
+      puts "playbook: #{playbook.path}"
+
+      playbook.plays.each_with_index do |play, index|
+        puts ""
+        puts "  play ##{index + 1} (#{host_pattern(play)}): #{play.name}\tTAGS: [#{play.tags.sort.join(", ")}]"
+        # Real Ansible prints the pattern as a Python list repr, e.g.
+        # `pattern: ['web']` - verified against ansible-core 2.19.4.
+        puts "    pattern: [#{pattern_list(play).map { |entry| "'#{entry}'" }.join(", ")}]"
+
+        names = yield(play)
+        puts "    hosts (#{names.size}):"
+        names.sort.each { |name| puts "      #{name}" }
+      end
+    end
+
+    private def self.pattern_list(play : Play) : Array(String)
+      hosts = play.hosts
+      hosts.is_a?(Array) ? hosts : hosts.split(",").map(&.strip).reject(&.empty?)
+    end
+
+    private def self.collect_tags(task : Task, inherited : Array(String), into : Array(String)) : Nil
+      effective = (task.tags + inherited).uniq
+
+      if task.block?
+        (task.block_tasks || [] of Task).each { |nested| collect_tags(nested, effective, into) }
+        (task.rescue_tasks || [] of Task).each { |nested| collect_tags(nested, effective, into) }
+        (task.always_tasks || [] of Task).each { |nested| collect_tags(nested, effective, into) }
+        return
+      end
+
+      effective.each { |tag| into << tag }
+    end
+
     private def self.host_pattern(play : Play) : String
       hosts = play.hosts
       hosts.is_a?(Array) ? hosts.join(",") : hosts
