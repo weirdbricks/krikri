@@ -83,6 +83,29 @@ is the record.
   not the full `buluma.gitlab` role) rather than guessing a fix from
   this one observation.
 
+- **`import_tasks:`/`import_role:` resolve a templated file/role name at
+  EXECUTION time (facts already gathered), not real Ansible's true
+  parse-time (before facts exist).** Found live benchmarking round172's
+  `buluma.php_versions` (Rocky 9.6): `import_tasks: file: "setup-{{
+  ansible_os_family }}.yml"` - real Ansible refuses the WHOLE playbook
+  at parse time ("Error when evaluating variable in import path...
+  Static imports cannot use variables from facts... 'ansible_os_family'
+  is undefined", 0 tasks run, rc=4) since static imports are documented
+  to only ever see vars/vars_files/extra-vars, never facts (which don't
+  exist yet at parse time). This engine instead resolves the templated
+  path once facts ARE available (at/after Gathering Facts), so it
+  successfully imports `setup-RedHat.yml` and keeps running several
+  more tasks before eventually failing for an unrelated reason (missing
+  `pip3` binary) - both engines end up `failed=1`, but via completely
+  different task paths, not a cosmetic difference. Not fixed here:
+  enforcing real Ansible's restriction means detecting, at TRUE parse
+  time, whether a templated import path references anything other than
+  vars/vars_files/extra-vars (facts specifically must be rejected) -
+  real roles essentially never write a static import this way (since
+  it's documented as always broken in real Ansible), so low real-world
+  impact; revisit if a live round finds a role where this changes
+  whether the run succeeds vs fails outright, not just how it fails.
+
 Note: 0.9.474's entry here claiming `openssl_dhparam:`/
 `openssh_keypair:` had "no plugin, no `AVAILABLE_PLUGINS` entry" was
 itself wrong; both had been implemented, if more simply, since
