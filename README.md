@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.565-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.566-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,11 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.566`** - **breaking:** `-c` now means `--connection`, matching
+  real Ansible, where it previously meant `--check` in this engine.
+  `-C` is the short form for check mode (`--check` is unchanged), and
+  `-D`/`-d` both mean `--diff`. A command line copied from
+  `ansible-playbook` now behaves the same here.
 - **`0.9.565`** - completed the CLI flag surface: `-u`/`--user`,
   `--private-key`, `--connection`, `-b`/`--become`, `--become-user`,
   `--become-method`, `-T`/`--timeout`, `--ssh-common-args`/
@@ -415,13 +420,6 @@ for current-state detail.
   sort, `role : task` prefixes, `--tags` filtering of the listing, and
   the quirk that a block's `always:` tasks are not listed). Both suppress
   this engine's own banner, since that output is routinely machine-read.
-- **`0.9.560`** - implemented `-e`/`--extra-vars`, previously missing
-  entirely: all four input forms (`key=value` pairs, inline JSON,
-  `@file` YAML or JSON, repeated flags with later winning) and real
-  Ansible's precedence, which is the highest there is - extra-vars beat
-  play/role/task vars and inventory, and a later `set_fact` cannot
-  override one. `key=value` yields a string (`-e num=5` is `"5"`) while
-  the JSON form preserves real types, matching real Ansible exactly.
 
 ## 🤝 Contributing
 

@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.565`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.566`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -92,14 +92,12 @@ real modules regardless - see `git log`.
   * `--flush-cache` is accepted and correct-by-construction: facts live
     only in a run-scoped store, so there is no on-disk cache to
     invalidate.
-  * **Short-form conflict, deliberate:** real Ansible uses `-C` for
-    `--check`, `-D` for `--diff` and `-c` for `--connection`. This
-    engine has always used `-c`/`-d` for check/diff. `-C`/`-D` now work
-    as real Ansible's, but `-c`/`-d` keep their existing meaning rather
-    than silently changing under anyone's scripts - so `-c local` copied
-    from an ansible command line sets CHECK MODE here and leaves
-    `local` as a stray argument (an error, not silent misbehavior).
-    Use `--connection local`.
+  * Short forms match real Ansible as of `0.9.566`: `-C` is `--check`,
+    `-D` is `--diff`, `-c` is `--connection`. **`-c` previously meant
+    `--check` in this engine and no longer does** - a breaking change,
+    made deliberately so a command line copied from `ansible-playbook`
+    behaves the same here. `-d` is kept as an extra alias for `--diff`
+    (real Ansible has no `-d`, so it collides with nothing).
 
 ## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 

@@ -135,7 +135,7 @@ begin
       inventory_file = inv
     end
 
-    parser.on("-c", "--check", "Don't make changes; predict changes instead (dry-run)") do
+    parser.on("--check", "Don't make changes; predict changes instead (dry-run)") do
       check_mode = true
     end
 
@@ -185,7 +185,7 @@ begin
     parser.on("--private-key=FILE", "--key-file=FILE", "SSH private key to connect with (sets ansible_ssh_private_key_file)") do |f|
       private_key_file = f
     end
-    parser.on("--connection=TYPE", "Connection type to use (sets ansible_connection)") do |c|
+    parser.on("-c TYPE", "--connection=TYPE", "Connection type to use (sets ansible_connection)") do |c|
       connection_override = c
     end
     parser.on("-b", "--become", "Run operations with become") do
@@ -236,10 +236,10 @@ begin
     parser.on("--vault-id=ID", "Accepted for compatibility; only a single vault password is supported") do |v|
       vault_id_args << v
     end
-    parser.on("-C", "--check", "Don't make changes; predict them instead (real Ansible's short form)") do
+    parser.on("-C", "Don't make changes; predict them instead (short form of --check)") do
       check_mode = true
     end
-    parser.on("-D", "--diff", "Show file differences when changing files (real Ansible's short form)") do
+    parser.on("-D", "Show file differences when changing files (short form of --diff)") do
       diff_mode = true
     end
     parser.on("-J", "--ask-vault-password", "Prompt for the vault password") do

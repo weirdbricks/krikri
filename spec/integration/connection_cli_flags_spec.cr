@@ -62,6 +62,14 @@ describe "connection CLI flags" do
     status, _ = run_with(["-D"], SHOW_VARS)
     status.exit_code.should eq(0)
   end
+
+  # 0.9.566 flipped -c from --check to --connection, matching real
+  # Ansible. -C is now the only short form for check mode.
+  it "-c is --connection, not --check" do
+    _, output = run_with(["-c", "local"], SHOW_VARS)
+    output.should contain("c=local")
+    output.should_not contain("CHECK")
+  end
 end
 
 describe "--step" do
