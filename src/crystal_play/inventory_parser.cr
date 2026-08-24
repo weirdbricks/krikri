@@ -17,10 +17,86 @@ module CrystalPlay
       @groups["ungrouped"] = HostGroup.new("ungrouped")
     end
     
-    # Get hosts matching a pattern
+    # Real Ansible's host-pattern language: terms separated by `:` or
+    # `,`, where a plain term is UNIONed, `!term` excludes and `&term`
+    # intersects, applied left to right. Previously only a single term
+    # was understood, so `web:db`, `!web`, `prod:!db` and `web:&prod` all
+    # matched NOTHING - and, being a pattern that matches no hosts rather
+    # than an error, the play was silently skipped.
     def get_hosts(pattern : String) : Array(Host)
+      terms = split_pattern(pattern)
+      return single_pattern_hosts(pattern) if terms.size <= 1 && !pattern.starts_with?('!') && !pattern.starts_with?('&')
+
+      # A pattern that STARTS with an exclusion or intersection is
+      # implicitly relative to every host: `!web` means "all except web",
+      # not "nothing except web" (verified against ansible-core 2.19.4).
+      first = terms.first
+      result = (first.starts_with?('!') || first.starts_with?('&')) ? @hosts.values.dup : [] of Host
+
+      terms.each do |term|
+        case term[0]?
+        when '!'
+          excluded = single_pattern_hosts(term[1..]).map(&.name).to_set
+          result.reject! { |host| excluded.includes?(host.name) }
+        when '&'
+          required = single_pattern_hosts(term[1..]).map(&.name).to_set
+          result.select! { |host| required.includes?(host.name) }
+        else
+          single_pattern_hosts(term).each do |host|
+            result << host unless result.any? { |existing| existing.name == host.name }
+          end
+        end
+      end
+      result
+    end
+
+    # Split on `:`/`,` while leaving an inventory RANGE alone -
+    # `web[01:03]` is one term, not two.
+    private def split_pattern(pattern : String) : Array(String)
+      terms = [] of String
+      current = String::Builder.new
+      depth = 0
+
+      pattern.each_char do |char|
+        case char
+        when '['       then depth += 1; current << char
+        when ']'       then depth -= 1 if depth > 0; current << char
+        when ':', ','
+          if depth > 0
+            current << char
+          else
+            terms << current.to_s
+            current = String::Builder.new
+          end
+        else current << char
+        end
+      end
+      terms << current.to_s
+
+      terms.map(&.strip).reject(&.empty?)
+    end
+
+    # Every host of *name*, following `:children` transitively - a parent
+    # group's own `hosts` hash holds only hosts declared directly under
+    # it, so a group defined purely as a parent (`[prod:children]`)
+    # otherwise resolved to nothing at all.
+    private def group_hosts(name : String, seen = Set(String).new) : Array(Host)
+      return [] of Host unless group = @groups[name]?
+      return [] of Host unless seen.add?(name)
+
+      hosts = group.hosts.values.dup
+      group.children.each do |child|
+        group_hosts(child, seen).each do |host|
+          hosts << host unless hosts.any? { |existing| existing.name == host.name }
+        end
+      end
+      hosts
+    end
+
+    # One term of a pattern - the original single-pattern behavior.
+    private def single_pattern_hosts(pattern : String) : Array(Host)
       case pattern
-      when "all"
+      when "all", "*"
         @hosts.values
       when "localhost"
         # Special case for localhost
@@ -33,9 +109,9 @@ module CrystalPlay
           [localhost]
         end
       else
-        # Check if it's a group
-        if group = @groups[pattern]?
-          group.hosts.values
+        # Check if it's a group (children resolved transitively)
+        if @groups.has_key?(pattern)
+          group_hosts(pattern)
         # Check if it's a host
         elsif host = @hosts[pattern]?
           [host]

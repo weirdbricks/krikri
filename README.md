@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.567-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.568-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,15 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.568`** - implemented real Ansible's host-pattern language for
+  both `hosts:` and `--limit`. Only a bare group/host/glob was understood
+  before, so a `[prod:children]` parent group, a `web:db` union, a `!web`
+  exclusion and a `web:&prod` intersection each matched NOTHING - and
+  since a pattern matching no hosts silently skips the play rather than
+  erroring, a play aimed at a parent group just quietly did nothing.
+  `:children` now resolves transitively, `:`/`,` union, `!` excludes,
+  `&` intersects, a leading `!` is relative to all hosts, and an
+  inventory range like `web[01:03]` is not mistaken for a separator.
 - **`0.9.567`** - closed KNOWN_MISSING.md's last non-scope-cut gap: a
   static import whose target can only be known from a FACT is now
   refused before anything runs, matching real Ansible's blast radius.
@@ -417,13 +426,6 @@ for current-state detail.
   real Ansible; the one deliberate difference is host ORDER for a
   multi-group pattern, which real Ansible emits differently on every run
   (Python hash iteration) and this engine sorts.
-- **`0.9.562`** - a YAML syntax error is now reported in real
-  ansible-playbook's own shape - `[ERROR]: YAML parsing failed: ...`, an
-  `Origin: path:line:col` line, the offending source line with a caret
-  and one line of leading context - instead of this engine's own terse
-  one-liner. Byte-identical to real Ansible across three error shapes,
-  including its rewordings of libyaml (colons in an unquoted value, tab
-  indentation) and its truncated-file note.
 
 ## 🤝 Contributing
 
