@@ -891,4 +891,88 @@ describe CrystalPlay::ConditionalEvaluator do
       CrystalPlay::ConditionalEvaluator.evaluate("true and (false if true else true)", v).should be_false
     end
   end
+
+  describe "raise_undefined: true (task-level when: strict-undefined semantics)" do
+    # Round 172 (buluma.git_tag, Rocky 9.6): `when: git_remote != '' and
+    # git_remote != None` with git_remote genuinely undefined (no
+    # default, never set anywhere). Real Ansible raises ("'git_remote'
+    # is undefined") and fails the task; the pre-fix lenient evaluator
+    # resolved both comparisons anyway (nil != '' -> true, nil != None
+    # -> false) and evaluated the whole `and` as false, silently
+    # skipping instead of failing.
+    it "raises for a genuinely undefined bare variable reached through a comparison" do
+      v = Hash(String, JSON::Any).new
+      expect_raises(CrystalPlay::ConditionalEvaluator::UndefinedVariableError) do
+        CrystalPlay::ConditionalEvaluator.evaluate(
+          "git_remote != '' and git_remote != None", v, raise_undefined: true
+        )
+      end
+    end
+
+    it "does not raise for the same condition under when:'s normal lenient default (raise_undefined: false)" do
+      v = Hash(String, JSON::Any).new
+      CrystalPlay::ConditionalEvaluator.evaluate(
+        "git_remote != '' and git_remote != None", v
+      ).should be_false
+    end
+
+    it "does not raise once the variable is actually defined" do
+      v = Hash(String, JSON::Any).new
+      v["git_remote"] = JSON::Any.new("origin")
+      CrystalPlay::ConditionalEvaluator.evaluate(
+        "git_remote != '' and git_remote != None", v, raise_undefined: true
+      ).should be_true
+    end
+
+    it "does not raise for the Python/Jinja None literal itself, only for a real undefined variable" do
+      v = Hash(String, JSON::Any).new
+      v["myvar"] = JSON::Any.new(nil)
+      CrystalPlay::ConditionalEvaluator.evaluate("myvar == None", v, raise_undefined: true).should be_true
+      CrystalPlay::ConditionalEvaluator.evaluate("myvar == none", v, raise_undefined: true).should be_true
+    end
+
+    it "raises for a genuinely undefined variable reached through bare truthiness" do
+      v = Hash(String, JSON::Any).new
+      expect_raises(CrystalPlay::ConditionalEvaluator::UndefinedVariableError) do
+        CrystalPlay::ConditionalEvaluator.evaluate("totally_undefined_var", v, raise_undefined: true)
+      end
+    end
+
+    it "raises for a genuinely undefined dotted path whose root is also undefined" do
+      v = Hash(String, JSON::Any).new
+      expect_raises(CrystalPlay::ConditionalEvaluator::UndefinedVariableError) do
+        CrystalPlay::ConditionalEvaluator.evaluate("some_result.stdout == 'x'", v, raise_undefined: true)
+      end
+    end
+
+    it "does NOT raise when the undefined operand goes through a filter/default() - still lenient by design" do
+      v = Hash(String, JSON::Any).new
+      CrystalPlay::ConditionalEvaluator.evaluate(
+        "git_remote | default('') != ''", v, raise_undefined: true
+      ).should be_false
+    end
+
+    it "short-circuits 'or' so an undefined second operand never raises when the first is already true" do
+      v = Hash(String, JSON::Any).new
+      v["already_true"] = JSON::Any.new(true)
+      CrystalPlay::ConditionalEvaluator.evaluate(
+        "already_true or totally_undefined_var", v, raise_undefined: true
+      ).should be_true
+    end
+
+    it "short-circuits 'and' so an undefined second operand never raises when the first is already false" do
+      v = Hash(String, JSON::Any).new
+      v["already_false"] = JSON::Any.new(false)
+      CrystalPlay::ConditionalEvaluator.evaluate(
+        "already_false and totally_undefined_var", v, raise_undefined: true
+      ).should be_false
+    end
+
+    it "still evaluates 'is defined' on the undefined variable itself without raising" do
+      v = Hash(String, JSON::Any).new
+      CrystalPlay::ConditionalEvaluator.evaluate(
+        "totally_undefined_var is not defined", v, raise_undefined: true
+      ).should be_true
+    end
+  end
 end

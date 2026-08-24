@@ -2367,7 +2367,15 @@ module CrystalPlay
         substituted_condition = substitutor.substitute(when_condition)
 
         begin
-          return true if ConditionalEvaluator.evaluate(substituted_condition, vars_context)
+          # raise_undefined: true - a task-level when: is real Ansible's
+          # strict-undefined case (see ConditionalEvaluator::
+          # UndefinedVariableError). Any raise here (this one or any
+          # other) is caught immediately below and converted into a
+          # WhenEvaluationError, which every call site already turns into
+          # a clean failed-task result instead of a crash - so widening
+          # what can raise here doesn't add a new failure mode, just a
+          # new correctly-classified reason for an existing one.
+          return true if ConditionalEvaluator.evaluate(substituted_condition, vars_context, raise_undefined: true)
         rescue ex
           raise WhenEvaluationError.new("Error while evaluating conditional: #{ex.message}")
         end

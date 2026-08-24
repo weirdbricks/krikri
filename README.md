@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.547-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.548-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,20 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.548`** - closed KNOWN_MISSING.md's `when:` strict-undefined gap:
+  a task-level `when:` reaching a genuinely undefined bare/dotted
+  variable (e.g. `when: git_remote != '' and git_remote != None` with
+  `git_remote` never set) now raises and fails the task (`failed=1`),
+  matching real Ansible byte-for-byte, instead of silently resolving the
+  comparison and skipping. Found live via round172's `buluma.git_tag`
+  (Rocky 9.6). `ConditionalEvaluator.evaluate` gained a `raise_undefined:`
+  flag, wired only into `Executor#when_passes?` (already exception-safe
+  via `WhenEvaluationError`, see 0.9.539) - a filter/function chain
+  (`| default(...)`, `lookup(...)`, any `is <test>`) still falls back to
+  the lenient `"undefined"` sentinel, same narrow scope as 0.9.517's
+  matching module-arg fix. `block:`/`include_tasks:`/`include_role:`/
+  handler `when:` deliberately not touched yet (see KNOWN_MISSING.md).
+  `crystal spec`: 1623 examples, 0 failures.
 - **`0.9.547`** - fixed `fetch:` spawning its own LOCAL controller
   process wrapped in `sudo -n -u <user> --` whenever `become:` was
   active, crashing outright with "sudo: a password is required" on any
@@ -462,24 +476,6 @@ for current-state detail.
   `_include_tasks`/`ansible.builtin.reboot`): excluded from the
   pre-flight required-plugins set. `crystal spec`: 1613 examples, 0
   failures.
-- **`0.9.540`-`0.9.541`** - closed the last 2 items from the backlog
-  pass below: a looped `when:` that raises an exception now correctly
-  aggregates to `failed=1` in the recap (not `skipped=1`), and real
-  Ansible's `...ignoring` line - previously never printed for ANY
-  ignored task failure, not just a `when:`-raise - now is, generally.
-  Also root-caused and fixed the 2 Crinja-fork-level gaps found while
-  verifying the whitespace fix (`crystal-play-0.9.17`): the lexer's
-  shared `Token` was never resetting `trim_left`/`trim_right` between
-  tokens, so a reused token silently carried a stale dash flag from an
-  earlier tag onto a later plain one - fixed at the real root
-  (`Token#reset`), not a workaround; and `None` finalizing
-  inconsistently depending on context - real Ansible's own `finalize`
-  hook converts `None` to `""` ONLY at a template's own top-level `{{
-  }}` output, while the same `None` through a filter (`join`, etc.)
-  still renders as Python's real `"None"` - fixed at the correct
-  narrow layer. `buluma.collectd`'s real `collectd.conf.j2` now
-  renders byte-identical to real Ansible. Crinja spec: 550 examples, 0
-  failures. `crystal spec`: 1613 examples, 0 failures.
 ---
 
 ## 🤝 Contributing

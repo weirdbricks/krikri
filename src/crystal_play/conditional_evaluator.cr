@@ -48,7 +48,41 @@ module CrystalPlay
     class ConditionalBooleanError < Exception
     end
 
-    def self.evaluate(condition : String, vars : Hash(String, JSON::Any), strict : Bool = false) : Bool
+    # Raised only when *raise_undefined* is true (currently: task-level
+    # `when:` via Executor#when_passes?, which already wraps this whole
+    # call in a rescue that converts it into a real failed-task result -
+    # see WhenEvaluationError there) and evaluating the condition reaches
+    # a BARE or DOTTED variable reference (the same REGEX_BARE_VAR_REF-
+    # shaped grammar VariableSubstitutor's own strict: module-arg check
+    # already covers, see its UndefinedVariableError) that resolves to
+    # nothing. Deliberately as narrowly scoped as that existing check:
+    # only a direct lookup reaching evaluate_value's own "not found" exit
+    # raises - a filter/function chain (`foo | default(...)`, `lookup(...)`,
+    # any `is <test>`) still falls back to the lenient "undefined" sentinel
+    # regardless, since this hand-rolled evaluator's own syntax-coverage
+    # gaps already produce that same sentinel for reasons unrelated to the
+    # variable genuinely being undefined - conflating the two would turn
+    # an evaluator limitation into a spurious task failure (see
+    # UndefinedVariableError's own comment in variable_substitutor.cr for
+    # the identical reasoning applied there first).
+    #
+    # Found live via round172's buluma.git_tag (Rocky 9.6): `when:
+    # git_remote != '' and git_remote != None` with `git_remote` genuinely
+    # undefined (no default, never set). Real Ansible raises ("'git_remote'
+    # is undefined") and fails the task (failed=1); this evaluator's
+    # lenient `nil != ''`/`nil != None` comparisons both resolved truthy
+    # instead, evaluating the whole `when:` as satisfied - the exact
+    # "changes final task-pass/fail state" trigger KNOWN_MISSING.md called
+    # for revisiting this with. `raise_undefined` is a separate flag from
+    # `strict` above (which checks the FINAL result's own type, for
+    # changed_when:/failed_when: - unrelated to whether an intermediate
+    # operand was undefined) - the two are independent because
+    # changed_when:/failed_when: deliberately still get the lenient
+    # undefined-operand handling here (not touched by this fix).
+    class UndefinedVariableError < Exception
+    end
+
+    def self.evaluate(condition : String, vars : Hash(String, JSON::Any), strict : Bool = false, raise_undefined : Bool = false) : Bool
       # Strip whitespace, then unwrap a fully-parenthesized expression.
       # condition_to_string wraps each list-`when:` clause in parens
       # (`(a != 'x') and (b != 'y')`), and the recursion here hands each
@@ -118,7 +152,7 @@ module CrystalPlay
       # Handle 'or' operator (split and evaluate any part)
       if condition.includes?(" or ")
         parts = split_by_operator(condition, " or ")
-        return parts.any? { |part| evaluate(part.strip, vars, strict) } if split_progressed?(parts, condition)
+        return parts.any? { |part| evaluate(part.strip, vars, strict, raise_undefined) } if split_progressed?(parts, condition)
       end
 
       # Handle 'and' operator (split and evaluate all parts).
@@ -134,7 +168,7 @@ module CrystalPlay
       # evaluate/evaluate_truthiness deal with it, which terminates.
       if condition.includes?(" and ")
         parts = split_by_operator(condition, " and ")
-        return parts.all? { |part| evaluate(part.strip, vars, strict) } if split_progressed?(parts, condition)
+        return parts.all? { |part| evaluate(part.strip, vars, strict, raise_undefined) } if split_progressed?(parts, condition)
       end
 
       # Handle 'not' at the beginning - checked last (highest
@@ -145,7 +179,7 @@ module CrystalPlay
       # operand under `not` is exactly as safe in real Ansible as under
       # crystal's existing truthy conversion - no divergence to guard.
       if condition.starts_with?("not ")
-        return !evaluate(condition[4..-1].strip, vars, false)
+        return !evaluate(condition[4..-1].strip, vars, false, raise_undefined)
       end
 
       # Handle 'is version(comparison_version, operator)' - Ansible's own
@@ -165,22 +199,22 @@ module CrystalPlay
       # a `loop:` over a genuinely undefined variable three tasks later
       # (surfacing as `item` = the literal string "undefined").
       if version_test = condition.match(REGEX_VERSION_TEST)
-        return evaluate_version_test(version_test[1], version_test[2], version_test[3], vars)
+        return evaluate_version_test(version_test[1], version_test[2], version_test[3], vars, raise_undefined)
       end
 
       # Handle comparison operators
       if condition.includes?("==")
-        return evaluate_comparison(condition, "==", vars)
+        return evaluate_comparison(condition, "==", vars, raise_undefined)
       elsif condition.includes?("!=")
-        return evaluate_comparison(condition, "!=", vars)
+        return evaluate_comparison(condition, "!=", vars, raise_undefined)
       elsif condition.includes?("<=")
-        return evaluate_comparison(condition, "<=", vars)
+        return evaluate_comparison(condition, "<=", vars, raise_undefined)
       elsif condition.includes?(">=")
-        return evaluate_comparison(condition, ">=", vars)
+        return evaluate_comparison(condition, ">=", vars, raise_undefined)
       elsif condition.includes?("<")
-        return evaluate_comparison(condition, "<", vars)
+        return evaluate_comparison(condition, "<", vars, raise_undefined)
       elsif condition.includes?(">")
-        return evaluate_comparison(condition, ">", vars)
+        return evaluate_comparison(condition, ">", vars, raise_undefined)
       end
 
       # Handle 'in' / 'not in' operator. `'x' not in list` must be checked
@@ -190,12 +224,12 @@ module CrystalPlay
       # os_hardening gates tasks on `'"change_user" not in
       # os_security_users_allow'`.
       if condition.includes?(" not in ")
-        return !evaluate_in(condition.gsub(" not in ", " in "), vars)
+        return !evaluate_in(condition.gsub(" not in ", " in "), vars, raise_undefined)
       end
 
       # Handle 'in' operator
       if condition.includes?(" in ")
-        return evaluate_in(condition, vars)
+        return evaluate_in(condition, vars, raise_undefined)
       end
 
       # Handle 'is defined' / 'is not defined' / 'is undefined' / 'is not
@@ -518,7 +552,7 @@ module CrystalPlay
       end
 
       # Handle bare variable (truthiness check)
-      return evaluate_truthiness(condition, vars, strict)
+      return evaluate_truthiness(condition, vars, strict, raise_undefined)
     end
 
     # If *expr* is entirely wrapped in one matching pair of outer parens
@@ -634,12 +668,12 @@ module CrystalPlay
     end
 
     # Evaluate comparison operators
-    private def self.evaluate_comparison(condition : String, operator : String, vars : Hash(String, JSON::Any)) : Bool
+    private def self.evaluate_comparison(condition : String, operator : String, vars : Hash(String, JSON::Any), raise_undefined : Bool = false) : Bool
       parts = condition.split(operator, 2)
       return false if parts.size != 2
 
-      left = evaluate_value(parts[0].strip, vars)
-      right = evaluate_value(parts[1].strip, vars)
+      left = evaluate_value(parts[0].strip, vars, raise_undefined)
+      right = evaluate_value(parts[1].strip, vars, raise_undefined)
 
       case operator
       when "=="
@@ -894,8 +928,8 @@ module CrystalPlay
       end
     end
 
-    private def self.evaluate_version_test(left_expr : String, compare_to_expr : String, operator_expr : String, vars : Hash(String, JSON::Any)) : Bool
-      left = evaluate_value(left_expr.strip, vars).to_s
+    private def self.evaluate_version_test(left_expr : String, compare_to_expr : String, operator_expr : String, vars : Hash(String, JSON::Any), raise_undefined : Bool = false) : Bool
+      left = evaluate_value(left_expr.strip, vars, raise_undefined).to_s
       compare_to = unquote_literal(compare_to_expr.strip)
       operator = unquote_literal(operator_expr.strip)
       cmp = compare_versions(left, compare_to)
@@ -947,7 +981,7 @@ module CrystalPlay
       0
     end
 
-    private def self.evaluate_in(condition : String, vars : Hash(String, JSON::Any)) : Bool
+    private def self.evaluate_in(condition : String, vars : Hash(String, JSON::Any), raise_undefined : Bool = false) : Bool
       # #split_by_operator (already used above for and/or) is quote- and
       # paren-depth-aware; a plain `condition.split(" in ", 2)` is not,
       # so a quoted literal that happens to contain the word "in" as
@@ -962,8 +996,8 @@ module CrystalPlay
       parts = split_by_operator(condition, " in ")
       return false if parts.size < 2
 
-      item = evaluate_value(parts[0].strip, vars)
-      container = evaluate_value(parts[1..].join(" in ").strip, vars)
+      item = evaluate_value(parts[0].strip, vars, raise_undefined)
+      container = evaluate_value(parts[1..].join(" in ").strip, vars, raise_undefined)
 
       # Check if item is in container (string or array). Every array
       # value this evaluator ever produces - whether from a literal
@@ -991,7 +1025,7 @@ module CrystalPlay
     end
 
     # Evaluate truthiness of a value
-    private def self.evaluate_truthiness(condition : String, vars : Hash(String, JSON::Any), strict : Bool = false) : Bool
+    private def self.evaluate_truthiness(condition : String, vars : Hash(String, JSON::Any), strict : Bool = false, raise_undefined : Bool = false) : Bool
       # Real Ansible/Python `bool([])` and `bool({})` are both False -
       # but #evaluate_value's own return union (String | Int64 | Bool |
       # Nil | Array(String)) has no Hash case at all (an empty Hash's
@@ -1017,7 +1051,7 @@ module CrystalPlay
         end
       end
 
-      value = evaluate_value(condition, vars)
+      value = evaluate_value(condition, vars, raise_undefined)
 
       case value
       when Bool
@@ -1053,7 +1087,7 @@ module CrystalPlay
     end
 
     # Evaluate a value (variable lookup or literal)
-    private def self.evaluate_value(expr : String, vars : Hash(String, JSON::Any)) : String | Int64 | Bool | Nil | Array(String)
+    private def self.evaluate_value(expr : String, vars : Hash(String, JSON::Any), raise_undefined : Bool = false) : String | Int64 | Bool | Nil | Array(String)
       expr = expr.strip
 
       # Handle quoted strings
@@ -1068,6 +1102,20 @@ module CrystalPlay
       elsif expr == "false" || expr == "False"
         return false
       end
+
+      # The Python/Jinja2 `None`/`none` literal - a real keyword, not a
+      # variable reference, so it must be recognized BEFORE the
+      # raise_undefined check below or a condition as ordinary as `myvar
+      # == None` would spuriously raise "'None' is undefined" (the bare-
+      # word grammar this literal happens to share with a real variable
+      # name is otherwise indistinguishable). Previously this had no
+      # explicit case at all - it fell through to the plain "undefined
+      # variable" lookup below, which returned `nil` for the same reason
+      # a genuinely-missing variable did (there's essentially never a
+      # real variable actually named `None`/`none`) - accidentally
+      # correct for comparisons, but only because raise_undefined didn't
+      # exist yet to tell the two apart.
+      return nil if expr == "None" || expr == "none"
 
       # Handle numbers
       if int_val = expr.to_i64?
@@ -1146,7 +1194,7 @@ module CrystalPlay
 
         items = inner.split(',').map(&.strip)
         return items.map { |item|
-          val = evaluate_value(item, vars)
+          val = evaluate_value(item, vars, raise_undefined)
           val.is_a?(String) ? val : val.to_s
         }
       end
@@ -1174,7 +1222,9 @@ module CrystalPlay
           # raw form is itself still unrendered Jinja was returned
           # as-is, un-rendered.
           resolved = rerender_if_templated(vars, VariableSubstitutor::VariableLookup.new(vars).resolve(expr))
-          return resolved ? json_any_to_value(resolved) : nil
+          return json_any_to_value(resolved) if resolved
+          raise UndefinedVariableError.new("'#{expr}' is undefined") if raise_undefined
+          return nil
         end
       end
 
@@ -1201,7 +1251,11 @@ module CrystalPlay
           json_any_to_value(value)
         end
       else
-        # Undefined variable - return nil
+        # Undefined variable - real Ansible raises here (see
+        # UndefinedVariableError above) when this evaluate_value call
+        # ultimately traces back to a task-level `when:` (raise_undefined
+        # true); every other caller keeps the long-standing lenient nil.
+        raise UndefinedVariableError.new("'#{expr}' is undefined") if raise_undefined
         nil
       end
     end

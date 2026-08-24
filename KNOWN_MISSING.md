@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.547`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.548`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -18,48 +18,39 @@ is the record.
 ## Real gaps (worth revisiting)
 
 - **Undefined-variable rendering is lenient almost everywhere; real
-  Ansible is strict by default for module-arg templating.** 0.9.517
-  narrowed this (was previously fully open, see git log for the
-  `robertdebock.bios_update` repro that found it): `VarSubstitutor#
-  substitute`'s module-arg call site (`#substitute_task_params`, the one
-  place that assembles a task's final param hash - also reached by
-  `changed_when:`/`failed_when:`) now raises `UndefinedVariableError`
-  (caught and converted into a clean failed-task result, matching real
-  Ansible's own "Finalization of task args ... failed") when a `{{ }}`
-  span's ENTIRE content is a bare variable reference (`foo`, `foo.bar`,
-  `foo['bar'][0]` - no filters/operators/function calls) that resolves
-  to nothing. Deliberately scoped no further than that: any expression
-  using a filter/operator/function call still goes through the lenient
-  path regardless, since this hand-rolled evaluator's own known
-  syntax-coverage gaps (documented throughout `expression_evaluator.cr`)
-  already fall back to the same `"undefined"` sentinel for reasons
-  unrelated to the variable genuinely being undefined - conflating the
-  two would turn an evaluator limitation into a spurious task failure.
-  Also NOT touched: `when:`/plain (non-module-arg) `#substitute` calls,
-  and Crinja's own `{% %}` block-tag rendering - all still fully lenient,
-  by design (see `ConditionalEvaluator`'s own truthiness handling for
-  why `when:` in particular stays permissive). A genuinely undefined
-  variable reached through a filter chain, or through `when:`, is still
-  an open gap - revisit with a dedicated pass if a live round finds one
-  that changes final task-pass/fail state, the same way this one did.
+  Ansible is strict by default for module-arg templating and `when:`.**
+  0.9.517 raised `VarSubstitutor::UndefinedVariableError` for a bare
+  module-arg reference; 0.9.548 (round172's `buluma.git_tag` repro,
+  Rocky 9.6 - `when: git_remote != '' and git_remote != None` with
+  `git_remote` genuinely undefined) closed the matching gap for
+  **task-level `when:`**: `ConditionalEvaluator.evaluate`'s new
+  `raise_undefined:` flag (passed only from `Executor#when_passes?`,
+  which already converts any raised exception into a clean failed-task
+  result via `WhenEvaluationError`) raises
+  `ConditionalEvaluator::UndefinedVariableError` when evaluation reaches
+  a bare/dotted variable reference that resolves to nothing - same
+  narrow REGEX_BARE_VAR_REF-shaped scope as 0.9.517, verified
+  byte-identical against real `ansible-playbook`'s own error message,
+  `failed=1`, and exit code 2. A filter/function chain (`| default(...)`,
+  `lookup(...)`, any `is <test>`) still falls back to the lenient
+  `"undefined"` sentinel regardless, for the same reason 0.9.517 didn't
+  touch those either.
 
-  **This has now happened**: round172's `buluma.git_tag` (Rocky 9.6) hit
-  `when: git_remote != '' and git_remote != None` with `git_remote`
-  genuinely undefined (no default, never set). Real Ansible raises
-  ("'git_remote' is undefined") and the task fails, `failed=1`; this
-  engine's lenient `ConditionalEvaluator` resolves the comparison anyway
-  and treats the whole `when:` as false, `skipped=1` instead - the exact
-  "changes final task-pass/fail state" trigger this entry called for,
-  through `when:` specifically (not a filter chain). Confirmed
-  deterministic, not a flake (identical cold and warm). Still not fixed
-  here - a real fix needs the "dedicated pass and full re-verification
-  budget" already called for above (extending `ConditionalEvaluator`'s
-  truthiness/comparison handling to distinguish a genuinely-undefined
-  operand from its own syntax-coverage-gap fallback is the same
-  conflation risk described above, now for `when:` instead of module-arg
-  templating - broader blast radius, since `when:` is used far more
-  pervasively than the narrow bare-var-ref module-arg case 0.9.517
-  fixed).
+  **Still NOT covered** (0.9.548 only wired `raise_undefined:` into the
+  single task-level `when_passes?` call site, which is exception-safe
+  by construction): `block:`/`include_tasks:`'s own multi-host
+  `partition_by_when`, `execute_block`'s single-host `when:`,
+  `run_include_tasks_once`/`run_include_role_once`, and
+  `execute_handler_plugin_once`'s handler `when:` - none of these five
+  call sites currently rescue an exception out of
+  `ConditionalEvaluator.evaluate` at all, so passing `raise_undefined:
+  true` there today would resurrect the exact "crashes the whole
+  process" regression 0.9.539 fixed for the main path, not fail cleanly.
+  Revisit by giving each its own `WhenEvaluationError`-shaped rescue (or
+  routing them through `when_passes?` itself) if a live round finds a
+  genuinely-undefined variable inside a `block:`/`include_tasks:`/
+  `include_role:`/handler `when:` that changes final task-pass/fail
+  state, the same way round172 did for the plain-task case.
 
 - **`package:`/`dnf:` install may fail to resolve a `name-version`
   partial-NEVRA spec real Ansible's own dnf module resolves fine.**
