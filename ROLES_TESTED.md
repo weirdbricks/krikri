@@ -622,6 +622,47 @@ or already-clean roles as if they were new.
 | buluma.ntp | ✅ Clean (round 171, Rocky 9.6). Byte-identical cold+warm, idempotent. |
 | buluma.openssh | ✅ Clean (round 171, Rocky 9.6). Byte-identical cold+warm, idempotent. |
 
+| buluma.ara | ⚠️ Same-fail on both engines (round 172, Rocky 9.6, fresh pair per role) - `ok=4 changed=1 failed=1 skipped=4` identical cold+warm (`pip:` needs the `packaging` python library, missing on this image). Not an engine bug. |
+| buluma.bareos_console | ⚠️ Same-fail on both engines (round 172, Rocky 9.6) - `ok=3 failed=1 skipped=3` identical (`No package bareos-bconsole available`). Not an engine bug. |
+| buluma.bareos_fd | ⚠️ Same-fail on both engines (round 172, Rocky 9.6) - `ok=13 failed=1 skipped=2` identical (`No package bareos-filedaemon available`). Not an engine bug. |
+| buluma.bareos_sd | ⚠️ Same-fail on both engines (round 172, Rocky 9.6) - `ok=14 failed=1 skipped=0` identical (bareos-repo package gap). Not an engine bug. |
+| buluma.bareos_webui | ⚠️ Same-fail on both engines (round 172, Rocky 9.6) - `ok=6 failed=1 skipped=3` identical (bareos-repo package gap). Not an engine bug. |
+| buluma.epel | ✅ Clean (round 172, Rocky 9.6). Byte-identical `ok=4 changed=2 skipped=1` cold, idempotent warm rerun. |
+| buluma.etherpad | ⚠️ Same-fail on both engines (round 172, Rocky 9.6) - `ok=5 changed=1 failed=1` identical (no `tar`/`unzip`/`gtar` binary on this minimal image). Not an engine bug. |
+| buluma.git | ✅ Clean (round 172, Rocky 9.6). Byte-identical `ok=4 changed=1 skipped=8` cold, idempotent warm rerun. |
+| buluma.git_tag | ⚠️ Real open gap, documented not fixed (round 172, Rocky 9.6) - `when: git_remote != '' and git_remote != None` with `git_remote` genuinely undefined: real Ansible raises and fails (`failed=1`); this engine's lenient `ConditionalEvaluator` treats the whole `when:` as false (`skipped=1` instead) - the exact "when: undefined-var" gap KNOWN_MISSING.md's own entry called for a live trigger of. Deterministic (cold+warm identical), not fixed here - see `KNOWN_MISSING.md`. |
+| buluma.hosts | ✅ Clean (round 172, Rocky 9.6). Byte-identical `ok=2 changed=1 skipped=0` cold, idempotent warm rerun. |
+| buluma.influxdb-1 | ⚠️ Same-fail on both engines (round 172, Rocky 9.6) - `ok=2 failed=1 skipped=0` identical (role itself issues a broken `cmd: "update"`, a role bug). Not an engine bug. |
+| buluma.irslackd | ⚠️ Same-fail on both engines (round 172, Rocky 9.6) - `ok=13 changed=1 failed=1` identical (`git` binary missing on this image). Not an engine bug. |
+| buluma.mailhog | ✅ Clean (round 172, Rocky 9.6; first attempt hit a genuine SSH-connectivity flake mid-role on a since-destroyed host, unrelated to either engine - retried on a fresh pair). Byte-identical `ok=10 changed=7 skipped=2` cold, idempotent warm rerun. |
+| buluma.metricbeat | ⚠️ Same-fail on both engines (round 172, Rocky 9.6) - `ok=8 failed=1 skipped=1` identical (`No package metricbeat-7.17.29 available`). Not an engine bug. |
+| buluma.microsoft_repository_keys | ✅ Clean (round 172, Rocky 9.6). Byte-identical `ok=2 changed=1 skipped=1` cold, idempotent warm rerun. |
+| buluma.modprobe | ✅ Clean (round 172, Rocky 9.6). Byte-identical `ok=3 changed=0 skipped=2` cold, idempotent warm rerun. |
+| buluma.molecule | ✅ Clean (round 172, Rocky 9.6). Byte-identical `ok=7 changed=3 skipped=1` cold, idempotent warm rerun. |
+| buluma.moodle | ⚠️ Same-fail on both engines (round 172, Rocky 9.6) - `ok=12 changed=1 failed=1` identical, same exact message (`dest '/var/www/html' must be an existing dir` - httpd not present, a role-ordering issue not an engine one). |
+| buluma.mount | ⚠️ Same-fail on both engines (round 172, Rocky 9.6) - `ok=4 failed=1 skipped=4` identical recap (real Ansible: `'mount_requests' is undefined` via `loop:`; this engine: an earlier `assert:` task catches the same undefined var first and reports "Assertion failed" - different message, but identical final task-pass/fail state, not a real divergence). |
+| buluma.mssql | ⚠️ Same-fail on both engines (round 172, Rocky 9.6) - `ok=9 changed=2 failed=1 skipped=2` cold identical (mssql-server refuses to start: "requires a machine with at least 2000 megabytes of memory" - a real resource constraint on this VM size); both `ok=0 changed=0` idempotent on warm rerun (handler didn't re-fire). Not an engine bug. |
+| buluma.munin | ⚠️ Same-fail on both engines (round 172, Rocky 9.6) - `ok=4 changed=1 failed=1 skipped=2` identical (`No package munin available`). Not an engine bug. |
+| buluma.nfs | ✅ Clean (round 172, Rocky 9.6). Byte-identical `ok=6 changed=3 skipped=4` cold, idempotent warm rerun. |
+| buluma.passenger | ⚠️ Same-fail on both engines (round 172, Rocky 9.6) - `ok=1 failed=1 skipped=0` identical (`environment:` value references genuinely-undefined `rbenv_plugins` - real Ansible raises; this engine also ends up `failed=1` here, no divergence in final state). |
+| buluma.php_versions | ⚠️ Real open gap, documented not fixed (round 172, Rocky 9.6) - `import_tasks: file: "setup-{{ ansible_os_family }}.yml"` (a fact-derived static-import filename): real Ansible refuses the WHOLE playbook at parse time (facts don't exist yet, `rc=4`, 0 tasks run); this engine resolves the templated path once facts ARE available and keeps running, failing later for an unrelated reason (missing `pip3`) - both end `failed=1` but via completely different task paths. See `KNOWN_MISSING.md`. |
+| buluma.pip | ✅ Clean (round 172, Rocky 9.6). Byte-identical `ok=2 changed=1 skipped=3` cold, idempotent warm rerun. |
+| buluma.puppet | ⚠️ Same-fail on both engines (round 172, Rocky 9.6) - both abort identically, rc=1, 0 tasks run (role's own `tasks/main.yml` uses the removed `include:` action). |
+| buluma.rabbitmq | ⚠️ Same-fail on both engines (round 172, Rocky 9.6) - `ok=1 failed=1 skipped=0` identical (`No package erlang available`). Not an engine bug. |
+| buluma.redmine-1 | ⚠️ Same-fail on both engines (round 172, Rocky 9.6) - `ok=4 failed=1 skipped=0` identical (`No package ImageMagick*/mariadb-devel available`). Not an engine bug. |
+| buluma.remi | ✅ Clean (round 172, Rocky 9.6). Byte-identical `ok=5 changed=3 skipped=0` cold, idempotent warm rerun. |
+| buluma.restore | ✅ Clean (round 172, Rocky 9.6). Byte-identical `ok=8 changed=1 skipped=8` cold, idempotent warm rerun. |
+| buluma.roundcubemail | ⚠️ Same-fail on both engines (round 172, Rocky 9.6) - `ok=29 changed=5 failed=1 skipped=25` identical (`No package roundcubemail available`). Not an engine bug. |
+| buluma.rpmfusion | ✅ Fixed (round 172, 0.9.546). Found a real recap divergence: `ok=8` matched on both, but `changed=4` (real) vs `changed=5` (crystal) - the role's own "Yum update cache" handler (`ansible.builtin.dnf: {update_cache: true}`, no `name:`) reported `changed:` on crystal, `ok:` (unchanged) on real Ansible, which never reports changed for a pure dnf/yum cache refresh (no reliable "was it actually stale" signal). `dnf.cr`/`yum.cr`'s own separate cache-only branches (reached only via a direct `dnf:`/`yum:` call, not the generic `package:`) had the old `changed: result[:exit_code] == 0` logic; `package.cr`'s identical path already had this right from an earlier round. Live-reverified clean on a fresh throwaway pair after the fix: byte-identical `ok=8 changed=4 skipped=0` cold, idempotent warm rerun, on both engines. |
+| buluma.samba | ✅ Clean (round 172, Rocky 9.6). Byte-identical `ok=4 changed=2 skipped=1` cold, idempotent warm rerun. |
+| buluma.sentry | ⚠️ Same-fail on both engines (round 172, Rocky 9.6) - `ok=1 failed=1 skipped=1` identical (`No package python3-virtualenv/libxmlsec1-dev/etc. available`). Not an engine bug. |
+| buluma.service | ✅ Clean (round 172, Rocky 9.6). Byte-identical `ok=3 changed=0 skipped=10` cold, idempotent warm rerun. |
+| buluma.skopeo | ✅ Clean (round 172, Rocky 9.6). Byte-identical `ok=2 changed=1 skipped=0` cold, idempotent warm rerun. |
+| buluma.solr | ⚠️ Same-fail on both engines (round 172, Rocky 9.6) - `ok=6 changed=3 failed=1 skipped=1` identical (no `tar`/`unzip`/`gtar` binary on this minimal image - 3rd independent role hitting this same environment gap this round). Not an engine bug. |
+| buluma.sosreport | ✅ Fixed (round 172, 0.9.547). Found a real crash: crystal's `Fetch sosreports` task (`ansible.builtin.fetch:`, under play-level `become: true`, even though the SSH connection was already root) crashed with "Failed to parse plugin output" / "sudo: a password is required", while real Ansible succeeded cleanly - fetch always runs on the controller, and `execute_local_plugin`'s generic become-wrapping (`sudo -n -u <user> --` around the WHOLE plugin process) doesn't distinguish a controller-only plugin, which real Ansible's fetch never needs local privilege escalation for at all. Fixed by skipping the sudo wrap for any `controller_only?` plugin regardless of the task's own `become:`. Live-reverified clean on a fresh throwaway pair after the fix: byte-identical cold+warm, idempotent, on both engines. |
+| buluma.spamassassin | ✅ Clean (round 172, Rocky 9.6). Byte-identical `ok=11 changed=7 skipped=1` cold, idempotent warm rerun. |
+| buluma.storage | ✅ Clean (round 172, Rocky 9.6). Byte-identical `ok=4 changed=1 skipped=31` cold, idempotent warm rerun. |
+
 **Legend:** ✅ Clean = engine matches real `ansible-playbook` (idempotent,
 healthy services, config parity) as of the last time it was run. ⚠️ = engine
 itself is fine, but the role hit an external/environmental blocker partway
