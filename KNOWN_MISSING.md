@@ -52,27 +52,27 @@ is the record.
   `include_role:`/handler `when:` that changes final task-pass/fail
   state, the same way round172 did for the plain-task case.
 
-- **`package:`/`dnf:` install may fail to resolve a `name-version`
-  partial-NEVRA spec real Ansible's own dnf module resolves fine.**
-  Found live benchmarking round171's `buluma.gitlab` on Rocky 9.6: its
-  own `Install gitlab` task installs `"gitlab-ce-19.2.0"` (name-version,
-  no release/arch) from a repo added earlier in the SAME play. Real
-  `ansible-playbook` (via python-dnf's native bindings, not the `dnf`
-  CLI) installed it successfully; this engine's `package.cr`/`dnf.cr`
-  (which shell out to plain `dnf install -y <spec>`) failed with `Error:
-  Unable to find a match: gitlab-ce-19.2.0` - reproduced identically on
-  a COLD run and again on a WARM rerun of the same host over 15+ minutes
-  later (rules out a repo-metadata-freshness race - the failure is
-  deterministic, not a timing flake). Likely cause: the real dnf
-  *library* API's NEVRA-partial matching is more lenient than what the
-  bare `dnf install` *CLI* verb accepts for a name-version-only spec
-  with no release/arch component - not yet confirmed by direct
-  reproduction against a real dnf CLI outside Ansible entirely (the
-  round171 host pair was destroyed before this could be isolated
-  further). Revisit with a dedicated, cheaper repro (a minimal playbook
-  installing a real name-version-pinned RPM from a small test repo,
-  not the full `buluma.gitlab` role) rather than guessing a fix from
-  this one observation.
+Note: the round171 `buluma.gitlab` "`package:`/`dnf:` can't resolve a
+name-version partial-NEVRA spec" entry that used to be here (`Error:
+Unable to find a match: gitlab-ce-19.2.0`) did NOT reproduce on a
+dedicated, isolated repro (2026-08-23): a fresh Rocky 9.6 host with the
+real `packages.gitlab.com` GitLab CE repo added, both bare `dnf install
+-y gitlab-ce-19.2.0` (plain CLI, no release/arch) and this engine's own
+`package:`/`dnf:` modules (0.9.549) all resolved and installed
+`gitlab-ce-19.2.0-ce.0.el9.x86_64` correctly, cold AND warm-idempotent.
+The bare-CLI test alone already disproves the entry's own "library API
+more lenient than the CLI verb" theory - plain `dnf install
+gitlab-ce-19.2.0` resolves a name-version partial NEVRA fine in
+general. Whatever round171 actually hit was either specific to that
+one host/moment (a corrupted/partial local metadata cache, a
+mid-transaction repo state, etc. - `dnf`'s own error for a genuinely
+unresolvable spec doesn't distinguish these from "no such NEVRA
+exists") or has since been fixed as a side effect of unrelated
+package.cr/dnf.cr work between 0.9.4xx and 0.9.549 - not confirmed
+either way. Revisit only if a live round hits this again, this time
+capturing `dnf --debuglevel=10 install -y <spec>` output and the exact
+package/repo before the host is destroyed, rather than reconstructing
+from a recap diff after the fact.
 
 - **A task-level `import_role:`/`import_tasks:` that hits the
   fact-in-static-import restriction (see 0.9.549 below) still only
