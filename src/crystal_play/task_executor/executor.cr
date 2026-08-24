@@ -941,11 +941,30 @@ module CrystalPlay
       # loop_template is a loop:/with_*: keyword given as "{{ some_var }}"
       # instead of a literal list/dict - also only resolvable once the
       # variable context exists.
-      loop_items = task.loop_items || resolve_first_found(task, host, vars_context) ||
-        resolve_fileglob(task, host, vars_context, shared: shared_sub) ||
-        resolve_loop_template(task, vars_context) ||
-        resolve_loop_flattened(task, vars_context, host.name) ||
-        resolve_loop_subelements(task, vars_context)
+      #
+      # resolve_loop_items_or_raise: a genuinely undefined/wrong-type loop
+      # source now fails the task (round174 matrix) instead of silently
+      # running once with an unbound `item` - see that method's own
+      # comment for the shared when:-gate + strict-undefined-rescue shape
+      # every one of the five loop-resolution call sites uses.
+      begin
+        loop_items = resolve_loop_items_or_raise(task, host, vars_context) do
+          task.loop_items || resolve_first_found(task, host, vars_context) ||
+            resolve_fileglob(task, host, vars_context, shared: shared_sub) ||
+            resolve_loop_template(task, vars_context) ||
+            resolve_loop_flattened(task, vars_context, host.name) ||
+            resolve_loop_subelements(task, vars_context)
+        end
+      rescue ex : WhenEvaluationError
+        # Same shape execute_task_once's own WhenEvaluationError rescue
+        # uses for a when: failure - a real `failed: true` result flowing
+        # through finish_single_task (register/notify/display/stats/halt,
+        # ignore_errors: and all), recapping failed=1 (never reached the
+        # loop, so never skipped=1 either) - matching real Ansible's own
+        # degrade-to-one-clean-failed-task behavior.
+        finish_single_task(task, host, when_error_result(ex))
+        return
+      end
 
       if loop_items
         execute_looped_task(task, host, vars_context, loop_items, exec_host)
@@ -1650,7 +1669,14 @@ module CrystalPlay
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
       candidates.each do |raw|
-        candidate = substitutor.substitute(raw).strip
+        # strict: true - round174 matrix scenario 5b: `with_first_found:
+        # "{{ undefined_var }}"` (one candidate, itself a bare template
+        # reference) must fail the task ("'undefined_var' is undefined"),
+        # not silently skip. Only a BARE/dotted `{{ }}` span raises (see
+        # VarSubstitutor#raise_if_strict_undefined) - an ordinary literal
+        # candidate string (no templating at all, the overwhelming common
+        # case) or one with a filter chain is unaffected.
+        candidate = substitutor.substitute(raw, strict: true).strip
         next if candidate.empty?
         # A leftover {{ }} means the fact it depends on is missing;
         # treating that as a filename would only produce a confusing
@@ -1775,7 +1801,22 @@ module CrystalPlay
       # loop_var:) always resolved to this engine's own "undefined"
       # sentinel regardless of what the template actually evaluated to.
       # Found live benchmarking buluma.confluence (round 165).
-      if loop_items = task.loop_items || resolve_loop_template(task, vars_context) || resolve_fileglob(task, host, vars_context)
+      #
+      # resolve_loop_items_or_raise: round174 matrix scenario 12c - a
+      # genuinely undefined loop: source must fail this include_vars:
+      # task itself ("'the_var' is undefined"), not silently try to load
+      # a file literally named "undefined" (the old bug: the engine's
+      # own "undefined" sentinel string leaking through as a filename).
+      begin
+        loop_items = resolve_loop_items_or_raise(task, host, vars_context) do
+          task.loop_items || resolve_loop_template(task, vars_context) || resolve_fileglob(task, host, vars_context)
+        end
+      rescue ex : WhenEvaluationError
+        finish_include_vars_failure(task, host, ex.message || "is undefined")
+        return
+      end
+
+      if loop_items
         executed = false
         failed = false
         rendered_items = loop_items.map { |item| deep_render_item(item, vars_context, host.name) }
@@ -1860,8 +1901,18 @@ module CrystalPlay
       end
 
       # The file may be chosen by with_first_found (exposed as `item`) or
-      # given directly; either way it is templated.
-      if items = resolve_first_found(task, host, vars_context)
+      # given directly; either way it is templated. strict: true inside
+      # resolve_first_found (round174 matrix scenario 5b) can now raise
+      # for a genuinely undefined candidate template - when: was already
+      # checked above, so this is purely the loop-source failure.
+      items = begin
+        resolve_first_found(task, host, vars_context)
+      rescue ex : UndefinedVariableError
+        finish_include_vars_failure(task, host, ex.message || "is undefined")
+        return
+      end
+
+      if items
         if items.empty?
           # Real Ansible's first_found lookup plugin defaults `skip:` to
           # false - with no candidate found, it raises ("The lookup
@@ -2017,7 +2068,13 @@ module CrystalPlay
       matches = [] of String
 
       patterns.each do |pattern|
-        substituted = substitutor.substitute(pattern)
+        # strict: true - round174 matrix scenario 5a: `with_fileglob:
+        # "{{ undefined_var }}"` must fail the task ("'undefined_var' is
+        # undefined"), not silently glob nothing and skip. Only a BARE/
+        # dotted `{{ }}` span raises (see VarSubstitutor#
+        # raise_if_strict_undefined) - a literal pattern (no templating,
+        # the common case) or a filter-chain pattern is unaffected.
+        substituted = substitutor.substitute(pattern, strict: true)
 
         # `with_fileglob: "{{ some_list_var }}"` (a single templated
         # value that evaluates to a LIST of patterns, real Ansible's own
@@ -2111,6 +2168,7 @@ module CrystalPlay
         # single-element list as exactly one iteration with that scalar
         # as `item`, identically - not just with_items:'s own
         # documented legacy flatten behavior.
+        #
         value.as_a? || [value]
       when "with_dict"
         hash = value.as_h?
@@ -2311,6 +2369,23 @@ module CrystalPlay
     # VarSubstitutor#substitute does. Supports simple and dotted variable
     # references (e.g. "some_var" or "some_dict.key"); anything more complex
     # (filters, expressions) isn't a variable reference and returns nil.
+    #
+    # The only 3 callers of this method are all loop-source resolvers
+    # (resolve_loop_template, resolve_loop_subelements, resolve_loop_
+    # flattened - verified by grep before making this raise unconditional).
+    # A bare/dotted reference (REGEX_BARE_VAR_REF's exact shape) that
+    # resolves to nothing now RAISES rather than silently returning nil -
+    # round174 differential matrix: real Ansible fails a genuinely
+    # undefined loop:/with_items:/with_dict:/with_community.general.
+    # flattened: source with "'the_var' is undefined" at loop-resolution
+    # time, before the task ever runs (not "runs once with an unbound
+    # item"). A filter/default()/lookup() chain never reaches this method
+    # at all (the leading regex requires the WHOLE `{{ }}` span to be a
+    # plain reference) - that's resolve_loop_template/resolve_loop_
+    # flattened's own separate ExpressionEvaluator fallback branch, left
+    # untouched, so `{{ undefined_var | default([]) }}` stays lenient.
+    # Every caller now needs (and, per this commit, has) a rescue around
+    # its own loop-resolution call - see resolve_loop_items_or_raise.
     private def resolve_template_value(template : String, vars_context : Hash(String, JSON::Any)) : JSON::Any?
       match = template.strip.match(/\A\{\{\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*\}\}\z/)
       return nil unless match
@@ -2336,6 +2411,16 @@ module CrystalPlay
         rendered = VariableSubstitutor::ExpressionEvaluator.new(vars_context).evaluate(inner)
         current = (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
       end
+
+      # current can be `nil` two ways: the top-level var (parts[0]) is
+      # missing from vars_context entirely, OR it IS present but a later
+      # dotted segment (`some_dict.missing_key`) isn't. Both are
+      # "undefined" for strictness purposes. An EXPLICITLY-set `null`
+      # value (`vars_context[parts[0]]?` returning a JSON::Any wrapping
+      # Nil, not Crystal nil) does NOT hit this branch - see bump-2's
+      # list-type check in resolve_loop_template for what real Ansible
+      # does with a defined-but-null loop source instead.
+      raise UndefinedVariableError.new("'#{match[1]}' is undefined") if current.nil?
 
       current
     end
@@ -2400,6 +2485,64 @@ module CrystalPlay
       rescue ex
         raise WhenEvaluationError.new("Error while evaluating conditional: #{ex.message}")
       end
+    end
+
+    # Shared by all five loop-resolution call sites (execute_task,
+    # execute_include_vars, execute_include_tasks, execute_include_role,
+    # execute_handler_internal): resolves the loop source via the block,
+    # and decides skip-vs-fail when that source turns out to be
+    # genuinely undefined.
+    #
+    # Order matters and is live-verified (round174 differential matrix
+    # against ansible-core 2.19.12, plus buluma.mount's own assert.yml):
+    # real Ansible consults the task's OWN when: before treating an
+    # undefined loop source as fatal.
+    #
+    #   when: false            + undefined loop -> skip  (scenario 7)
+    #   when: item.x is defined + undefined loop -> skip  (`item` is
+    #                             unbound, so `is defined` is false)
+    #   no when:               + undefined loop -> FAIL  (scenario 1/1b)
+    #
+    # Note the middle case is why this must NOT be a pre-gate that
+    # bails out whenever the condition mentions the loop variable: those
+    # conditions are exactly the ones real Ansible still evaluates (with
+    # `item` unbound) to decide the task is skippable. It equally must
+    # not pre-empt a loop that resolves FINE - a normal defined loop with
+    # `when: item.enabled` is evaluated per item downstream, untouched by
+    # any of this, because this method only consults when: after the
+    # resolution has actually raised.
+    #
+    # Returning nil on the skip path deliberately hands the task to the
+    # ordinary non-looped route, where the EXISTING when_passes? call
+    # skips it with correct "skipping:" output and skipped=1 accounting -
+    # no separate skip bookkeeping needed here.
+    #
+    # A genuine failure surfaces as one WhenEvaluationError, flowing
+    # through the exact same rescue/swallow_when_error/when_error_result/
+    # finish_single_task plumbing 2f7b481 already built for when:
+    # failures - no new exception type or rescue shape at any site, and
+    # (critically, see 40671ba/0.9.539) no site can add a raising loop
+    # resolver without also getting a working rescue, since every call is
+    # wrapped by this method.
+    private def resolve_loop_items_or_raise(task : Task, host : Host, vars_context : Hash(String, JSON::Any), & : -> Array(JSON::Any)?) : Array(JSON::Any)?
+      yield
+    rescue ex : UndefinedVariableError
+      if when_condition = task.when_condition
+        # Lenient evaluation on purpose: `item.backup is defined` with
+        # `item` unbound must read as false (skip), not raise. A when:
+        # that is itself strictly-undefined still fails downstream via
+        # when_passes?'s own raise_undefined: path, which is where real
+        # Ansible reports it too.
+        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+        skippable = begin
+          !ConditionalEvaluator.evaluate(substitutor.substitute(when_condition), vars_context)
+        rescue
+          false
+        end
+        return nil if skippable
+      end
+
+      raise WhenEvaluationError.new(ex.message)
     end
 
     private def when_passes?(task : Task, vars_context : Hash(String, JSON::Any), host : Host, item_label : String? = nil, shared : VarSubstitutor? = nil, defer_stats : Bool = false, defer_display : Bool = false) : Bool
@@ -3945,10 +4088,24 @@ module CrystalPlay
       # `else` branch below with no item bound at all, so a custom
       # loop_var like `group`/`user` resolved as "undefined" instead of
       # looping once per list entry.
-      loop_items = task.loop_items || resolve_first_found(task, host, base_vars_context) ||
-        resolve_loop_template(task, base_vars_context) ||
-        resolve_loop_flattened(task, base_vars_context, host.name) ||
-        resolve_loop_subelements(task, base_vars_context)
+      #
+      # resolve_loop_items_or_raise: round174 matrix scenario 12a - a
+      # genuinely undefined loop: source must fail this include_tasks:
+      # task itself, BEFORE the included file is ever entered - real
+      # Ansible never reaches the included task at all. swallow_when_error
+      # below is the same task-level (no item_label) failure shape run_
+      # include_tasks_once's own WhenEvaluationError rescue uses.
+      begin
+        loop_items = resolve_loop_items_or_raise(task, host, base_vars_context) do
+          task.loop_items || resolve_first_found(task, host, base_vars_context) ||
+            resolve_loop_template(task, base_vars_context) ||
+            resolve_loop_flattened(task, base_vars_context, host.name) ||
+            resolve_loop_subelements(task, base_vars_context)
+        end
+      rescue ex : WhenEvaluationError
+        swallow_when_error(task, host, ex)
+        return
+      end
 
       if loop_items
         # with_first_found:'s own no-candidate-matched, skip: true case -
@@ -4231,10 +4388,22 @@ module CrystalPlay
     private def execute_include_role(task : Task, host : Host)
       base_vars_context = build_vars_context(task, host)
       # Same scalar-template loop gap as execute_include_tasks above.
-      loop_items = task.loop_items ||
-        resolve_loop_template(task, base_vars_context) ||
-        resolve_loop_flattened(task, base_vars_context, host.name) ||
-        resolve_loop_subelements(task, base_vars_context)
+      #
+      # resolve_loop_items_or_raise: round174 matrix scenario 12b - same
+      # class of gap/fix as execute_include_tasks just above (real
+      # Ansible never enters the role at all on an undefined loop:
+      # source).
+      begin
+        loop_items = resolve_loop_items_or_raise(task, host, base_vars_context) do
+          task.loop_items ||
+            resolve_loop_template(task, base_vars_context) ||
+            resolve_loop_flattened(task, base_vars_context, host.name) ||
+            resolve_loop_subelements(task, base_vars_context)
+        end
+      rescue ex : WhenEvaluationError
+        swallow_when_error(task, host, ex)
+        return
+      end
 
       if loop_items
         loop_var = task.loop_var
@@ -5264,12 +5433,41 @@ module CrystalPlay
       # with_fileglob/with_first_found (need a delegate host + shared
       # substitutor a handler has no equivalent concept of, and are
       # vanishingly rare on a handler in practice).
-      loop_items = handler.loop_items ||
-        resolve_loop_template(handler, vars_context) ||
-        resolve_loop_flattened(handler, vars_context, host.name) ||
-        resolve_loop_subelements(handler, vars_context)
+      # resolve_loop_items_or_raise: round174 matrix scenario 10 - a
+      # genuinely undefined loop: source fails the handler itself
+      # (returned via when_error_result, the same shape execute_handler_
+      # plugin_once's own when: WhenEvaluationError rescue already
+      # returns - flows through the normal handler result pipeline:
+      # halt_if_failed/notify/display below, or execute_handler_loop's
+      # per-item aggregation for a looped handler).
+      # NB: the failure must NOT early-return here. Everything below this
+      # point (halt_if_failed, the handler-notifies-handler forwarding,
+      # display/stats) is what makes a failed handler actually mark the
+      # run as failed - returning the result directly instead of letting
+      # it flow through skipped all of that, so the handler printed its
+      # failure and recapped failed=1 while the process still exited 0
+      # with a "Playbook execution complete" banner (caught by
+      # when_strict_undefined_five_sites_spec.cr's handler example).
+      loop_items = nil
+      when_error = nil
+      begin
+        loop_items = resolve_loop_items_or_raise(handler, host, vars_context) do
+          handler.loop_items ||
+            resolve_loop_template(handler, vars_context) ||
+            resolve_loop_flattened(handler, vars_context, host.name) ||
+            resolve_loop_subelements(handler, vars_context)
+        end
+      rescue ex : WhenEvaluationError
+        when_error = ex
+      end
 
-      result = loop_items ? execute_handler_loop(handler, host, vars_context, loop_items) : execute_handler_plugin_once(handler, host, vars_context)
+      result = if ex = when_error
+                 when_error_result(ex)
+               elsif items = loop_items
+                 execute_handler_loop(handler, host, vars_context, items)
+               else
+                 execute_handler_plugin_once(handler, host, vars_context)
+               end
 
       # A handler can itself notify: further handlers (robertdebock.
       # auditd's own "Run augenrules" -> notify: "Load rules" -> real

@@ -1314,7 +1314,7 @@ module CrystalPlay
                              else
                                [with_fileglob.as_s]
                              end
-      elsif with_flattened = (task_hash["with_flattened"]? || task_hash["with_community.general.flattened"]?).try(&.as_a?)
+      elsif with_flattened = (task_hash["with_flattened"]? || task_hash["with_community.general.flattened"]?)
         # `with_flattened:` (the short lookup-plugin-name alias real
         # playbooks actually write - confirmed via dev-sec.os-hardening's
         # own "find files with write-permissions for group" task, which
@@ -1330,7 +1330,21 @@ module CrystalPlay
         # Each source is normally a `{{ var }}` reference to a list, so store
         # them verbatim and let TaskExecutor resolve + flatten at execution
         # time once the variable context exists (see resolve_loop_flattened).
-        task.loop_flattened = with_flattened.map { |item| safe_yaml_to_string(item) }
+        #
+        # A single-source scalar form (`with_community.general.flattened:
+        # "{{ some_list_var }}"`, no square brackets - round174 matrix
+        # scenario 6/6b's own shape) was previously invisible here at all
+        # (only `.as_a?` was checked), so task.loop_flattened stayed nil
+        # and the task fell all the way through to a non-looped run with
+        # no `item` bound - the SAME silent bug as an unrecognized `with_*`
+        # keyword, just for a real, spelled-correctly one. One templated
+        # source is still exactly one source, so it's wrapped in a
+        # one-element array rather than needing a separate code path.
+        task.loop_flattened = if arr = with_flattened.as_a?
+                                 arr.map { |item| safe_yaml_to_string(item) }
+                               else
+                                 [safe_yaml_to_string(with_flattened)]
+                               end
       elsif with_subelements = task_hash["with_subelements"]?.try(&.as_a?)
         task.loop_subelements_list = with_subelements[0]?.try { |v| safe_yaml_to_string(v) }
         task.loop_subelements_key = with_subelements[1]?.try { |v| safe_yaml_to_string(v) }
