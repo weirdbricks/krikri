@@ -521,23 +521,24 @@ module CrystalPlay
         rescue_hosts = run_hosts.select { |host| block_failed[host.name] }
         rescue_hosts.each { |host| @halted_hosts.delete(host.name) }
 
+        # Same as execute_block's single-host path: the block-body
+        # failure moves into "rescued" as soon as rescue: is ENTERED,
+        # not only when the rescue then succeeds (live-verified against
+        # ansible-core 2.19.12, round173 - failing block + failing
+        # rescue recaps as `failed=1 rescued=1`).
+        rescue_hosts.each do |host|
+          recovered = @results[host.name]["failed"] - failed_before[host.name]
+          if recovered > 0
+            @results[host.name]["failed"] -= recovered
+            @results[host.name]["rescued"] += recovered
+          end
+        end
+
         propagate_role_context(task, rescue_tasks)
         run_task_batch(rescue_tasks, rescue_hosts)
 
         rescue_hosts.each do |host|
-          still_failed = @halted_hosts.includes?(host.name)
-          block_failed[host.name] = still_failed
-
-          # rescue: succeeded - the block-body failure it recovered from
-          # doesn't count as a play failure. Move it into "rescued"
-          # instead, matching Ansible's recap (failed=0 ... rescued=1).
-          unless still_failed
-            recovered = @results[host.name]["failed"] - failed_before[host.name]
-            if recovered > 0
-              @results[host.name]["failed"] -= recovered
-              @results[host.name]["rescued"] += recovered
-            end
-          end
+          block_failed[host.name] = @halted_hosts.includes?(host.name)
         end
       end
 
@@ -3786,20 +3787,23 @@ module CrystalPlay
       if block_failed && (rescue_tasks = task.rescue_tasks)
         @halted_hosts.delete(host.name)
 
+        # The block-body failures move into "rescued" as soon as rescue:
+        # is ENTERED - not only when the rescue then succeeds. Verified
+        # live against ansible-core 2.19.12 (round173): a failing block
+        # task plus a rescue: that ALSO fails recaps as
+        # `failed=1 rescued=1`, not `failed=2` - the original body
+        # failure is still rescued, and only the rescue's own failure
+        # counts. Converting here (before running the rescue) keeps the
+        # rescue's own failures counting normally afterwards.
+        recovered = @results[host.name]["failed"] - failed_before
+        if recovered > 0
+          @results[host.name]["failed"] -= recovered
+          @results[host.name]["rescued"] += recovered
+        end
+
         propagate_role_context(task, rescue_tasks)
         run_task_list(rescue_tasks, host)
         block_failed = @halted_hosts.includes?(host.name)
-
-        # rescue: succeeded - the block-body failures it recovered from
-        # don't count as play failures. Move them into "rescued" instead,
-        # matching Ansible's recap (failed=0 ... rescued=1).
-        unless block_failed
-          recovered = @results[host.name]["failed"] - failed_before
-          if recovered > 0
-            @results[host.name]["failed"] -= recovered
-            @results[host.name]["rescued"] += recovered
-          end
-        end
       end
 
       if always_tasks = task.always_tasks
