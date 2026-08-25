@@ -141,10 +141,24 @@ describe CrystalPlay::Vault do
       CrystalPlay::Vault.password = nil
     end
 
-    it "raises when a vault-encrypted value is found but no password is configured" do
+    # Since 0.9.583 an undecryptable value is left ENCRYPTED rather than
+    # aborting: real Ansible defers the failure to the point of USE, so a
+    # playbook carrying a vault var it never references runs fine with no
+    # secret at all (verified against ansible-core 2.19.4: unused var and
+    # no password exits 0; using it exits 2). The substitutor raises when
+    # such a value is actually rendered.
+    it "leaves a value encrypted when no password can decrypt it, rather than raising" do
       encrypted = CrystalPlay::Vault.encrypt("secret", "pw")
-      expect_raises(CrystalPlay::Vault::Error, /no vault password was provided/) do
-        CrystalPlay::Vault.maybe_decrypt_json(JSON::Any.new(encrypted))
+      CrystalPlay::Vault.maybe_decrypt_json(JSON::Any.new(encrypted)).as_s.should eq(encrypted)
+    end
+
+    it "raises only when such a value is rendered" do
+      encrypted = CrystalPlay::Vault.encrypt("secret", "pw")
+      vars = {"v" => CrystalPlay::Vault.maybe_decrypt_json(JSON::Any.new(encrypted))}
+      substitutor = CrystalPlay::VarSubstitutor.new(vars: vars, host_name: "localhost")
+
+      expect_raises(CrystalPlay::VarSubstitutor::UndecryptableVaultError, /undecryptable variable/) do
+        substitutor.substitute("{{ v }}")
       end
     end
   end

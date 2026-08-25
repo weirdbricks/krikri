@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.580`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.583`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -50,11 +50,9 @@ real modules regardless - see `git log`.
   differ.** `--help` lists every flag real ansible-core 2.19.4 does.
   What is NOT fully behavioral:
 
-  * `-M`/`--module-path` and `--vault-id` are accepted and ignored.
-    Module path is meaningless here (modules are compiled binaries
-    shipped with the engine, not a Python search path), and only a
-    single vault password is supported, so a vault identity has nothing
-    to select.
+  * `-M`/`--module-path` is accepted and ignored: modules here are
+    compiled binaries shipped with the engine, not a Python search path.
+    (`--vault-id` became real in 0.9.583.)
   * `--scp-extra-args`/`--sftp-extra-args` are accepted and stored but
     have nothing to attach to: this engine moves files over `ssh` plus a
     piped stream rather than shelling out to scp/sftp.
@@ -84,7 +82,7 @@ real modules regardless - see `git log`.
   name.
 
 - **Several keywords are still unimplemented and silently ignored:
-  `vars_prompt:` and `debugger:`.** Found in the same scan
+  `debugger:`.** Found in the same scan
   that produced 0.9.571's `serial:` and 0.9.573's `any_errors_fatal:`/
   `max_fail_percentage:` - those two were fixed because ignoring them
   changes whether a bad rollout STOPS. The remaining three do not:

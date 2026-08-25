@@ -21,6 +21,7 @@ require "./src/crystal_play/task_lister"
 require "./src/crystal_play/start_at_filter"
 require "./src/crystal_play/cli_options"
 require "./src/crystal_play/serial_batches"
+require "./src/crystal_play/vars_prompt"
 require "./src/crystal_play/inventory_parser"
 require "./src/crystal_play/task_executor"
 require "./src/crystal_play/vault"
@@ -234,7 +235,7 @@ begin
     parser.on("-M PATH", "--module-path=PATH", "Accepted for compatibility; modules here are compiled binaries, not a search path") do |m|
       module_path_args << m
     end
-    parser.on("--vault-id=ID", "Accepted for compatibility; only a single vault password is supported") do |v|
+    parser.on("--vault-id=ID", "Vault identity as label@source (a password file, or @prompt); repeatable") do |v|
       vault_id_args << v
     end
     parser.on("-C", "Don't make changes; predict them instead (short form of --check)") do
@@ -343,6 +344,28 @@ end
 unless File.exists?(playbook_file)
   puts "Error: Playbook file not found: #{playbook_file}".colorize(:red)
   exit 1
+end
+
+# --vault-id label@source. The source is a password FILE, or "prompt"
+# to ask. An unlabeled `--vault-id file` is the default identity.
+vault_id_args.each do |spec|
+  label, _, source = spec.partition('@')
+  if source.empty?
+    label, source = "default", label
+  end
+
+  secret =
+    if source == "prompt"
+      print "Vault password (#{label}): "
+      CrystalPlay::VaultCli.prompt_password
+    elsif File.exists?(source)
+      File.read(source).strip
+    else
+      puts "Error: vault-id source not found: #{source}".colorize(:red)
+      exit 1
+    end
+
+  CrystalPlay::Vault.add_vault_id(label, secret)
 end
 
 if password_file = vault_password_file
@@ -663,6 +686,15 @@ playbook.plays.each_with_index do |play, play_index|
   # magic `always`/`never` task tags. Note this runs even with NEITHER
   # flag passed, because `tags: never` must be honored on an ordinary
   # invocation - see TagFilter's own comment.
+  # vars_prompt: is answered once, before the play's tasks run, and the
+  # answers become play variables. A prompt does NOT override a value the
+  # play already set for the same name.
+  unless play.vars_prompt.empty?
+    CrystalPlay::VarsPrompt.resolve(play.vars_prompt).each do |name, value|
+      play.vars[name] = value
+    end
+  end
+
   # -b/--become and --become-user supply a default for the play, exactly
   # as real Ansible does; a play that sets become: itself still wins.
   play.become = true if become_flag

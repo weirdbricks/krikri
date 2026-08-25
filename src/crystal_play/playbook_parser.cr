@@ -457,6 +457,9 @@ module CrystalPlay
     # `remote_user:` at play scope - the connection user, i.e. what
     # `ansible_user` would say. A task's own remote_user: wins over it.
     property remote_user : String? = nil
+    # `vars_prompt:` - name/prompt/private/default per entry, asked
+    # before the play runs.
+    property vars_prompt : Array(Hash(String, String)) = [] of Hash(String, String)
     property any_errors_fatal : Bool = false
     property max_fail_percentage : Float64? = nil
 
@@ -1124,6 +1127,17 @@ module CrystalPlay
 
       play.order = yaml["order"]?.try { |value| safe_yaml_to_string(value).strip }
       play.remote_user = yaml["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
+
+      # vars_prompt: each entry is a mapping with at least a name; the
+      # rest (prompt, private, default) are optional.
+      if prompts = yaml["vars_prompt"]?.try(&.as_a?)
+        prompts.each do |entry|
+          next unless fields = entry.as_h?
+          parsed = Hash(String, String).new
+          fields.each { |key, field_value| parsed[key.to_s] = safe_yaml_to_string(field_value) }
+          play.vars_prompt << parsed if parsed.has_key?("name")
+        end
+      end
       play.strategy = yaml["strategy"]?.try { |value| safe_yaml_to_string(value).strip }
       if subset_yaml = yaml["gather_subset"]?
         play.gather_subset =

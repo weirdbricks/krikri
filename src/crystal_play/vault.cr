@@ -39,9 +39,43 @@ module CrystalPlay
     # Ansible itself treats the vault password: one secret for the run,
     # not a per-file argument.
     @@password : String? = nil
+    # --vault-id label@source: several passwords, each tagged with the
+    # identity it belongs to. A 1.2-format header names the identity it
+    # was encrypted with ("$ANSIBLE_VAULT;1.2;AES256;dev"), so that one
+    # is tried first; the rest are tried afterwards, which is what real
+    # Ansible does and what makes an unlabeled or mislabeled blob still
+    # decrypt when any supplied identity fits.
+    @@vault_ids = Hash(String, String).new
 
     def self.password=(value : String?)
       @@password = value
+    end
+
+    def self.add_vault_id(label : String, secret : String) : Nil
+      @@vault_ids[label] = secret
+      # The first identity also serves as the single-password fallback,
+      # so everything that predates --vault-id keeps working.
+      @@password ||= secret
+    end
+
+    def self.vault_ids : Hash(String, String)
+      @@vault_ids
+    end
+
+    # Every password worth trying for *content*, best candidate first.
+    def self.candidate_passwords(content : String) : Array(String)
+      candidates = [] of String
+
+      # Header form: $ANSIBLE_VAULT;1.2;AES256;<label>
+      header = content.lstrip.lines.first?
+      if header && (parts = header.split(';')).size >= 4
+        label = parts[3].strip
+        @@vault_ids[label]?.try { |secret| candidates << secret }
+      end
+
+      @@vault_ids.each_value { |secret| candidates << secret unless candidates.includes?(secret) }
+      @@password.try { |secret| candidates << secret unless candidates.includes?(secret) }
+      candidates
     end
 
     def self.password : String?
@@ -62,12 +96,21 @@ module CrystalPlay
     def self.maybe_decrypt(content : String) : String
       return content unless encrypted?(content)
 
-      password = @@password
-      unless password
-        raise Error.new("This content is vault-encrypted, but no vault password was provided (use --vault-password-file or --ask-vault-pass)")
+      candidates = candidate_passwords(content)
+      if candidates.empty?
+        raise Error.new("This content is vault-encrypted, but no vault password was provided (use --vault-password-file, --vault-id or --ask-vault-pass)")
       end
 
-      decrypt(content, password)
+      last_error = nil
+      candidates.each do |candidate|
+        begin
+          return decrypt(content, candidate)
+        rescue ex
+          last_error = ex
+        end
+      end
+
+      raise last_error || Error.new("Unable to decrypt vault-encrypted content with any supplied vault password")
     end
 
     # Like maybe_decrypt, but for a parsed variable value rather than a raw
@@ -83,7 +126,21 @@ module CrystalPlay
     def self.maybe_decrypt_json(value : JSON::Any) : JSON::Any
       case raw = value.raw
       when String
-        encrypted?(raw) ? JSON::Any.new(maybe_decrypt(raw)) : value
+        # A blob none of the supplied secrets can open is left AS IS
+        # rather than aborting the parse. Real Ansible defers the
+        # failure to the point of USE - a playbook carrying a prod-only
+        # vault var still runs fine on a dev box with only the dev
+        # secret, as long as no task actually references it. The
+        # substitutor raises if such a value is ever rendered.
+        if encrypted?(raw)
+          begin
+            JSON::Any.new(maybe_decrypt(raw))
+          rescue
+            value
+          end
+        else
+          value
+        end
       when Array
         JSON::Any.new(raw.map { |item| maybe_decrypt_json(item) })
       when Hash

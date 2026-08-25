@@ -239,7 +239,33 @@ module CrystalPlay
       @magic_vars_added = true
     end
     
+    # Raised when a template renders a vault blob none of the supplied
+    # secrets could open. Vault.maybe_decrypt_json leaves such a value
+    # encrypted rather than failing the parse, so the failure lands here,
+    # at the point of USE - matching real Ansible, which runs a playbook
+    # carrying a prod-only vault var quite happily on a dev box until
+    # something actually references it.
+    class UndecryptableVaultError < Exception
+    end
+
     def substitute(text : String, strict : Bool = false) : String
+      rendered = substitute_impl(text, strict)
+      if rendered.includes?("$ANSIBLE_VAULT")
+        # Real Ansible distinguishes the two cases in its message:
+        # nothing supplied at all, versus supplied secrets none of which
+        # fit. Verified against ansible-core 2.19.4.
+        detail =
+          if Vault.vault_ids.empty? && Vault.password.nil?
+            "Attempting to decrypt but no vault secrets found."
+          else
+            "Decryption failed (no vault secrets were found that could decrypt)."
+          end
+        raise UndecryptableVaultError.new("Attempt to use undecryptable variable: #{detail}")
+      end
+      rendered
+    end
+
+    private def substitute_impl(text : String, strict : Bool = false) : String
       # A task param whose ENTIRE value is block-tag Jinja with no `{{
       # }}` interpolation anywhere at all (`{% if x %}a{% else %}b{%
       # endif %}`, no braces-braces span) - real, valid Ansible/Jinja2

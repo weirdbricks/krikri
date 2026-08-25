@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.580-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.583-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,16 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.583`** - implemented `vars_prompt:` and made `--vault-id` real.
+  Prompts are asked only on a terminal, exactly as real Ansible does -
+  piped or closed stdin falls back to the entry's `default:` (and to the
+  literal string `None` when there is none, a Python quirk this
+  reproduces). `--vault-id label@source` now supplies several vault
+  identities, picking the one a 1.2 header names and trying the rest
+  after. An undecryptable value is no longer fatal at parse time: real
+  Ansible defers to the point of USE, so a playbook carrying a
+  prod-only vault var runs fine on a dev box until something references
+  it.
 - **`0.9.580`** - implemented `gather_subset:` and `remote_user:`.
   Fact gathering now honors `all`/`min`/`network`/`hardware`/`mounts`
   and `!` negations, skipping the expensive families while always
@@ -404,33 +414,6 @@ for current-state detail.
   Ansible's does, since that ordering is the whole observable point of
   the strategy. An unknown strategy is now refused with real Ansible's
   message and exit code 1, rather than silently falling back to linear.
-- **`0.9.577`** - implemented `ignore_unreachable:`, `order:` and
-  `throttle:`. `ignore_unreachable:` needed the architecture to change:
-  unreachable hosts used to be dropped from every play wholesale, so
-  there was no per-task point at which to tolerate one. They now stay in
-  the play and each task reports UNREACHABLE! against them, which is
-  what real Ansible does - so a task can ignore it and the host carries
-  on to the next one. `order:` covers inventory/reverse_inventory/
-  sorted/reverse_sorted/shuffle, and `throttle:` caps a task's
-  concurrency below `--forks`.
-- **`0.9.576`** - implemented `module_defaults:`'s ACTION GROUP keys
-  (`group/aws`, `group/community.general.consul`), which 0.9.575 had
-  skipped. Membership is read from each installed collection's own
-  `meta/runtime.yml` - the same source real Ansible uses - including
-  `metadata: extend_group` inheritance, with ansible-core's own builtin
-  groups seeded so `group/aws` resolves even when amazon.aws is absent,
-  as it does in real Ansible. A group nothing defines is now an error
-  with real Ansible's message and exit code 4, rather than being ignored.
-  Also fixed a bare `debug:` with no arguments failing outright: real
-  ansible.builtin.debug defaults its msg to "Hello world!", which is
-  exactly what a task taking its msg from module_defaults looks like.
-- **`0.9.575`** - implemented `module_defaults:`, which was parsed to
-  nothing - a task relying on it ran with the argument MISSING and
-  failed outright. Play, block and task scope all apply with the nearest
-  winning, a task's own argument always beats a default, and keys match
-  on the bare module name so a short key supplies defaults to an FQCN
-  task and vice versa. An action-group key (`group/aws`) is skipped, as
-  this engine has no action groups.
 
 ## 🤝 Contributing
 
