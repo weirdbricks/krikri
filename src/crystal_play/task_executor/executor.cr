@@ -250,10 +250,13 @@ module CrystalPlay
       getter task : Task
       getter host : Host
       getter results : Hash(String, IO::Memory)
-      getter done_signal : Channel(Nil)
+      # Carries the FINISHED host's name, not just a tick: the caller
+      # prints each host's buffer as its name arrives, which is what
+      # gives real Ansible's completion-order output.
+      getter done_signal : Channel(String)
       getter gate : Channel(Nil)
 
-      def initialize(@task : Task, @host : Host, @results : Hash(String, IO::Memory), @done_signal : Channel(Nil), @gate : Channel(Nil))
+      def initialize(@task : Task, @host : Host, @results : Hash(String, IO::Memory), @done_signal : Channel(String), @gate : Channel(Nil))
       end
     end
 
@@ -895,16 +898,22 @@ module CrystalPlay
       gate = Channel(Nil).new(max_parallel)
       max_parallel.times { gate.send(nil) }
       buffers = Hash(String, IO::Memory).new
-      done = Channel(Nil).new(hosts.size)
+      done = Channel(String).new(hosts.size)
 
       hosts.each do |host|
         pool[host.name].send(WorkMessage.new(task, host, buffers, done, gate))
       end
 
-      hosts.size.times { done.receive }
-
-      hosts.each do |host|
-        if buffer = buffers[host.name]?
+      # Printed as each host FINISHES, not in host order afterwards -
+      # real ansible-playbook reports the fast host first when a slower
+      # one is still working, and this engine used to hold everything
+      # back and then print in inventory order. Each host's output is
+      # still flushed as one buffered block, so completion order costs
+      # nothing in readability: concurrent hosts still cannot interleave
+      # mid-task.
+      hosts.size.times do
+        finished = done.receive
+        if buffer = buffers[finished]?
           print buffer.to_s
         end
       end
@@ -936,7 +945,7 @@ module CrystalPlay
               OutputRouting.clear_current_fiber_redirect
             end
             msg.results[msg.host.name] = buffer
-            msg.done_signal.send(nil)
+            msg.done_signal.send(msg.host.name)
             msg.gate.send(nil)
           end
         end

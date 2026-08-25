@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.578-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.579-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,12 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.579`** - per-host result lines are now printed in COMPLETION
+  order under the default `linear` strategy, as real Ansible does - the
+  host that finishes first is reported first, rather than everything
+  being held back and printed in inventory order. Each host's block is
+  still flushed atomically, so concurrent hosts still never interleave
+  mid-task; completion order costs nothing in readability.
 - **`0.9.578`** - implemented `strategy:`. `free` (and `host_pinned`,
   which differs only in worker affinity) lets each host run the whole
   task list with no barrier between tasks, so a fast host races ahead
@@ -425,14 +431,6 @@ for current-state detail.
   it printed the secret. Now suppresses all result detail (ok, failing,
   looped and handler paths alike) while still reporting the task's
   status, matching real Ansible, and leaks nothing under `-v` either.
-- **`0.9.573`** - implemented `any_errors_fatal:` and
-  `max_fail_percentage:`, both previously parsed to nothing. A play
-  written to halt the moment a host failed carried right on across the
-  rest of the fleet - the same class of silent no-op as `serial:` in
-  0.9.571, and in the same dangerous direction. Both abort the play for
-  EVERY host, and stop the remaining `serial:` batches too; the
-  percentage comparison is strictly-greater, matching real Ansible
-  (1-of-3 hosts aborts at 33 but not at 34).
 
 ## 🤝 Contributing
 

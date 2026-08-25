@@ -874,7 +874,7 @@ describe "crystal-ansible CLI (--check mode)" do
     end
   end
 
-  it "--forks 1 (one-host-at-a-time) is byte-identical to the --forks 5 default's parallel fan-out" do
+  it "--forks 1 (one-host-at-a-time) produces the same content as the --forks 5 default's parallel fan-out" do
     default_status, default_output = run_playbook(
       "test-forks-quick.yml",
       [] of String,
@@ -888,7 +888,13 @@ describe "crystal-ansible CLI (--check mode)" do
 
     default_status.success?.should be_true
     forks1_status.success?.should be_true
-    forks1_output.should eq(default_output)
+
+    # Compared as a multiset of lines, not byte-for-byte: since 0.9.579
+    # the parallel path prints each host's block as that host FINISHES
+    # (real ansible-playbook's completion order), so the two runs can
+    # legitimately order two adjacent host lines differently. What must
+    # not change with --forks is WHAT happened - every line, once.
+    forks1_output.lines.sort.should eq(default_output.lines.sort)
   end
 
   it "--forks N runs every host per task, still runs run_once: only on the first host, and keeps each host's output un-interleaved" do
@@ -909,9 +915,14 @@ describe "crystal-ansible CLI (--check mode)" do
     # ...but its registered result is still visible from both hosts.
     output.scan("once_result changed=True").size.should eq(2)
     output.scan("cmd_result changed=True").size.should eq(2)
-    # Each host's own lines stay together, in host order, never
-    # interleaved mid-task by the concurrent fan-out.
-    output.should contain("changed: [web1]\nchanged: [web2]")
+    # Each host's own lines stay together, never interleaved mid-task by
+    # the concurrent fan-out. The ORDER of the two is completion order
+    # since 0.9.579 (matching real ansible-playbook, which reports the
+    # host that finished first), so either arrangement is correct - what
+    # must hold is that the two lines are adjacent, not split apart.
+    adjacent = output.includes?("changed: [web1]\nchanged: [web2]") ||
+               output.includes?("changed: [web2]\nchanged: [web1]")
+    adjacent.should be_true
     output.should contain("forks smoke test complete!")
   end
 
