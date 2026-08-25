@@ -15,6 +15,25 @@ module CrystalPlay
   # then ./roles/<name> relative to the working directory. Ansible also
   # searches ANSIBLE_ROLES_PATH and a few other locations; not implemented.
   module RoleLoader
+    # Whether *name* resolves to a real role directory, from the same
+    # search path #resolve_role_dir already uses (collection role dirs,
+    # playbook_dir/roles/name, ./roles/name relative to CWD, and
+    # ANSIBLE_ROLES_PATH/Galaxy-default roles_paths) - exposed publicly
+    # (resolve_role_dir itself is private) so PlaybookParser can do the
+    # same existence check for a task-level `import_role:`, which real
+    # Ansible resolves STATICALLY (before any task runs) exactly like a
+    # play-level `roles:` entry or a meta/main.yml dependency already
+    # does via #load_role's own RoleNotFoundError raise - previously
+    # only those two call sites checked existence at all; a task-level
+    # import_role: referencing a role never installed (buluma.revealmd's
+    # own `import_role: name: buluma.service`, round 180) instead ran 5
+    # of the role's OWN tasks first and only failed later at the runtime
+    # `_include_role` dispatch, instead of refusing the whole playbook
+    # up front the way real Ansible does (rc=1, zero tasks run).
+    def self.role_exists?(name : String, playbook_dir : String) : Bool
+      !resolve_role_dir(name, playbook_dir).nil?
+    end
+
     # Loads every entry in a play's `roles:` list (plus their meta/main.yml
     # dependencies, recursively), in order. Returns {tasks, handlers} to
     # prepend to the play - Ansible runs role tasks before the play's own

@@ -1350,6 +1350,15 @@ module CrystalPlay
           # Same bypass as RemovedActionError above, same reason - see
           # that class's own comment and StaticImportUndefinedError's.
           raise ex
+        rescue ex : RoleNotFoundError
+          # Same bypass, same reason - see RoleNotFoundError's own
+          # comment. Newly reachable from here (not just #load_role
+          # directly) since a task-level `import_role:` referencing a
+          # never-installed role now checks existence at this same
+          # parse_task call site - without this bypass it would fall
+          # through to the generic per-task warning below instead of
+          # refusing the whole playbook the way real Ansible does.
+          raise ex
         rescue ex
           puts "Warning: Skipping #{context} #{index + 1}: #{ex.message}".colorize(:yellow)
         end
@@ -1577,6 +1586,20 @@ module CrystalPlay
             if rendered.includes?("{{") || rendered.strip == "undefined" || rendered.strip.empty?
               first_var = role_name_raw.match(/\{\{\s*([A-Za-z_][A-Za-z0-9_]*)/).try(&.[1]) || role_name_raw
               raise StaticImportRoleUndefinedError.new("'#{first_var}' is undefined")
+            end
+          else
+            # A literal (non-templated) name - real Ansible resolves it
+            # up front and refuses the WHOLE playbook if the role isn't
+            # installed anywhere ("the role '<name>' was not found",
+            # rc=1, zero tasks run), not a mid-play failure once this
+            # one task is finally reached. Checked here (not deferred to
+            # #parse_include_role, which has no existence check at all -
+            # that's what let a role-private, never-installed cross-role
+            # reference like this run 5 of the IMPORTING role's own
+            # tasks before failing) so it's caught at the same static
+            # parse time real Ansible catches it at.
+            unless RoleLoader.role_exists?(role_name_raw, file_dir)
+              raise RoleNotFoundError.new("the role '#{role_name_raw}' was not found")
             end
           end
         end
