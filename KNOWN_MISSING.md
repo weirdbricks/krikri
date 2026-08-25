@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.576`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.577`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -84,8 +84,7 @@ real modules regardless - see `git log`.
   name.
 
 - **Several keywords are still unimplemented and silently ignored:
-  `throttle:`, `order:`, `gather_subset:`, `strategy:`,
-  `ignore_unreachable:`, `remote_user:` (as a
+  `gather_subset:`, `strategy:`, `remote_user:` (as a
   play/task keyword - the `-u` CLI flag and `ansible_user` DO work),
   `vars_prompt:` and `debugger:`.** Found in the same scan
   that produced 0.9.571's `serial:` and 0.9.573's `any_errors_fatal:`/

@@ -41,6 +41,13 @@ module CrystalPlay
     # of the log. Previously unparsed and unused, so every such task
     # printed its secret in full.
     property no_log : Bool = false
+    # `ignore_unreachable: true` - an unreachable host does not fail the
+    # play at this task; it is reported, counted as ignored, and the host
+    # carries on to the next task (which may itself be unreachable).
+    property ignore_unreachable : Bool = false
+    # `throttle:` - cap how many hosts run this task at once, below the
+    # run's own --forks. 0/absent means no extra cap.
+    property throttle : Int32 = 0
     # Block- and task-scope `module_defaults:` - see Play#module_defaults.
     property module_defaults : Hash(String, Hash(String, String)) = Hash(String, Hash(String, String)).new
     property when_condition : String?
@@ -428,6 +435,9 @@ module CrystalPlay
     # name. Applies at play, block and task scope, nearest wins, and an
     # argument the task sets itself always wins over a default.
     property module_defaults : Hash(String, Hash(String, String)) = Hash(String, Hash(String, String)).new
+    # `order:` - the order hosts are processed in: inventory (default),
+    # reverse_inventory, sorted, reverse_sorted, shuffle.
+    property order : String? = nil
     property any_errors_fatal : Bool = false
     property max_fail_percentage : Float64? = nil
 
@@ -1084,6 +1094,7 @@ module CrystalPlay
       play.gather_facts_set = !gather_facts_yaml.nil?
       play.force_handlers = parse_become_value(yaml["force_handlers"]?) || false
 
+      play.order = yaml["order"]?.try { |value| safe_yaml_to_string(value).strip }
       play.module_defaults = parse_module_defaults(yaml["module_defaults"]?)
       play.any_errors_fatal = parse_become_value(yaml["any_errors_fatal"]?) || false
       if mfp = yaml["max_fail_percentage"]?
@@ -1488,7 +1499,7 @@ module CrystalPlay
                       "with_dict", "with_fileglob", "with_first_found", "with_nested", "with_sequence",
                       "with_flattened", "with_community.general.flattened", "with_subelements", "with_indexed_items", "until", "retries", "delay",
                       "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "delegate_facts", "run_once", "connection",
-                      "async", "poll", "vars", "environment", "no_log", "module_defaults",
+                      "async", "poll", "vars", "environment", "no_log", "module_defaults", "ignore_unreachable", "throttle",
                       "block", "rescue", "always", "import_tasks", "include_tasks", "include_role",
                       "import_role", "meta", "include_vars"]
       # ... and the same names fully qualified, since directive() accepts
@@ -1568,6 +1579,8 @@ module CrystalPlay
       task.register = task_hash["register"]?.try { |v| safe_yaml_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
+      task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
+      task.throttle = task_hash["throttle"]?.try { |value| safe_yaml_to_string(value).to_i? } || 0
       task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
       task.check_mode = parse_optional_bool_or_template(task_hash["check_mode"]?)
       task.diff_mode = parse_optional_bool_or_template(task_hash["diff"]?)
@@ -1810,6 +1823,8 @@ module CrystalPlay
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
+      task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
+      task.throttle = task_hash["throttle"]?.try { |value| safe_yaml_to_string(value).to_i? } || 0
       task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
 
       if tags_yaml = task_hash["tags"]?
@@ -1957,6 +1972,8 @@ module CrystalPlay
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
+      task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
+      task.throttle = task_hash["throttle"]?.try { |value| safe_yaml_to_string(value).to_i? } || 0
       task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
@@ -2011,6 +2028,8 @@ module CrystalPlay
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
+      task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
+      task.throttle = task_hash["throttle"]?.try { |value| safe_yaml_to_string(value).to_i? } || 0
       task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
@@ -2114,6 +2133,8 @@ module CrystalPlay
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
+      task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
+      task.throttle = task_hash["throttle"]?.try { |value| safe_yaml_to_string(value).to_i? } || 0
       task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)

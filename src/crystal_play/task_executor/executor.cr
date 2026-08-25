@@ -287,7 +287,12 @@ module CrystalPlay
       @vars_files_dir = ".",
       # See Play#any_errors_fatal / Play#max_fail_percentage.
       @any_errors_fatal = false,
-      @max_fail_percentage : Float64? = nil
+      @max_fail_percentage : Float64? = nil,
+      # Hosts the pre-upload pass already found unreachable. Rather than
+      # dropping them from the play, each task on such a host yields an
+      # unreachable result - which is what makes per-task
+      # `ignore_unreachable:` possible at all.
+      @unreachable_hosts = Set(String).new
     )
       @results = Hash(String, Hash(String, Int32)).new
       @registered_vars = Hash(String, Hash(String, JSON::Any)).new
@@ -478,11 +483,42 @@ module CrystalPlay
       true
     end
 
+    # Emits real Ansible's UNREACHABLE! line for *host* and books it as
+    # either ignored (ignore_unreachable:) or unreachable, halting the
+    # host in the latter case.
+    private def report_unreachable(task : Task, host : Host) : Nil
+      connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+      puts %(fatal: [#{host.name}]: UNREACHABLE! => {"changed": false, "msg": "Failed to connect to the host via ssh: #{connection_host}", "unreachable": true}).colorize(:red)
+
+      stats = @results[host.name]
+      if task.ignore_unreachable
+        # Counted as ok AND ignored, matching real Ansible's own recap
+        # for an ignored unreachable task.
+        stats["ok"] += 1
+        stats["ignored"] += 1
+      else
+        stats["unreachable"] += 1
+        @halted_hosts << host.name
+      end
+    end
+
     private def run_task_batch(tasks : Array(Task), hosts : Array(Host))
       ensure_grouped(tasks)
 
       tasks.each do |task|
         next unless step_allows?(task)
+
+        # A host known to be unreachable produces an unreachable result
+        # for every task, exactly as real Ansible does when the
+        # connection keeps failing - and `ignore_unreachable: true`
+        # makes that one ignored rather than fatal, letting the host go
+        # on to the next task.
+        hosts.each do |host|
+          next unless @unreachable_hosts.includes?(host.name)
+          next if @halted_hosts.includes?(host.name)
+
+          report_unreachable(task, host)
+        end
 
         # any_errors_fatal:/max_fail_percentage: are evaluated BETWEEN
         # tasks: once the threshold is crossed the play stops for every
@@ -490,7 +526,14 @@ module CrystalPlay
         # at the end so the very next task is the one that does not run.
         break if abort_play?(hosts)
 
-        active_hosts = hosts.reject { |host| @halted_hosts.includes?(host.name) }
+        # Unreachable hosts are excluded from EXECUTION as well as from
+        # the halted set: report_unreachable above has already booked the
+        # result, and an ignore_unreachable: host stays un-halted on
+        # purpose - without this it would fall through to a real SSH
+        # attempt and hang on the connection it is already known to fail.
+        active_hosts = hosts.reject do |host|
+          @halted_hosts.includes?(host.name) || @unreachable_hosts.includes?(host.name)
+        end
 
         if task.block? && !active_hosts.empty?
           execute_block_multi(task, active_hosts)
@@ -515,7 +558,7 @@ module CrystalPlay
           puts "*" * 70
         end
 
-        if @forks > 1 && task_forkable?(task) && active_hosts.size > 1
+        if @forks > 1 && task_forkable?(task) && active_hosts.size > 1 && task.throttle != 1
           run_task_for_hosts_in_parallel(task, active_hosts)
         else
           active_hosts.each { |host| execute_task(task, host) }
@@ -768,7 +811,12 @@ module CrystalPlay
     # per-call spawn pattern did, but the worker fiber itself survives
     # across tasks.
     private def run_task_for_hosts_in_parallel(task : Task, hosts : Array(Host))
+      # throttle: caps concurrency for this task BELOW --forks - real
+      # Ansible's own semantics (it never raises the limit, only lowers
+      # it). A throttle of 1 makes the task effectively serial.
       max_parallel = Math.min(hosts.size, @forks)
+      max_parallel = Math.min(max_parallel, task.throttle) if task.throttle > 0
+      max_parallel = 1 if max_parallel < 1
       pool = ensure_host_worker_pool(hosts)
       gate = Channel(Nil).new(max_parallel)
       max_parallel.times { gate.send(nil) }

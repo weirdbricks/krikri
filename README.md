@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.576-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.577-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,15 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.577`** - implemented `ignore_unreachable:`, `order:` and
+  `throttle:`. `ignore_unreachable:` needed the architecture to change:
+  unreachable hosts used to be dropped from every play wholesale, so
+  there was no per-task point at which to tolerate one. They now stay in
+  the play and each task reports UNREACHABLE! against them, which is
+  what real Ansible does - so a task can ignore it and the host carries
+  on to the next one. `order:` covers inventory/reverse_inventory/
+  sorted/reverse_sorted/shuffle, and `throttle:` caps a task's
+  concurrency below `--forks`.
 - **`0.9.576`** - implemented `module_defaults:`'s ACTION GROUP keys
   (`group/aws`, `group/community.general.consul`), which 0.9.575 had
   skipped. Membership is read from each installed collection's own
@@ -429,14 +438,6 @@ for current-state detail.
   `ID_LIKE`, so on such a machine every
   `when: ansible_os_family == "Debian"` gate in every role silently
   skipped.
-- **`0.9.571`** - implemented `serial:`, which was ignored entirely. Real
-  Ansible runs the whole play against one batch of hosts at a time -
-  that is what makes a rolling restart rolling - while this engine still
-  hit every host simultaneously, so the batching a playbook used to
-  protect a fleet silently did nothing. Counts, percentages and lists of
-  batch sizes all supported, matching real Ansible over four hosts.
-  (`run_once`, `delegate_to` and `delegate_facts` were checked in the
-  same pass and were already correct.)
 
 ## 🤝 Contributing
 

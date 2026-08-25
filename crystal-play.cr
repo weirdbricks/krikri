@@ -614,7 +614,10 @@ playbook.plays.each_with_index do |play, play_index|
 
   # Get hosts for this play from inventory, excluding any host that
   # already hard-failed in an earlier play this run.
-  matched_hosts = inventory.get_hosts(play.hosts.to_s).reject { |host| unreachable_hosts.includes?(host.name) }
+  # Unreachable hosts stay IN the play: the executor reports each task
+  # against them as unreachable, which is what lets a task's own
+  # `ignore_unreachable:` tolerate it and carry on.
+  matched_hosts = inventory.get_hosts(play.hosts.to_s)
 
   # --limit further restricts the play's own hosts: pattern to the
   # intersection with whatever it matches - real ansible-playbook's
@@ -695,7 +698,7 @@ playbook.plays.each_with_index do |play, play_index|
   # serial: runs the WHOLE play against one batch of hosts at a time.
   # With no serial: this is a single batch of every host, exactly as
   # before.
-  CrystalPlay::SerialBatches.split(hosts, play.serial).each do |batch_hosts|
+  CrystalPlay::SerialBatches.split(CrystalPlay::SerialBatches.order(hosts, play.order), play.serial).each do |batch_hosts|
   # Create task executor with handlers and play vars
   executor = CrystalPlay::TaskExecutor.new(
     hosts: batch_hosts,
@@ -719,7 +722,8 @@ playbook.plays.each_with_index do |play, play_index|
     vars_files: play.vars_files,
     vars_files_dir: File.dirname(File.expand_path(playbook_file)),
     any_errors_fatal: play.any_errors_fatal,
-    max_fail_percentage: play.max_fail_percentage
+    max_fail_percentage: play.max_fail_percentage,
+    unreachable_hosts: unreachable_hosts
   )
 
   # Run tasks
