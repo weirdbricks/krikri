@@ -728,7 +728,9 @@ playbook.plays.each_with_index do |play, play_index|
     any_errors_fatal: play.any_errors_fatal,
     max_fail_percentage: play.max_fail_percentage,
     unreachable_hosts: unreachable_hosts,
-    strategy: play.strategy
+    strategy: play.strategy,
+    gather_subset: play.gather_subset,
+    remote_user: play.remote_user
   )
 
   # Run tasks

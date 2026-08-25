@@ -48,18 +48,47 @@ rescue
 end
 
 # Gather all system facts
-def gather_facts : Hash(String, String | Int64 | Hash(String, String) | Array(String) | Array(Hash(String, String)) | Hash(String, JSON::Any))
+# `gather_subset:` - which families of facts to collect. Tokens are
+# real Ansible's: all, min, hardware, network, virtual, plus a leading
+# "!" to subtract. Later tokens win, and "min" is always included (real
+# Ansible always returns the minimal set - verified: `!all,min` still
+# yields hostname/distribution facts, just no hardware or mounts).
+#
+# Subsetting exists to skip the EXPENSIVE families: `!hardware` avoids
+# reading every block device, `!mounts` avoids statting every mount.
+def subset_enabled?(subset : Array(String), family : String) : Bool
+  # min is the floor - never subtractable.
+  return true if family == "min"
+
+  enabled = subset.empty? || subset.includes?("all")
+  subset.each do |token|
+    case token
+    when "all"          then enabled = true
+    when "!all"         then enabled = false
+    when family         then enabled = true
+    when "!#{family}"   then enabled = false
+    when "min", "!min"  then next
+    end
+  end
+  enabled
+end
+
+def gather_facts(subset : Array(String) = [] of String) : Hash(String, String | Int64 | Hash(String, String) | Array(String) | Array(Hash(String, String)) | Hash(String, JSON::Any))
   facts = {} of String => (String | Int64 | Hash(String, String) | Array(String) | Array(Hash(String, String)) | Hash(String, JSON::Any))
 
+  # The minimal set, always gathered - hostname, OS/distribution, the
+  # interpreter, the user and the clock. This is what real Ansible's
+  # "min" subset covers.
   gather_hostname(facts)
   gather_os_facts(facts)
-  gather_network_facts(facts)
-  gather_hardware_facts(facts)
-  gather_mount_facts(facts)
   gather_python_facts(facts)
   gather_user_facts(facts)
-  gather_environment_facts(facts)
   gather_date_time_facts(facts)
+  gather_environment_facts(facts)
+
+  gather_network_facts(facts) if subset_enabled?(subset, "network")
+  gather_hardware_facts(facts) if subset_enabled?(subset, "hardware")
+  gather_mount_facts(facts) if subset_enabled?(subset, "mounts")
 
   facts
 end
@@ -682,7 +711,17 @@ end
 
 # Entry point
 begin
-  facts = gather_facts
+  # gather_subset arrives in the plugin config like any other parameter,
+  # as a comma-separated list.
+  requested_subset = [] of String
+  if (config = STDIN.gets_to_end) && !config.strip.empty?
+    parsed_config = JSON.parse(config) rescue nil
+    parsed_config.try(&.["params"]?).try(&.["gather_subset"]?).try(&.as_s?).try do |raw|
+      requested_subset = raw.split(',').map(&.strip).reject(&.empty?)
+    end
+  end
+
+  facts = gather_facts(requested_subset)
   
   result = {
     "changed" => false,

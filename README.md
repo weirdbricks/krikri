@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.579-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.580-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,12 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.580`** - implemented `gather_subset:` and `remote_user:`.
+  Fact gathering now honors `all`/`min`/`network`/`hardware`/`mounts`
+  and `!` negations, skipping the expensive families while always
+  keeping the minimal set. `remote_user:` at play or task scope sets the
+  connection user, surfaced as `ansible_user` exactly as real Ansible
+  does, with a task's own value overriding the play's.
 - **`0.9.579`** - per-host result lines are now printed in COMPLETION
   order under the default `linear` strategy, as real Ansible does - the
   host that finishes first is reported first, rather than everything
@@ -425,12 +431,6 @@ for current-state detail.
   on the bare module name so a short key supplies defaults to an FQCN
   task and vice versa. An action-group key (`group/aws`) is skipped, as
   this engine has no action groups.
-- **`0.9.574`** - implemented `no_log:`, which was parsed to nothing.
-  It is the control a playbook uses to keep a password, token or key out
-  of the log, so ignoring it did not merely diverge from real Ansible -
-  it printed the secret. Now suppresses all result detail (ok, failing,
-  looped and handler paths alike) while still reporting the task's
-  status, matching real Ansible, and leaks nothing under `-v` either.
 
 ## 🤝 Contributing
 

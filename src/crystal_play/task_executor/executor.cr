@@ -300,7 +300,12 @@ module CrystalPlay
       # here; linear is this engine's existing behavior, and
       # host_pinned is treated as free (its only difference is worker
       # affinity, which this engine has no equivalent of).
-      @strategy : String? = nil
+      @strategy : String? = nil,
+      # See Play#gather_subset - forwarded to the facts plugin, which
+      # does the actual family filtering.
+      @gather_subset = [] of String,
+      # See Play#remote_user.
+      @remote_user : String? = nil
     )
       @results = Hash(String, Hash(String, Int32)).new
       @registered_vars = Hash(String, Hash(String, JSON::Any)).new
@@ -1053,7 +1058,9 @@ module CrystalPlay
           "user" => host.user,
           "port" => host.port,
         },
-        "params" => {} of String => String,
+        # gather_subset: is forwarded as a comma-separated list; the
+        # facts plugin decides which families to skip.
+        "params" => @gather_subset.empty? ? ({} of String => String) : {"gather_subset" => @gather_subset.join(",")},
         "vars"   => wire_vars,
       }
 
@@ -1518,6 +1525,15 @@ module CrystalPlay
       # backup_directory" task.
       if task_connection = task.connection
         vars_context["ansible_connection"] = JSON::Any.new(task_connection)
+      end
+
+      # remote_user: - the connection user, surfaced as ansible_user
+      # exactly as real Ansible does (verified: a play-level
+      # `remote_user: playuser` renders `{{ ansible_user }}` as
+      # playuser, and a task's own remote_user: overrides it for that
+      # task). Applied before extra-vars below, which still outrank it.
+      if user = task.remote_user || @remote_user
+        vars_context["ansible_user"] = JSON::Any.new(user)
       end
 
       # Last word, deliberately: -e/--extra-vars outranks every other

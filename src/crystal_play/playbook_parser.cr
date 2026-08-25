@@ -48,6 +48,8 @@ module CrystalPlay
     # `throttle:` - cap how many hosts run this task at once, below the
     # run's own --forks. 0/absent means no extra cap.
     property throttle : Int32 = 0
+    # `remote_user:` at task scope - see Play#remote_user.
+    property remote_user : String? = nil
     # Block- and task-scope `module_defaults:` - see Play#module_defaults.
     property module_defaults : Hash(String, Hash(String, String)) = Hash(String, Hash(String, String)).new
     property when_condition : String?
@@ -449,6 +451,12 @@ module CrystalPlay
     # before any starts the next; free lets each host run the whole task
     # list independently.
     property strategy : String? = nil
+    # `gather_subset:` - which fact families the implicit fact gathering
+    # collects (all, min, network, hardware, mounts, and !negations).
+    property gather_subset : Array(String) = [] of String
+    # `remote_user:` at play scope - the connection user, i.e. what
+    # `ansible_user` would say. A task's own remote_user: wins over it.
+    property remote_user : String? = nil
     property any_errors_fatal : Bool = false
     property max_fail_percentage : Float64? = nil
 
@@ -1115,7 +1123,17 @@ module CrystalPlay
       play.force_handlers = parse_become_value(yaml["force_handlers"]?) || false
 
       play.order = yaml["order"]?.try { |value| safe_yaml_to_string(value).strip }
+      play.remote_user = yaml["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
       play.strategy = yaml["strategy"]?.try { |value| safe_yaml_to_string(value).strip }
+      if subset_yaml = yaml["gather_subset"]?
+        play.gather_subset =
+          if list = subset_yaml.as_a?
+            list.map { |token| safe_yaml_to_string(token).strip }
+          else
+            safe_yaml_to_string(subset_yaml).split(',').map(&.strip)
+          end
+        play.gather_subset = play.gather_subset.reject(&.empty?)
+      end
       # Real Ansible REFUSES an unknown strategy - "[ERROR]: Invalid play
       # strategy specified: nonsense", exit 1 - rather than falling back
       # to linear (verified against ansible-core 2.19.4).
@@ -1528,7 +1546,7 @@ module CrystalPlay
                       "with_dict", "with_fileglob", "with_first_found", "with_nested", "with_sequence",
                       "with_flattened", "with_community.general.flattened", "with_subelements", "with_indexed_items", "until", "retries", "delay",
                       "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "delegate_facts", "run_once", "connection",
-                      "async", "poll", "vars", "environment", "no_log", "module_defaults", "ignore_unreachable", "throttle",
+                      "async", "poll", "vars", "environment", "no_log", "module_defaults", "ignore_unreachable", "throttle", "remote_user",
                       "block", "rescue", "always", "import_tasks", "include_tasks", "include_role",
                       "import_role", "meta", "include_vars"]
       # ... and the same names fully qualified, since directive() accepts
@@ -1610,6 +1628,7 @@ module CrystalPlay
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
       task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
       task.throttle = task_hash["throttle"]?.try { |value| safe_yaml_to_string(value).to_i? } || 0
+      task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
       task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
       task.check_mode = parse_optional_bool_or_template(task_hash["check_mode"]?)
       task.diff_mode = parse_optional_bool_or_template(task_hash["diff"]?)
@@ -1854,6 +1873,7 @@ module CrystalPlay
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
       task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
       task.throttle = task_hash["throttle"]?.try { |value| safe_yaml_to_string(value).to_i? } || 0
+      task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
       task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
 
       if tags_yaml = task_hash["tags"]?
@@ -2003,6 +2023,7 @@ module CrystalPlay
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
       task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
       task.throttle = task_hash["throttle"]?.try { |value| safe_yaml_to_string(value).to_i? } || 0
+      task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
       task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
@@ -2059,6 +2080,7 @@ module CrystalPlay
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
       task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
       task.throttle = task_hash["throttle"]?.try { |value| safe_yaml_to_string(value).to_i? } || 0
+      task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
       task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
@@ -2164,6 +2186,7 @@ module CrystalPlay
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
       task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
       task.throttle = task_hash["throttle"]?.try { |value| safe_yaml_to_string(value).to_i? } || 0
+      task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
       task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
