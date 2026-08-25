@@ -46,14 +46,14 @@ module CrystalPlay
       msg = @params["msg"]?
       var_name = @params["var"]?
       
-      # Must have either msg or var
-      if !msg && !var_name
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "msg or var parameter required"
-        )
-      end
+      # Neither msg nor var is not an error: real ansible.builtin.debug
+      # documents `msg` as defaulting to "Hello world!" and prints that
+      # (verified against ansible-core 2.19.4 - a bare `debug:` task
+      # succeeds and prints it). This engine failed the task outright
+      # with "msg or var parameter required", so a bare debug: - which is
+      # exactly what a task relying on module_defaults for its msg looks
+      # like - broke the play.
+      msg = "Hello world!" if !msg && !var_name
       
       # Build the debug output
       debug_output = if var_name

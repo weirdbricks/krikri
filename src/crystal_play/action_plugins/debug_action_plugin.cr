@@ -26,6 +26,13 @@ module CrystalPlay
       msg = @params["msg"]?
       var_name = @params["var"]?
 
+      # Real ansible.builtin.debug documents msg as defaulting to
+      # "Hello world!" and prints it for a bare `debug:` task (verified
+      # against ansible-core 2.19.4). This is the copy that actually runs
+      # for a normal debug task - plugins/debug.cr carries the same
+      # default for --async/manual invocation.
+      msg = "Hello world!" unless msg || var_name
+
       unless msg || var_name
         return ActionResult.final(result_json(changed: false, failed: true, msg: "msg or var parameter required"))
       end

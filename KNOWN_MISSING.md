@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.575`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.576`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -108,10 +108,16 @@ real modules regardless - see `git log`.
   `debugger:` (an interactive debugger this engine has no equivalent
   of). `no_log:` was on this list until 0.9.574 - it was fixed rather
   than documented because ignoring it LEAKS SECRETS, and
-  `module_defaults:` until 0.9.575. One piece of `module_defaults:` is
-  deliberately not implemented: an ACTION GROUP key (`group/aws`) is
-  skipped rather than applied, since this engine has no notion of action
-  groups - the rest of the mapping alongside it still applies.
+  `module_defaults:` until 0.9.575 - including its ACTION GROUP keys
+  (`group/aws`) in 0.9.576, which read each installed collection's own
+  `meta/runtime.yml` exactly as real Ansible does. One residual
+  difference there follows from this engine's flat module namespace
+  (FQCN and short names are the same module, by design): real Ansible
+  scopes a group's members to the collection that defined them, so
+  `group/some.coll.grp` containing `debug` applies to
+  `some.coll.debug` and NOT to `ansible.builtin.debug`, while here it
+  applies to `debug`. There is no separate `some.coll.debug` module in
+  this engine for it to mean anything else.
 
 ## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 

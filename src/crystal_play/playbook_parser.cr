@@ -4,6 +4,8 @@ require "./role_loader"
 require "./vault"
 require "./variable_substitutor"
 
+require "./action_groups"
+
 module CrystalPlay
   # Represents a single task in a playbook
   class Task
@@ -978,21 +980,41 @@ module CrystalPlay
     # defaults to an `ansible.builtin.debug:` task, and an
     # `ansible.builtin.debug:` key to a `debug:` task.
     #
-    # Action-group keys (`group/aws`) are skipped: this engine has no
-    # notion of action groups, and silently treating one as a module name
-    # would apply its defaults to nothing anyway.
+    # An action-group key (`group/aws`) is expanded to its member
+    # modules via ActionGroups, which reads the installed collections'
+    # meta/runtime.yml exactly as real Ansible does.
     def self.parse_module_defaults(yaml : YAML::Any?) : Hash(String, Hash(String, String))
       result = Hash(String, Hash(String, String)).new
       return result unless hash = yaml.try(&.as_h?)
 
       hash.each do |raw_key, raw_value|
         key = raw_key.to_s
-        next if key.starts_with?("group/")
         next unless args = raw_value.as_h?
 
-        normalized = normalize_module_key(key)
-        entry = result[normalized] ||= Hash(String, String).new
-        args.each { |arg, value| entry[arg.to_s] = safe_yaml_to_string(value) }
+        # An ACTION GROUP key stands for every module in that group.
+        # Membership comes from the installed collections' own
+        # meta/runtime.yml, the same source real Ansible reads - see
+        # ActionGroups. A group no installed collection defines resolves
+        # to nothing, which is the honest outcome: there are no modules
+        # for it to apply to.
+        targets =
+          if key.starts_with?("group/")
+            members = ActionGroups.modules_for(key)
+            # Real Ansible REFUSES the playbook for a group nothing
+            # defines - "could not resolve the module_defaults group
+            # <fq name>", exit 4 - rather than ignoring the key.
+            unless members
+              raise "Error loading module_defaults: could not resolve the module_defaults group #{ActionGroups.qualified_name(key)}"
+            end
+            members.map { |name| normalize_module_key(name) }
+          else
+            [normalize_module_key(key)]
+          end
+
+        targets.each do |target|
+          entry = result[target] ||= Hash(String, String).new
+          args.each { |arg, value| entry[arg.to_s] = safe_yaml_to_string(value) }
+        end
       end
       result
     end

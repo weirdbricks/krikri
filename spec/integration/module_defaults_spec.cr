@@ -71,10 +71,12 @@ describe "module_defaults:" do
       YAML
   end
 
-  # An action-group key is skipped rather than treated as a module name -
-  # this engine has no notion of action groups, and a `group/...` entry
-  # must not break the rest of the mapping alongside it.
-  it "ignores a group/ action-group key without disturbing the others" do
+  # An action-group key expands to its member modules. `group/aws` is
+  # defined by ansible.builtin itself (as an extend_group pointer into
+  # amazon.aws), so it RESOLVES even with that collection absent and the
+  # rest of the mapping applies - verified against real Ansible, which
+  # exits 0 here.
+  it "accepts a builtin action-group key that resolves to no installed modules" do
     markers(<<-YAML).should eq(["STILL_APPLIED"])
       - hosts: all
         gather_facts: false
@@ -104,5 +106,88 @@ describe "module_defaults:" do
             ansible.builtin.debug:
               msg: "EXPLICIT"
       YAML
+  end
+end
+
+# Action groups proper: membership comes from the installed collections'
+# own meta/runtime.yml, the same source real Ansible reads.
+private ACTION_GROUP_RUNTIME = <<-YAML
+  action_groups:
+    demo:
+      - debug
+    extended:
+      - metadata:
+          extend_group:
+            - testns.testcoll.demo
+  YAML
+
+private def run_with_collections(playbook : String, runtime : String) : {Int32, String}
+  dir = File.tempname("action-groups")
+  meta = File.join(dir, "collections", "ansible_collections", "testns", "testcoll", "meta")
+  Dir.mkdir_p(meta)
+  File.write(File.join(meta, "runtime.yml"), runtime)
+  File.write(File.join(dir, "inv.ini"), "localhost ansible_connection=local\n")
+  File.write(File.join(dir, "pb.yml"), playbook)
+
+  stdout_io = IO::Memory.new
+  status = Process.run(BINARY, ["-i", "inv.ini", "pb.yml"],
+    output: stdout_io, error: stdout_io, chdir: dir,
+    env: {"ANSIBLE_COLLECTIONS_PATH" => File.join(dir, "collections")})
+  {status.exit_code, stdout_io.to_s}
+ensure
+  FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+end
+
+describe "module_defaults: action groups" do
+  it "expands a collection's action group to its member modules" do
+    code, output = run_with_collections(<<-YAML, ACTION_GROUP_RUNTIME)
+      - hosts: all
+        gather_facts: false
+        module_defaults:
+          group/testns.testcoll.demo:
+            msg: "FROM_GROUP"
+        tasks:
+          - name: t
+            ansible.builtin.debug:
+      YAML
+
+    code.should eq(0)
+    output.should contain("FROM_GROUP")
+  end
+
+  # metadata/extend_group pulls in another group's members.
+  it "follows extend_group" do
+    code, output = run_with_collections(<<-YAML, ACTION_GROUP_RUNTIME)
+      - hosts: all
+        gather_facts: false
+        module_defaults:
+          group/testns.testcoll.extended:
+            msg: "FROM_EXTENDED"
+        tasks:
+          - name: t
+            ansible.builtin.debug:
+      YAML
+
+    code.should eq(0)
+    output.should contain("FROM_EXTENDED")
+  end
+
+  # A group nothing defines is an ERROR, with real Ansible's own message
+  # and exit code 4 - a bare name resolves in ansible.builtin, so
+  # `group/demo` does NOT match a collection's `demo` group.
+  it "refuses an unresolvable group the way real Ansible does" do
+    code, output = run_with_collections(<<-YAML, ACTION_GROUP_RUNTIME)
+      - hosts: all
+        gather_facts: false
+        module_defaults:
+          group/demo:
+            msg: "NEVER"
+        tasks:
+          - name: t
+            ansible.builtin.debug:
+      YAML
+
+    code.should eq(4)
+    output.should contain("could not resolve the module_defaults group ansible.builtin.demo")
   end
 end

@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.575-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.576-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,17 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.576`** - implemented `module_defaults:`'s ACTION GROUP keys
+  (`group/aws`, `group/community.general.consul`), which 0.9.575 had
+  skipped. Membership is read from each installed collection's own
+  `meta/runtime.yml` - the same source real Ansible uses - including
+  `metadata: extend_group` inheritance, with ansible-core's own builtin
+  groups seeded so `group/aws` resolves even when amazon.aws is absent,
+  as it does in real Ansible. A group nothing defines is now an error
+  with real Ansible's message and exit code 4, rather than being ignored.
+  Also fixed a bare `debug:` with no arguments failing outright: real
+  ansible.builtin.debug defaults its msg to "Hello world!", which is
+  exactly what a task taking its msg from module_defaults looks like.
 - **`0.9.575`** - implemented `module_defaults:`, which was parsed to
   nothing - a task relying on it ran with the argument MISSING and
   failed outright. Play, block and task scope all apply with the nearest
@@ -426,14 +437,6 @@ for current-state detail.
   batch sizes all supported, matching real Ansible over four hosts.
   (`run_once`, `delegate_to` and `delegate_facts` were checked in the
   same pass and were already correct.)
-- **`0.9.570`** - an unreachable host no longer kills the run. One host
-  that could not be connected to crashed the whole process with a raw
-  Crystal stack trace, printed no recap at all, discarded every
-  REACHABLE host's results, and exited 1. It is now reported
-  `UNREACHABLE!`, recapped as `unreachable=1`, every other host still
-  runs, and the run exits 4 - real Ansible's code whenever any host was
-  unreachable, ahead of a failed host's 2. The recap is also now sorted
-  by host name, as real Ansible prints it.
 
 ## 🤝 Contributing
 
