@@ -407,6 +407,36 @@ for current-state detail.
   prompt needs a live Python task object and is documented as not
   offered, rather than half-offered.
 
+- **`0.9.583`** - implemented `vars_prompt:` and made `--vault-id` real.
+  Prompts are asked only on a terminal, exactly as real Ansible does -
+  piped or closed stdin falls back to the entry's `default:` (and to the
+  literal string `None` when there is none, a Python quirk this
+  reproduces). `--vault-id label@source` now supplies several vault
+  identities, picking the one a 1.2 header names and trying the rest
+  after. An undecryptable value is no longer fatal at parse time: real
+  Ansible defers to the point of USE, so a playbook carrying a
+  prod-only vault var runs fine on a dev box until something references
+  it.
+- **`0.9.580`** - implemented `gather_subset:` and `remote_user:`.
+  Fact gathering now honors `all`/`min`/`network`/`hardware`/`mounts`
+  and `!` negations, skipping the expensive families while always
+  keeping the minimal set. `remote_user:` at play or task scope sets the
+  connection user, surfaced as `ansible_user` exactly as real Ansible
+  does, with a task's own value overriding the play's.
+- **`0.9.579`** - per-host result lines are now printed in COMPLETION
+  order under the default `linear` strategy, as real Ansible does - the
+  host that finishes first is reported first, rather than everything
+  being held back and printed in inventory order. Each host's block is
+  still flushed atomically, so concurrent hosts still never interleave
+  mid-task; completion order costs nothing in readability.
+- **`0.9.578`** - implemented `strategy:`. `free` (and `host_pinned`,
+  which differs only in worker affinity) lets each host run the whole
+  task list with no barrier between tasks, so a fast host races ahead
+  while a slow one is still working - output interleaves exactly as real
+  Ansible's does, since that ordering is the whole observable point of
+  the strategy. An unknown strategy is now refused with real Ansible's
+  message and exit code 1, rather than silently falling back to linear.
+
 ## 🤝 Contributing
 
 Contributions welcome! Please:
