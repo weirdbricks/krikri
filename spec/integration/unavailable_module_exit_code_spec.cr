@@ -77,6 +77,53 @@ describe "unavailable module exit code" do
     status.exit_code.should eq(4)
   end
 
+  # Real Ansible only ever attempts module resolution for a task it's
+  # about to run - a task whose own when: is false never contributes to
+  # the exit code, even though the module name is still present
+  # somewhere in the playbook text. Previously this was a static
+  # whole-playbook scan (PlaybookParser.unavailable_modules) that
+  # flagged ANY unresolvable module name regardless of reachability -
+  # found via buluma.jenkins's own zypper_repository task (round 180),
+  # gated behind an OS-family branch that's false on every host this
+  # project benchmarks against (Ubuntu/RHEL-family), yet still forcing
+  # exit 4 where real Ansible exits 0/2 based on what actually ran.
+  it "does not count a module whose task's when: is false" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: uses a module that does not exist, but never runs here
+            nonexistent_module_xyz: {}
+            when: false
+          - name: later task
+            ansible.builtin.debug:
+              msg: "LATER-TASK-RAN"
+      YAML
+
+    status.exit_code.should eq(0)
+    output.should contain("LATER-TASK-RAN")
+    output.should contain("✓ Playbook execution complete")
+  end
+
+  # The counterpart: no when: at all (or a true one) still counts,
+  # exactly as before - only the false-when: case changed.
+  it "still counts a module whose task has no when: at all" do
+    status, _ = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: uses a module that does not exist
+            nonexistent_module_xyz: {}
+          - name: uses a module that does not exist, and always runs
+            other_nonexistent_module_xyz: {}
+            when: true
+      YAML
+
+    status.exit_code.should eq(4)
+  end
+
   # Guard against over-reach: a playbook using only real modules must
   # still exit 0.
   it "does not affect a playbook whose modules all exist" do

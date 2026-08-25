@@ -60,6 +60,22 @@ module CrystalPlay
     
     # Track results for recap
     getter results : Hash(String, Hash(String, Int32))
+    # Modules referenced by a task whose own when: (independent of the
+    # forced-skip #when_passes? always takes for an unavailable module)
+    # would have evaluated true for at least one host - i.e. genuinely
+    # REACHED, not merely present somewhere in the playbook text. Real
+    # Ansible only ever attempts module resolution for a task it's about
+    # to run, so a module referenced only inside a branch that's
+    # unreached on every host (`when: ansible_os_family == "Suse"` on an
+    # Ubuntu run) never contributes to its exit code - the previous
+    # whole-playbook static scan (PlaybookParser.unavailable_modules)
+    # flagged ANY unresolvable module name found anywhere in the file
+    # regardless of reachability, producing a false-positive exit 4
+    # divergence from real Ansible's own (often 0 or 2) exit code on
+    # every such role. Found via buluma.jenkins's own zypper_repository
+    # task (round 180), gated behind an OS-family branch that's false on
+    # every host this project benchmarks against (Ubuntu/RHEL-family).
+    getter reachable_unavailable_modules = Set(String).new
     # Track registered variables per host
     @registered_vars : Hash(String, Hash(String, JSON::Any))
     # Handler runner
@@ -2936,8 +2952,21 @@ module CrystalPlay
       # takes the skip path below, regardless of its own when: (or lack
       # of one) - it can never actually run, so it's treated the same as
       # a when:-false task rather than reached via real conditional
-      # evaluation.
-      unless task.unavailable_module
+      # evaluation. It's still recorded into reachable_unavailable_modules
+      # (for the final exit-code decision, see that getter's own comment)
+      # if its own when: would have let it run - a raised
+      # WhenEvaluationError (an undefined var the when: itself
+      # references) is treated conservatively as "can't tell, don't
+      # count" rather than crashing the run over this bookkeeping.
+      if module_name = task.unavailable_module
+        would_run = begin
+          when_condition = task.when_condition
+          when_condition.nil? || evaluate_when(when_condition, vars_context, host, shared)
+        rescue
+          false
+        end
+        reachable_unavailable_modules << module_name if would_run
+      else
         return true unless when_condition = task.when_condition
 
         return true if evaluate_when(when_condition, vars_context, host, shared)

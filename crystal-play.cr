@@ -446,9 +446,14 @@ begin
   # benchmarkable). The `validate` warnings below already NAME it ("uses
   # unimplemented plugin: x"), but the run still ended "Playbook
   # execution complete" with exit 0 - a green light to CI for what real
-  # ansible-playbook refuses outright with rc=4. Collected here, acted on
-  # at the end of the run (see unavailable_modules_found below).
-  unavailable_modules_found = CrystalPlay::PlaybookParser.unavailable_modules(playbook)
+  # ansible-playbook refuses outright with rc=4. Accumulated from each
+  # play's own executor (TaskExecutor#reachable_unavailable_modules)
+  # after it runs, NOT a static whole-playbook scan - see that getter's
+  # own comment for why: a module referenced only inside a branch
+  # that's unreached on every host must not count, matching real
+  # Ansible's own lazy (only-if-about-to-run) module resolution. Acted
+  # on at the end of the run, below.
+  unavailable_modules_found = Set(String).new
 
   # Show warnings
   warnings = CrystalPlay::PlaybookParser.validate(playbook)
@@ -791,6 +796,7 @@ playbook.plays.each_with_index do |play, play_index|
 
   # Run tasks
   executor.run
+  unavailable_modules_found.concat(executor.reachable_unavailable_modules)
 
   # Carry any host that hard-failed in this play forward - excluded from
   # every remaining play too, not just the rest of this one. halted_hosts
