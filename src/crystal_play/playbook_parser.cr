@@ -39,6 +39,8 @@ module CrystalPlay
     # of the log. Previously unparsed and unused, so every such task
     # printed its secret in full.
     property no_log : Bool = false
+    # Block- and task-scope `module_defaults:` - see Play#module_defaults.
+    property module_defaults : Hash(String, Hash(String, String)) = Hash(String, Hash(String, String)).new
     property when_condition : String?
     property register : String?
     property notify : Array(String)?
@@ -420,6 +422,10 @@ module CrystalPlay
     # is STRICTLY GREATER than this (verified: 1 of 3 hosts, i.e. 33.3%,
     # aborts at 33 but not at 34; 0 aborts on any failure; 100 never
     # does). Both are per serial: batch.
+    # `module_defaults:` - per-module default arguments, keyed by module
+    # name. Applies at play, block and task scope, nearest wins, and an
+    # argument the task sets itself always wins over a default.
+    property module_defaults : Hash(String, Hash(String, String)) = Hash(String, Hash(String, String)).new
     property any_errors_fatal : Bool = false
     property max_fail_percentage : Float64? = nil
 
@@ -965,6 +971,67 @@ module CrystalPlay
     end
 
     # Parse a single play
+    # Parses a `module_defaults:` mapping into {module name => {arg =>
+    # value}}. Keys are normalized to the bare module name, because real
+    # Ansible matches a short key against an FQCN task and vice versa -
+    # verified against ansible-core 2.19.4: a `debug:` key supplies
+    # defaults to an `ansible.builtin.debug:` task, and an
+    # `ansible.builtin.debug:` key to a `debug:` task.
+    #
+    # Action-group keys (`group/aws`) are skipped: this engine has no
+    # notion of action groups, and silently treating one as a module name
+    # would apply its defaults to nothing anyway.
+    def self.parse_module_defaults(yaml : YAML::Any?) : Hash(String, Hash(String, String))
+      result = Hash(String, Hash(String, String)).new
+      return result unless hash = yaml.try(&.as_h?)
+
+      hash.each do |raw_key, raw_value|
+        key = raw_key.to_s
+        next if key.starts_with?("group/")
+        next unless args = raw_value.as_h?
+
+        normalized = normalize_module_key(key)
+        entry = result[normalized] ||= Hash(String, String).new
+        args.each { |arg, value| entry[arg.to_s] = safe_yaml_to_string(value) }
+      end
+      result
+    end
+
+    def self.normalize_module_key(name : String) : String
+      name.includes?('.') ? name.split('.').last : name
+    end
+
+    # Fills each task's missing arguments from the module_defaults in
+    # scope. Runs as a post-parse pass over the whole task tree so play,
+    # block and task scope are handled in one place, with the nearest
+    # scope winning and the task's OWN arguments always winning over any
+    # default.
+    def self.apply_module_defaults(tasks : Array(Task), inherited : Hash(String, Hash(String, String))) : Nil
+      tasks.each do |task|
+        effective = inherited
+        unless task.module_defaults.empty?
+          effective = inherited.dup
+          task.module_defaults.each do |module_name, args|
+            merged = (effective[module_name]?.try(&.dup)) || Hash(String, String).new
+            args.each { |arg, value| merged[arg] = value }
+            effective[module_name] = merged
+          end
+        end
+
+        if task.block?
+          apply_module_defaults(task.block_tasks || [] of Task, effective)
+          apply_module_defaults(task.rescue_tasks || [] of Task, effective)
+          apply_module_defaults(task.always_tasks || [] of Task, effective)
+          next
+        end
+
+        next unless defaults = effective[normalize_module_key(task.module_name)]?
+        defaults.each do |arg, value|
+          task.params[arg] = value unless task.params.has_key?(arg)
+        end
+      end
+    end
+
     private def self.parse_play(yaml : YAML::Any, index : Int32, playbook_dir : String) : Play
       unless yaml.as_h?
         raise "Play must be a YAML mapping (hash)"
@@ -995,6 +1062,7 @@ module CrystalPlay
       play.gather_facts_set = !gather_facts_yaml.nil?
       play.force_handlers = parse_become_value(yaml["force_handlers"]?) || false
 
+      play.module_defaults = parse_module_defaults(yaml["module_defaults"]?)
       play.any_errors_fatal = parse_become_value(yaml["any_errors_fatal"]?) || false
       if mfp = yaml["max_fail_percentage"]?
         play.max_fail_percentage = safe_yaml_to_string(mfp).to_f?
@@ -1072,6 +1140,8 @@ module CrystalPlay
       end
 
       play.tasks = pre_tasks + role_tasks + own_tasks + post_tasks
+      apply_module_defaults(play.tasks, play.module_defaults)
+      apply_module_defaults(play.handlers, play.module_defaults)
 
       # Parse handlers
       own_handlers = [] of Task
@@ -1396,7 +1466,7 @@ module CrystalPlay
                       "with_dict", "with_fileglob", "with_first_found", "with_nested", "with_sequence",
                       "with_flattened", "with_community.general.flattened", "with_subelements", "with_indexed_items", "until", "retries", "delay",
                       "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "delegate_facts", "run_once", "connection",
-                      "async", "poll", "vars", "environment", "no_log",
+                      "async", "poll", "vars", "environment", "no_log", "module_defaults",
                       "block", "rescue", "always", "import_tasks", "include_tasks", "include_role",
                       "import_role", "meta", "include_vars"]
       # ... and the same names fully qualified, since directive() accepts
@@ -1476,6 +1546,7 @@ module CrystalPlay
       task.register = task_hash["register"]?.try { |v| safe_yaml_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
+      task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
       task.check_mode = parse_optional_bool_or_template(task_hash["check_mode"]?)
       task.diff_mode = parse_optional_bool_or_template(task_hash["diff"]?)
       task.become = resolve_become(task_hash, play)
@@ -1717,6 +1788,7 @@ module CrystalPlay
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
+      task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
 
       if tags_yaml = task_hash["tags"]?
         task.tags = tags_yaml.as_a?.try(&.map(&.as_s)) || [tags_yaml.as_s]
@@ -1863,6 +1935,7 @@ module CrystalPlay
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
+      task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
@@ -1916,6 +1989,7 @@ module CrystalPlay
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
+      task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
@@ -2018,6 +2092,7 @@ module CrystalPlay
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
+      task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user

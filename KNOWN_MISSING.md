@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.574`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.575`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -85,7 +85,7 @@ real modules regardless - see `git log`.
 
 - **Several keywords are still unimplemented and silently ignored:
   `throttle:`, `order:`, `gather_subset:`, `strategy:`,
-  `module_defaults:`, `ignore_unreachable:`, `remote_user:` (as a
+  `ignore_unreachable:`, `remote_user:` (as a
   play/task keyword - the `-u` CLI flag and `ansible_user` DO work),
   `vars_prompt:` and `debugger:`.** Found in the same scan
   that produced 0.9.571's `serial:` and 0.9.573's `any_errors_fatal:`/
@@ -102,14 +102,16 @@ real modules regardless - see `git log`.
   for. Worth implementing if a benchmark round finds a role whose
   behavior actually depends on one. The later additions to this list
   come from the same zero-implementation sweep: `strategy:` (linear vs
-  free vs host_pinned execution ordering), `module_defaults:` (per-module
-  default arguments - a real behavioral gap, worth doing next if a role
-  needs it), `ignore_unreachable:` (per-task tolerance for an
+  free vs host_pinned execution ordering), `ignore_unreachable:` (per-task tolerance for an
   unreachable host, now that 0.9.570 made unreachable a real outcome),
   `vars_prompt:` (interactive, so of little use to an automated run) and
   `debugger:` (an interactive debugger this engine has no equivalent
   of). `no_log:` was on this list until 0.9.574 - it was fixed rather
-  than documented because ignoring it LEAKS SECRETS.
+  than documented because ignoring it LEAKS SECRETS, and
+  `module_defaults:` until 0.9.575. One piece of `module_defaults:` is
+  deliberately not implemented: an ACTION GROUP key (`group/aws`) is
+  skipped rather than applied, since this engine has no notion of action
+  groups - the rest of the mapping alongside it still applies.
 
 ## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 

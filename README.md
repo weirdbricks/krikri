@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.574-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.575-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,13 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.575`** - implemented `module_defaults:`, which was parsed to
+  nothing - a task relying on it ran with the argument MISSING and
+  failed outright. Play, block and task scope all apply with the nearest
+  winning, a task's own argument always beats a default, and keys match
+  on the bare module name so a short key supplies defaults to an FQCN
+  task and vice versa. An action-group key (`group/aws`) is skipped, as
+  this engine has no action groups.
 - **`0.9.574`** - implemented `no_log:`, which was parsed to nothing.
   It is the control a playbook uses to keep a password, token or key out
   of the log, so ignoring it did not merely diverge from real Ansible -
@@ -427,16 +434,6 @@ for current-state detail.
   runs, and the run exits 4 - real Ansible's code whenever any host was
   unreachable, ahead of a failed host's 2. The recap is also now sorted
   by host name, as real Ansible prints it.
-- **`0.9.569`** - inventory host RANGES (`web[01:03]`, `n[1:3]`,
-  `h[a:c]`, `x[01:10:3]`, `srv[1:2].ex.com`) are expanded instead of
-  being taken as one literal hostname - an inventory written the
-  ordinary way previously defined a host actually named `web[01:03]` and
-  every real host in it was invisible. Also added the missing
-  `inventory_hostname_short` (which RAISED as undefined) and
-  `group_names` (which rendered empty), and fixed `groups['parent']`
-  returning [] for a `:children` group. `group_vars/` and `host_vars/`
-  loading and their whole precedence chain were verified against real
-  Ansible and already correct.
 
 ## 🤝 Contributing
 
