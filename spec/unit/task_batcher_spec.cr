@@ -23,6 +23,33 @@ describe CrystalPlay::TaskBatcher do
     groups.first.map(&.name).should eq(["a", "b", "c"])
   end
 
+  it "ends the batch after a task whose notify: is certain to abort the run" do
+    # Real Ansible aborts at the notifying task, having run nothing
+    # after it; a batch group would already have executed every
+    # remaining step in the same SSH round trip, applying side effects
+    # real Ansible never applies (verified live over SSH - round 181).
+    a = task("a")
+    b = task("b")
+    b.notify = ["no_such_handler"]
+    c = task("c")
+
+    groups = CrystalPlay::TaskBatcher.plan([a, b, c], ->(t : CrystalPlay::Task) { t.notify == ["no_such_handler"] })
+
+    groups.map(&.map(&.name)).should eq([["a", "b"], ["c"]])
+  end
+
+  it "keeps batching a notify: that can be answered - the ordinary case pays nothing" do
+    a = task("a")
+    b = task("b")
+    b.notify = ["real handler"]
+    c = task("c")
+
+    groups = CrystalPlay::TaskBatcher.plan([a, b, c], ->(_t : CrystalPlay::Task) { false })
+
+    groups.size.should eq(1)
+    groups.first.map(&.name).should eq(["a", "b", "c"])
+  end
+
   it "splits a run right before a task that references an earlier register: (bare when:)" do
     a = task("a", register: "result_a")
     b = task("b")

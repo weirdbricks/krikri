@@ -358,33 +358,35 @@ describe CrystalPlay::PlaybookParser do
     end
   end
 
-  describe "notify: static handler-name validation" do
-    # Real bug found benchmarking robertdebock.roundcubemail (round93):
-    # a role's own `notify: restart httpd` had no matching Debian
-    # handler at all - real ansible-playbook refuses to run the whole
-    # play upfront ("ERROR! The requested handler 'restart httpd' was
-    # not found..."), while this engine's own handler dispatch just
-    # silently no-op'd the unmatched notify, completing "successfully"
-    # with the intended restart never happening. Fixed with a static
-    # pre-flight check (`HandlerNotFoundError`, bypasses graceful
-    # per-play degradation the same way `RemovedActionError` does).
-    it "aborts the whole playbook parse for a bare literal notify: target with no matching handler" do
-      expect_raises(CrystalPlay::HandlerNotFoundError, /restart httpd.*was not found/) do
-        CrystalPlay::PlaybookParser.parse_string(<<-YAML
-          - hosts: all
-            tasks:
-              - name: touch a file
-                ansible.builtin.file:
-                  path: /tmp/x
-                  state: touch
-                notify: restart httpd
-            handlers:
-              - name: restart apache2
-                ansible.builtin.debug:
-                  msg: restarted
-          YAML
-        )
-      end
+  describe "notify: handler-name validation is NOT done at parse time" do
+    # An unmatched notify: is real Ansible's error only when the
+    # notifying task actually fires the notification, at RUN time -
+    # verified against ansible-core 2.19.4: a task that reports `ok`
+    # (unchanged) or is skipped by its `when:` notifies nothing and the
+    # run completes green, even with a notify: naming a handler that
+    # exists nowhere. This engine used to reject all three at PARSE
+    # time with rc=4, failing playbooks real Ansible runs fine, and
+    # simultaneously missed a bad notify inside an include_tasks:-
+    # loaded file, which no parse-time sweep can see. The check now
+    # lives in TaskExecutor#notify_handlers - see
+    # cli_spec.cr's "notify: naming a nonexistent handler" specs for the
+    # run-time behavior, and HandlerNotFoundError's own comment.
+    it "parses a bare literal notify: target with no matching handler without raising" do
+      result = CrystalPlay::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: touch a file
+              ansible.builtin.file:
+                path: /tmp/x
+                state: touch
+              notify: restart httpd
+          handlers:
+            - name: restart apache2
+              ansible.builtin.debug:
+                msg: restarted
+        YAML
+      )
+      result.plays[0].tasks.size.should eq(1)
     end
 
     it "does not raise when the notify: target matches a real handler name" do

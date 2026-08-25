@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.599`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.600`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -91,24 +91,6 @@ real modules regardless - see `git log`.
   half-offered: an unknown command says so instead of appearing to work.
   Triggering (always/never/on_failed/on_skipped/on_unreachable), the
   prompt text, redo, and the exit codes all match real Ansible.
-
-- **`notify:` naming a handler that exists nowhere is caught at PARSE
-  time here, so a notify inside an `include_tasks:`-loaded file is never
-  checked at all.** Real Ansible checks at RUN time, when the notifying
-  task actually fires, and aborts the play ("The requested handler
-  'restart apache' was not found in either the main handlers list nor in
-  the listening handlers list"). A statically-visible bad notify IS
-  caught here (exit 4, verified live against real ansible-core 2.19.4 -
-  the two differ only in exit code and timing, 4-at-parse vs
-  2-at-runtime). What is missed is a bad notify reached only through
-  dynamic inclusion: `buluma.phpmyadmin`'s own `setup-Debian.yml`
-  (loaded via `include_tasks:`) notifies `restart apache`, a handler no
-  role in its dependency chain defines - real Ansible aborts the run
-  there, this engine runs the role to completion. Found round 181
-  re-verifying the round-180 templating gap. Fixing it means deferring
-  notify validation to run time (or re-validating each dynamically
-  included file as it loads) rather than the current whole-playbook
-  parse-time sweep.
 
 ## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 

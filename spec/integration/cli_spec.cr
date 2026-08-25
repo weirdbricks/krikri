@@ -25,6 +25,13 @@ Spec.before_suite do
   raise "build.sh failed while preparing integration specs" unless status.success?
 end
 
+private def write_notify_playbook(name : String, body : String) : String
+  Dir.mkdir_p(File.join(PROJECT_ROOT, "spec", "tmp"))
+  path = File.join(PROJECT_ROOT, "spec", "tmp", name)
+  File.write(path, body)
+  path
+end
+
 private def run_playbook(
   fixture : String,
   mode_args : Array(String) = ["--check"],
@@ -1296,6 +1303,222 @@ describe "crystal-ansible CLI (--check mode)" do
     status.success?.should be_true
     output.should contain("SUCCESS")
     output.should_not contain("should never print")
+  end
+
+  # Real Ansible aborts the run at the notifying task, prints one
+  # "[ERROR]: The requested handler ... was not found in either the main
+  # handlers list nor in the listening handlers list" line and exits 1
+  # with no PLAY RECAP - but ONLY when the notification actually fires.
+  # Every expectation here was verified against real ansible-core 2.19.4
+  # running the equivalent playbook, including the exit codes.
+  describe "notify: naming a nonexistent handler" do
+    it "aborts the run with rc=1 when a CHANGED task notifies it" do
+      write_notify_playbook("notify_missing_changed.yml", <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          tasks:
+            - name: changes and notifies a missing handler
+              ansible.builtin.command: echo hi
+              notify: no_such_handler
+            - name: after
+              ansible.builtin.debug:
+                msg: should never be reached
+          handlers:
+            - name: real handler
+              ansible.builtin.debug:
+                msg: h
+        YAML
+
+      status, output = run_playbook(
+        File.join("..", "spec", "tmp", "notify_missing_changed.yml"),
+        mode_args: [] of String,
+        inventory: EXPLICIT_LOCALHOST_INVENTORY,
+      )
+
+      status.exit_code.should eq(1)
+      output.should contain("The requested handler 'no_such_handler' was not found in either the main handlers list nor in the listening handlers list")
+      output.should_not contain("should never be reached")
+      output.should_not contain("PLAY RECAP")
+    end
+
+    it "does not abort when the notifying task is unchanged - real Ansible notifies nothing" do
+      write_notify_playbook("notify_missing_unchanged.yml", <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          tasks:
+            - name: does not change but notifies a missing handler
+              ansible.builtin.debug:
+                msg: nochange
+              notify: no_such_handler
+            - name: after
+              ansible.builtin.debug:
+                msg: reached
+          handlers:
+            - name: real handler
+              ansible.builtin.debug:
+                msg: h
+        YAML
+
+      status, output = run_playbook(
+        File.join("..", "spec", "tmp", "notify_missing_unchanged.yml"),
+        mode_args: [] of String,
+        inventory: EXPLICIT_LOCALHOST_INVENTORY,
+      )
+
+      status.exit_code.should eq(0)
+      output.should contain("reached")
+      output.should_not contain("was not found in either")
+    end
+
+    it "does not abort when the notifying task is skipped by its when:" do
+      write_notify_playbook("notify_missing_skipped.yml", <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          tasks:
+            - name: skipped, notifies a missing handler
+              ansible.builtin.command: echo hi
+              when: false
+              notify: no_such_handler
+            - name: after
+              ansible.builtin.debug:
+                msg: reached
+          handlers:
+            - name: real handler
+              ansible.builtin.debug:
+                msg: h
+        YAML
+
+      status, output = run_playbook(
+        File.join("..", "spec", "tmp", "notify_missing_skipped.yml"),
+        mode_args: [] of String,
+        inventory: EXPLICIT_LOCALHOST_INVENTORY,
+      )
+
+      status.exit_code.should eq(0)
+      output.should contain("reached")
+      output.should_not contain("was not found in either")
+    end
+
+    it "catches a bad notify inside an include_tasks:-loaded file, which no parse-time sweep can see" do
+      # The buluma.phpmyadmin shape (round 181): setup-Debian.yml is
+      # pulled in via include_tasks: and notifies `restart apache`, a
+      # handler nothing in the role's dependency chain defines. Must not
+      # be swallowed into a per-task "Failed to load included tasks"
+      # failure either - real Ansible aborts the whole run.
+      write_notify_playbook("notify_missing_inner.yml", <<-YAML)
+        - name: inner changes and notifies a missing handler
+          ansible.builtin.command: echo hi
+          notify: restart apache
+        YAML
+
+      write_notify_playbook("notify_missing_include.yml", <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          tasks:
+            - name: include it
+              ansible.builtin.include_tasks: notify_missing_inner.yml
+            - name: after
+              ansible.builtin.debug:
+                msg: should never be reached
+          handlers:
+            - name: Restart httpd
+              ansible.builtin.debug:
+                msg: h
+        YAML
+
+      status, output = run_playbook(
+        File.join("..", "spec", "tmp", "notify_missing_include.yml"),
+        mode_args: [] of String,
+        inventory: EXPLICIT_LOCALHOST_INVENTORY,
+      )
+
+      status.exit_code.should eq(1)
+      output.should contain("The requested handler 'restart apache' was not found")
+      output.should_not contain("Failed to load included tasks")
+      output.should_not contain("should never be reached")
+    end
+
+    it "accepts a notify: that matches a handler's listen: topic" do
+      write_notify_playbook("notify_listen_topic.yml", <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          tasks:
+            - name: notify a listen topic
+              ansible.builtin.command: echo hi
+              notify: webserver restarted
+          handlers:
+            - name: restart httpd
+              listen: webserver restarted
+              ansible.builtin.debug:
+                msg: h
+        YAML
+
+      status, output = run_playbook(
+        File.join("..", "spec", "tmp", "notify_listen_topic.yml"),
+        mode_args: [] of String,
+        inventory: EXPLICIT_LOCALHOST_INVENTORY,
+      )
+
+      status.exit_code.should eq(0)
+      output.should_not contain("was not found in either")
+    end
+
+    it "accepts a notify: whose matching handler's own name: is a template" do
+      write_notify_playbook("notify_templated_handler.yml", <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          vars:
+            svc: httpd
+          tasks:
+            - name: notify the rendered name
+              ansible.builtin.command: echo hi
+              notify: "Restart httpd"
+          handlers:
+            - name: "Restart {{ svc }}"
+              ansible.builtin.debug:
+                msg: h
+        YAML
+
+      status, output = run_playbook(
+        File.join("..", "spec", "tmp", "notify_templated_handler.yml"),
+        mode_args: [] of String,
+        inventory: EXPLICIT_LOCALHOST_INVENTORY,
+      )
+
+      status.exit_code.should eq(0)
+      output.should_not contain("was not found in either")
+    end
+
+    it "accepts the role-qualified '<qualifier> : <name>' notify: form" do
+      write_notify_playbook("notify_role_qualified.yml", <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          tasks:
+            - name: notify role-qualified
+              ansible.builtin.command: echo hi
+              notify: "some_role : restart httpd"
+          handlers:
+            - name: restart httpd
+              ansible.builtin.debug:
+                msg: h
+        YAML
+
+      status, output = run_playbook(
+        File.join("..", "spec", "tmp", "notify_role_qualified.yml"),
+        mode_args: [] of String,
+        inventory: EXPLICIT_LOCALHOST_INVENTORY,
+      )
+
+      status.exit_code.should eq(0)
+      output.should_not contain("was not found in either")
+    end
   end
 
   it "exits non-zero and reports the error for an invalid playbook" do

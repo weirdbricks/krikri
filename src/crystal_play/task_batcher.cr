@@ -23,7 +23,17 @@ module CrystalPlay
     # separately for each nested list you also want grouped) into
     # consecutive runs, preserving order. Every task in *tasks* appears
     # in exactly one returned group.
-    def self.plan(tasks : Array(Task)) : Array(Array(Task))
+    # *aborts_on_notify* (supplied by TaskExecutor, which owns the play's
+    # handler list) answers "if this task fires its notify:, will the run
+    # abort with HandlerNotFoundError?" - real Ansible stops right there,
+    # having run nothing after it, while a batch group would already have
+    # executed every remaining step in the same SSH round trip, applying
+    # real side effects on the target that real Ansible never applies.
+    # Such a task therefore ENDS its group (it may still run batched with
+    # what precedes it - the abort happens after it, not before). Only a
+    # notify: that is CERTAIN to abort breaks the run, so an ordinary
+    # playbook loses no batching at all.
+    def self.plan(tasks : Array(Task), aborts_on_notify : Proc(Task, Bool)? = nil) : Array(Array(Task))
       groups = [] of Array(Task)
       current = [] of Task
       # Compiled once per register name, when it's added below - not
@@ -48,6 +58,12 @@ module CrystalPlay
         flush.call if references_register?(task, seen_registers)
 
         current << task
+
+        if aborts_on_notify && aborts_on_notify.call(task)
+          flush.call
+          next
+        end
+
         if (reg = task.register) && !reg.empty?
           seen_registers[reg] = /\b#{Regex.escape(reg)}\b/
         end

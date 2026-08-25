@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.599-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.600-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -384,6 +384,19 @@ A short rolling summary of the last few versions - see `git log` for the
 complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
+
+- **`0.9.600`** - `notify:` validation moved from parse time to run
+  time, where real Ansible does it. An unmatched `notify:` is real
+  Ansible's error only when the notifying task actually fires the
+  notification: a task that reports `ok` (unchanged) or is skipped by
+  its `when:` notifies nothing and the run completes green. This engine
+  rejected all three upfront with rc=4 - failing playbooks real Ansible
+  runs fine - while simultaneously MISSING a bad notify inside an
+  `include_tasks:`-loaded file, which no parse-time sweep can see. It
+  now aborts at the notifying task with real Ansible's own message and
+  rc=1, and the task batcher ends its SSH batch there so the steps
+  after it never run, matching what real Ansible actually executes on
+  the target.
 
 - **`0.9.599`** - closes the last "Real gaps" entry in
   [KNOWN_MISSING.md](KNOWN_MISSING.md), plus a second bug the live

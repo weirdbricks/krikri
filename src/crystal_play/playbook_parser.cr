@@ -719,21 +719,32 @@ module CrystalPlay
   class StaticImportUndefinedError < Exception
   end
 
-  # Real Ansible statically validates every `notify:` target against the
-  # play's own handler names/`listen:` topics BEFORE running a single
-  # task, and refuses to run the play at all if one doesn't resolve
-  # ("ERROR! The requested handler '...' was not found") - not a
-  # per-task runtime skip. This engine's own handler dispatch
-  # (`HandlerRunner#should_run_handler?`) already silently no-ops an
-  # unmatched notify: - correct AT RUN TIME for a genuinely templated or
-  # role-qualified name it can't resolve until then, but for a bare
-  # LITERAL name real Ansible would have already rejected outright, so
-  # the role's own bug (a typo'd/stale `notify:` target) went completely
-  # unnoticed instead of aborting the run. Found via robertdebock.
-  # roundcubemail (round93): `notify: restart httpd` had no matching
-  # Debian handler at all - real Ansible refuses to run; this engine
-  # ran the whole role "successfully" with apache's new vhost never
-  # activated.
+  # Raised at RUN time - from `TaskExecutor#notify_handlers`, at the
+  # moment a task actually notifies - when the notified name matches no
+  # handler's name and no handler's `listen:` topic. Real Ansible aborts
+  # the whole run there and then ("ERROR! The requested handler '...'
+  # was not found in either the main handlers list nor in the listening
+  # handlers list", rc=1, no PLAY RECAP printed), rather than silently
+  # no-opping the notification the way this engine's handler dispatch
+  # (`HandlerRunner#should_run_handler?`) otherwise does - which let a
+  # role's own typo'd/stale `notify:` target go completely unnoticed
+  # (robertdebock.roundcubemail, round93: `notify: restart httpd` with
+  # no matching Debian handler, the whole role "succeeding" with
+  # apache's new vhost never activated).
+  #
+  # This used to be a PARSE-time sweep over every literal notify: name
+  # in the play, which is not where real Ansible checks: verified
+  # against ansible-core 2.19.4, a notify: naming a nonexistent handler
+  # is an error ONLY if the notifying task actually fires the
+  # notification - a task that reports `ok` (unchanged), or is skipped
+  # by its `when:`, notifies nothing and the run completes green. The
+  # parse-time version aborted all three cases with rc=4, failing
+  # playbooks real Ansible runs fine, and simultaneously MISSED a bad
+  # notify inside an `include_tasks:`-loaded file, which no parse-time
+  # sweep can see at all (buluma.phpmyadmin's own setup-Debian.yml,
+  # round 181: `notify: restart apache`, a handler nothing in its
+  # dependency chain defines - real Ansible aborts, this engine ran the
+  # role to completion).
   class HandlerNotFoundError < Exception
   end
 
@@ -1282,42 +1293,7 @@ module CrystalPlay
       end
       play.handlers = role_handlers + own_handlers
 
-      validate_notify_targets(play)
-
       play
-    end
-
-    # Static "does every literal notify: target resolve to a real
-    # handler" check - see `HandlerNotFoundError`'s own comment for the
-    # full rationale. Deliberately conservative: skips any notify: name
-    # that's templated (`{{`) or role-qualified (`" : "`-shaped, real
-    # Ansible's own auto-namespacing form for role-loaded handlers,
-    # replicated at RUN time by `HandlerRunner#should_run_handler?` -
-    # not worth re-deriving the exact qualifier here just to validate
-    # it early) - only a bare literal name real Ansible could ALSO have
-    # validated statically is checked, so this never false-positives on
-    # a name that's legitimately only resolvable once real values/role
-    # context are known.
-    private def self.validate_notify_targets(play : Play) : Nil
-      handler_names = Set(String).new
-      flatten_tasks(play.handlers).each do |handler|
-        handler_names << handler.name unless handler.name.includes?("{{")
-        if listen_topic = handler.listen
-          handler_names << listen_topic unless listen_topic.includes?("{{")
-        end
-      end
-
-      flatten_tasks(play.tasks).each do |task|
-        next unless notify_list = task.notify
-        notify_list.each do |notify_name|
-          next if notify_name.includes?("{{") || notify_name.includes?(" : ")
-          unless handler_names.includes?(notify_name)
-            raise HandlerNotFoundError.new(
-              "The requested handler '#{notify_name}' was not found in any of the search paths for play '#{play.name}'."
-            )
-          end
-        end
-      end
     end
 
     # Parse a list of task-shaped YAML nodes, skipping (with a warning) any

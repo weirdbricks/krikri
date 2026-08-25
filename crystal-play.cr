@@ -795,7 +795,15 @@ playbook.plays.each_with_index do |play, play_index|
   )
 
   # Run tasks
-  executor.run
+  begin
+    executor.run
+  rescue ex : CrystalPlay::HandlerNotFoundError
+    # Real Ansible aborts the whole run at the notifying task, prints
+    # this one line, and exits 1 with NO play recap (verified against
+    # ansible-core 2.19.4) - see HandlerNotFoundError's own comment.
+    puts "[ERROR]: #{ex.message}".colorize(:red)
+    exit 1
+  end
   unavailable_modules_found.concat(executor.reachable_unavailable_modules)
 
   # Carry any host that hard-failed in this play forward - excluded from

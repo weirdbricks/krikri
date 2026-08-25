@@ -883,6 +883,14 @@ module CrystalPlay
           puts ""
 
           run_task_batch(included_tasks, group_hosts)
+        rescue ex : HandlerNotFoundError
+          # A notify: naming a nonexistent handler aborts the whole run
+          # (real Ansible's own behavior) - it must not be swallowed
+          # into a per-task "Failed to load included tasks" failure just
+          # because the notifying task came from an included file. This
+          # is the one path that made the pre-0.9.600 parse-time check
+          # miss the case entirely.
+          raise ex
         rescue ex
           group_hosts.each { |host| fail_include(task, host, "Failed to load included tasks: #{ex.message}") }
         end
@@ -1330,7 +1338,10 @@ module CrystalPlay
       return if notify_list.empty?
 
       unless notify_list.any?(&.includes?("{{"))
-        notify_list.each { |handler_name| @handler_runner.notify(host, handler_name) }
+        notify_list.each do |handler_name|
+          raise_unless_handler_exists(handler_name, task, host)
+          @handler_runner.notify(host, handler_name)
+        end
         return
       end
 
@@ -1338,8 +1349,108 @@ module CrystalPlay
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       notify_list.each do |handler_name|
         rendered = handler_name.includes?("{{") ? (substitutor.substitute(handler_name) rescue handler_name) : handler_name
+        raise_unless_handler_exists(rendered, task, host)
         @handler_runner.notify(host, rendered)
       end
+    end
+
+    # Batching-only, deliberately narrower than #handler_answers_to?:
+    # true ONLY when this task's notify: is CERTAIN to abort the run - a
+    # literal (untemplated) name that no handler's literal name or
+    # listen: topic answers to, with no templated handler name/topic in
+    # the play that might still turn out to match at flush time. Anything
+    # uncertain answers false and keeps its batching, so the ordinary
+    # case pays nothing. See TaskBatcher.plan's *aborts_on_notify*
+    # comment for why the batch has to end here.
+    private def certainly_aborts_on_notify?(task : Task) : Bool
+      notify_list = task.notify
+      return false unless notify_list && !notify_list.empty?
+
+      handlers = @handler_runner.handlers
+      answerable = Set(String).new
+      handlers.each do |handler|
+        return false if handler.name.includes?("{{")
+        answerable << handler.name
+        if listen_topic = handler.listen
+          return false if listen_topic.includes?("{{")
+          answerable << listen_topic
+        end
+      end
+
+      notify_list.any? do |notify_name|
+        next false if notify_name.includes?("{{")
+        bare_name = (idx = notify_name.rindex(" : ")) ? notify_name[(idx + 3)..] : notify_name
+        !answerable.includes?(notify_name) && !answerable.includes?(bare_name)
+      end
+    end
+
+    # Real Ansible aborts the run the moment a task notifies a name no
+    # handler answers to - see `HandlerNotFoundError`'s own comment for
+    # why this lives here (run time, only for a notification actually
+    # fired) rather than in a parse-time sweep, and for exactly what
+    # real ansible-core 2.19.4 does in each case.
+    #
+    # The "does anything answer to this name" test deliberately mirrors
+    # `HandlerRunner#should_run_handler?` rather than re-deriving its
+    # own rules: whatever that method would MATCH must not be rejected
+    # here, or a notification this engine can genuinely dispatch would
+    # abort the run instead. That includes the role-qualified
+    # "<qualifier> : <name>" form (matched on the bare name after the
+    # last " : ") and a handler whose own `name:`/`listen:` is itself a
+    # template - the latter is rendered against this task's own vars
+    # context before comparing, and, failing that, treated as a
+    # possible match rather than a miss, since its real per-host value
+    # is not known until the flush.
+    private def raise_unless_handler_exists(notify_name : String, task : Task, host : Host) : Nil
+      return if handler_answers_to?(notify_name, task, host)
+
+      raise HandlerNotFoundError.new(
+        "The requested handler '#{notify_name}' was not found in either the main handlers list nor in the listening handlers list"
+      )
+    end
+
+    private def handler_answers_to?(notify_name : String, task : Task, host : Host) : Bool
+      bare_name = (idx = notify_name.rindex(" : ")) ? notify_name[(idx + 3)..] : notify_name
+
+      templated = false
+      @handler_runner.handlers.each do |handler|
+        candidates = [handler.name]
+        if listen_topic = handler.listen
+          candidates << listen_topic
+        end
+
+        candidates.each do |candidate|
+          if candidate.includes?("{{")
+            templated = true
+            next
+          end
+          return true if candidate == notify_name || candidate == bare_name
+        end
+      end
+
+      return false unless templated
+
+      # Only pay for rendering when a raw comparison already missed AND
+      # some handler name/topic is a template.
+      substitutor = VarSubstitutor.new(vars: build_vars_context(task, host), host_name: host.name)
+      @handler_runner.handlers.each do |handler|
+        candidates = [handler.name]
+        if listen_topic = handler.listen
+          candidates << listen_topic
+        end
+
+        candidates.each do |candidate|
+          next unless candidate.includes?("{{")
+          rendered = (substitutor.substitute(candidate) rescue nil)
+          # An unrenderable handler name is treated as a possible match,
+          # not a miss - its real value depends on vars this task's own
+          # context may not carry.
+          return true if rendered.nil? || rendered.includes?("{{")
+          return true if rendered == notify_name || rendered == bare_name
+        end
+      end
+
+      false
     end
 
     # Build the base variable context (play/host/registered/task vars + facts)
@@ -3087,7 +3198,7 @@ module CrystalPlay
       return if @grouped_lists.includes?(key)
       @grouped_lists << key
 
-      TaskBatcher.plan(tasks).each do |group|
+      TaskBatcher.plan(tasks, ->certainly_aborts_on_notify?(Task)).each do |group|
         next if group.size < 2
         group.each { |member| @task_group[member] = group }
       end
@@ -4743,6 +4854,9 @@ module CrystalPlay
       propagate_role_context(task, included_tasks)
 
       run_task_list(included_tasks, host)
+    rescue ex : HandlerNotFoundError
+      # Same as the batched include path above - see there.
+      raise ex
     rescue ex
       fail_include(task, host, "Failed to load included tasks: #{ex.message}")
     end
