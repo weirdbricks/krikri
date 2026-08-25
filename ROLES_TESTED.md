@@ -8,6 +8,67 @@ or already-clean roles as if they were new.
 
 | Role | Status |
 |---|---|
+| weareinteractive.ntp | ✅ Fixed and verified (rounds 177/179, 0.9.589). Cold run initially diverged (`rc=2` real ansible vs `rc=4` crystal-ansible) because crystal-ansible's SSH transport hit an Atlantic.net IP reused from an earlier role in the same batch, with a DIFFERENT host key still in `known_hosts` - it hardcoded `StrictHostKeyChecking=accept-new` (refuses a CHANGED key) regardless of `ANSIBLE_HOST_KEY_CHECKING`, while real ansible's `host_key_checking=False` uses `StrictHostKeyChecking=no` (accepts a changed key too, verified in ansible-core's own `ssh.py`). Fixed to honor `ANSIBLE_HOST_KEY_CHECKING`/`ANSIBLE_SSH_HOST_KEY_CHECKING`. |
+| weareinteractive.sftp | ✅ Fixed (round 178, 0.9.590), not re-verified live. Its own `meta/main.yml` depends on `franklinkim.ssh`, a role no longer published anywhere - real ansible refuses the whole run immediately with `rc=1` ("the role ... was not found"); crystal-ansible fell through to its generic parser-error `rc=4`. Fixed with a dedicated `RoleNotFoundError` (also covers a play-level missing `roles:` entry, same rc=1); confirmed against a local repro matching this exact failure shape and message. |
+| weareinteractive.php5_redis | ⚠️ Same underlying cause as `weareinteractive.sftp` (its own dependency chain needs `franklinkim.php5`/`franklinkim.redis`, both gone from Galaxy) - covered by the same `RoleNotFoundError` fix, not independently re-verified. |
+| weareinteractive.openssl | ✅ Fixed and verified (round 179, 0.9.591). Cold run initially diverged: crystal-ansible's own "Including variables" (`with_first_found` over paths referencing `ansible_distribution_release`) failed `'ansible_distribution_release' is undefined` on Rocky 9.6, while real ansible resolved it fine - `facts.cr` only set this fact when `/etc/os-release` had `VERSION_CODENAME` (true for Ubuntu/Debian, never set on RHEL-family), leaving it fully undefined instead of real Ansible's guaranteed `""` fallback. Fixed; re-verified live - both engines now reach the identical `ok=2 changed=0 failed=1` recap (both fail installing `python-openssl`, unavailable on Rocky 9.6). Residual `rc=4` vs `2` is the pre-existing, deliberately out-of-scope `community.crypto` gap (`openssl_privatekey`/`openssl_csr`/`openssl_certificate`), not a new issue. |
+| weareinteractive.cron | ⚠️ Round 177: recap matches (`ok=5 changed=0 skipped=3` both), but crystal-ansible exits 4 ("unavailable modules: cronvar") while real ansible (which has the module resolvable) exits 0 - the role's own "Configuring cron variables" task is unreachable on this host (no `cron_vars` items defined) on both engines. Same documented class as round 175's `apache2_module` gap - a genuinely unimplemented plugin (`ansible.builtin.cronvar`), not a logic bug. Not implemented this round. |
+| weareinteractive.docker | ⚠️ Round 177: recap matches exactly (`ok=3 changed=2 failed=1 skipped=7` both - both fail identically on `docker-ce` unavailable, no repo added for this OS on either engine), but crystal-ansible exits 4 ("unavailable modules: zypper") vs real ansible's 2 - same documented missing-plugin class; `zypper` is SUSE-only and out of this project's Ubuntu/RHEL scope. |
+| weareinteractive.vsftpd | ⚠️ Round 178: blocked by the pre-existing, deliberately out-of-scope `community.crypto` gap (`openssl_privatekey`/`openssl_csr`/`openssl_certificate`) - not a new issue. |
+| weareinteractive.users_oh_my_zsh | ⚠️ Round 178: NOT a clean comparison - this batch's harness was missing `ANSIBLE_ALLOW_BROKEN_CONDITIONALS=true` (a regression from the round172+ template lineage, restored starting round 179's batch), so real ansible failed early on an unrelated strict-conditional check in its own `weareinteractive.users` dependency while crystal-ansible (lenient here) continued further and hit a second, genuinely new finding: the legacy free-form `action: "{{ ansible_pkg_mgr }} pkg=... state=present"` task syntax (module name templated inside the string) isn't parsed at all - crystal-ansible treats the literal key `action` itself as an unresolvable module name. Real 2015-era syntax, likely too niche to prioritize; needs a from-scratch comparison with the harness fix in place before treating the conditional-strictness side as settled. |
+| mrlesmithjr.blocky | ⚠️ Round 178: recap matches (`ok`/`changed`/`failed` identical), but crystal-ansible exits 4 ("unavailable modules: community.docker.docker_compose_v2") vs real ansible's 2 - same documented missing-plugin class as `apache2_module`/`cronvar`/`zypper` above. |
+| mrlesmithjr.consul | ⚠️ Round 179: both engines ultimately refuse via `community.general.clustering.consul.consul_acl` (a submodule not part of the base `community.general` install even for the real-ansible comparison side) - real ansible refuses at PARSE time (rc=4, zero tasks run), crystal-ansible runs the whole play first (`ok=12 changed=5 failed=1`, ~80s) and only then reports the same rc=4. This is the pre-existing, deliberately-scoped "WHICH TASKS RUN differs, not the exit status" gap already documented for role-private custom modules - generalizes to any unresolvable module, not a new issue. |
+| mrlesmithjr.apache2 | ✅ Clean (round 178). Byte-identical `rc=0` cold and idempotent warm rerun on both, Rocky 9.6. |
+| mrlesmithjr.avahi | ✅ Clean (round 178). Byte-identical `rc=0` cold and idempotent warm rerun on both. |
+| mrlesmithjr.bind | ✅ Clean (round 178). Byte-identical `rc=0` cold and idempotent warm rerun on both. |
+| mrlesmithjr.bootstrap | ⚠️ Round 179: identical `rc=1` both engines - role has no RHEL/Rocky-compatible task path (Debian/Ubuntu-only), fails identically. |
+| mrlesmithjr.bootstrap_python | ✅ Clean (round 179). Matching `rc=2` both cold/warm (role hits a real, identical package-availability issue on Rocky 9.6). |
+| mrlesmithjr.change_hostname | ✅ Clean (round 179). Byte-identical `rc=0` cold and idempotent warm rerun on both. |
+| mrlesmithjr.cloud_init | ✅ Clean (round 179). Byte-identical `rc=0` cold and idempotent warm rerun on both. |
+| mrlesmithjr.cockpit | ✅ Clean (round 179). Byte-identical `rc=0` cold and idempotent warm rerun on both (real `cockpit` web console installed and enabled). |
+| mrlesmithjr.conntrackd | ⚠️ Round 179: identical `rc=1` both engines - Debian/Ubuntu-only role, no RHEL path. |
+| mrlesmithjr.dnsmasq | ✅ Clean (round 179). Byte-identical `rc=0` cold and idempotent warm rerun on both. |
+| mrlesmithjr.docker | ✅ Clean (round 179). Matching `rc=2` both cold/warm (real, identical package-availability failure on Rocky 9.6). |
+| mrlesmithjr.domain_join | ⚠️ Round 179: identical `rc=1` both engines - Debian/Ubuntu-only role. |
+| mrlesmithjr.elasticsearch | ✅ Clean (round 179). Matching `rc=2` both cold/warm (real, identical failure). |
+| mrlesmithjr.elk_kibana | ⚠️ Round 179: identical `rc=1` both engines - Debian/Ubuntu-only role. |
+| mrlesmithjr.etc_hosts | ✅ Clean (round 179). Matching `rc=2` both cold/warm. |
+| mrlesmithjr.etcd | ✅ Clean (round 179). Matching `rc=2` both cold/warm. |
+| mrlesmithjr.frr | ✅ Clean (round 179). Matching non-idempotency on BOTH engines identically - cold `rc=2` both, warm `rc=0` both (role converges to success only on rerun, same on both). |
+| mrlesmithjr.gitlab_runner | ✅ Clean (round 179). Byte-identical `rc=0` cold and idempotent warm rerun on both. |
+| mrlesmithjr.glusterfs | ✅ Clean (round 179). Matching `rc=2` both cold/warm. |
+| mrlesmithjr.grafana | ✅ Clean (round 179). Byte-identical `rc=0` cold and idempotent warm rerun on both (real Grafana installed and running). |
+| mrlesmithjr.haproxy | ✅ Clean (round 179). Byte-identical `rc=0` cold and idempotent warm rerun on both. |
+| mrlesmithjr.influxdb | ✅ Clean (round 179). Matching `rc=2` both cold/warm. |
+| weareinteractive.apache2 | ⚠️ Round 177: identical `rc=1` both engines - legacy bare `include:` (removed from ansible-core after 2023-05-16), correctly refused by both since the 0.9.588 fix. |
+| weareinteractive.composer | ⚠️ Round 177: identical `rc=1` both engines - same legacy `include:` refusal. |
+| weareinteractive.cron | see divergent entry above |
+| weareinteractive.docker_compose | ✅ Clean (round 177). Byte-identical `rc=0` cold and idempotent warm rerun on both. |
+| weareinteractive.environment | ✅ Clean (round 177). Byte-identical `rc=0` cold and idempotent warm rerun on both. |
+| weareinteractive.fail2ban | ⚠️ Round 177: identical `rc=1` both engines - legacy `include:` refusal. |
+| weareinteractive.files | ⚠️ Round 177: identical `rc=1` both engines - legacy `include:` refusal. |
+| weareinteractive.git | ✅ Clean (round 177). Byte-identical `rc=0` cold and idempotent warm rerun on both. |
+| weareinteractive.hosts | ✅ Clean (round 177). Byte-identical `rc=0` cold and idempotent warm rerun on both. |
+| weareinteractive.htpasswd | ✅ Clean (round 177). Matching `rc=2` both cold/warm (real, identical failure). |
+| weareinteractive.login | ⚠️ Round 177: identical `rc=1` both engines - legacy `include:` refusal. |
+| weareinteractive.logrotate | ⚠️ Round 177: identical `rc=1` both engines - legacy `include:` refusal. |
+| weareinteractive.mongodb | ✅ Clean (round 177). Matching `rc=2` both cold/warm. |
+| weareinteractive.newrelic | ✅ Clean (round 177). Matching `rc=2` both cold/warm (needs a real New Relic license key, absent on both). |
+| weareinteractive.nodejs | ✅ Clean (round 177). Matching `rc=2` both cold/warm. |
+| weareinteractive.php5 | ✅ Clean (round 179). Matching `rc=2` both cold/warm. |
+| weareinteractive.php5_newrelic | ⚠️ Round 179: identical `rc=1` both engines - legacy `include:` refusal. |
+| weareinteractive.pm2 | ✅ Clean (round 178). Matching `rc=2` both cold/warm. |
+| weareinteractive.postfix | ⚠️ Round 178: identical `rc=1` both engines - legacy `include:` refusal. |
+| weareinteractive.sealion | ⚠️ Round 178: identical `rc=1` both engines - legacy `include:` refusal. |
+| weareinteractive.ssh | ✅ Clean (round 178). Matching `rc=2` both cold/warm. |
+| weareinteractive.ssmtp | ⚠️ Round 178: identical `rc=1` both engines - legacy `include:` refusal. |
+| weareinteractive.sudo | ✅ Clean (round 178). Byte-identical `rc=0` cold and idempotent warm rerun on both (13.2x warm speedup). |
+| weareinteractive.swap | ⚠️ Round 178: identical `rc=1` both engines - legacy `include:` refusal. |
+| weareinteractive.timezone | ⚠️ Round 178: identical `rc=1` both engines - legacy `include:` refusal. |
+| weareinteractive.ufw | ✅ Clean (round 178). Matching `rc=2` both cold/warm. |
+| weareinteractive.unison | ⚠️ Round 178: identical `rc=1` both engines - legacy `include:` refusal. |
+| weareinteractive.users_git | ✅ Clean (round 178). Matching `rc=2` both cold/warm. |
+| weareinteractive.vim | ⚠️ Round 178: identical `rc=1` both engines - legacy `include:` refusal. |
 | geerlingguy.selenium | ✅ Fixed and verified (round 176, 0.9.588). Cold run initially diverged: real ansible correctly failed "Install Chrome (if configured, RedHat)" with a GPG-signature error (`google-chrome-stable` RPM installed straight from a URL, no key imported) while crystal-ansible's `yum:`/`dnf:`/`package:` plugins installed it anyway - dnf's own actual default for `localpkg_gpgcheck` is OFF (verified against real ansible-core's own `dnf.py`: `conf.localpkg_gpgcheck = not disable_gpg_check`, which the module always sets explicitly regardless of dnf.conf). Fixed by always passing `--setopt=localpkg_gpgcheck=1` (or `--nogpgcheck` when `disable_gpg_check: true`) in `yum.cr`/`dnf.cr`/`package.cr`. Re-verified live on a fresh Rocky 9.6 pair - both engines now fail identically with the same GPG error, cold and warm. |
 | geerlingguy.packer_rhel | ⚠️ Round 176: identical failure both engines - `kernel-devel-5.14.0-570.25.1.el9_6.x86_64` not available in any enabled repo on this Rocky 9.6 image. Externally environmental, not a crystal-ansible bug. |
 | geerlingguy.ansible | ⚠️ Round 176: identical failure both engines - no `ansible` package in any enabled repo (needs EPEL or similar, not configured by the role itself). Externally environmental, not a crystal-ansible bug. |

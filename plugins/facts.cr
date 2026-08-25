@@ -168,9 +168,19 @@ def gather_os_facts(facts)
       facts["ansible_distribution_major_version"] = major
     end
     
-    if release = os_info["VERSION_CODENAME"]?
-      facts["ansible_distribution_release"] = release
-    end
+    # Real Ansible's DistributionFactCollector always sets this fact,
+    # falling back to "" when the OS has no release codename at all
+    # (RHEL-family /etc/os-release ships no VERSION_CODENAME, unlike
+    # Ubuntu/Debian) - never leaves it genuinely undefined. Previously
+    # this key was skipped entirely on RHEL-family hosts, so any
+    # templated reference (e.g. a `with_first_found:` candidate like
+    # "{{ ansible_distribution | lower }}/{{ ansible_distribution_
+    # release }}.yml") raised "'ansible_distribution_release' is
+    # undefined" instead of just rendering an empty path segment that
+    # (correctly) fails to match any file and falls through to the next
+    # candidate. Found benchmarking weareinteractive.openssl (round
+    # 179) on Rocky 9.6.
+    facts["ansible_distribution_release"] = os_info["VERSION_CODENAME"]? || ""
   end
 
   facts["ansible_pkg_mgr"] = detect_pkg_mgr

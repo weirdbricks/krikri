@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.588`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.591`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -125,6 +125,34 @@ real modules regardless - see `git log`.
   verify `a2enmod`/`a2dismod` invocation and idempotency
   (`apache2ctl -M` mtime-check semantics) against actual behavior
   before shipping it.
+- More of the same "genuinely unimplemented plugin, referenced only in
+  a task this platform never actually reaches" class as
+  `community.general.apache2_module` above, found sweeping 60 new
+  roles (rounds 177-179) - same root cause each time (this engine's
+  eager parse-time module check counts a reference regardless of a
+  gating `when:`, matching real Ansible's own behavior, but the local
+  comparison side happens to have the collection installed and never
+  hits the check): `ansible.builtin.cronvar` (`weareinteractive.cron`
+  - a real core module, unlike the others here; worth implementing if
+  it recurs, modest scope, similar spirit to `lineinfile`/`cron.cr`),
+  `zypper` (`weareinteractive.docker` - SUSE-only, out of this
+  project's Ubuntu/RHEL scope, not planned),
+  `community.docker.docker_compose_v2` (`mrlesmithjr.blocky`),
+  `community.general.clustering.consul.consul_acl`
+  (`mrlesmithjr.consul` - also demonstrates the "WHICH TASKS RUN
+  differs" side of this same gap: real Ansible refuses at parse time
+  with zero tasks run, this engine runs the whole play first, ~80s of
+  real work, before reporting the same rc=4 - already covered by the
+  role-private-custom-modules entry below, not distinct).
+- The legacy free-form `action: "<templated module name> key=val ..."`
+  task syntax (module name and args packed into one string, with the
+  module name itself resolved from a runtime variable like `{{
+  ansible_pkg_mgr }}`) isn't parsed at all - this engine treats the
+  literal YAML key `action` as the module name itself, reporting
+  `unavailable modules: action`. Pre-2.4-era idiom, found in
+  `weareinteractive.users_oh_my_zsh` (round 178). Not implemented -
+  real-world usage of this exact form is rare and every modern role
+  uses `ansible.builtin.<module>:` directly instead.
 - Role-private custom modules (a role's own `library/*.py`, outside the
   `ansible.builtin`/`community.*`/etc. plugin set this engine ships as
   native binaries) - there's no generic arbitrary-Python-module runner,
