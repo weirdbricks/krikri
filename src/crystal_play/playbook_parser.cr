@@ -137,6 +137,13 @@ module CrystalPlay
     # any downstream `results[index]` lookup. Found via robertdebock.
     # mount's own "Create mountpoint" task.
     property index_var : String?
+    # loop_control.label - what the per-item result line shows instead of
+    # the raw item, e.g. `label: "{{ item.name }}"` to keep a big dict
+    # out of the output.
+    property loop_label : String?
+    # loop_control.extended - exposes the `ansible_loop` dict (index,
+    # first/last, allitems, nextitem/previtem, ...) for the iteration.
+    property loop_extended : Bool = false
     # until: / retries: / delay: - retry a task until a condition passes.
     property until_condition : String?
     property retries : Int32
@@ -1800,6 +1807,8 @@ module CrystalPlay
       if loop_control = task_hash["loop_control"]?.try(&.as_h?)
         task.loop_var = loop_control["loop_var"]?.try(&.as_s?)
         task.index_var = loop_control["index_var"]?.try(&.as_s?)
+        task.loop_label = loop_control["label"]?.try(&.as_s?)
+        task.loop_extended = parse_become_value(loop_control["extended"]?) || false
       end
 
       # Parse until / retries / delay
@@ -1959,6 +1968,8 @@ module CrystalPlay
       if loop_control = task_hash["loop_control"]?.try(&.as_h?)
         task.loop_var = loop_control["loop_var"]?.try(&.as_s?)
         task.index_var = loop_control["index_var"]?.try(&.as_s?)
+        task.loop_label = loop_control["label"]?.try(&.as_s?)
+        task.loop_extended = parse_become_value(loop_control["extended"]?) || false
       end
 
       task
@@ -2174,6 +2185,8 @@ module CrystalPlay
       if loop_control = task_hash["loop_control"]?.try(&.as_h?)
         task.loop_var = loop_control["loop_var"]?.try(&.as_s?)
         task.index_var = loop_control["index_var"]?.try(&.as_s?)
+        task.loop_label = loop_control["label"]?.try(&.as_s?)
+        task.loop_extended = parse_become_value(loop_control["extended"]?) || false
       end
 
       task
@@ -2234,6 +2247,8 @@ module CrystalPlay
       if loop_control = task_hash["loop_control"]?.try(&.as_h?)
         task.loop_var = loop_control["loop_var"]?.try(&.as_s?)
         task.index_var = loop_control["index_var"]?.try(&.as_s?)
+        task.loop_label = loop_control["label"]?.try(&.as_s?)
+        task.loop_extended = parse_become_value(loop_control["extended"]?) || false
       end
 
       task

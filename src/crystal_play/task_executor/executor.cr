@@ -2131,9 +2131,10 @@ module CrystalPlay
         executed = false
         failed = false
         rendered_items = loop_items.map { |item| deep_render_item(item, vars_context, host.name) }
-        rendered_items.each do |item|
+        rendered_items.each_with_index do |item, loop_index|
           item_context = vars_context.dup
           item_context["item"] = item
+          item_context["ansible_loop"] = ansible_loop_vars(rendered_items, loop_index) if task.loop_extended
           # loop_control: { loop_var: some_name } exposes the item under
           # a CUSTOM name instead of (real Ansible: in addition to) the
           # default "item" - previously ignored entirely here, always
@@ -3854,6 +3855,7 @@ module CrystalPlay
                          vars_context["item"] = item
                          vars_context[loop_var] = item if loop_var
                          vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
+                         vars_context["ansible_loop"] = ansible_loop_vars(loop_items, idx.to_i) if task.loop_extended
 
                          # A task-level vars: that references `item`
                          # (linux-system-roles/kernel_settings' own
@@ -3919,7 +3921,7 @@ module CrystalPlay
                          item_exec_host = task.delegate_to ? resolve_delegate_host(task, host, vars_context) : exec_host
                          fact_hosts[idx] = item_exec_host if task.delegate_facts && task.delegate_to
 
-                         result = execute_task_once(task, host, vars_context, item_label: item_display(item), exec_host: item_exec_host, defer_loop_stats: true)
+                         result = execute_task_once(task, host, vars_context, item_label: item_label_for(task, item, vars_context, host), exec_host: item_exec_host, defer_loop_stats: true)
                          if result && (facts = result["ansible_facts"]?) && (facts_hash = facts.as_h?)
                            facts_hash.each { |key, value| running_vars_context[key] = value }
                          end
@@ -3992,6 +3994,7 @@ module CrystalPlay
         vars_context["item"] = item
         vars_context[loop_var] = item if loop_var
         vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
+        vars_context["ansible_loop"] = ansible_loop_vars(loop_items, idx) if task.loop_extended
         item_contexts[idx] = vars_context
 
         # Per item, not per call: each iteration builds its own context
@@ -4000,7 +4003,7 @@ module CrystalPlay
         item_substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
         begin
-          next unless when_passes?(task, vars_context, host, item_label: item_display(item), shared: item_substitutor, defer_stats: true)
+          next unless when_passes?(task, vars_context, host, item_label: item_label_for(task, item, vars_context, host), shared: item_substitutor, defer_stats: true)
         rescue ex : WhenEvaluationError
           # Same rationale as execute_task_once's own identical rescue -
           # a real failed result here (not a silent skip) lets
@@ -4066,7 +4069,16 @@ module CrystalPlay
         any_changed ||= changed
         any_failed ||= failed
 
-        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item), ignore_errors: task.ignore_errors, no_log: task.no_log)
+        # loop_control.label renders against this item, so it needs a
+        # context carrying it - this method is handed only the results.
+        label_context = build_vars_context(task, host)
+        label_context["item"] = item
+        if loop_var = task.loop_var
+          label_context[loop_var] = item
+        end
+        label_context["ansible_loop"] = ansible_loop_vars(loop_items, idx) if task.loop_extended
+
+        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_label_for(task, item, label_context, host), ignore_errors: task.ignore_errors, no_log: task.no_log)
 
         result_hash = result.as_h.dup
         result_hash["item"] = item
@@ -4122,6 +4134,37 @@ module CrystalPlay
     end
 
     # Render a loop item for display purposes (Ansible shows `(item=...)`).
+    # loop_control.extended - real Ansible's `ansible_loop` dict for the
+    # current iteration. Keys and semantics verified against ansible-core
+    # 2.19.4 over a 3-item loop: index is 1-based, revindex counts down
+    # from length, and nextitem/previtem are ABSENT (not null) at the
+    # ends, so `| default(...)` is what a playbook uses there.
+    private def ansible_loop_vars(items : Array(JSON::Any), idx : Int32) : JSON::Any
+      entry = Hash(String, JSON::Any).new
+      entry["index"] = JSON::Any.new((idx + 1).to_i64)
+      entry["index0"] = JSON::Any.new(idx.to_i64)
+      entry["revindex"] = JSON::Any.new((items.size - idx).to_i64)
+      entry["revindex0"] = JSON::Any.new((items.size - idx - 1).to_i64)
+      entry["first"] = JSON::Any.new(idx == 0)
+      entry["last"] = JSON::Any.new(idx == items.size - 1)
+      entry["length"] = JSON::Any.new(items.size.to_i64)
+      entry["allitems"] = JSON::Any.new(items)
+      entry["nextitem"] = items[idx + 1] if idx + 1 < items.size
+      entry["previtem"] = items[idx - 1] if idx > 0
+      JSON::Any.new(entry)
+    end
+
+    # loop_control.label - what the per-item line shows instead of the
+    # raw item. Rendered against that item's own context, so it can name
+    # a field of the item.
+    private def item_label_for(task : Task, item : JSON::Any, vars_context : Hash(String, JSON::Any), host : Host) : String
+      if label = task.loop_label
+        rendered = VarSubstitutor.new(vars: vars_context, host_name: host.name).substitute(label) rescue nil
+        return rendered if rendered
+      end
+      item_display(item)
+    end
+
     private def item_display(item : JSON::Any) : String
       item.raw.is_a?(String) ? item.as_s : item.to_json
     end

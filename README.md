@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.584-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.585-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,13 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.585`** - implemented `loop_control:`'s `label:` and
+  `extended:`. `label:` was ignored, so a loop over dicts printed the
+  whole dict on every line instead of the field the playbook chose;
+  `extended:` left `ansible_loop` undefined, which FAILED any task using
+  it. `ansible_loop` now carries index/index0/revindex/revindex0/first/
+  last/length/allitems, with nextitem and previtem ABSENT at the ends as
+  real Ansible leaves them.
 - **`0.9.584`** - implemented `debugger:`. All five triggers
   (always/never/on_failed/on_skipped/on_unreachable) fire as real
   Ansible's do, with its prompt text, its `p`/`r`/`c`/`q` commands, and
@@ -402,18 +409,6 @@ for current-state detail.
   Ansible defers to the point of USE, so a playbook carrying a
   prod-only vault var runs fine on a dev box until something references
   it.
-- **`0.9.580`** - implemented `gather_subset:` and `remote_user:`.
-  Fact gathering now honors `all`/`min`/`network`/`hardware`/`mounts`
-  and `!` negations, skipping the expensive families while always
-  keeping the minimal set. `remote_user:` at play or task scope sets the
-  connection user, surfaced as `ansible_user` exactly as real Ansible
-  does, with a task's own value overriding the play's.
-- **`0.9.579`** - per-host result lines are now printed in COMPLETION
-  order under the default `linear` strategy, as real Ansible does - the
-  host that finishes first is reported first, rather than everything
-  being held back and printed in inventory order. Each host's block is
-  still flushed atomically, so concurrent hosts still never interleave
-  mid-task; completion order costs nothing in readability.
 
 ## 🤝 Contributing
 
