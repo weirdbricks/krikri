@@ -50,6 +50,8 @@ module CrystalPlay
     property throttle : Int32 = 0
     # `remote_user:` at task scope - see Play#remote_user.
     property remote_user : String? = nil
+    # `debugger:` at task scope - see Play#debugger.
+    property debugger : String? = nil
     # Block- and task-scope `module_defaults:` - see Play#module_defaults.
     property module_defaults : Hash(String, Hash(String, String)) = Hash(String, Hash(String, String)).new
     property when_condition : String?
@@ -457,6 +459,9 @@ module CrystalPlay
     # `remote_user:` at play scope - the connection user, i.e. what
     # `ansible_user` would say. A task's own remote_user: wins over it.
     property remote_user : String? = nil
+    # `debugger:` at play scope - always/never/on_failed/on_skipped/
+    # on_unreachable. A task's own debugger: wins.
+    property debugger : String? = nil
     # `vars_prompt:` - name/prompt/private/default per entry, asked
     # before the play runs.
     property vars_prompt : Array(Hash(String, String)) = [] of Hash(String, String)
@@ -1127,6 +1132,7 @@ module CrystalPlay
 
       play.order = yaml["order"]?.try { |value| safe_yaml_to_string(value).strip }
       play.remote_user = yaml["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
+      play.debugger = yaml["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
 
       # vars_prompt: each entry is a mapping with at least a name; the
       # rest (prompt, private, default) are optional.
@@ -1560,7 +1566,7 @@ module CrystalPlay
                       "with_dict", "with_fileglob", "with_first_found", "with_nested", "with_sequence",
                       "with_flattened", "with_community.general.flattened", "with_subelements", "with_indexed_items", "until", "retries", "delay",
                       "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "delegate_facts", "run_once", "connection",
-                      "async", "poll", "vars", "environment", "no_log", "module_defaults", "ignore_unreachable", "throttle", "remote_user",
+                      "async", "poll", "vars", "environment", "no_log", "module_defaults", "ignore_unreachable", "throttle", "remote_user", "debugger",
                       "block", "rescue", "always", "import_tasks", "include_tasks", "include_role",
                       "import_role", "meta", "include_vars"]
       # ... and the same names fully qualified, since directive() accepts
@@ -1643,6 +1649,7 @@ module CrystalPlay
       task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
       task.throttle = task_hash["throttle"]?.try { |value| safe_yaml_to_string(value).to_i? } || 0
       task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
+      task.debugger = task_hash["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
       task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
       task.check_mode = parse_optional_bool_or_template(task_hash["check_mode"]?)
       task.diff_mode = parse_optional_bool_or_template(task_hash["diff"]?)
@@ -1888,6 +1895,7 @@ module CrystalPlay
       task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
       task.throttle = task_hash["throttle"]?.try { |value| safe_yaml_to_string(value).to_i? } || 0
       task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
+      task.debugger = task_hash["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
       task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
 
       if tags_yaml = task_hash["tags"]?
@@ -2038,6 +2046,7 @@ module CrystalPlay
       task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
       task.throttle = task_hash["throttle"]?.try { |value| safe_yaml_to_string(value).to_i? } || 0
       task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
+      task.debugger = task_hash["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
       task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
@@ -2095,6 +2104,7 @@ module CrystalPlay
       task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
       task.throttle = task_hash["throttle"]?.try { |value| safe_yaml_to_string(value).to_i? } || 0
       task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
+      task.debugger = task_hash["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
       task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
@@ -2201,6 +2211,7 @@ module CrystalPlay
       task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
       task.throttle = task_hash["throttle"]?.try { |value| safe_yaml_to_string(value).to_i? } || 0
       task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
+      task.debugger = task_hash["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
       task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)

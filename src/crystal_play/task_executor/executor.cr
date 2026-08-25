@@ -20,6 +20,8 @@ require "random/secure"
 
 require "../cli_options"
 
+require "../task_debugger"
+
 module CrystalPlay
   # `ansible_version` - a real Ansible magic var (`{full, major, minor,
   # revision, string}`) giving the CONTROLLER's ansible-core version, used
@@ -305,7 +307,9 @@ module CrystalPlay
       # does the actual family filtering.
       @gather_subset = [] of String,
       # See Play#remote_user.
-      @remote_user : String? = nil
+      @remote_user : String? = nil,
+      # See Play#debugger.
+      @debugger : String? = nil
     )
       @results = Hash(String, Hash(String, Int32)).new
       @registered_vars = Hash(String, Hash(String, JSON::Any)).new
@@ -640,7 +644,7 @@ module CrystalPlay
           puts "*" * 70
         end
 
-        if @forks > 1 && task_forkable?(task) && active_hosts.size > 1 && task.throttle != 1
+        if @forks > 1 && task_forkable?(task) && active_hosts.size > 1 && task.throttle != 1 && (task.debugger || @debugger).nil?
           run_task_for_hosts_in_parallel(task, active_hosts)
         else
           active_hosts.each { |host| execute_task(task, host) }
@@ -3727,7 +3731,31 @@ module CrystalPlay
     # combination redirects it to the delegate target instead (real
     # Ansible's own documented meaning); register:/display/stats always
     # stay attributed to `host` regardless.
+    # Whether *task* on *host* should drop into the debugger, and the
+    # loop that does. Returns the (possibly re-run) result.
+    private def debug_if_requested(task : Task, host : Host, result : JSON::Any) : JSON::Any
+      setting = task.debugger || @debugger
+      return result unless TaskDebugger.triggered?(setting, result)
+
+      current = result
+      loop do
+        case TaskDebugger.run(render_task_name_for_display(task, host), host.name, current,
+             build_vars_context(task, host))
+        in TaskDebugger::Outcome::Continue
+          return current
+        in TaskDebugger::Outcome::Redo
+          # `r` re-runs the task and re-evaluates the trigger against the
+          # new result, so a still-failing task prompts again - which is
+          # the point of being able to fix something and retry.
+          rerun = execute_task_once(task, host, build_vars_context(task, host))
+          current = rerun if rerun
+          return current unless TaskDebugger.triggered?(setting, current)
+        end
+      end
+    end
+
     private def finish_single_task(task : Task, host : Host, result : JSON::Any, fact_host : Host = host)
+      result = debug_if_requested(task, host, result)
       merge_ansible_facts(fact_host, result)
 
       if register_name = task.register

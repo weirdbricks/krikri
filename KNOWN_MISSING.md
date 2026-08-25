@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.583`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.584`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -81,37 +81,16 @@ real modules regardless - see `git log`.
   Revisit if a real role is found branching on a derivative's display
   name.
 
-- **Several keywords are still unimplemented and silently ignored:
-  `debugger:`.** Found in the same scan
-  that produced 0.9.571's `serial:` and 0.9.573's `any_errors_fatal:`/
-  `max_fail_percentage:` - those two were fixed because ignoring them
-  changes whether a bad rollout STOPS. The remaining three do not:
-  `throttle:` caps how many hosts run a task at once (a performance and
-  load control - this engine already serializes far more than real
-  Ansible does by default), `order:` picks the host ordering
-  (inventory/sorted/reverse_sorted/shuffle - affects sequence, not
-  outcome), and `gather_subset:` narrows which facts are collected (a
-  gathering-time optimization; this engine gathers a fixed set). Each is
-  accepted and ignored rather than rejected, so a playbook using one
-  still runs - it simply does not get the ordering/limiting it asked
-  for. Worth implementing if a benchmark round finds a role whose
-  behavior actually depends on one. The later additions to this list
-  come from the same zero-implementation sweep: `ignore_unreachable:` (per-task tolerance for an
-  unreachable host, now that 0.9.570 made unreachable a real outcome),
-  `vars_prompt:` (interactive, so of little use to an automated run) and
-  `debugger:` (an interactive debugger this engine has no equivalent
-  of). `no_log:` was on this list until 0.9.574 - it was fixed rather
-  than documented because ignoring it LEAKS SECRETS, and
-  `module_defaults:` until 0.9.575 - including its ACTION GROUP keys
-  (`group/aws`) in 0.9.576, which read each installed collection's own
-  `meta/runtime.yml` exactly as real Ansible does. One residual
-  difference there follows from this engine's flat module namespace
-  (FQCN and short names are the same module, by design): real Ansible
-  scopes a group's members to the collection that defined them, so
-  `group/some.coll.grp` containing `debug` applies to
-  `some.coll.debug` and NOT to `ansible.builtin.debug`, while here it
-  applies to `debug`. There is no separate `some.coll.debug` module in
-  this engine for it to mean anything else.
+- **`debugger:` is implemented for the commands that do not need a live
+  Python task object (0.9.584): `p`/`print`, `r`/`redo`, `c`/`continue`,
+  `q`/`quit`, and EOF-as-interrupt.** Real Ansible's debugger also lets
+  you ASSIGN from the prompt - `task.args['x'] = 'y'`,
+  `task_vars['z'] = 1` - and then redo with the modified values. That
+  needs evaluating arbitrary Python against the live task object, which
+  this engine has no equivalent of, so it is not offered rather than
+  half-offered: an unknown command says so instead of appearing to work.
+  Triggering (always/never/on_failed/on_skipped/on_unreachable), the
+  prompt text, redo, and the exit codes all match real Ansible.
 
 ## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 

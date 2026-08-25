@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.583-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.584-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,13 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.584`** - implemented `debugger:`. All five triggers
+  (always/never/on_failed/on_skipped/on_unreachable) fire as real
+  Ansible's do, with its prompt text, its `p`/`r`/`c`/`q` commands, and
+  its exit codes - including EOF on stdin being an interrupt (99) rather
+  than the ordinary failed-task 2. Assigning to task args from the
+  prompt needs a live Python task object and is documented as not
+  offered, rather than half-offered.
 - **`0.9.583`** - implemented `vars_prompt:` and made `--vault-id` real.
   Prompts are asked only on a terminal, exactly as real Ansible does -
   piped or closed stdin falls back to the entry's `default:` (and to the
@@ -407,13 +414,6 @@ for current-state detail.
   being held back and printed in inventory order. Each host's block is
   still flushed atomically, so concurrent hosts still never interleave
   mid-task; completion order costs nothing in readability.
-- **`0.9.578`** - implemented `strategy:`. `free` (and `host_pinned`,
-  which differs only in worker affinity) lets each host run the whole
-  task list with no barrier between tasks, so a fast host races ahead
-  while a slow one is still working - output interleaves exactly as real
-  Ansible's does, since that ordering is the whole observable point of
-  the strategy. An unknown strategy is now refused with real Ansible's
-  message and exit code 1, rather than silently falling back to linear.
 
 ## 🤝 Contributing
 

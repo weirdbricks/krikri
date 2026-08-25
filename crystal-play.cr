@@ -762,7 +762,8 @@ playbook.plays.each_with_index do |play, play_index|
     unreachable_hosts: unreachable_hosts,
     strategy: play.strategy,
     gather_subset: play.gather_subset,
-    remote_user: play.remote_user
+    remote_user: play.remote_user,
+    debugger: play.debugger
   )
 
   # Run tasks
