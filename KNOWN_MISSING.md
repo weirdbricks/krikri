@@ -92,6 +92,43 @@ real modules regardless - see `git log`.
   Triggering (always/never/on_failed/on_skipped/on_unreachable), the
   prompt text, redo, and the exit codes all match real Ansible.
 
+- **A role default computed from ANOTHER, genuinely-never-set variable
+  (`phpmyadmin_mysql_password: "{{ mysql_root_password }}"`, buluma.
+  phpmyadmin's own defaults/main.yml, `mysql_root_password` supplied by
+  neither the role nor this benchmark's playbook) silently renders as
+  the literal string `"undefined"` wherever it's used, instead of
+  failing the task the way real Ansible does (`'mysql_root_password' is
+  undefined`).** Found round 180 (60-role Ubuntu marathon): real
+  ansible correctly fails the role's "Add default username and password
+  for MySQL connection" task; crystal-ansible instead writes the
+  literal text `undefined` into phpMyAdmin's config as the MySQL
+  password and continues, reaching (and then separately failing on) a
+  later `apache.service`-not-found task real ansible never got to.
+  Root cause, traced to a specific line: `CrinjaRenderer.
+  rerender_nested_templates` (crinja_renderer.cr) calls `substitutor.
+  substitute(raw)` to recursively re-render a variable's own `{{ }}`-
+  shaped stored value - when that inner render ALSO bottoms out at a
+  variable with no entry anywhere, `VarSubstitutor#substitute`'s
+  lenient by-design fallback (used everywhere, including inside
+  `default()` filter support and ordinary `{{ var }}` template
+  substitution for a ordinarily-just-unset variable, where returning a
+  placeholder rather than raising is correct/needed) returns the
+  literal text `"undefined"` rather than a value `rerender_nested_
+  templates` can recognize as "still didn't resolve" - so it gets
+  baked permanently into the Crinja value for `phpmyadmin_mysql_
+  password` as if it were real, legitimate content. NOT fixed this
+  round: the fix needs a way to distinguish "genuinely-unset variable,
+  lenient fallback is correct" from "this recursive-re-templating chain
+  specifically should raise, matching real Ansible" without an
+  ambiguous sentinel *string* doing double duty for both - likely a
+  real `Undefined`-carrying return type threaded through `VarSubstitutor#
+  substitute`'s callers, which touches how role defaults, `default()`,
+  and `is defined`/`is undefined` all currently rely on the existing
+  lenient text-placeholder behavior. Revisit as a dedicated
+  investigation, not a quick patch - the existing lenient design is
+  relied on broadly enough that a narrow one-line fix risks silently
+  breaking other things this same engine already gets right.
+
 ## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 
 - Cloud provider modules (`amazon.aws`/`community.aws` - `ec2_instance`,
