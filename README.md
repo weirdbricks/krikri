@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.592-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.596-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,24 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.593`-`0.9.596`** - four fixes from a 60-role Ubuntu marathon:
+  a huge (5934-line) template crashed the whole `template:` task with a
+  PCRE2 JIT-stack overflow, from two rewrite regexes whose lazy
+  quantifiers could cross newlines and, on a file with sparse/unmatched
+  brace/quote characters, backtracked across nearly the whole file
+  looking for a match; a dotted-path lookup (`item.1.stdout`, pulling
+  the 2nd element out of a `with_indexed_items:` pair) only supported
+  Hash key lookup, not numeric indexing into an Array; `with_dict:` over
+  an empty list (a common "override me" default shape) returned nil for
+  the whole loop instead of treating it as an empty dict, running the
+  task once with `item` undefined instead of skipping it like real
+  Ansible; the `ansible_lsb` fact (`/etc/lsb-release`) was entirely
+  unimplemented, breaking a PPA apt-repo template's codename lookup. Also
+  fixed the "unavailable modules" exit-code check itself: it used to be
+  a static whole-playbook scan that flagged a module even inside a
+  branch unreachable on every host in the run (e.g. an OS-family-gated
+  task) - now only counts a module if its task's own `when:` would
+  actually have let it run, matching real Ansible's lazy resolution.
 - **`0.9.592`** - `until:`/`when:`/`failed_when:`-style Jinja "is" tests now
   recognize `successful`/`failure`/`change`/`skip` (real Ansible's own
   aliases for `success`/`failed`/`changed`/`skipped`), in both the
@@ -421,13 +439,6 @@ for current-state detail.
   Found benchmarking `buluma.selinux`: its own container-guard
   (`when: ansible_connection not in [...]`) hard-failed with
   `'ansible_connection' is undefined` on a plain SSH host.
-- **`0.9.586`** - a handler notifying a handler defined EARLIER than it
-  was silently dropped. Handlers run in definition order, so such a
-  notification arrives after its target has already been passed; real
-  Ansible makes exactly one further pass for those, and this now does
-  too - including the corners that pin the rule: a self-notifying
-  handler runs exactly twice, a backward chain C->B->A stops at B, and a
-  handler notified from AHEAD still runs only once.
 - **`0.9.585`** - implemented `loop_control:`'s `label:` and
   `extended:`. `label:` was ignored, so a loop over dicts printed the
   whole dict on every line instead of the field the playbook chose;
