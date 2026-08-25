@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.591-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.592-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,15 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.592`** - `until:`/`when:`/`failed_when:`-style Jinja "is" tests now
+  recognize `successful`/`failure`/`change`/`skip` (real Ansible's own
+  aliases for `success`/`failed`/`changed`/`skipped`), in both the
+  hand-rolled `ConditionalEvaluator` and Crinja. `until: result is
+  successful` - a very common retry idiom - previously matched nothing,
+  so the retry loop always ran its full default 3 attempts regardless of
+  the first attempt's real success; by the final (now-idempotent) attempt
+  the task's own result silently overwrote a genuine `changed: true` with
+  `changed: false`. Found benchmarking `mrlesmithjr.motd`'s `apt:` task.
 - **`0.9.589`-`0.9.591`** - three fixes from a 60-role RHEL marathon:
   SSH transport now honors `ANSIBLE_HOST_KEY_CHECKING`/
   `ANSIBLE_SSH_HOST_KEY_CHECKING` (previously hardcoded
@@ -426,25 +435,6 @@ for current-state detail.
   it. `ansible_loop` now carries index/index0/revindex/revindex0/first/
   last/length/allitems, with nextitem and previtem ABSENT at the ends as
   real Ansible leaves them.
-- **`0.9.584`** - implemented `debugger:`. All five triggers
-  (always/never/on_failed/on_skipped/on_unreachable) fire as real
-  Ansible's do, with its prompt text, its `p`/`r`/`c`/`q` commands, and
-  its exit codes - including EOF on stdin being an interrupt (99) rather
-  than the ordinary failed-task 2. Assigning to task args from the
-  prompt needs a live Python task object and is documented as not
-  offered, rather than half-offered.
-
-- **`0.9.583`** - implemented `vars_prompt:` and made `--vault-id` real.
-  Prompts are asked only on a terminal, exactly as real Ansible does -
-  piped or closed stdin falls back to the entry's `default:` (and to the
-  literal string `None` when there is none, a Python quirk this
-  reproduces). `--vault-id label@source` now supplies several vault
-  identities, picking the one a 1.2 header names and trying the rest
-  after. An undecryptable value is no longer fatal at parse time: real
-  Ansible defers to the point of USE, so a playbook carrying a
-  prod-only vault var runs fine on a dev box until something references
-  it.
-
 ## 🤝 Contributing
 
 Contributions welcome! Please:

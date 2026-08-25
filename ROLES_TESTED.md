@@ -734,6 +734,27 @@ or already-clean roles as if they were new.
 | buluma.spamassassin | ✅ Clean (round 172, Rocky 9.6). Byte-identical `ok=11 changed=7 skipped=1` cold, idempotent warm rerun. |
 | buluma.storage | ✅ Clean (round 172, Rocky 9.6). Byte-identical `ok=4 changed=1 skipped=31` cold, idempotent warm rerun. |
 
+| mrlesmithjr.base | ✅ Clean (round 180, Ubuntu 22.04). Byte-identical `ok=`/`changed=` cold, idempotent warm rerun on both engines. |
+| mrlesmithjr.cacti | ⚠️ Same-fail on both engines (round 180, Ubuntu 22.04) - identical `rc=1`, 0 tasks run (role's own `tasks/main.yml` uses the removed `include:` action). |
+| mrlesmithjr.drbd | ⚠️ Same-fail on both engines (round 180, Ubuntu 22.04) - identical `rc=2` cold and warm (real, identical package/environment failure). |
+| mrlesmithjr.elkstack | ✅ Clean (round 180, Ubuntu 22.04). Byte-identical `rc=0` cold and idempotent warm rerun on both. |
+| mrlesmithjr.gerrit | ⚠️ Same-fail on both engines (round 180, Ubuntu 22.04) - identical `rc=1`, legacy `include:` refusal. |
+| mrlesmithjr.gitlab_ce | ⚠️ Same-fail on both engines (round 180, Ubuntu 22.04) - identical `rc=1`, legacy `include:` refusal. |
+| mrlesmithjr.graphite | ⚠️ Same-fail on both engines (round 180, Ubuntu 22.04) - identical `rc=1`, legacy `include:` refusal. |
+| mrlesmithjr.guacamole | ✅ Clean (round 180, Ubuntu 22.04). Byte-identical `rc=0` cold, idempotent warm rerun (real Guacamole stack installed) on both. |
+| mrlesmithjr.ipset | ⚠️ Same-fail on both engines (round 180, Ubuntu 22.04) - identical `rc=1`, legacy `include:` refusal. |
+| mrlesmithjr.iptables | ⚠️ Same-fail on both engines (round 180, Ubuntu 22.04) - identical `rc=1`, legacy `include:` refusal. |
+| mrlesmithjr.isc_dhcp | ⚠️ Same-fail on both engines (round 180, Ubuntu 22.04) - identical `rc=1`, legacy `include:` refusal. |
+| mrlesmithjr.jekyll | ⚠️ Same-fail on both engines (round 180, Ubuntu 22.04) - identical `rc=1`, legacy `include:` refusal. |
+| mrlesmithjr.kafka | ⚠️ Same-fail on both engines (round 180, Ubuntu 22.04) - identical `rc=1`, legacy `include:` refusal. |
+| mrlesmithjr.keepalived | ⚠️ Same-fail on both engines (round 180, Ubuntu 22.04) - identical `rc=2` cold and warm (real, identical environment failure). |
+| mrlesmithjr.kvm | ✅ Clean (round 180, Ubuntu 22.04). Byte-identical `rc=0` cold, idempotent warm rerun on both (nested-virt-less host, role still converges identically on both engines). |
+| mrlesmithjr.lighttpd | ✅ Fixed and verified (round 180, 0.9.592). Cold run initially diverged on the role's `debian | Installing Pre-Reqs` apt task (`until: result is successful`): real ansible reported `changed` (genuinely installed a package), crystal-ansible reported `ok`/"already installed" - root cause was crystal-ansible's `until:`/`is successful` Jinja test being entirely unrecognized by both expression evaluators, so the retry loop always ran its full default 3 attempts regardless of the first attempt's real success; by the 3rd (now-idempotent) attempt the package was already installed, and that attempt's `changed: false` result is what got registered. Fixed by adding `successful`/`failure`/`change`/`skip` test-name aliases to both `ConditionalEvaluator` and the Crinja test registrations (matching real Ansible's `TestModule.tests`), ordered so a longer alias (`successful`) is checked before any name that's merely its own prefix (`success`) - the same substring-prefix trap already documented for `link_exists`/`link`. Live-reverified clean on the same throwaway host: cold now correctly reports `changed`, warm rerun correctly reports `ok`. Also matches the role's own cold-fails/warm-succeeds non-idempotency shape identically on both engines pre-fix (`rc=2` cold / `rc=0` warm), unrelated to the apt bug. |
+| mrlesmithjr.mariadb_mysql | ⚠️ Same-fail on both engines (round 180, Ubuntu 22.04) - identical `rc=2` cold and warm (real, identical package-availability failure). |
+| mrlesmithjr.mdadm | ✅ Clean (round 180, Ubuntu 22.04). Byte-identical `rc=0` cold, idempotent warm rerun on both. |
+| mrlesmithjr.memcached | ⚠️ Same-fail on both engines (round 180, Ubuntu 22.04) - identical `rc=1`, legacy `include:` refusal. |
+| mrlesmithjr.motd | ✅ Fixed and verified (round 180, 0.9.592) - see `mrlesmithjr.lighttpd` above for the shared root cause (`until: result is successful`); this is the role that originally surfaced the bug (`debian | Installing Pre-Reqs` apt task installing `dnsutils`). Re-verified clean after the fix: cold `changed=4` matches real ansible exactly, warm rerun `changed=0` idempotent on both. |
+
 **Legend:** ✅ Clean = engine matches real `ansible-playbook` (idempotent,
 healthy services, config parity) as of the last time it was run. ⚠️ = engine
 itself is fine, but the role hit an external/environmental blocker partway

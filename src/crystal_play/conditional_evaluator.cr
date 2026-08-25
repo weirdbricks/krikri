@@ -315,9 +315,29 @@ module CrystalPlay
       # completely fresh host where "Check Vault installation" had
       # genuinely failed and left `.stdout` empty, producing a bogus
       # "-version" command with no vault binary in it at all.
-      # "succeeded"/"success" are the same test - real Ansible provides
-      # both spellings.
-      {"failed", "succeeded", "success", "changed", "skipped"}.each do |test_name|
+      # "succeeded"/"success"/"successful" are the same test - real
+      # Ansible's own TestModule.tests maps all three (plus "failure",
+      # "change", "skip" short aliases) to the same underlying checks.
+      # "successful" specifically was missing here even though it's the
+      # exact spelling `until: result is successful` uses (found via
+      # mrlesmithjr.motd's "debian | Installing Pre-Reqs" apt task,
+      # round180): falling through with no matching test_name left the
+      # `until:` retry loop's own `ConditionalEvaluator.evaluate` call
+      # never seeing a recognized test, so it looped the full default 3
+      # retries regardless of the first attempt's real success - the
+      # package install genuinely succeeded (changed: true) on attempt
+      # 1, but retries 2/3 re-ran the now-idempotent apt task and their
+      # `changed: false` "already installed" result was what actually
+      # got registered/reported, silently losing the real changed status.
+      # Ordered so a longer name is checked before any other name that's
+      # merely its own prefix ("successful"/"success", "changed"/"change",
+      # "skipped"/"skip") - same `includes?`+`gsub` substring-prefix trap
+      # as "link_exists" vs "link" above: checking "success" first would
+      # match inside "result is successful" too (`" is success"` is a
+      # literal substring of `" is successful"`), and the `gsub` then only
+      # strips that shorter substring, leaving a mangled var_name ("ful")
+      # that never resolves - silently evaluating to false forever.
+      {"failed", "failure", "succeeded", "successful", "success", "changed", "change", "skipped", "skip"}.each do |test_name|
         if condition.includes?(" is not #{test_name}")
           var_name = condition.gsub(" is not #{test_name}", "").strip
           return !result_field(vars, var_name, test_name)
@@ -724,8 +744,14 @@ module CrystalPlay
 
       failed = result["failed"]?.try(&.as_bool?) || false
       case test_name
-      when "succeeded", "success"
+      when "succeeded", "success", "successful"
         !failed
+      when "failure"
+        failed
+      when "change"
+        result["changed"]?.try(&.as_bool?) || false
+      when "skip"
+        result["skipped"]?.try(&.as_bool?) || false
       else
         result[test_name]?.try(&.as_bool?) || false
       end

@@ -1355,10 +1355,14 @@ module CrystalPlay
     end
 
     Crinja.test(:failed) { JinjaFilters.result_field(target, "failed") }
+    Crinja.test(:failure) { JinjaFilters.result_field(target, "failed") }
     Crinja.test(:changed) { JinjaFilters.result_field(target, "changed") }
+    Crinja.test(:change) { JinjaFilters.result_field(target, "changed") }
     Crinja.test(:skipped) { JinjaFilters.result_field(target, "skipped") }
+    Crinja.test(:skip) { JinjaFilters.result_field(target, "skipped") }
     Crinja.test(:succeeded) { !JinjaFilters.result_field(target, "failed") }
     Crinja.test(:success) { !JinjaFilters.result_field(target, "failed") }
+    Crinja.test(:successful) { !JinjaFilters.result_field(target, "failed") }
     Crinja.test(:integer) { target.raw.is_a?(Int32) || target.raw.is_a?(Int64) }
     Crinja.test(:float) { target.raw.is_a?(Float64) }
 
