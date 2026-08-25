@@ -170,14 +170,30 @@ module CrystalPlay
     # `{{ 'Ciphers ' ~ sshd_ciphers | join(',') if sshd_ciphers }}` to
     # omit the whole config line entirely when the list is empty).
     # #rewrite_ternary_expr treats a missing else branch as `''`.
+    # `[^}\n]` (not just `[^}]`) in every lazy segment below is load-
+    # bearing, not cosmetic: a real inline ternary is always written on
+    # one line, but `[^}]*?` alone also matches newlines, so on a large
+    # template with sparse/mismatched `{`/`}` (mrlesmithjr.netdata's own
+    # 5934-line netdata.conf.j2 - only 26 `{{` and 37 bare `}` total in
+    # the whole file, zero of them an actual ternary) each of the 26
+    # `{{` candidates would lazily scan for the next literal `}`
+    # ACROSS THE REST OF THE FILE, and the nested optional `else` group
+    # multiplies that against every already-scanned position - PCRE2's
+    # JIT match-time stack (a separate resource from its compile-time
+    # stack, and unrelated to true catastrophic backtracking) overflows
+    # ("Regex match error: JIT stack limit reached"), crashing the
+    # `template:` task outright on a file that never needed rewriting at
+    # all. Excluding `\n` bounds every candidate scan to a single line,
+    # matching how these templates are actually written and eliminating
+    # the cross-file scan entirely.
     INLINE_TERNARY = /
       \{\{                          # opening {{
       (                             # capture the whole expression
-        (?:[^}]*?)                 # lazy: up to the ternary
+        (?:[^}\n]*?)               # lazy: up to the ternary
         \s+if\s+                  # the ` if ` keyword
-        (?:[^}]*?)                 # condition (lazy)
+        (?:[^}\n]*?)               # condition (lazy)
         (?:\s+else\s+              # the ` else ` keyword (optional)
-        (?:[^}]*?))?                # else branch (lazy, optional)
+        (?:[^}\n]*?))?              # else branch (lazy, optional)
       )
       \}\}                        # closing }}
     /x
@@ -187,7 +203,17 @@ module CrystalPlay
     # idiom (dev-sec os_hardening's securetty template uses it). Rewritten
     # into the equivalent `LIST | join("SEP")` filter, which Crinja supports.
     # $1 = the sep string literal, $2 = the list expression being joined.
-    JOIN_METHOD = /("(?:[^"\\]|\\.)*")\s*\.join\(\s*([^)]*?)\s*\)/
+    # `[^"\\]` excludes `\n` too (not just cosmetic - see INLINE_TERNARY's
+    # own comment above for the general shape of this bug): a template
+    # with an ODD number of `"` characters total has no valid second
+    # quote to close a literal at all, so the unbounded `(?:[^"\\]|\\.)*`
+    # tries every possible split of the REST OF THE FILE between its two
+    # alternatives looking for one - mrlesmithjr.netdata's own 5934-line
+    # netdata.conf.j2 has exactly one stray `"` in the whole file, and
+    # this pattern alone (not INLINE_TERNARY, initially suspected first)
+    # was the one that actually overflowed PCRE2's JIT match-time stack.
+    # Real quoted string literals here are always single-line.
+    JOIN_METHOD = /("(?:[^"\\\n]|\\.)*")\s*\.join\(\s*([^)\n]*?)\s*\)/
 
     # Method-call `.split(...)` - real Python's own str.split() method
     # (not a Jinja2 filter - Jinja2 exposes native object methods
