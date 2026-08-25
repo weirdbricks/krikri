@@ -183,6 +183,32 @@ def gather_os_facts(facts)
     facts["ansible_distribution_release"] = os_info["VERSION_CODENAME"]? || ""
   end
 
+  # ansible_lsb - real Ansible's LSBFactCollector (via `lsb_release`, or a
+  # parse of /etc/lsb-release when the command is absent). Only Ubuntu
+  # ships /etc/lsb-release by default among the distros this project
+  # targets - entirely unimplemented before, so `ansible_facts['lsb']`
+  # was always undefined and any dotted access on it (`.codename`, etc.)
+  # rendered as an empty string rather than raising. Found benchmarking
+  # buluma.fish's own Ubuntu apt-repo task (`{{ ansible_facts['lsb'].
+  # codename | lower }}` in the PPA's `deb` line): the empty codename
+  # left a malformed sources.list entry ("Malformed entry ... (Component)"),
+  # crashing `apt-get update` outright on a role real Ansible installs
+  # cleanly.
+  if File.exists?("/etc/lsb-release")
+    lsb_info = {} of String => String
+    File.each_line("/etc/lsb-release") do |line|
+      key, sep, value = line.partition('=')
+      next if sep.empty?
+      lsb_info[key.strip] = value.strip.strip('"')
+    end
+    lsb_facts = {} of String => String
+    lsb_facts["id"] = lsb_info["DISTRIB_ID"]? || ""
+    lsb_facts["description"] = lsb_info["DISTRIB_DESCRIPTION"]? || ""
+    lsb_facts["release"] = lsb_info["DISTRIB_RELEASE"]? || ""
+    lsb_facts["codename"] = lsb_info["DISTRIB_CODENAME"]? || ""
+    facts["ansible_lsb"] = lsb_facts
+  end
+
   facts["ansible_pkg_mgr"] = detect_pkg_mgr
 
   facts["ansible_system"] = "Linux"
