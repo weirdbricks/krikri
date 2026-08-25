@@ -480,6 +480,18 @@ rescue ex : CrystalPlay::RemovedActionError
   # legacy bare `include:` directive.
   puts "[ERROR]: #{ex.message}".colorize(:red)
   exit 1
+rescue ex : CrystalPlay::RoleNotFoundError
+  # A `roles:` entry (play-level or a role's own meta/main.yml
+  # dependency) naming a role not found on disk is real Ansible's own
+  # plain "[ERROR]: the role '<name>' was not found ..." at rc=1 -
+  # verified live (both cases give the identical rc=1) - not the
+  # parser-error 4 this engine fell back to when the missing role
+  # silently emptied the whole play list ("No valid plays found").
+  # Found benchmarking weareinteractive.sftp (round 178): its own
+  # meta/main.yml depends on franklinkim.ssh, a role no longer
+  # published anywhere.
+  puts "[ERROR]: #{ex.message}".colorize(:red)
+  exit 1
 rescue ex : CrystalPlay::YamlSyntaxError
   # Rendered the way real ansible-playbook renders a YAML syntax error -
   # [ERROR]: line, Origin: path:line:col, then the offending source line

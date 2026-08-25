@@ -99,7 +99,7 @@ module CrystalPlay
 
       role_dir = resolve_role_dir(name, playbook_dir)
       unless role_dir
-        raise "Role not found: #{name} (looked under #{File.join(playbook_dir, "roles", name)} and #{File.join("roles", name)})"
+        raise RoleNotFoundError.new("Role not found: #{name} (looked under #{File.join(playbook_dir, "roles", name)} and #{File.join("roles", name)})")
       end
       # Real Ansible's `role_path` magic var is always an ABSOLUTE path -
       # resolve_role_dir's own search dirs can be relative (a bare "roles"

@@ -1206,7 +1206,7 @@ describe CrystalPlay::PlaybookParser do
       playbook.plays[0].tasks.map(&.name).should eq(["debian branch"])
     end
 
-    it "raises a warning (not a hard failure) when a role can't be found, matching other unparseable-task handling" do
+    it "raises a hard RoleNotFoundError (rc=1 at the top level) when a role can't be found, matching real Ansible's own immediate refusal" do
       root = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "playbook_parser_missing_role_spec")
       FileUtils.rm_rf(root) if Dir.exists?(root)
       Dir.mkdir_p(root)
@@ -1218,7 +1218,7 @@ describe CrystalPlay::PlaybookParser do
             - does_not_exist
         YAML
 
-      expect_raises(Exception, /No valid plays found/) do
+      expect_raises(CrystalPlay::RoleNotFoundError, /Role not found/) do
         CrystalPlay::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
       end
     end

@@ -666,6 +666,23 @@ module CrystalPlay
   class RemovedActionError < Exception
   end
 
+  # A `roles:` entry (play-level, or a role's own `meta/main.yml`
+  # `dependencies:` list) naming a role this engine can't find on disk
+  # at all. Real Ansible refuses the WHOLE run immediately with a plain
+  # "[ERROR]: the role '<name>' was not found ..." message, exit 1 -
+  # verified directly (both a play-level `roles: - bogus_role` and a
+  # dependency role's own missing `meta/main.yml` dependency give the
+  # identical rc=1). RoleLoader#load_role previously raised a bare
+  # String exception here, which fell into #parse's generic per-play
+  # rescue: a soft "Warning: Failed to parse play N: Role not found:
+  # ..." followed by silently dropping that play, ending in "No valid
+  # plays found in playbook" -> this engine's generic parser-error exit
+  # 4 - not real Ansible's immediate, specific rc=1. Found benchmarking
+  # weareinteractive.sftp (round 178), whose own meta/main.yml depends
+  # on franklinkim.ssh, a role no longer published anywhere.
+  class RoleNotFoundError < Exception
+  end
+
   # Real Ansible's `import_tasks:`/`import_role:` are genuinely STATIC,
   # parse-time constructs - the templated file/role path may reference
   # vars/vars_files/extra-vars only, never facts (which don't exist yet
@@ -978,6 +995,8 @@ module CrystalPlay
             raise ex
           rescue ex : StaticImportUndefinedError
             raise ex
+          rescue ex : RoleNotFoundError
+            raise ex
           rescue ex
             puts "Warning: Failed to import playbook '#{import_path}': #{ex.message}".colorize(:yellow)
           end
@@ -1005,6 +1024,12 @@ module CrystalPlay
         rescue ex : StaticImportUndefinedError
           # Same bypass, same reason - see StaticImportUndefinedError's
           # own comment.
+          raise ex
+        rescue ex : RoleNotFoundError
+          # Same bypass, same reason - see RoleNotFoundError's own
+          # comment: real Ansible refuses the whole run for a missing
+          # role (play-level or a role's own meta/main.yml dependency),
+          # not a per-play soft-skip.
           raise ex
         rescue ex
           puts "Warning: Failed to parse play #{index + 1}: #{ex.message}".colorize(:yellow)
