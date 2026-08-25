@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.596-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.598-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,7 +385,7 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
-- **`0.9.593`-`0.9.596`** - four fixes from a 60-role Ubuntu marathon:
+- **`0.9.593`-`0.9.598`** - six fixes from a 60-role Ubuntu marathon:
   a huge (5934-line) template crashed the whole `template:` task with a
   PCRE2 JIT-stack overflow, from two rewrite regexes whose lazy
   quantifiers could cross newlines and, on a file with sparse/unmatched
@@ -397,12 +397,18 @@ for current-state detail.
   the whole loop instead of treating it as an empty dict, running the
   task once with `item` undefined instead of skipping it like real
   Ansible; the `ansible_lsb` fact (`/etc/lsb-release`) was entirely
-  unimplemented, breaking a PPA apt-repo template's codename lookup. Also
-  fixed the "unavailable modules" exit-code check itself: it used to be
-  a static whole-playbook scan that flagged a module even inside a
-  branch unreachable on every host in the run (e.g. an OS-family-gated
-  task) - now only counts a module if its task's own `when:` would
-  actually have let it run, matching real Ansible's lazy resolution.
+  unimplemented, breaking a PPA apt-repo template's codename lookup. The
+  "unavailable modules" exit-code check itself was a static whole-
+  playbook scan that flagged a module even inside a branch unreachable
+  on every host (e.g. an OS-family-gated task) - now only counts a
+  module if its task's own `when:` would actually have let it run,
+  matching real Ansible's lazy resolution. A task-level `import_role:`
+  to a role never installed ran extra tasks before failing instead of
+  refusing the whole playbook statically (`rc=1`, zero tasks) the way
+  real Ansible does. `pip:` never checked the pip executable actually
+  exists before deciding there was nothing to install, silently
+  no-op'ing instead of failing on a genuinely pip-less host whose
+  package list happened to be empty on that OS.
 - **`0.9.592`** - `until:`/`when:`/`failed_when:`-style Jinja "is" tests now
   recognize `successful`/`failure`/`change`/`skip` (real Ansible's own
   aliases for `success`/`failed`/`changed`/`skipped`), in both the
