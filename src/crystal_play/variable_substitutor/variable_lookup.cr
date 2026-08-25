@@ -246,10 +246,30 @@ module CrystalPlay
             next
           end
 
-          case current.raw
+          case raw = current.raw
           when Hash
             current = current[part]?
             return nil unless current
+          when Array
+            # Numeric dot-indexing into a list (`item.1` meaning
+            # `item[1]`) - real Jinja2 attribute access falls back to
+            # item access, which for a list means an integer index.
+            # `with_indexed_items`/`with_together`/`zip()` all yield
+            # each item as a plain `[index_or_a, b]` pair, and the
+            # idiomatic way to pull the second element back out in a
+            # `when:`/`{{ }}` is exactly this dotted form (buluma.
+            # dotfiles' own "Remove existing dotfiles file" task gates
+            # on `when: "'@' not in item.1.stdout"` over `with_indexed_
+            # items: existing_dotfile_info.results`) - previously only
+            # Hash key lookup was implemented here, so any numeric part
+            # against an Array fell through to the generic `else return
+            # nil`, and the `when:` itself then raised "item.1.stdout is
+            # undefined" instead of resolving the pair's second element.
+            index = part.to_i?
+            return nil unless index
+            index += raw.size if index < 0
+            return nil unless index >= 0 && index < raw.size
+            current = raw[index]
           else
             return nil
           end

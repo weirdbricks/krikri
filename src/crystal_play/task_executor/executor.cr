@@ -2524,6 +2524,23 @@ module CrystalPlay
         end
       when "with_dict"
         hash = value.as_h?
+        if hash.nil? && (arr = value.as_a?) && arr.empty?
+          # Real Ansible's `with_dict:` ultimately does a Python
+          # `dict(candidate)` conversion - `dict([])` succeeds (yields
+          # `{}`, zero loop items, task reported "skipping"), even
+          # though `dict([1, 2, 3])` (a genuinely non-empty non-mapping
+          # list) would raise. A role default of `rsyslog_foo: []`
+          # meant to be overridden with a real dict (buluma.rsyslog's
+          # own `rsyslog_rsyslog_d_files: []`) is a common shape for
+          # this - previously `value.as_h?` failing on an Array
+          # returned nil for the WHOLE loop regardless of size, and
+          # (per resolve_loop_template's own comment above) a nil loop
+          # resolution runs the task ONCE with `item` undefined instead
+          # of skipping it, so `item.key`/`item.value` raised
+          # "undefined" instead of the task being skipped like real
+          # Ansible.
+          hash = {} of String => JSON::Any
+        end
         return nil unless hash
         LoopResolver.with_dict(hash.transform_keys(&.to_s))
       when "with_nested"
