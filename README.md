@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.598-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.599-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -384,6 +384,24 @@ A short rolling summary of the last few versions - see `git log` for the
 complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
+
+- **`0.9.599`** - closes the last "Real gaps" entry in
+  [KNOWN_MISSING.md](KNOWN_MISSING.md), plus a second bug the live
+  re-verification of it surfaced. A role default computed from another,
+  genuinely-never-set variable (`phpmyadmin_mysql_password: "{{
+  mysql_root_password }}"`) rendered as the literal seven-character text
+  `undefined` and the run continued - writing that string into
+  phpMyAdmin's config as the real MySQL password - where real Ansible
+  fails the task naming the innermost missing variable. Strict
+  module-arg templating now follows the chain instead of stopping at the
+  first level, and an unresolvable chain is handed to the template
+  engines as a real undefined value, so `| default('x')`, `is defined`
+  and `when:` gates over one all answer what real Ansible answers; the
+  deliberate leniency everywhere else is unchanged. Underneath it, a
+  `meta/main.yml` **dependency's defaults were discarded** once that
+  dependency's own tasks were loaded - so the extremely common "role B
+  declares role A as a dependency, then references A's defaults" shape
+  silently resolved to nothing throughout B.
 
 - **`0.9.593`-`0.9.598`** - six fixes from a 60-role Ubuntu marathon:
   a huge (5934-line) template crashed the whole `template:` task with a

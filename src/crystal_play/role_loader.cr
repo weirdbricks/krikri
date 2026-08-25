@@ -113,7 +113,9 @@ module CrystalPlay
       parent_paths : Array(String) = [] of String,
       parent_defaults : Hash(String, JSON::Any) = Hash(String, JSON::Any).new,
     )
-      return if seen.includes?(name)
+      # An already-loaded role contributes no defaults a second time -
+      # its tasks (and their defaults) are already in the play.
+      return Hash(String, JSON::Any).new if seen.includes?(name)
       seen.add(name)
 
       role_dir = resolve_role_dir(name, playbook_dir)
@@ -151,7 +153,7 @@ module CrystalPlay
       # extended further), matching real Ansible: a dependency isn't
       # "nested inside" the declaring role's own tasks the way an
       # include_role: call is.
-      load_meta_dependencies(role_dir, play, playbook_dir, seen, tasks, handlers, parent_names, parent_paths, parent_defaults)
+      dependency_defaults = load_meta_dependencies(role_dir, play, playbook_dir, seen, tasks, handlers, parent_names, parent_paths, parent_defaults)
 
       defaults = load_vars_file_main(File.join(role_dir, "defaults"))
       # Real Ansible keeps a role's defaults visible for the rest of the
@@ -172,7 +174,22 @@ module CrystalPlay
       # Ansible keeps it in scope - `task.role_defaults` was previously
       # always just THIS role's own defaults, discarding the whole
       # ancestor chain.
-      defaults = parent_defaults.merge(defaults)
+      #
+      # A meta/main.yml DEPENDENCY's own defaults are in scope for the
+      # role that declares it, too - real Ansible loads a dependency
+      # first and its defaults stay visible to the dependent role, which
+      # is how the extremely common "role B declares role A as a
+      # dependency and then references A's defaults" shape works at all
+      # (`buluma.phpmyadmin`'s own `phpmyadmin_mysql_password: "{{
+      # mysql_root_password }}"` reads that name straight out of its
+      # `buluma.mysql` dependency's defaults/main.yml). Only the
+      # ancestor chain (`parent_defaults`, an include_role: caller) was
+      # carried before, so a dependency's defaults were loaded, used for
+      # that dependency's OWN tasks, and then discarded - every such
+      # cross-role reference silently resolved to nothing. Lower
+      # precedence than this role's own defaults, matching real
+      # Ansible's own dependency-then-self load order.
+      defaults = parent_defaults.merge(dependency_defaults).merge(defaults)
       role_vars = load_vars_file_main(File.join(role_dir, "vars"))
       invocation_vars.each { |key, value| role_vars[key] = value } # invocation vars win over vars/main.yml
 
@@ -240,20 +257,32 @@ module CrystalPlay
 
       tasks.concat(role_tasks)
       handlers.concat(role_handlers)
+
+      # Returned so a DECLARING role can pick these up as its own
+      # dependency defaults (see the `dependency_defaults` merge above).
+      defaults
     end
 
-    private def self.load_meta_dependencies(role_dir : String, play : Play, playbook_dir : String, seen : Set(String), tasks : Array(Task), handlers : Array(Task), parent_names : Array(String) = [] of String, parent_paths : Array(String) = [] of String, parent_defaults : Hash(String, JSON::Any) = Hash(String, JSON::Any).new)
+    # Returns the accumulated defaults of every dependency loaded (later
+    # dependencies winning over earlier ones on a name collision, matching
+    # real Ansible's load order), for the declaring role to merge under
+    # its own - see `load_role`'s `dependency_defaults` comment.
+    private def self.load_meta_dependencies(role_dir : String, play : Play, playbook_dir : String, seen : Set(String), tasks : Array(Task), handlers : Array(Task), parent_names : Array(String) = [] of String, parent_paths : Array(String) = [] of String, parent_defaults : Hash(String, JSON::Any) = Hash(String, JSON::Any).new) : Hash(String, JSON::Any)
+      collected = Hash(String, JSON::Any).new
       meta_path = File.join(role_dir, "meta", "main.yml")
-      return unless File.exists?(meta_path)
+      return collected unless File.exists?(meta_path)
 
       meta_yaml = YAML.parse(Vault.maybe_decrypt(File.read(meta_path)))
       deps = meta_yaml["dependencies"]?.try(&.as_a?)
-      return unless deps
+      return collected unless deps
 
       deps.each do |dep|
         dep_name, dep_vars, dep_tags = parse_role_entry(dep)
-        load_role(dep_name, dep_vars, dep_tags, play, playbook_dir, seen, tasks, handlers, nil, parent_names, parent_paths, parent_defaults)
+        dep_defaults = load_role(dep_name, dep_vars, dep_tags, play, playbook_dir, seen, tasks, handlers, nil, parent_names, parent_paths, parent_defaults)
+        collected.merge!(dep_defaults)
       end
+
+      collected
     end
 
     private def self.resolve_role_dir(name : String, playbook_dir : String) : String?

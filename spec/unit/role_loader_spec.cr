@@ -243,6 +243,47 @@ describe CrystalPlay::RoleLoader do
     tasks.map(&.name).should eq(["base task", "dependent task"])
   end
 
+  it "keeps a meta dependency's defaults in scope for the role that declares it" do
+    # Real Ansible loads a dependency first and leaves its defaults
+    # visible to the dependent role - the shape buluma.phpmyadmin uses
+    # to read `mysql_root_password` out of its buluma.mysql dependency.
+    # Previously a dependency's defaults were used for that dependency's
+    # own tasks and then discarded.
+    build_role("dep_defaults_base") do |role|
+      role.tasks("- name: base task\n  ansible.builtin.debug:\n    msg: base\n")
+      role.defaults("mysql_root_password: s3Cur31t4.\n")
+    end
+
+    build_role("dep_defaults_user") do |role|
+      role.tasks("- name: user task\n  ansible.builtin.debug:\n    msg: user\n")
+      role.defaults("pma_password: \"{{ mysql_root_password }}\"\n")
+      role.meta("dependencies:\n  - dep_defaults_base\n")
+    end
+
+    tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- dep_defaults_user"), fresh_play, ROLES_ROOT)
+
+    user_task = tasks.find! { |task| task.name == "user task" }
+    user_task.role_defaults.not_nil!["mysql_root_password"].as_s.should eq("s3Cur31t4.")
+  end
+
+  it "lets the declaring role's own defaults win over a dependency's" do
+    build_role("dep_defaults_base2") do |role|
+      role.tasks("- name: base2 task\n  ansible.builtin.debug:\n    msg: base\n")
+      role.defaults("shared_name: from_dependency\n")
+    end
+
+    build_role("dep_defaults_user2") do |role|
+      role.tasks("- name: user2 task\n  ansible.builtin.debug:\n    msg: user\n")
+      role.defaults("shared_name: from_self\n")
+      role.meta("dependencies:\n  - dep_defaults_base2\n")
+    end
+
+    tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- dep_defaults_user2"), fresh_play, ROLES_ROOT)
+
+    user_task = tasks.find! { |task| task.name == "user2 task" }
+    user_task.role_defaults.not_nil!["shared_name"].as_s.should eq("from_self")
+  end
+
   it "loads each role only once, even if listed directly and pulled in as a dependency" do
     build_role("shared") { |role| role.tasks(<<-YAML) }
       - name: shared task

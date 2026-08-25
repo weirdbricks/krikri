@@ -85,7 +85,6 @@ module CrystalPlay
         @@template_cache[source] ||= shared_env.from_string(source)
       end
 
-
       # Render a template containing Jinja2 control structures, raising
       # on any failure instead of swallowing it - for a caller (like
       # `ExpressionEvaluator`'s own Crinja-delegation branches, see
@@ -301,9 +300,32 @@ module CrystalPlay
       # process, matching the guard's own "process-wide, not
       # per-instance" reasoning (see `VarSubstitutor`'s identical
       # `@@block_tag_escalation_depth` comment).
-      def self.convert_var(raw_value : JSON::Any, substitutor : VarSubstitutor) : Crinja::Value
+      def self.convert_var(raw_value : JSON::Any, substitutor : VarSubstitutor, name : String = "") : Crinja::Value
         if @@prepare_crinja_vars_depth >= MAX_PREPARE_CRINJA_VARS_DEPTH
           return json_any_to_crinja_value(raw_value)
+        end
+
+        # A variable whose own stored value is `{{ }}` text bottoming out
+        # at a name set nowhere (`phpmyadmin_mysql_password: "{{
+        # mysql_root_password }}"` with no `mysql_root_password`
+        # anywhere) is UNDEFINED, not "defined, with the seven-character
+        # value `undefined`" - which is what the lenient re-render below
+        # otherwise hands Crinja, since `VarSubstitutor#substitute`
+        # renders any unresolved lookup as that literal sentinel text.
+        # Crinja then saw an ordinary non-empty string: `| default('x')`
+        # returned "undefined" instead of "x", `is defined` was True
+        # where real Ansible says False, and `when: v | default('') !=
+        # ''` ran a task real Ansible skips.
+        #
+        # Handing back a real `Crinja::Undefined` instead lets Crinja's
+        # OWN undefined semantics answer all three, which is exactly
+        # what they exist for - no sentinel string doing double duty.
+        # The complementary half (a STRICT caller - module-arg
+        # finalization - failing the task rather than rendering
+        # anything) is `VarSubstitutor#raise_if_nested_value_undefined`,
+        # which fires before this conversion is ever reached.
+        if (raw = raw_value.raw).is_a?(String) && substitutor.unresolvable_template?(raw)
+          return Crinja::Value.new(Crinja::Undefined.new(name))
         end
 
         @@prepare_crinja_vars_depth += 1

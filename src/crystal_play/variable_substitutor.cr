@@ -363,8 +363,57 @@ module CrystalPlay
     # comment for why that's deliberate, not a gap in this check.
     private def raise_if_strict_undefined(inner : String) : Nil
       return unless inner.matches?(REGEX_BARE_VAR_REF)
-      return if VariableSubstitutor::VariableLookup.new(@vars).resolve(inner)
-      raise UndefinedVariableError.new("'#{inner}' is undefined")
+      resolved = VariableSubstitutor::VariableLookup.new(@vars).resolve(inner)
+      raise UndefinedVariableError.new("'#{inner}' is undefined") unless resolved
+      raise_if_nested_value_undefined(resolved)
+    end
+
+    # A resolved value that is ITSELF unrendered `{{ }}` text (a role
+    # default computed from another variable - `phpmyadmin_mysql_
+    # password: "{{ mysql_root_password }}"`, buluma.phpmyadmin's own
+    # defaults/main.yml) is only as defined as whatever it bottoms out
+    # at. Real Ansible templates recursively and reports the INNERMOST
+    # missing name ("'mysql_root_password' is undefined", pointing at
+    # the defaults file, not at the task's own `{{ phpmyadmin_mysql_
+    # password }}`), because its Jinja2 rendering is one strict pass
+    # over the whole chain rather than a lenient inner render feeding a
+    # strict outer one.
+    #
+    # Without this, the outer check above saw a perfectly real @vars
+    # entry, passed, and the inner re-render (CrinjaRenderer#rerender_
+    # nested_templates -> #substitute, LENIENT) collapsed the missing
+    # innermost name to this codebase's literal "undefined" sentinel
+    # text - baked in as if it were legitimate content, so the task
+    # succeeded with the string "undefined" as, in that role's case,
+    # phpMyAdmin's real MySQL password. The leniency itself is correct
+    # and load-bearing everywhere else (`default()`, `is defined`, an
+    # ordinarily-unset variable); what was wrong is that the STRICT
+    # caller's strictness stopped at the first level instead of
+    # following the chain.
+    #
+    # Recursion is via #substitute's own `strict:` path (not a
+    # hand-rolled walk), so every shape it already handles - a partial
+    # string `prefix-{{ x }}-suffix`, several spans in one value, a
+    # chain several levels deep - is covered here identically, and its
+    # existing depth guards bound the recursion.
+    private def raise_if_nested_value_undefined(value : JSON::Any) : Nil
+      raw = value.raw
+      return unless raw.is_a?(String) && raw.includes?("{{")
+      substitute_impl(raw, true)
+    end
+
+    # Public form of the same probe, for the Crinja-context conversion
+    # side (`CrinjaRenderer.convert_var`) - see its call site for why
+    # that path needs to ASK rather than raise: it hands the answer to
+    # Crinja as a real `Undefined`, whose own `default()`/`is defined`
+    # semantics are what a lenient caller wants, instead of failing a
+    # task the lenient caller never wanted failed.
+    def unresolvable_template?(raw : String) : Bool
+      return false unless raw.includes?("{{")
+      substitute_impl(raw, true)
+      false
+    rescue UndefinedVariableError
+      true
     end
 
     # Finds each `{{ ... }}` span in *text* and replaces it with the
@@ -477,11 +526,11 @@ module CrystalPlay
       hash.each { |k, v| result[substitute(k)] = substitute(v) }
       result
     end
-    
+
     def substitute_array(array : Array(String)) : Array(String)
       array.map { |item| substitute(item) }
     end
-    
+
     def set_variable(name : String, value : String | JSON::Any)
       ensure_owned!
       @vars[name] = value.is_a?(JSON::Any) ? value : JSON::Any.new(value)
@@ -493,11 +542,11 @@ module CrystalPlay
       @evaluator = nil
       @renderer = nil
     end
-    
+
     def get_vars : Hash(String, JSON::Any)
       @vars
     end
-    
+
     def has_variable?(name : String) : Bool
       @vars.has_key?(name)
     end

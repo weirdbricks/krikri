@@ -91,7 +91,7 @@ module CrystalPlay
       end
 
       private def convert(key : String) : Crinja::Value
-        CrinjaRenderer.convert_var(@raw_vars[key], @substitutor)
+        CrinjaRenderer.convert_var(@raw_vars[key], @substitutor, key)
       end
 
       # Real Ansible's `vars` magic variable - a dict of the whole

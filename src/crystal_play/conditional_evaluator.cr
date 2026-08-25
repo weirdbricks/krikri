@@ -767,11 +767,29 @@ module CrystalPlay
     # found via cloudalchemy.grafana's own "Fail when grafana admin user
     # isn't set" task.
     private def self.defined?(vars : Hash(String, JSON::Any), var_name : String) : Bool
-      if var_name.includes?(".") || var_name.includes?("[")
-        !VariableSubstitutor::VariableLookup.new(vars).resolve(var_name).nil?
-      else
-        vars.has_key?(var_name)
+      resolved =
+        if var_name.includes?(".") || var_name.includes?("[")
+          VariableSubstitutor::VariableLookup.new(vars).resolve(var_name)
+        else
+          vars[var_name]?
+        end
+      return false unless resolved
+
+      # A variable whose own stored value is `{{ }}` text bottoming out
+      # at a name set nowhere is undefined, not defined - the same
+      # distinction `CrinjaRenderer.convert_var` draws for the Crinja
+      # side (see its comment for the full case). This evaluator is
+      # independent of that one (see CLAUDE.md - the two Jinja
+      # evaluators share no implementation, so this bug class has to be
+      # found and fixed once in each), so `when: phpmyadmin_mysql_
+      # password is defined` answered True here even after the Crinja
+      # side started answering False, and any role gating a
+      # set-the-real-default task on `is undefined` skipped it.
+      if (raw = resolved.raw).is_a?(String) && VarSubstitutor.new(vars: vars).unresolvable_template?(raw)
+        return false
       end
+
+      true
     end
 
     # Audit pass (2026-08-11, following the ansible-vault/prometheus/

@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.591`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.599`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -92,42 +92,23 @@ real modules regardless - see `git log`.
   Triggering (always/never/on_failed/on_skipped/on_unreachable), the
   prompt text, redo, and the exit codes all match real Ansible.
 
-- **A role default computed from ANOTHER, genuinely-never-set variable
-  (`phpmyadmin_mysql_password: "{{ mysql_root_password }}"`, buluma.
-  phpmyadmin's own defaults/main.yml, `mysql_root_password` supplied by
-  neither the role nor this benchmark's playbook) silently renders as
-  the literal string `"undefined"` wherever it's used, instead of
-  failing the task the way real Ansible does (`'mysql_root_password' is
-  undefined`).** Found round 180 (60-role Ubuntu marathon): real
-  ansible correctly fails the role's "Add default username and password
-  for MySQL connection" task; crystal-ansible instead writes the
-  literal text `undefined` into phpMyAdmin's config as the MySQL
-  password and continues, reaching (and then separately failing on) a
-  later `apache.service`-not-found task real ansible never got to.
-  Root cause, traced to a specific line: `CrinjaRenderer.
-  rerender_nested_templates` (crinja_renderer.cr) calls `substitutor.
-  substitute(raw)` to recursively re-render a variable's own `{{ }}`-
-  shaped stored value - when that inner render ALSO bottoms out at a
-  variable with no entry anywhere, `VarSubstitutor#substitute`'s
-  lenient by-design fallback (used everywhere, including inside
-  `default()` filter support and ordinary `{{ var }}` template
-  substitution for a ordinarily-just-unset variable, where returning a
-  placeholder rather than raising is correct/needed) returns the
-  literal text `"undefined"` rather than a value `rerender_nested_
-  templates` can recognize as "still didn't resolve" - so it gets
-  baked permanently into the Crinja value for `phpmyadmin_mysql_
-  password` as if it were real, legitimate content. NOT fixed this
-  round: the fix needs a way to distinguish "genuinely-unset variable,
-  lenient fallback is correct" from "this recursive-re-templating chain
-  specifically should raise, matching real Ansible" without an
-  ambiguous sentinel *string* doing double duty for both - likely a
-  real `Undefined`-carrying return type threaded through `VarSubstitutor#
-  substitute`'s callers, which touches how role defaults, `default()`,
-  and `is defined`/`is undefined` all currently rely on the existing
-  lenient text-placeholder behavior. Revisit as a dedicated
-  investigation, not a quick patch - the existing lenient design is
-  relied on broadly enough that a narrow one-line fix risks silently
-  breaking other things this same engine already gets right.
+- **`notify:` naming a handler that exists nowhere is caught at PARSE
+  time here, so a notify inside an `include_tasks:`-loaded file is never
+  checked at all.** Real Ansible checks at RUN time, when the notifying
+  task actually fires, and aborts the play ("The requested handler
+  'restart apache' was not found in either the main handlers list nor in
+  the listening handlers list"). A statically-visible bad notify IS
+  caught here (exit 4, verified live against real ansible-core 2.19.4 -
+  the two differ only in exit code and timing, 4-at-parse vs
+  2-at-runtime). What is missed is a bad notify reached only through
+  dynamic inclusion: `buluma.phpmyadmin`'s own `setup-Debian.yml`
+  (loaded via `include_tasks:`) notifies `restart apache`, a handler no
+  role in its dependency chain defines - real Ansible aborts the run
+  there, this engine runs the role to completion. Found round 181
+  re-verifying the round-180 templating gap. Fixing it means deferring
+  notify validation to run time (or re-validating each dynamically
+  included file as it loads) rather than the current whole-playbook
+  parse-time sweep.
 
 ## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 
