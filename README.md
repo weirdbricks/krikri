@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.586-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.587-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,12 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.587`** - `ansible_connection` is now always resolvable as a
+  magic var (defaults to `"local"`/`"ssh"` per host, matching real
+  Ansible), instead of undefined unless something explicitly set it.
+  Found benchmarking `buluma.selinux`: its own container-guard
+  (`when: ansible_connection not in [...]`) hard-failed with
+  `'ansible_connection' is undefined` on a plain SSH host.
 - **`0.9.586`** - a handler notifying a handler defined EARLIER than it
   was silently dropped. Handlers run in definition order, so such a
   notification arrives after its target has already been passed; real
@@ -417,11 +423,11 @@ for current-state detail.
   Ansible defers to the point of USE, so a playbook carrying a
   prod-only vault var runs fine on a dev box until something references
   it.
-- **`0.9.580`** - implemented `gather_subset:` and `remote_user:`.
-  Fact gathering now honors `all`/`min`/`network`/`hardware`/`mounts`
-  and `!` negations, skipping the expensive families while always
-  keeping the minimal set. `remote_user:` at play or task scope sets the
-  connection user, surfaced as `ansible_user` exactly as real Ansible
+- **`0.9.580`** - implemented `gather_subset:` and `remote_user:`. Fact
+  gathering now honors `all`/`min`/`network`/`hardware`/`mounts` and `!`
+  negations, skipping the expensive families while always keeping the
+  minimal set. `remote_user:` at play or task scope sets the connection
+  user, surfaced as `ansible_user` exactly as real Ansible
   does, with a task's own value overriding the play's.
 - **`0.9.579`** - per-host result lines are now printed in COMPLETION
   order under the default `linear` strategy, as real Ansible does - the

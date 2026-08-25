@@ -1513,6 +1513,25 @@ module CrystalPlay
       # strict module-arg templating.
       vars_context["ansible_check_mode"] = JSON::Any.new(@check_mode)
 
+      # ansible_connection - real Ansible always resolves this magic var
+      # (defaults "smart", which itself resolves to "ssh" for a remote
+      # host, "local" for the controller) even when nothing sets it
+      # explicitly (verified against real ansible-playbook: `{{
+      # ansible_connection }}` renders "ssh" on a bare inventory entry
+      # with no ansible_connection= at all). Previously left entirely
+      # undefined unless inventory/task explicitly set it, so a role's
+      # own `when: ansible_connection not in [...]` (buluma.selinux's
+      # block-level guard against running inside a container) hard-
+      # failed with "'ansible_connection' is undefined" instead of
+      # evaluating true, on every plain SSH host. `||=` so an explicit
+      # inventory-set value (already merged into vars_context via
+      # base_context_b_for above) or a prior magic-var write is never
+      # clobbered; task.connection below still overrides unconditionally
+      # since that's this ONE task's own explicit override.
+      vars_context["ansible_connection"] ||= JSON::Any.new(
+        PluginManager.is_local_connection?(host, vars_context) ? "local" : "ssh"
+      )
+
       render_task_vars(task, vars_context, host.name)
 
       # connection: local (or any other connection: override) on this
@@ -5827,6 +5846,12 @@ module CrystalPlay
       vars_context["ansible_play_hosts"] = JSON::Any.new(play_host_names)
       vars_context["ansible_version"] = ANSIBLE_VERSION_MAGIC_VAR
       vars_context["ansible_check_mode"] = JSON::Any.new(@check_mode)
+      # ansible_connection default - see #build_vars_context's identical
+      # comment for the full story (buluma.selinux's block-level `when:
+      # ansible_connection not in [...]` guard).
+      vars_context["ansible_connection"] ||= JSON::Any.new(
+        PluginManager.is_local_connection?(host, vars_context) ? "local" : "ssh"
+      )
 
       # The handler's own when: is now checked inside #execute_handler_
       # plugin_once instead of here - see that method's own comment for
