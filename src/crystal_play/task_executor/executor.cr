@@ -3617,7 +3617,7 @@ module CrystalPlay
       if @adhoc
         ResultDisplay.display_adhoc_result(host, result)
       else
-        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: task.ignore_errors)
+        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: task.ignore_errors, no_log: task.no_log)
       end
       ResultDisplay.update_stats(@results[host.name], result, task.ignore_errors)
       halt_if_failed(task, host, failed)
@@ -3891,7 +3891,7 @@ module CrystalPlay
         any_changed ||= changed
         any_failed ||= failed
 
-        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item), ignore_errors: task.ignore_errors)
+        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item), ignore_errors: task.ignore_errors, no_log: task.no_log)
 
         result_hash = result.as_h.dup
         result_hash["item"] = item
@@ -3995,7 +3995,7 @@ module CrystalPlay
       if @adhoc
         ResultDisplay.display_adhoc_result(host, result)
       else
-        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: task.ignore_errors)
+        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: task.ignore_errors, no_log: task.no_log)
       end
       ResultDisplay.update_stats(@results[host.name], result, task.ignore_errors)
       halt_if_failed(task, host, failed)
@@ -5738,7 +5738,7 @@ module CrystalPlay
 
         any_changed ||= result["changed"]?.try(&.as_bool) || false
         any_failed ||= result["failed"]?.try(&.as_bool) || false
-        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item), ignore_errors: handler.ignore_errors)
+        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item), ignore_errors: handler.ignore_errors, no_log: handler.no_log)
       end
 
       JSON.parse({

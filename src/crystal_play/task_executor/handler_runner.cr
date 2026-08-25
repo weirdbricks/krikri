@@ -130,7 +130,11 @@ module CrystalPlay
                 # need recording here, not a second summary display line.
                 ResultDisplay.update_stats(results[host.name], result)
               else
-                ResultDisplay.display_result(host, result, diff_mode)
+                # no_log: a handler is as capable of holding a secret as
+                # any other task, and this is the non-looped handler's
+                # own display path - the looped one goes through
+                # execute_handler_loop, which passes it too.
+                ResultDisplay.display_result(host, result, diff_mode, no_log: handler.no_log)
                 ResultDisplay.update_stats(results[host.name], result)
               end
             end

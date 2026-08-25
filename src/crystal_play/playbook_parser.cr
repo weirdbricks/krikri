@@ -34,6 +34,11 @@ module CrystalPlay
     # executor substitutes them at run time and forwards the result to
     # the plugin, which applies them around its own shelled-out commands.
     property environment : Hash(String, String)?
+    # `no_log: true` - suppress this task's result detail. A SECURITY
+    # control: it is how a playbook keeps a password, token or key out
+    # of the log. Previously unparsed and unused, so every such task
+    # printed its secret in full.
+    property no_log : Bool = false
     property when_condition : String?
     property register : String?
     property notify : Array(String)?
@@ -1391,7 +1396,7 @@ module CrystalPlay
                       "with_dict", "with_fileglob", "with_first_found", "with_nested", "with_sequence",
                       "with_flattened", "with_community.general.flattened", "with_subelements", "with_indexed_items", "until", "retries", "delay",
                       "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "delegate_facts", "run_once", "connection",
-                      "async", "poll", "vars", "environment",
+                      "async", "poll", "vars", "environment", "no_log",
                       "block", "rescue", "always", "import_tasks", "include_tasks", "include_role",
                       "import_role", "meta", "include_vars"]
       # ... and the same names fully qualified, since directive() accepts
@@ -1470,6 +1475,7 @@ module CrystalPlay
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.register = task_hash["register"]?.try { |v| safe_yaml_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
+      task.no_log = parse_become_value(task_hash["no_log"]?) || false
       task.check_mode = parse_optional_bool_or_template(task_hash["check_mode"]?)
       task.diff_mode = parse_optional_bool_or_template(task_hash["diff"]?)
       task.become = resolve_become(task_hash, play)
@@ -1710,6 +1716,7 @@ module CrystalPlay
 
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
+      task.no_log = parse_become_value(task_hash["no_log"]?) || false
 
       if tags_yaml = task_hash["tags"]?
         task.tags = tags_yaml.as_a?.try(&.map(&.as_s)) || [tags_yaml.as_s]
@@ -1855,6 +1862,7 @@ module CrystalPlay
       # nested task still evaluates its own when:/tags:/etc in addition.
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
+      task.no_log = parse_become_value(task_hash["no_log"]?) || false
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
@@ -1907,6 +1915,7 @@ module CrystalPlay
 
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
+      task.no_log = parse_become_value(task_hash["no_log"]?) || false
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
@@ -2008,6 +2017,7 @@ module CrystalPlay
 
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
+      task.no_log = parse_become_value(task_hash["no_log"]?) || false
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user

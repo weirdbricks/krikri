@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.573-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.574-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,12 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.574`** - implemented `no_log:`, which was parsed to nothing.
+  It is the control a playbook uses to keep a password, token or key out
+  of the log, so ignoring it did not merely diverge from real Ansible -
+  it printed the secret. Now suppresses all result detail (ok, failing,
+  looped and handler paths alike) while still reporting the task's
+  status, matching real Ansible, and leaks nothing under `-v` either.
 - **`0.9.573`** - implemented `any_errors_fatal:` and
   `max_fail_percentage:`, both previously parsed to nothing. A play
   written to halt the moment a host failed carried right on across the
@@ -431,15 +437,6 @@ for current-state detail.
   returning [] for a `:children` group. `group_vars/` and `host_vars/`
   loading and their whole precedence chain were verified against real
   Ansible and already correct.
-- **`0.9.568`** - implemented real Ansible's host-pattern language for
-  both `hosts:` and `--limit`. Only a bare group/host/glob was understood
-  before, so a `[prod:children]` parent group, a `web:db` union, a `!web`
-  exclusion and a `web:&prod` intersection each matched NOTHING - and
-  since a pattern matching no hosts silently skips the play rather than
-  erroring, a play aimed at a parent group just quietly did nothing.
-  `:children` now resolves transitively, `:`/`,` union, `!` excludes,
-  `&` intersects, a leading `!` is relative to all hosts, and an
-  inventory range like `web[01:03]` is not mistaken for a separator.
 
 ## 🤝 Contributing
 

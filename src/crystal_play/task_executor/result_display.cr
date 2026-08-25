@@ -8,10 +8,29 @@ module CrystalPlay
     # Display task result with appropriate formatting.
     # item_label is set for looped tasks, rendering `ok: [host] => (item=x)`
     # to match how Ansible annotates per-iteration output.
-    def self.display_result(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false)
+    def self.display_result(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false)
       changed = result["changed"]?.try(&.as_bool) || false
       failed = result["failed"]?.try(&.as_bool) || false
       msg = result["msg"]?.try(&.as_s) || ""
+
+      # no_log: print the status line and NOTHING else - no msg, no
+      # stdout, no diff, no error detail. Real ansible-playbook shows
+      # exactly `changed: [host]` / `ok: [host]` for such a task and
+      # leaks nothing even under -v (verified against 2.19.4). This is a
+      # security control, so it is applied before any other branch below
+      # can print part of the result.
+      if no_log
+        status_only = if failed
+                        "failed".colorize(:red).bold
+                      elsif changed
+                        "changed".colorize(:yellow)
+                      else
+                        "ok".colorize(:green)
+                      end
+        suffix_only = item_label ? " => (item=#{item_label})" : ""
+        puts "#{status_only}: [#{host.connection_host}]#{suffix_only}"
+        return
+      end
 
       # Status indicator
       status = if failed
