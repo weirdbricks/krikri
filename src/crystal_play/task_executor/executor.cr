@@ -284,7 +284,10 @@ module CrystalPlay
       # `vars_files:` - candidate path lists, resolved per host because a
       # path may be templated against that host's own facts.
       @vars_files = [] of Array(String),
-      @vars_files_dir = "."
+      @vars_files_dir = ".",
+      # See Play#any_errors_fatal / Play#max_fail_percentage.
+      @any_errors_fatal = false,
+      @max_fail_percentage : Float64? = nil
     )
       @results = Hash(String, Hash(String, Int32)).new
       @registered_vars = Hash(String, Hash(String, JSON::Any)).new
@@ -444,11 +447,48 @@ module CrystalPlay
       end
     end
 
+    # True once this play should stop for EVERY host. Also records the
+    # decision so crystal-play.cr can skip the remaining serial: batches
+    # - real Ansible does not start the next batch after an abort
+    # (verified: `serial: 1` + any_errors_fatal with h2 failing runs h1's
+    # batch fully, then stops; h3 never runs at all).
+    getter play_aborted : Bool = false
+
+    private def abort_play?(hosts : Array(Host)) : Bool
+      return true if @play_aborted
+      return false if hosts.empty?
+
+      failed = hosts.count { |host| @halted_hosts.includes?(host.name) }
+      return false if failed == 0
+
+      triggered =
+        if @any_errors_fatal
+          true
+        elsif limit = @max_fail_percentage
+          # Strictly greater, matching real Ansible.
+          (failed * 100.0 / hosts.size) > limit
+        else
+          false
+        end
+
+      return false unless triggered
+
+      @play_aborted = true
+      hosts.each { |host| @halted_hosts << host.name }
+      true
+    end
+
     private def run_task_batch(tasks : Array(Task), hosts : Array(Host))
       ensure_grouped(tasks)
 
       tasks.each do |task|
         next unless step_allows?(task)
+
+        # any_errors_fatal:/max_fail_percentage: are evaluated BETWEEN
+        # tasks: once the threshold is crossed the play stops for every
+        # host, not just the ones that failed. Checked here rather than
+        # at the end so the very next task is the one that does not run.
+        break if abort_play?(hosts)
 
         active_hosts = hosts.reject { |host| @halted_hosts.includes?(host.name) }
 

@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.572-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.573-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,14 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.573`** - implemented `any_errors_fatal:` and
+  `max_fail_percentage:`, both previously parsed to nothing. A play
+  written to halt the moment a host failed carried right on across the
+  rest of the fleet - the same class of silent no-op as `serial:` in
+  0.9.571, and in the same dangerous direction. Both abort the play for
+  EVERY host, and stop the remaining `serial:` batches too; the
+  percentage comparison is strictly-greater, matching real Ansible
+  (1-of-3 hosts aborts at 33 but not at 34).
 - **`0.9.572`** - implemented `vars_files:`, which was not wired up at
   all: the keyword parsed to nothing, so every variable it should have
   defined was undefined and the task failed outright. Files load in
@@ -432,15 +440,6 @@ for current-state detail.
   `:children` now resolves transitively, `:`/`,` union, `!` excludes,
   `&` intersects, a leading `!` is relative to all hosts, and an
   inventory range like `web[01:03]` is not mistaken for a separator.
-- **`0.9.567`** - closed KNOWN_MISSING.md's last non-scope-cut gap: a
-  static import whose target can only be known from a FACT is now
-  refused before anything runs, matching real Ansible's blast radius.
-  A task-level `import_tasks:` with a fact-templated path used to be
-  dropped SILENTLY (no banner, no failure, exit 0); an `import_role:`
-  with a fact-templated name failed only that one task, mid-play, after
-  earlier tasks had already run. Both now abort the load with real
-  Ansible's own exit codes - 4 for an import_tasks path, 1 for an
-  import_role name.
 
 ## 🤝 Contributing
 

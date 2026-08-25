@@ -410,6 +410,13 @@ module CrystalPlay
     # "first of these that exists". Paths may be templated, including
     # against facts, so they are resolved per host at run time.
     property vars_files : Array(Array(String)) = [] of Array(String)
+    # `any_errors_fatal:` - one host failing aborts the play for ALL of
+    # them. `max_fail_percentage:` - abort once the share of failed hosts
+    # is STRICTLY GREATER than this (verified: 1 of 3 hosts, i.e. 33.3%,
+    # aborts at 33 but not at 34; 0 aborts on any failure; 100 never
+    # does). Both are per serial: batch.
+    property any_errors_fatal : Bool = false
+    property max_fail_percentage : Float64? = nil
 
     def initialize(@name : String, @hosts : String | Array(String))
       @tasks = [] of Task
@@ -982,6 +989,11 @@ module CrystalPlay
       play.gather_facts = gather_facts_yaml ? gather_facts_yaml.as_bool : true
       play.gather_facts_set = !gather_facts_yaml.nil?
       play.force_handlers = parse_become_value(yaml["force_handlers"]?) || false
+
+      play.any_errors_fatal = parse_become_value(yaml["any_errors_fatal"]?) || false
+      if mfp = yaml["max_fail_percentage"]?
+        play.max_fail_percentage = safe_yaml_to_string(mfp).to_f?
+      end
 
       # vars_files: a list whose entries are either a path or a nested
       # list of candidate paths (first existing one wins).

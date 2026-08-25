@@ -717,7 +717,9 @@ playbook.plays.each_with_index do |play, play_index|
     extra_vars: extra_vars,
     force_handlers: force_handlers || play.force_handlers,
     vars_files: play.vars_files,
-    vars_files_dir: File.dirname(File.expand_path(playbook_file))
+    vars_files_dir: File.dirname(File.expand_path(playbook_file)),
+    any_errors_fatal: play.any_errors_fatal,
+    max_fail_percentage: play.max_fail_percentage
   )
 
   # Run tasks
@@ -743,6 +745,10 @@ playbook.plays.each_with_index do |play, play_index|
       combined_results[host_name] = host_stats.dup
     end
   end
+
+  # any_errors_fatal:/max_fail_percentage: stop the whole play, so the
+  # remaining serial: batches must not start either.
+  break if executor.play_aborted
   end
 end
 

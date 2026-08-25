@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.572`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.573`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -82,6 +82,22 @@ real modules regardless - see `git log`.
   matches (Ubuntu, Debian, CentOS, RedHat, Fedora, Rocky, AlmaLinux).
   Revisit if a real role is found branching on a derivative's display
   name.
+
+- **Three play keywords are still unimplemented and silently ignored:
+  `throttle:`, `order:` and `gather_subset:`.** Found in the same scan
+  that produced 0.9.571's `serial:` and 0.9.573's `any_errors_fatal:`/
+  `max_fail_percentage:` - those two were fixed because ignoring them
+  changes whether a bad rollout STOPS. The remaining three do not:
+  `throttle:` caps how many hosts run a task at once (a performance and
+  load control - this engine already serializes far more than real
+  Ansible does by default), `order:` picks the host ordering
+  (inventory/sorted/reverse_sorted/shuffle - affects sequence, not
+  outcome), and `gather_subset:` narrows which facts are collected (a
+  gathering-time optimization; this engine gathers a fixed set). Each is
+  accepted and ignored rather than rejected, so a playbook using one
+  still runs - it simply does not get the ordering/limiting it asked
+  for. Worth implementing if a benchmark round finds a role whose
+  behavior actually depends on one.
 
 ## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 
