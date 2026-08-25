@@ -66,6 +66,35 @@ module CrystalPlay
       raw_name = @params["name"]?
       name = normalize_name(raw_name)
 
+      # Real Ansible's pip.py resolves (and validates the EXISTENCE of)
+      # the pip executable via `get_bin_path` before it ever looks at
+      # name:/requirements: at all - a target with no pip/pip3 binary
+      # installed anywhere fails immediately with "Unable to find any
+      # of pip3 to use.  pip needs to be installed.", REGARDLESS of
+      # whether there's actually anything to install. Previously this
+      # engine only resolved pip_bin (a bare string, e.g. "pip3") and
+      # never checked it actually exists on the target - combined with
+      # the empty-name early-return just below, a role whose package
+      # list happens to be empty ON THIS OS (buluma.vagrant's own
+      # `vagrant_pip_packages: []` on Debian-family, round 180) never
+      # even tried to invoke pip at all, silently reporting `ok:`
+      # instead of real Ansible's hard failure for a genuinely
+      # pip-less host. Skipped for a virtualenv: target - #resolve_pip_
+      # binary already creates the venv (and fails there if that
+      # itself doesn't work), so its own pip is guaranteed to exist by
+      # the time this runs.
+      unless @params["virtualenv"]?
+        candidate = @params["executable"]? || "pip3"
+        # `which`, not the shell builtin `command -v` - LocalExecutor's
+        # own no-shell-metacharacters fast path execs argv[0] directly
+        # as a real binary (skipping a `bash -c` hop), and "command" is
+        # a shell builtin with no standalone executable on this system
+        # (or most others) to exec at all.
+        unless remote_exec("which #{candidate}")[:exit_code] == 0
+          return PluginResult.new(changed: false, failed: true, msg: "Unable to find any of #{candidate} to use.  pip needs to be installed.")
+        end
+      end
+
       # Real Ansible's pip.py: `name` is a list; `if name:` is Python
       # truthiness, so a name: PARAM THAT IS PRESENT but resolves to an
       # EMPTY list (e.g. a templated `name: "{{ some_list_var }}"` that
