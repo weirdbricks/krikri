@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.587-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.588-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,15 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.588`** - two fixes from a real GPG-check and legacy-`include:`
+  divergence: `yum:`/`dnf:`/`package:` now always pass
+  `--setopt=localpkg_gpgcheck=1` for a URL/local RPM install unless
+  `disable_gpg_check: true` - dnf's own actual default leaves that OFF
+  regardless of `dnf.conf`'s repo `gpgcheck=1`, which previously let a
+  tampered or unsigned RPM install silently where real ansible correctly
+  refuses it. A removed action plugin (bare `include:`, gone from
+  ansible-core after 2023-05-16) now exits 1 like real Ansible, not this
+  engine's generic parser-error 4.
 - **`0.9.587`** - `ansible_connection` is now always resolvable as a
   magic var (defaults to `"local"`/`"ssh"` per host, matching real
   Ansible), instead of undefined unless something explicitly set it.

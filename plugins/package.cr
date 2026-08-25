@@ -322,7 +322,15 @@ module CrystalPlay
             )
           end
 
-          install_result = remote_exec("dnf install -y #{shell_pkg} || yum install -y #{shell_pkg}")
+          # --setopt=localpkg_gpgcheck=1 unless disable_gpg_check: - see
+          # yum.cr's identical fix for the full story (real ansible's
+          # dnf module forces `conf.localpkg_gpgcheck = not
+          # disable_gpg_check`, overriding dnf's own actual gpgcheck-OFF
+          # default for local/URL package installs). Applies here too:
+          # `package:` with a URL/path `name:` shells straight to
+          # dnf/yum with no gpgcheck override at all.
+          gpg_opt = is_true?(@params["disable_gpg_check"]?) ? "--nogpgcheck" : "--setopt=localpkg_gpgcheck=1"
+          install_result = remote_exec("dnf install -y #{gpg_opt} #{shell_pkg} || yum install -y #{gpg_opt} #{shell_pkg}")
           if install_result[:exit_code] == 0
             # A URL/path `name:` skipped the `rpm -q` pre-check above
             # (it can't tell "installed" from "valid RPM file"), so a

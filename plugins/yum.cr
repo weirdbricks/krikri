@@ -239,11 +239,27 @@ module CrystalPlay
         end
       end
       
-      # GPG check
+      # GPG check - real ansible's dnf module explicitly sets BOTH
+      # conf.gpgcheck AND conf.localpkg_gpgcheck to `not disable_gpg_check`
+      # (verified in ansible-core's own dnf.py: "conf.localpkg_gpgcheck =
+      # not disable_gpg_check"), overriding dnf's own actual default for
+      # local/URL package installs, which is gpgcheck-OFF regardless of
+      # the repo gpgcheck=1 setting in dnf.conf. Plain `--nogpgcheck` only
+      # covers the repo-package path; without also forcing
+      # `--setopt=localpkg_gpgcheck=1` here, a `name: https://.../foo.rpm`
+      # install silently skipped signature verification (inherited dnf's
+      # own default), diverging from real ansible-playbook which
+      # correctly refuses an RPM whose signing key isn't imported. Found
+      # benchmarking geerlingguy.selenium's "Install Chrome (if
+      # configured, RedHat)" task (direct google-chrome-stable RPM URL,
+      # no imported key) - real ansible failed with "Failed to validate
+      # GPG signature", crystal-ansible installed it anyway.
       if is_true?(@params["disable_gpg_check"]?)
         options << "--nogpgcheck"
+      else
+        options << "--setopt=localpkg_gpgcheck=1"
       end
-      
+
       # Security/bugfix updates
       if is_true?(@params["security"]?)
         options << "--security"

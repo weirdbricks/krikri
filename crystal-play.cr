@@ -469,6 +469,17 @@ rescue ex : CrystalPlay::StaticImportRoleUndefinedError
   # it uses for an import_tasks: PATH.
   puts "[ERROR]: #{ex.message}".colorize(:red)
   exit 1
+rescue ex : CrystalPlay::RemovedActionError
+  # A removed action plugin (`include:`) is real Ansible's own rc=1
+  # (verified against ansible-core 2.19.4: same "[ERROR]: The 'ansible.
+  # builtin.include' action plugin has been removed" message, exit 1) -
+  # NOT the parser-error 4 this engine uses for a genuine YAML/syntax
+  # error or an unresolvable import_tasks:/import_role: path. Previously
+  # fell through to the generic `rescue ex` below and exited 4. Found
+  # benchmarking mrlesmithjr.firewalld (round 176), which still uses the
+  # legacy bare `include:` directive.
+  puts "[ERROR]: #{ex.message}".colorize(:red)
+  exit 1
 rescue ex : CrystalPlay::YamlSyntaxError
   # Rendered the way real ansible-playbook renders a YAML syntax error -
   # [ERROR]: line, Origin: path:line:col, then the offending source line

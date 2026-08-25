@@ -240,11 +240,18 @@ module CrystalPlay
         end
       end
       
-      # GPG check
+      # GPG check - see yum.cr's identical fix for the full story: real
+      # ansible's dnf module forces `conf.localpkg_gpgcheck = not
+      # disable_gpg_check`, overriding dnf's own actual default (gpgcheck
+      # OFF for local/URL package installs regardless of dnf.conf's repo
+      # gpgcheck=1). Without this, a URL-sourced RPM install silently
+      # skipped signature verification here too.
       if is_true?(@params["disable_gpg_check"]?)
         options << "--nogpgcheck"
+      else
+        options << "--setopt=localpkg_gpgcheck=1"
       end
-      
+
       # Security/bugfix updates
       if is_true?(@params["security"]?)
         options << "--security"
