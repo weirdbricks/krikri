@@ -436,6 +436,10 @@ begin
     end
     puts ""
   end
+rescue ex : CrystalPlay::InvalidStrategyError
+  # Real Ansible reports an unknown strategy and exits 1.
+  puts "[ERROR]: #{ex.message}".colorize(:red)
+  exit 1
 rescue ex : CrystalPlay::StaticImportRoleUndefinedError
   # Real Ansible reports an unresolvable import_role: NAME as a plain
   # undefined-variable error with exit code 1 - not the parser-error 4
@@ -723,7 +727,8 @@ playbook.plays.each_with_index do |play, play_index|
     vars_files_dir: File.dirname(File.expand_path(playbook_file)),
     any_errors_fatal: play.any_errors_fatal,
     max_fail_percentage: play.max_fail_percentage,
-    unreachable_hosts: unreachable_hosts
+    unreachable_hosts: unreachable_hosts,
+    strategy: play.strategy
   )
 
   # Run tasks

@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.577`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.578`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -84,7 +84,7 @@ real modules regardless - see `git log`.
   name.
 
 - **Several keywords are still unimplemented and silently ignored:
-  `gather_subset:`, `strategy:`, `remote_user:` (as a
+  `gather_subset:`, `remote_user:` (as a
   play/task keyword - the `-u` CLI flag and `ansible_user` DO work),
   `vars_prompt:` and `debugger:`.** Found in the same scan
   that produced 0.9.571's `serial:` and 0.9.573's `any_errors_fatal:`/
@@ -100,8 +100,7 @@ real modules regardless - see `git log`.
   still runs - it simply does not get the ordering/limiting it asked
   for. Worth implementing if a benchmark round finds a role whose
   behavior actually depends on one. The later additions to this list
-  come from the same zero-implementation sweep: `strategy:` (linear vs
-  free vs host_pinned execution ordering), `ignore_unreachable:` (per-task tolerance for an
+  come from the same zero-implementation sweep: `ignore_unreachable:` (per-task tolerance for an
   unreachable host, now that 0.9.570 made unreachable a real outcome),
   `vars_prompt:` (interactive, so of little use to an automated run) and
   `debugger:` (an interactive debugger this engine has no equivalent
@@ -117,6 +116,18 @@ real modules regardless - see `git log`.
   `some.coll.debug` and NOT to `ansible.builtin.debug`, while here it
   applies to `debug`. There is no separate `some.coll.debug` module in
   this engine for it to mean anything else.
+
+- **Under the default `linear` strategy, a task's per-host result lines
+  are printed in HOST order, where real Ansible prints them in
+  COMPLETION order.** With two hosts and one of them slow, real Ansible
+  reports the fast host first; this engine reports them in inventory
+  order once the task has finished everywhere. That is deliberate: the
+  parallel path buffers each host's output so concurrent hosts' progress
+  lines can never interleave into an unreadable mess. Recap, exit code
+  and every result are identical - only the order of two adjacent lines
+  differs. `strategy: free` (0.9.578) does interleave, matching real
+  Ansible exactly, because there the ordering IS the observable
+  behavior.
 
 ## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 

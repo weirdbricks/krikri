@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.577-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.578-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,13 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.578`** - implemented `strategy:`. `free` (and `host_pinned`,
+  which differs only in worker affinity) lets each host run the whole
+  task list with no barrier between tasks, so a fast host races ahead
+  while a slow one is still working - output interleaves exactly as real
+  Ansible's does, since that ordering is the whole observable point of
+  the strategy. An unknown strategy is now refused with real Ansible's
+  message and exit code 1, rather than silently falling back to linear.
 - **`0.9.577`** - implemented `ignore_unreachable:`, `order:` and
   `throttle:`. `ignore_unreachable:` needed the architecture to change:
   unreachable hosts used to be dropped from every play wholesale, so
@@ -426,18 +433,6 @@ for current-state detail.
   EVERY host, and stop the remaining `serial:` batches too; the
   percentage comparison is strictly-greater, matching real Ansible
   (1-of-3 hosts aborts at 33 but not at 34).
-- **`0.9.572`** - implemented `vars_files:`, which was not wired up at
-  all: the keyword parsed to nothing, so every variable it should have
-  defined was undefined and the task failed outright. Files load in
-  order with later winning, a nested list means "first that exists", a
-  path may be templated (including against a fact), and a missing file
-  is tolerated - all matching real Ansible, including the precedence
-  detail that a vars_file BEATS the play's own `vars:`. Fixing the
-  fact-templated case surfaced a second bug: `ansible_os_family` fell
-  back to `"Linux"` for any DERIVATIVE distro instead of consulting
-  `ID_LIKE`, so on such a machine every
-  `when: ansible_os_family == "Debian"` gate in every role silently
-  skipped.
 
 ## 🤝 Contributing
 

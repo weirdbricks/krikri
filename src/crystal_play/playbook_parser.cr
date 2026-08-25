@@ -398,6 +398,13 @@ module CrystalPlay
   end
 
   # Represents a play (collection of tasks for specific hosts)
+  # The strategies this engine implements. host_pinned is accepted and
+  # behaves as free: its only difference is worker affinity, which this
+  # engine has no equivalent of. `debug` is real Ansible's interactive
+  # debugger strategy and is deliberately NOT accepted here - see
+  # KNOWN_MISSING.md's note on `debugger:`.
+  VALID_STRATEGIES = ["linear", "free", "host_pinned"]
+
   class Play
     property name : String
     property hosts : String | Array(String)
@@ -438,6 +445,10 @@ module CrystalPlay
     # `order:` - the order hosts are processed in: inventory (default),
     # reverse_inventory, sorted, reverse_sorted, shuffle.
     property order : String? = nil
+    # `strategy:` - linear (default) runs every host through a task
+    # before any starts the next; free lets each host run the whole task
+    # list independently.
+    property strategy : String? = nil
     property any_errors_fatal : Bool = false
     property max_fail_percentage : Float64? = nil
 
@@ -587,6 +598,11 @@ module CrystalPlay
         end
       end
     end
+  end
+
+  # An unknown `strategy:`. Real Ansible reports it and exits 1, not the
+  # parser-error 4 it uses for a malformed playbook.
+  class InvalidStrategyError < Exception
   end
 
   class Playbook
@@ -957,6 +973,10 @@ module CrystalPlay
           # Same bypass as RemovedActionError above - see that class's
           # own comment and HandlerNotFoundError's own comment.
           raise ex
+        rescue ex : InvalidStrategyError
+          # Same bypass: real Ansible refuses the whole run for an
+          # unknown strategy rather than degrading this one play.
+          raise ex
         rescue ex : StaticImportRoleUndefinedError
           raise ex
         rescue ex : StaticImportUndefinedError
@@ -1095,6 +1115,15 @@ module CrystalPlay
       play.force_handlers = parse_become_value(yaml["force_handlers"]?) || false
 
       play.order = yaml["order"]?.try { |value| safe_yaml_to_string(value).strip }
+      play.strategy = yaml["strategy"]?.try { |value| safe_yaml_to_string(value).strip }
+      # Real Ansible REFUSES an unknown strategy - "[ERROR]: Invalid play
+      # strategy specified: nonsense", exit 1 - rather than falling back
+      # to linear (verified against ansible-core 2.19.4).
+      if strategy = play.strategy
+        unless strategy.empty? || VALID_STRATEGIES.includes?(strategy)
+          raise InvalidStrategyError.new("Invalid play strategy specified: #{strategy}")
+        end
+      end
       play.module_defaults = parse_module_defaults(yaml["module_defaults"]?)
       play.any_errors_fatal = parse_become_value(yaml["any_errors_fatal"]?) || false
       if mfp = yaml["max_fail_percentage"]?

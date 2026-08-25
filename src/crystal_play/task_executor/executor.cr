@@ -292,7 +292,12 @@ module CrystalPlay
       # dropping them from the play, each task on such a host yields an
       # unreachable result - which is what makes per-task
       # `ignore_unreachable:` possible at all.
-      @unreachable_hosts = Set(String).new
+      @unreachable_hosts = Set(String).new,
+      # `strategy:` - see Play#strategy. Only "free" changes anything
+      # here; linear is this engine's existing behavior, and
+      # host_pinned is treated as free (its only difference is worker
+      # affinity, which this engine has no equivalent of).
+      @strategy : String? = nil
     )
       @results = Hash(String, Hash(String, Int32)).new
       @registered_vars = Hash(String, Hash(String, JSON::Any)).new
@@ -338,10 +343,79 @@ module CrystalPlay
         gather_facts_for_all_hosts
       end
 
-      run_task_batch(@tasks, @hosts)
+      if free_strategy?
+        run_free
+      else
+        run_task_batch(@tasks, @hosts)
+      end
 
       # Run handlers at the end of all tasks (Ansible behavior)
       run_handlers
+    end
+
+    # One host's whole task list, flushing output after EACH task rather
+    # than at the end. Real Ansible emits a host's banner and its result
+    # together - under `free` you see "TASK [x] / changed: [h2]" as a
+    # pair, then h2's next pair, while h1 is still working - so buffering
+    # per host (rather than per task) would group all of a host's output
+    # into one block and lose exactly the interleaving the strategy is
+    # for.
+    private def run_free_for_host(host : Host) : Nil
+      @tasks.each do |task|
+        break if @halted_hosts.includes?(host.name)
+
+        buffer = IO::Memory.new
+        OutputRouting.redirect_current_fiber_to(buffer)
+        begin
+          run_task_list([task], host)
+        ensure
+          OutputRouting.clear_current_fiber_redirect
+          print buffer.to_s
+        end
+      end
+    end
+
+    private def free_strategy? : Bool
+      strategy = @strategy
+      return false unless strategy
+      strategy == "free" || strategy == "host_pinned"
+    end
+
+    # `strategy: free` - each host runs the WHOLE task list on its own,
+    # with no barrier between tasks, so a fast host races ahead while a
+    # slow one is still on an earlier task. Verified against ansible-core
+    # 2.19.4: with h1 sleeping in task 1, h2 prints its own banner and
+    # result for BOTH tasks before h1 reports task 1 at all.
+    #
+    # Bounded by --forks, like every other fan-out here. Output is NOT
+    # buffered per host: real Ansible interleaves these lines as they
+    # happen, which is the whole visible point of the strategy.
+    private def run_free : Nil
+      hosts = @hosts
+      return if hosts.empty?
+
+      if hosts.size == 1 || @forks <= 1
+        hosts.each { |host| run_free_for_host(host) }
+        return
+      end
+
+      gate = Channel(Nil).new(Math.min(hosts.size, @forks))
+      Math.min(hosts.size, @forks).times { gate.send(nil) }
+      done = Channel(Nil).new(hosts.size)
+
+      hosts.each do |host|
+        spawn do
+          gate.receive
+          begin
+            run_free_for_host(host)
+          ensure
+            gate.send(nil)
+            done.send(nil)
+          end
+        end
+      end
+
+      hosts.size.times { done.receive }
     end
 
     # Whether *task* can safely fan out across hosts via --forks. Excluded:
