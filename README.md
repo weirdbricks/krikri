@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.585-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.586-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,13 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.586`** - a handler notifying a handler defined EARLIER than it
+  was silently dropped. Handlers run in definition order, so such a
+  notification arrives after its target has already been passed; real
+  Ansible makes exactly one further pass for those, and this now does
+  too - including the corners that pin the rule: a self-notifying
+  handler runs exactly twice, a backward chain C->B->A stops at B, and a
+  handler notified from AHEAD still runs only once.
 - **`0.9.585`** - implemented `loop_control:`'s `label:` and
   `extended:`. `label:` was ignored, so a loop over dicts printed the
   whole dict on every line instead of the field the playbook chose;
@@ -399,16 +406,6 @@ for current-state detail.
   than the ordinary failed-task 2. Assigning to task args from the
   prompt needs a live Python task object and is documented as not
   offered, rather than half-offered.
-- **`0.9.583`** - implemented `vars_prompt:` and made `--vault-id` real.
-  Prompts are asked only on a terminal, exactly as real Ansible does -
-  piped or closed stdin falls back to the entry's `default:` (and to the
-  literal string `None` when there is none, a Python quirk this
-  reproduces). `--vault-id label@source` now supplies several vault
-  identities, picking the one a 1.2 header names and trying the rest
-  after. An undecryptable value is no longer fatal at parse time: real
-  Ansible defers to the point of USE, so a playbook carrying a
-  prod-only vault var runs fine on a dev box until something references
-  it.
 
 ## 🤝 Contributing
 
