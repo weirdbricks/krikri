@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.571`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.572`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -68,6 +68,20 @@ real modules regardless - see `git log`.
     made deliberately so a command line copied from `ansible-playbook`
     behaves the same here. `-d` is kept as an extra alias for `--diff`
     (real Ansible has no `-d`, so it collides with nothing).
+
+- **`ansible_distribution` is the os-release ID, capitalized, not real
+  Ansible's per-distro display name.** On LMDE 7 real Ansible reports
+  `Linux Mint Debian Edition` where this reports `Linuxmint` (both agree
+  on `ansible_os_family: Debian` since 0.9.572, and on
+  `ansible_distribution_version`). Real Ansible carries a per-distro
+  naming table plus distro-specific files (`/etc/linuxmint/info` and
+  friends) to produce those display strings; reproducing it for every
+  derivative is not justified by anything a role actually gates on -
+  roles overwhelmingly branch on `ansible_os_family`, and on
+  `ansible_distribution` only for the mainstream names this already
+  matches (Ubuntu, Debian, CentOS, RedHat, Fedora, Rocky, AlmaLinux).
+  Revisit if a real role is found branching on a derivative's display
+  name.
 
 ## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 

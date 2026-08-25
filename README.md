@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.571-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.572-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,18 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.572`** - implemented `vars_files:`, which was not wired up at
+  all: the keyword parsed to nothing, so every variable it should have
+  defined was undefined and the task failed outright. Files load in
+  order with later winning, a nested list means "first that exists", a
+  path may be templated (including against a fact), and a missing file
+  is tolerated - all matching real Ansible, including the precedence
+  detail that a vars_file BEATS the play's own `vars:`. Fixing the
+  fact-templated case surfaced a second bug: `ansible_os_family` fell
+  back to `"Linux"` for any DERIVATIVE distro instead of consulting
+  `ID_LIKE`, so on such a machine every
+  `when: ansible_os_family == "Debian"` gate in every role silently
+  skipped.
 - **`0.9.571`** - implemented `serial:`, which was ignored entirely. Real
   Ansible runs the whole play against one batch of hosts at a time -
   that is what makes a rolling restart rolling - while this engine still
@@ -429,11 +441,6 @@ for current-state detail.
   earlier tasks had already run. Both now abort the load with real
   Ansible's own exit codes - 4 for an import_tasks path, 1 for an
   import_role name.
-- **`0.9.566`** - **breaking:** `-c` now means `--connection`, matching
-  real Ansible, where it previously meant `--check` in this engine.
-  `-C` is the short form for check mode (`--check` is unchanged), and
-  `-D`/`-d` both mean `--diff`. A command line copied from
-  `ansible-playbook` now behaves the same here.
 
 ## 🤝 Contributing
 

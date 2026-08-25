@@ -715,7 +715,9 @@ playbook.plays.each_with_index do |play, play_index|
     smart_gathering: gathering == "smart",
     fact_store: run_fact_store,
     extra_vars: extra_vars,
-    force_handlers: force_handlers || play.force_handlers
+    force_handlers: force_handlers || play.force_handlers,
+    vars_files: play.vars_files,
+    vars_files_dir: File.dirname(File.expand_path(playbook_file))
   )
 
   # Run tasks

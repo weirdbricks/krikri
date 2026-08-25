@@ -280,7 +280,11 @@ module CrystalPlay
       @extra_vars = {} of String => JSON::Any,
       # --force-handlers / the `force_handlers: true` play keyword: run
       # notified handlers even for a host a task already failed on.
-      @force_handlers = false
+      @force_handlers = false,
+      # `vars_files:` - candidate path lists, resolved per host because a
+      # path may be templated against that host's own facts.
+      @vars_files = [] of Array(String),
+      @vars_files_dir = "."
     )
       @results = Hash(String, Hash(String, Int32)).new
       @registered_vars = Hash(String, Hash(String, JSON::Any)).new
@@ -1142,6 +1146,53 @@ module CrystalPlay
 
     # Build the base variable context (play/host/registered/task vars + facts)
     # shared by every execution path for a task.
+    # Resolves and parses this play's vars_files for *host*. Cached per
+    # host: the paths can be templated against that host's facts, but
+    # they do not change between tasks, and re-reading a YAML file for
+    # every task on every host would be pure waste.
+    @vars_files_cache = Hash(String, Hash(String, JSON::Any)).new
+
+    private def load_vars_files(host : Host) : Hash(String, JSON::Any)
+      # Keyed on the hostvars generation, not just the host: this runs
+      # for "Gathering Facts" too, BEFORE any fact exists, and a path
+      # templated against a fact (`vars-{{ ansible_os_family }}.yml`)
+      # resolves to nothing at that point. Caching that empty result per
+      # host would poison every later task.
+      cache_key = "#{host.name}\u0000#{@hv_generation}"
+      if cached = @vars_files_cache[cache_key]?
+        return cached
+      end
+
+      merged = Hash(String, JSON::Any).new
+      base = base_context_a_for(host).dup
+      base_context_b_for(host).each { |key, value| base[key] = value }
+      substitutor = VarSubstitutor.new(vars: base, host_name: host.name)
+
+      @vars_files.each do |candidates|
+        candidates.each do |raw|
+          rendered = (substitutor.substitute(raw) rescue raw)
+          path = File.expand_path(rendered, @vars_files_dir)
+          next unless File.exists?(path)
+
+          begin
+            parsed = YAML.parse(File.read(path))
+            if hash = parsed.as_h?
+              hash.each { |key, value| merged[key.to_s] = JSON.parse(value.to_json) }
+            end
+          rescue
+            # A vars file that will not parse is skipped rather than
+            # taking the run down - real ansible-playbook likewise does
+            # not abort for a vars_files entry it cannot use (verified:
+            # a MISSING file is tolerated silently, rc=0).
+          end
+          break
+        end
+      end
+
+      @vars_files_cache[cache_key] = merged
+      merged
+    end
+
     private def build_vars_context(task : Task, host : Host) : Hash(String, JSON::Any)
       # See the @base_context_a_cache/@base_context_b_cache ivar comments
       # above for why this is 2 caches, not 1, and exactly what real
@@ -1165,6 +1216,15 @@ module CrystalPlay
       # from what `VariableContext.build`'s ordering used to guarantee
       # via unconditional overwrite-in-priority-order instead.
       vars_context = base_context_a_for(host).dup
+
+      # vars_files: sit ABOVE play vars and below role/task vars - real
+      # Ansible's documented order, verified live: a name set in both
+      # `vars:` and a vars_file resolves to the FILE's value, and a later
+      # file beats an earlier one. Merged here, straight after the tier
+      # holding play_vars, so role_vars/task.vars below still win.
+      unless @vars_files.empty?
+        load_vars_files(host).each { |key, value| vars_context[key] = value }
+      end
 
       if defaults = task.role_defaults
         defaults.each { |key, value| vars_context[key] ||= value }

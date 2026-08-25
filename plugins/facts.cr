@@ -79,6 +79,20 @@ def gather_hostname(facts)
   end
 end
 
+# Maps a distribution (or an ID_LIKE token) to real Ansible's os_family,
+# or nil when it is not one this knows - the caller then tries ID_LIKE.
+def family_for(name : String) : String?
+  case name
+  when "Ubuntu", "Debian", "Linuxmint", "Pop!_OS", "Raspbian", "Kali" then "Debian"
+  when "CentOS", "RedHat", "Fedora", "Rocky", "AlmaLinux", "Amazon", "Oracle" then "RedHat"
+  when "Arch", "Manjaro"                                              then "Archlinux"
+  when "SUSE", "Opensuse", "Suse"                                     then "Suse"
+  when "Alpine"                                                       then "Alpine"
+  when "Gentoo"                                                       then "Gentoo"
+  else nil
+  end
+end
+
 # Gather OS facts
 def gather_os_facts(facts)
   os_info = parse_os_release
@@ -97,16 +111,26 @@ def gather_os_facts(facts)
       end
       facts["ansible_distribution"] = distribution
       
-      # OS family
-      os_family = case distribution
-      when "Ubuntu", "Debian" then "Debian"
-      when "CentOS", "RedHat", "Fedora", "Rocky", "AlmaLinux" then "RedHat"
-      when "Arch" then "Arch"
-      when "SUSE", "openSUSE" then "Suse"
-      when "Alpine" then "Alpine"
-      else "Linux"
+      # OS family. A DERIVATIVE distro (Linux Mint, Pop!_OS, Amazon
+      # Linux, ...) is not in the list above, and falling through to
+      # "Linux" is wrong: real Ansible reports the family of the distro
+      # it derives from, which /etc/os-release states in ID_LIKE.
+      # Verified on LMDE 7 (ID=linuxmint, ID_LIKE=debian): real Ansible
+      # says Debian, this said "Linux" - so every
+      # `when: ansible_os_family == "Debian"` gate in every role
+      # silently skipped, and an OS-keyed `vars-{{ ansible_os_family
+      # }}.yml` looked for a file that does not exist. The benchmark
+      # hosts have always been plain Ubuntu/Rocky, which is why no round
+      # ever caught this.
+      os_family = family_for(distribution)
+      if os_family.nil?
+        os_info["ID_LIKE"]?.try do |id_like|
+          id_like.split(/\s+/).each do |like|
+            os_family ||= family_for(like.capitalize)
+          end
+        end
       end
-      facts["ansible_os_family"] = os_family
+      facts["ansible_os_family"] = os_family || distribution
     end
     
     if version = os_info["VERSION_ID"]?

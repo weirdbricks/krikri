@@ -405,6 +405,11 @@ module CrystalPlay
     # percentage ("50%"). Empty means the play runs against every host at
     # once, which is what this engine always did.
     property serial : Array(String) = [] of String
+    # `vars_files:` - each entry is the list of candidate paths for one
+    # slot: a plain entry is a one-element list, a nested list is
+    # "first of these that exists". Paths may be templated, including
+    # against facts, so they are resolved per host at run time.
+    property vars_files : Array(Array(String)) = [] of Array(String)
 
     def initialize(@name : String, @hosts : String | Array(String))
       @tasks = [] of Task
@@ -977,6 +982,18 @@ module CrystalPlay
       play.gather_facts = gather_facts_yaml ? gather_facts_yaml.as_bool : true
       play.gather_facts_set = !gather_facts_yaml.nil?
       play.force_handlers = parse_become_value(yaml["force_handlers"]?) || false
+
+      # vars_files: a list whose entries are either a path or a nested
+      # list of candidate paths (first existing one wins).
+      if vars_files_yaml = yaml["vars_files"]?.try(&.as_a?)
+        vars_files_yaml.each do |entry|
+          if alternatives = entry.as_a?
+            play.vars_files << alternatives.map { |alt| safe_yaml_to_string(alt) }
+          else
+            play.vars_files << [safe_yaml_to_string(entry)]
+          end
+        end
+      end
 
       # serial: accepts a scalar (`serial: 2`, `serial: "50%"`) or a list
       # of them (`serial: [1, 2]`), where each entry sizes one batch and
