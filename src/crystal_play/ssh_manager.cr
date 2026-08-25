@@ -160,7 +160,7 @@ module CrystalPlay
         "-o", "ConnectTimeout=#{CliOptions.timeout}",
         "-o", "ServerAliveInterval=60",
         "-o", "ServerAliveCountMax=3",
-        "-o", "StrictHostKeyChecking=accept-new",  # Auto-accept new host keys
+        "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
       ] + identity_args(identity_file) + [
         "-p", port.to_s,
         "#{user}@#{host}",
@@ -226,7 +226,7 @@ module CrystalPlay
         "-o", "ConnectTimeout=#{CliOptions.timeout}",
         "-o", "ServerAliveInterval=60",
         "-o", "ServerAliveCountMax=3",
-        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
       ] + identity_args(identity_file) + [
         "-p", port.to_s,
         "#{user}@#{host}",
@@ -342,7 +342,7 @@ module CrystalPlay
         "-o", "ConnectTimeout=#{CliOptions.timeout}",
         "-o", "ServerAliveInterval=60",
         "-o", "ServerAliveCountMax=3",
-        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
       ] + identity_args(identity_file) + [
         "-p", port.to_s,
         "#{user}@#{host}",
@@ -482,7 +482,7 @@ module CrystalPlay
         "-o", "ControlMaster=auto",
         "-o", "ControlPath=#{control_path}",
         "-o", "ControlPersist=600",
-        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
       ] + (recursive ? ["-r"] : [] of String) + identity_args(identity_file) + [
         "-P", port.to_s,
         local_path,
@@ -533,7 +533,7 @@ module CrystalPlay
         "-o", "ControlMaster=auto",
         "-o", "ControlPath=#{control_path}",
         "-o", "ControlPersist=600",
-        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
       ] + identity_args(identity_file) + [
         "-P", port.to_s,
         "#{user}@#{host}:#{remote_path}",
@@ -590,7 +590,7 @@ module CrystalPlay
         "rsync",
         "-az",  # archive mode, compress
         "--chmod=#{mode.to_s(8)}",  # set permissions
-        "-e", "ssh -o ControlMaster=auto -o ControlPath=#{control_path} -o ControlPersist=600 -o StrictHostKeyChecking=accept-new#{identity_ssh_opt(identity_file)} -p #{port}",
+        "-e", "ssh -o ControlMaster=auto -o ControlPath=#{control_path} -o ControlPersist=600 -o StrictHostKeyChecking=#{strict_host_key_checking}#{identity_ssh_opt(identity_file)} -p #{port}",
         local_path,
         "#{user}@#{host}:#{remote_path}"
       ]
@@ -635,7 +635,7 @@ module CrystalPlay
         "rsync",
         "-az",
         "--chmod=#{mode.to_s(8)}",
-        "-e", "ssh -o ControlMaster=auto -o ControlPath=#{control_path} -o ControlPersist=600 -o StrictHostKeyChecking=accept-new#{identity_ssh_opt(identity_file)} -p #{port}",
+        "-e", "ssh -o ControlMaster=auto -o ControlPath=#{control_path} -o ControlPersist=600 -o StrictHostKeyChecking=#{strict_host_key_checking}#{identity_ssh_opt(identity_file)} -p #{port}",
       ] + local_files + ["#{user}@#{host}:#{remote_dir}/"]
 
       result = Process.run(
@@ -704,6 +704,29 @@ module CrystalPlay
     # (and scp) invocation in this file already routes through here -
     # making this the one place a CLI-supplied ssh argument has to be
     # added, rather than five.
+    # StrictHostKeyChecking value for every ssh/rsync invocation in this
+    # file. Defaults to "accept-new" (auto-trust a NEW host key, but
+    # still refuse a CHANGED one) - safe for non-interactive use without
+    # silently masking a real MITM/key-rotation surprise. Real Ansible's
+    # `host_key_checking = False` (ansible.cfg `[defaults]`, or the
+    # ANSIBLE_HOST_KEY_CHECKING/ANSIBLE_SSH_HOST_KEY_CHECKING env vars -
+    # verified in ansible-core's own ssh.py connection plugin:
+    # `if self.get_option('host_key_checking') is False: b_args = (b"-o",
+    # b"StrictHostKeyChecking=no")`) is explicitly MORE permissive than
+    # this engine's own default - it accepts a CHANGED key too, which
+    # matters for exactly the scenario that surfaced this: an ephemeral
+    # cloud host whose IP got reused with a different host key from an
+    # earlier run still in this machine's known_hosts. This engine has
+    # no ansible.cfg INI parsing at all (see crystal-play.cr's own
+    # show_custom_stats comment for why - env-var-only by design), so
+    # only the env var forms are honored here, matching how every other
+    # env-var-only setting in this codebase already works.
+    private def self.strict_host_key_checking : String
+      value = ENV["ANSIBLE_HOST_KEY_CHECKING"]? || ENV["ANSIBLE_SSH_HOST_KEY_CHECKING"]?
+      return "accept-new" unless value
+      ["no", "false", "0", "off"].includes?(value.downcase) ? "no" : "accept-new"
+    end
+
     private def self.identity_args(identity_file : String?) : Array(String)
       base = identity_file ? ["-i", identity_file] : [] of String
       base + CliOptions.extra_ssh_args
