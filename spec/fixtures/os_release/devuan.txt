@@ -1,0 +1,6 @@
+PRETTY_NAME="Devuan GNU/Linux 5 (daedalus)"
+NAME="Devuan GNU/Linux"
+VERSION_ID="5"
+VERSION="5 (daedalus)"
+ID=devuan
+ID_LIKE=debian

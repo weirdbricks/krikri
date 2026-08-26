@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.600-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.601-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -384,6 +384,21 @@ A short rolling summary of the last few versions - see `git log` for the
 complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
+
+- **`0.9.601`** - closes the last three documented gaps, leaving
+  [KNOWN_MISSING.md](KNOWN_MISSING.md)'s "Real gaps" section empty.
+  `ansible_distribution` now reports real Ansible's per-distro DISPLAY
+  name rather than the capitalized os-release ID - "Linux Mint Debian
+  Edition" not "Linuxmint", "Debian" not "Raspbian" - ported branch for
+  branch from its own `parse_distribution_file_Debian` and checked
+  against that same Python parser over a corpus of real os-release
+  files. The `debugger:` prompt gained real Ansible's ASSIGNMENT
+  commands (`task.args['x'] = ...`, `task_vars['y'] = ...`) plus
+  `u`/`update_task`, including the subtle rule that a `task_vars` edit
+  changes nothing until `u` re-templates the task. And
+  `--scp-extra-args` now actually extends this engine's `scp` command
+  lines - the note claiming it had "nothing to attach to" was wrong
+  about the engine's own file transfers.
 
 - **`0.9.600`** - `notify:` validation moved from parse time to run
   time, where real Ansible does it. An unmatched `notify:` is real

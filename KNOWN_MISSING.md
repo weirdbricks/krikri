@@ -10,12 +10,18 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.600`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.601`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
+
+**Currently empty.** The last three entries here - the nested-undefined
+chain (`0.9.599`), `notify:` validation timing (`0.9.600`), and the
+`ansible_distribution` display name plus the `debugger:` assignment
+commands and `--scp-extra-args` (`0.9.601`) - are all fixed; see
+`git log`. What remains below is deliberate scope, not a backlog.
 
 Note: the round171 `buluma.gitlab` "`package:`/`dnf:` can't resolve a
 name-version partial-NEVRA spec" entry that used to be here (`Error:
@@ -45,19 +51,35 @@ itself wrong; both had been implemented, if more simply, since
 `0.9.121`/`0.9.125`. 0.9.475 upgraded both to more fully match their
 real modules regardless - see `git log`.
 
-- **`ansible-playbook`'s CLI flag surface is now fully covered by name
-  (0.9.565), but four flags are accepted-and-inert and two short forms
-  differ.** `--help` lists every flag real ansible-core 2.19.4 does.
-  What is NOT fully behavioral:
+## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 
-  * `-M`/`--module-path` is accepted and ignored: modules here are
-    compiled binaries shipped with the engine, not a Python search path.
-    (`--vault-id` became real in 0.9.583.)
-  * `--scp-extra-args`/`--sftp-extra-args` are accepted and stored but
-    have nothing to attach to: this engine moves files over `ssh` plus a
-    piped stream rather than shelling out to scp/sftp.
-    `--ssh-common-args`/`--ssh-extra-args` DO take effect.
-  * `--flush-cache` is accepted and correct-by-construction: facts live
+- **`ansible-playbook`'s CLI flag surface is fully covered by name, and
+  all but one flag is now behavioral.** `--help` lists every flag real
+  ansible-core 2.19.4 does.
+
+  * `-M`/`--module-path` is accepted and ignored, and this one is a real
+    scope cut rather than an oversight: real Ansible searches those
+    directories for PYTHON modules, while every module here is a
+    compiled binary shipped with the engine. Honouring the flag would
+    mean an arbitrary-Python-module runner (already an explicit scope cut
+    below), and pretending to honour it - silently searching the given
+    path for a same-named compiled binary - would be a worse failure
+    mode than ignoring it, since a user's `-M` directory holds `.py`
+    files this can never execute.
+  * `--scp-extra-args` became real in `0.9.601`. The entry that used to
+    live here ("accepted and stored, but nothing to attach to - this
+    engine moves files over ssh plus a piped stream rather than shelling
+    out to scp") was wrong on its own facts: `SSHManager#upload_file`/
+    `#download_file` are `scp` invocations, and `PluginManager` falls
+    back to scp for the plugin-binary push whenever rsync is missing on
+    the target. It now extends those command lines, alongside
+    `--ssh-common-args` (which real Ansible applies to scp as well -
+    only `--ssh-extra-args` is ssh-only).
+  * `--sftp-extra-args` is accepted and inert, and correct by
+    construction: nothing here ever invokes `sftp`, so - exactly as in
+    real Ansible under a non-sftp transfer method - there is no sftp
+    command line for it to extend.
+  * `--flush-cache` is accepted and correct by construction: facts live
     only in a run-scoped store, so there is no on-disk cache to
     invalidate.
   * Short forms match real Ansible as of `0.9.566`: `-C` is `--check`,
@@ -66,33 +88,6 @@ real modules regardless - see `git log`.
     made deliberately so a command line copied from `ansible-playbook`
     behaves the same here. `-d` is kept as an extra alias for `--diff`
     (real Ansible has no `-d`, so it collides with nothing).
-
-- **`ansible_distribution` is the os-release ID, capitalized, not real
-  Ansible's per-distro display name.** On LMDE 7 real Ansible reports
-  `Linux Mint Debian Edition` where this reports `Linuxmint` (both agree
-  on `ansible_os_family: Debian` since 0.9.572, and on
-  `ansible_distribution_version`). Real Ansible carries a per-distro
-  naming table plus distro-specific files (`/etc/linuxmint/info` and
-  friends) to produce those display strings; reproducing it for every
-  derivative is not justified by anything a role actually gates on -
-  roles overwhelmingly branch on `ansible_os_family`, and on
-  `ansible_distribution` only for the mainstream names this already
-  matches (Ubuntu, Debian, CentOS, RedHat, Fedora, Rocky, AlmaLinux).
-  Revisit if a real role is found branching on a derivative's display
-  name.
-
-- **`debugger:` is implemented for the commands that do not need a live
-  Python task object (0.9.584): `p`/`print`, `r`/`redo`, `c`/`continue`,
-  `q`/`quit`, and EOF-as-interrupt.** Real Ansible's debugger also lets
-  you ASSIGN from the prompt - `task.args['x'] = 'y'`,
-  `task_vars['z'] = 1` - and then redo with the modified values. That
-  needs evaluating arbitrary Python against the live task object, which
-  this engine has no equivalent of, so it is not offered rather than
-  half-offered: an unknown command says so instead of appearing to work.
-  Triggering (always/never/on_failed/on_skipped/on_unreachable), the
-  prompt text, redo, and the exit codes all match real Ansible.
-
-## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 
 - Cloud provider modules (`amazon.aws`/`community.aws` - `ec2_instance`,
   `s3_object`, IAM, security groups, etc.), `azure_rm_*`, and dynamic

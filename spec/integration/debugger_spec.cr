@@ -99,4 +99,62 @@ describe "debugger:" do
     plain_code.should eq(2)
     plain_output.should_not contain("(debug)>")
   end
+
+  # Assignment from the prompt - real Ansible does this by exec'ing the
+  # typed line as Python; this parses the two shapes that make the
+  # debugger useful and applies them to the real task/vars. Every
+  # expectation below was checked against ansible-core 2.19.4 driving the
+  # equivalent playbook with the same piped input, recap counts included.
+  describe "assignment" do
+    templated = <<-YAML
+      - hosts: all
+        gather_facts: false
+        vars:
+          exit_code: "1"
+        tasks:
+          - name: exits with a var-controlled code
+            ansible.builtin.command: "/bin/sh -c 'exit {{ exit_code }}'"
+            debugger: on_failed
+          - name: after
+            ansible.builtin.debug:
+              msg: reached
+      YAML
+
+    it "applies task.args[...] and re-runs it on r" do
+      # `_raw_params` is real Ansible's name for a command:'s free-form
+      # argument; this engine stores it as `cmd` and aliases the two.
+      code, output = run_debug(FAILING, %(task.args["_raw_params"] = "/bin/true"\nr\n))
+      code.should eq(0)
+      output.should contain("changed=1")
+      output.should_not contain("failed=1")
+    end
+
+    it "does NOT change the task on a task_vars assignment alone - u is required" do
+      # Verified against real Ansible: assign + r re-runs the ORIGINAL
+      # command, because its task object is already templated by then.
+      code, _ = run_debug(templated, %(task_vars["exit_code"] = "0"\nr\nc\n))
+      code.should eq(2)
+    end
+
+    it "re-templates the task from updated task_vars on u, and then r passes" do
+      code, output = run_debug(templated, %(task_vars["exit_code"] = "0"\nu\nr\nc\n))
+      code.should eq(0)
+      output.should contain("reached")
+    end
+
+    it "shows the templated arguments with p task.args, reflecting an applied edit" do
+      _, output = run_debug(templated, %(task_vars["exit_code"] = "0"\nu\np task.args\nc\n))
+      output.should contain("exit 0")
+    end
+
+    it "refuses a value it cannot parse instead of pretending the assignment took" do
+      _, output = run_debug(FAILING, %(task.args["chdir"] = some_python_expr()\nc\n))
+      output.should contain("***ValueError")
+    end
+
+    it "still reports a genuinely unknown command" do
+      _, output = run_debug(FAILING, "wat\nc\n")
+      output.should contain("Unknown command: wat")
+    end
+  end
 end

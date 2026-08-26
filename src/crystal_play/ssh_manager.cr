@@ -483,7 +483,8 @@ module CrystalPlay
         "-o", "ControlPath=#{control_path}",
         "-o", "ControlPersist=600",
         "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
-      ] + (recursive ? ["-r"] : [] of String) + identity_args(identity_file) + [
+      ] + (recursive ? ["-r"] : [] of String) + identity_args(identity_file) +
+              CliOptions.extra_scp_args + [
         "-P", port.to_s,
         local_path,
         "#{user}@#{host}:#{remote_path}"
@@ -534,7 +535,7 @@ module CrystalPlay
         "-o", "ControlPath=#{control_path}",
         "-o", "ControlPersist=600",
         "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
-      ] + identity_args(identity_file) + [
+      ] + identity_args(identity_file) + CliOptions.extra_scp_args + [
         "-P", port.to_s,
         "#{user}@#{host}:#{remote_path}",
         local_path

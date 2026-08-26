@@ -4,6 +4,7 @@
 # Runs locally on target host and returns all facts in one JSON response
 
 require "json"
+require "../src/crystal_play/plugin_helpers/distribution_facts"
 
 # uname(2) and getgid(2) aren't bound by Crystal's stdlib (only getuid is),
 # so they're declared here directly to avoid forking `uname`/`id -g`.
@@ -108,20 +109,6 @@ def gather_hostname(facts)
   end
 end
 
-# Maps a distribution (or an ID_LIKE token) to real Ansible's os_family,
-# or nil when it is not one this knows - the caller then tries ID_LIKE.
-def family_for(name : String) : String?
-  case name
-  when "Ubuntu", "Debian", "Linuxmint", "Pop!_OS", "Raspbian", "Kali" then "Debian"
-  when "CentOS", "RedHat", "Fedora", "Rocky", "AlmaLinux", "Amazon", "Oracle" then "RedHat"
-  when "Arch", "Manjaro"                                              then "Archlinux"
-  when "SUSE", "Opensuse", "Suse"                                     then "Suse"
-  when "Alpine"                                                       then "Alpine"
-  when "Gentoo"                                                       then "Gentoo"
-  else nil
-  end
-end
-
 # Gather OS facts
 def gather_os_facts(facts)
   os_info = parse_os_release
@@ -151,11 +138,11 @@ def gather_os_facts(facts)
       # }}.yml` looked for a file that does not exist. The benchmark
       # hosts have always been plain Ubuntu/Rocky, which is why no round
       # ever caught this.
-      os_family = family_for(distribution)
+      os_family = CrystalPlay::PluginHelpers::DistributionFacts.family_for(distribution)
       if os_family.nil?
         os_info["ID_LIKE"]?.try do |id_like|
           id_like.split(/\s+/).each do |like|
-            os_family ||= family_for(like.capitalize)
+            os_family ||= CrystalPlay::PluginHelpers::DistributionFacts.family_for(like.capitalize)
           end
         end
       end
@@ -181,6 +168,24 @@ def gather_os_facts(facts)
     # candidate. Found benchmarking weareinteractive.openssl (round
     # 179) on Rocky 9.6.
     facts["ansible_distribution_release"] = os_info["VERSION_CODENAME"]? || ""
+
+    # Real Ansible computes the generic distro/version/release facts
+    # first and then lets the matching distribution-FILE parser override
+    # them - the order matters, since several of those branches set a
+    # release/version of their own that must win over the os-release
+    # values just written above. Only the Debian-family parser is ported
+    # (see PluginHelpers::DistributionFacts): it is where every
+    # derivative display name lives, and the RedHat/SUSE names this
+    # engine already emits from ID were verified to match real Ansible
+    # as-is.
+    if raw = os_release_content
+      if overrides = CrystalPlay::PluginHelpers::DistributionFacts.refine_debian(raw)
+        overrides.each { |key, value| facts[key] = value }
+        if refined = overrides["ansible_distribution"]?
+          facts["ansible_os_family"] = CrystalPlay::PluginHelpers::DistributionFacts.family_for(refined) || facts["ansible_os_family"]
+        end
+      end
+    end
   end
 
   # ansible_lsb - real Ansible's LSBFactCollector (via `lsb_release`, or a
@@ -418,6 +423,19 @@ def detect_virtualization : String
   end
 
   "None"
+end
+
+# The RAW text of whichever os-release file #parse_os_release used - real
+# Ansible's distribution-file parsers match substrings against the whole
+# file, not against parsed key/value pairs (`"Mint" in data`), so a
+# faithful port needs the original text.
+def os_release_content : String?
+  ["/etc/os-release", "/usr/lib/os-release"].each do |path|
+    next unless File.exists?(path)
+    content = File.read(path)
+    return content unless content.strip.empty?
+  end
+  nil
 end
 
 def parse_os_release : Hash(String, String)?

@@ -3915,16 +3915,28 @@ module CrystalPlay
       return result unless TaskDebugger.triggered?(setting, result)
 
       current = result
+      # `task_vars[...] = v` typed at the prompt lands here once
+      # `u`/`update_task` promotes it, and is merged into the context
+      # every subsequent redo builds - real Ansible's own semantics,
+      # where a task_vars edit changes nothing until `u` re-templates
+      # the task (verified against ansible-core 2.19.4: assign + `r`
+      # alone re-runs the ORIGINAL command).
+      var_overrides = Hash(String, JSON::Any).new
       loop do
+        debug_vars = build_vars_context(task, host)
+        var_overrides.each { |key, value| debug_vars[key] = value }
+
         case TaskDebugger.run(render_task_name_for_display(task, host), host.name, current,
-             build_vars_context(task, host))
+             debug_vars, task, var_overrides)
         in TaskDebugger::Outcome::Continue
           return current
         in TaskDebugger::Outcome::Redo
           # `r` re-runs the task and re-evaluates the trigger against the
           # new result, so a still-failing task prompts again - which is
           # the point of being able to fix something and retry.
-          rerun = execute_task_once(task, host, build_vars_context(task, host))
+          rerun_vars = build_vars_context(task, host)
+          var_overrides.each { |key, value| rerun_vars[key] = value }
+          rerun = execute_task_once(task, host, rerun_vars)
           current = rerun if rerun
           return current unless TaskDebugger.triggered?(setting, current)
         end
