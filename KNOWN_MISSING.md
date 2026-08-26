@@ -61,6 +61,65 @@ ansible-core 2.19.4 and NOT fixed.
   - which is why this is worth doing properly rather than patching per
   call site. Sizeable: it touches both evaluators.
 
+  **How often does this actually bite? Measure before building.**
+  Exposure is much narrower than "numbers are broken", and the one
+  corpus measured so far says it may not be worth the rewrite yet.
+  Of 16 realistic templating shapes checked against ansible-core
+  2.19.4, only FIVE diverge, and every one needs both conditions: the
+  value passes through a TEMPLATE INDIRECTION (`v: "{{ other }}"`) and
+  is then equality-compared, membership-tested, or type-inspected:
+
+  | diverges                    | agrees                              |
+  |-----------------------------|-------------------------------------|
+  | `ind == 3` (True -> False)  | direct `n_int == 3`                 |
+  | `ind == '3'` (False -> True)| arithmetic `ind + 1`, `\| int`      |
+  | `ind \| type_debug` int->str| `>` / `<` comparisons               |
+  | bool `type_debug` bool->str | truthiness, `if/else`               |
+  | `ind in some_list` T->F     | rendering to text, `\| length`      |
+
+  In a 353-YAML corpus (the `buluma.phpmyadmin` dependency chain - 7
+  Galaxy roles) the divergent shape appears ZERO times. All 12 numeric
+  equalities there are against REGISTER FIELDS (`php_installed.rc != 0`,
+  `result.status == 200`), which come from module JSON rather than
+  template rendering and are natively typed on BOTH engines - verified
+  identical, `type_debug` included. That sample is small and
+  homogeneous (one Debian web stack), which is exactly why the next
+  round should widen it rather than guess.
+
+  **Proposed for the next benchmark round - a passive frequency
+  measurement, NOT a change to role selection.** Run whatever roles the
+  round would have picked anyway; before running, scan the downloaded
+  role set. Do NOT go hunting for roles that use the shape: selecting
+  for it answers "does it break when exercised", which is a different
+  question and cannot measure frequency, since the sample is biased by
+  construction. Hunt only if the passive scan shows real occurrences.
+
+  A naive grep is NOT good enough - it was tried, and 12 of 12 hits were
+  false positives (register fields). The detector has to cross-reference
+  the operand:
+
+  ```
+  for each `X == <number>`, `X != <number>`, or `X in <var>` in a role's
+  tasks/ (including when:/until:/changed_when:/failed_when:/assert that:):
+      look X up in that same role's defaults/main.yml + vars/main.yml
+      report ONLY if X is defined there AND its value contains "{{"
+      (the indirection is what diverges; a literal or a register field
+      does not)
+  ```
+
+  Roughly 20 minutes to write once, then free on every later round.
+  Report per role: file, line, the expression, and X's defining value.
+
+  Decision rule for whoever runs it: if the shape shows up in a
+  meaningful fraction of a WIDER corpus (a RHEL/hardening/collection
+  sweep, not another Debian web stack), that justifies the native-typing
+  work - and each hit is a ready-made motivating role and regression
+  test, which is how every other fix in this project got one. If it
+  stays at or near zero across a few hundred more roles, leave this
+  entry documented and spend the time elsewhere: when it does bite it
+  bites silently (an inverted `when:` gate, no error, no failed task),
+  which is why it stays recorded at all rather than being withdrawn.
+
 ## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 
 - **`ansible-playbook`'s CLI flag surface is fully covered by name, and
