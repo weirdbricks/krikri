@@ -1,6 +1,6 @@
 module CrystalPlay
-  VERSION = "0.9.604"
-  
+  VERSION = "0.9.612"
+
   def self.version_info
     String.build do |str|
       str << "Crystal Ansible #{VERSION}\n"
@@ -9,7 +9,7 @@ module CrystalPlay
       str << "Crystal: #{Crystal::VERSION}"
     end
   end
-  
+
   def self.banner
     String.build do |str|
       str << "CRYSTAL PLAY v#{VERSION}"

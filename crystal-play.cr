@@ -67,6 +67,10 @@ end
 # Parse command line arguments
 playbook_file = ""
 inventory_file = "inventory.ini"
+# Whether -i was actually given. Real Ansible warns "Unable to parse X as
+# an inventory source" only for a source the USER named; with no -i at
+# all it simply reports that nothing was parsed.
+inventory_explicit = false
 check_mode = false
 diff_mode = false
 batching_enabled = true
@@ -135,6 +139,7 @@ begin
 
     parser.on("-i INVENTORY", "--inventory=INVENTORY", "Specify inventory file") do |inv|
       inventory_file = inv
+      inventory_explicit = true
     end
 
     parser.on("--check", "Don't make changes; predict changes instead (dry-run)") do
@@ -518,7 +523,10 @@ rescue ex
 end
 
 # Parse inventory
-inventory = nil
+# Starts as an empty inventory rather than nil: an unreadable source is
+# a warning, not a fatal error (see the rescue below), so every later
+# reference is to a real Inventory either way.
+inventory = CrystalPlay::Inventory.new
 begin
   inventory = CrystalPlay::InventoryParser.parse(inventory_file)
 
@@ -543,12 +551,29 @@ begin
     puts ""
   end
 rescue ex
-  puts "Error loading inventory:".colorize(:red).bold
-  puts "  #{ex.message}".colorize(:red)
-  puts ""
-  puts "Please check that your inventory file exists and is properly formatted.".colorize(:yellow)
-  puts "Use -i flag to specify a different inventory file.".colorize(:yellow)
-  exit 1
+  # Real Ansible does NOT abort when an inventory source can't be read:
+  # INVENTORY_UNPARSED_IS_FAILED defaults to false, so it warns, carries
+  # on with an empty inventory, and leaves the implicit localhost as the
+  # only reachable host - which is why `ansible-playbook play.yml` with
+  # no -i at all works there and used to stop here with "Error loading
+  # inventory" (the common CI shape: a `hosts: localhost` playbook and
+  # no inventory file in the repo at all).
+  #
+  # Note what "empty inventory" does and does not match, exactly as in
+  # real Ansible: `hosts: localhost` runs (Inventory#single_pattern_hosts
+  # synthesizes the implicit localhost with a local connection), while
+  # `hosts: all` matches nothing and the play is skipped.
+  inventory = CrystalPlay::Inventory.new
+
+  unless quiet_listing_mode
+    puts "Inventory Warnings:".colorize(:yellow).bold
+    if inventory_explicit
+      puts "  ⚠️  Unable to parse #{inventory_file} as an inventory source: #{ex.message}".colorize(:yellow)
+    end
+    puts "  ⚠️  No inventory was parsed, only implicit localhost is available".colorize(:yellow)
+    puts "  ⚠️  provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'".colorize(:yellow)
+    puts ""
+  end
 end
 
 # The connection/become flags are, in real Ansible, exactly "set this
@@ -787,6 +812,7 @@ playbook.plays.each_with_index do |play, play_index|
     force_handlers: force_handlers || play.force_handlers,
     vars_files: play.vars_files,
     vars_files_dir: File.dirname(File.expand_path(playbook_file)),
+    playbook_dir: File.dirname(File.expand_path(playbook_file)),
     any_errors_fatal: play.any_errors_fatal,
     max_fail_percentage: play.max_fail_percentage,
     unreachable_hosts: unreachable_hosts,

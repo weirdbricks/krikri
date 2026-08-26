@@ -131,12 +131,21 @@ module CrystalPlay
     end
     
     # Every group *host_name* belongs to, following :children upward, in
-    # the sorted order real Ansible's `group_names` uses. "all" is
-    # excluded, matching real Ansible (verified: a host in [web] under
-    # [prod:children] reports exactly "prod, web").
+    # the sorted order real Ansible's `group_names` uses. Only "all" is
+    # excluded (verified: a host in [web] under [prod:children] reports
+    # exactly "prod, web").
+    #
+    # "ungrouped" is NOT excluded, though it used to be: real Ansible
+    # reports `group_names == ["ungrouped"]` for a host that belongs to
+    # no other group, and that is genuine membership rather than an
+    # internal artifact like "all" - a host listed above any [section]
+    # header reported no groups at all here. Found in a regression sweep
+    # while adding directory inventories (0.9.610). It only ever shows
+    # up for a host with no real group, since any grouped host is not in
+    # "ungrouped" to begin with.
     def groups_for(host_name : String) : Array(String)
       @groups.keys.select do |group_name|
-        next false if group_name == "all" || group_name == "ungrouped"
+        next false if group_name == "all"
         hosts_in_group(group_name).any? { |host| host.name == host_name }
       end.sort!
     end
@@ -200,8 +209,26 @@ module CrystalPlay
   
   # Inventory Parser - supports INI and YAML formats
   class InventoryParser
-    # Parse inventory from file (auto-detect format)
+    # Real Ansible's INVENTORY_IGNORE_EXTS default: files with these
+    # suffixes are skipped when an inventory DIRECTORY is read, so an
+    # editor backup or a stray README next to the real sources doesn't
+    # get parsed as inventory. Taken verbatim from `ansible-config dump`
+    # on ansible-core 2.19.4.
+    IGNORED_INVENTORY_EXTENSIONS = %w[
+      .pyc .pyo .swp .bak ~ .rpm .md .txt .rst .orig .cfg .retry
+    ]
+
+    # Parse inventory from a file, a directory of inventory sources, or a
+    # comma-separated host list (auto-detect).
     def self.parse(path : String) : Inventory
+      # `-i "web1,web2,"` - real Ansible's host_list source. The trailing
+      # comma is what disambiguates a single-host list from a filename
+      # (`-i localhost` is a file; `-i localhost,` is a host list), which
+      # is why the rule is "contains a comma", not "isn't a file".
+      return parse_host_list(path) if path.includes?(',')
+
+      return parse_directory(path) if File.directory?(path)
+
       unless File.exists?(path)
         raise "Inventory file not found: #{path}"
       end
@@ -220,6 +247,84 @@ module CrystalPlay
         # Default to INI format
         parse_ini(path)
       end
+    end
+
+    # An inventory DIRECTORY: every source inside it is parsed and the
+    # results merged, which is how real Ansible lets a project split
+    # `production/` into `01-web.ini`, `02-db.ini`, `hosts.yml` and so
+    # on. Sources are read in filename order; ignored extensions
+    # (IGNORED_INVENTORY_EXTENSIONS), hidden files and nested
+    # directories are skipped, as they are there.
+    #
+    # Group vars are re-applied AFTER the merge, not just per file: an
+    # `[all:vars]` block in one file has to reach hosts defined in
+    # another (verified against real Ansible), and each file's own
+    # parse only ever saw its own hosts.
+    def self.parse_directory(path : String) : Inventory
+      merged = Inventory.new
+
+      sources = Dir.children(path).sort!.map { |child| File.join(path, child) }
+      sources.each do |source|
+        next unless File.file?(source)
+        next if File.basename(source).starts_with?('.')
+        next if IGNORED_INVENTORY_EXTENSIONS.any? { |extension| source.ends_with?(extension) }
+
+        merge_inventory(merged, parse(source))
+      end
+
+      apply_group_vars(merged)
+      merged
+    end
+
+    # Folds *source* into *target*: hosts are unioned (a host named in
+    # two files keeps both files' vars, later file winning per key), and
+    # so are groups, their members, their children and their vars.
+    private def self.merge_inventory(target : Inventory, source : Inventory) : Nil
+      source.hosts.each do |name, host|
+        if existing = target.hosts[name]?
+          host.vars.each { |key, value| existing.vars[key] = value }
+          existing.user = host.user if host.user
+          existing.port = host.port
+        else
+          target.add_host(host)
+        end
+      end
+
+      source.groups.each do |name, group|
+        target_group = target.get_or_create_group(name)
+        group.hosts.each_key do |hostname|
+          # Deliberately the TARGET's copy of the host, so a host merged
+          # from an earlier file stays one object across every group it
+          # belongs to (group vars are applied through these references).
+          if host = target.hosts[hostname]?
+            target_group.add_host(host)
+          end
+        end
+        group.children.each { |child| target_group.add_child(child) }
+        group.vars.each { |key, value| target_group.vars[key] = value }
+      end
+    end
+
+    # `-i "alpha,beta,"` - a literal list of hosts rather than a file.
+    # Range syntax works here exactly as it does in an INI file
+    # (`-i "web[01:03],"`), since real Ansible runs the same expansion
+    # over host_list entries.
+    def self.parse_host_list(path : String) : Inventory
+      inventory = Inventory.new
+
+      path.split(',').each do |entry|
+        entry = entry.strip
+        next if entry.empty?
+
+        expand_host_range(entry).each do |hostname|
+          host = Host.new(hostname)
+          inventory.add_host(host)
+          inventory.get_or_create_group("ungrouped").add_host(host)
+          inventory.get_or_create_group("all").add_host(host)
+        end
+      end
+
+      inventory
     end
 
     # Parse a dynamic inventory: run the executable with --list and parse
@@ -481,7 +586,17 @@ module CrystalPlay
     # Parse host line from INI
     private def self.parse_host_line(line : String, group_name : String, inventory : Inventory)
       # Format: hostname key=value key=value
-      parts = line.split(/\s+/)
+      #
+      # Split the way real Ansible does - `shlex.split`, not a plain
+      # whitespace split. Two things follow from that, both verified
+      # against ansible-core 2.19.4: a quoted value may CONTAIN spaces
+      # (`w1 motd='hello there'` is one token), and the quotes are
+      # consumed by the splitter, so what reaches the value parser is
+      # already unquoted. That second part is why `w1 port="6"` is the
+      # INT 6 here while `port="6"` inside a [group:vars] block is the
+      # STRING "6" - there the quotes survive into literal_eval, which
+      # reads them as a Python string literal.
+      parts = shlex_split(line)
       return if parts.empty?
       
       # A host entry may be a RANGE standing for several hosts -
@@ -672,6 +787,23 @@ module CrystalPlay
     # Apply group variables to hosts
     private def self.apply_group_vars(inventory : Inventory)
       inventory.groups.each do |group_name, group|
+        # `[all:vars]` applies to EVERY host in the inventory, not just
+        # to hosts explicitly listed under an `[all]` section - which no
+        # INI inventory ever writes, since membership of `all` is
+        # implicit. The INI parser files each host under its own named
+        # group (or `ungrouped`) and never under `all`, so this group's
+        # own `hosts` is empty and its vars reached nobody: an
+        # `[all:vars]` block - one of the most common things an
+        # inventory contains - was silently ignored in its entirety.
+        # Found while adding directory-inventory support (0.9.610),
+        # where the same block additionally has to reach hosts defined
+        # in a different file.
+        if group_name == "all"
+          inventory.hosts.each_value do |host|
+            group.vars.each { |key, value| host.vars[key] ||= value }
+          end
+        end
+
         # Apply group vars to all hosts in the group
         group.hosts.each do |hostname, host|
           group.vars.each do |key, value|
@@ -699,41 +831,200 @@ module CrystalPlay
     # - Unquoted integers/floats → numeric.
     # - Unquoted `null`/`None` (case-insensitive) or bare `~` → JSON null.
     # - Everything else → string.
+    # POSIX `shlex.split`, enough of it for an inventory host line:
+    # whitespace separates tokens; single quotes take everything
+    # literally up to the next single quote; double quotes do the same
+    # but honour backslash escapes; a backslash outside quotes escapes
+    # the next character; and adjacent quoted and unquoted runs
+    # concatenate into ONE token (`a"b"c` is `abc`, `\'it\'\'s\'` is
+    # `its`), which is the behavior a naive "strip surrounding quotes"
+    # approach gets wrong.
+    private def self.shlex_split(line : String) : Array(String)
+      tokens = [] of String
+      current = String::Builder.new
+      started = false
+      index = 0
+
+      while index < line.size
+        char = line[index]
+
+        case char
+        when ' ', '\t'
+          if started
+            tokens << current.to_s
+            current = String::Builder.new
+            started = false
+          end
+        when '\''
+          started = true
+          index += 1
+          while index < line.size && line[index] != '\''
+            current << line[index]
+            index += 1
+          end
+        when '"'
+          started = true
+          index += 1
+          while index < line.size && line[index] != '"'
+            if line[index] == '\\' && index + 1 < line.size
+              index += 1
+              current << line[index]
+            else
+              current << line[index]
+            end
+            index += 1
+          end
+        when '\\'
+          started = true
+          index += 1
+          current << line[index] if index < line.size
+        else
+          started = true
+          current << char
+        end
+
+        index += 1
+      end
+
+      tokens << current.to_s if started
+      tokens
+    end
+
+    # An INI inventory value, typed exactly as real Ansible types it -
+    # by running the raw text through Python's `ast.literal_eval` and
+    # keeping the string when that raises. That is a narrower rule than
+    # it looks, and the difference is not cosmetic:
+    #
+    #   True / False        -> bool        true / false / TRUE -> STRING
+    #   None                -> null        none / null / ~     -> STRING
+    #   3 / -7 / 1.5        -> number      yes / no / on / off -> STRING
+    #   [1, 2] / {'k': 'v'} -> list/dict   anything else       -> STRING
+    #
+    # (Verified value by value against ansible-core 2.19.4, for both
+    # `[group:vars]` blocks and inline host-line vars.)
+    #
+    # This engine previously treated `true`/`yes`/`no`/`false` as
+    # booleans and left `[1, 2]` as text, which broke two things
+    # silently. A `[all:vars] enabled=false` is the *string* "false" on
+    # real Ansible - which is TRUTHY - so `when: enabled` there fails
+    # the task outright under 2.19's strict conditionals ("Conditional
+    # result (True) was derived from value of type 'str'"), where this
+    # engine quietly took the false branch and skipped it. And a
+    # list-valued inventory var was a string here, so `loop:` over it
+    # iterated characters or nothing rather than its elements.
+    #
+    # Quoted values ("yes"/'yes') are strings with the quotes stripped,
+    # which is literal_eval's own behavior for a quoted Python string.
+    # Python tuples (`(1, 2)`) are deliberately NOT parsed - literal_eval
+    # accepts them, but a tuple has no JSON representation and no
+    # inventory in the corpus uses one; they stay strings.
     private def self.parse_value(value : String) : JSON::Any
-      # Quoted values are always strings — strip the quotes and return as-is,
-      # without any type inference. Matches real Ansible's INI parser.
-      if (value.starts_with?('"') && value.ends_with?('"')) ||
-         (value.starts_with?("'") && value.ends_with?("'"))
+      return JSON::Any.new(value) if value.empty?
+
+      if value.size >= 2 &&
+         ((value.starts_with?('"') && value.ends_with?('"')) ||
+          (value.starts_with?('\'') && value.ends_with?('\'')))
         return JSON::Any.new(value[1..-2])
       end
 
-      # Bare ~ is the YAML null alias, always JSON null.
-      return JSON::Any.new(nil) if value == "~"
-
-      # Try to parse as number
-      if int_value = value.to_i?
-        return JSON::Any.new(int_value.to_i64)
+      # Case-SENSITIVE: Python knows `True`, not `true`.
+      case value
+      when "True"  then return JSON::Any.new(true)
+      when "False" then return JSON::Any.new(false)
+      when "None"  then return JSON::Any.new(nil)
       end
 
-      if float_value = value.to_f?
-        return JSON::Any.new(float_value)
+      if int_value = python_int(value)
+        return JSON::Any.new(int_value)
       end
 
-      # Try to parse as boolean, then null (checking case-insensitively
-      # for words, matching Ansible's own Python `value.lower()` behavior).
-      case value.downcase
-      when "true", "yes"
-        return JSON::Any.new(true)
-      when "false", "no"
-        return JSON::Any.new(false)
-      when "null", "none"
-        return JSON::Any.new(nil)
+      # Floats are laxer than ints in Python: `01.5` is a perfectly good
+      # float literal even though `0123` is not a good int one. Guarded
+      # on the presence of a `.`/exponent so a rejected int literal
+      # (`0123`) cannot slip through here as a float.
+      if value.matches?(/\A[+-]?(?:\d[\d_]*)?(?:\.\d[\d_]*)?(?:[eE][+-]?\d[\d_]*)?\z/) &&
+         (value.includes?('.') || value.includes?('e') || value.includes?('E'))
+        if float_value = value.delete('_').to_f?
+          return JSON::Any.new(float_value)
+        end
       end
 
-      # Default to string
+      if (value.starts_with?('[') && value.ends_with?(']')) ||
+         (value.starts_with?('{') && value.ends_with?('}'))
+        if parsed = python_literal_to_json(value)
+          return parsed
+        end
+      end
+
       JSON::Any.new(value)
     end
-    
+
+    # Python's own decimal-integer literal rule, which is stricter than
+    # `String#to_i64?`: a leading zero may only be followed by more
+    # zeros (`0` and `00` are ints, `0123` is a SyntaxError and stays a
+    # string - which is exactly how a zero-padded value like an
+    # `id=0123` survives as text on real Ansible), and `_` is a legal
+    # digit separator (`1_000` is 1000). Verified against ansible-core
+    # 2.19.4 over all six shapes.
+    private def self.python_int(value : String) : Int64?
+      return nil unless value.matches?(/\A[+-]?(?:0(?:_?0)*|[1-9](?:_?[0-9])*)\z/)
+      value.delete('_').to_i64?
+    end
+
+    # Best-effort `literal_eval` for the container literals an inventory
+    # actually carries: rewrites Python's single-quoted strings and
+    # True/False/None into their JSON spellings and hands the result to
+    # the JSON parser. Returns nil when that fails, which lands the
+    # caller on literal_eval's own fallback - the untouched string.
+    private def self.python_literal_to_json(value : String) : JSON::Any?
+      converted = String.build do |str|
+        index = 0
+        while index < value.size
+          char = value[index]
+          case char
+          when '\''
+            # A single-quoted Python string becomes a JSON string; inner
+            # double quotes have to be escaped on the way.
+            index += 1
+            str << '"'
+            while index < value.size && value[index] != '\''
+              str << "\\" if value[index] == '"' || value[index] == '\\'
+              str << value[index]
+              index += 1
+            end
+            str << '"'
+          when '"'
+            str << '"'
+            index += 1
+            while index < value.size && value[index] != '"'
+              str << "\\" if value[index] == '\\'
+              str << value[index]
+              index += 1
+            end
+            str << '"'
+          else
+            if value[index, 4]? == "True"
+              str << "true"
+              index += 3
+            elsif value[index, 5]? == "False"
+              str << "false"
+              index += 4
+            elsif value[index, 4]? == "None"
+              str << "null"
+              index += 3
+            else
+              str << char
+            end
+          end
+          index += 1
+        end
+      end
+
+      JSON.parse(converted)
+    rescue
+      nil
+    end
+
     # Validate inventory
     def self.validate(inventory : Inventory) : Array(String)
       warnings = [] of String

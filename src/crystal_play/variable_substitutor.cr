@@ -48,6 +48,64 @@ module CrystalPlay
   # lenient path.
   REGEX_BARE_VAR_REF = /\A[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[(?:-?\d+|'[^']*'|"[^"]*")\])*\z/
 
+  # The only filters real Ansible lets a genuinely UNDEFINED value reach
+  # without failing the task. Everything else in Jinja2/Ansible raises on
+  # `AnsibleUndefined` - differentialed against the local ansible-core
+  # 2.19.4 with `msg: "{{ nope | <filter> }}"` over 24 filters
+  # (dict2items, items2dict, list, first, join, length, string, bool,
+  # int, ternary, flatten, map, select, unique, sort, lower, trim,
+  # to_json, combine, count, min, mandatory all FAIL; only these three
+  # succeed), so a tolerant ALLOWLIST is the accurate model here, not a
+  # denylist of the handful of filters a benchmark round happened to hit.
+  UNDEFINED_TOLERANT_FILTERS = Set{"default", "d", "type_debug"}
+
+  # Returns the offending variable name when *expr* is a filter chain
+  # whose SOURCE is a genuinely undefined bare variable reference and
+  # whose FIRST filter is not one of UNDEFINED_TOLERANT_FILTERS - i.e.
+  # exactly the shape real Ansible hard-fails - and nil otherwise.
+  #
+  # Why this exists (round185, buluma.environment's `loop: "{{
+  # environment_list | dict2items }}"`, with no default anywhere in the
+  # role): the strict-undefined machinery only ever looked at BARE
+  # `{{ var }}` references, so the moment an undefined value flowed
+  # through any filter it stopped being strict - and FilterEngine's own
+  # `as_hash`/`as_array` helpers independently coerced the missing value
+  # to `{}`/`[]` before anything upstream could notice. The task then
+  # produced zero loop items and silently no-op'd where real Ansible
+  # fails ("dict2items requires a dictionary, got ...AnsibleUndefined").
+  #
+  # Only the FIRST filter is consulted, which is what real Ansible does
+  # too: `x | default([]) | dict2items` is fine (default consumes the
+  # undefined - the legitimate, extremely common idiom), while
+  # `x | dict2items | default([])` still fails, because dict2items has
+  # already raised by the time default is reached.
+  #
+  # Deliberately narrow in the same spirit as REGEX_BARE_VAR_REF: the
+  # source has to be a plain variable reference that is genuinely absent
+  # from *vars* (a straight lookup, no evaluation), so none of this
+  # evaluator's documented expression-syntax gaps can turn into a
+  # spurious task failure here.
+  def self.undefined_filter_chain_source(expr : String, vars : Hash(String, JSON::Any)) : String?
+    return nil unless expr.includes?('|')
+
+    parts = VariableSubstitutor::FilterEngine.split_chain(expr)
+    return nil unless parts.size >= 2
+
+    source = parts[0].strip
+    # Same carve-out as raise_if_strict_undefined: `omit` is a magic
+    # bareword, not a variable anyone ever sets.
+    return nil if source == "omit"
+    return nil unless source.matches?(REGEX_BARE_VAR_REF)
+
+    first_filter = parts[1].strip.lchop("ansible.builtin.")
+    paren = first_filter.index('(')
+    filter_name = (paren ? first_filter[0, paren] : first_filter).strip
+    return nil if UNDEFINED_TOLERANT_FILTERS.includes?(filter_name)
+
+    return nil if VariableSubstitutor::VariableLookup.new(vars).resolve(source)
+    source
+  end
+
   # VariableSubstitutor - Main class for variable substitution
   # Uses modular components from variable_substitutor/ directory
   class VarSubstitutor
@@ -248,8 +306,19 @@ module CrystalPlay
     class UndecryptableVaultError < Exception
     end
 
-    def substitute(text : String, strict : Bool = false) : String
-      rendered = substitute_impl(text, strict)
+    # `output:` marks the FINAL, user-facing rendering of a value - a
+    # module argument, a debug message, anything whose text a human or a
+    # target host actually sees. Only there is a container rendered in
+    # Python's `repr` form (`['a', 'b']`, matching real Ansible);
+    # every INTERNAL caller leaves it false and keeps the JSON-compact
+    # form, because this engine renders sub-expressions to text and
+    # `JSON.parse`es them back all over the place (loop sources,
+    # with_fileglob, nested-template re-rendering, the `omit` sentinel
+    # sweep) and Python-repr text is not valid JSON. See
+    # CrinjaRenderer#evaluate_value!'s comment for the same trap found
+    # from the other side.
+    def substitute(text : String, strict : Bool = false, output : Bool = false) : String
+      rendered = substitute_impl(text, strict, output)
       if rendered.includes?("$ANSIBLE_VAULT")
         # Real Ansible distinguishes the two cases in its message:
         # nothing supplied at all, versus supplied secrets none of which
@@ -265,7 +334,7 @@ module CrystalPlay
       rendered
     end
 
-    private def substitute_impl(text : String, strict : Bool = false) : String
+    private def substitute_impl(text : String, strict : Bool = false, output : Bool = false) : String
       # A task param whose ENTIRE value is block-tag Jinja with no `{{
       # }}` interpolation anywhere at all (`{% if x %}a{% else %}b{%
       # endif %}`, no braces-braces span) - real, valid Ansible/Jinja2
@@ -302,7 +371,7 @@ module CrystalPlay
       result = expand_mustache_spans(text) do |inner|
         stripped = inner.empty? || (!inner[0].whitespace? && !inner[-1].whitespace?) ? inner : inner.strip
         raise_if_strict_undefined(stripped) if strict
-        evaluator.evaluate(stripped)
+        output ? evaluator.evaluate_output(stripped) : evaluator.evaluate(stripped)
       end
 
       # Ansible re-templates a rendered result that still contains "{{" -
@@ -344,7 +413,7 @@ module CrystalPlay
                         expand_mustache_spans(result) do |inner|
                           stripped = inner.strip
                           raise_if_strict_undefined(stripped) if strict
-                          evaluator.evaluate(stripped)
+                          output ? evaluator.evaluate_output(stripped) : evaluator.evaluate(stripped)
                         end
                       end
         break if next_result == result
@@ -362,7 +431,17 @@ module CrystalPlay
     # alone regardless of strict: - see UndefinedVariableError's own
     # comment for why that's deliberate, not a gap in this check.
     private def raise_if_strict_undefined(inner : String) : Nil
-      return unless inner.matches?(REGEX_BARE_VAR_REF)
+      unless inner.matches?(REGEX_BARE_VAR_REF)
+        # Not a bare reference - but a filter chain STARTING from an
+        # undefined bare reference is just as strictly fatal in real
+        # Ansible as the bare reference itself (see
+        # CrystalPlay.undefined_filter_chain_source). Every other shape
+        # still stays on the lenient path.
+        if undefined_name = CrystalPlay.undefined_filter_chain_source(inner, @vars)
+          raise UndefinedVariableError.new("'#{undefined_name}' is undefined")
+        end
+        return
+      end
       # `omit` is real Ansible's magic bareword for "drop this parameter
       # entirely", not a variable anyone ever sets - so a bare
       # `{{ omit }}` looked undefined to this check and FAILED the task,

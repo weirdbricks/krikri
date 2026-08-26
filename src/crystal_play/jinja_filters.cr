@@ -1065,6 +1065,18 @@ module CrystalPlay
       value_name = arguments["value_name"].to_s
       base = target.raw
 
+      # A genuinely UNDEFINED input is fatal in real Ansible ("dict2items
+      # requires a dictionary, got ...AnsibleUndefined"), not an empty
+      # result - differentialed against ansible-core 2.19.4, where every
+      # filter except default/d/type_debug fails on an undefined value.
+      # Same bug the hand-rolled evaluator had (see CrystalPlay.
+      # undefined_filter_chain_source), found and fixed independently on
+      # each side per this repo's CLAUDE.md: `{{ nope | dict2items }}`
+      # in a real .j2 rendered as `[]` and the template task succeeded.
+      # `{{ nope | default({}) | dict2items }}` is untouched - default
+      # has already replaced the Undefined by the time this runs.
+      raise Crinja::UndefinedError.new(base.name.presence || "dict2items input") if base.is_a?(Crinja::Undefined)
+
       if base.is_a?(Hash)
         Crinja::Value.new(base.map { |k, v| {key_name => k, value_name => v} })
       else
@@ -1085,6 +1097,9 @@ module CrystalPlay
       key_name = arguments["key_name"].to_s
       value_name = arguments["value_name"].to_s
       result = {} of Crinja::Value => Crinja::Value
+      # Same strict-undefined requirement as dict2items above.
+      raw_target = target.raw
+      raise Crinja::UndefinedError.new(raw_target.name.presence || "items2dict input") if raw_target.is_a?(Crinja::Undefined)
       target.each do |item|
         next unless item.raw.is_a?(Hash)
         h = item.raw.as(Hash)

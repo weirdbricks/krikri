@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.604`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.612`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -21,20 +21,35 @@ Everything that used to be here is fixed - the nested-undefined chain
 (`0.9.599`), `notify:` validation timing (`0.9.600`), the
 `ansible_distribution` display name plus the `debugger:` assignment
 commands and `--scp-extra-args` (`0.9.601`), the `omit` sentinel leak
-(`0.9.602`), and cross-role vars/defaults visibility (`0.9.603`); see
-`git log`. Two more turned out not to be engine bugs at all and were
-withdrawn rather than fixed: `buluma.phpmyadmin`'s warm-rerun churn is
-role-side (`geerlingguy.php` and `buluma.php` both own `php.ini` and
-overwrite each other, on real Ansible too), and the `buluma.httpd`
-"Configure httpd" difference chased after it was an artifact of my own
-comparison - alternating two engines against ONE shared host makes each
-run the other's cold state. On a clean single-engine sequence both
-engines alternate `ok` then `changed` identically, because that role's
-template strips the `Include /etc/phpmyadmin/apache.conf` line the
-phpmyadmin role's `lineinfile` re-adds every run.
+(`0.9.602`), cross-role vars/defaults visibility (`0.9.603`), a failed
+dynamic `include_role:` double-counting `ok` alongside `failed`
+(`0.9.605`), `user:`'s `groups:` passing a literal `"[]"` straight
+to `useradd` (`0.9.606`), an undefined variable reaching a filter
+being silently coerced to an empty result instead of failing the task
+(`0.9.607`), and - found while building the `community.crypto` modules
+(`0.9.608`) - the missing `playbook_dir`/`inventory_dir`/`inventory_file`
+magic vars plus task-level `check_mode:` being ignored in both
+directions (`0.9.609`), and then - found while verifying those - the
+inventory loader's missing implicit localhost, directory and host-list
+sources, an `[all:vars]` block reaching nobody at all, and `group_names`
+omitting `ungrouped` (`0.9.610`), and INI inventory values being typed
+by this engine's own rules rather than Python's `literal_eval`
+(`0.9.611`), and finally the three that fix exposed: non-boolean
+`when:` results being accepted, containers rendering as JSON rather than
+Python repr, and INI host lines being whitespace-split rather than
+shlex-split (`0.9.612`); see `git log`. Two more turned out not to be
+engine bugs at all and were withdrawn rather than fixed:
+`buluma.phpmyadmin`'s warm-rerun churn is role-side (`geerlingguy.php`
+and `buluma.php` both own `php.ini` and overwrite each other, on real
+Ansible too), and the `buluma.httpd` "Configure httpd" difference
+chased after it was an artifact of my own comparison - alternating two
+engines against ONE shared host makes each run the other's cold state.
+On a clean single-engine sequence both engines alternate `ok` then
+`changed` identically, because that role's template strips the
+`Include /etc/phpmyadmin/apache.conf` line the phpmyadmin role's
+`lineinfile` re-adds every run.
 
-One entry remains, found while verifying the above against
-ansible-core 2.19.4 and NOT fixed.
+One entry remains.
 
 - **Templating is not native-typed, and real Ansible's now is.** A
   `{{ }}` expression whose value is a YAML int renders here as the
@@ -119,6 +134,50 @@ ansible-core 2.19.4 and NOT fixed.
   entry documented and spend the time elsewhere: when it does bite it
   bites silently (an inverted `when:` gate, no error, no failed task),
   which is why it stays recorded at all rather than being withdrawn.
+
+  **Frequency scan run** against a 611-role corpus (every role ever used
+  across all benchmark rounds to date - buluma/robertdebock/geerlingguy/
+  mrlesmithjr/weareinteractive/etc., a much wider and more author-diverse
+  sample than the earlier 353-file single-dependency-chain corpus; ~60
+  of the requested 672 roles 404'd on Galaxy, the usual dead/renamed-repo
+  noise). The cross-referencing detector (script not checked in - a
+  ~100-line Python one-off, regex-based rather than a real YAML/Jinja
+  parse) found 5 hits across 5 roles, but 3 are detector-side false
+  positives it can't rule out statically: `X in <var>` matched two
+  Jinja *substring* tests on string values (`bootstrap_install.
+  stdout_regex in bootstrap_install_packages.stdout` in `buluma.
+  bootstrap`/`robertdebock.bootstrap`, `java_folder in temp` in the
+  transitively-pulled `lean_delivery.java`) - substring testing on a
+  string renders identically under both typing models regardless of the
+  indirection, so these don't actually diverge; only *list*-membership
+  against typed elements does, and the static scan can't tell the two
+  apart without evaluating the right-hand operand.
+
+  The one real hit, duplicated across two near-identical role forks
+  (`robertdebock.java` and `buluma.java`), is exactly the documented
+  shape and is live/reachable today: `vars/main.yml` maps
+  `ansible_distribution` to a YAML-int Java version table
+  (`_java_default_version: {Alpine: 8, RedHat: 11, Ubuntu-18: 17, ...}`),
+  indirects it twice (`java_default_version`, then `defaults/main.yml`'s
+  `java_version: "{{ java_default_version }}"`), and gates the Oracle
+  JCE-policy install task on `java_version == 8` (the role's own comment
+  shows the author even weighed `== "8"`). On real ansible-core 2.19
+  `java_version` stays `int 8` and the task correctly runs on
+  Alpine/Gentoo/Suse; here it renders as the string `"8"`, the equality
+  is always False, and the task is silently always skipped regardless of
+  distro - no error, no failed task, matching the "bites silently"
+  warning above exactly.
+
+  **Verdict: still near zero (1 genuine pattern in 611 roles, ~0.16%)
+  even on a much wider, non-Debian-web corpus - the decision rule's
+  "meaningful fraction" bar is not met.** Per the rule, defer the full
+  native-typing rewrite. `robertdebock.java`/`buluma.java`'s
+  `java_version == 8` is now a ready-made motivating role and regression
+  test if the rewrite is ever picked up; it could also be patched as a
+  narrow one-off (special-case numeric equality against an
+  `{{ other_var }}`-only indirection) rather than waiting on the full
+  model change, if this specific role is ever hit in a live benchmark
+  round.
 
 ## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 
@@ -270,15 +329,27 @@ ansible-core 2.19.4 and NOT fixed.
   (would require modeling Ansible's own config-resolution/inventory
   internals, not just a data lookup).
 - `win_*` filters - Windows-only, irrelevant to this project's targets.
-- `community.crypto.x509_certificate` / real CA issuance - a full,
-  correct X.509 CA implementation is out of scope for a single module;
-  blocks `robertdebock.ca` specifically. Note (0.9.475): the sibling
-  `dirless/x509-crystal` shard already does self-signed/CA-signed X.509
-  cert generation (ECDSA/RSA) via direct `LibCrypto` bindings - the
-  expensive part of this scope cut - so a future attempt at this module
-  should start there rather than from scratch, though it's not a
-  drop-in (still needs CSR-based issuance from arbitrary subject/SAN
-  fields, `state=absent`, revocation, etc. that shard doesn't expose).
+- `community.crypto`'s remaining modules. **This is no longer the blanket
+  scope cut it used to be**: `openssl_privatekey`, `openssl_csr`,
+  `x509_certificate` (providers `selfsigned` and `ownca`) and
+  `openssl_pkcs12` (`action: export`) are implemented as of `0.9.608`,
+  which is what the 13 roles in the corpus that touch this collection
+  actually call - joining `openssl_dhparam` and `openssh_keypair`, which
+  were already here. They are built on the `openssl` CLI rather than on
+  the `dirless/x509-crystal` shard the earlier note pointed at: that
+  shard generates whole CA+client bundles in one call and exposes no
+  CSR-based issuance, while the CLI reproduces the real modules' file
+  formats, extensions and idempotency rules directly (all four were
+  differentialed against real community.crypto 3.1.1, both directions -
+  neither engine regenerates the other's artifacts).
+
+  Still unimplemented, none of them seen in a role yet: `openssl_publickey`,
+  `openssl_privatekey_info`, `x509_certificate_info`, `get_certificate`,
+  `luks_device`, and the `acme`/`entrust` certificate providers plus
+  `openssl_pkcs12`'s `action: parse` (all of which fail with a clear
+  "not supported" message rather than silently doing something else).
+  The `*_info` ones are read-only and cheap if a role ever needs them;
+  `acme` means speaking ACME to a real CA, which stays out of scope.
 - `community.general.vdo` - unimplemented; untestable so far, no real
   role sets a non-empty `vdo_devices`.
 - `gluster.gluster.gluster_volume` - unimplemented; causes a cosmetic

@@ -834,12 +834,20 @@ describe CrystalPlay::ConditionalEvaluator do
       ).should be_false
     end
 
-    it "does not raise when the filter actually matches (real boolean-shaped truthy result)" do
+    # This used to assert that a MATCH does not raise, on the assumption
+    # that a matching regex_search is "boolean-shaped". It is not: the
+    # result is the matched STRING, and ansible-core 2.19 rejects any
+    # non-boolean conditional result - verified live for both
+    # `changed_when:` and `when:` with exactly this filter
+    # ("Conditional result (True) was derived from value of type 'str'").
+    it "raises for a matching filter too - the result is a string, not a bool" do
       v = Hash(String, JSON::Any).new
       v["xz_version"] = JSON.parse(%({"stdout": "xz (XZ Utils) 5.6.1"}))
-      CrystalPlay::ConditionalEvaluator.evaluate(
-        %(xz_version.stdout | regex_search("5\\.6\\.(0|1)")), v, strict: true
-      ).should be_true
+      expect_raises(CrystalPlay::ConditionalEvaluator::ConditionalBooleanError, /type 'str'/) do
+        CrystalPlay::ConditionalEvaluator.evaluate(
+          %(xz_version.stdout | regex_search("5\\.6\\.(0|1)")), v, strict: true
+        )
+      end
     end
 
     it "does not raise for `not` over a None-yielding filter (Python `not` always yields a real bool)" do

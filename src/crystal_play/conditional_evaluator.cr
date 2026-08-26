@@ -1099,6 +1099,16 @@ module CrystalPlay
       end
     end
 
+    # Real Ansible's own escape hatch for the strict-boolean-conditional
+    # rule it introduced in 2.19; this project's benchmark harness has
+    # set it on the real-Ansible side since round 20, so honouring it
+    # here keeps both engines comparable under the same environment.
+    def self.allow_broken_conditionals? : Bool
+      value = ENV["ANSIBLE_ALLOW_BROKEN_CONDITIONALS"]?
+      return false unless value
+      ["true", "yes", "1", "on"].includes?(value.strip.downcase)
+    end
+
     # Evaluate truthiness of a value
     private def self.evaluate_truthiness(condition : String, vars : Hash(String, JSON::Any), strict : Bool = false, raise_undefined : Bool = false) : Bool
       # Real Ansible/Python `bool([])` and `bool({})` are both False -
@@ -1120,13 +1130,57 @@ module CrystalPlay
       if resolved = VariableSubstitutor::VariableLookup.new(vars).resolve(condition)
         case raw = resolved.raw
         when Hash
+          if strict && !allow_broken_conditionals?
+            raise ConditionalBooleanError.new(
+              "Conditional result (#{raw.empty? ? "False" : "True"}) was derived from value of type 'dict'. " \
+              "Conditionals must have a boolean result.")
+          end
           return !raw.empty?
         when Array
+          if strict && !allow_broken_conditionals?
+            raise ConditionalBooleanError.new(
+              "Conditional result (#{raw.empty? ? "False" : "True"}) was derived from value of type 'list'. " \
+              "Conditionals must have a boolean result.")
+          end
           return !raw.empty?
         end
       end
 
       value = evaluate_value(condition, vars, raise_undefined)
+
+      # ansible-core 2.19 requires a conditional to end in a REAL
+      # boolean: anything else fails the task with "Conditional result
+      # (X) was derived from value of type 'T'. Conditionals must have a
+      # boolean result." - even the very common bare-truthy-variable
+      # idiom (`when: some_string`, `when: some_int`). Differentialed
+      # over six shapes against 2.19.4: only a genuine bool passes.
+      #
+      # `ANSIBLE_ALLOW_BROKEN_CONDITIONALS` turns it back off, exactly as
+      # it does there - which is also what keeps this project's own
+      # benchmark harness comparable, since it has set that variable for
+      # the real-Ansible side since round 20.
+      if strict && !allow_broken_conditionals?
+        case raw_value = value
+        when Bool
+          # The only shape real Ansible accepts.
+        when String
+          # "undefined" is this codebase's own unresolved-lookup
+          # sentinel, reported below as the NoneType it stands for.
+          unless raw_value == "undefined"
+            raise ConditionalBooleanError.new(
+              "Conditional result (#{raw_value.empty? ? "False" : "True"}) was derived from value of type 'str'. " \
+              "Conditionals must have a boolean result.")
+          end
+        when Int32, Int64
+          raise ConditionalBooleanError.new(
+            "Conditional result (#{raw_value == 0 ? "False" : "True"}) was derived from value of type 'int'. " \
+            "Conditionals must have a boolean result.")
+        when Array
+          raise ConditionalBooleanError.new(
+            "Conditional result (#{raw_value.empty? ? "False" : "True"}) was derived from value of type 'list'. " \
+            "Conditionals must have a boolean result.")
+        end
+      end
 
       case value
       when Bool
@@ -1231,6 +1285,19 @@ module CrystalPlay
       # literal, nonexistent hash key, always undefined.
       if expr.includes?("|") || expr.includes?("(") || expr.includes?(" - ") || expr.includes?("~") ||
          expr.includes?("*") || expr.includes?("/")
+        # A filter chain fed by a genuinely undefined variable is fatal
+        # for a `when:`/`assert:` in real Ansible exactly as a bare
+        # undefined reference is ("Error while evaluating conditional:
+        # 'nope' is undefined" for `when: nope | length > 0`, verified
+        # against ansible-core 2.19.4) - the strict path below only ever
+        # reached the BARE-lookup branches, so anything with a filter in
+        # it stayed lenient and silently skipped the task. Same
+        # allowlist-driven check the templating and loop-source entry
+        # points use; `nope | default(...)` stays lenient, as it must.
+        if raise_undefined && (undefined_name = CrystalPlay.undefined_filter_chain_source(expr, vars))
+          raise UndefinedVariableError.new("'#{undefined_name}' is undefined")
+        end
+
         evaluator = VariableSubstitutor::ExpressionEvaluator.new(vars)
         rendered = evaluator.evaluate(expr)
         parsed = (JSON.parse(rendered) rescue nil)

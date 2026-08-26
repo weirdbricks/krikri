@@ -41,25 +41,45 @@ describe CrystalPlay::InventoryParser do
       inventory.hosts["web1"].vars["version"].should eq(JSON::Any.new(2.5))
     end
 
-    it "parses unquoted true/yes as boolean true" do
+    # These four used to assert that `true`/`yes`/`false`/`no` become
+    # booleans, on the stated (but never checked) assumption that this
+    # matches real Ansible's INI parser. It does not: real Ansible runs
+    # the value through Python's `ast.literal_eval`, which knows `True`
+    # and `False` and nothing else - a live differential against
+    # ansible-core 2.19.4 over 27 values (0.9.611) has `true`, `false`,
+    # `TRUE`, `yes`, `no` and `on` all coming back as plain strings.
+    it "keeps lowercase true/yes as strings, the way literal_eval does" do
       write(File.join(ROOT, "inventory.ini"), <<-INI)
         [web]
-        web1 active=true enabled=yes
+        web1 active=true enabled=yes switched=on
         INI
 
       inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
-      inventory.hosts["web1"].vars["active"].should eq(JSON::Any.new(true))
-      inventory.hosts["web1"].vars["enabled"].should eq(JSON::Any.new(true))
+      inventory.hosts["web1"].vars["active"].should eq(JSON::Any.new("true"))
+      inventory.hosts["web1"].vars["enabled"].should eq(JSON::Any.new("yes"))
+      inventory.hosts["web1"].vars["switched"].should eq(JSON::Any.new("on"))
     end
 
-    it "parses unquoted false/no as boolean false" do
+    it "keeps lowercase false/no as strings, the way literal_eval does" do
       write(File.join(ROOT, "inventory.ini"), <<-INI)
         [web]
         web1 active=false enabled=no
         INI
 
       inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
-      inventory.hosts["web1"].vars["active"].should eq(JSON::Any.new(false))
+      inventory.hosts["web1"].vars["active"].should eq(JSON::Any.new("false"))
+      inventory.hosts["web1"].vars["enabled"].should eq(JSON::Any.new("no"))
+    end
+
+    # Python's own spelling, and the ONLY spelling that yields a bool.
+    it "parses capitalized True/False as booleans" do
+      write(File.join(ROOT, "inventory.ini"), <<-INI)
+        [web]
+        web1 active=True enabled=False
+        INI
+
+      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory.hosts["web1"].vars["active"].should eq(JSON::Any.new(true))
       inventory.hosts["web1"].vars["enabled"].should eq(JSON::Any.new(false))
     end
 
@@ -93,14 +113,14 @@ describe CrystalPlay::InventoryParser do
       inventory.hosts["web1"].vars["code"].should eq(JSON::Any.new("007"))
     end
 
-    it "parses unquoted null as JSON null" do
+    it "keeps unquoted null as a string - only Python's None is null" do
       write(File.join(ROOT, "inventory.ini"), <<-INI)
         [web]
         web1 myvar=null
         INI
 
       inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
-      inventory.hosts["web1"].vars["myvar"].should eq(JSON::Any.new(nil))
+      inventory.hosts["web1"].vars["myvar"].should eq(JSON::Any.new("null"))
     end
 
     it "parses unquoted None as JSON null" do
@@ -113,27 +133,73 @@ describe CrystalPlay::InventoryParser do
       inventory.hosts["web1"].vars["myvar"].should eq(JSON::Any.new(nil))
     end
 
-    it "parses bare ~ as JSON null" do
+    # `~` is YAML's null alias, and an INI inventory is not YAML - real
+    # Ansible leaves it as the one-character string.
+    it "keeps a bare ~ as a string" do
       write(File.join(ROOT, "inventory.ini"), <<-INI)
         [web]
         web1 myvar=~
         INI
 
       inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
-      inventory.hosts["web1"].vars["myvar"].should eq(JSON::Any.new(nil))
+      inventory.hosts["web1"].vars["myvar"].should eq(JSON::Any.new("~"))
     end
 
-    it "is case-insensitive for null and None" do
+    it "is case-SENSITIVE for None: only Python's own spelling is null" do
       write(File.join(ROOT, "inventory.ini"), <<-INI)
         [web]
-        web1 a=NULL b=Null c=none d=NONE
+        web1 a=NULL b=Null c=none d=NONE e=None
         INI
 
       inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
-      inventory.hosts["web1"].vars["a"].should eq(JSON::Any.new(nil))
-      inventory.hosts["web1"].vars["b"].should eq(JSON::Any.new(nil))
-      inventory.hosts["web1"].vars["c"].should eq(JSON::Any.new(nil))
-      inventory.hosts["web1"].vars["d"].should eq(JSON::Any.new(nil))
+      inventory.hosts["web1"].vars["a"].should eq(JSON::Any.new("NULL"))
+      inventory.hosts["web1"].vars["b"].should eq(JSON::Any.new("Null"))
+      inventory.hosts["web1"].vars["c"].should eq(JSON::Any.new("none"))
+      inventory.hosts["web1"].vars["d"].should eq(JSON::Any.new("NONE"))
+      inventory.hosts["web1"].vars["e"].should eq(JSON::Any.new(nil))
+    end
+
+    # A list-valued inventory var was previously left as text, so a
+    # `loop:` over it iterated nothing useful.
+    # In a [group:vars] block, where the whole line is one value - a
+    # host LINE is split on whitespace first (real Ansible shlex-splits
+    # it), so a literal with a space in it never survives there on
+    # either engine.
+    it "parses Python list and dict literals into real containers" do
+      write(File.join(ROOT, "inventory.ini"), <<-INI)
+        [web]
+        web1
+
+        [web:vars]
+        nums=[1, 2]
+        names=['a', 'b']
+        mapping={'k': 'v'}
+        mixed=[True, None, 'x']
+        INI
+
+      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      vars = inventory.groups["web"].vars
+      vars["nums"].as_a.map(&.as_i).should eq([1, 2])
+      vars["names"].as_a.map(&.as_s).should eq(["a", "b"])
+      vars["mapping"].as_h["k"].as_s.should eq("v")
+      vars["mixed"].as_a[0].as_bool.should be_true
+      vars["mixed"].as_a[1].raw.should be_nil
+      vars["mixed"].as_a[2].as_s.should eq("x")
+    end
+
+    # literal_eval raises for anything it cannot parse, and real Ansible
+    # keeps the raw string when it does.
+    it "keeps a malformed container literal as a string" do
+      write(File.join(ROOT, "inventory.ini"), <<-INI)
+        [web]
+        web1
+
+        [web:vars]
+        broken=[1, oops]
+        INI
+
+      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory.groups["web"].vars["broken"].should eq(JSON::Any.new("[1, oops]"))
     end
 
     it "keeps an unquoted plain string as a string" do

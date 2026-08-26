@@ -60,6 +60,11 @@ module CrystalPlay
     property listen : String?
     property ignore_errors : Bool
     property check_mode : Bool?
+    # Raw `{{ ... }}` text when check_mode: is a templated expression
+    # rather than a literal boolean - same deferred-evaluation shape
+    # `become_expr` uses, and evaluated in TaskExecutor#
+    # resolve_task_check_mode against live vars.
+    property check_mode_expr : String?
     property diff_mode : Bool?
     property become : Bool
     # Raw `{{ ... }}` text when become: is a templated expression rather
@@ -860,6 +865,10 @@ module CrystalPlay
       "community.postgresql.postgresql_user",
       "community.postgresql.postgresql_privs",
       "community.crypto.openssl_dhparam",
+      "community.crypto.openssl_privatekey",
+      "community.crypto.openssl_csr",
+      "community.crypto.x509_certificate",
+      "community.crypto.openssl_pkcs12",
       "community.crypto.openssh_keypair",
       "community.general.modprobe",
       "community.general.pamd",
@@ -1703,6 +1712,7 @@ module CrystalPlay
       task.debugger = task_hash["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
       task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
       task.check_mode = parse_optional_bool_or_template(task_hash["check_mode"]?)
+      task.check_mode_expr = template_expression(task_hash["check_mode"]?)
       task.diff_mode = parse_optional_bool_or_template(task_hash["diff"]?)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
@@ -2712,6 +2722,17 @@ module CrystalPlay
     # neutral default that doesn't force either behavior on - closer to
     # what a runtime-deferred evaluation would usually produce than
     # guessing `true` or `false` outright.
+    # The raw text of a value that is a template rather than a literal
+    # boolean, so a runtime evaluation can render it against real vars
+    # (`check_mode: "{{ simulate_only }}"`); nil for a literal, which
+    # parse_optional_bool_or_template already resolved.
+    private def self.template_expression(yaml : YAML::Any?) : String?
+      return nil unless yaml
+      return nil unless (raw = yaml.raw).is_a?(String)
+      return nil unless raw.includes?("{{") || raw.includes?("{%")
+      raw
+    end
+
     private def self.parse_optional_bool_or_template(yaml : YAML::Any?) : Bool?
       return nil unless yaml
       case yaml.raw

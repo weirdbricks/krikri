@@ -90,7 +90,9 @@ describe "omit" do
           ansible.builtin.debug:
             msg: "{{ [1, v_omit, 3] }}"
       YAML
-    output.should contain("[1,3]")
+    # Containers render in Python's `repr` form, as real Ansible renders
+    # them (0.9.612) - single quotes, a space after each comma.
+    output.should contain("[1, 3]")
   end
 
   it "drops its whole key in a dict literal" do
@@ -99,7 +101,9 @@ describe "omit" do
           ansible.builtin.debug:
             msg: "{{ {'a': 1, 'b': v_omit} }}"
       YAML
-    output.should contain(%({"a":1}))
+    # Containers render in Python's `repr` form, as real Ansible renders
+    # them (0.9.612) - single quotes, a space after each comma.
+    output.should contain(%({'a': 1}))
   end
 
   it "does not swallow genuinely falsy values alongside it" do
@@ -114,7 +118,9 @@ describe "omit" do
           ansible.builtin.debug:
             msg: "{{ {'a': 0, 'b': false, 'c': '', 'd': v_omit} }}"
       YAML
-    output.should contain(%(["kept","",0,false]))
-    output.should contain(%({"a":0,"b":false,"c":""}))
+    # Containers render in Python's `repr` form, as real Ansible renders
+    # them (0.9.612) - single quotes, a space after each comma.
+    output.should contain(%(['kept', '', 0, False]))
+    output.should contain(%({'a': 0, 'b': False, 'c': ''}))
   end
 end

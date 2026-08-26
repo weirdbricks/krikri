@@ -1660,11 +1660,19 @@ module CrystalPlay
       end
 
       # Same shape as as_array above - if value is already a JSON Hash,
-      # return it; otherwise return an empty Hash (the only sensible
-      # "absent" value for a filter that needs a dict to read from,
-      # matching how as_array returns an empty Array for a non-Array
-      # input). Used by dict2items to be tolerant of undefined / nil /
-      # non-dict inputs the way Ansible itself is.
+      # return it; otherwise return an empty Hash.
+      #
+      # NOTE (round185): this is a coercion for a non-dict value that is
+      # nonetheless DEFINED, nothing more. It used to claim it made
+      # dict2items "tolerant of undefined ... the way Ansible itself is",
+      # which was factually wrong - real Ansible hard-fails
+      # `{{ x | dict2items }}` for an undefined x, and this leniency was
+      # what made a genuinely undefined loop source silently resolve to
+      # zero items (buluma.environment). The undefined case is now caught
+      # BEFORE any filter runs, by CrystalPlay.undefined_filter_chain_
+      # source at the strict-templating and loop-resolution entry points,
+      # so nothing downstream of here has to distinguish "missing" from
+      # "present but not a dict" - which JSON::Any cannot express anyway.
       private def as_hash(value : JSON::Any) : Hash(String, JSON::Any)
         value.as_h? || {} of String => JSON::Any
       end

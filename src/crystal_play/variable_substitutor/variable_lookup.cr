@@ -688,6 +688,59 @@ module CrystalPlay
       # (not just used internally) so FilterEngine's caller can render a
       # filter chain's final JSON::Any result the same way a plain variable
       # lookup would be.
+      # The FINAL, user-facing rendering of a `{{ }}` span's value:
+      # identical to #format_value except that a container comes out in
+      # Python's `repr` form, which is what real Ansible produces
+      # (`{{ ['a', 'b'] }}` renders `['a', 'b']` there, and rendered
+      # `["a","b"]` here). Only the outermost substitution may use this -
+      # anything internal needs #format_value's JSON, per its comment.
+      def format_value_output(value : JSON::Any) : String
+        case value.raw
+        when Array, Hash
+          python_repr(value)
+        else
+          format_value(value)
+        end
+      end
+
+      # Python's `repr` for a JSON::Any, used to render containers the
+      # way real Ansible does. Scalars follow Python's own spellings
+      # (`True`/`False`/`None`); strings follow its quote choice: single
+      # quotes normally, double quotes when the string contains a single
+      # quote and no double quote, and single quotes with `\'` escapes
+      # when it contains both (verified against real Ansible's output
+      # for all three shapes).
+      def python_repr(value : JSON::Any) : String
+        case raw = value.raw
+        when String
+          python_repr_string(raw)
+        when Bool
+          raw ? "True" : "False"
+        when Nil
+          # Only INSIDE a container: a bare `{{ none_var }}` renders as
+          # empty text in real Ansible, which #format_value handles.
+          "None"
+        when Array
+          "[" + raw.map { |item| python_repr(item) }.join(", ") + "]"
+        when Hash
+          "{" + raw.map { |key, item| "#{python_repr_string(key)}: #{python_repr(item)}" }.join(", ") + "}"
+        else
+          format_value(value)
+        end
+      end
+
+      private def python_repr_string(value : String) : String
+        escaped = value.gsub("\\", "\\\\")
+
+        if value.includes?('\'') && !value.includes?('"')
+          "\"" + escaped + "\""
+        elsif value.includes?('\'')
+          "\'" + escaped.gsub("\'", "\\\'") + "\'"
+        else
+          "\'" + escaped + "\'"
+        end
+      end
+
       def format_value(value : JSON::Any) : String
         case value.raw
         when String
@@ -720,6 +773,16 @@ module CrystalPlay
         when Bool
           value.as_bool ? "True" : "False"
         when Array
+          # JSON-compact on purpose, and NOT Python-repr: this method is
+          # the hinge of an internal "render a sub-expression to a
+          # String, `JSON.parse` it back into structured data" round
+          # trip used throughout expression_evaluator.cr /
+          # filter_engine.cr / comparison_evaluator.cr / this file, and
+          # Python-repr text is not valid JSON (see CrinjaRenderer#
+          # evaluate_value!'s own comment - a naive rewrite here breaks
+          # that round trip outright, which is exactly what happened
+          # when this was first attempted). User-facing rendering of a
+          # container goes through #format_value_output instead.
           value.to_json
         when Hash
           value.to_json

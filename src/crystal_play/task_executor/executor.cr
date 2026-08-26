@@ -57,7 +57,7 @@ module CrystalPlay
     property diff_mode : Bool
     property play_vars : Hash(String, JSON::Any)
     property gather_facts : Bool
-    
+
     # Track results for recap
     getter results : Hash(String, Hash(String, Int32))
     # Modules referenced by a task whose own when: (independent of the
@@ -312,6 +312,11 @@ module CrystalPlay
       # path may be templated against that host's own facts.
       @vars_files = [] of Array(String),
       @vars_files_dir = ".",
+      # The playbook's own directory, absolute - real Ansible's
+      # `playbook_dir` magic var (see #apply_path_magic_vars). Defaults
+      # to the working directory, which is also what real Ansible
+      # reports for an ad-hoc run with no playbook at all.
+      @playbook_dir = ".",
       # See Play#any_errors_fatal / Play#max_fail_percentage.
       @any_errors_fatal = false,
       @max_fail_percentage : Float64? = nil,
@@ -331,7 +336,7 @@ module CrystalPlay
       # See Play#remote_user.
       @remote_user : String? = nil,
       # See Play#debugger.
-      @debugger : String? = nil
+      @debugger : String? = nil,
     )
       @results = Hash(String, Hash(String, Int32)).new
       @registered_vars = Hash(String, Hash(String, JSON::Any)).new
@@ -365,11 +370,11 @@ module CrystalPlay
         # wipe them. Registered vars deliberately stay per-play.
         @facts[host.name] ||= {} of String => JSON::Any
       end
-      
+
       # Initialize handler runner
       @handler_runner = HandlerRunner.new(@handlers, @hosts)
     end
-    
+
     # Main execution loop
     def run
       # Gather facts if enabled
@@ -991,7 +996,7 @@ module CrystalPlay
       end
       @host_worker_pool
     end
-    
+
     # Gather facts for all hosts using the facts plugin
     # Each host's fact gathering is fully independent - writes only to
     # @facts[host.name] and @results[host.name], both pre-seeded per host
@@ -1119,12 +1124,12 @@ module CrystalPlay
     rescue ex
       {false, ex.message}
     end
-    
+
     # Show execution recap
     def show_recap
       ResultDisplay.show_recap(@hosts, @results)
     end
-    
+
     # Execute a task on a host - dispatches to the loop, retry, or plain
     # single-execution path depending on what the task declares.
     private def execute_task(task : Task, host : Host)
@@ -1165,7 +1170,7 @@ module CrystalPlay
       # (execute_batch_group prepares every member up front) - reuse it
       # instead of paying for VariableContext.build + facts merge again.
       vars_context = @batch_cache[host.name]?.try(&.[task]?).try(&.[1]) ||
-        build_vars_context(task, host)
+                     build_vars_context(task, host)
 
       # delegate_to: run the module against a different host's connection
       # while vars/facts/register/stats stay attributed to `host` - resolved
@@ -1229,7 +1234,7 @@ module CrystalPlay
         return
       end
 
-      if (until_condition = task.until_condition) && !@check_mode
+      if (until_condition = task.until_condition) && !resolve_task_check_mode(task, vars_context)
         execute_task_with_retries(task, host, vars_context, until_condition, exec_host)
         return
       end
@@ -1684,6 +1689,7 @@ module CrystalPlay
       # hard-failed ("'ansible_check_mode' is undefined") under 0.9.517's
       # strict module-arg templating.
       vars_context["ansible_check_mode"] = JSON::Any.new(@check_mode)
+      apply_path_magic_vars(vars_context)
 
       # ansible_connection - real Ansible always resolves this magic var
       # (defaults "smart", which itself resolves to "ssh" for a remote
@@ -1933,6 +1939,45 @@ module CrystalPlay
     # would also need its own "hostvars" key excluded to avoid infinite
     # recursion) - inventory vars + facts + registered vars covers every
     # real-world hostvars[...] use seen so far.
+    # playbook_dir / inventory_dir / inventory_file - real Ansible's path
+    # magic vars, all three ABSOLUTE regardless of how the paths were
+    # spelled on the command line (verified against ansible-core 2.19.4
+    # with a relative playbook and a relative inventory run from a third
+    # directory). Roles use `playbook_dir` to reach files relative to the
+    # playbook rather than the working directory; without it, `{{
+    # playbook_dir }}` failed outright here ("'playbook_dir' is
+    # undefined") under strict module-arg templating.
+    #
+    # With no inventory, `inventory_dir`/`inventory_file` are left
+    # UNDEFINED rather than set to empty strings - also verified against
+    # real Ansible - so a role's `inventory_file is defined` guard reads
+    # the same here. A DIRECTORY inventory sets `inventory_dir` to the
+    # directory itself and `inventory_file` to its single source file,
+    # leaving the latter undefined when several sources make "the"
+    # inventory file ambiguous.
+    #
+    # Both of those shapes are handled here but not reachable yet: this
+    # engine's inventory loader defaults to `inventory.ini` instead of
+    # real Ansible's implicit localhost when `-i` is omitted, and cannot
+    # load a directory of inventory sources at all (it tries to execute
+    # it as a dynamic inventory script). Those are separate, pre-existing
+    # gaps in the loader, not in these magic vars.
+    private def apply_path_magic_vars(vars_context : Hash(String, JSON::Any)) : Nil
+      vars_context["playbook_dir"] = JSON::Any.new(File.expand_path(@playbook_dir))
+
+      return unless path = @inventory_path
+      absolute = File.expand_path(path)
+
+      if File.directory?(absolute)
+        vars_context["inventory_dir"] = JSON::Any.new(absolute)
+        sources = Dir.children(absolute).map { |child| File.join(absolute, child) }.select { |child| File.file?(child) }
+        vars_context["inventory_file"] = JSON::Any.new(sources.first) if sources.size == 1
+      else
+        vars_context["inventory_dir"] = JSON::Any.new(File.dirname(absolute))
+        vars_context["inventory_file"] = JSON::Any.new(absolute)
+      end
+    end
+
     private def build_hostvars : Hash(String, JSON::Any)
       if (cache = @hostvars_cache) && @hostvars_cache_generation == @hv_generation
         return cache
@@ -2530,18 +2575,18 @@ module CrystalPlay
         case value.raw
         when Int64, Int32, Float64 then true
         when String                then value.as_s.to_f64? != nil
-        # Python's bool is a subclass of int (isinstance(True, int) is
-        # True) - real ansible-core's own argument-spec validator
-        # accepts a bool value for a declared int/float param on that
-        # basis. dev-sec mysql_hardening's own argument_specs.yml
-        # declares mysql_hardening_skip_show_database as `type: int,
-        # default: 1` while defaults/main.yml sets it to the literal
-        # boolean `true` - a real (if sloppy) mismatch in the role
-        # itself that real ansible-playbook tolerates via this exact
-        # coercion; rejecting it here failed the role's own argument-
-        # spec validation task before any hardening logic ever ran.
-        when Bool                  then true
-        else                             false
+          # Python's bool is a subclass of int (isinstance(True, int) is
+          # True) - real ansible-core's own argument-spec validator
+          # accepts a bool value for a declared int/float param on that
+          # basis. dev-sec mysql_hardening's own argument_specs.yml
+          # declares mysql_hardening_skip_show_database as `type: int,
+          # default: 1` while defaults/main.yml sets it to the literal
+          # boolean `true` - a real (if sloppy) mismatch in the role
+          # itself that real ansible-playbook tolerates via this exact
+          # coercion; rejecting it here failed the role's own argument-
+          # spec validation task before any hardening logic ever ran.
+        when Bool then true
+        else           false
         end
       when "path", "str", "raw"
         true # ansible-core stringifies almost anything for these
@@ -2552,12 +2597,12 @@ module CrystalPlay
 
     private def json_type_name(value : JSON::Any) : String
       case value.raw
-      when Hash    then "dict"
-      when Array   then "list"
-      when Bool    then "bool"
+      when Hash         then "dict"
+      when Array        then "list"
+      when Bool         then "bool"
       when Int64, Int32 then "int"
-      when Float64 then "float"
-      else              "str"
+      when Float64      then "float"
+      else                   "str"
       end
     end
 
@@ -2635,6 +2680,20 @@ module CrystalPlay
         if bare.starts_with?("{{") && bare.ends_with?("}}")
           bare = bare[2..-3].strip
         end
+        # A loop source whose value is undefined but which passes
+        # through a filter first (`loop: "{{ environment_list |
+        # dict2items }}"`, buluma.environment) never reached
+        # resolve_template_value's own raise above - the filter chain
+        # took the lenient ExpressionEvaluator path and FilterEngine
+        # coerced the missing value into an empty hash/list, so the task
+        # silently produced zero items instead of failing. Raising the
+        # same UndefinedVariableError here hands it to
+        # resolve_loop_items_or_raise, so the round174 skip-vs-fail-by-
+        # when: matrix applies unchanged.
+        if undefined_name = CrystalPlay.undefined_filter_chain_source(bare, vars_context)
+          raise UndefinedVariableError.new("'#{undefined_name}' is undefined")
+        end
+
         result = expression_evaluator_for(vars_context).evaluate(bare)
 
         if kind == "with_dict"
@@ -2741,12 +2800,12 @@ module CrystalPlay
     # verified against a real ansible-playbook run.
     private def python_type_name(value : JSON::Any) : String
       case value.raw
-      when Nil    then "NoneType"
-      when Bool   then "bool"
-      when Int64  then "int"
+      when Nil     then "NoneType"
+      when Bool    then "bool"
+      when Int64   then "int"
       when Float64 then "float"
-      when Hash   then "dict"
-      else "str"
+      when Hash    then "dict"
+      else              "str"
       end
     end
 
@@ -3039,7 +3098,10 @@ module CrystalPlay
       substituted_condition = sub.substitute(when_condition)
 
       begin
-        ConditionalEvaluator.evaluate(substituted_condition, vars_context, raise_undefined: true)
+        # strict: true - a task `when:` must end in a real boolean on
+        # ansible-core 2.19 (see ConditionalEvaluator#evaluate_truthiness);
+        # ANSIBLE_ALLOW_BROKEN_CONDITIONALS relaxes it there and here.
+        ConditionalEvaluator.evaluate(substituted_condition, vars_context, strict: true, raise_undefined: true)
       rescue ex
         raise WhenEvaluationError.new("Error while evaluating conditional: #{ex.message}")
       end
@@ -3414,6 +3476,29 @@ module CrystalPlay
     # where it actually gets evaluated - falls back to task.become (the
     # parser's best-effort literal guess) if there's no expr, or if
     # rendering it produces something ConditionalEvaluator can't use.
+    # A task's effective check mode: its own `check_mode:` when it has
+    # one, otherwise the run-wide `--check` flag. Real Ansible honours
+    # BOTH directions (verified against ansible-core 2.19.4):
+    # `check_mode: true` simulates a task during an ordinary run, and
+    # `check_mode: false` lets a task really execute during a `--check`
+    # run - the usual reason being a read-only `command:` whose output
+    # the rest of the play needs in order to be simulated at all.
+    #
+    # Note what this deliberately does NOT touch: the
+    # `ansible_check_mode` magic var stays bound to the RUN's mode, not
+    # the task's. Live-verified - a `check_mode: true` task inside an
+    # ordinary run still sees `ansible_check_mode == false`.
+    private def resolve_task_check_mode(task : Task, vars_context : Hash(String, JSON::Any)? = nil) : Bool
+      if (expr = task.check_mode_expr) && (vars = vars_context)
+        substitutor = VarSubstitutor.new(vars: vars, host_name: "")
+        rendered = substitutor.substitute(expr)
+        return ConditionalEvaluator.evaluate(rendered, {} of String => JSON::Any) rescue @check_mode
+      end
+
+      value = task.check_mode
+      value.nil? ? @check_mode : value
+    end
+
     private def resolve_task_become(task : Task, substitutor : VarSubstitutor) : Bool
       expr = task.become_expr
       return task.become unless expr
@@ -3518,7 +3603,7 @@ module CrystalPlay
       item_label : String? = nil,
       exec_host : Host = host,
       shared : VarSubstitutor? = nil,
-      defer_loop_stats : Bool = false
+      defer_loop_stats : Bool = false,
     ) : JSON::Any?
       substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
@@ -3564,7 +3649,7 @@ module CrystalPlay
       end
 
       if task.module_name == "ansible.builtin.reboot"
-        result = execute_reboot(substituted_params, exec_host, vars_context)
+        result = execute_reboot(substituted_params, exec_host, vars_context, resolve_task_check_mode(task, vars_context))
         return apply_changed_failed_when(task, result, vars_context, host)
       end
 
@@ -3632,7 +3717,7 @@ module CrystalPlay
 
       config = build_plugin_config(task, exec_host, substituted_params, wire_vars, substituted_become_user)
 
-      if task.async_seconds && !@check_mode
+      if task.async_seconds && !resolve_task_check_mode(task, wire_vars)
         # async: writes this config verbatim to a job file; the detached
         # __async_run process resolves become:/become_user: back out of
         # it via the JSON::Any entry point, exactly as before.
@@ -3829,8 +3914,9 @@ module CrystalPlay
       JSON.parse({"changed" => false, "failed" => false, "msg" => ""}.to_json)
     end
 
-    private def execute_reboot(params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any)) : JSON::Any
-      return JSON.parse({"changed" => true, "failed" => false, "msg" => "Would have rebooted"}.to_json) if @check_mode
+    private def execute_reboot(params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any),
+                               check_mode : Bool = @check_mode) : JSON::Any
+      return JSON.parse({"changed" => true, "failed" => false, "msg" => "Would have rebooted"}.to_json) if check_mode
 
       if PluginManager.is_local_connection?(exec_host, vars_context)
         return JSON.parse({
@@ -3972,7 +4058,7 @@ module CrystalPlay
         var_overrides.each { |key, value| debug_vars[key] = value }
 
         case TaskDebugger.run(render_task_name_for_display(task, host), host.name, current,
-             debug_vars, task, var_overrides)
+          debug_vars, task, var_overrides)
         in TaskDebugger::Outcome::Continue
           return current
         in TaskDebugger::Outcome::Redo
@@ -4046,7 +4132,7 @@ module CrystalPlay
       host : Host,
       base_vars_context : Hash(String, JSON::Any),
       loop_items : Array(JSON::Any),
-      exec_host : Host = host
+      exec_host : Host = host,
     )
       # Render each item *before* it's ever bound to "item" or checked
       # against when: - a literal loop: entry can itself be a template
@@ -4413,7 +4499,7 @@ module CrystalPlay
       host : Host,
       vars_context : Hash(String, JSON::Any),
       until_condition : String,
-      exec_host : Host = host
+      exec_host : Host = host,
     )
       register_name = task.register
       attempts = task.retries.clamp(1..)
@@ -5117,7 +5203,16 @@ module CrystalPlay
       # at parse time and produces no task result of its own at all (see
       # is_static_import's own comment - found via round171's
       # robertdebock.revealmd).
-      @results[host.name]["ok"] += 1 unless task.is_static_import
+      #
+      # Incremented AFTER the role actually loads (see the `rescue` below),
+      # not here - counting it eagerly double-counted a role that fails to
+      # load at all (nonexistent role name): both this "ok" AND
+      # fail_include's own "failed" fired for the same task. Found round185
+      # benchmarking andrewrothstein.libvirt (a broken meta dependency on
+      # the since-removed andrewrothstein.qemu): real Ansible's recap was
+      # `ok=0 failed=1` (a fatal, unrescued include_role halts the play for
+      # that host immediately, same as any other fatal task), crystal's was
+      # `ok=1 failed=1`.
 
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       role_name = substitutor.substitute(task.include_role_name.as(String))
@@ -5160,6 +5255,8 @@ module CrystalPlay
         fail_include(task, host, "Failed to load role '#{role_name}': #{ex.message}")
         return
       end
+
+      @results[host.name]["ok"] += 1 unless task.is_static_import
 
       # Round 26 originally had an eager re-render of each loaded task's
       # `name:` here (against just the include_role: `vars:` passed in) to
@@ -5291,7 +5388,7 @@ module CrystalPlay
     # Substitute variables in task parameters
     private def substitute_task_params(
       params : Hash(String, String),
-      substitutor : VarSubstitutor
+      substitutor : VarSubstitutor,
     ) : Hash(String, String)
       result = Hash(String, String).new
 
@@ -5310,7 +5407,10 @@ module CrystalPlay
         # ("Finalization of task args ... failed"). See
         # UndefinedVariableError's own comment for the narrow, bare-
         # reference-only scope of what actually raises here.
-        substituted_value = substitutor.substitute(value, strict: true)
+        # output: true - a module argument is final text (see
+        # VarSubstitutor#substitute), so a container renders the way
+        # real Ansible renders one.
+        substituted_value = substitutor.substitute(value, strict: true, output: true)
 
         # `mode:` piped through a variable (`mode: "{{ redis_conf_dir_mode
         # }}"`, geerlingguy.redis's own style) loses its octal-ness the
@@ -5365,10 +5465,10 @@ module CrystalPlay
               # originated.
               plain = raw.to_s
               substituted_value = if plain.matches?(/\A[0-7]{3,4}\z/)
-                                     plain
-                                   else
-                                     "0" + raw.to_s(8)
-                                   end
+                                    plain
+                                  else
+                                    "0" + raw.to_s(8)
+                                  end
             end
           end
         end
@@ -5414,14 +5514,14 @@ module CrystalPlay
       subdir = case task.module_name
                when "ansible.builtin.copy"     then "files"
                when "ansible.builtin.template" then "templates"
-               else                                  nil
+               else                                 nil
                end
       return params unless subdir
 
       role_dir = case task.module_name
                  when "ansible.builtin.copy"     then task.role_files_dir
-                 when "ansible.builtin.template"  then task.role_templates_dir
-                 else                                  nil
+                 when "ansible.builtin.template" then task.role_templates_dir
+                 else                                 nil
                  end
       return params unless role_dir
 
@@ -5880,11 +5980,11 @@ module CrystalPlay
       host : Host,
       params : Hash(String, String),
       vars_context : Hash(String, JSON::Any),
-      become_user : String? = task.become_user
+      become_user : String? = task.become_user,
     ) : String
       # Add check_mode and diff_mode to params
       final_params = params.dup
-      final_params["check_mode"] = @check_mode.to_s
+      final_params["check_mode"] = resolve_task_check_mode(task, vars_context).to_s
       final_params["diff_mode"] = @diff_mode.to_s
 
       # environment: - substituted here (once, with the same vars_context
@@ -5924,10 +6024,10 @@ module CrystalPlay
         "host" => {
           "name" => host.name,
           "user" => host.user,
-          "port" => host.port
+          "port" => host.port,
         },
         "params" => final_params,
-        "vars" => wire_vars,
+        "vars"   => wire_vars,
         # Read by PluginManager, not by the plugin binary itself - become:
         # wraps the *whole* plugin process (local spawn or the remote SSH
         # command) in `sudo -n -u <user> --`, rather than being something
@@ -5935,13 +6035,13 @@ module CrystalPlay
         # top-level config fields (not nested under "params") so this
         # round-trips through async:'s job file (written verbatim from this
         # same config) without __async_run needing any extra plumbing.
-        "become" => task.become.to_s,
-        "become_user" => become_user
+        "become"      => task.become.to_s,
+        "become_user" => become_user,
       }
 
       config.to_json
     end
-    
+
     # Matches real Ansible's `stdout_lines`/`stderr_lines` (built from
     # Python's `str.splitlines()`), not Crystal's plain `String#split("\n")`.
     # The two differ on exactly the cases that matter for real command
@@ -5968,7 +6068,7 @@ module CrystalPlay
     private def register_result(host : Host, register_name : String, result : JSON::Any)
       # Create a mutable copy of the result to add stdout_lines/stderr_lines
       result_hash = result.as_h.dup
-      
+
       # Add stdout_lines by splitting stdout on newlines (Ansible behavior)
       if stdout = result_hash["stdout"]?.try(&.as_s)
         stdout_lines = ansible_splitlines(stdout).map { |line| JSON::Any.new(line) }
@@ -5980,12 +6080,12 @@ module CrystalPlay
         stderr_lines = ansible_splitlines(stderr).map { |line| JSON::Any.new(line) }
         result_hash["stderr_lines"] = JSON::Any.new(stderr_lines)
       end
-      
+
       # Store the enhanced result
       @registered_vars[host.name][register_name] = JSON::Any.new(result_hash)
       @hv_generation += 1
     end
-    
+
     # Run all notified handlers
     private def run_handlers
       # Create callback for handler execution
@@ -6005,7 +6105,7 @@ module CrystalPlay
       @handler_runner.run(execute_callback, @results, @diff_mode, name_resolver,
         @force_handlers ? nil : @halted_hosts)
     end
-    
+
     # Execute a handler (internal - called via callback)
     private def execute_handler_internal(handler : Task, host : Host) : JSON::Any
       # Build variable context
@@ -6080,6 +6180,7 @@ module CrystalPlay
       vars_context["ansible_play_hosts"] = JSON::Any.new(play_host_names)
       vars_context["ansible_version"] = ANSIBLE_VERSION_MAGIC_VAR
       vars_context["ansible_check_mode"] = JSON::Any.new(@check_mode)
+      apply_path_magic_vars(vars_context)
       # ansible_connection default - see #build_vars_context's identical
       # comment for the full story (buluma.selinux's block-level `when:
       # ansible_connection not in [...]` guard).
@@ -6197,7 +6298,7 @@ module CrystalPlay
       handler : Task,
       host : Host,
       base_vars_context : Hash(String, JSON::Any),
-      loop_items : Array(JSON::Any)
+      loop_items : Array(JSON::Any),
     ) : JSON::Any
       loop_var = handler.loop_var
       index_var = handler.index_var
@@ -6219,9 +6320,9 @@ module CrystalPlay
       end
 
       JSON.parse({
-        "changed"            => JSON::Any.new(any_changed),
-        "failed"             => JSON::Any.new(any_failed),
-        "already_displayed"  => JSON::Any.new(true),
+        "changed"           => JSON::Any.new(any_changed),
+        "failed"            => JSON::Any.new(any_failed),
+        "already_displayed" => JSON::Any.new(true),
       }.to_json)
     end
 
@@ -6296,7 +6397,7 @@ module CrystalPlay
       end
 
       if handler.module_name == "ansible.builtin.reboot"
-        result = execute_reboot(substituted_params, host, vars_context)
+        result = execute_reboot(substituted_params, host, vars_context, resolve_task_check_mode(handler, vars_context))
         result = apply_changed_failed_when(handler, result, vars_context, host)
         if register_name = handler.register
           register_result(host, register_name, result) unless register_name.empty?

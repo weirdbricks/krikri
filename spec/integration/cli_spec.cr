@@ -97,12 +97,12 @@ describe "crystal-ansible CLI (--check mode)" do
     output.should contain("with_items item: y")
     output.should contain("one=1")
     output.should contain("two=2")
-    output.should contain(%(nested item: ["a","x"]))
-    output.should contain(%(nested item: ["b","y"]))
+    output.should contain(%(nested item: ['a', 'x']))
+    output.should contain(%(nested item: ['b', 'y']))
     output.should contain("sequence item: 1")
     output.should contain("sequence item: 3")
-    output.should contain(%(indexed item: ["0","x"]))
-    output.should contain(%(indexed item: ["1","y"]))
+    output.should contain(%(indexed item: ['0', 'x']))
+    output.should contain(%(indexed item: ['1', 'y']))
     output.should contain("var loop item: red")
     output.should contain("var loop item: green")
     output.should contain("var loop item: blue")
@@ -279,10 +279,10 @@ describe "crystal-ansible CLI (--check mode)" do
     status, output = run_playbook("test-nested-loop-in-include-quick.yml")
 
     status.success?.should be_true
-    output.should contain("mount={\"name\":\"first\"} item=a")
-    output.should contain("mount={\"name\":\"first\"} item=b")
-    output.should contain("mount={\"name\":\"second\"} item=a")
-    output.should contain("mount={\"name\":\"second\"} item=b")
+    output.should contain(%(mount={'name': 'first'} item=a))
+    output.should contain(%(mount={'name': 'first'} item=b))
+    output.should contain(%(mount={'name': 'second'} item=a))
+    output.should contain(%(mount={'name': 'second'} item=b))
     output.should contain("nested loop in include smoke test complete!")
   end
 
@@ -1171,8 +1171,8 @@ describe "crystal-ansible CLI (--check mode)" do
     )
 
     status.success?.should be_true
-    output.should contain("multilocal_members=[\"web1\",\"web2\"]")
-    output.should contain("all_members=[\"web1\",\"web2\"]")
+    output.should contain(%(multilocal_members=['web1', 'web2']))
+    output.should contain(%(all_members=['web1', 'web2']))
     output.should contain("groups smoke test complete!")
   end
 

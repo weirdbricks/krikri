@@ -99,6 +99,67 @@ module CrystalPlay
         value ? @lookup.format_value(value) : "undefined"
       end
 
+      # #evaluate, but formatting a CONTAINER result the way real Ansible
+      # renders one into final text - Python's `repr` (`['a', 'b']`),
+      # not this codebase's internal JSON-compact form (`["a","b"]`).
+      #
+      # Deliberately narrow: only a plain variable reference (bare,
+      # dotted or indexed) is re-resolved structurally here, because
+      # those are the shapes whose value is available WITHOUT re-running
+      # the evaluation, and `{{ some_list }}` is where this difference
+      # actually shows up. A filter chain still renders through
+      # #evaluate's JSON form - see KNOWN_MISSING.md; closing that needs
+      # the evaluator to carry structured results out to the final
+      # boundary, which is the round trip CrinjaRenderer#evaluate_value!
+      # warns about.
+      #
+      # Only VarSubstitutor's outermost `{{ }}` expansion may call this.
+      def evaluate_output(expr : String) : String
+        rendered = evaluate(expr)
+
+        # Only a result that LOOKS like a container is worth a second,
+        # structural look - which keeps the common scalar render at
+        # exactly one evaluation.
+        return rendered unless container_shaped?(rendered)
+
+        if value = structured_container(expr)
+          return @lookup.format_value_output(value)
+        end
+        rendered
+      end
+
+      private def container_shaped?(rendered : String) : Bool
+        return false if rendered.size < 2
+        (rendered.starts_with?('[') && rendered.ends_with?(']')) ||
+          (rendered.starts_with?('{') && rendered.ends_with?('}'))
+      end
+
+      # Re-resolves *expr* to its structured value, to tell a real
+      # container apart from a STRING that merely looks like one (a var
+      # holding the text `{"a": 1}` renders identically but must not be
+      # reformatted). A plain reference is answered straight from the
+      # variable table; anything else goes back through Crinja, which
+      # evaluates any expression structurally.
+      #
+      # Skipped entirely for an expression with a side effect
+      # (`lookup('pipe', ...)` and friends), which must never run twice.
+      private def structured_container(expr : String) : JSON::Any?
+        value =
+          if expr.matches?(REGEX_PLAIN_REFERENCE)
+            @lookup.resolve(expr)
+          elsif expr.includes?("lookup(") || expr.includes?("query(") || expr.includes?("pipe")
+            nil
+          else
+            render_via_crinja_value(expr)
+          end
+
+        return nil unless value
+        raw = value.raw
+        (raw.is_a?(Array) || raw.is_a?(Hash)) ? value : nil
+      rescue
+        nil
+      end
+
       # Evaluate any expression and return string result. A thin guard in
       # front of #evaluate_expr for the inline ternary `TRUTHY if COND else
       # FALSY` (real Jinja2/Ansible syntax, used directly in default vars
@@ -110,6 +171,11 @@ module CrystalPlay
       # of #evaluate_expr's own checks since COND itself commonly contains
       # a comparison - splitting first keeps that comparison scoped to COND
       # instead of being (wrongly) evaluated against the whole expression.
+      # A plain variable reference: name, dotted path, bracket index.
+      # No filters, operators, calls or literals - matching
+      # REGEX_BARE_VAR_REF's spirit in variable_substitutor.cr.
+      REGEX_PLAIN_REFERENCE = /\A[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[(?:-?\d+|'[^']*'|"[^"]*")\])*\z/
+
       def evaluate(expr : String) : String
         if ternary = split_ternary(expr)
           # CRINJA.md step 5, second construct after boolean_logic?

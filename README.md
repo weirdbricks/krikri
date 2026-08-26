@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.604-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.612-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,106 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.605`-`0.9.606`** - two fixes from a 60-role marathon (40
+  buluma.\* on Ubuntu 22.04, 20 andrewrothstein.\* on Rocky 9.6, fresh
+  host pair per distro, every role run twice for idempotency). A dynamic
+  `include_role:` naming a role that fails to load (found via
+  `andrewrothstein.libvirt`'s own dependency on the since-removed
+  `andrewrothstein.qemu`) was double-counted in the recap - both the
+  eager `ok` increment added for a *successful* include and
+  `fail_include`'s own `failed` increment fired for the same task, so a
+  fatal `ok=0 failed=1` on real Ansible showed as `ok=1 failed=1` here;
+  the `ok` increment now only fires once the role actually loads.
+  Separately, `ansible.builtin.user`'s `groups:` argument passed a
+  literal `"[]"` straight to `useradd -G` when `groups: "{{ x |
+  default([]) }}"` rendered from an undefined `x` (found via
+  `andrewrothstein.gitlab_runner`'s own "Add the gitlab-runner user to
+  other groups" task) - real Ansible's `list`-typed argspec recognizes
+  a `[...]`-shaped string and parses it back into a real (here, empty)
+  list before it ever reaches `useradd`; this engine now special-cases
+  the empty-list text the same way.
+
+- **`0.9.612`** - three parity fixes the previous one exposed. A
+  conditional must now end in a real boolean, as ansible-core 2.19
+  requires: `when: some_string` / `some_int` / `some_list` fail with
+  real Ansible's own message instead of silently taking a branch it
+  refuses to take - and `ANSIBLE_ALLOW_BROKEN_CONDITIONALS` relaxes it
+  here exactly as it does there. Containers render in Python's `repr`
+  form (`['a', 'b']`, `{'k': 'v'}`) in final output, where they had
+  rendered as JSON; internal rendering deliberately stays JSON, since
+  this engine renders sub-expressions to text and parses them back.
+  And INI host lines are shlex-split, so an inline var may contain
+  quoted spaces and its quotes are consumed by the splitter.
+
+- **`0.9.611`** - INI inventory values are now typed the way real
+  Ansible types them: by Python's `literal_eval`, where `True`/`False`
+  are booleans, `None` is null, `[1, 2]` and `{'k': 'v'}` are real
+  containers - and `true`, `false`, `yes`, `no`, `null` and `~` are all
+  plain strings. This engine had been booleanizing the lowercase forms
+  and leaving containers as text, so a list-valued inventory var could
+  not be looped over, and `[all:vars] enabled=false` quietly took the
+  false branch where real Ansible sees a (truthy) string. Verified
+  value-by-value against ansible-core 2.19.4 over 27 shapes; five unit
+  specs that had asserted the old behavior were rewritten against the
+  differential.
+
+- **`0.9.610`** - inventory sources. `ansible-playbook play.yml` with no
+  `-i` (or with an unreadable one) stopped here with "Error loading
+  inventory" where real Ansible warns and carries on with the implicit
+  localhost - the common CI shape for a `hosts: localhost` playbook.
+  `-i <directory>` (several inventory files merged, ignoring backup and
+  hidden files) and `-i "host1,host2,"` were both unsupported. Fixing
+  the directory case surfaced a bigger one underneath: an `[all:vars]`
+  block applied to **nobody**, in single-file inventories too, because
+  the INI parser files hosts under their own group and never under
+  `all` - one of the most common things an inventory contains, silently
+  ignored in its entirety. A regression sweep alongside it caught
+  `group_names` omitting `ungrouped`, so a host listed above any
+  `[section]` header reported belonging to no groups at all.
+
+- **`0.9.609`** - two gaps found while differentialing the modules
+  above. `{{ playbook_dir }}` was undefined here (real Ansible always
+  defines it, along with `inventory_dir`/`inventory_file`, always
+  absolute) - roles use it to reach files relative to the playbook
+  rather than the working directory. And task-level `check_mode:` was
+  parsed but never used: only the global `--check` flag reached the
+  modules, so `check_mode: true` really executed the task it was meant
+  to simulate, and `check_mode: false` - which real Ansible uses to let
+  one read-only task run for real during a `--check` run - was equally
+  ignored. Both directions now match, including a templated
+  `check_mode: "{{ ... }}"`; `ansible_check_mode` deliberately still
+  reports the run's mode rather than the task's, as real Ansible does.
+
+- **`0.9.608`** - four `community.crypto` modules implemented, closing
+  what had been recorded as a blanket scope cut: `openssl_privatekey`,
+  `openssl_csr`, `x509_certificate` (`selfsigned` and `ownca`
+  providers) and `openssl_pkcs12` (`action: export`). A frequency scan
+  over the 673-role corpus is what prompted it - 13 roles call this
+  collection, and since an unimplemented module aborts the play with
+  `rc=4`, each of those roles was entirely unrunnable. All four are
+  built on the `openssl` CLI and were differentialed against the real
+  modules end to end: file formats, permissions (including
+  `openssl_privatekey`'s forced 0600 and `openssl_pkcs12`'s 0400),
+  extensions, fingerprints, error wording, and the idempotency matrix
+  each module actually uses - in both directions, so neither engine
+  regenerates artifacts the other created. `robertdebock.openssl` now
+  runs to completion, byte-comparable and idempotent on the rerun.
+
+- **`0.9.607`** - an undefined variable that reached a *filter* stopped
+  being strict. `loop: "{{ environment_list | dict2items }}"` with no
+  `default()` in the chain (`buluma.environment`'s own task) silently
+  produced zero loop items and a green play, where real Ansible fails
+  the task; strictness had only ever looked at bare `{{ var }}`
+  references, and `FilterEngine`'s `as_hash`/`as_array` coerced the
+  missing value to `{}`/`[]` before anything upstream could notice. An
+  undefined chain source is now fatal at all three entry points -
+  module-argument templating, loop-source resolution, and
+  `when:`/`assert:` conditions - unless the FIRST filter in the chain is
+  one of the three real Ansible actually tolerates (`default`, `d`,
+  `type_debug`, differentialed across 24 filters against ansible-core
+  2.19.4), so `x | default([]) | dict2items` keeps working. Crinja (real
+  `.j2` files) had the same bug independently and was fixed alongside.
+
 - **`0.9.603`** - a role can now see every other role's `vars/main.yml`
   and `defaults/main.yml`, including roles that run LATER in the play -
   real Ansible loads them all into the variable manager at play setup,
@@ -521,13 +621,6 @@ for current-state detail.
   Found benchmarking `buluma.selinux`: its own container-guard
   (`when: ansible_connection not in [...]`) hard-failed with
   `'ansible_connection' is undefined` on a plain SSH host.
-- **`0.9.585`** - implemented `loop_control:`'s `label:` and
-  `extended:`. `label:` was ignored, so a loop over dicts printed the
-  whole dict on every line instead of the field the playbook chose;
-  `extended:` left `ansible_loop` undefined, which FAILED any task using
-  it. `ansible_loop` now carries index/index0/revindex/revindex0/first/
-  last/length/allitems, with nextitem and previtem ABSENT at the ends as
-  real Ansible leaves them.
 ## 🤝 Contributing
 
 Contributions welcome! Please:
