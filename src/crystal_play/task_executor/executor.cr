@@ -1565,13 +1565,16 @@ module CrystalPlay
 
       @all_role_defaults.each { |key, value| vars_context[key] ||= value } unless @all_role_defaults.empty?
 
+      # Both role-vars layers sit above play/host vars but BELOW a
+      # REGISTERED variable: real Ansible ranks registered vars (19) well
+      # above role vars (15), and baseA already holds them. Verified
+      # against ansible-core 2.19.4 - a task that registers into a name
+      # its own role's vars/main.yml also defines resolves to the
+      # REGISTERED result there, where this engine used to hand back the
+      # role var and lose the command's output entirely.
+      registered = @registered_vars[host.name]
+
       unless @all_role_vars.empty?
-        # Above play/host vars but NOT above a REGISTERED variable: real
-        # Ansible ranks registered vars (19) well above role vars (15),
-        # and baseA already holds them. `task.role_vars` below still
-        # overwrites blindly - a pre-existing inversion for the current
-        # role only, left alone here rather than widened to every role.
-        registered = @registered_vars[host.name]
         @all_role_vars.each do |key, value|
           next if registered.has_key?(key)
           vars_context[key] = value
@@ -1579,7 +1582,10 @@ module CrystalPlay
       end
 
       if role_vars = task.role_vars
-        role_vars.each { |key, value| vars_context[key] = value }
+        role_vars.each do |key, value|
+          next if registered.has_key?(key)
+          vars_context[key] = value
+        end
       end
 
       task.vars.each { |key, value| vars_context[key] = value }

@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.603-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.604-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -395,7 +395,11 @@ for current-state detail.
   mapped against ansible-core 2.19.4 with a three-way matrix rather than
   assumed - all roles' defaults < this role's own defaults < play vars <
   all roles' vars < this role's own vars - and `include_role:` stays
-  scoped, since only static `roles:` are loaded at setup.
+  scoped, since only static `roles:` are loaded at setup. `0.9.604`
+  completes the ladder at the top: a REGISTERED variable now outranks a
+  role var of the same name, as in real Ansible, where a task that
+  registered into a name its own role also defined used to lose the
+  command's output entirely.
 
 - **`0.9.602`** - `omit` no longer leaks this engine's internal
   sentinel as literal text. `{{ x | default(omit) }}` used anywhere

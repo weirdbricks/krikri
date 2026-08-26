@@ -184,6 +184,35 @@ describe "cross-role variable scope" do
     end
   end
 
+  it "ranks a REGISTERED variable above the role's own vars of the same name" do
+    # Real Ansible's precedence puts registered vars (19) well above role
+    # vars (15). This engine applied role vars with a blind overwrite, so
+    # a task registering into a name its own role's vars/main.yml also
+    # defines lost the command's output entirely - verified against
+    # ansible-core 2.19.4, which resolves to the registered result.
+    with_root do |root|
+      write_role(root, "rv",
+        tasks: <<-YAML,
+        - name: register into a colliding name
+          ansible.builtin.command: echo from_register
+          register: collide_reg
+        - name: who wins
+          ansible.builtin.debug:
+            msg: "reg={{ collide_reg.stdout | default(collide_reg) }}"
+        YAML
+        vars: "collide_reg: from_role_vars\n")
+
+      output = run_play(root, <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          roles: [rv]
+        YAML
+
+      output.should contain("reg=from_register")
+    end
+  end
+
   it "does NOT expose an include_role:'d role's vars to the rest of the play" do
     with_root do |root|
       write_role(root, "incl",
