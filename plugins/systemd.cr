@@ -101,7 +101,7 @@ module CrystalPlay
         if @check_mode
           messages << "Would reload systemd daemon"
         else
-          reload_result = remote_exec("systemctl daemon-reload")
+          reload_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} daemon-reload")
           if reload_result[:exit_code] == 0
             messages << "Systemd daemon reloaded"
           else
@@ -120,7 +120,7 @@ module CrystalPlay
         if @check_mode
           messages << "Would re-execute systemd daemon"
         else
-          reexec_result = remote_exec("systemctl daemon-reexec")
+          reexec_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} daemon-reexec")
           if reexec_result[:exit_code] == 0
             messages << "Systemd daemon re-executed"
           else
@@ -143,7 +143,7 @@ module CrystalPlay
             messages << "Would mask #{name}"
             changed = true
           else
-            mask_result = remote_exec("systemctl mask #{name}")
+            mask_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} mask #{name}")
             if mask_result[:exit_code] == 0
               messages << "Unit masked"
               changed = true
@@ -160,7 +160,7 @@ module CrystalPlay
             messages << "Would unmask #{name}"
             changed = true
           else
-            unmask_result = remote_exec("systemctl unmask #{name}")
+            unmask_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} unmask #{name}")
             if unmask_result[:exit_code] == 0
               messages << "Unit unmasked"
               changed = true
@@ -187,7 +187,7 @@ module CrystalPlay
             messages << "Would enable #{name}"
             changed = true
           else
-            enable_result = remote_exec("systemctl enable #{name}")
+            enable_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} enable #{name}")
             if enable_result[:exit_code] == 0
               messages << "Unit enabled"
               changed = true
@@ -204,7 +204,7 @@ module CrystalPlay
             messages << "Would disable #{name}"
             changed = true
           else
-            disable_result = remote_exec("systemctl disable #{name}")
+            disable_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} disable #{name}")
             if disable_result[:exit_code] == 0
               messages << "Unit disabled"
               changed = true
@@ -230,7 +230,7 @@ module CrystalPlay
               messages << "Would start #{name}"
               changed = true
             else
-              start_result = remote_exec("systemctl start #{name}")
+              start_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} start #{name}")
               if start_result[:exit_code] == 0
                 messages << "Unit started"
                 changed = true
@@ -249,7 +249,7 @@ module CrystalPlay
               messages << "Would stop #{name}"
               changed = true
             else
-              stop_result = remote_exec("systemctl stop #{name}")
+              stop_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} stop #{name}")
               if stop_result[:exit_code] == 0
                 messages << "Unit stopped"
                 changed = true
@@ -267,7 +267,7 @@ module CrystalPlay
             messages << "Would restart #{name}"
             changed = true
           else
-            restart_result = remote_exec("systemctl restart #{name}")
+            restart_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} restart #{name}")
             if restart_result[:exit_code] == 0
               messages << "Unit restarted"
               changed = true
@@ -284,7 +284,7 @@ module CrystalPlay
             messages << "Would reload #{name}"
             changed = true
           else
-            reload_result = remote_exec("systemctl reload #{name}")
+            reload_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} reload #{name}")
             if reload_result[:exit_code] == 0
               messages << "Unit reloaded"
               changed = true
@@ -337,7 +337,7 @@ module CrystalPlay
     # UnitFileState, etc.) into a plain string-keyed hash, matching
     # what real Ansible's systemd module exposes as `.status`.
     private def systemctl_show(name : String) : Hash(String, String)
-      result = remote_exec("systemctl show #{name}")
+      result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} show #{name}")
       status = Hash(String, String).new
       result[:stdout].each_line do |line|
         key, sep, value = line.partition('=')
@@ -348,7 +348,7 @@ module CrystalPlay
 
     # Whether the unit is currently active (running).
     private def active?(name : String) : Bool
-      result = remote_exec("systemctl is-active #{name} 2>/dev/null")
+      result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} is-active #{name} 2>/dev/null")
       result[:exit_code] == 0
     end
 
@@ -358,7 +358,7 @@ module CrystalPlay
       # "disabled", "masked", and "static" alike - so exit code alone can't
       # distinguish "disabled" from "static". Parse the output word
       # instead: only an explicit "enabled" word means boot-enabled.
-      result = remote_exec("systemctl is-enabled #{name} 2>/dev/null")
+      result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} is-enabled #{name} 2>/dev/null")
       output = result[:stdout].strip
       (result[:exit_code] == 0) && (output == "enabled")
     end
@@ -366,8 +366,54 @@ module CrystalPlay
     # Whether the unit is masked.
     private def masked?(name : String) : Bool
       # Masked units show the literal word "masked" from `is-enabled`.
-      result = remote_exec("systemctl is-enabled #{name} 2>/dev/null")
+      result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} is-enabled #{name} 2>/dev/null")
       result[:stdout].strip == "masked"
+    end
+
+    # `scope: user|global|system` (real Ansible's own `systemd_service`/
+    # `systemd` parameter) - selects which systemd MANAGER instance every
+    # `systemctl` invocation targets (`--user` for the invoking user's own
+    # session manager, `--global` for that user's not-yet-logged-in
+    # default, plain/no flag - "system" - for the usual machine-wide one).
+    # Entirely unhandled before: every systemctl call here always hit the
+    # system manager regardless of `scope:`, so a `scope: user` task -
+    # exactly the shape a rootless-Docker/Podman role's own "enable my
+    # user unit" task uses - checked/managed a SYSTEM unit of the same
+    # name (usually absent) instead of the real per-user one under
+    # `~/.config/systemd/user/`, either doing nothing or reporting "unit
+    # file does not exist" for a unit that's actually there. Found live
+    # via konstruktoid.docker_rootless's own "Enable and start Docker"
+    # (`scope: user`) - real Ansible enables/starts the user-session
+    # docker.service; this engine failed outright ("Unit file docker.
+    # service does not exist"), looking at the SYSTEM unit namespace.
+    private def scope_flag : String
+      case @params["scope"]?
+      when "user"   then " --user"
+      when "global" then " --global"
+      else               ""
+      end
+    end
+
+    # `systemctl --user` needs a reachable per-user D-Bus session, which
+    # it finds via `$XDG_RUNTIME_DIR` (conventionally `/run/user/<uid>`) -
+    # real Ansible's systemd module sets this itself whenever `scope:
+    # user` is given and the caller hasn't already set it (see its own
+    # `home = expanduser("~")`/`XDG_RUNTIME_DIR` handling), precisely so
+    # a `become_user:`'d task doesn't need its OWN separate `environment:
+    # {XDG_RUNTIME_DIR: ...}` block just to make `--user` reach the right
+    # bus. `$(id -u)` (not a fixed uid: this plugin process already runs
+    # AS the become_user by the time it execs `systemctl`, so its own
+    # effective uid is exactly right) rather than looking up the task's
+    # `become_user:` name here, which this plugin never even receives.
+    # Missing entirely before - found via konstruktoid.docker_rootless's
+    # own "Enable and start Docker" (`scope: user`, no `environment:` of
+    # its own - only the ROOTFUL half of this role sets XDG_RUNTIME_DIR
+    # explicitly): `--user` alone still failed ("Unit file docker.service
+    # does not exist") without a reachable runtime dir to find the real
+    # per-user bus, even though the unit file was genuinely already
+    # installed under `~/.config/systemd/user/docker.service`.
+    private def scope_env_prefix : String
+      @params["scope"]? == "user" ? "XDG_RUNTIME_DIR=/run/user/$(id -u) " : ""
     end
 
     # Helper to convert string/bool to boolean

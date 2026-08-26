@@ -1541,7 +1541,24 @@ module CrystalPlay
           begin
             File.read(resolved_path).chomp
           rescue
-            "undefined"
+            # Real Ansible's `file` lookup plugin RAISES when the file
+            # can't be read ("Unable to access the file '<path>': File
+            # not found"), failing the whole task's arg finalization
+            # rather than continuing with a placeholder - unlike a
+            # genuinely-undefined VARIABLE reference, which is lenient by
+            # design elsewhere in this evaluator. Falling back to the
+            # "undefined" sentinel here instead let a missing file's
+            # literal text "undefined" get written straight into real
+            # task output - found via andrewrothstein.ssh-user-keygen's
+            # own `lookup('file', ssh_user_pubkey)` on a host with no
+            # `~/.ssh/id_rsa.pub`: real Ansible fails the task, this
+            # engine wrote the string "undefined" into `~/.ssh/
+            # authorized_keys` as if it were a real public key. Mirrors
+            # the url lookup's own HTTP-failure raise just above (same
+            # `rescue ex` in the executor turns this into "Finalization
+            # of task args ... failed", matching real Ansible's message
+            # shape).
+            raise "The lookup plugin 'file' failed: Unable to access the file '#{path}': File not found"
           end
         when "pipe"
           # lookup('pipe', command) - runs *command* via the shell ON

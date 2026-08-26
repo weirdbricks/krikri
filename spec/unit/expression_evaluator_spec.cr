@@ -251,10 +251,22 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate(%(lookup('file', '#{path}'))).should eq("secret-content")
   end
 
-  it "evaluates lookup('file', ...) as undefined for a missing file" do
+  # Real bug found benchmarking andrewrothstein.ssh-user-keygen (0.9.616):
+  # real Ansible's `file` lookup RAISES for a missing file ("Unable to
+  # access the file '<path>': File not found"), failing the task's arg
+  # finalization - it does NOT fall back to a placeholder the way a
+  # genuinely-undefined VARIABLE reference does elsewhere in this
+  # evaluator. The previous "undefined" fallback let the literal text
+  # "undefined" get written straight into a real target file
+  # (`~/.ssh/authorized_keys`, via `lookup('file', ssh_user_pubkey)` on
+  # a host with no `~/.ssh/id_rsa.pub`) instead of failing like real
+  # Ansible does.
+  it "raises (does not silently return 'undefined') for lookup('file', ...) on a missing file" do
     v = Hash(String, JSON::Any).new
     evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
-    evaluator.evaluate(%(lookup('file', '/no/such/file/at/all'))).should eq("undefined")
+    expect_raises(Exception, /lookup plugin 'file' failed.*File not found/) do
+      evaluator.evaluate(%(lookup('file', '/no/such/file/at/all')))
+    end
   end
 
   it "evaluates lookup('pipe', command) running a local shell command" do

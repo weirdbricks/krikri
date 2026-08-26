@@ -2093,6 +2093,31 @@ module CrystalPlay
     # naturally through parse_tasks -> parse_task -> parse_block_task).
     private def self.parse_block_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), block_yaml : Array(YAML::Any), play : Play, file_dir : String) : Task
       task = Task.new(name, "_block")
+
+      # Resolve this block's own become:/become_user: FIRST, then
+      # temporarily make them the "ambient" default every child task
+      # parsed below falls back to (a task without its OWN become:/
+      # become_user: key resolves via `play.become`/`play.become_user` -
+      # previously always the PLAY's top-level value, with no notion of
+      # an enclosing BLOCK's become at all). Real Ansible's own
+      # precedence is task > block > role > play; save/restore around
+      # the three child-list parses below makes nested blocks work
+      # naturally too (each level's resolved become becomes the ambient
+      # default for ITS OWN children, restored once done, so a doubly-
+      # nested block sees its immediate parent's become, not the play's).
+      # Missing entirely before - found via konstruktoid.docker_rootless's
+      # own "Configure and enable the Docker service" block (`become:
+      # true, become_user: "{{ docker_user }}"` at the BLOCK level, no
+      # per-task become of their own): every task inside silently ran as
+      # root instead of the rootless docker user, so `systemctl --user`
+      # (correct only from inside that user's own session) always
+      # targeted root's session instead, "Unit file docker.service does
+      # not exist" regardless of the real per-user unit's presence.
+      saved_become = play.become
+      saved_become_user = play.become_user
+      play.become = resolve_become(task_hash, play)
+      play.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
+
       task.block_tasks = parse_tasks(block_yaml, play, "task in block '#{name}'", file_dir)
 
       if rescue_yaml = task_hash["rescue"]?.try(&.as_a?)
@@ -2102,6 +2127,9 @@ module CrystalPlay
       if always_yaml = task_hash["always"]?.try(&.as_a?)
         task.always_tasks = parse_tasks(always_yaml, play, "task in always of block '#{name}'", file_dir)
       end
+
+      play.become = saved_become
+      play.become_user = saved_become_user
 
       # Block-level settings gate/apply to the block as a whole; each
       # nested task still evaluates its own when:/tags:/etc in addition.

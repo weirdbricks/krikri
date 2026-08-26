@@ -916,6 +916,66 @@ or already-clean roles as if they were new.
 | mrlesmithjr.ansible-observium | ✅ Clean (round 186, Rocky 9.6). Matching rc=1 cold / rc=1 warm on both engines. Real 1.0s/1.1s vs crystal 0.0s/0.0s. |
 | andrewrothstein.docker_engine | ⚠️ Round 186 (Rocky 9.6): found a real bug - a list-form `when:` made of `x | bool` filter chains: each filter-chain condition renders via the Python-repr text path ("True"/"False"), and `JSON.parse("True")` isn't valid JSON, so the strict boolean check saw the literal STRING "True" and hard-failed the handler even though every operand really was boolean. Fixed in 0.9.613, both cold/warm now match real Ansible exactly (real 16.3s/16.9s vs crystal cold/warm rc=0/0 post-fix). |
 | andrewrothstein.rstudio-server | ✅ Clean (round 186, Rocky 9.6). Matching rc=2 cold / rc=2 warm on both engines. Real 28.4s/28.9s vs crystal 17.9s/0.9s. |
+| andrewrothstein.gh | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 23.3s/4.4s vs crystal 6.3s/0.4s. |
+| andrewrothstein.leinengen | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 46.3s/22.7s vs crystal 22.1s/0.7s. |
+| andrewrothstein.sentinel | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=2 cold / rc=2 warm on both engines. Real 6.2s/6.2s vs crystal 0.3s/0.3s. |
+| andrewrothstein.nancy | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 10.7s/4.6s vs crystal 1.4s/0.2s. |
+| andrewrothstein.alpine-glibc-shim | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 2.4s/2.4s vs crystal 0.1s/0.1s. |
+| andrewrothstein.critools | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 18.5s/5.8s vs crystal 4.7s/0.5s. |
+| andrewrothstein.influxdb | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 17.2s/8.8s vs crystal 7.7s/0.4s. |
+| andrewrothstein.ansible-stunnel | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=2 cold / rc=2 warm on both engines. Real 50.7s/13.9s vs crystal 2.7s/6.4s. |
+| andrewrothstein.ssh-config | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 3.8s/3.7s vs crystal 0.2s/0.1s. |
+| andrewrothstein.deno | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 12.4s/4.1s vs crystal 3.0s/0.3s. |
+| andrewrothstein.tfctl | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 11.5s/10.8s vs crystal 2.8s/0.4s. |
+| andrewrothstein.sshkey | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=2 cold / rc=2 warm on both engines. Real 2.9s/3.3s vs crystal 0.1s/0.1s. |
+| andrewrothstein.ssl-key | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=2 cold / rc=2 warm on both engines. Real 11.4s/20.6s vs crystal 0.3s/0.3s. |
+| andrewrothstein.trust-ca | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 13.1s/15.6s vs crystal 0.2s/0.2s. |
+| andrewrothstein.subgit | ⚠️ Round 187 (Ubuntu 22.04): found a real gap, documented not fixed - `get_url` (Crystal stdlib `HTTP::Client`) can't complete a TLS handshake against subgit.com's own legacy server (Apache/OpenSSL 1.0.2u), "SSL_shutdown: error:0A000197"; real Ansible's Python TLS stack negotiates it fine. See KNOWN_MISSING.md. |
+| andrewrothstein.minio | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 26.6s/18.1s vs crystal 5.6s/2.0s. |
+| andrewrothstein.supervisord-program | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=2 cold / rc=2 warm on both engines. Real 6.9s/6.8s vs crystal 0.2s/0.2s. |
+| andrewrothstein.codeserver | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 55.7s/11.7s vs crystal 13.3s/0.2s. |
+| mrlesmithjr.manage-ssh-keys | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=1 cold / rc=1 warm on both engines. Real 2.3s/2.2s vs crystal 0.0s/0.0s. |
+| andrewrothstein.podman | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=2 cold / rc=2 warm on both engines. Real 5.7s/6.2s vs crystal 0.1s/0.1s. |
+| andrewrothstein.supervisord | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=2 cold / rc=2 warm on both engines. Real 72.5s/73.2s vs crystal 1.6s/3.7s. |
+| mrlesmithjr.ansible-debian-autoupdates | ⚠️ Round 187 (Ubuntu 22.04): NOT a crystal-ansible bug - real ansible's apt hit a transient dpkg lock held by unattended-upgrades; this engine's package module short-circuited on already-installed and never invoked apt, sidestepping the lock contention (same pattern as round185's buluma.ruby). |
+| andrewrothstein.bash-dcb | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=2 cold / rc=2 warm on both engines. Real 7.2s/7.9s vs crystal 0.3s/0.3s. |
+| andrewrothstein.dumb_init | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 9.7s/8.8s vs crystal 0.5s/0.2s. |
+| andrewrothstein.redis | ⚠️ Round 187 (Ubuntu 22.04): NOT a crystal-ansible bug - transient Ubuntu apt-mirror inconsistency (404 on an older `linux-libc-dev` build fetching gcc/build-essential); real ansible's own cold run also struggled (timed out at 500s) before succeeding warm. |
+| andrewrothstein.docker-registry | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=1 cold / rc=1 warm on both engines. Real 1.9s/1.7s vs crystal 0.0s/0.0s. |
+| andrewrothstein.couchdb | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=1 cold / rc=1 warm on both engines. Real 1.9s/1.8s vs crystal 0.0s/0.0s. |
+| andrewrothstein.git_build | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=2 cold / rc=2 warm on both engines. Real 100.6s/103.8s vs crystal 1.2s/1.1s. |
+| andrewrothstein.r | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=2 cold / rc=2 warm on both engines. Real 5.9s/5.8s vs crystal 0.1s/0.1s. |
+| andrewrothstein.tftpd_hpa | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=2 cold / rc=2 warm on both engines. Real 74.5s/74.0s vs crystal 5.3s/0.3s. |
+| andrewrothstein.flask | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=2 cold / rc=2 warm on both engines. Real 75.9s/73.1s vs crystal 1.5s/1.5s. |
+| andrewrothstein.haskell | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=2 cold / rc=2 warm on both engines. Real 11.8s/11.3s vs crystal 1.3s/1.3s. |
+| robertdebock.enpass | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=2 cold / rc=2 warm on both engines. Real 72.5s/72.1s vs crystal 3.2s/1.2s. |
+| andrewrothstein.typesafe-activator | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=1 cold / rc=1 warm on both engines. Real 1.7s/1.7s vs crystal 0.0s/0.0s. |
+| andrewrothstein.devpiserver | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=1 cold / rc=1 warm on both engines. Real 1.6s/1.7s vs crystal 0.0s/0.0s. |
+| andrewrothstein.func_e | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 26.3s/18.7s vs crystal 1.2s/0.4s. |
+| andrewrothstein.github-release | ⚠️ Round 187 (Ubuntu 22.04): found a real bug - a meta/main.yml dependency written with `src:` (real Ansible's own RoleRequirement key, not just `role:`/`name:`) raised "Role entry missing 'role' or 'name'" and aborted parsing the WHOLE PLAYBOOK. Fixed in 0.9.622, both cold/warm now match real Ansible exactly (real 23.4s/17.6s post-fix confirmed live). |
+| andrewrothstein.gomplate | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 15.3s/10.6s vs crystal 2.3s/0.6s. |
+| andrewrothstein.docker-machine | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 10.7s/10.5s vs crystal 1.5s/0.4s. |
+| andrewrothstein.conda_env | ✅ Clean (round 187, Ubuntu 22.04). Matching rc=2 cold / rc=2 warm on both engines. Real 7.3s/7.8s vs crystal 0.1s/0.1s. |
+| nickjj.acme_sh | ✅ Clean (round 187, Rocky 9.6). Matching rc=2 cold / rc=2 warm on both engines. Real 16.3s/8.8s vs crystal 9.0s/2.8s. |
+| andrewrothstein.htpasswd_deps | ✅ Clean (round 187, Rocky 9.6). Matching rc=0 cold / rc=0 warm on both engines. Real 6.3s/4.8s vs crystal 21.2s/0.2s. |
+| andrewrothstein.hugo | ✅ Clean (round 187, Rocky 9.6). Matching rc=0 cold / rc=0 warm on both engines. Real 45.9s/4.3s vs crystal 4.5s/0.4s. |
+| andrewrothstein.gosec | ✅ Clean (round 187, Rocky 9.6). Matching rc=0 cold / rc=0 warm on both engines. Real 12.2s/7.6s vs crystal 2.2s/0.4s. |
+| andrewrothstein.influxdb2 | ✅ Clean (round 187, Rocky 9.6). Matching rc=0 cold / rc=0 warm on both engines. Real 20.1s/8.2s vs crystal 8.5s/0.4s. |
+| andrewrothstein.dotnet-runtime | ✅ Clean (round 187, Rocky 9.6). Matching rc=2 cold / rc=2 warm on both engines. Real 7.0s/6.9s vs crystal 1.9s/1.9s. |
+| andrewrothstein.goreleaser | ✅ Clean (round 187, Rocky 9.6). Matching rc=0 cold / rc=0 warm on both engines. Real 12.6s/4.1s vs crystal 3.5s/0.3s. |
+| andrewrothstein.node | ✅ Clean (round 187, Rocky 9.6). Matching rc=0 cold / rc=0 warm on both engines. Real 18.9s/5.3s vs crystal 9.0s/0.5s. |
+| andrewrothstein.kafka-consumer | ✅ Clean (round 187, Rocky 9.6). Matching rc=2 cold / rc=2 warm on both engines. Real 20.5s/12.6s vs crystal 6.8s/0.7s. |
+| andrewrothstein.ntp | ✅ Clean (round 187, Rocky 9.6). Matching rc=0 cold / rc=0 warm on both engines. Real 7.4s/7.0s vs crystal 0.4s/0.4s. |
+| andrewrothstein.iperf | ✅ Clean (round 187, Rocky 9.6). Matching rc=0 cold / rc=0 warm on both engines. Real 9.9s/7.9s vs crystal 3.2s/0.4s. |
+| andrewrothstein.credhub | ✅ Clean (round 187, Rocky 9.6). Matching rc=0 cold / rc=0 warm on both engines. Real 10.1s/4.1s vs crystal 1.6s/0.3s. |
+| andrewrothstein.intellij | ✅ Clean (round 187, Rocky 9.6). Matching rc=2 cold / rc=2 warm on both engines. Real 3.7s/3.6s vs crystal 0.7s/0.7s. |
+| konstruktoid.docker_rootless | ⚠️ Round 187 (Rocky 9.6): found a real bug - three stacked bugs: `systemd_service`'s `scope: user` was completely unhandled (every systemctl call always hit the SYSTEM manager); fixing that exposed real Ansible's own auto-set `XDG_RUNTIME_DIR` for scope:user with no equivalent here; fixing THAT exposed the real root cause - block-level `become:`/`become_user:` was never inherited by child tasks at all, so the whole block silently ran as root instead of the intended user. Fixed in 0.9.619-0.9.621, both cold/warm now match real Ansible exactly (real 48.8s/26.7s post-fix confirmed live). |
+| andrewrothstein.netdata | ✅ Clean (round 187, Rocky 9.6). Matching rc=2 cold / rc=2 warm on both engines. Real 5.3s/5.0s vs crystal 2.0s/2.0s. |
+| andrewrothstein.jfrogcli | ✅ Clean (round 187, Rocky 9.6). Matching rc=0 cold / rc=0 warm on both engines. Real 5.8s/4.3s vs crystal 2.6s/0.3s. |
+| andrewrothstein.gitlab-config | ✅ Clean (round 187, Rocky 9.6). Matching rc=2 cold / rc=2 warm on both engines. Real 3.7s/3.5s vs crystal 0.3s/0.3s. |
+| andrewrothstein.luarocks | ✅ Clean (round 187, Rocky 9.6). Matching rc=2 cold / rc=2 warm on both engines. Real 4.9s/4.7s vs crystal 2.2s/2.3s. |
+| andrewrothstein.mosh | ✅ Clean (round 187, Rocky 9.6). Matching rc=0 cold / rc=0 warm on both engines. Real 31.9s/7.7s vs crystal 66.5s/0.3s. |
+| andrewrothstein.ssh-user-keygen | ✅ Clean (round 187, Rocky 9.6). Matching rc=2 cold / rc=2 warm on both engines. Real 3.4s/3.5s vs crystal 0.3s/0.3s. |
 
 **Legend:** ✅ Clean = engine matches real `ansible-playbook` (idempotent,
 healthy services, config parity) as of the last time it was run. ⚠️ = engine

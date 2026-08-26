@@ -243,6 +243,37 @@ describe CrystalPlay::RoleLoader do
     tasks.map(&.name).should eq(["base task", "dependent task"])
   end
 
+  # Real bug found benchmarking andrewrothstein.github-release (0.9.622):
+  # `src:` is real Ansible's own `RoleRequirement` key, used both for a
+  # `requirements.yml` entry AND for a role's `meta/main.yml` dependency
+  # (`- src: some.role, version: v1.0.0` - the galaxy-requirements
+  # convention, copied verbatim into many real published roles' own meta
+  # dependencies). Only "role"/"name" were recognized as the dependency's
+  # name key - a `src:`-keyed dependency raised "Role entry missing
+  # 'role' or 'name'" and aborted parsing the WHOLE PLAYBOOK (not just
+  # that one dependency), even though real Ansible resolves and installs
+  # it completely normally.
+  it "resolves a meta dependency written with 'src:' (real Ansible's own RoleRequirement key), not just 'role:'/'name:'" do
+    build_role("base") { |role| role.tasks(<<-YAML) }
+      - name: base task
+        ansible.builtin.debug:
+          msg: base
+      YAML
+
+    build_role("dependent") do |role|
+      role.tasks(<<-YAML)
+        - name: dependent task
+          ansible.builtin.debug:
+            msg: dependent
+        YAML
+      role.meta("dependencies:\n  - src: base\n    version: v1.0.0\n")
+    end
+
+    tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- dependent"), fresh_play, ROLES_ROOT)
+
+    tasks.map(&.name).should eq(["base task", "dependent task"])
+  end
+
   it "keeps a meta dependency's defaults in scope for the role that declares it" do
     # Real Ansible loads a dependency first and leaves its defaults
     # visible to the dependent role - the shape buluma.phpmyadmin uses

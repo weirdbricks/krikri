@@ -14,6 +14,22 @@ describe "command plugin" do
     result["stdout"].as_s.should eq("hello")
   end
 
+  # Real bug found benchmarking konstruktoid.docker_rootless (0.9.618):
+  # a nonexistent executable raised a Crystal exception, caught by this
+  # plugin's own rescue - but that early return had no rc/stdout at
+  # all (only stderr), where real Ansible's run_command() catches
+  # ENOENT itself and returns a normal (rc=2, stdout='', stderr=...)
+  # result. A `failed_when: false`-guarded probe of an optional binary
+  # correctly avoided failing the TASK, but a later `.stdout`/`.rc`
+  # reference on the same registered result was genuinely undefined
+  # instead of real Ansible's empty string/2.
+  it "populates rc/stdout even when the executable itself doesn't exist (ENOENT), matching real Ansible's run_command()" do
+    result = PluginSpecHelper.run("command", {"cmd" => "/does/not/exist/anywhere --version"})
+
+    result["rc"].as_i64.should eq(2)
+    result["stdout"].as_s.should eq("")
+  end
+
   it "does not strip internal newlines, only the trailing one" do
     result = PluginSpecHelper.run("command", {"cmd" => "seq 1 3"})
 

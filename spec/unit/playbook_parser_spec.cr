@@ -981,6 +981,51 @@ describe CrystalPlay::PlaybookParser do
       task.always_tasks.as(Array(CrystalPlay::Task)).map(&.name).should eq(["cleanup"])
     end
 
+    # Real bug found benchmarking konstruktoid.docker_rootless (0.9.621):
+    # `become:`/`become_user:` set at the BLOCK level (not on each child
+    # task individually - the common "run this whole block as another
+    # user" idiom) was never inherited by the nested tasks at all. Each
+    # child's own become/become_user resolved only against the PLAY's
+    # top-level value (real Ansible's precedence is task > block > role >
+    # play), so every task inside silently ran as whatever the play-level
+    # default was (usually root) instead of the block's own become_user -
+    # found via a block wrapping `systemd_service: {scope: user}`, which
+    # then targeted root's own session bus instead of the intended user's,
+    # "Unit file ... does not exist" for a unit that genuinely existed
+    # under that OTHER user's `~/.config/systemd/user/`.
+    it "inherits become:/become_user: from an enclosing block onto its child tasks" do
+      task = single_task(<<-YAML)
+        - name: my block
+          become: true
+          become_user: dockeruser
+          block:
+            - name: inner (no become of its own)
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      inner = task.block_tasks.as(Array(CrystalPlay::Task)).first
+      inner.become.should be_true
+      inner.become_user.should eq("dockeruser")
+    end
+
+    it "lets a child task's own become:/become_user: override the enclosing block's" do
+      task = single_task(<<-YAML)
+        - name: my block
+          become: true
+          become_user: dockeruser
+          block:
+            - name: inner (its own become_user)
+              become_user: someoneelse
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      inner = task.block_tasks.as(Array(CrystalPlay::Task)).first
+      inner.become.should be_true
+      inner.become_user.should eq("someoneelse")
+    end
+
     it "leaves rescue_tasks/always_tasks nil when not specified" do
       task = single_task(<<-YAML)
         - name: my block

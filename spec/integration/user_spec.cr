@@ -17,6 +17,27 @@ describe "user plugin" do
     result["failed"]?.try(&.as_bool).should be_falsey
   end
 
+  # Real bug found benchmarking konstruktoid.docker_rootless (0.9.617):
+  # real Ansible's user module ALWAYS returns the resolved user facts
+  # (home/uid/group/shell/name) in its register result, whether the
+  # user was just created, modified, or already matched exactly. This
+  # plugin's PluginResult never carried any of them at all - `register:
+  # docker_user_info` followed by `{{ docker_user_info.home }}` was
+  # undefined regardless of whether the user already existed, failing
+  # any later task that reads it.
+  it "returns home/uid/group/shell/name facts in the register result, matching real Ansible" do
+    root_home = `getent passwd root`.split(":")[5].strip
+    root_uid = `id -u root`.strip.to_i64
+    root_shell = `getent passwd root`.split(":")[6].strip
+
+    result = PluginSpecHelper.run("user", {"name" => "root", "check_mode" => "true"})
+
+    result["home"].as_s.should eq(root_home)
+    result["uid"].as_i64.should eq(root_uid)
+    result["shell"].as_s.should eq(root_shell)
+    result["name"].as_s.should eq("root")
+  end
+
   it "reports no change when group: is given by name and already matches (getent passwd's own gid field is numeric, not a name)" do
     root_group_name = `id -gn root`.strip
 

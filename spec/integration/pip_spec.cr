@@ -56,6 +56,31 @@ describe "pip plugin" do
     result["changed"].as_bool.should be_false
   end
 
+  # Real bug found benchmarking konstruktoid.docker_rootless (0.9.616):
+  # `name: [docker, "urllib3<2"]` (a literal YAML list) reaches this
+  # plugin already comma-joined by the parser ("docker,urllib3<2") -
+  # checked here as ONE bogus "package" via `pip show
+  # docker,urllib3<2`, which always fails, so the idempotency
+  # short-circuit could never succeed and a warm rerun always reported
+  # changed: true even when every package was already installed.
+  # Separately (not spec-covered here - would need a real network
+  # install - see this file's own no-real-execution convention above),
+  # the unescaped `<` in the same comma-joined string reached a
+  # `bash -c` pip-install invocation as a literal shell metacharacter,
+  # redirecting stdin from a nonexistent file named "2" instead of
+  # being part of the package spec - verified live against the real
+  # host that found it.
+  it "checks each comma-joined package independently for the already-installed idempotency short-circuit" do
+    # "pip" is always present in a working pip environment - safe (pip
+    # show only, no install/network) - listed twice to exercise the
+    # per-package split this fix introduced without depending on which
+    # OTHER packages happen to be installed in the sandbox running specs.
+    result = PluginSpecHelper.run("pip", {"name" => "pip,pip"})
+
+    result["failed"]?.try(&.as_bool).should_not be_true
+    result["changed"].as_bool.should be_false
+  end
+
   describe "umask:" do
     # Real bug found via a proactive scope-cut audit: umask: was
     # entirely unimplemented. Verified against real

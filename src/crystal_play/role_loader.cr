@@ -79,7 +79,19 @@ module CrystalPlay
       end
 
       hash = entry.as_h
-      name = (hash["role"]? || hash["name"]?).try(&.as_s)
+      # `src:` is real Ansible's own `RoleRequirement` key - the SAME
+      # class ansible-core uses both for a `requirements.yml` entry AND
+      # for a role's `meta/main.yml` dependency, so a dependency written
+      # `- src: some.role, version: v1.0.0` (copied from the galaxy-
+      # requirements convention, common in real published roles) is
+      # entirely normal, real syntax - not just "role"/"name". Missing
+      # here meant ANY role with a `src:`-keyed meta dependency failed
+      # to parse the name at all and raised, aborting the WHOLE
+      # playbook parse (not just that one dependency) - found live via
+      # andrewrothstein.github-release's own `meta/main.yml`
+      # (`dependencies: [{src: andrewrothstein.unarchive-deps, version:
+      # v1.0.9}]`), which real Ansible resolves and installs fine.
+      name = (hash["role"]? || hash["name"]? || hash["src"]?).try(&.as_s)
       raise "Role entry missing 'role' or 'name'" unless name
 
       vars = Hash(String, JSON::Any).new
@@ -87,7 +99,15 @@ module CrystalPlay
         vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value)) }
       end
 
-      reserved = {"role", "name", "vars", "tags"}
+      # `version`/`scm` are the other two `RoleRequirement` galaxy-source
+      # keys that travel alongside `src:` - dependency-RESOLUTION
+      # metadata (which tag/branch/protocol to fetch from), not role
+      # vars, so they must be excluded here the same way `role`/`name`
+      # already are (a `version: v1.0.9` var leaking into the role's own
+      # vars context, e.g. via `{{ version }}`, would be a real
+      # divergence from what real Ansible - which never exposes these
+      # as vars either - provides).
+      reserved = {"role", "name", "src", "version", "scm", "vars", "tags"}
       hash.each do |key, value|
         key_str = key.to_s
         next if reserved.includes?(key_str)

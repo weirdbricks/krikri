@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.615-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.622-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -86,12 +86,14 @@ have. See **Features** below for the full list of what's implemented.
 
 ## ❓ What's missing
 
-**Short version: as of this version, there are no known real correctness
-gaps left open** - the primary way gaps get found here is running real
-production Ansible roles (from Galaxy) against both engines on real
-hosts and diffing the result, not a pre-planned feature checklist, and
-every gap found that way has been fixed. The structural differences
-above are the only *deliberate* exclusions.
+**Short version: as of this version, there is one known real correctness
+gap left open** (a Crystal/OpenSSL TLS-compatibility limitation talking
+to a server running very old TLS - see KNOWN_MISSING.md) - the primary
+way gaps get found here is running real production Ansible roles (from
+Galaxy) against both engines on real hosts and diffing the result, not
+a pre-planned feature checklist, and every OTHER gap found that way has
+been fixed. The structural differences above are the only *deliberate*
+exclusions.
 
 That status changes as new roles get tested, so it's tracked in one place
 rather than duplicated here:
@@ -384,6 +386,30 @@ A short rolling summary of the last few versions - see `git log` for the
 complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
+
+- **`0.9.616`-`0.9.622`** - seven fixes from a 60-role marathon (40
+  andrewrothstein.\*/mrlesmithjr.\*/etc. on Ubuntu 22.04, 20 more on
+  Rocky 9.6, fresh host pair per distro, every role run twice for
+  idempotency). A multi-package `pip: name:` list containing a shell
+  metacharacter (`urllib3<2`) broke the `bash -c` invocation it reached
+  unescaped, and its own idempotency check surfaced once fixed
+  (`0.9.616`); `lookup('file', ...)` on a missing file silently returned
+  "undefined" instead of raising like real Ansible, and that sentinel
+  then got written straight into `~/.ssh/authorized_keys` as if it were
+  a real key (`0.9.616`); `user:`'s registered result never carried
+  home/uid/group/shell/name at all (`0.9.617`); a nonexistent command's
+  exec failure never populated rc/stdout the way real Ansible's own
+  ENOENT handling does, leaving a `failed_when: false`-guarded probe's
+  later `.stdout` reference genuinely undefined (`0.9.618`); three
+  stacked fixes chasing the SAME motivating role -
+  `systemd_service`'s `scope: user` was completely unhandled
+  (`0.9.619`), fixing that exposed real Ansible's own auto-set
+  `XDG_RUNTIME_DIR` for scope:user having no equivalent here
+  (`0.9.620`), and fixing THAT exposed the actual root cause: block-
+  level `become:`/`become_user:` was never inherited by child tasks at
+  all, so an entire block silently ran as root (`0.9.621`); and a
+  `meta/main.yml` dependency written with `src:` (real Ansible's own
+  `RoleRequirement` key) aborted parsing the WHOLE PLAYBOOK (`0.9.622`).
 
 - **`0.9.613`-`0.9.615`** - three fixes from a 60-role marathon (40
   andrewrothstein.\*/buluma.\*/etc. on Ubuntu 22.04, 20 more on Rocky

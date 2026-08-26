@@ -163,11 +163,32 @@ module CrystalPlay
         status = process.wait
         exit_code = status.exit_code
       rescue ex
+        # Real Ansible's command module never gets here at all - Python's
+        # `subprocess`/`AnsibleModule.run_command` catches ENOENT (a
+        # nonexistent executable) itself and returns a normal (rc, stdout,
+        # stderr) result (rc=2, empty stdout, an error message in stderr)
+        # rather than raising, so a `register:`'d result always has
+        # `.rc`/`.stdout`/`.stderr` populated even when the command fails
+        # to spawn at all. This early return had none of those fields -
+        # only `stderr` - so `failed_when: false` (the idiomatic "probe an
+        # optional binary, don't fail the task" idiom) correctly kept the
+        # TASK from failing, but a later `.stdout`/`.rc` reference on the
+        # same registered variable was genuinely undefined instead of the
+        # empty string/rc=2 real Ansible would have given it. Found via
+        # konstruktoid.docker_rootless's own `command: .../docker version`
+        # (`failed_when: false`, `register: rootless_docker_version`) on
+        # a host where that binary doesn't exist yet - a LATER task's
+        # `when: docker_release not in rootless_docker_version.stdout`
+        # hard-failed with "'rootless_docker_version.stdout' is undefined"
+        # where real Ansible just evaluates `not in ''`.
         return PluginResult.new(
-          changed: false,
+          changed: true,
           failed: true,
           msg: "Failed to execute command: #{ex.message}",
-          stderr: ex.message
+          stdout: "",
+          stderr: ex.message || "",
+          exit_code: 2,
+          rc: 2
         )
       end
 

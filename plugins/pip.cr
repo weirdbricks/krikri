@@ -242,16 +242,27 @@ module CrystalPlay
                  return PluginResult.new(changed: false, failed: true, msg: "name or requirements is required")
                end
 
-      version_pin = spec.try(&.includes?("=="))
-
+      # A comma-joined multi-package `name:` list checked as ONE bogus
+      # "package" (`pip3 show docker,urllib3`) always failed - not just
+      # returning a wrong single result, but reporting `changed: true`
+      # on every rerun regardless of what was actually already present,
+      # since the idempotency check itself could never succeed. Checked
+      # per-package here (each already-installed, or - for a `==` pin -
+      # already at the requested version) so a warm rerun genuinely
+      # short-circuits, matching real Ansible's own per-package pip
+      # idempotency.
       unless upgrade || requirements
-        if !version_pin && already_installed?(pip_bin, spec.not_nil!)
-          return PluginResult.new(changed: false, failed: false, msg: "Package already installed")
-        elsif version_pin
-          bare, _, wanted_version = spec.not_nil!.partition("==")
-          if installed_version(pip_bin, bare) == wanted_version
-            return PluginResult.new(changed: false, failed: false, msg: "Package already installed at requested version")
+        packages = spec.not_nil!.split(',').map(&.strip)
+        all_satisfied = packages.all? do |package|
+          if package.includes?("==")
+            bare, _, wanted_version = package.partition("==")
+            installed_version(pip_bin, bare) == wanted_version
+          else
+            already_installed?(pip_bin, package)
           end
+        end
+        if all_satisfied
+          return PluginResult.new(changed: false, failed: false, msg: "Package already installed")
         end
       end
 
@@ -259,7 +270,28 @@ module CrystalPlay
       if is_true?(@params["editable"]?) && !extra.split(' ').includes?("-e")
         extra = extra.empty? ? "-e" : "#{extra} -e"
       end
-      cmd = with_umask(with_chdir("#{pip_bin} install #{upgrade ? "--upgrade " : ""}#{extra} #{target}".strip))
+
+      # `target` reaches here already comma-joined by the parser for a
+      # literal YAML `name:` list (real Ansible's pip module takes a
+      # LIST and installs every element in one invocation, unlike this
+      # plugin's own pre-existing single-package-name assumption
+      # elsewhere - see #normalize_name's comment). Left as one
+      # unescaped word, a version-constrained spec containing a shell
+      # metacharacter (`urllib3<2`, `foo>1.0`) gets misparsed by the
+      # `bash -c` this plugin shells out through - `<2` becomes a
+      # stdin REDIRECT from a file literally named "2" instead of part
+      # of the pip argument, and pip never runs at all. Real Ansible
+      # never has this problem because it execs pip with a real argv
+      # list, no shell in between. Splitting on the comma the parser
+      # joined with and re-quoting each element via `Process.quote`
+      # both makes a genuine multi-package `name:` list actually work
+      # (was previously passed as one bogus comma-glued "package") and
+      # makes each element shell-safe again. `-r <file>` and a bare
+      # `--upgrade`/`extra_args` are never comma-joined so they pass
+      # through the `elsif spec` branch above and are handled directly
+      # below, one per name.
+      quoted_target = requirements ? target : target.split(',').map { |t| Process.quote(t.strip) }.join(" ")
+      cmd = with_umask(with_chdir("#{pip_bin} install #{upgrade ? "--upgrade " : ""}#{extra} #{quoted_target}".strip))
       result = remote_exec(cmd)
 
       unless result[:exit_code] == 0

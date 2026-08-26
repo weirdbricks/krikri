@@ -95,14 +95,34 @@ module CrystalPlay
       return base if base.failed
 
       ageing = apply_password_ageing(name, check_mode)
-      return base unless ageing
-      return ageing if ageing.failed
+      return ageing if ageing && ageing.failed
 
-      PluginResult.new(
-        changed: base.changed || ageing.changed,
-        failed: false,
-        msg: ageing.changed ? ageing.msg : base.msg
-      )
+      final_msg = ageing && ageing.changed ? ageing.msg : base.msg
+      final_changed = base.changed || (ageing.try(&.changed) || false)
+
+      # Real Ansible's user module ALWAYS returns the resolved user
+      # facts (home/uid/group/shell/name) in its register result -
+      # whether the user was just created, just modified, or already
+      # matched. Re-reads the FINAL state (post create/modify - one
+      # cheap extra `getent passwd`, check_mode has no real state to
+      # read so it's skipped) rather than reusing the pre-task
+      # `current`, which real Ansible also does (a create/modify may
+      # have changed exactly the field a later task wants to read).
+      # Missing entirely before - found via konstruktoid.docker_rootless's
+      # own `register: docker_user_info` followed by `{{
+      # docker_user_info.home }}`, undefined regardless of whether the
+      # user already existed.
+      facts = check_mode ? current : lookup(name)
+      result = PluginResult.new(changed: final_changed, failed: false, msg: final_msg)
+      if facts
+        result.extra["name"] = JSON::Any.new(facts.name)
+        result.extra["uid"] = JSON::Any.new(facts.uid.to_i64? || 0_i64)
+        result.extra["group"] = JSON::Any.new(facts.gid.to_i64? || 0_i64)
+        result.extra["home"] = JSON::Any.new(facts.home)
+        result.extra["shell"] = JSON::Any.new(facts.shell)
+        result.extra["comment"] = JSON::Any.new(facts.comment)
+      end
+      result
     end
 
     # password_expire_min:/_max:/_warn: - real Ansible's user module sets

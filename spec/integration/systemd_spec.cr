@@ -57,4 +57,29 @@ describe "systemd plugin" do
     result["failed"].as_bool.should be_false
     result["changed"].as_bool.should be_true
   end
+
+  # Real bug found benchmarking konstruktoid.docker_rootless (0.9.619):
+  # `scope: user` (real Ansible's `systemd_service`/`systemd` parameter
+  # for targeting the invoking user's OWN systemd session manager - the
+  # idiomatic way a rootless-Docker/Podman role enables its own user
+  # unit) was completely unhandled: every `systemctl` call always hit
+  # the SYSTEM manager regardless, so `konstruktoid.docker_rootless`'s
+  # own "Enable and start Docker" (`scope: user`) failed outright
+  # ("Unit file docker.service does not exist" - looking at the system
+  # namespace instead of `~/.config/systemd/user/docker.service`).
+  # Live-verified end-to-end against a real per-user systemd unit
+  # (enable+start actually took effect under `systemctl --user`) - this
+  # spec only checks `scope: user` is accepted and handled like any
+  # other query, staying inside this file's own no-real-mutation
+  # convention.
+  it "accepts scope: user without rejecting the parameter" do
+    result = PluginSpecHelper.run("systemd", {
+      "name"       => "nonexistent-crystal-play-user-unit.service",
+      "state"      => "started",
+      "scope"      => "user",
+      "check_mode" => "true",
+    })
+    result["failed"].as_bool.should be_false
+    result["changed"].as_bool.should be_true
+  end
 end

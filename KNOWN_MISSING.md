@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.615`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.622`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -47,7 +47,31 @@ applied, corrupting any multi-line YAML `|-` block built from one such
 span per line (`0.9.614`), and a bare FLOAT literal (`5.1`) in a
 comparison having no case at all in the strict-undefined evaluator,
 plus no float-numeric fallback in the comparison itself once found
-(`0.9.615`); see `git log`. Two more turned out not to be
+(`0.9.615`); and - found in round 187's 60-role marathon, all four
+stacked in the SAME motivating role - a multi-package `pip:` `name:`
+list containing a shell metacharacter (`urllib3<2`) breaking the
+`bash -c` invocation it reached unescaped, plus the per-package
+idempotency check that surfaced once fixed (`0.9.616`), `lookup('file',
+...)` on a missing file silently returning the "undefined" sentinel
+instead of raising like real Ansible - and that sentinel then getting
+written straight into `~/.ssh/authorized_keys` as if it were a real key
+(`0.9.616`), the `user:` module's registered result never carrying
+home/uid/group/shell/name at all, so `.home` etc. was always undefined
+regardless of whether the user already existed (`0.9.617`), a
+nonexistent command's exec failure never populating rc/stdout the way
+real Ansible's own ENOENT handling does, so a `failed_when: false`-
+guarded probe left a later `.stdout` reference genuinely undefined
+(`0.9.618`), `systemd_service`'s `scope: user` being completely
+unhandled - every systemctl call always hit the system manager
+regardless (`0.9.619`) - which once fixed exposed real Ansible's own
+auto-set `XDG_RUNTIME_DIR` for scope:user having no equivalent here
+(`0.9.620`), which once fixed exposed the actual root cause underneath
+all three: block-level `become:`/`become_user:` was never inherited by
+child tasks at all, so an entire block silently ran as root instead of
+the intended user (`0.9.621`); and, found in the same round, a
+`meta/main.yml` dependency written with `src:` (real Ansible's own
+`RoleRequirement` key, not just `role:`/`name:`) aborting the parse of
+the WHOLE PLAYBOOK (`0.9.622`); see `git log`. Two more turned out not to be
 engine bugs at all and were withdrawn rather than fixed:
 `buluma.phpmyadmin`'s warm-rerun churn is role-side (`geerlingguy.php`
 and `buluma.php` both own `php.ini` and overwrite each other, on real
@@ -59,7 +83,7 @@ On a clean single-engine sequence both engines alternate `ok` then
 `Include /etc/phpmyadmin/apache.conf` line the phpmyadmin role's
 `lineinfile` re-adds every run.
 
-One entry remains.
+Two entries remain.
 
 - **Templating is not native-typed, and real Ansible's now is.** A
   `{{ }}` expression whose value is a YAML int renders here as the
@@ -188,6 +212,24 @@ One entry remains.
   `{{ other_var }}`-only indirection) rather than waiting on the full
   model change, if this specific role is ever hit in a live benchmark
   round.
+
+- **`get_url`/`lookup('url', ...)` can't complete a TLS handshake
+  against a server running very old OpenSSL/TLS.** Found in round 187's
+  60-role marathon: `andrewrothstein.subgit` downloads
+  `https://subgit.com/download/subgit-3.3.18.zip`, whose server (Apache
+  2.4.25, OpenSSL 1.0.2u per its own response header) real Ansible's
+  Python TLS stack negotiates fine but Crystal's stdlib `HTTP::Client`
+  cannot: `SSL_shutdown: error:0A000197:SSL routines::shutdown while in
+  init`, reproduced directly with a bare `HTTP::Client.get` (not
+  anything this project's own wrapper does differently) - a genuine
+  Crystal/OpenSSL binding limitation talking to a legacy TLS
+  configuration, not a bug in this project's download code. Fixing it
+  properly would mean deliberately relaxing this engine's TLS context
+  (lower minimum version and/or broader cipher list) for every HTTP(S)
+  download - a security-relevant tradeoff worth a real decision, not a
+  quick patch slipped into an unrelated benchmark round. Documented, not
+  fixed. `curl` from the same host reaches the server fine, confirming
+  it's specifically Crystal's own TLS client, not network/DNS/firewall.
 
 ## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 
