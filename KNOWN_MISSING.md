@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.602`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.603`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -48,40 +48,6 @@ ansible-core 2.19.4, and are NOT fixed.
   preserves the SOURCE type rather than re-inferring from rendered text
   - which is why this is worth doing properly rather than patching per
   call site. Sizeable: it touches both evaluators.
-
-- **A role's `vars/main.yml` and `defaults/main.yml` are visible only to
-  that role (and, since `0.9.599`, to a role that declares it as a
-  dependency); real Ansible makes them visible to EVERY role in the
-  play, including ones that run EARLIER.** Real Ansible loads all of a
-  play's roles - and their vars/defaults - into the variable manager when
-  the play is set up, not when each role's tasks reach the top of the
-  queue. Minimal repro (`roles: [first, second]`, where only `second`
-  defines the names):
-
-  ```
-  first's tasks:   {{ second_role_var is defined }}      real True   here False
-                   {{ second_role_default is defined }}  real True   here False
-  ```
-
-  Found round 183 chasing the entry that used to be here (a warm re-run
-  of `buluma.phpmyadmin` reporting `changed=7`). That entry was largely
-  wrong and is deleted: with the tasks correctly paired to their own
-  result lines, real ansible churns on warm re-runs of that role too -
-  `Configure php` rewrites `php.ini` on BOTH engines every run, because
-  `geerlingguy.php` and `buluma.php` both own that file and overwrite
-  each other. Role-side, not an engine bug. What the comparison DID
-  surface is this scoping difference: `geerlingguy.php`'s own "Define
-  php_packages." is gated `when: php_packages is not defined`, and
-  `php_packages` is defined in `buluma.php/vars/main.yml` - a role that
-  runs LATER in the same dependency chain - so real Ansible skips that
-  task and this engine runs it.
-
-  Not fixed: it is a deliberate-looking scoping choice to unpick, and
-  making every role's defaults visible play-wide changes variable
-  PRECEDENCE broadly rather than in one spot, so it wants its own pass
-  with the differential harness rather than a quick patch. Verified
-  pre-existing, not a regression from the `0.9.599` defaults work
-  (identical on a `0.9.598` build).
 
 - **`buluma.httpd`'s "Configure httpd" rewrites its config on every real
   Ansible warm run and not on this engine's.** Same round-183

@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.602-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.603-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -384,6 +384,18 @@ A short rolling summary of the last few versions - see `git log` for the
 complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
+
+- **`0.9.603`** - a role can now see every other role's `vars/main.yml`
+  and `defaults/main.yml`, including roles that run LATER in the play -
+  real Ansible loads them all into the variable manager at play setup,
+  where this engine scoped them to the owning role. That is what made
+  `geerlingguy.php`'s own `when: php_packages is not defined` run a task
+  real Ansible skips, `php_packages` being defined by a role further
+  down the same dependency chain. The precedence it introduces was
+  mapped against ansible-core 2.19.4 with a three-way matrix rather than
+  assumed - all roles' defaults < this role's own defaults < play vars <
+  all roles' vars < this role's own vars - and `include_role:` stays
+  scoped, since only static `roles:` are loaded at setup.
 
 - **`0.9.602`** - `omit` no longer leaks this engine's internal
   sentinel as literal text. `{{ x | default(omit) }}` used anywhere

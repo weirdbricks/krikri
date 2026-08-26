@@ -444,6 +444,26 @@ module CrystalPlay
     # "first of these that exists". Paths may be templated, including
     # against facts, so they are resolved per host at run time.
     property vars_files : Array(Array(String)) = [] of Array(String)
+
+    # Every `roles:` entry's own defaults/main.yml and vars/main.yml,
+    # merged in role order (a later role wins a name collision), kept as
+    # two separate layers because real Ansible ranks them either side of
+    # play `vars:`.
+    #
+    # Real Ansible loads ALL of a play's roles - and their vars/defaults
+    # - into the variable manager when the play is SET UP, not when each
+    # role's tasks reach the front of the queue, so a role can see the
+    # vars of a role that runs AFTER it. Verified against ansible-core
+    # 2.19.4 (`roles: [alpha, beta]`, names defined only in beta:
+    # `only_beta_var is defined` inside alpha is True). This engine
+    # scoped them to the owning role and its dependents, so such a
+    # reference resolved to nothing - which is what made
+    # geerlingguy.php's own `when: php_packages is not defined` run a
+    # task real Ansible skips (`php_packages` lives in
+    # buluma.php/vars/main.yml, a role that runs later in the same
+    # dependency chain).
+    property all_role_defaults : Hash(String, JSON::Any) = Hash(String, JSON::Any).new
+    property all_role_vars : Hash(String, JSON::Any) = Hash(String, JSON::Any).new
     # `any_errors_fatal:` - one host failing aborts the play for ALL of
     # them. `max_fail_percentage:` - abort once the share of failed hosts
     # is STRICTLY GREATER than this (verified: 1 of 3 hosts, i.e. 33.3%,

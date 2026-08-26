@@ -771,6 +771,8 @@ playbook.plays.each_with_index do |play, play_index|
     check_mode: check_mode,
     diff_mode: diff_mode,
     play_vars: play.vars,
+    all_role_defaults: play.all_role_defaults,
+    all_role_vars: play.all_role_vars,
     # --gathering explicit gathers only for plays that actually wrote
     # `gather_facts: true`; an unset gather_facts (which defaults to true
     # under implicit/smart) means "don't" here.

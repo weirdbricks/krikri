@@ -45,7 +45,7 @@ module CrystalPlay
 
       roles_yaml.each do |entry|
         name, invocation_vars, invocation_tags = parse_role_entry(entry)
-        load_role(name, invocation_vars, invocation_tags, play, playbook_dir, seen, tasks, handlers)
+        load_role(name, invocation_vars, invocation_tags, play, playbook_dir, seen, tasks, handlers, play_scope: true)
       end
 
       {tasks, handlers}
@@ -112,6 +112,14 @@ module CrystalPlay
       parent_names : Array(String) = [] of String,
       parent_paths : Array(String) = [] of String,
       parent_defaults : Hash(String, JSON::Any) = Hash(String, JSON::Any).new,
+      # Whether this role's own defaults/vars join the PLAY-WIDE layers
+      # every role can see (Play#all_role_defaults/#all_role_vars). True
+      # for a static `roles:` entry and its meta dependencies, which real
+      # Ansible loads at play setup; FALSE for include_role:, whose
+      # vars/defaults real Ansible keeps scoped to that inclusion unless
+      # it is `public: true` - contributing them here would expose them
+      # to every later task in the play instead.
+      play_scope : Bool = false,
     )
       # An already-loaded role contributes no defaults a second time -
       # its tasks (and their defaults) are already in the play.
@@ -153,7 +161,7 @@ module CrystalPlay
       # extended further), matching real Ansible: a dependency isn't
       # "nested inside" the declaring role's own tasks the way an
       # include_role: call is.
-      dependency_defaults = load_meta_dependencies(role_dir, play, playbook_dir, seen, tasks, handlers, parent_names, parent_paths, parent_defaults)
+      dependency_defaults = load_meta_dependencies(role_dir, play, playbook_dir, seen, tasks, handlers, parent_names, parent_paths, parent_defaults, play_scope)
 
       defaults = load_vars_file_main(File.join(role_dir, "defaults"))
       # Real Ansible keeps a role's defaults visible for the rest of the
@@ -192,6 +200,18 @@ module CrystalPlay
       defaults = parent_defaults.merge(dependency_defaults).merge(defaults)
       role_vars = load_vars_file_main(File.join(role_dir, "vars"))
       invocation_vars.each { |key, value| role_vars[key] = value } # invocation vars win over vars/main.yml
+
+      # Contribute to the play-wide layers every role can see - see
+      # Play#all_role_defaults for why real Ansible makes these visible
+      # to roles that ran EARLIER too. Assigned in load order, so a
+      # later role wins a name collision, which is what real Ansible
+      # answers outside any role (verified: post_tasks: sees the LAST
+      # role's value for a name two roles both define).
+      if play_scope
+        own_defaults = load_vars_file_main(File.join(role_dir, "defaults"))
+        own_defaults.each { |key, value| play.all_role_defaults[key] = value }
+        role_vars.each { |key, value| play.all_role_vars[key] = value }
+      end
 
       files_dir = existing_dir(File.join(role_dir, "files"))
       templates_dir = existing_dir(File.join(role_dir, "templates"))
@@ -267,7 +287,7 @@ module CrystalPlay
     # dependencies winning over earlier ones on a name collision, matching
     # real Ansible's load order), for the declaring role to merge under
     # its own - see `load_role`'s `dependency_defaults` comment.
-    private def self.load_meta_dependencies(role_dir : String, play : Play, playbook_dir : String, seen : Set(String), tasks : Array(Task), handlers : Array(Task), parent_names : Array(String) = [] of String, parent_paths : Array(String) = [] of String, parent_defaults : Hash(String, JSON::Any) = Hash(String, JSON::Any).new) : Hash(String, JSON::Any)
+    private def self.load_meta_dependencies(role_dir : String, play : Play, playbook_dir : String, seen : Set(String), tasks : Array(Task), handlers : Array(Task), parent_names : Array(String) = [] of String, parent_paths : Array(String) = [] of String, parent_defaults : Hash(String, JSON::Any) = Hash(String, JSON::Any).new, play_scope : Bool = false) : Hash(String, JSON::Any)
       collected = Hash(String, JSON::Any).new
       meta_path = File.join(role_dir, "meta", "main.yml")
       return collected unless File.exists?(meta_path)
@@ -278,7 +298,7 @@ module CrystalPlay
 
       deps.each do |dep|
         dep_name, dep_vars, dep_tags = parse_role_entry(dep)
-        dep_defaults = load_role(dep_name, dep_vars, dep_tags, play, playbook_dir, seen, tasks, handlers, nil, parent_names, parent_paths, parent_defaults)
+        dep_defaults = load_role(dep_name, dep_vars, dep_tags, play, playbook_dir, seen, tasks, handlers, nil, parent_names, parent_paths, parent_defaults, play_scope)
         collected.merge!(dep_defaults)
       end
 

@@ -285,6 +285,12 @@ module CrystalPlay
       @check_mode = false,
       @diff_mode = false,
       @play_vars = {} of String => JSON::Any,
+      # Play#all_role_defaults / #all_role_vars - every static role's own
+      # defaults/vars, visible to EVERY role in the play including ones
+      # that ran earlier (real Ansible loads them all at play setup).
+      # See #build_vars_context for exactly where they rank.
+      @all_role_defaults = {} of String => JSON::Any,
+      @all_role_vars = {} of String => JSON::Any,
       @gather_facts = true,
       @inventory = nil,
       @inventory_path = nil,
@@ -1535,8 +1541,41 @@ module CrystalPlay
         load_vars_files(host).each { |key, value| vars_context[key] = value }
       end
 
+      # Play-wide role layers. Real Ansible's precedence here was
+      # established against ansible-core 2.19.4 with a three-way matrix
+      # (see role_scope_spec.cr, which encodes every case), and the
+      # ladder it produced is, low to high:
+      #
+      #   all roles' defaults < this role's own defaults < play vars
+      #     < all roles' vars < this role's own vars
+      #
+      # so: another role's DEFAULT never beats this role's own, but
+      # another role's VAR beats this role's own default (verified:
+      # alpha's own `x_name` default resolves to beta's `x_name` var),
+      # and outside any role the LAST-loaded role wins each layer.
+      # Both defaults layers are applied with `||=` (fill-only), so the
+      # one applied FIRST wins - this role's own defaults go in ahead of
+      # the play-wide layer, which is what makes another role's default
+      # lose to this role's own (verified: with `shared_default` set by
+      # both roles, alpha's tasks see alpha's value and beta's see
+      # beta's, while a task outside any role sees the LAST role's).
       if defaults = task.role_defaults
         defaults.each { |key, value| vars_context[key] ||= value }
+      end
+
+      @all_role_defaults.each { |key, value| vars_context[key] ||= value } unless @all_role_defaults.empty?
+
+      unless @all_role_vars.empty?
+        # Above play/host vars but NOT above a REGISTERED variable: real
+        # Ansible ranks registered vars (19) well above role vars (15),
+        # and baseA already holds them. `task.role_vars` below still
+        # overwrites blindly - a pre-existing inversion for the current
+        # role only, left alone here rather than widened to every role.
+        registered = @registered_vars[host.name]
+        @all_role_vars.each do |key, value|
+          next if registered.has_key?(key)
+          vars_context[key] = value
+        end
       end
 
       if role_vars = task.role_vars
