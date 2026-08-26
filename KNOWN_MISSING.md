@@ -17,12 +17,24 @@ is the record.
 
 ## Real gaps (worth revisiting)
 
-The five entries that used to be here - the nested-undefined chain
+Everything that used to be here is fixed - the nested-undefined chain
 (`0.9.599`), `notify:` validation timing (`0.9.600`), the
-`ansible_distribution` display name, the `debugger:` assignment
-commands, and `--scp-extra-args` (`0.9.601`) - are all fixed; see
-`git log`. The three below were found while verifying those, on
-ansible-core 2.19.4, and are NOT fixed.
+`ansible_distribution` display name plus the `debugger:` assignment
+commands and `--scp-extra-args` (`0.9.601`), the `omit` sentinel leak
+(`0.9.602`), and cross-role vars/defaults visibility (`0.9.603`); see
+`git log`. Two more turned out not to be engine bugs at all and were
+withdrawn rather than fixed: `buluma.phpmyadmin`'s warm-rerun churn is
+role-side (`geerlingguy.php` and `buluma.php` both own `php.ini` and
+overwrite each other, on real Ansible too), and the `buluma.httpd`
+"Configure httpd" difference chased after it was an artifact of my own
+comparison - alternating two engines against ONE shared host makes each
+run the other's cold state. On a clean single-engine sequence both
+engines alternate `ok` then `changed` identically, because that role's
+template strips the `Include /etc/phpmyadmin/apache.conf` line the
+phpmyadmin role's `lineinfile` re-adds every run.
+
+One entry remains, found while verifying the above against
+ansible-core 2.19.4 and NOT fixed.
 
 - **Templating is not native-typed, and real Ansible's now is.** A
   `{{ }}` expression whose value is a YAML int renders here as the
@@ -48,15 +60,6 @@ ansible-core 2.19.4, and are NOT fixed.
   preserves the SOURCE type rather than re-inferring from rendered text
   - which is why this is worth doing properly rather than patching per
   call site. Sizeable: it touches both evaluators.
-
-- **`buluma.httpd`'s "Configure httpd" rewrites its config on every real
-  Ansible warm run and not on this engine's.** Same round-183
-  comparison; both engines otherwise agree task for task on that
-  playbook prefix. Unconfirmed whether this is the scoping difference
-  above showing up in `httpd_config_src`/`httpd_config_dest`, or
-  something separate - it was not chased once the entry it came from
-  turned out to be role-side churn. This engine reporting FEWER changes
-  is the less dangerous direction, but it is still a divergence.
 
 ## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 
