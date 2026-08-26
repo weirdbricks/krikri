@@ -49,46 +49,48 @@ ansible-core 2.19.4, and are NOT fixed.
   - which is why this is worth doing properly rather than patching per
   call site. Sizeable: it touches both evaluators.
 
-- **A warm re-run of `buluma.phpmyadmin` reports `changed=7` for tasks
-  that changed nothing.** Found round 181. The files those tasks touch
-  are byte-identical between consecutive runs (md5-compared on the
-  host), the count is stable across runs, and it is pre-existing rather
-  than anything the round-181 fixes introduced (the pre-fix build
-  reported `changed=8` - the extra one being the MySQL password
-  flapping, which is now fixed). Not root-caused: the tasks involved
-  are `lineinfile`/template-shaped with a `mode:` set, which has been a
-  false-changed source before (see the round143-147 `lineinfile`
-  mode-drift fix in `git log`), but a minimal local repro of that exact
-  shape is idempotent on both engines, so the real trigger is still
-  unidentified. Needs a live host and per-task diff output to pin down.
+- **A role's `vars/main.yml` and `defaults/main.yml` are visible only to
+  that role (and, since `0.9.599`, to a role that declares it as a
+  dependency); real Ansible makes them visible to EVERY role in the
+  play, including ones that run EARLIER.** Real Ansible loads all of a
+  play's roles - and their vars/defaults - into the variable manager when
+  the play is set up, not when each role's tasks reach the top of the
+  queue. Minimal repro (`roles: [first, second]`, where only `second`
+  defines the names):
 
-Note: the round171 `buluma.gitlab` "`package:`/`dnf:` can't resolve a
-name-version partial-NEVRA spec" entry that used to be here (`Error:
-Unable to find a match: gitlab-ce-19.2.0`) did NOT reproduce on a
-dedicated, isolated repro (2026-08-23): a fresh Rocky 9.6 host with the
-real `packages.gitlab.com` GitLab CE repo added, both bare `dnf install
--y gitlab-ce-19.2.0` (plain CLI, no release/arch) and this engine's own
-`package:`/`dnf:` modules (0.9.549) all resolved and installed
-`gitlab-ce-19.2.0-ce.0.el9.x86_64` correctly, cold AND warm-idempotent.
-The bare-CLI test alone already disproves the entry's own "library API
-more lenient than the CLI verb" theory - plain `dnf install
-gitlab-ce-19.2.0` resolves a name-version partial NEVRA fine in
-general. Whatever round171 actually hit was either specific to that
-one host/moment (a corrupted/partial local metadata cache, a
-mid-transaction repo state, etc. - `dnf`'s own error for a genuinely
-unresolvable spec doesn't distinguish these from "no such NEVRA
-exists") or has since been fixed as a side effect of unrelated
-package.cr/dnf.cr work between 0.9.4xx and 0.9.549 - not confirmed
-either way. Revisit only if a live round hits this again, this time
-capturing `dnf --debuglevel=10 install -y <spec>` output and the exact
-package/repo before the host is destroyed, rather than reconstructing
-from a recap diff after the fact.
+  ```
+  first's tasks:   {{ second_role_var is defined }}      real True   here False
+                   {{ second_role_default is defined }}  real True   here False
+  ```
 
-Note: 0.9.474's entry here claiming `openssl_dhparam:`/
-`openssh_keypair:` had "no plugin, no `AVAILABLE_PLUGINS` entry" was
-itself wrong; both had been implemented, if more simply, since
-`0.9.121`/`0.9.125`. 0.9.475 upgraded both to more fully match their
-real modules regardless - see `git log`.
+  Found round 183 chasing the entry that used to be here (a warm re-run
+  of `buluma.phpmyadmin` reporting `changed=7`). That entry was largely
+  wrong and is deleted: with the tasks correctly paired to their own
+  result lines, real ansible churns on warm re-runs of that role too -
+  `Configure php` rewrites `php.ini` on BOTH engines every run, because
+  `geerlingguy.php` and `buluma.php` both own that file and overwrite
+  each other. Role-side, not an engine bug. What the comparison DID
+  surface is this scoping difference: `geerlingguy.php`'s own "Define
+  php_packages." is gated `when: php_packages is not defined`, and
+  `php_packages` is defined in `buluma.php/vars/main.yml` - a role that
+  runs LATER in the same dependency chain - so real Ansible skips that
+  task and this engine runs it.
+
+  Not fixed: it is a deliberate-looking scoping choice to unpick, and
+  making every role's defaults visible play-wide changes variable
+  PRECEDENCE broadly rather than in one spot, so it wants its own pass
+  with the differential harness rather than a quick patch. Verified
+  pre-existing, not a regression from the `0.9.599` defaults work
+  (identical on a `0.9.598` build).
+
+- **`buluma.httpd`'s "Configure httpd" rewrites its config on every real
+  Ansible warm run and not on this engine's.** Same round-183
+  comparison; both engines otherwise agree task for task on that
+  playbook prefix. Unconfirmed whether this is the scoping difference
+  above showing up in `httpd_config_src`/`httpd_config_dest`, or
+  something separate - it was not chased once the entry it came from
+  turned out to be role-side churn. This engine reporting FEWER changes
+  is the less dangerous direction, but it is still a divergence.
 
 ## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 
