@@ -221,5 +221,21 @@ describe CrystalPlay::VarSubstitutor do
       subject.substitute("a{{ 'x' -}}b").should eq("axb")
       subject.substitute("a{{- 'x' }}b").should eq("axb")
     end
+
+    # Real bug found benchmarking andrewrothstein.temurin (0.9.614): a
+    # multi-line YAML `|-` literal block scalar building a filename out of
+    # one `{{ part -}}`/`_{{ part -}}` span per line, relying on the trim
+    # markers to collapse the block's own line breaks into a single-line
+    # string. The marker CHARACTER was already stripped (test above), but
+    # its WHITESPACE-TRIMMING EFFECT wasn't applied, so every line break
+    # in the source survived into the rendered string, corrupting a
+    # download URL/filename into one with literal newlines in the middle.
+    it "actually trims the adjacent whitespace/newline a trim marker implies, not just the marker character" do
+      subject = CrystalPlay::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h")
+
+      subject.substitute("a{{ 'x' -}}\n  b").should eq("axb")
+      subject.substitute("a  \n{{- 'x' }}b").should eq("axb")
+      subject.substitute("OpenJDK{{ 'jdk' -}}\n_{{ 'x64' -}}\n.tar.gz").should eq("OpenJDKjdk_x64.tar.gz")
+    end
   end
 end

@@ -1251,6 +1251,24 @@ module CrystalPlay
         return int_val
       end
 
+      # A bare float literal (`5.1`) on one side of a comparison, e.g.
+      # `when: zsh_version.stdout | float < 5.1` (buluma.p10k's own
+      # minimum-version gate). This method's return union has no Float64
+      # case, so the literal is returned as a String instead - safe here
+      # because #compare_values already falls back to a numeric parse of
+      # `to_s` for either side, so a String holding "5.1" compares
+      # correctly against a real Int64/Float-rendered-as-String operand.
+      # Previously fell through to the dotted-path guard just below,
+      # which only excludes float literals from the DOTTED lookup branch
+      # (correctly) but doesn't itself resolve them - execution continued
+      # to the plain "vars.has_key?" lookup, found no variable literally
+      # named "5.1", and raised "'5.1' is undefined" under raise_undefined
+      # - a real bug, not a hypothetical one: found live via
+      # buluma.p10k's own ZSH-version check, which real Ansible evaluates
+      # fine (integer literals already worked; only non-integer numeric
+      # literals were missing this case).
+      return expr if expr.to_f64?
+
       # A filter chain (`mylist | length > 0`, or a bare `when: mylist |
       # length` truthiness check), a parenthesized sub-expression
       # (possibly with trailing dotted/indexed access - dev-sec
@@ -1300,6 +1318,26 @@ module CrystalPlay
 
         evaluator = VariableSubstitutor::ExpressionEvaluator.new(vars)
         rendered = evaluator.evaluate(expr)
+
+        # #evaluate's own output is Python/Jinja2-repr text ("True"/
+        # "False", capitalized - matching what a real `{{ }}` span
+        # renders), not JSON - so a filter chain that resolves to a
+        # boolean (`x | bool`, `x is defined`, ...) must be recognized
+        # here BEFORE the JSON.parse fallback below, or it silently
+        # becomes the STRING "True"/"False" instead of a real Bool.
+        # Found via andrewrothstein.docker_engine's own reconfigure
+        # handler: `when: [docker_engine_manage_service | bool,
+        # docker_engine_config_reload | bool, ...]` - JSON.parse("True")
+        # raises (not valid JSON), so the fallback wrapped the literal
+        # text "True" in a JSON::Any::String, and the strict boolean
+        # check two callers up then hard-failed the handler with
+        # "Conditional result (True) was derived from value of type
+        # 'str'" even though every operand really was boolean - a
+        # regression introduced by 0.9.612's strict-conditional check
+        # tightening what used to be silently-accepted truthy text.
+        return true if rendered == "True"
+        return false if rendered == "False"
+
         parsed = (JSON.parse(rendered) rescue nil)
         return json_any_to_value(parsed || JSON::Any.new(rendered))
       end
@@ -1477,6 +1515,22 @@ module CrystalPlay
         if right_num = right.to_s.to_i64?
           return left_num <=> right_num
         end
+      end
+
+      # Neither side parsed as an integer - try float (`zsh_version.stdout
+      # | float < 5.1`: the left side is a real Float64-valued string from
+      # the `float` filter, the right a bare float literal). Checked only
+      # after the integer attempt above so two genuine integers still
+      # compare via Int64 <=> (avoids any float-precision surprise on
+      # large values) exactly as before this case was added.
+      left_f = left.to_s.to_f64?
+      right_f = right.to_s.to_f64?
+      if left_f && right_f
+        # Float64#<=> returns Int32 | Nil (nil only for a NaN operand,
+        # which a real version/numeric literal from a playbook never is)
+        # - the `|| 0` is unreachable in practice, just satisfying the
+        # method's declared Int32 return type.
+        return (left_f <=> right_f) || 0
       end
 
       # Fall back to string comparison

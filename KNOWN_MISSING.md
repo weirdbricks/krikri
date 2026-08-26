@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.612`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.615`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -37,7 +37,17 @@ by this engine's own rules rather than Python's `literal_eval`
 (`0.9.611`), and finally the three that fix exposed: non-boolean
 `when:` results being accepted, containers rendering as JSON rather than
 Python repr, and INI host lines being whitespace-split rather than
-shlex-split (`0.9.612`); see `git log`. Two more turned out not to be
+shlex-split (`0.9.612`); and - found in round 186's 60-role marathon -
+a list-form `when:` made of `x | bool` filter chains hard-failing under
+the new strict-boolean check because the filter chain's own render path
+produces Python-repr text ("True"/"False") that isn't valid JSON
+(`0.9.613`), a plain-mustache `{{ expr -}}`/`{{- expr }}` trim marker
+having its CHARACTER stripped but never its WHITESPACE-TRIMMING EFFECT
+applied, corrupting any multi-line YAML `|-` block built from one such
+span per line (`0.9.614`), and a bare FLOAT literal (`5.1`) in a
+comparison having no case at all in the strict-undefined evaluator,
+plus no float-numeric fallback in the comparison itself once found
+(`0.9.615`); see `git log`. Two more turned out not to be
 engine bugs at all and were withdrawn rather than fixed:
 `buluma.phpmyadmin`'s warm-rerun churn is role-side (`geerlingguy.php`
 and `buluma.php` both own `php.ini` and overwrite each other, on real

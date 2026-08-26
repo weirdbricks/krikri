@@ -522,18 +522,51 @@ module CrystalPlay
             inner = text[(i + 2)...close_at]
             # A `{{ expr -}}`/`{{- expr }}` whitespace-trim marker (real,
             # valid Jinja2 syntax on an expression tag, not just a block
-            # tag) - this plain mustache-only scanner has no concept of
-            # trim markers at all, so a leading/trailing "-" was passed
-            # straight into the expression body (`'x'-` instead of
-            # `'x'`), corrupting it into a dangling arithmetic operator
-            # that resolved to "undefined". Only the WHITESPACE-trimming
-            # effect is dropped here (this scanner doesn't do block-
-            # level whitespace control to begin with); stripping the
-            # marker character itself is what fixes the corrupted
-            # expression.
-            inner = inner.lstrip.lchop('-') if inner.lstrip.starts_with?('-')
-            inner = inner.rstrip.rchop('-') if inner.rstrip.ends_with?('-')
-            result << yield inner
+            # tag) - this plain mustache-only scanner originally had no
+            # concept of trim markers at all, so a leading/trailing "-"
+            # was passed straight into the expression body (`'x'-`
+            # instead of `'x'`), corrupting it into a dangling
+            # arithmetic operator that resolved to "undefined". Stripping
+            # the marker character here fixes the corrupted expression;
+            # the surrounding-whitespace TRIM EFFECT the marker also
+            # implies is applied below, once the marker's presence is
+            # known.
+            lstrip_marker = inner.lstrip.starts_with?('-')
+            rstrip_marker = inner.rstrip.ends_with?('-')
+            inner = inner.lstrip.lchop('-') if lstrip_marker
+            inner = inner.rstrip.rchop('-') if rstrip_marker
+
+            # `{{- expr }}`: strip trailing whitespace already written to
+            # the builder (real Jinja2 strips back to, and including, the
+            # preceding newline). Found via andrewrothstein.temurin's own
+            # multi-line `|-` YAML block scalar building a download
+            # filename out of `{{ part -}}` / `_{{ part -}}` spans, one
+            # per line, relying on the trim markers to collapse the
+            # block's own line breaks into a single-line string - without
+            # this, every line break survived into the literal filename/
+            # URL, breaking the download outright.
+            if lstrip_marker
+              buffered = result.to_s
+              trimmed = buffered.rstrip
+              result = String::Builder.new
+              result << trimmed
+            end
+
+            rendered = yield inner
+            result << rendered
+
+            # `{{ expr -}}`: skip leading whitespace (through the next
+            # newline) in the literal text immediately following the
+            # closing `}}`, matching Jinja2's own `-%}`/`-}}` behavior.
+            if rstrip_marker
+              j = close_at + 2
+              while j < n && text[j].ascii_whitespace?
+                j += 1
+              end
+              i = j
+              next
+            end
+
             i = close_at + 2
             next
           end

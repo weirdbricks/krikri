@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.612-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.615-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -385,6 +385,27 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.613`-`0.9.615`** - three fixes from a 60-role marathon (40
+  andrewrothstein.\*/buluma.\*/etc. on Ubuntu 22.04, 20 more on Rocky
+  9.6, fresh host pair per distro, every role run twice for
+  idempotency). A list-form `when:` made of `x | bool` filter chains
+  hard-failed under 0.9.612's new strict-boolean check: each chain's own
+  render path produces Python-repr text ("True"/"False"), and
+  `JSON.parse("True")` isn't valid JSON, so the fallback wrapped the
+  literal text in a String instead of a real Bool (found via
+  `andrewrothstein.docker_engine`'s reconfigure handler). A plain
+  `{{ expr -}}`/`{{- expr }}` whitespace-trim marker had its CHARACTER
+  stripped but never its WHITESPACE-TRIMMING EFFECT applied, so a
+  multi-line YAML `|-` block built from one such span per line kept
+  every line break in its rendered output (found via
+  `andrewrothstein.temurin`'s own filename/URL construction, breaking
+  the download outright). And a bare FLOAT literal (`5.1`) in a
+  comparison had no case at all in the strict-undefined evaluator - only
+  bare INTs did - so `when: zsh_version.stdout | float < 5.1` raised
+  "'5.1' is undefined"; fixing that also exposed the comparison itself
+  had no float-numeric fallback, only int, which would have compared
+  "10.2" < "5.1" lexicographically wrong.
+
 - **`0.9.605`-`0.9.606`** - two fixes from a 60-role marathon (40
   buluma.\* on Ubuntu 22.04, 20 andrewrothstein.\* on Rocky 9.6, fresh
   host pair per distro, every role run twice for idempotency). A dynamic
@@ -442,185 +463,6 @@ for current-state detail.
   `group_names` omitting `ungrouped`, so a host listed above any
   `[section]` header reported belonging to no groups at all.
 
-- **`0.9.609`** - two gaps found while differentialing the modules
-  above. `{{ playbook_dir }}` was undefined here (real Ansible always
-  defines it, along with `inventory_dir`/`inventory_file`, always
-  absolute) - roles use it to reach files relative to the playbook
-  rather than the working directory. And task-level `check_mode:` was
-  parsed but never used: only the global `--check` flag reached the
-  modules, so `check_mode: true` really executed the task it was meant
-  to simulate, and `check_mode: false` - which real Ansible uses to let
-  one read-only task run for real during a `--check` run - was equally
-  ignored. Both directions now match, including a templated
-  `check_mode: "{{ ... }}"`; `ansible_check_mode` deliberately still
-  reports the run's mode rather than the task's, as real Ansible does.
-
-- **`0.9.608`** - four `community.crypto` modules implemented, closing
-  what had been recorded as a blanket scope cut: `openssl_privatekey`,
-  `openssl_csr`, `x509_certificate` (`selfsigned` and `ownca`
-  providers) and `openssl_pkcs12` (`action: export`). A frequency scan
-  over the 673-role corpus is what prompted it - 13 roles call this
-  collection, and since an unimplemented module aborts the play with
-  `rc=4`, each of those roles was entirely unrunnable. All four are
-  built on the `openssl` CLI and were differentialed against the real
-  modules end to end: file formats, permissions (including
-  `openssl_privatekey`'s forced 0600 and `openssl_pkcs12`'s 0400),
-  extensions, fingerprints, error wording, and the idempotency matrix
-  each module actually uses - in both directions, so neither engine
-  regenerates artifacts the other created. `robertdebock.openssl` now
-  runs to completion, byte-comparable and idempotent on the rerun.
-
-- **`0.9.607`** - an undefined variable that reached a *filter* stopped
-  being strict. `loop: "{{ environment_list | dict2items }}"` with no
-  `default()` in the chain (`buluma.environment`'s own task) silently
-  produced zero loop items and a green play, where real Ansible fails
-  the task; strictness had only ever looked at bare `{{ var }}`
-  references, and `FilterEngine`'s `as_hash`/`as_array` coerced the
-  missing value to `{}`/`[]` before anything upstream could notice. An
-  undefined chain source is now fatal at all three entry points -
-  module-argument templating, loop-source resolution, and
-  `when:`/`assert:` conditions - unless the FIRST filter in the chain is
-  one of the three real Ansible actually tolerates (`default`, `d`,
-  `type_debug`, differentialed across 24 filters against ansible-core
-  2.19.4), so `x | default([]) | dict2items` keeps working. Crinja (real
-  `.j2` files) had the same bug independently and was fixed alongside.
-
-- **`0.9.603`** - a role can now see every other role's `vars/main.yml`
-  and `defaults/main.yml`, including roles that run LATER in the play -
-  real Ansible loads them all into the variable manager at play setup,
-  where this engine scoped them to the owning role. That is what made
-  `geerlingguy.php`'s own `when: php_packages is not defined` run a task
-  real Ansible skips, `php_packages` being defined by a role further
-  down the same dependency chain. The precedence it introduces was
-  mapped against ansible-core 2.19.4 with a three-way matrix rather than
-  assumed - all roles' defaults < this role's own defaults < play vars <
-  all roles' vars < this role's own vars - and `include_role:` stays
-  scoped, since only static `roles:` are loaded at setup. `0.9.604`
-  completes the ladder at the top: a REGISTERED variable now outranks a
-  role var of the same name, as in real Ansible, where a task that
-  registered into a name its own role also defined used to lose the
-  command's output entirely.
-
-- **`0.9.602`** - `omit` no longer leaks this engine's internal
-  sentinel as literal text. `{{ x | default(omit) }}` used anywhere
-  except as a whole module parameter emitted
-  `__crystal_ansible_omit__` into logs, config files and command lines
-  as if it were real content; a bare `{{ omit }}` failed the task
-  outright as an undefined variable. It now renders as nothing
-  mid-string, is elided from list and dict literals (in BOTH
-  evaluators), and still drops a whole parameter when it is the entire
-  value - with genuinely falsy neighbours (`""`, `0`, `false`) kept.
-
-- **`0.9.601`** - closes the last three documented gaps, leaving
-  [KNOWN_MISSING.md](KNOWN_MISSING.md)'s "Real gaps" section empty.
-  `ansible_distribution` now reports real Ansible's per-distro DISPLAY
-  name rather than the capitalized os-release ID - "Linux Mint Debian
-  Edition" not "Linuxmint", "Debian" not "Raspbian" - ported branch for
-  branch from its own `parse_distribution_file_Debian` and checked
-  against that same Python parser over a corpus of real os-release
-  files. The `debugger:` prompt gained real Ansible's ASSIGNMENT
-  commands (`task.args['x'] = ...`, `task_vars['y'] = ...`) plus
-  `u`/`update_task`, including the subtle rule that a `task_vars` edit
-  changes nothing until `u` re-templates the task. And
-  `--scp-extra-args` now actually extends this engine's `scp` command
-  lines - the note claiming it had "nothing to attach to" was wrong
-  about the engine's own file transfers. Verifying these turned up
-  three NEW divergences, documented rather than fixed - most notably
-  that ansible-core 2.19 made Jinja templating native-typed (a
-  `{{ }}` over a YAML int yields an int, not the string this engine
-  still produces).
-
-- **`0.9.600`** - `notify:` validation moved from parse time to run
-  time, where real Ansible does it. An unmatched `notify:` is real
-  Ansible's error only when the notifying task actually fires the
-  notification: a task that reports `ok` (unchanged) or is skipped by
-  its `when:` notifies nothing and the run completes green. This engine
-  rejected all three upfront with rc=4 - failing playbooks real Ansible
-  runs fine - while simultaneously MISSING a bad notify inside an
-  `include_tasks:`-loaded file, which no parse-time sweep can see. It
-  now aborts at the notifying task with real Ansible's own message and
-  rc=1, and the task batcher ends its SSH batch there so the steps
-  after it never run, matching what real Ansible actually executes on
-  the target.
-
-- **`0.9.599`** - closes the last "Real gaps" entry in
-  [KNOWN_MISSING.md](KNOWN_MISSING.md), plus a second bug the live
-  re-verification of it surfaced. A role default computed from another,
-  genuinely-never-set variable (`phpmyadmin_mysql_password: "{{
-  mysql_root_password }}"`) rendered as the literal seven-character text
-  `undefined` and the run continued - writing that string into
-  phpMyAdmin's config as the real MySQL password - where real Ansible
-  fails the task naming the innermost missing variable. Strict
-  module-arg templating now follows the chain instead of stopping at the
-  first level, and an unresolvable chain is handed to the template
-  engines as a real undefined value, so `| default('x')`, `is defined`
-  and `when:` gates over one all answer what real Ansible answers; the
-  deliberate leniency everywhere else is unchanged. Underneath it, a
-  `meta/main.yml` **dependency's defaults were discarded** once that
-  dependency's own tasks were loaded - so the extremely common "role B
-  declares role A as a dependency, then references A's defaults" shape
-  silently resolved to nothing throughout B.
-
-- **`0.9.593`-`0.9.598`** - six fixes from a 60-role Ubuntu marathon:
-  a huge (5934-line) template crashed the whole `template:` task with a
-  PCRE2 JIT-stack overflow, from two rewrite regexes whose lazy
-  quantifiers could cross newlines and, on a file with sparse/unmatched
-  brace/quote characters, backtracked across nearly the whole file
-  looking for a match; a dotted-path lookup (`item.1.stdout`, pulling
-  the 2nd element out of a `with_indexed_items:` pair) only supported
-  Hash key lookup, not numeric indexing into an Array; `with_dict:` over
-  an empty list (a common "override me" default shape) returned nil for
-  the whole loop instead of treating it as an empty dict, running the
-  task once with `item` undefined instead of skipping it like real
-  Ansible; the `ansible_lsb` fact (`/etc/lsb-release`) was entirely
-  unimplemented, breaking a PPA apt-repo template's codename lookup. The
-  "unavailable modules" exit-code check itself was a static whole-
-  playbook scan that flagged a module even inside a branch unreachable
-  on every host (e.g. an OS-family-gated task) - now only counts a
-  module if its task's own `when:` would actually have let it run,
-  matching real Ansible's lazy resolution. A task-level `import_role:`
-  to a role never installed ran extra tasks before failing instead of
-  refusing the whole playbook statically (`rc=1`, zero tasks) the way
-  real Ansible does. `pip:` never checked the pip executable actually
-  exists before deciding there was nothing to install, silently
-  no-op'ing instead of failing on a genuinely pip-less host whose
-  package list happened to be empty on that OS.
-- **`0.9.592`** - `until:`/`when:`/`failed_when:`-style Jinja "is" tests now
-  recognize `successful`/`failure`/`change`/`skip` (real Ansible's own
-  aliases for `success`/`failed`/`changed`/`skipped`), in both the
-  hand-rolled `ConditionalEvaluator` and Crinja. `until: result is
-  successful` - a very common retry idiom - previously matched nothing,
-  so the retry loop always ran its full default 3 attempts regardless of
-  the first attempt's real success; by the final (now-idempotent) attempt
-  the task's own result silently overwrote a genuine `changed: true` with
-  `changed: false`. Found benchmarking `mrlesmithjr.motd`'s `apt:` task.
-- **`0.9.589`-`0.9.591`** - three fixes from a 60-role RHEL marathon:
-  SSH transport now honors `ANSIBLE_HOST_KEY_CHECKING`/
-  `ANSIBLE_SSH_HOST_KEY_CHECKING` (previously hardcoded
-  `StrictHostKeyChecking=accept-new`, which still refuses a CHANGED
-  host key - real Ansible's `host_key_checking=False` accepts one,
-  which matters for an ephemeral cloud host whose IP got reused with a
-  different key); a missing role (play-level `roles:` or a role's own
-  `meta/main.yml` dependency) now exits 1 like real Ansible instead of
-  this engine's generic parser-error 4; `ansible_distribution_release`
-  is now always a defined fact (falls back to `""` on RHEL-family,
-  which has no `VERSION_CODENAME`) instead of fully undefined, fixing
-  a `with_first_found:` path template that referenced it.
-- **`0.9.588`** - two fixes from a real GPG-check and legacy-`include:`
-  divergence: `yum:`/`dnf:`/`package:` now always pass
-  `--setopt=localpkg_gpgcheck=1` for a URL/local RPM install unless
-  `disable_gpg_check: true` - dnf's own actual default leaves that OFF
-  regardless of `dnf.conf`'s repo `gpgcheck=1`, which previously let a
-  tampered or unsigned RPM install silently where real ansible correctly
-  refuses it. A removed action plugin (bare `include:`, gone from
-  ansible-core after 2023-05-16) now exits 1 like real Ansible, not this
-  engine's generic parser-error 4.
-- **`0.9.587`** - `ansible_connection` is now always resolvable as a
-  magic var (defaults to `"local"`/`"ssh"` per host, matching real
-  Ansible), instead of undefined unless something explicitly set it.
-  Found benchmarking `buluma.selinux`: its own container-guard
-  (`when: ansible_connection not in [...]`) hard-failed with
-  `'ansible_connection' is undefined` on a plain SSH host.
 ## 🤝 Contributing
 
 Contributions welcome! Please:

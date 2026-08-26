@@ -834,6 +834,34 @@ describe CrystalPlay::ConditionalEvaluator do
       ).should be_false
     end
 
+    # Real bug found benchmarking andrewrothstein.docker_engine (0.9.612
+    # regression, fixed in 0.9.613): a list-form `when:` clause whose
+    # items are plain `x | bool` filter chains. Each item is evaluated as
+    # its own bare condition with strict: true - #evaluate_value's filter-
+    # chain branch renders it via ExpressionEvaluator (Python-repr text,
+    # "True"/"False") and then tried JSON.parse on that text, which isn't
+    # valid JSON, so it fell back to wrapping the literal string "True" -
+    # the strict check two callers up then raised "Conditional result
+    # (True) was derived from value of type 'str'" even though the
+    # operand really was boolean. Verified live: real ansible-core 2.19.12
+    # runs the handler; crystal (pre-fix) hard-failed it.
+    it "does not raise for a bare `x | bool` filter chain that resolves to a real boolean" do
+      v = Hash(String, JSON::Any).new
+      v["docker_engine_manage_service"] = JSON::Any.new("yes")
+      CrystalPlay::ConditionalEvaluator.evaluate(
+        "docker_engine_manage_service | bool", v, strict: true
+      ).should be_true
+    end
+
+    it "does not raise for a list-form when: made entirely of `| bool` filter chains" do
+      v = Hash(String, JSON::Any).new
+      v["a"] = JSON::Any.new("yes")
+      v["b"] = JSON::Any.new("1")
+      CrystalPlay::ConditionalEvaluator.evaluate(
+        "(a | bool) and (b | bool)", v, strict: true
+      ).should be_true
+    end
+
     # This used to assert that a MATCH does not raise, on the assumption
     # that a matching regex_search is "boolean-shaped". It is not: the
     # result is the matched STRING, and ansible-core 2.19 rejects any
@@ -981,6 +1009,35 @@ describe CrystalPlay::ConditionalEvaluator do
       CrystalPlay::ConditionalEvaluator.evaluate(
         "totally_undefined_var is not defined", v, raise_undefined: true
       ).should be_true
+    end
+  end
+
+  describe "bare float literal in a comparison" do
+    # Real bug found benchmarking buluma.p10k (0.9.615): `when:
+    # zsh_version.stdout | float < 5.1`. #evaluate_value had a case for
+    # bare INT literals ("3") but none for a bare float literal ("5.1") -
+    # it fell through to the plain variable-lookup branch, found no var
+    # literally named "5.1", and raised "'5.1' is undefined" under
+    # raise_undefined (task-level when: strictness) even though real
+    # Ansible evaluates the comparison fine.
+    it "does not raise 'is undefined' for a bare float literal operand" do
+      v = Hash(String, JSON::Any).new
+      v["zsh_version"] = JSON.parse(%({"stdout": "4.9"}))
+      CrystalPlay::ConditionalEvaluator.evaluate(
+        "zsh_version.stdout | float < 5.1", v, raise_undefined: true
+      ).should be_true
+    end
+
+    it "compares floats numerically, not lexicographically, on both sides of '<'" do
+      v = Hash(String, JSON::Any).new
+      v["zsh_version"] = JSON.parse(%({"stdout": "10.2"}))
+      # Lexicographic "10.2" <=> "5.1" would wrongly say 10.2 < 5.1 (the
+      # '1' < '5' first-character comparison) - #compare_values needs a
+      # real numeric float fallback once the int64 attempt fails for both
+      # sides, not just for the literal-recognition fix above.
+      CrystalPlay::ConditionalEvaluator.evaluate(
+        "zsh_version.stdout | float < 5.1", v, raise_undefined: true
+      ).should be_false
     end
   end
 end

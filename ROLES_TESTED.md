@@ -856,6 +856,66 @@ or already-clean roles as if they were new.
 | andrewrothstein.cntlm | ✅ Clean (round 185, Rocky 9.6). Matching rc=2 cold / rc=2 warm on both engines. Real 3.5s/3.5s vs crystal 1.1s/1.1s. |
 | andrewrothstein.corkscrew | ✅ Clean (round 185, Rocky 9.6). Matching rc=2 cold / rc=2 warm on both engines. Real 6.0s/6.0s vs crystal 2.2s/2.2s. |
 | andrewrothstein.confd | ✅ Clean (round 185, Rocky 9.6). Matching rc=0 cold / rc=0 warm on both engines. Real 4.0s/3.5s vs crystal 0.6s/0.3s. |
+| andrewrothstein.cmake | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 6.3s/6.9s vs crystal 12.5s/0.4s. |
+| andrewrothstein.apt-cacher-ng | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 8.4s/8.6s vs crystal 16.3s/0.3s. |
+| andrewrothstein.systemd_service | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 3.3s/2.9s vs crystal 0.1s/0.1s. |
+| andrewrothstein.yq | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 4.8s/4.9s vs crystal 0.8s/0.3s. |
+| andrewrothstein.coredns | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 9.0s/8.2s vs crystal 3.3s/0.4s. |
+| andrewrothstein.bash_it | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 17.1s/18.4s vs crystal 5.4s/0.5s. |
+| andrewrothstein.step | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 8.1s/7.1s vs crystal 2.3s/0.3s. |
+| andrewrothstein.prometheus_installer | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 53.4s/48.4s vs crystal 27.8s/2.1s. |
+| andrewrothstein.dive | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 8.0s/8.8s vs crystal 1.2s/0.4s. |
+| andrewrothstein.bazelisk | ⚠️ Round 186 (Ubuntu 22.04): found a real bug - its `andrewrothstein.temurin` dependency builds a download filename from a multi-line YAML `|-` block scalar, one `{{ part -}}` span per line, relying on the `-}}` trim marker to collapse the block's own line breaks - the marker CHARACTER was stripped but its whitespace-trimming EFFECT was never applied, so every line break survived into the literal filename/URL, breaking the download outright (400 Bad Request). Fixed in 0.9.614, both cold/warm now match real Ansible exactly (real 9.9s/9.2s vs crystal cold/warm rc=0/0 post-fix). |
+| dev-sec.ssh-hardening | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=2 cold / rc=2 warm on both engines. Real 6.2s/5.9s vs crystal 0.1s/0.1s. |
+| andrewrothstein.docker_buildx | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 6.4s/6.2s vs crystal 1.8s/0.5s. |
+| buluma.p10k | ⚠️ Round 186 (Ubuntu 22.04): found a real bug - `when: zsh_version.stdout | float < 5.1` - a bare FLOAT literal ("5.1") on the right side of a comparison had no case in `#evaluate_value` (only bare INTs did), so it fell through to plain variable lookup, found no var literally named "5.1", and raised "'5.1' is undefined" under strict-undefined `when:` checking; fixing it also exposed `#compare_values` had no float-numeric fallback either (only int), which would have compared "10.2" < "5.1" lexicographically-wrong once the literal was recognized. Fixed in 0.9.615, both cold/warm now match real Ansible exactly (real 16.4s/16.1s vs crystal cold/warm rc=0/0 post-fix). |
+| buluma.perforce | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 9.2s/9.6s vs crystal 28.2s/1.3s. |
+| andrewrothstein.zookeeper | ⚠️ Round 186 (Ubuntu 22.04): found a real bug - same `andrewrothstein.temurin` dependency, same whitespace-trim-marker bug as bazelisk. Fixed in 0.9.614, both cold/warm now match real Ansible exactly (real 17.7s/21.2s vs crystal cold/warm rc=0/0 post-fix). |
+| andrewrothstein.opa | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 6.2s/6.4s vs crystal 2.2s/0.6s. |
+| buluma.investigate | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 12.0s/10.5s vs crystal 11.9s/0.3s. |
+| buluma.mate | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 7.2s/7.0s vs crystal 101.6s/0.2s. |
+| mrlesmithjr.ntop | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=1 cold / rc=1 warm on both engines. Real 0.9s/0.9s vs crystal 0.0s/0.0s. |
+| andrewrothstein.consul_template | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 5.9s/6.1s vs crystal 1.8s/0.3s. |
+| andrewrothstein.emacs-build | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=2 cold / rc=2 warm on both engines. Real 38.1s/38.6s vs crystal 147.7s/2.4s. |
+| andrewrothstein.useful-groups | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 8.0s/6.7s vs crystal 0.5s/0.3s. |
+| andrewrothstein.rust | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=2 cold / rc=2 warm on both engines. Real 14.1s/15.3s vs crystal 2.1s/0.4s. |
+| andrewrothstein.ca-certs | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 6.4s/6.2s vs crystal 0.2s/0.2s. |
+| andrewrothstein.atom | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=2 cold / rc=2 warm on both engines. Real 28.3s/25.6s vs crystal 17.8s/3.2s. |
+| andrewrothstein.nats_server | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 5.0s/5.5s vs crystal 1.6s/0.3s. |
+| andrewrothstein.node-n | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 27.0s/28.9s vs crystal 17.7s/4.5s. |
+| andrewrothstein.tmux | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 7.8s/8.0s vs crystal 0.2s/0.2s. |
+| weareinteractive.ansible-users | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=2 cold / rc=2 warm on both engines. Real 3.4s/3.4s vs crystal 0.1s/0.2s. |
+| andrewrothstein.protoc | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 7.5s/7.5s vs crystal 1.2s/0.3s. |
+| andrewrothstein.act | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 5.1s/5.4s vs crystal 1.8s/0.3s. |
+| andrewrothstein.dnsmasq_configure | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=2 cold / rc=2 warm on both engines. Real 7.5s/6.1s vs crystal 13.0s/0.2s. |
+| andrewrothstein.arkade | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 4.6s/4.6s vs crystal 0.9s/0.3s. |
+| andrewrothstein.tfsec | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 4.8s/4.5s vs crystal 1.6s/0.5s. |
+| mrlesmithjr.ansible-hashi-vault | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=2 cold / rc=2 warm on both engines. Real 23.3s/19.3s vs crystal 0.1s/0.1s. |
+| andrewrothstein.drill | ⚠️ Round 186 (Ubuntu 22.04): found a real bug - same `andrewrothstein.temurin` dependency, same whitespace-trim-marker bug as bazelisk. Fixed in 0.9.614, both cold/warm now match real Ansible exactly (real 49.5s/12.9s vs crystal cold/warm rc=0/0 post-fix). |
+| andrewrothstein.felix | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 5.5s/6.1s vs crystal 2.6s/0.6s. |
+| andrewrothstein.docker-cleanup | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 8.5s/8.1s vs crystal 0.3s/0.3s. |
+| buluma.local | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 3.7s/4.6s vs crystal 0.1s/0.1s. |
+| andrewrothstein.gcc_toolbox | ✅ Clean (round 186, Ubuntu 22.04). Matching rc=0 cold / rc=0 warm on both engines. Real 7.0s/7.9s vs crystal 0.3s/0.3s. |
+| andrewrothstein.emacs-config | ✅ Clean (round 186, Rocky 9.6). Matching rc=2 cold / rc=2 warm on both engines. Real 9.0s/8.0s vs crystal 1.8s/1.9s. |
+| mrlesmithjr.unbound | ✅ Clean (round 186, Rocky 9.6). Matching rc=1 cold / rc=1 warm on both engines. Real 1.0s/0.8s vs crystal 0.0s/0.0s. |
+| andrewrothstein.etcd | ✅ Clean (round 186, Rocky 9.6). Matching rc=0 cold / rc=0 warm on both engines. Real 6.6s/7.0s vs crystal 5.2s/0.6s. |
+| mrlesmithjr.powershell | ✅ Clean (round 186, Rocky 9.6). Matching rc=0 cold / rc=0 warm on both engines. Real 9.4s/9.5s vs crystal 19.4s/2.2s. |
+| lean_delivery.solr_standalone | ✅ Clean (round 186, Rocky 9.6). Matching rc=2 cold / rc=2 warm on both engines. Real 28.1s/29.2s vs crystal 13.8s/13.8s. |
+| andrewrothstein.varnish | ✅ Clean (round 186, Rocky 9.6). Matching rc=2 cold / rc=2 warm on both engines. Real 13.5s/13.0s vs crystal 5.9s/2.0s. |
+| mrlesmithjr.postfix | ✅ Clean (round 186, Rocky 9.6). Matching rc=2 cold / rc=2 warm on both engines. Real 5.6s/5.2s vs crystal 1.1s/1.2s. |
+| mrlesmithjr.oracle-java8 | ✅ Clean (round 186, Rocky 9.6). Matching rc=1 cold / rc=1 warm on both engines. Real 1.1s/0.9s vs crystal 0.0s/0.0s. |
+| andrewrothstein.ansible-maven | ✅ Clean (round 186, Rocky 9.6). Matching rc=0 cold / rc=0 warm on both engines. Real 13.9s/14.2s vs crystal 17.3s/0.7s. |
+| dev-sec.os-hardening | ✅ Clean (round 186, Rocky 9.6). Matching rc=2 cold / rc=2 warm on both engines. Real 38.0s/37.7s vs crystal 0.2s/0.1s. |
+| andrewrothstein.docker_compose | ✅ Clean (round 186, Rocky 9.6). Matching rc=0 cold / rc=0 warm on both engines. Real 5.2s/5.4s vs crystal 1.2s/0.4s. |
+| andrewrothstein.dotnet_install | ✅ Clean (round 186, Rocky 9.6). Matching rc=2 cold / rc=2 warm on both engines. Real 10.8s/11.4s vs crystal 8.1s/3.7s. |
+| andrewrothstein.splunk_uf | ✅ Clean (round 186, Rocky 9.6). Matching rc=2 cold / rc=2 warm on both engines. Real 9.9s/9.5s vs crystal 1.1s/1.3s. |
+| andrewrothstein.fluentd | ✅ Clean (round 186, Rocky 9.6). Matching rc=0 cold / rc=0 warm on both engines. Real 9.7s/9.2s vs crystal 51.1s/0.7s. |
+| mrlesmithjr.quagga | ✅ Clean (round 186, Rocky 9.6). Matching rc=1 cold / rc=1 warm on both engines. Real 0.9s/1.0s vs crystal 0.0s/0.0s. |
+| mrlesmithjr.powerdns-authoritative | ✅ Clean (round 186, Rocky 9.6). Matching rc=1 cold / rc=1 warm on both engines. Real 1.1s/1.1s vs crystal 0.0s/0.0s. |
+| andrewrothstein.gator | ✅ Clean (round 186, Rocky 9.6). Matching rc=0 cold / rc=0 warm on both engines. Real 9.6s/8.5s vs crystal 3.8s/0.5s. |
+| mrlesmithjr.ansible-observium | ✅ Clean (round 186, Rocky 9.6). Matching rc=1 cold / rc=1 warm on both engines. Real 1.0s/1.1s vs crystal 0.0s/0.0s. |
+| andrewrothstein.docker_engine | ⚠️ Round 186 (Rocky 9.6): found a real bug - a list-form `when:` made of `x | bool` filter chains: each filter-chain condition renders via the Python-repr text path ("True"/"False"), and `JSON.parse("True")` isn't valid JSON, so the strict boolean check saw the literal STRING "True" and hard-failed the handler even though every operand really was boolean. Fixed in 0.9.613, both cold/warm now match real Ansible exactly (real 16.3s/16.9s vs crystal cold/warm rc=0/0 post-fix). |
+| andrewrothstein.rstudio-server | ✅ Clean (round 186, Rocky 9.6). Matching rc=2 cold / rc=2 warm on both engines. Real 28.4s/28.9s vs crystal 17.9s/0.9s. |
 
 **Legend:** ✅ Clean = engine matches real `ansible-playbook` (idempotent,
 healthy services, config parity) as of the last time it was run. ⚠️ = engine
