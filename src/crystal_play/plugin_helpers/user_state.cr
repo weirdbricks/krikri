@@ -40,10 +40,26 @@ module CrystalPlay
         # groups:/uid:/etc param. Found via ansible-community.ansible-
         # vault's own `groups: "{{ vault_groups }}"` (vault_groups:
         # null in defaults/main.yml).
+        # `groups: "{{ some_var | default([]) }}"` where some_var is
+        # undefined - a very common "optional supplementary groups"
+        # idiom (found via andrewrothstein.gitlab_runner's own "Add the
+        # gitlab-runner user to other groups" task, round 185) - renders
+        # the empty list's own text form "[]" through this codebase's
+        # non-native `{{ }}` substitution, same as Python's `str([])`
+        # would. Real Ansible's `groups:` argspec is `type: list`, and
+        # `check_type_list` recognizes a string shaped like `[...]` and
+        # parses it back into a real (here, empty) list via
+        # `ast.literal_eval` BEFORE ever reaching useradd - so real
+        # Ansible passes no `-G` at all. This codebase has no such
+        # generic list-arg parsing, so `groups.presence` alone treats the
+        # literal text "[]" as a real (single, malformed) group name,
+        # producing `useradd: group '[]' does not exist`. Narrowly
+        # special-case the empty-list text here rather than building a
+        # general string-to-list arg coercion for a single call site.
         args = [] of String
         args << "-u #{uid}" if uid.presence
         args << "-g #{gid}" if gid.presence
-        args << "-G #{groups}" if groups.presence
+        args << "-G #{groups}" if groups.presence && groups != "[]"
         args << "-s #{shell}" if shell.presence
         args << "-d #{home}" if home.presence
         args << "-c #{comment.inspect}" if comment.presence

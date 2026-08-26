@@ -59,6 +59,21 @@ describe UserState do
       args = UserState.useradd_args("vault", nil, "bin", "", nil, nil, "Vault user", true, false)
       args.should eq(["-g bin", "-c \"Vault user\"", "-r", "-M", "vault"])
     end
+
+    it "omits -G when groups renders to the empty-list text \"[]\"" do
+      # Real bug found benchmarking andrewrothstein.gitlab_runner (round
+      # 185): `groups: "{{ addl_groups | default([]) }}"` where
+      # addl_groups is undefined renders through this codebase's own
+      # non-native `{{ }}` substitution to the literal text "[]" (same
+      # as Python's `str([])`), which `groups.presence` alone treats as
+      # a real (single, malformed) group name - `useradd: group '[]'
+      # does not exist`. Real Ansible's `groups:` argspec is `type:
+      # list`, and `check_type_list` parses a `[...]`-shaped string back
+      # into a real list via `ast.literal_eval` before ever reaching
+      # useradd, so it passes no `-G` at all for an empty list.
+      args = UserState.useradd_args("runner", nil, nil, "[]", nil, nil, nil, false, true)
+      args.should eq(["-m", "runner"])
+    end
   end
 
   describe ".usermod_flags" do
