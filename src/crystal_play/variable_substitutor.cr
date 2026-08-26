@@ -363,6 +363,13 @@ module CrystalPlay
     # comment for why that's deliberate, not a gap in this check.
     private def raise_if_strict_undefined(inner : String) : Nil
       return unless inner.matches?(REGEX_BARE_VAR_REF)
+      # `omit` is real Ansible's magic bareword for "drop this parameter
+      # entirely", not a variable anyone ever sets - so a bare
+      # `{{ omit }}` looked undefined to this check and FAILED the task,
+      # where real Ansible renders it (to empty text mid-string, or to a
+      # dropped parameter when it is the whole value). Verified against
+      # ansible-core 2.19.4: `msg: "[{{ omit }}]"` prints "[]".
+      return if inner == "omit"
       resolved = VariableSubstitutor::VariableLookup.new(@vars).resolve(inner)
       raise UndefinedVariableError.new("'#{inner}' is undefined") unless resolved
       raise_if_nested_value_undefined(resolved)

@@ -167,7 +167,39 @@ module CrystalPlay
         value = shared_env.evaluate(ast, parent_context)
         return nil if value.undefined?
 
-        CrinjaRenderer.crinja_value_to_json_any(value)
+        CrinjaRenderer.elide_omitted(CrinjaRenderer.crinja_value_to_json_any(value))
+      end
+
+      # Real Ansible's `omit` inside a CONTAINER removes that entry
+      # rather than leaving a placeholder in it - verified against
+      # ansible-core 2.19.4: `{{ [1, v_omit, 3] }}` renders `[1, 3]` and
+      # `{{ {'a': 1, 'b': v_omit} }}` renders `{"a": 1}`. Crinja builds
+      # such a literal itself (this is the raw-value path every bracket/
+      # dict expression takes), so it sees `omit` as the ordinary string
+      # this engine represents it with, and kept it - the literal
+      # sentinel text then landed in whatever the list/dict fed.
+      #
+      # ExpressionEvaluator's own literal-array/dict builders need the
+      # same treatment separately: the two evaluators share no
+      # implementation, so this bug class has to be fixed once in each
+      # (see CLAUDE.md). Only containers are touched here - a bare
+      # scalar `omit` must survive intact this far, since that is what
+      # tells the caller to drop a whole parameter.
+      def self.elide_omitted(value : JSON::Any) : JSON::Any
+        case raw = value.raw
+        when Array
+          JSON::Any.new(raw.reject { |item| item.as_s? == CrystalPlay::OMIT_SENTINEL }
+            .map { |item| elide_omitted(item) })
+        when Hash
+          kept = Hash(String, JSON::Any).new
+          raw.each do |key, item|
+            next if item.as_s? == CrystalPlay::OMIT_SENTINEL
+            kept[key] = elide_omitted(item)
+          end
+          JSON::Any.new(kept)
+        else
+          value
+        end
       end
 
       @@expression_cache = Hash(String, Crinja::AST::ExpressionNode).new

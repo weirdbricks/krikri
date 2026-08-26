@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.601`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.602`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -48,17 +48,6 @@ ansible-core 2.19.4, and are NOT fixed.
   preserves the SOURCE type rather than re-inferring from rendered text
   - which is why this is worth doing properly rather than patching per
   call site. Sizeable: it touches both evaluators.
-
-- **`omit` leaks as this engine's literal sentinel text when it is
-  rendered into ordinary text rather than consumed as a module
-  parameter.** `v_omit: "{{ never_set | default(omit) }}"` used in a
-  `debug: msg:` prints `[__crystal_ansible_omit__]` where real Ansible
-  prints `[]`. Using the same variable AS a parameter (`mode: "{{
-  v_omit }}"`) is correct on both - the parameter is dropped - so this
-  is only the text-rendering path. Contained, but the fix has to land
-  AFTER the param-level omit handling, which works by testing whether a
-  fully-substituted param equals the sentinel: mapping the sentinel to
-  "" too early would break the feature it exists for.
 
 - **A warm re-run of `buluma.phpmyadmin` reports `changed=7` for tasks
   that changed nothing.** Found round 181. The files those tasks touch

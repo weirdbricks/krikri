@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.601-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.602-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -384,6 +384,16 @@ A short rolling summary of the last few versions - see `git log` for the
 complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
+
+- **`0.9.602`** - `omit` no longer leaks this engine's internal
+  sentinel as literal text. `{{ x | default(omit) }}` used anywhere
+  except as a whole module parameter emitted
+  `__crystal_ansible_omit__` into logs, config files and command lines
+  as if it were real content; a bare `{{ omit }}` failed the task
+  outright as an undefined variable. It now renders as nothing
+  mid-string, is elided from list and dict literals (in BOTH
+  evaluators), and still drops a whole parameter when it is the entire
+  value - with genuinely falsy neighbours (`""`, `0`, `false`) kept.
 
 - **`0.9.601`** - closes the last three documented gaps, leaving
   [KNOWN_MISSING.md](KNOWN_MISSING.md)'s "Real gaps" section empty.

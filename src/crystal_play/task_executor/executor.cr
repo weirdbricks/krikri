@@ -5334,6 +5334,23 @@ module CrystalPlay
         # sending the plugin a literal sentinel string as the param value.
         next if substituted_value == OMIT_SENTINEL
 
+        # An omit that is only PART of a larger value cannot drop the
+        # parameter - real Ansible renders it as nothing and keeps the
+        # rest (verified against ansible-core 2.19.4: with `v_omit: "{{
+        # never_set | default(omit) }}"`, `msg: "[{{ v_omit }}]"` prints
+        # "[]"). This engine used to emit its own raw sentinel text
+        # there, so `__crystal_ansible_omit__` reached the module - and
+        # a user's log, config file or command line - as if it were
+        # real content.
+        #
+        # Deliberately AFTER the whole-value check above: mapping the
+        # sentinel to "" first would turn "the whole param is omit" into
+        # "the param is the empty string", which is the opposite of what
+        # omit exists to do.
+        if substituted_value.includes?(OMIT_SENTINEL)
+          substituted_value = substituted_value.gsub(OMIT_SENTINEL, "")
+        end
+
         result[substitutor.substitute(key)] = substituted_value
       end
 

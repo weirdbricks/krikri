@@ -2129,7 +2129,14 @@ module CrystalPlay
 
           key_value = resolve_plus_operand(key_part.strip)
           key = key_value.as_s? || key_value.as_i64?.try(&.to_s) || @lookup.format_value(key_value)
-          h[key] = resolve_plus_operand(val_part.strip)
+          value = resolve_plus_operand(val_part.strip)
+          # An `omit` VALUE drops its whole key, the same way it drops a
+          # module parameter - verified against ansible-core 2.19.4:
+          # `{{ {'a': 1, 'b': v_omit} }}` renders as `{"a": 1}`, not as a
+          # "b" key holding a placeholder. Without this the raw sentinel
+          # text became the key's real value.
+          next if omit?(value)
+          h[key] = value
         end
 
         @lookup.format_value(JSON::Any.new(h))
@@ -2151,8 +2158,20 @@ module CrystalPlay
         inner = expr[1..-2].strip
         return JSON::Any.new([] of JSON::Any) if inner.empty?
 
-        elements = split_top_level_commas(inner).map { |elem| resolve_plus_operand(elem) }
+        # An `omit` ELEMENT is removed from the list rather than kept as
+        # a placeholder - verified against ansible-core 2.19.4:
+        # `{{ [1, v_omit, 3] }}` renders as `[1, 3]`.
+        elements = split_top_level_commas(inner)
+          .map { |elem| resolve_plus_operand(elem) }
+          .reject { |elem| omit?(elem) }
         JSON::Any.new(elements)
+      end
+
+      # Whether *value* is the omit sentinel (see CrystalPlay::
+      # OMIT_SENTINEL) - the marker real Ansible's `omit` leaves behind
+      # for a container/parameter to drop rather than render.
+      private def omit?(value : JSON::Any) : Bool
+        value.as_s? == OMIT_SENTINEL
       end
 
       private def split_top_level_commas(expr : String) : Array(String)
