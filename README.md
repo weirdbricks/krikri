@@ -398,7 +398,11 @@ for current-state detail.
   changes nothing until `u` re-templates the task. And
   `--scp-extra-args` now actually extends this engine's `scp` command
   lines - the note claiming it had "nothing to attach to" was wrong
-  about the engine's own file transfers.
+  about the engine's own file transfers. Verifying these turned up
+  three NEW divergences, documented rather than fixed - most notably
+  that ansible-core 2.19 made Jinja templating native-typed (a
+  `{{ }}` over a YAML int yields an int, not the string this engine
+  still produces).
 
 - **`0.9.600`** - `notify:` validation moved from parse time to run
   time, where real Ansible does it. An unmatched `notify:` is real

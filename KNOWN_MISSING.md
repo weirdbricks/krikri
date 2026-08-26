@@ -17,11 +17,61 @@ is the record.
 
 ## Real gaps (worth revisiting)
 
-**Currently empty.** The last three entries here - the nested-undefined
-chain (`0.9.599`), `notify:` validation timing (`0.9.600`), and the
-`ansible_distribution` display name plus the `debugger:` assignment
-commands and `--scp-extra-args` (`0.9.601`) - are all fixed; see
-`git log`. What remains below is deliberate scope, not a backlog.
+The five entries that used to be here - the nested-undefined chain
+(`0.9.599`), `notify:` validation timing (`0.9.600`), the
+`ansible_distribution` display name, the `debugger:` assignment
+commands, and `--scp-extra-args` (`0.9.601`) - are all fixed; see
+`git log`. The three below were found while verifying those, on
+ansible-core 2.19.4, and are NOT fixed.
+
+- **Templating is not native-typed, and real Ansible's now is.** A
+  `{{ }}` expression whose value is a YAML int renders here as the
+  STRING "3" where ansible-core 2.19.4 gives the int 3. Reproduced
+  minimally (`a_number: 3`, `v_num: "{{ a_number }}"`):
+  `v_num | type_debug` is `int` on real Ansible and `str` here, so
+  `v_num == 3` is True there and False here, and `v_num == '3'` is
+  False there and True here - a `when:` gate on either spelling can
+  take the opposite branch.
+
+  This is a MODEL difference, not a bug at one call site, and the
+  comment in `crinja_renderer.cr` asserting that "real Ansible's
+  default (non-jinja2_native) templating renders a `{{ }}` expression
+  to plain text and does NOT re-infer a scalar type" is simply out of
+  date: that was true through ansible-core 2.18, and 2.19 made native
+  types the default. Anything done here has to keep the case that
+  motivated the current behavior working - `bind_python_version: "{{
+  bind_default_python_version }}"` where the referenced var is the
+  quoted YAML STRING "3" must stay the string "3" (buluma.bind's own
+  `(bind_python_version == '3') | ternary(...)`, which picked the wrong
+  branch and installed python2-era package names when this engine
+  re-inferred types blindly). Native typing satisfies both - it
+  preserves the SOURCE type rather than re-inferring from rendered text
+  - which is why this is worth doing properly rather than patching per
+  call site. Sizeable: it touches both evaluators.
+
+- **`omit` leaks as this engine's literal sentinel text when it is
+  rendered into ordinary text rather than consumed as a module
+  parameter.** `v_omit: "{{ never_set | default(omit) }}"` used in a
+  `debug: msg:` prints `[__crystal_ansible_omit__]` where real Ansible
+  prints `[]`. Using the same variable AS a parameter (`mode: "{{
+  v_omit }}"`) is correct on both - the parameter is dropped - so this
+  is only the text-rendering path. Contained, but the fix has to land
+  AFTER the param-level omit handling, which works by testing whether a
+  fully-substituted param equals the sentinel: mapping the sentinel to
+  "" too early would break the feature it exists for.
+
+- **A warm re-run of `buluma.phpmyadmin` reports `changed=7` for tasks
+  that changed nothing.** Found round 181. The files those tasks touch
+  are byte-identical between consecutive runs (md5-compared on the
+  host), the count is stable across runs, and it is pre-existing rather
+  than anything the round-181 fixes introduced (the pre-fix build
+  reported `changed=8` - the extra one being the MySQL password
+  flapping, which is now fixed). Not root-caused: the tasks involved
+  are `lineinfile`/template-shaped with a `mode:` set, which has been a
+  false-changed source before (see the round143-147 `lineinfile`
+  mode-drift fix in `git log`), but a minimal local repro of that exact
+  shape is idempotent on both engines, so the real trigger is still
+  unidentified. Needs a live host and per-task diff output to pin down.
 
 Note: the round171 `buluma.gitlab` "`package:`/`dnf:` can't resolve a
 name-version partial-NEVRA spec" entry that used to be here (`Error:
