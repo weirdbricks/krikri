@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.623-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.624-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -387,6 +387,14 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.624`** - three round-189 fixes, all live-verified on fresh hosts:
+  YAML folded-scalar `when:` conditions (more-indented continuation lines
+  embed real newlines) silently evaluated FALSE - every loop item skipped;
+  `regex_search` with no match returned the `"undefined"` sentinel string
+  instead of Python None, so a list-form `failed_when: (... ) is not none`
+  FAILED a succeeding task; and `async:`/`poll: 0` over SSH was refused
+  outright, so fire-and-forget reboot idioms never actually rebooted -
+  remote async now mirrors real Ansible's `~/.ansible_async`.
 - **`0.9.623` (continued)** - after the vsftpd re-verify landed,
   ran the rest of the original round 188 shortlist (9 new roles:
   `andrewrothstein.{calicoctl,cfssl,coder,bazel}`,
