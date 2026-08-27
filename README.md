@@ -387,6 +387,36 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.623` (continued)** - after the vsftpd re-verify landed,
+  ran the rest of the original round 188 shortlist (9 new roles:
+  `andrewrothstein.{calicoctl,cfssl,coder,bazel}`,
+  `mrlesmithjr.{nfs-server,ansible_apt_sources}`,
+  `geerlingguy.{sonar-runner,ssh-chroot-jail}`, `buluma.forensics`,
+  fresh Atlantic.net pair per role, cold + warm both engines). 8/9
+  clean, 1/9 environmental both-fail (`geerlingguy.ssh-chroot-jail` -
+  role tries to copy `/usr/bin/vim` into the chroot; `vim` isn't
+  installed on a fresh Rocky 9.6 image, both engines hit the same
+  `"/usr/bin/vim not found"` and fail the task the same way per the
+  rule "if they fail the same way that's fine"), 1/9 a NEW real
+  engine bug: `buluma.forensics` (Rocky 9.6, crystal rc=2 / real
+  ansible rc=0) - the role's `command_collector | Save output` task
+  uses `delegate_to: localhost` for an `ansible.builtin.copy` module,
+  and crystal-ansible tries to scp the plugin binary to `localhost:22`
+  ("Connection refused" on a cloud VPS whose controller has no sshd
+  running); real ansible-core runs the plugin via `connection: local`
+  and never ssh's to itself. Fix is in `task_executor.cr`
+  `delegate_to:` resolution: short-circuit to `connection: local` when
+  the delegate target is the controller (localhost / 127.0.0.1 /
+  controller hostname). The bug is structural and likely affects
+  every role that uses `delegate_to: localhost` for an SSH-uploading
+  module on a controller without sshd. See
+  [[round188-delegate-to-localhost-ssh-reupload]]. Performance
+  observations across the 9 new roles: crystal 1.3x-15x faster than
+  python on every role, both phases - the persistent-daemon + batched
+  task model compounds across role complexity (nfs-server: 77s->28s
+  cold, 32s->2s warm; forensics: 154s->56s cold, 149s->62s warm; cfssl:
+  51s->16s cold, 40s->11s warm).
+
 - **`0.9.623`** - two fixes from a `weareinteractive.vsftpd` re-verify
   (Ubuntu 22.04, fresh Atlantic.net pair, byte-identical to real
   ansible-core 2.19.4 once both were in). The 0.9.608 community.crypto

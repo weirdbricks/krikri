@@ -113,7 +113,34 @@ ansible-core 2.19.4 on Ubuntu 22.04 (cold 20.73s vs py 63.91s; warm
 `ok=11 changed=0 failed=0 skipped=14` recap both engines, both
 phases).
 
-Two entries remain.
+And - found re-running the rest of the original round 188 shortlist
+after the 0.9.623 re-verify landed (`~/scratch/round188_10roles/`,
+9 new roles: `andrewrothstein.{calicoctl,cfssl,coder,bazel}`,
+`mrlesmithjr.{nfs-server,ansible_apt_sources}`,
+`geerlingguy.{sonar-runner,ssh-chroot-jail}`, `buluma.forensics`,
+fresh Atlantic.net pair per role, cold + warm both engines). 8/9
+clean, 1/9 environmental both-fail (`geerlingguy.ssh-chroot-jail` -
+the role tries to copy `/usr/bin/vim` into the chroot, `vim` isn't
+installed on a fresh Rocky 9.6 image, both engines hit the same
+`"/usr/bin/vim not found"` and fail the task the same way), 1/9 a
+NEW real engine bug (`buluma.forensics` Rocky 9.6, crystal rc=2 vs
+py rc=0 - the role's `command_collector | Save output` task uses
+`delegate_to: localhost` for an `ansible.builtin.copy` module, and
+crystal-ansible tries to scp the plugin binary to `localhost:22`
+before running it, which fails with "Connection refused" on a cloud
+VPS whose controller has no sshd running; real ansible-core runs
+the plugin via `connection: local` and never ssh's to itself). Fix is
+in `src/crystal_play/task_executor/executor.cr` `delegate_to:`
+resolution: short-circuit to `connection: local` when the delegate
+target is the controller (localhost / 127.0.0.1 / controller
+hostname), so the SSH plugin-upload step is bypassed entirely and
+the plugin is run on the controller's filesystem directly. The role
+itself is correct (real ansible passes); the bug is structural and
+likely affects every role that uses `delegate_to: localhost` for an
+SSH-uploading module on a controller without sshd. Per-role timings
+recorded in `~/scratch/round188_10roles/results/timings-continuation.tsv`
+(real 12-298s, crystal 1.9-62s - crystal 1.3-17x faster on every
+role, both phases). Two entries remain.
 
 - **Templating is not native-typed, and real Ansible's now is.** A
   `{{ }}` expression whose value is a YAML int renders here as the
