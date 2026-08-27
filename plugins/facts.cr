@@ -364,6 +364,15 @@ def gather_os_facts(facts)
   userspace = capture("rpm", ["--eval", "%{_arch}"]) if userspace.empty?
   userspace = arch if userspace.empty?
   facts["ansible_userspace_architecture"] = userspace unless userspace.empty?
+
+  # ansible_userspace_bits ("64" / "32") - real Ansible derives this from
+  # getconf LONG_BIT (found via gantsign.ansible-role-golang's
+  # vars/architecture/{{ ansible_facts.architecture }}-{{ userspace_bits }}.yml
+  # include chain, which real Ansible resolves and crystal-ansible didn't).
+  long_bits = capture("getconf", ["LONG_BIT"])
+  long_bits = "64" if long_bits.empty? && arch =~ /64/
+  long_bits = "32" if long_bits.empty? && !arch.empty?
+  facts["ansible_userspace_bits"] = long_bits unless long_bits.empty?
 end
 
 # Detect whether we're running inside a container/VM, following the same

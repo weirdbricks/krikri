@@ -605,6 +605,21 @@ module CrystalPlay
         # contends for the dpkg lock - wrap with lock_timeout retry.
         upgrade_result = apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold #{pkg_list}", lock_timeout, ->remote_exec(String))
 
+        # apt-get exits 100 when a package can't be located at all
+        # ("E: Unable to locate package sensu" - e.g. a repo that carries
+        # no candidate for this release). That's a hard failure the way
+        # real Ansible's apt module fails with "No package matching X is
+        # available", NOT a clean "already at latest" - the previous code
+        # fell through to success here (found via buluma.sensu-install,
+        # where packagecloud's sensu/stable repo has no jammy candidate).
+        if upgrade_result[:exit_code] != 0
+          return PluginResult.new(
+            changed: changed,
+            failed: true,
+            msg: "Failed to install latest: #{upgrade_result[:stderr]}"
+          )
+        end
+
         # "N upgraded, M newly installed, ..." is apt's own reliable,
         # locale-stable summary line - checking for the English phrase
         # "already the newest version" (the previous approach) missed

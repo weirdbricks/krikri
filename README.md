@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.625-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.627-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -387,6 +387,14 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.627`** - round 191 (60 new roles, fresh server pair per role,
+  each run twice per engine): `apt state: latest` now fails when apt-get
+  can't locate a package instead of reporting "already at latest" with
+  rc=0; verified against `buluma.sensu-install`. Full per-role timings in
+  `ROLES_TESTED.md`.
+- **`0.9.626`** - round 191: new `ansible_userspace_bits` fact;
+  `gantsign.ansible-role-golang`'s include-vars chain now resolves
+  identically to real ansible.
 - **`0.9.625`** - six round-190 fixes from a 60-role marathon (55 same-rc,
   11 divergences, 6 real engine bugs): `.yaml` main-file roles loaded an
   EMPTY defaults/vars/tasks set (ara_api/handbrake); `command:` +

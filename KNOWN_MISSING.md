@@ -17,6 +17,71 @@ is the record.
 
 ## Real gaps (worth revisiting)
 
+## Round 191 (60-role marathon, fresh G3.2GB pair per role, cold+warm both engines, 0.9.625 → 0.9.627)
+
+Two real bugs found and fixed, one open bug documented, one module gap
+recorded; 60 roles run (10 of the original 60 picks were dead upstream on
+Galaxy - GitHub tag 404s - and were replaced in-round; every role ran on
+its own freshly-provisioned server pair, each engine run twice).
+
+**Fixed 0.9.626 - `ansible_userspace_bits` fact missing.**
+`plugins/facts.cr` never set it (`ansible_userspace_architecture` was
+there, its sibling wasn't). `gantsign.ansible-role-golang`'s first task
+chain is `include_vars:
+vars/architecture/{{ ansible_facts.architecture }}-{{ ansible_facts.
+userspace_bits }}.yml`, so the role died before touching the network
+while real ansible proceeded to (and failed on) a dead Google Storage
+403. Re-verified on a fresh pair with 0.9.626: crystal now loads the
+same version vars and fails at the identical upstream 403 - parity.
+
+**Fixed 0.9.627 - `apt state: latest` ignored apt-get's exit code.**
+`plugins/apt.cr` `handle_latest` only looked for the
+"N upgraded, M newly installed" summary line; when apt-get exits 100
+("E: Unable to locate package sensu" - packagecloud's sensu/stable repo
+carries no jammy candidate), summary was nil and the fallback
+`exit_code == 0` concluded "already at latest version", changed=false,
+rc=0. Real ansible fails with "No package matching 'sensu' is
+available". Found via `buluma.sensu-install` (py rc=2, crystal rc=0);
+re-verified on a fresh pair with 0.9.627: both engines rc=2, identical.
+
+**Open bug - recursive re-templating of command args containing literal
+`{{ ... }}` (gantsign.helm).** Described under "Real gaps" above.
+
+**Non-divergence strictness differences recorded (both engines fail,
+different reasons):** `gantsign.gitkraken` (2.19 rejects legacy
+`always_run` on a `uri` task; crystal parsed it and continued to a 404)
+and `andrewrothstein.cassandra-cluster` (2.19 rejects `become_user` on
+a TaskInclude; crystal proceeded to a dead Oracle JDK 400).
+
+**Environmental noise (both engines fail identically - not bugs):**
+stale apt mirror 404s for pinned versions (airflow, awscli, azurecli,
+binpack, gnome, mate, obsproject, rabbitvcs), dead upstream download
+URLs (apacheds, bitcoin_core, cassandra, azure_pipelines_agent, ceph
+repo), and Alpine-only packages on Ubuntu (alpine_iso_build).
+
+Times for the round (all 60 roles, per-role cold/warm py-vs-crystal)
+are recorded in `ROLES_TESTED.md`'s round-191 rows.
+
+## Real gaps (worth revisiting)
+
+- **Recursive re-templating of command args containing literal
+  non-Jinja `{{ ... }}` text (OPEN, found round 191 / 0.9.627).**
+  `gantsign.helm` runs `command: "{{ helm_install_dir }}/helm version
+  --client --template {{ \"'{{ if .Version }}...{{ else }}...{{ end
+  }}'\" }}"` - the Jinja expression's *value* itself contains Go-template
+  braces. crystal-ansible re-evaluates the already-rendered string and
+  dies with `'else' is undefined`; real ansible passes the literal
+  through (role completes, py ok / crystal fail). Same documented bug
+  class as earlier recursive-re-templating fixes but in the command-arg
+  path; the other two fixes this round (below) were closed same-day.
+
+- **`ansible.builtin.git_config` module unimplemented (round 191).**
+  `gantsign.git_credential_manager` needs it (py ok, crystal rc=4
+  "unavailable modules"). Same class as the `cronvar`/`zypper` gaps
+  below but reachable on an Ubuntu host, hence listed here rather than
+  as a scope cut.
+
+
 Round 190 (60-role marathon, fresh Atlantic.net pair per role, cold+warm
 both engines) found and fixed six more engine bugs (all in 0.9.625):
 
