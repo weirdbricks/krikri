@@ -1132,13 +1132,12 @@ module CrystalPlay
     # (not standard Jinja2): searches *pattern* anywhere in the target
     # (Python `re.search`, not a full match), and with a backreference-
     # style second argument (`'\\1'`) returns that captured group's text
-    # instead of the whole match. No match resolves to Undefined -
-    # ported from `FilterEngine`'s own version (see that file's own
-    # comment on why Undefined rather than an empty string: a caller
-    # chaining `| first` needs a real miss, not a silently-succeeding
-    # empty match). Found missing there via konstruktoid-hardening's own
-    # `sshd_version.stderr_lines | regex_search('OpenSSH_(...)', '\\1')
-    # | first`.
+    # instead of the whole match. No match resolves to Python None/JSON
+    # null - real Ansible's own return value (NOT undefined), so a
+    # downstream `is not none` sees the miss and `| default(...)` without
+    # a truthy second arg does not fire, same as real Jinja. Found
+    # missing there via konstruktoid-hardening's own `sshd_version.
+    # stderr_lines | regex_search('OpenSSH_(...)', '\\1') | first`.
     Crinja.filter({pattern: Crinja::UNDEFINED, group_ref: ""}, :regex_search) do
       pattern = arguments["pattern"].to_s
       group_ref = arguments["group_ref"].to_s
@@ -1150,7 +1149,7 @@ module CrystalPlay
           index = group_ref.gsub(/\D/, "").to_i?
           index ? match[index]? : nil
         end
-      end || Crinja::UNDEFINED
+      end || nil
     end
 
     # `regex_findall(pattern, multiline=False, ignorecase=False)` - real

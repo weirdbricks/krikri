@@ -3720,8 +3720,11 @@ module CrystalPlay
       if task.async_seconds && !resolve_task_check_mode(task, wire_vars)
         # async: writes this config verbatim to a job file; the detached
         # __async_run process resolves become:/become_user: back out of
-        # it via the JSON::Any entry point, exactly as before.
-        return apply_changed_failed_when(task, execute_async(task, exec_host, config), vars_context, host)
+        # it via the JSON::Any entry point, exactly as before. Remote
+        # hosts take the SSH fire-and-forget path inside execute_async
+        # (needs the substitutor/become_user context the local path
+        # re-derives itself).
+        return apply_changed_failed_when(task, execute_async(task, exec_host, config, vars_context, substitutor, substituted_become_user), vars_context, host)
       end
 
       # The same become resolution and validation resolve_become used to
@@ -3764,17 +3767,19 @@ module CrystalPlay
     # binary, not a Fiber, so the job survives even if the poll loop or
     # the whole playbook run finishes first - closer to how real Ansible's
     # background job outlives the control connection). Local connections
-    # only: genuine remote async needs a process that survives the SSH
-    # session ending, which this codebase's plain exec-over-SSH connection
-    # model doesn't support - a documented scope cut, not an oversight.
-    private def execute_async(task : Task, exec_host : Host, config_json : String) : JSON::Any
+    # use that path; REMOTE connections (round 189: mrlesmithjr.
+    # change-hostname's own `shutdown -r now` + `async: 1`/`poll: 0`
+    # reboot idiom) previously failed outright ("async: is only supported
+    # for local connections"), so the host never rebooted while real
+    # Ansible's fire-and-forget ran it. Remote async now mirrors real
+    # Ansible's ~/.ansible_async model: the plugin binary is uploaded,
+    # then nohup-launched detached on the target with its stdout (the
+    # module's own JSON result) collected into ~/.ansible_async/<jid>
+    # via an atomic tmp+mv, and poll:ed by cat-ing that file over SSH.
+    private def execute_async(task : Task, exec_host : Host, config_json : String, vars : Hash(String, JSON::Any), substitutor : VarSubstitutor? = nil, substituted_become_user : String? = nil) : JSON::Any
       is_local = exec_host.vars["ansible_connection"]?.try(&.as_s?) == "local" || exec_host.name == "localhost" || exec_host.name == "127.0.0.1"
       unless is_local
-        return JSON.parse({
-          "changed" => false,
-          "failed"  => true,
-          "msg"     => "async: is only supported for local connections in crystal-ansible",
-        }.to_json)
+        return execute_remote_async(task, exec_host, config_json, vars, substitutor, substituted_become_user)
       end
 
       jid = AsyncJobs.generate_jid
@@ -3810,6 +3815,87 @@ module CrystalPlay
         sleep poll.seconds
         if status = AsyncJobs.read_status(jid)
           return status if AsyncJobs.finished?(status)
+        end
+        break if Time.instant >= deadline
+      end
+
+      JSON.parse({
+        "changed"        => false,
+        "failed"         => true,
+        "msg"            => "async task did not complete within #{task.async_seconds} seconds",
+        "ansible_job_id" => jid,
+      }.to_json)
+    end
+
+    # The remote-connection half of async: - see execute_async's own
+    # comment. Detached launch (poll: 0 returns immediately, real
+    # fire-and-forget semantics: the `shutdown -r now` idiom kills the
+    # SSH session the moment it starts, which is the point) plus an
+    # optional poll loop reading the job's status file back over SSH.
+    private def execute_remote_async(task : Task, exec_host : Host, config_json : String, vars : Hash(String, JSON::Any), substitutor : VarSubstitutor?, substituted_become_user : String?) : JSON::Any
+      # Same become resolution + validation the non-async remote path
+      # applies at its own call site.
+      become = false
+      become_user = nil
+      if substitutor && resolve_task_become(task, substitutor)
+        become = true
+        candidate = substituted_become_user
+        become_user = (candidate.nil? || candidate.empty?) ? "root" : candidate
+        unless PluginManager.valid_become_user?(become_user)
+          return JSON.parse({
+            "changed" => false,
+            "failed"  => true,
+            "msg"     => "become_user #{become_user.inspect} is not a valid username",
+          }.to_json)
+        end
+      end
+
+      PluginManager.ensure_uploaded(exec_host, task.module_name, vars)
+      target = PluginManager.remote_plugin_target(task.module_name, become, become_user)
+      connection_host = PluginManager.get_connection_host(exec_host, vars)
+      user = exec_host.user || "root"
+      identity_file = vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
+
+      jid = AsyncJobs.generate_jid
+      dir = "~/.ansible_async"
+      encoded = Base64.strict_encode(config_json)
+      # base64 alphabet can't break shell quoting; the tmp+mv makes the
+      # status file's appearance atomic for the poll loop below (a
+      # partial stdout write would otherwise parse as garbage mid-read).
+      launch = <<-SCRIPT
+        mkdir -p #{dir}
+        echo '#{encoded}' | base64 -d > #{dir}/#{jid}.cfg
+        nohup sh -c '#{target} < #{dir}/#{jid}.cfg > #{dir}/#{jid}.tmp 2>&1; mv #{dir}/#{jid}.tmp #{dir}/#{jid}' >/dev/null 2>&1 &
+      SCRIPT
+
+      launched = SSHManager.exec_script(connection_host, user, launch, exec_host.port, identity_file: identity_file)
+      if launched[:exit_code] != 0
+        return JSON.parse({
+          "changed" => false,
+          "failed"  => true,
+          "msg"     => "remote async launch failed: #{launched[:stderr].strip}",
+        }.to_json)
+      end
+
+      poll = task.poll_seconds || 10
+      if poll <= 0
+        return JSON.parse({
+          "changed"        => true,
+          "started"        => 1,
+          "finished"       => 0,
+          "ansible_job_id" => jid,
+          "msg"            => "Job started: #{jid}",
+        }.to_json)
+      end
+
+      deadline = Time.instant + task.async_seconds.not_nil!.seconds
+      loop do
+        sleep poll.seconds
+        check = SSHManager.exec_script(connection_host, user, "cat #{dir}/#{jid} 2>/dev/null", exec_host.port, identity_file: identity_file)
+        if (output = check[:stdout].strip).size > 0
+          if status = (JSON.parse(output) rescue nil)
+            return status
+          end
         end
         break if Time.instant >= deadline
       end

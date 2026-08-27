@@ -10,12 +10,16 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.623`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.624`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
+
+Round 189's three divergences (list-form `failed_when:` filter-chain
+false-fail, folded multi-line compound `when:` silent-skip, `async:`
+over SSH refused) were all fixed in 0.9.624 - see git log.
 
 Everything that used to be here is fixed - the nested-undefined chain
 (`0.9.599`), `notify:` validation timing (`0.9.600`), the

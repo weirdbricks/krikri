@@ -525,11 +525,16 @@ module CrystalPlay
           # value (Python re.search, not a full match), and with a
           # backreference-style second argument (`'\\1'`) returns that
           # captured group's text instead of the whole match. No match
-          # at all resolves to "undefined" (matching the general
-          # unresolved-lookup convention elsewhere in this evaluator),
-          # not an empty string, so a caller chaining `| first` (real
-          # Ansible would get `None` back and typically guards with
-          # `default(...)`) doesn't silently succeed on bogus data.
+          # at all resolves to Python None/JSON null - matching real
+          # Ansible exactly (it returns None, NOT undefined), so a
+          # downstream `is not none` test sees the miss
+          # (buluma.cve_2024_3094's own list-form failed_when gates on
+          # exactly that, round 189: the old "undefined" sentinel string
+          # here made `is not none` TRUE and failed a succeeding task)
+          # and `| default(...)` without a truthy second arg does NOT
+          # fire, same as real Jinja. A caller chaining `| first` on a
+          # no-match now fails the way real Ansible's `None | first`
+          # does, instead of silently succeeding on bogus data.
           # Found via konstruktoid-hardening's own `sshd_version.
           # stderr_lines | regex_search('OpenSSH_(...)', '\\1') | first`
           # (extracting the installed OpenSSH version) - previously
@@ -548,7 +553,7 @@ module CrystalPlay
               JSON::Any.new(match[0])
             end
           else
-            JSON::Any.new("undefined")
+            JSON::Any.new(nil)
           end
         when "regex_findall"
           # regex_findall(pattern, multiline=False, ignorecase=False) -

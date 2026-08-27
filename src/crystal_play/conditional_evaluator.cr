@@ -101,6 +101,21 @@ module CrystalPlay
       # `(` breaks lookup/split (left operand becomes "(os_family "). Only
       # strip when the parens enclose the *entire* remaining expression.
       condition = condition.strip
+      # YAML folded (`>`) / literal (`|`) block scalars put REAL newlines
+      # (plus runs of indentation spaces) into when:/changed_when:/
+      # failed_when:/until: strings whenever a continuation line is more
+      # indented than the block's own base indentation (equal-indent lines
+      # fold to single spaces, more-indented ones keep their line breaks).
+      # Real Ansible evaluates conditions through a real Python/Jinja
+      # parser where inter-token whitespace is irrelevant; this
+      # hand-rolled evaluator splits on literal " and "/" or "/etc. and
+      # so a newline INSIDE an operand silently mis-splits the condition
+      # - `mrlesmithjr.network-tweaks`' own `(x is defined and\n  x) and
+      # (item.set is defined and\n    item.set)` evaluated FALSE for every
+      # loop item while real Ansible ran them (round 189). Collapse every
+      # whitespace run OUTSIDE string literals to a single space, before
+      # any operator splitting happens.
+      condition = normalize_condition_whitespace(condition)
       condition = unwrap_outer_parens(condition)
 
       # Handle the Python/Jinja2 conditional (ternary) expression `X if
@@ -919,6 +934,49 @@ module CrystalPlay
       end
     end
 
+    # Quote-aware whitespace normalization for condition strings - see
+    # evaluate's own comment for the YAML folded-scalar motivation.
+    # Whitespace INSIDE single/double-quoted string literals is preserved
+    # byte-for-byte (a comparison against a multi-word literal is
+    # unaffected); only inter-token whitespace runs are collapsed to one
+    # space. Backslash escapes inside quotes don't terminate the quote.
+    private def self.normalize_condition_whitespace(condition : String) : String
+      return condition unless condition.includes?('\n') || condition.includes?('\t') || condition.includes?("  ")
+
+      String.build do |buf|
+        in_quote = false
+        quote_char = ' '
+        escaped = false
+        pending_space = false
+        condition.each_char do |ch|
+          if in_quote
+            buf << ch
+            if escaped
+              escaped = false
+            elsif ch == '\\'
+              escaped = true
+            elsif ch == quote_char
+              in_quote = false
+            end
+            next
+          end
+          if ch == '"' || ch == '\''
+            buf << ' ' if pending_space
+            pending_space = false
+            in_quote = true
+            quote_char = ch
+            buf << ch
+          elsif ch.whitespace?
+            pending_space = true
+          else
+            buf << ' ' if pending_space
+            pending_space = false
+            buf << ch
+          end
+        end
+      end
+    end
+
     private def self.matches_type_test?(vars : Hash(String, JSON::Any), var_name : String, test_name : String) : Bool
       # var_name may itself be a filter-chain expression, not a bare
       # variable reference - e.g. `java_version | int is number`
@@ -932,8 +990,28 @@ module CrystalPlay
       # JSON.parse the result" pattern rerender_if_templated already
       # uses just above for re-rendering an already-resolved value.
       if var_name.includes?("|")
-        rendered = VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate(var_name)
-        value = (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+        # Route through CrinjaRenderer#evaluate_value! (structured, not
+        # render-then-parse): a filter chain whose final value is Python
+        # None - regex_search with no match, as of the round-189 fix -
+        # must reach the type test as JSON null, not as the empty STRING
+        # the String-rendering bridge turned it into (JSON.parse("")
+        # raised, the rescue substituted JSON::Any.new(""), and
+        # `(x | regex_search(...)) is not none` was TRUE for a no-match,
+        # failing a succeeding task - buluma.cve_2024_3094's own
+        # list-form failed_when). evaluate_value! returns nil for
+        # UNDEFINED (a genuinely missing variable), which falls back to
+        # the old render-then-parse path below for that case.
+        structured = begin
+          VariableSubstitutor::CrinjaRenderer.new(vars).evaluate_value!(var_name)
+        rescue
+          nil
+        end
+        if structured
+          value = structured
+        else
+          rendered = VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate(var_name)
+          value = (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+        end
       else
         value = if var_name.includes?(".") || var_name.includes?("[")
                   VariableSubstitutor::VariableLookup.new(vars).resolve(var_name)

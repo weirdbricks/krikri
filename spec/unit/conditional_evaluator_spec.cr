@@ -1040,4 +1040,37 @@ describe CrystalPlay::ConditionalEvaluator do
       ).should be_false
     end
   end
+
+  describe "round 189 regressions" do
+    it "evaluates a YAML folded-scalar condition with embedded newlines from more-indented continuation lines" do
+      # mrlesmithjr.network-tweaks: `(a is defined and\n  a) and (item.set is\n  #   defined and\n    item.set)` - real newlines in the condition string silently
+      # evaluated FALSE for every loop item before the whitespace
+      # normalizer; real Ansible (real Python parser) runs them.
+      v = vars({"a" => true} of String => JSON::Any::Type)
+      condition = "(a is defined and\n              a) and\n              (b is defined and\n                b)"
+      v2 = vars({"a" => true, "b" => true} of String => JSON::Any::Type)
+      CrystalPlay::ConditionalEvaluator.evaluate(condition, v2).should be_true
+      v3 = vars({"a" => true, "b" => false} of String => JSON::Any::Type)
+      CrystalPlay::ConditionalEvaluator.evaluate(condition, v3).should be_false
+      # untouched single-space conditions still work
+      CrystalPlay::ConditionalEvaluator.evaluate("a is defined and a", v).should be_true
+    end
+
+    it "treats a regex_search no-match as None for `is not none` (filter chain over a registered result)" do
+      # buluma.cve_2024_3094: `(xz_version.stdout | regex_search("5\\.6\\.(0|1)")) is not none`
+      # must be FALSE when the regex does not match - the old "undefined"
+      # sentinel string made it TRUE and failed a succeeding task.
+      v = vars({"a" => true} of String => JSON::Any::Type)
+      v["xz_version"] = JSON::Any.new({"stdout" => JSON::Any.new("xz (XZ Utils) 5.2.5\nliblzma 5.2.5")})
+      CrystalPlay::ConditionalEvaluator.evaluate(
+        %(xz_version.stdout | ansible.builtin.regex_search("5\\.6\\.(0|1)") is not none), v
+      ).should be_false
+      # and TRUE when it does match
+      v_hit = vars({"a" => true} of String => JSON::Any::Type)
+      v_hit["xz_version"] = JSON::Any.new({"stdout" => JSON::Any.new("xz (XZ Utils) 5.6.0")})
+      CrystalPlay::ConditionalEvaluator.evaluate(
+        %(xz_version.stdout | ansible.builtin.regex_search("5\\.6\\.(0|1)") is not none), v_hit
+      ).should be_true
+    end
+  end
 end
