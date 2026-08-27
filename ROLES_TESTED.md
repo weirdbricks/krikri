@@ -49,7 +49,7 @@ or already-clean roles as if they were new.
 | gantsign.ctop | ✅ Clean (round 191, 0.9.627, Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 7.6s vs cr 5.8s; warm py 4.7s vs cr 1.3s.  |
 | gantsign.default-web-browser | ✅ Clean (round 191, 0.9.627, Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 12.4s vs cr 6.0s; warm py 7.2s vs cr 1.9s.  |
 | gantsign.fd | ✅ Clean (round 191, 0.9.627, Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 8.7s vs cr 10.1s; warm py 5.6s vs cr 1.5s.  |
-| gantsign.git_credential_manager | ❌ DIVERGENCE (round 191, 0.9.627, Ubuntu 22.04). rc cold py=0 cr=4, warm py=0 cr=4. Times: cold py 38.6s vs cr -; warm py 10.5s vs cr -. crystal rc=4: ansible.builtin.git_config module gap (documented class); py ok |
+| gantsign.git_credential_manager | ✅ Fixed (round 192, 0.9.628, Ubuntu 22.04). The git_config plugin existed since 0.9.489 but was only registered under community.general.* - added the ansible.builtin.git_config FQCN to AVAILABLE_PLUGINS. Re-verified on a fresh pair: rc=0 cold+warm both engines, idempotent warm. Real 39.8s/9.7s vs crystal 43.8s/2.4s. |
 | gantsign.git_user | ✅ Clean (round 191, 0.9.627, Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 12.5s vs cr 14.9s; warm py 3.0s vs cr 1.0s.  |
 | gantsign.gitkraken | ❌ DIVERGENCE (round 191, 0.9.627, Ubuntu 22.04). rc cold py=4 cr=2, warm py=4 cr=2. Times: cold py - vs cr -; warm py - vs cr -. both fail: py rejects legacy always_run+uri conflict; crystal parses it, dies at 404 uri; strictness difference |
 | gantsign.gnome-proxy | ✅ Clean (round 191, 0.9.627, Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 9.0s vs cr 6.0s; warm py 4.5s vs cr 1.2s.  |

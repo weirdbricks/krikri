@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.627-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.628-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -387,6 +387,10 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.628`** - round 192: `ansible.builtin.git_config` FQCN now resolves
+  to the existing git_config plugin (was only registered as
+  community.general.*); `gantsign.git_credential_manager` clean both
+  engines on a fresh pair.
 - **`0.9.627`** - round 191 (60 new roles, fresh server pair per role,
   each run twice per engine): `apt state: latest` now fails when apt-get
   can't locate a package instead of reporting "already at latest" with

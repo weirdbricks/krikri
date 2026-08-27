@@ -913,6 +913,11 @@ module CrystalPlay
       "ansible.builtin.subversion",
       "ansible.builtin.expect",
       "community.general.git_config",
+      # gantsign.git_credential_manager calls it with the ansible.builtin.
+      # prefix (round 191: rc=4 "unavailable modules" despite the plugin
+      # existing since 0.9.489 under its community.general name) -
+      # simple_plugin_name strips both namespaces to the same binary.
+      "ansible.builtin.git_config",
       "community.general.sudoers",
       "community.general.dnf_versionlock",
       "community.docker.docker_image_build",

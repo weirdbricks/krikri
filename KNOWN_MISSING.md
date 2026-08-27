@@ -75,11 +75,6 @@ are recorded in `ROLES_TESTED.md`'s round-191 rows.
   class as earlier recursive-re-templating fixes but in the command-arg
   path; the other two fixes this round (below) were closed same-day.
 
-- **`ansible.builtin.git_config` module unimplemented (round 191).**
-  `gantsign.git_credential_manager` needs it (py ok, crystal rc=4
-  "unavailable modules"). Same class as the `cronvar`/`zypper` gaps
-  below but reachable on an Ubuntu host, hence listed here rather than
-  as a scope cut.
 
 
 Round 190 (60-role marathon, fresh Atlantic.net pair per role, cold+warm
