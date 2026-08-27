@@ -79,7 +79,14 @@ module CrystalPlay
 
       url = @params["url"]?
       data = @params["data"]?
-      unless url || data
+      # file: - path to a key file ON THE TARGET, matching real Ansible's
+      # own apt_key:file: param (mrlesmithjr.ansible_es_apm_server's
+      # "debian | Adding Elasticsearch GPG Key" copies the key to /tmp first
+      # then points file: at it, round 190). Previously only url:/data: were
+      # accepted, so file: failed with "Missing required parameter: url or
+      # data" while real ansible imported it fine.
+      file_path = @params["file"]?
+      unless url || data || file_path
         return PluginResult.new(changed: false, failed: true, msg: "Missing required parameter: url or data")
       end
 
@@ -109,8 +116,19 @@ module CrystalPlay
           unless result[:exit_code] == 0
             return PluginResult.new(changed: false, failed: true, msg: "Failed to fetch key from #{url}: #{result[:stderr]}")
           end
-        else
+        elsif data
           File.write(tmp_path, data.not_nil!)
+        else
+          # file: is a path on the TARGET (real Ansible's own apt_key:file:
+          # semantics - mrlesmithjr.ansible_es_apm_server copies the key to
+          # /tmp first, then points file: at that path). Stage it into the
+          # same tmp the data:/url: branches use so the rest of the import
+          # path is unchanged. remote_exec's cwd is the target's root, and
+          # a plain cp keeps us from re-reading the file through Crystal.
+          result = remote_exec("cp #{shell_single_quote(file_path.not_nil!)} #{tmp_path}")
+          unless result[:exit_code] == 0
+            return PluginResult.new(changed: false, failed: true, msg: "Failed to read key file #{file_path}: #{result[:stderr]}")
+          end
         end
 
         # Real Ansible's apt_key: is idempotent even when only url:/data:

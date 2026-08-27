@@ -317,8 +317,8 @@ module CrystalPlay
     # sweep) and Python-repr text is not valid JSON. See
     # CrinjaRenderer#evaluate_value!'s comment for the same trap found
     # from the other side.
-    def substitute(text : String, strict : Bool = false, output : Bool = false) : String
-      rendered = substitute_impl(text, strict, output)
+    def substitute(text : String, strict : Bool = false, output : Bool = false, native : Bool = false) : String
+      rendered = substitute_impl(text, strict, output, native)
       if rendered.includes?("$ANSIBLE_VAULT")
         # Real Ansible distinguishes the two cases in its message:
         # nothing supplied at all, versus supplied secrets none of which
@@ -334,7 +334,33 @@ module CrystalPlay
       rendered
     end
 
-    private def substitute_impl(text : String, strict : Bool = false, output : Bool = false) : String
+    # native (set_fact native_containers) helper: a BARE variable/dotted
+    # reference whose value is a JSON scalar (int/float/bool) keeps its
+    # native JSON text instead of the evaluator's stringification -
+    # real Ansible's `{{ int_var }}` inside a native container preserves
+    # the int, and buluma.ara_api's own reconciled configuration then
+    # wrote `DATABASE_CONN_MAX_AGE: 0` / `DEBUG: false` where this engine
+    # wrote strings `"0"` / `"False"` (Django then crashed on
+    # `float + str`, round 190). Anything else (filters, literals,
+    # strings, containers - containers already arrive as JSON text)
+    # falls back to the ordinary evaluator.
+    private def native_scalar(expr : String, evaluator) : String?
+      return nil unless expr.matches?(VariableSubstitutor::ExpressionEvaluator::REGEX_PLAIN_REFERENCE)
+      value = begin
+        VariableSubstitutor::VariableLookup.new(@vars).resolve(expr)
+      rescue
+        nil
+      end
+      return nil unless value
+      case value.raw
+      when Int64, Float64, Bool
+        value.to_s
+      else
+        nil
+      end
+    end
+
+    private def substitute_impl(text : String, strict : Bool = false, output : Bool = false, native : Bool = false) : String
       # A task param whose ENTIRE value is block-tag Jinja with no `{{
       # }}` interpolation anywhere at all (`{% if x %}a{% else %}b{%
       # endif %}`, no braces-braces span) - real, valid Ansible/Jinja2
@@ -371,7 +397,11 @@ module CrystalPlay
       result = expand_mustache_spans(text) do |inner|
         stripped = inner.empty? || (!inner[0].whitespace? && !inner[-1].whitespace?) ? inner : inner.strip
         raise_if_strict_undefined(stripped) if strict
-        output ? evaluator.evaluate_output(stripped) : evaluator.evaluate(stripped)
+        if native && (nv = native_scalar(stripped, evaluator))
+          nv
+        else
+          output ? evaluator.evaluate_output(stripped) : evaluator.evaluate(stripped)
+        end
       end
 
       # Ansible re-templates a rendered result that still contains "{{" -
@@ -413,7 +443,11 @@ module CrystalPlay
                         expand_mustache_spans(result) do |inner|
                           stripped = inner.strip
                           raise_if_strict_undefined(stripped) if strict
-                          output ? evaluator.evaluate_output(stripped) : evaluator.evaluate(stripped)
+                          if native && (nv = native_scalar(stripped, evaluator))
+                            nv
+                          else
+                            output ? evaluator.evaluate_output(stripped) : evaluator.evaluate(stripped)
+                          end
                         end
                       end
         break if next_result == result

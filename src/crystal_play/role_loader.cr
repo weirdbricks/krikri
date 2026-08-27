@@ -250,13 +250,20 @@ module CrystalPlay
       # (prometheus.prometheus's own roles write it both ways across
       # different calls - `tasks_from: install.yml` as well as bare
       # names elsewhere) - append .yml only when it's not already there.
-      tasks_filename = if tasks_from
-                         (tasks_from.ends_with?(".yml") || tasks_from.ends_with?(".yaml")) ? tasks_from : "#{tasks_from}.yml"
-                       else
-                         "main.yml"
-                       end
-      role_tasks = load_tasks_file(File.join(role_dir, "tasks", tasks_filename), play, known_vars)
-      role_handlers = load_tasks_file(File.join(role_dir, "handlers", "main.yml"), play, known_vars)
+      tasks_path = if tasks_from
+                     if tasks_from.ends_with?(".yml") || tasks_from.ends_with?(".yaml") || tasks_from.ends_with?(".json")
+                       File.join(role_dir, "tasks", tasks_from)
+                     else
+                       # Real Ansible resolves a bare tasks_from: name
+                       # against ANY of its accepted extensions.
+                       ext = %w[yml yaml json].find { |e| File.exists?(File.join(role_dir, "tasks", "#{tasks_from}.#{e}")) }
+                       File.join(role_dir, "tasks", "#{tasks_from}.#{ext || "yml"}")
+                     end
+                   else
+                     find_main_file(File.join(role_dir, "tasks")) || File.join(role_dir, "tasks", "main.yml")
+                   end
+      role_tasks = load_tasks_file(tasks_path, play, known_vars)
+      role_handlers = load_tasks_file(find_main_file(File.join(role_dir, "handlers")) || File.join(role_dir, "handlers", "main.yml"), play, known_vars)
 
       # The argument-spec "Validating arguments..." task only applies to
       # the role's own default ("main") entry point, not an arbitrary
@@ -309,7 +316,7 @@ module CrystalPlay
     # its own - see `load_role`'s `dependency_defaults` comment.
     private def self.load_meta_dependencies(role_dir : String, play : Play, playbook_dir : String, seen : Set(String), tasks : Array(Task), handlers : Array(Task), parent_names : Array(String) = [] of String, parent_paths : Array(String) = [] of String, parent_defaults : Hash(String, JSON::Any) = Hash(String, JSON::Any).new, play_scope : Bool = false) : Hash(String, JSON::Any)
       collected = Hash(String, JSON::Any).new
-      meta_path = File.join(role_dir, "meta", "main.yml")
+      meta_path = find_main_file(File.join(role_dir, "meta")) || File.join(role_dir, "meta", "main.yml")
       return collected unless File.exists?(meta_path)
 
       meta_yaml = YAML.parse(Vault.maybe_decrypt(File.read(meta_path)))
@@ -494,15 +501,30 @@ module CrystalPlay
     # came back undefined, tripping the role's own "fail if both
     # tunnel networks are disabled" validation check that real Ansible
     # never reaches (both are non-empty by default).
+    def self.find_main_file(dir : String) : String?
+      # Real Ansible's loader accepts .yml/.yaml/.json interchangeably for
+      # every main-file lookup. Only main.yml was checked before, so a
+      # role shipping defaults/main.YAML (buluma.ara_api does exactly
+      # that - every defaults var then undefined, first observed as
+      # `'ara_api_root_dir' is undefined` while real ansible resolved it
+      # fine, round 190) silently loaded an EMPTY defaults hash.
+      %w[yml yaml json].each do |ext|
+        candidate = File.join(dir, "main.#{ext}")
+        return candidate if File.exists?(candidate)
+      end
+      nil
+    end
+
     def self.load_vars_file_main(dir : String) : Hash(String, JSON::Any)
-      single = File.join(dir, "main.yml")
-      return load_vars_file(single) if File.exists?(single)
+      if found = find_main_file(dir)
+        return load_vars_file(found)
+      end
 
       main_dir = File.join(dir, "main")
       return Hash(String, JSON::Any).new unless Dir.exists?(main_dir)
 
       result = Hash(String, JSON::Any).new
-      Dir.glob(File.join(main_dir, "*.yml")).sort.each do |path|
+      (Dir.glob(File.join(main_dir, "*.yml")) + Dir.glob(File.join(main_dir, "*.yaml")) + Dir.glob(File.join(main_dir, "*.json"))).sort.each do |path|
         load_vars_file(path).each { |key, value| result[key] = value }
       end
       result

@@ -145,6 +145,21 @@ module CrystalPlay
         command_name = cmd_parts.first
         args = cmd_parts[1..]
 
+        # Process.new's `env:` sets the CHILD's environment, but the
+        # executable lookup itself (execvp) searches the PARENT's PATH -
+        # so `environment: PATH: <venv>/bin` + `command: ara-manage`
+        # failed with "No such file or directory" even though the binary
+        # exists in the overridden PATH (real Ansible runs commands via
+        # /bin/sh -c with the env exported FIRST, so its lookup uses the
+        # new PATH - buluma.ara_api's migration task, round 190).
+        # Resolve the executable against the task's own PATH override
+        # before spawning; fall back to the bare name (parent PATH
+        # lookup, unchanged behavior without an override).
+        if (task_env = task_environment) && (override_path = task_env["PATH"]?)
+          resolved = resolve_in_path(command_name, override_path)
+          command_name = resolved if resolved
+        end
+
         process = Process.new(
           command_name,
           args,
@@ -228,6 +243,20 @@ module CrystalPlay
 
       env = Hash(String, String).from_json(env_json)
       env.empty? ? nil : env.transform_values { |v| v.as(String?) }
+    end
+
+    # First executable file named *name* under the colon-separated
+    # *path_override* (the task's own environment: PATH), or nil when the
+    # name already contains a path separator (absolute/relative - used
+    # verbatim, parent-process semantics) or nothing matches.
+    private def resolve_in_path(name : String, path_override : String?) : String?
+      return nil if name.includes?('/')
+      path_override.try &.split(':').each do |dir|
+        next if dir.empty?
+        candidate = File.join(dir, name)
+        return candidate if File.executable?(candidate) && !File.directory?(candidate)
+      end
+      nil
     end
 
     private def parse_command(cmd : String) : Array(String)

@@ -1453,6 +1453,34 @@ module CrystalPlay
       # OS-version-specific vars files); any other lookup type resolves
       # to "undefined" rather than raising, matching how every other
       # unsupported construct in this evaluator degrades.
+
+      # Defaults matching ansible-core 2.19's own constants when no
+      # ansible.cfg / env override is set. Only the options real roles
+      # actually look up (buluma.multi's COLOR_* / DEFAULT_* / RETRY_*)
+      # are covered; anything else returns "" rather than inventing a value.
+      private def ansible_config_value(name : String) : String
+        case name.upcase
+        when "COLOR_OK" then "green"
+        when "COLOR_CHANGED" then "yellow"
+        when "COLOR_SKIP" then "cyan"
+        when "COLOR_UNREACHABLE" then "bright red"
+        when "COLOR_ERROR", "COLOR_FAILED" then "red"
+        when "COLOR_DEBUG" then "dark gray"
+        when "COLOR_VERBOSE" then "blue"
+        when "COLOR_WARN" then "bright purple"
+        when "DEFAULT_BECOME_USER" then "root"
+        when "DEFAULT_ROLES_PATH" then "~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles"
+        when "DEFAULT_HOST_LIST" then "/etc/ansible/hosts"
+        when "RETRY_FILES_SAVE_PATH" then ""
+        when "DEFAULT_TIMEOUT" then "10"
+        when "DEFAULT_FORKS" then "5"
+        else
+          # Honour a matching ANSIBLE_<NAME> env var when present (real
+          # Ansible's own resolution order: env > cfg > default).
+          ENV["ANSIBLE_#{name.upcase}"]? || ""
+        end
+      end
+
       private def evaluate_lookup(args : String) : String
         parts = split_top_level_commas(args)
         lookup_type = parts[0]?.try { |part| quoted_string_literal(part.strip) }.try(&.as_s?)
@@ -1479,6 +1507,28 @@ module CrystalPlay
           # real Vault version used to build the download URL.
           var_name = parts[1]?.try { |part| resolve_plus_operand(part.strip) }.try(&.as_s?)
           var_name ? (ENV[var_name]? || "") : "undefined"
+        when "config"
+          # lookup('config', 'OPTION'[, 'OPTION2', ...], wantlist=True) -
+          # real Ansible's own config lookup plugin, returns the current
+          # value of one or more ansible.cfg / ANSIBLE_* settings from the
+          # CONTROLLER. Multi-arg form with wantlist=True returns a real
+          # list (buluma.multi's own `loop: "{{ lookup('config', 'COLOR_OK',
+          # 'COLOR_CHANGED', 'COLOR_SKIP', wantlist=True) }}"`, round 190 -
+          # previously unimplemented, fell through to "undefined", so the
+          # loop bound `item` to nothing and the debug failed with
+          # `'item' is undefined`). Defaults match ansible-core 2.19's own
+          # DEFAULT_*/COLOR_* constants when no ansible.cfg override is set.
+          wantlist = parts[1..].any? { |part| part.strip.downcase.starts_with?("wantlist=true") }
+          names = parts[1..].reject { |part| part.strip.downcase.starts_with?("wantlist=") }.compact_map { |part|
+            quoted_string_literal(part.strip).try(&.as_s?) || evaluate(part.strip).presence
+          }
+          return "undefined" if names.empty?
+          values = names.map { |n| ansible_config_value(n) }
+          if wantlist || names.size > 1
+            values.to_json
+          else
+            values[0]
+          end
         when "url"
           # lookup('url', url_expr, wantlist=True) - real Ansible's own
           # url lookup plugin, fetching a URL from the CONTROLLER (same

@@ -2099,60 +2099,49 @@ module CrystalPlay
     private def render_task_vars(task : Task, vars_context : Hash(String, JSON::Any), host_name : String)
       task.vars.each_key do |key|
         raw = vars_context[key]?
-        next unless raw && (raw_string = raw.raw.as?(String)) && raw_string.includes?("{{")
+        next unless raw
 
-        if native = evaluate_bare_mustache_preserving_type(raw_string, vars_context)
-          vars_context[key] = native
-          next
-        end
-
-        # Task-level `vars:` are rendered here UNCONDITIONALLY, before
-        # `when:` is even checked (this method runs inside
-        # build_vars_context, which builds the very context `when:`
-        # itself gets evaluated against) - real Ansible's own per-key
-        # lazy Jinja templating means a `vars:` entry never gets touched
-        # at all if the task ends up skipped by `when:` and nothing else
-        # references it first. A `vars:` expression that legitimately
-        # raises on this host (`| first` on a genuinely empty sequence,
-        # even with `| default(None)` right after it - `first`'s own
-        # raise is deliberate and correct, matching real Jinja2/Ansible,
-        # see jinja_filters.cr/filter_engine.cr's own comments) used to
-        # crash the WHOLE task outright regardless of whether `when:`
-        # would have skipped it. Real bug found benchmarking devsec.
-        # hardening.os_hardening's own mount-hardening task: `vars:
-        # mountinfo: "{{ ansible_facts.mounts | selectattr(...) | list |
-        # first | default(None) }}"` crashed on any host missing that
-        # particular mount point, even though `when: mount.enabled |
-        # bool` is `false` by the role's own default for most of its
-        # mount entries and never references `mountinfo` at all.
-        #
-        # Fix: if evaluating THIS key raises, leave it absent from
-        # vars_context - this codebase's existing, pervasive "undefined"
-        # convention - instead of letting the exception propagate and
-        # crash the task. Correctly harmless when nothing downstream
-        # (`when:`, the task's own params) ever looks this key up, which
-        # is exactly the common case a disabled/not-applicable `when:`
-        # guard represents. Narrower than true per-key laziness (a
-        # genuinely-needed value that's ALSO broken now resolves as
-        # "undefined" rather than raising at the point of use, matching
-        # every other undefined-variable case in this codebase rather
-        # than real Ansible's own raise-on-actual-use) - not attempted
-        # here; see KNOWN_MISSING.md for why a full lazy-evaluation
-        # redesign is bigger, separately-deferred work.
+        # Walk nested Hash/Array values too - a task-level `vars:` dict
+        # like buluma.ara_api's `reconciled_configuration: { DEBUG:
+        # "{{ ara_api_debug }}", DATABASE_CONN_MAX_AGE: "{{ ara_api_
+        # database_conn_max_age }}", ... }` used to leave every nested
+        # bare-mustache as an unevaluated STRING, so set_fact later
+        # stored "False"/"0" instead of real bool/int and to_nice_yaml
+        # wrote quoted strings Django rejected (round 190). Recursing
+        # preserves the same type-preserving bare-mustache path the
+        # top-level case already uses.
         begin
-          substitutor = VarSubstitutor.new(vars: vars_context, host_name: host_name)
-          rendered = substitutor.substitute(raw_string)
-
-          # A dict/list-valued task var (mountinfo above) renders to JSON
-          # object/array text via VariableLookup#format_value - parsed back
-          # to real structure so dotted/indexed access into it
-          # (`mountinfo.device`) works, the same reasoning as set_fact's own
-          # dict/array coercion.
-          parsed = (rendered.starts_with?('{') || rendered.starts_with?('[')) ? (JSON.parse(rendered) rescue nil) : nil
-          vars_context[key] = parsed || JSON::Any.new(rendered)
+          vars_context[key] = render_task_var_value(raw, vars_context, host_name)
         rescue
+          # Same raise-to-absent convention as before: a vars: expression
+          # that legitimately raises is dropped rather than crashing the
+          # whole task when when: would have skipped it.
           vars_context.delete(key)
         end
+      end
+    end
+
+    private def render_task_var_value(value : JSON::Any, vars_context : Hash(String, JSON::Any), host_name : String) : JSON::Any
+      case raw = value.raw
+      when Hash
+        result_hash = Hash(String, JSON::Any).new
+        raw.each { |k, v| result_hash[k] = render_task_var_value(v, vars_context, host_name) }
+        JSON::Any.new(result_hash)
+      when Array
+        JSON::Any.new(raw.map { |v| render_task_var_value(v, vars_context, host_name) })
+      when String
+        return value unless raw.includes?("{{")
+
+        if native = evaluate_bare_mustache_preserving_type(raw, vars_context)
+          return native
+        end
+
+        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host_name)
+        rendered = substitutor.substitute(raw)
+        parsed = (rendered.starts_with?('{') || rendered.starts_with?('[')) ? (JSON.parse(rendered) rescue nil) : nil
+        parsed || JSON::Any.new(rendered)
+      else
+        value
       end
     end
 
@@ -3511,7 +3500,7 @@ module CrystalPlay
       substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
       begin
-        substituted_params = substitute_task_params(task.params, substitutor)
+        substituted_params = substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"))
       rescue ex
         # Same "finalization of task args failed" handling as
         # execute_task_once's own identical rescue (see there) - this
@@ -3624,7 +3613,7 @@ module CrystalPlay
       end
 
       begin
-        substituted_params = substitute_task_params(task.params, substitutor)
+        substituted_params = substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"))
       rescue ex
         # A raised exception during param substitution (e.g. lookup('url',
         # ...) hitting a real HTTP error - see ExpressionEvaluator#
@@ -5475,6 +5464,7 @@ module CrystalPlay
     private def substitute_task_params(
       params : Hash(String, String),
       substitutor : VarSubstitutor,
+      native_containers : Bool = false,
     ) : Hash(String, String)
       result = Hash(String, String).new
 
@@ -5495,8 +5485,16 @@ module CrystalPlay
         # reference-only scope of what actually raises here.
         # output: true - a module argument is final text (see
         # VarSubstitutor#substitute), so a container renders the way
-        # real Ansible renders one.
-        substituted_value = substitutor.substitute(value, strict: true, output: true)
+        # real Ansible renders one. EXCEPT for set_fact
+        # (native_containers): real Ansible keeps a set_fact: value
+        # NATIVELY typed - a container expression stays a real dict/list,
+        # not display text. Formatting it as output text here produced a
+        # Python-repr STRING fact (buluma.ara_api's own
+        # `ara_api_configuration: "{{ {ara_api_env: reconciled_configuration} }}"`
+        # became the literal `{'default': {...}}` text, which its own
+        # to_nice_yaml then quoted as a scalar and the app failed to
+        # parse, round 190).
+        substituted_value = substitutor.substitute(value, strict: true, output: !native_containers, native: native_containers)
 
         # `mode:` piped through a variable (`mode: "{{ redis_conf_dir_mode
         # }}"`, geerlingguy.redis's own style) loses its octal-ness the
@@ -6468,7 +6466,7 @@ module CrystalPlay
       # (see there) - a handler has no equivalent before this, so a
       # strict: UndefinedVariableError would have crashed the whole run.
       begin
-        substituted_params = substitute_task_params(handler.params, substitutor)
+        substituted_params = substitute_task_params(handler.params, substitutor, native_containers: handler.module_name.ends_with?("set_fact"))
       rescue ex
         result = JSON.parse({
           "changed" => false,

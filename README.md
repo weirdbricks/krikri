@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.624-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.625-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -387,6 +387,16 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.625`** - six round-190 fixes from a 60-role marathon (55 same-rc,
+  11 divergences, 6 real engine bugs): `.yaml` main-file roles loaded an
+  EMPTY defaults/vars/tasks set (ara_api/handbrake); `command:` +
+  `environment: PATH:` could not find venv binaries (execvp used the
+  parent PATH); nested task-vars kept bare-mustache values as unevaluated
+  strings; `set_fact` containers rendered as Python-repr text instead of
+  native dicts (Django: `float + str`); `apt_key: file:` and
+  `lookup('config', ..., wantlist=True)` were unimplemented. Plus facts
+  now derive user_id/dir/shell from getpwuid instead of ENV (unset in
+  non-login SSH shells).
 - **`0.9.624`** - three round-189 fixes, all live-verified on fresh hosts:
   YAML folded-scalar `when:` conditions (more-indented continuation lines
   embed real newlines) silently evaluated FALSE - every loop item skipped;

@@ -1530,6 +1530,16 @@ module CrystalPlay
       when "env"
         var_name = arg1.to_s
         Crinja::Value.new(var_name.empty? ? "" : (ENV[var_name]? || ""))
+      when "config"
+        # Multi-arg config lookup - see ExpressionEvaluator's own config
+        # branch for the full rationale (buluma.multi, round 190).
+        names = variadic_terms.map(&.to_s).reject { |t| t.downcase.starts_with?("wantlist=") || t.empty? }
+        values = names.map { |n| JinjaFilters.ansible_config_value(n) }
+        if names.size > 1 || variadic_terms.any? { |t| t.to_s.downcase.starts_with?("wantlist=true") }
+          Crinja::Value.new(values)
+        else
+          Crinja::Value.new(values[0]? || "")
+        end
       when "vars"
         name = arg1.to_s
         name.empty? ? Crinja::Value.new(nil) : env.context[name]
@@ -1678,6 +1688,28 @@ module CrystalPlay
     # Same logic as ExpressionEvaluator's own #resolve_lookup_path,
     # duplicated rather than shared - see this file's own top-of-file
     # comment on why the two evaluators don't share implementation.
+
+    def self.ansible_config_value(name : String) : String
+      case name.upcase
+      when "COLOR_OK" then "green"
+      when "COLOR_CHANGED" then "yellow"
+      when "COLOR_SKIP" then "cyan"
+      when "COLOR_UNREACHABLE" then "bright red"
+      when "COLOR_ERROR", "COLOR_FAILED" then "red"
+      when "COLOR_DEBUG" then "dark gray"
+      when "COLOR_VERBOSE" then "blue"
+      when "COLOR_WARN" then "bright purple"
+      when "DEFAULT_BECOME_USER" then "root"
+      when "DEFAULT_ROLES_PATH" then "~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles"
+      when "DEFAULT_HOST_LIST" then "/etc/ansible/hosts"
+      when "RETRY_FILES_SAVE_PATH" then ""
+      when "DEFAULT_TIMEOUT" then "10"
+      when "DEFAULT_FORKS" then "5"
+      else
+        ENV["ANSIBLE_#{name.upcase}"]? || ""
+      end
+    end
+
     def self.resolve_lookup_path(path : String, role_path : String?) : String
       return path if path.starts_with?('/')
       role_path ? File.join(role_path, "files", path) : path

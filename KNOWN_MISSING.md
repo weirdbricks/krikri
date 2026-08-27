@@ -10,12 +10,64 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.624`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.625`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
+
+Round 190 (60-role marathon, fresh Atlantic.net pair per role, cold+warm
+both engines) found and fixed six more engine bugs (all in 0.9.625):
+
+- **`main.yaml` roles loaded an EMPTY defaults/vars/tasks set.**
+  `load_vars_file_main` (and the tasks/handlers/meta main-file lookups)
+  only ever checked `main.yml` - real Ansible accepts `.yml`/`.yaml`/
+  `.json` interchangeably. `buluma.ara_api` ships `defaults/main.yaml`,
+  so EVERY defaults var was undefined (`'ara_api_root_dir' is undefined`)
+  and `buluma.handbrake`'s whole `tasks/main.yaml` role silently ran as
+  ZERO tasks (rc=0 with ok=0 while real ansible did the real work).
+  Fixed with a shared `find_main_file` across all five main-file sites.
+- **`command:` with `environment: PATH:` couldn't find venv binaries.**
+  `Process.new(env:)` sets the CHILD's environment but the executable
+  lookup (execvp) uses the PARENT's PATH - `command: ara-manage` +
+  `environment: PATH: <venv>/bin` failed "No such file or directory"
+  while real ansible (which runs via `/bin/sh -c` with the env exported
+  first) found it. The plugin now resolves the executable against the
+  task's own PATH override before spawning.
+- **Nested task-vars lost their types.** `render_task_vars` only
+  templated top-level string values, so a task-level `vars:` DICT
+  (ara_api's `reconciled_configuration: { DEBUG: "{{ ara_api_debug }}",
+  ... }`) kept every nested bare-mustache as an unevaluated STRING -
+  `set_fact` stored `"False"`/`"0"`, `to_nice_yaml` wrote quoted strings,
+  Django crashed on `float + str`. Now recursively walks Hash/Array
+  values through the same type-preserving bare-mustache path.
+- **`set_fact` container values rendered as Python-repr text.**
+  `substitute_task_params` applied `output: true` to EVERY module arg,
+  stringifying a `set_fact: cfg: "{{ {k: v} }}"` container into the
+  literal `{'default': {...}}` repr text. `set_fact` (and only set_fact)
+  now gets `output: false` + a `native:` flag that keeps bare int/float/
+  bool references as real JSON scalars (`DATABASE_CONN_MAX_AGE: 0`,
+  `DEBUG: false`).
+- **`apt_key: file:` was unimplemented** ("Missing required parameter:
+  url or data" - mrlesmithjr.ansible_es_apm_server copies the key to
+  /tmp then points file: at it). Now supported, target-side path.
+- **`lookup('config', 'OPT1', 'OPT2', ..., wantlist=True)` was
+  unimplemented** (`buluma.multi`'s color-loop failed `'item' is
+  undefined`). Both evaluators now implement it with ansible-core 2.19
+  defaults for the COLOR_*/DEFAULT_*/RETRY_* options roles actually
+  look up, plus ANSIBLE_<NAME> env-var honouring.
+
+Also fixed en route (round 190, found via the remote-only user_dir gap):
+facts now derive `ansible_user_id/_dir/_shell/_gecos` from
+`getpwuid(getuid())` instead of ENV - the facts plugin runs remotely in a
+non-login SSH shell where USER/HOME/SHELL are frequently unset.
+
+Remaining open from this round (documented, not yet fixed): none new -
+the other same-fail roles are legacy `include:`, missing Galaxy
+dependencies, or desktop packages on headless Ubuntu, all failing
+identically on both engines.
+
 
 Round 189's three divergences (list-form `failed_when:` filter-chain
 false-fail, folded multi-line compound `when:` silent-skip, `async:`

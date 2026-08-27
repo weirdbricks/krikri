@@ -6,6 +6,20 @@
 require "json"
 require "../src/crystal_play/plugin_helpers/distribution_facts"
 
+lib PASSWD
+  struct Passwd
+    pw_name : UInt8*
+    pw_passwd : UInt8*
+    pw_uid : UInt32
+    pw_gid : UInt32
+    pw_gecos : UInt8*
+    pw_dir : UInt8*
+    pw_shell : UInt8*
+  end
+
+  fun getpwuid(uid : UInt32) : Passwd*
+end
+
 # uname(2) and getgid(2) aren't bound by Crystal's stdlib (only getuid is),
 # so they're declared here directly to avoid forking `uname`/`id -g`.
 lib LibC
@@ -709,19 +723,38 @@ def gather_python_facts(facts)
 end
 
 def gather_user_facts(facts)
-  if user = ENV["USER"]?
-    facts["ansible_user_id"] = user
+  # Real Ansible's setup derives these from getpwuid(getuid()), NOT from
+  # the environment - and the difference is observable: the facts plugin
+  # runs remotely inside a non-login SSH shell where USER/HOME/SHELL are
+  # frequently unset, so the ENV lookups silently skipped ansible_user_id/
+  # _dir/_shell entirely on remote hosts (buluma.ara_api's own
+  # `ara_api_root_dir: "{{ ansible_facts['user_dir'] }}/.ara"` default then
+  # hard-failed with 'ara_api_root_dir' is undefined remotely while the
+  # identical playbook ran clean locally, round 190). pw_name/pw_dir/
+  # pw_shell from getpwuid are always present; ENV only fills a fact the
+  # passwd entry somehow lacks. (getpwuid isn't in Crystal's own LibC
+  # bindings, hence the local lib declaration - glibc's struct passwd
+  # layout, verified against getpwuid(3).)
+  if pw = PASSWD.getpwuid(LibC.getuid.to_u32)
+    facts["ansible_user_id"] = String.new(pw.value.pw_name) unless facts["ansible_user_id"]?
+    facts["ansible_user_dir"] = String.new(pw.value.pw_dir) unless facts["ansible_user_dir"]?
+    facts["ansible_user_shell"] = String.new(pw.value.pw_shell) unless facts["ansible_user_shell"]?
+    facts["ansible_user_gecos"] = String.new(pw.value.pw_gecos) unless facts["ansible_user_gecos"]?
   end
-  
+
+  if user = ENV["USER"]?
+    facts["ansible_user_id"] ||= user
+  end
+
   facts["ansible_user_uid"] = LibC.getuid.to_i64
   facts["ansible_user_gid"] = LibC.getgid.to_i64
-  
+
   if home = ENV["HOME"]?
-    facts["ansible_user_dir"] = home
+    facts["ansible_user_dir"] ||= home
   end
-  
+
   if shell = ENV["SHELL"]?
-    facts["ansible_user_shell"] = shell
+    facts["ansible_user_shell"] ||= shell
   end
 end
 
