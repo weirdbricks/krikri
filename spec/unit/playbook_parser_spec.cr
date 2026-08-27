@@ -1386,7 +1386,15 @@ describe CrystalPlay::PlaybookParser do
 
       tasks = playbook.plays[0].tasks
       tasks[0].when_condition.should eq(%(foo == "bar"))
-      tasks[1].when_condition.should eq(%((other_var == "x") and (foo == "bar")))
+      # Round 188: parent `when:` is PREPENDED, not appended, so the
+      # cheaper/gate-like operand is evaluated first and `and` can
+      # short-circuit the more-expensive one when the gate is false.
+      # Real Ansible evaluates `and` left-to-right with short-circuit,
+      # so `(foo == "bar") and (other_var == "x")` correctly avoids
+      # evaluating `other_var == "x"` when the parent's `foo == "bar"`
+      # is false (and vice versa for the old, child-first order which
+      # raised an undefined-var on the child when the parent was false).
+      tasks[1].when_condition.should eq(%((foo == "bar") and (other_var == "x")))
     end
 
     it "applies the import's own tags: to each imported task individually" do
@@ -1444,6 +1452,129 @@ describe CrystalPlay::PlaybookParser do
         YAML
 
       playbook.plays[0].tasks.map(&.name).should eq(["own task"])
+    end
+
+    # Round 188: parent `when:` is PREPENDED, not appended, specifically
+    # so `and` can short-circuit. The previous test verifies the
+    # string shape; this one verifies the integration-time effect: a
+    # gated `import_tasks:` whose child file's last task references a
+    # `register:` from a prior inner task that the gate skipped, the
+    # whole file is skipped, the child's `when:` is never evaluated,
+    # and a strict-undefined reference to a missing registered var
+    # does NOT raise. Pre-fix this raised "'item_stat.stat.exists' is
+    # undefined" at the child's when-eval, aborting the play; the fix
+    # prepends the parent so `(parent) and (child)` short-circuits
+    # when the parent is false, exactly like real Ansible.
+    it "parent when: false short-circuits the child's when: (no strict-undef on the child operand)" do
+      root = import_tasks_root("import_tasks_parent_gate_short_circuits_spec")
+      File.write(File.join(root, "inner.yml"), <<-YAML)
+        - name: write registered var
+          ansible.builtin.set_fact:
+            item_stat: {stat: {exists: false}}
+        - name: gated by parent AND by self
+          ansible.builtin.debug:
+            msg: "should be skipped"
+          when: not item_stat.stat.exists
+        YAML
+
+      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+        - name: play
+          hosts: all
+          gather_facts: false
+          tasks:
+            - import_tasks: inner.yml
+              when: parent_gate | bool
+        YAML
+
+      # The child task's when_condition is `(parent) and (child)` -
+      # parent FIRST. (Pre-fix it was `(child) and (parent)`.)
+      tasks = playbook.plays[0].tasks
+      tasks[0].when_condition.should eq(%(parent_gate | bool))
+      tasks[1].when_condition.should eq(%((parent_gate | bool) and (not item_stat.stat.exists)))
+    end
+  end
+
+  describe "module name resolution" do
+    # Round 188: a bare `community.crypto.*` short name (e.g.
+    # `openssl_privatekey:`) must resolve to the registered
+    # `community.crypto.openssl_privatekey` FQCN exactly the way
+    # `ansible.builtin.foo` -> `foo` already worked. Bare names are
+    # the community-collection idiom (every role tested writes
+    # `openssl_privatekey:` / `openssl_csr:` / `openssl_pkcs12:` etc.,
+    # not the FQCN), and real Ansible auto-aliases them via the
+    # collection-aliasing mechanism. The fix is one line in
+    # MODULE_SEARCH_COLLECTIONS: adding "community.crypto" so
+    # `#resolve_module_name` tries `community.crypto.<raw>` as a
+    # fallback when the bare name isn't directly in AVAILABLE_PLUGINS.
+    # Pre-fix the bare name was unresolvable, the role-side task was
+    # dropped with a "uses unimplemented plugin" warning, and the
+    # `community.crypto modules implemented` 0.9.608 work had
+    # arguably unblocked the engine from rc=4 errors but NOT actually
+    # run the work - silently skipped, green play, missing the real
+    # change.
+    describe "community.crypto short names" do
+      %w[
+        openssl_privatekey
+        openssl_csr
+        x509_certificate
+        openssl_pkcs12
+        openssh_keypair
+      ].each do |short_name|
+        it "resolves bare `#{short_name}:` to community.crypto.#{short_name}" do
+          task = single_task(<<-YAML)
+            - name: t
+              #{short_name}:
+                path: /tmp/x
+            YAML
+          task.module_name.should eq("community.crypto.#{short_name}")
+        end
+      end
+    end
+
+    # The other collections already in MODULE_SEARCH_COLLECTIONS
+    # (ansible.builtin/legacy/posix, community.general/docker/
+    # mysql/postgresql) were never broken and shouldn't have changed -
+    # regression-test the existing behavior alongside the new one.
+    describe "other collection short names (regression)" do
+      it "resolves bare `apt_key:` to ansible.builtin.apt_key" do
+        task = single_task(<<-YAML)
+          - name: t
+            apt_key:
+              url: https://x
+          YAML
+        task.module_name.should eq("ansible.builtin.apt_key")
+      end
+
+      it "resolves bare `docker_container:` to community.docker.docker_container" do
+        task = single_task(<<-YAML)
+          - name: t
+            docker_container:
+              name: x
+          YAML
+        task.module_name.should eq("community.docker.docker_container")
+      end
+    end
+
+    # Already-resolved FQCNs and `ansible.builtin.*` short names must
+    # still work unchanged.
+    describe "FQCNs and ansible.builtin are unchanged" do
+      it "leaves an explicit FQCN alone" do
+        task = single_task(<<-YAML)
+          - name: t
+            community.crypto.openssl_privatekey:
+              path: /tmp/x
+          YAML
+        task.module_name.should eq("community.crypto.openssl_privatekey")
+      end
+
+      it "leaves a bare ansible.builtin.* module alone" do
+        task = single_task(<<-YAML)
+          - name: t
+            ansible.builtin.debug:
+              msg: hi
+          YAML
+        task.module_name.should eq("ansible.builtin.debug")
+      end
     end
   end
 

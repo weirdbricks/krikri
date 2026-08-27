@@ -932,6 +932,21 @@ module CrystalPlay
     MODULE_SEARCH_COLLECTIONS = [
       "ansible.builtin", "ansible.legacy", "ansible.posix",
       "community.general", "community.docker", "community.mysql", "community.postgresql",
+      # community.crypto (round 188): openssl_privatekey, openssl_csr,
+      # x509_certificate, openssl_pkcs12, openssh_keypair. Roles write
+      # the bare short names (`openssl_privatekey:`, `openssl_csr:`, ...),
+      # and real Ansible auto-resolves them to `community.crypto.<name>`
+      # via the collection aliasing mechanism. Without this entry, the
+      # `MODULE_SEARCH_COLLECTIONS` loop in #resolve_module_name never
+      # tries the `community.crypto.` prefix, the bare name is
+      # unresolvable, and the task is dropped with a
+      # "uses unimplemented plugin" warning (the plugin source and
+      # binary both exist - the lookup just didn't find them).
+      # Verified against weareinteractive.openssl's own `openssl_privatekey:`
+      # / `openssl_csr:` / `openssl_certificate:` task names: real
+      # ansible-core 2.19.4 resolves them; crystal 0.9.622 warned and
+      # skipped.
+      "community.crypto",
     ]
 
     # Modules whose bare-string task arg is a raw command line, not
@@ -1466,7 +1481,21 @@ module CrystalPlay
 
       imported_tasks.each do |task|
         if import_when
-          task.when_condition = task.when_condition ? "(#{task.when_condition}) and (#{import_when})" : import_when
+          # Parent `when:` PREPENDED, not appended (round 188): real
+          # Ansible evaluates `and` left-to-right with short-circuit, and
+          # a parent's `when:` is almost always the cheaper, more
+          # gate-like operand — e.g. `when: openssl_generate_csr | bool`
+          # wrapping a child's `when: not item_stat.stat.exists`. With
+          # the parent APPENDED, the child's reference to a `register:`
+          # from a prior inner task (which was itself skipped, so the
+          # registered var was never written) gets evaluated first and
+          # raises "'item_stat.stat.exists' is undefined" — aborting the
+          # whole play even though real Ansible would have skipped the
+          # whole file at the parent `when: false` decision and never
+          # evaluated the child operand at all. Verified on a fresh
+          # Ubuntu host against the weareinteractive.vsftpd re-verify
+          # (crystal 0.9.622) vs ansible-core 2.19.4.
+          task.when_condition = task.when_condition ? "(#{import_when}) and (#{task.when_condition})" : import_when
         end
         task.tags = (task.tags + import_tags).uniq
         import_vars.each { |key, value| task.vars[key] = value }

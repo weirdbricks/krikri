@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.622-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.623-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -386,6 +386,34 @@ A short rolling summary of the last few versions - see `git log` for the
 complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
+
+- **`0.9.623`** - two fixes from a `weareinteractive.vsftpd` re-verify
+  (Ubuntu 22.04, fresh Atlantic.net pair, byte-identical to real
+  ansible-core 2.19.4 once both were in). The 0.9.608 community.crypto
+  additions had marked the role "unblocked" but the engine was still
+  broken on it: `import_tasks: ... when: <gate>` was combining the
+  parent's `when:` as `"#{child} and #{parent}"` (child operand first),
+  so when the parent gate was `false` the child operand was still
+  evaluated, hitting strict-undefined on a `register:` reference from
+  a prior inner task that the gate would have skipped, and aborting
+  the whole play with `'item_stat.stat.exists' is undefined` - real
+  Ansible would have skipped the whole file at the parent's
+  `when: false` decision. One-line fix in `playbook_parser.cr:1469`:
+  parent `when:` prepended, not appended, so `and` can short-circuit
+  left-to-right. And `MODULE_SEARCH_COLLECTIONS` was missing
+  `"community.crypto"`, so bare short names (`openssl_privatekey:`,
+  `openssl_csr:`, `x509_certificate:`, `openssl_pkcs12:`,
+  `openssh_keypair:` - the community-collection idiom) had no
+  FQCN-prefix to try against `AVAILABLE_PLUGINS`, the resolver
+  returned `nil`, and the task was silently dropped with a
+  "uses unimplemented plugin" warning despite the plugin source AND
+  compiled binary both existing - the 0.9.608 unblock arguably got
+  the engine past `rc=4` errors but didn't actually run the work in
+  roles that use the bare short names. One-line fix in
+  `playbook_parser.cr:932-935`: added `"community.crypto"` to the list.
+  After both fixes, the re-verify is byte-identical (real 63.91s/40.89s
+  vs crystal 20.73s/3.84s; same recap both phases) and 5 new unit +
+  integration specs pin the fix.
 
 - **`0.9.616`-`0.9.622`** - seven fixes from a 60-role marathon (40
   andrewrothstein.\*/mrlesmithjr.\*/etc. on Ubuntu 22.04, 20 more on

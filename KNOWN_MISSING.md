@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.622`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.623`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -82,6 +82,36 @@ On a clean single-engine sequence both engines alternate `ok` then
 `changed` identically, because that role's template strips the
 `Include /etc/phpmyadmin/apache.conf` line the phpmyadmin role's
 `lineinfile` re-adds every run.
+
+And - found re-verifying `weareinteractive.vsftpd` (which `ROLES_TESTED.md`
+marked "unblocked in 0.9.608, not yet re-run live") - two pre-existing
+engine bugs that survived the 0.9.608 community.crypto additions, both
+fixed in `0.9.623`. (1) `import_tasks: ... when: <gate>` was combining
+the parent's `when:` as `"#{child} and #{parent}"` - child operand
+first. Real Ansible evaluates `and` left-to-right with short-circuit,
+so when the parent gate is `false` the child operand should never be
+evaluated; crystal was evaluating the child first, hitting
+strict-undefined on a `register:` reference from a prior inner task
+that the gate would have skipped, and aborting the whole play with
+`'item_stat.stat.exists' is undefined` even though real Ansible would
+have skipped the whole file. One-line fix in `playbook_parser.cr:1469`:
+parent `when:` prepended, not appended. (2) `MODULE_SEARCH_COLLECTIONS`
+was missing `"community.crypto"`, so bare short names
+(`openssl_privatekey:`, `openssl_csr:`, `x509_certificate:`,
+`openssl_pkcs12:`, `openssh_keypair:`) had no FQCN-prefix to try
+against `AVAILABLE_PLUGINS`, the resolver returned `nil`, the task
+was dropped with a "uses unimplemented plugin" warning, and the work
+was silently skipped despite the plugin source AND compiled binary
+both existing - the 0.9.608 community.crypto additions arguably
+unblocked the engine from `rc=4` errors but did NOT actually run the
+work in roles that use the bare short names (the community-collection
+idiom). One-line fix in `playbook_parser.cr:932-935`: added
+`"community.crypto"` to the list. After both fixes, the
+`weareinteractive.vsftpd` re-verify is byte-identical to real
+ansible-core 2.19.4 on Ubuntu 22.04 (cold 20.73s vs py 63.91s; warm
+3.84s vs py 40.89s; same `ok=12 changed=5 failed=0 skipped=14` /
+`ok=11 changed=0 failed=0 skipped=14` recap both engines, both
+phases).
 
 Two entries remain.
 
