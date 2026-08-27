@@ -44,8 +44,20 @@ rc=0. Real ansible fails with "No package matching 'sensu' is
 available". Found via `buluma.sensu-install` (py rc=2, crystal rc=0);
 re-verified on a fresh pair with 0.9.627: both engines rc=2, identical.
 
-**Open bug - recursive re-templating of command args containing literal
-`{{ ... }}` (gantsign.helm).** Described under "Real gaps" above.
+**Fixed 0.9.629 - recursive re-templating of command args containing
+literal `{{ ... }}` text (gantsign.helm).** The whole-output re-pass
+loop in `substitute_impl` re-rendered brace text that came from an
+evaluated QUOTED LITERAL in the task itself (helm's `--template
+{{ "'{{ if .Version }}...{{ else }}...{{ end }}'" }}` argument),
+parsing `{{ else }}` as a Jinja tag and failing with "'else' is
+undefined" while real ansible (single-pass Jinja2, output never
+re-scanned) ran the command fine. The loop now only engages when a
+span of the ORIGINAL argument resolves via a variable lookup to a raw
+value that is itself a template - real ansible's actual recursion
+model. Regression specs in
+`spec/unit/var_substitutor_recursive_retemplating_spec.cr`; live-
+verified on a fresh pair: both engines rc=0 cold+warm (real 22.8s/10.7s
+vs crystal 16.1s/2.6s).
 
 **Non-divergence strictness differences recorded (both engines fail,
 different reasons):** `gantsign.gitkraken` (2.19 rejects legacy
@@ -64,16 +76,6 @@ are recorded in `ROLES_TESTED.md`'s round-191 rows.
 
 ## Real gaps (worth revisiting)
 
-- **Recursive re-templating of command args containing literal
-  non-Jinja `{{ ... }}` text (OPEN, found round 191 / 0.9.627).**
-  `gantsign.helm` runs `command: "{{ helm_install_dir }}/helm version
-  --client --template {{ \"'{{ if .Version }}...{{ else }}...{{ end
-  }}'\" }}"` - the Jinja expression's *value* itself contains Go-template
-  braces. crystal-ansible re-evaluates the already-rendered string and
-  dies with `'else' is undefined`; real ansible passes the literal
-  through (role completes, py ok / crystal fail). Same documented bug
-  class as earlier recursive-re-templating fixes but in the command-arg
-  path; the other two fixes this round (below) were closed same-day.
 
 
 

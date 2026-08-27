@@ -429,8 +429,26 @@ module CrystalPlay
       # `dest:` path, so the config was never actually written anywhere
       # real, and the wg-quick service failed to start ("config file
       # does not exist") with no obvious tie back to this.
+      # Round 191 (gantsign.helm) - recursive re-templating must only
+      # apply to leftover templates that ORIGINATED IN A VARIABLE'S OWN
+      # VALUE. Real Ansible renders a task argument in a single Jinja2
+      # pass and never re-scans the rendered OUTPUT; its documented
+      # recursion happens when a *variable lookup* resolves to a string
+      # that is itself a template (the variable's value gets templated
+      # as part of resolving it). A task arg whose own expression is a
+      # QUOTED LITERAL containing brace text - helm's
+      # `--template {{ "'{{ if .Version }}{{ .Version }}{{ else }}...
+      # {{ end }}'" }}` - evaluates to Go-template text that MUST pass
+      # through verbatim; re-scanning it here parsed `{{ else }}` as a
+      # Jinja tag and failed with "'else' is undefined" while real
+      # ansible ran the command fine. So: only enter the re-pass loop
+      # below when at least one span of the ORIGINAL text resolves, via
+      # a variable lookup, to a raw value that is itself a template
+      # (the os_hardening include_tasks case this loop was built for).
+      # Literal-origin leftovers stay verbatim, exactly like Jinja2.
+      pending_re_template = re_template_from_variable?(text)
       depth = 0
-      while (result.includes?("{{") || result.includes?("{%") || result.includes?("{#")) && depth < 5
+      while pending_re_template && (result.includes?("{{") || result.includes?("{%") || result.includes?("{#")) && depth < 5
         next_result = if result.includes?("{%") || result.includes?("{#")
                         break if @@block_tag_escalation_depth >= MAX_BLOCK_TAG_ESCALATION_DEPTH
                         @@block_tag_escalation_depth += 1
@@ -545,6 +563,35 @@ module CrystalPlay
     # at all, so an expression containing an inner `}` (from a dict
     # literal) could never find a valid close and was left completely
     # unrendered.
+    # Round 191 (gantsign.helm) - does *text* contain a mustache span
+    # that resolves, via a variable lookup, to a raw value that is
+    # itself a template (contains `{{`/`{%`/`{#`)? Only such spans make
+    # real Ansible's recursive re-templating apply to a task argument's
+    # rendered output; brace text produced by an evaluated LITERAL (a
+    # quoted string in the task itself, e.g. helm's Go-template arg)
+    # stays verbatim. Narrow on purpose: bare/dotted/bracketed refs
+    # (`{{ x }}`, `{{ a.b[0] }}`) and simple `x | filter` chains whose
+    # head is such a ref - the shapes every variable-origin recursion
+    # bug so far (os_hardening include_tasks, wireguard block-tag
+    # defaults) has taken.
+    private def re_template_from_variable?(text : String) : Bool
+      found = false
+      expand_mustache_spans(text) do |inner|
+        unless found
+          expr = inner.strip
+          expr = expr.split("|").first.strip if expr.includes?("|")
+          if expr.matches?(/\A[A-Za-z_][A-Za-z0-9_.\[\]"']*\z/)
+            if (v = VariableSubstitutor::VariableLookup.new(@vars).resolve(expr)) && (raw = v.raw).is_a?(String) &&
+               (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#"))
+              found = true
+            end
+          end
+        end
+        inner
+      end
+      found
+    end
+
     private def expand_mustache_spans(text : String, & : String -> String) : String
       result = String::Builder.new
       i = 0
