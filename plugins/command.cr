@@ -40,6 +40,25 @@ module CrystalPlay
     end
 
     def execute : PluginResult
+      # Real ansible-core 2.19 removed the long-deprecated `warn:` param
+      # from command/shell and now rejects it at module-arg validation
+      # with exactly this message. Found live-benchmarking
+      # cloudalchemy.node_exporter / cloudalchemy.bind_exporter (round
+      # 195 re-runs): both roles' "Gather currently installed version"
+      # command tasks carry `warn:`, which only runs on the WARM pass
+      # (the version probe is skipped cold because the binary doesn't
+      # exist yet), so cold ran clean on both engines and warm diverged -
+      # real ansible rc=2 "Unsupported parameters ... warn", crystal
+      # tolerated it and rc=0'd. This engine now rejects it the same way
+      # (same message, shell.cr shares this via its own copy below).
+      if @params.has_key?("warn")
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Unsupported parameters for (ansible.legacy.command) module: warn. Supported parameters include: _raw_params, _uses_shell, argv, chdir, cmd, creates, executable, expand_argument_vars, removes, stdin, stdin_add_newline, strip_empty_ends."
+        )
+      end
+
       # Get command (supports both 'cmd' and free-form)
       cmd = @params["cmd"]? || @params["_raw_params"]?
 

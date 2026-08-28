@@ -36,6 +36,18 @@ module CrystalPlay
     end
 
     def execute : PluginResult
+      # Same `warn:` rejection as command.cr - real ansible-core 2.19
+      # rejects the removed param identically (message adjusted for the
+      # shell module's own supported-parameter list; the tail after
+      # "warn." matches ansible-core 2.19's shell argspec).
+      if @params.has_key?("warn")
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Unsupported parameters for (ansible.legacy.shell) module: warn. Supported parameters include: _raw_params, _uses_shell, argv, chdir, cmd, creates, executable, expand_argument_vars, removes, stdin, stdin_add_newline, strip_empty_ends."
+        )
+      end
+
       # Get command (supports both direct string and 'cmd' parameter)
       cmd = @params["_raw_params"]? || @params["cmd"]?
       unless cmd
