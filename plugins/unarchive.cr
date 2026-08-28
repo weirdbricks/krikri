@@ -91,7 +91,15 @@ module CrystalPlay
       if creates = @params["creates"]?
         expanded_creates = expand_tilde(creates)
         if remote_file_exists?(expanded_creates) || remote_dir_exists?(expanded_creates)
-          return PluginResult.new(changed: false, failed: false, msg: "Skipped: #{creates} already exists")
+          # skipped: true - finish_single_task turns this into real
+          # ansible's "skipping: [host]" display + skipped= accounting.
+          # Without it the skip displayed as `ok:` with the message as
+          # body and counted ok=1, off-by-one vs real ansible's recap on
+          # every creates:-guarded unarchive (cloudalchemy.node_exporter /
+          # mysqld_exporter, round 195 re-verification: crystal ok=14/17
+          # skipped=2/15 where real ansible ok=13/16 skipped=3/16 - same
+          # skip, different counter).
+          return PluginResult.new(changed: false, failed: false, msg: "Skipped: #{creates} already exists", skipped: true)
         end
       end
 
