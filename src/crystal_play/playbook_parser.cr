@@ -1686,6 +1686,34 @@ module CrystalPlay
         raise "No module found in task '#{name}'"
       end
 
+      # Legacy `action:` directive (round 192 - stefangweichinger.ansible_
+      # rclone's handler `action: ansible.builtin.setup` crashed the whole
+      # run). Real Ansible treats `action:` as "run this module", NOT as a
+      # module name: the value is `<module> [k=v args]` free-form, or
+      # `{module: ..., args: {...}}`. Previously `action` itself became the
+      # module name, the plugin lookup failed ("Plugin binary not found:
+      # action") and the exception escaped as an unhandled crash of the
+      # entire binary instead of a task-level failure.
+      if module_name == "action" || module_name == "ansible.builtin.action"
+        if (mp = module_params) && (s = mp.as_s?)
+          tokens = s.strip.split(/\s+/, 2)
+          module_name = tokens[0]
+          rest = tokens[1]?
+          module_params = rest && !rest.strip.empty? ? YAML::Any.new(rest) : YAML::Any.new(Hash(YAML::Any, YAML::Any).new)
+        elsif (mp2 = module_params) && (h = mp2.as_h?)
+          mod = ""
+          args = nil.as(YAML::Any?)
+          h.each do |k, v|
+            ks = k.to_s
+            mod = v.to_s if ks == "module"
+            args = v if ks == "args"
+          end
+          raise "action: is missing 'module' in task '#{name}'" if mod.empty?
+          module_name = mod
+          module_params = args || YAML::Any.new(Hash(YAML::Any, YAML::Any).new)
+        end
+      end
+
       # `include:` (bare, ansible.builtin.include, or ansible.legacy.
       # include - NOT include_tasks:/include_role:/include_vars:, which
       # are unrelated, still-valid directives already excluded via
