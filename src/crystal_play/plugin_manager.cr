@@ -1021,8 +1021,20 @@ module CrystalPlay
     # already makes internally, before deciding whether batching even
     # applies to a given host.
     def self.is_local_connection?(host : Host, vars : Hash(String, JSON::Any)) : Bool
-      # Check if ansible_connection is set to local
-      if conn = vars["ansible_connection"]?
+      # The host's OWN connection setting wins first. On a delegate_to:
+      # task, `vars` here is the vars_context of the host the task would
+      # otherwise have run on (build_vars_context injects
+      # ansible_connection="ssh" into every non-local origin host's
+      # context), NOT the delegated target's - so the passed vars must
+      # never override the target host's own inventory setting. Found via
+      # cloudalchemy.node_exporter (round 195): its get_url tasks use
+      # `delegate_to: localhost`; the origin host's injected "ssh" won
+      # the vars-first check, the local-connection decision went remote,
+      # and the engine crashed with an unhandled "ssh: connect to host
+      # localhost port 22: Connection refused" trying to upload the
+      # get_url plugin binary to the controller as if it were a remote
+      # target - where real Ansible runs the task locally and rc=0s.
+      if conn = host.vars["ansible_connection"]?
         return conn.as_s? == "local"
       end
 
@@ -1035,7 +1047,17 @@ module CrystalPlay
       # plugin binaries to "127.0.0.1" as if it were a genuine remote
       # target, which needs actual SSH access to itself and isn't what
       # `delegate_to: 127.0.0.1` means at all.
-      host.name == "localhost" || host.name == "127.0.0.1"
+      return true if host.name == "localhost" || host.name == "127.0.0.1"
+
+      # Fall back to the passed vars - for the same-host (non-delegate)
+      # case this is the host's own merged context (inventory-set
+      # ansible_connection, or the "ssh" default build_vars_context
+      # injects), for a delegate it correctly loses to the checks above.
+      if conn = vars["ansible_connection"]?
+        return conn.as_s? == "local"
+      end
+
+      false
     end
 
     # Get the actual hostname to connect to (checks ansible_host

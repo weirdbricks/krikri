@@ -74,7 +74,33 @@ module CrystalPlay
       content_type = headers["Content-Type"]?.try(&.split(";").first.strip) || ""
       result.extra["content_type"] = JSON::Any.new(content_type)
       result.extra["redirected"] = JSON::Any.new(redirected)
-      result.extra["location"] = JSON::Any.new(headers["Location"]) if headers["Location"]?
+
+      # Real Ansible's uri module merges EVERY response header into the
+      # result, transmogrified the way its own comment puts it: "replacing
+      # '-' with '_', since variables don't work with dashes" and
+      # lowercased ("headers are title cased. Lowercase them to be
+      # compatible with the python2 behaviour") - `ukey = key.replace("-",
+      # "_").lower()`. So `Content-Disposition` is exposed as
+      # `content_disposition`, `X-Frame-Options` as `x_frame_options`,
+      # etc., and a role may read `head_query.content_disposition`
+      # directly (gantsign.postman does exactly this to resolve the
+      # "latest" download filename from a HEAD request - previously
+      # missing here, the read hit "'head_query.content_disposition' is
+      # undefined" and failed the task where real Ansible rc=0'd).
+      # Core keys (status/url/changed/...) can't be clobbered by a header
+      # name - none of them contain a dash - and content_type/location
+      # keep their existing, already-correct values below.
+      headers.each do |name, values|
+        ukey = name.gsub("-", "_").downcase
+        # python's dict-comprehension merge keeps the LAST duplicate header
+        result.extra[ukey] = JSON::Any.new(values.last)
+      end
+
+      # Real Ansible urljoin()s location against the request URL; this
+      # engine keeps the raw header value (pre-existing behavior).
+      if location = headers["Location"]?
+        result.extra["location"] = JSON::Any.new(location)
+      end
 
       if is_true?(@params["return_content"]?) || content_type == "application/json"
         result.extra["content"] = JSON::Any.new(body)

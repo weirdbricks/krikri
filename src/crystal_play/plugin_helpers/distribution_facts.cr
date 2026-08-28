@@ -166,6 +166,166 @@ module CrystalPlay
           nil
         end
       end
+
+      # Real Ansible's distribution-FILE facts: `ansible_distribution_file_
+      # {variety,path,parsed}` (+ the parse's own distribution/version/
+      # release overrides), from its process_dist_files() walk over
+      # OSDIST_LIST - found missing via cloudalchemy.process_exporter
+      # (round 195): the role's with_first_found list keys a vars file off
+      # `{{ ansible_distribution_file_variety | lower }}.yml` (→ redhat.yml
+      # on Rocky), and with the keys never set here the template raised
+      # "'ansible_distribution_file_variety' is undefined" where real
+      # Ansible rc=0'd. Ported branch-for-branch (see the follow-up block
+      # below for the walk itself).
+      OSDIST_LIST = [
+        {"Altlinux", "/etc/altlinux-release"},
+        {"OracleLinux", "/etc/oracle-release"},
+        {"Slackware", "/etc/slackware-version"},
+        {"CentOS", "/etc/centos-release"},
+        {"RedHat", "/etc/redhat-release"},
+        {"VMwareESX", "/etc/vmware-release"},
+        {"OpenWrt", "/etc/openwrt_release"},
+        {"Amazon", "/etc/os-release"},
+        {"Amazon", "/etc/system-release"},
+        {"Alpine", "/etc/alpine-release"},
+        {"Archlinux", "/etc/arch-release"},
+        {"Archlinux", "/etc/os-release"},
+        {"SUSE", "/etc/os-release"},
+        {"SUSE", "/etc/SuSE-release"},
+        {"Gentoo", "/etc/gentoo-release"},
+        {"Debian", "/etc/os-release"},
+        {"Debian", "/etc/lsb-release"},
+        {"Mandriva", "/etc/lsb-release"},
+        {"SMGL", "/etc/sourcemage-release"},
+        {"ClearLinux", "/usr/lib/os-release"},
+        {"Coreos", "/etc/coreos/update.conf"},
+        {"Flatcar", "/etc/os-release"},
+        {"NA", "/etc/os-release"},
+      ]
+
+      SEARCH_STRING = {
+        "OracleLinux" => "Oracle Linux",
+        "RedHat"      => "Red Hat",
+        "Altlinux"    => "ALT",
+        "SMGL"        => "Source Mage GNU/Linux",
+      }
+
+      # The walk itself, ported from process_dist_files() + _parse_dist_file():
+      # - SEARCH_STRING names parse ALWAYS (search string absent →
+      #   distribution = first whitespace token of the file content - this
+      #   is exactly where real Ansible's ansible_distribution="Rocky"
+      #   comes from on Rocky, not from the os-release ID);
+      # - OS_RELEASE_ALIAS (Archlinux): content must contain "Arch Linux";
+      # - otherwise a per-name parse function, missing = parse failure
+      #   (real Ansible's AttributeError → return False);
+      # - first success sets variety/path/parsed and stops; if NOTHING
+      #   parses the file_* facts stay unset (real Ansible's own
+      #   behavior - the keys are simply never written).
+      def self.distribution_file_facts(distro_id : String) : Hash(String, String)?
+        OSDIST_LIST.each do |name, path|
+          content = File.exists?(path) ? File.read(path).strip("\"' \n\t") : ""
+          # allowempty: VMwareESX and Arch's /etc/arch-release may be empty
+          allow_empty = {"VMwareESX", "Archlinux"}.includes?(name)
+          next if content.empty? && !allow_empty
+
+          overrides = nil
+          parsed = false
+          if search = SEARCH_STRING[name]?
+            if content.includes?(search)
+              overrides = {"distribution" => name}
+            else
+              overrides = {"distribution" => content.split[0]}
+            end
+            parsed = true
+          elsif name == "Archlinux" && path == "/etc/os-release"
+            if content.includes?("Arch Linux")
+              overrides = {"distribution" => name}
+              parsed = true
+            end
+          else
+            case name
+            when "Debian"
+              # parse_distribution_file_Debian is one big if/elif chain
+              # (Debian/Raspbian → Ubuntu → SteamOS → Kali/Parrot → Devuan
+              # → Cumulus → Mint → UOS → Deepin → LMDE → else False) that
+              # refine_debian was already ported from branch-for-branch -
+              # so "parsed" is exactly "refine_debian matched".
+              if overrides = refine_debian(content)
+                parsed = true
+              end
+            when "Amazon"
+              if content.includes?("Amazon")
+                parsed = true
+                overrides = {"distribution" => "Amazon"}
+              end
+            when "SUSE"
+              if content.downcase.includes?("suse")
+                parsed = true
+                # real parser takes NAME= for os-release paths
+                if path == "/etc/os-release" && (m = content.match(/^NAME=(.*)/m))
+                  overrides = {"distribution" => m[1].strip("\"")}
+                end
+              end
+            when "Alpine"
+              parsed = true
+              overrides = {"distribution" => "Alpine", "distribution_version" => content}
+            when "OpenWrt"
+              if content.includes?("OpenWrt")
+                parsed = true
+                overrides = {"distribution" => name}
+              end
+            when "Slackware"
+              if content.includes?("Slackware")
+                parsed = true
+                overrides = {"distribution" => name}
+              end
+            when "Mandriva"
+              if content.includes?("Mandriva")
+                parsed = true
+                overrides = {"distribution" => "Mandriva"}
+              end
+            when "CentOS"
+              if content.includes?("CentOS Stream")
+                parsed = true
+                overrides = {"distribution_release" => "Stream"}
+              elsif content.includes?("TencentOS Server")
+                parsed = true
+                overrides = {"distribution" => "TencentOS"}
+              end
+            when "NA"
+              parsed = true
+              o = Hash(String, String).new
+              content.each_line do |line|
+                if m = line.match(/^NAME=(.*)/)
+                  o["distribution"] = m[1].strip("\"")
+                end
+                if (m = line.match(/^VERSION=(.*)/)) && o["distribution_version"]?.nil?
+                  o["distribution_version"] = m[1].strip("\"")
+                end
+              end
+              overrides = o
+            when "ClearLinux"
+              if path == "/usr/lib/os-release" && (m = content.match(/NAME="(.*)"/)) && m[1].includes?("Clear Linux")
+                parsed = true
+                overrides = {"distribution" => m[1]}
+              end
+            end
+            # every other name: the Python original has no parse function
+            # for it either → AttributeError → parse failure
+          end
+
+          if parsed
+            facts = {
+              "ansible_distribution_file_variety" => name,
+              "ansible_distribution_file_path"    => path,
+              "ansible_distribution_file_parsed"  => "True",
+            }
+            facts.merge!(overrides) if overrides
+            return facts
+          end
+        end
+        nil
+      end
     end
   end
 end

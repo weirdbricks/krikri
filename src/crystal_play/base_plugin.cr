@@ -122,16 +122,30 @@ module CrystalPlay
     
     # Check if this host should use local connection
     protected def is_local_connection? : Bool
+      # The CONFIG's host is authoritative for where this plugin process
+      # is actually running, so the localhost name check must win over
+      # @vars: on a delegate_to: localhost task, the config's vars belong
+      # to the ORIGIN host (build_vars_context injects
+      # ansible_connection="ssh" for every non-local origin host), and
+      # the old vars-first order saw that "ssh" and made the plugin's own
+      # file/remote helpers SSH back to localhost:22 - connection refused
+      # on any controller without sshd. Found via cloudalchemy.
+      # mysqld_exporter (round 195): its `delegate_to: localhost`
+      # unarchive task failed with "Source ... failed to transfer" after
+      # the executor-side fix correctly routed the task to a local plugin
+      # spawn but the plugin's internals still misread the connection.
+      # (An explicit inventory localhost with ansible_connection=ssh is
+      # not distinguishable here - config["host"] carries only name/user/
+      # port - and stays unsupported; real Ansible's IMPLICIT localhost
+      # is always local, which is the case this models.)
+      return true if @host.name == "localhost" || @host.name == "127.0.0.1"
+
       # Check if ansible_connection is set to local
       if conn = @vars["ansible_connection"]?
         return conn.as_s? == "local"
       end
-      
-      # Check if host is localhost - "127.0.0.1" is real Ansible's other
-      # well-known spelling for the controller itself (see
-      # PluginManager.is_local_connection?'s identical fix for the
-      # rationale).
-      @host.name == "localhost" || @host.name == "127.0.0.1"
+
+      false
     end
     
     # Get the actual hostname to connect to (checks ansible_host variable)

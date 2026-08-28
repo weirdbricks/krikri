@@ -200,6 +200,35 @@ def gather_os_facts(facts)
         end
       end
     end
+
+    # Real Ansible's distribution-FILE facts (see
+    # DistributionFacts.distribution_file_facts for the ported walk). Found
+    # missing via cloudalchemy.process_exporter (round 195): its
+    # with_first_found vars list keys off
+    # `{{ ansible_distribution_file_variety | lower }}.yml` → redhat.yml on
+    # Rocky; with the keys never set here the template raised
+    # "'ansible_distribution_file_variety' is undefined" and the task
+    # failed where real Ansible rc=0'd. The parse's own distribution
+    # override is the real-Ansible quirk where ansible_distribution on
+    # Rocky comes from /etc/redhat-release's first token ("Rocky"), not
+    # the os-release ID - os_family re-derivation follows it, falling back
+    # to ID_LIKE for names family_for doesn't know (e.g. "Rocky Linux"
+    # from an NA-entry parse) exactly like real Ansible's own order.
+    if file_facts = CrystalPlay::PluginHelpers::DistributionFacts.distribution_file_facts(os_info["ID"]? || "")
+      file_facts.each { |key, value| facts[key] = value }
+      if refined = file_facts["distribution"]?
+        facts["ansible_distribution"] = refined
+        new_family = CrystalPlay::PluginHelpers::DistributionFacts.family_for(refined)
+        if new_family.nil?
+          os_info["ID_LIKE"]?.try do |id_like|
+            id_like.split(/\s+/).each do |like|
+              new_family ||= CrystalPlay::PluginHelpers::DistributionFacts.family_for(like.capitalize)
+            end
+          end
+        end
+        facts["ansible_os_family"] = new_family if new_family
+      end
+    end
   end
 
   # ansible_lsb - real Ansible's LSBFactCollector (via `lsb_release`, or a
