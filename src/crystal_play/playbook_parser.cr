@@ -1091,6 +1091,19 @@ module CrystalPlay
           # role (play-level or a role's own meta/main.yml dependency),
           # not a per-play soft-skip.
           raise ex
+        rescue ex : InvalidIncludeAttributeError
+          # Same bypass as RoleNotFoundError above - real
+          # ansible-core's AnsibleParserError for an include_tasks:/
+          # include_role: with a disallowed attribute (e.g. become:/
+          # become_user:) aborts the whole playbook run (rc=4),
+          # not a per-play soft-skip into a "Warning: Failed to
+          # parse play N". Without this bypass, the play-level
+          # rescue below would convert the parse error into a
+          # warning, the play would be silently dropped, and
+          # #parse_string's own "No valid plays found in playbook"
+          # check (line just below) would fire with the original
+          # InvalidIncludeAttributeError message lost.
+          raise ex
         rescue ex
           puts "Warning: Failed to parse play #{index + 1}: #{ex.message}".colorize(:yellow)
         end
@@ -1383,6 +1396,17 @@ module CrystalPlay
           # parse_task call site - without this bypass it would fall
           # through to the generic per-task warning below instead of
           # refusing the whole playbook the way real Ansible does.
+          raise ex
+        rescue ex : InvalidIncludeAttributeError
+          # Same bypass as the others above - real ansible-core's
+          # AnsibleParserError for `become:` / `become_user:` /
+          # other attrs not on TaskInclude/IncludeRole's allowlist
+          # aborts the whole playbook (rc=4) rather than
+          # degrading to a "Warning: Skipping task" the way a bare
+          # Exception would. The TypedException class is what
+          # tells the rescue chain to propagate instead of swallow.
+          # See InvalidIncludeAttributeError's own comment and the
+          # round-194 writeup for the divergence history.
           raise ex
         rescue ex
           puts "Warning: Skipping #{context} #{index + 1}: #{ex.message}".colorize(:yellow)
@@ -2239,6 +2263,139 @@ module CrystalPlay
       task
     end
 
+    # Real ansible-core 2.19's TaskInclude/HandlerTaskInclude parser
+    # validates the task dict against a fixed allowlist (TaskInclude's
+    # own VALID_INCLUDE_KEYWORDS frozenset) and raises
+    # `'X' is not a valid attribute for a TaskInclude` for any key not
+    # on the list. `become`/`become_user`/`become_method`/`become_flags`/
+    # `become_exe` are the ones that bite in practice - the Task class
+    # has them as fields (so a normal task accepts them) but the
+    # include-only classes deliberately do not, since the include
+    # statement itself is a control-flow directive and per-task
+    # privilege escalation doesn't compose with that. The
+    # andrewrothstein.java-oracle role's `alpine-glibc-shim` dependency
+    # had `become: yes` / `become_user: root` on an include_tasks: line
+    # and crystal accepted it (then failed downstream with a
+    # different error, rc=2 vs real ansible's rc=4). Same fix for
+    # RoleInclude (the parser class behind include_role:), whose
+    # `_validate_attributes` rejects any key not in its own fattributes
+    # - become/ is not there either, same error class `'X' is not a
+    # valid attribute for a IncludeRole`.
+    #
+    # import_tasks:/import_role: are NOT validated this way (real
+    # ansible's own ImportPlaybook/ImportRole inherit the full Task
+    # fattributes and accept become:/become_user:), so this set is
+    # consulted only by parse_include_tasks and parse_include_role
+    # below. Starts from real ansible's TaskInclude.VALID_INCLUDE_KEYWORDS
+    # verbatim (lib/ansible/playbook/task_include.py), then extends
+    # with the keys crystal's existing parse_include_tasks and the
+    # broader task parser already read off a task_hash so the FQCN
+    # `ansible.builtin.include_tasks:` form (parse_task's directive()
+    # helper keys on the bare name, but the FQCN form lands in the
+    # same task_hash) and the legacy `with_first_found:` form
+    # (githubixx.ansible_role_wireguard's "Include tasks depending
+    # on OS" pattern, see playbook_parser_spec.cr:1614) keep
+    # working. Real ansible would reject some of these (notably
+    # `with_first_found` and the block-level attrs) with the same
+    # error; that's a separate gap from this round-194 fix, not
+    # one any role in ROLES_TESTED.md currently depends on
+    # behaving the ansible way.
+    TASK_INCLUDE_VALID_KEYWORDS = Set{
+      # Real ansible-core 2.19's TaskInclude.VALID_INCLUDE_KEYWORDS
+      # (lib/ansible/playbook/task_include.py).
+      "action", "args", "collections", "debugger", "ignore_errors",
+      "loop", "loop_control", "loop_with", "name", "no_log",
+      "register", "run_once", "tags", "timeout", "vars", "when",
+      # FQCN forms of the include directive itself, accepted by
+      # parse_task's `directive()` helper for "include_tasks" /
+      # "include_role". The bare-name skip in validate_include_keys
+      # matches the directive key passed in; the FQCN form
+      # alongside has to be on the allowlist, otherwise
+      # `ansible.builtin.include_tasks:` fails the same way
+      # `become:` would. Same for include_role.
+      "ansible.builtin.include_tasks", "ansible.builtin.include_role",
+      "ansible.legacy.include_tasks", "ansible.legacy.include_role",
+      # Loop-control and block-control keys parse_include_tasks /
+      # the broader task parser already consume from task_hash.
+      # Listed here rather than added at skip-time so they show
+      # up in the same allowlist; a future round that brings
+      # crystal's behavior in line with real ansible's stricter
+      # allowlist can trim this set. Loop-with variants come
+      # from the older lookup-based loop syntax; with_fileglob
+      # and with_first_found are real patterns in roles that
+      # predate loop: (round-166 wireguard, the round-190
+      # marathon, etc.).
+      "with_first_found", "with_items", "with_dict", "with_nested",
+      "with_sequence", "with_indexed_items", "with_fileglob",
+      "notify", "listen", "environment", "changed_when",
+      "failed_when", "until", "retries", "delay", "check_mode",
+      "diff", "delegate_to", "delegate_facts", "connection",
+      "ignore_unreachable", "throttle", "remote_user",
+      "module_defaults",
+    }
+
+    # Bypasses the per-task "Warning: Skipping task ... ParseError"
+    # rescue in #parse_tasks, the same way RemovedActionError,
+    # StaticImportRoleUndefinedError, etc. do - matches real
+    # ansible-core's own AnsibleParserError which aborts the whole
+    # playbook rather than degrading gracefully. Without the typed
+    # class, the bare-string raise above would land in the generic
+    # rescue at the end of parse_tasks's begin block, the whole play
+    # would silently lose the offending task, and the user would see
+    # `ok=0 changed=0 failed=0` with no indication anything was
+    # wrong - the exact opposite of what real ansible does and what
+    # the spec expects.
+    class InvalidIncludeAttributeError < Exception
+      getter key : String
+      getter kind : String
+      def initialize(@key : String, @kind : String)
+        super("'#{@key}' is not a valid attribute for a #{@kind}")
+      end
+    end
+
+    # Validates that every key in a task_hash for an include_tasks:/
+    # include_role: directive is on the allowlist above (or is the
+    # include directive key itself - the task's "action", not a
+    # sibling attribute). Real ansible-core raises
+    #   AnsibleParserError("'<key>' is not a valid attribute for a
+    #     <TaskInclude|IncludeRole>", obj=data)
+    # and aborts the whole play (not just the one task) - the
+    # caller's caller (parse_task) wraps in the same
+    # "Error parsing playbook:" handler the other parser-fatal
+    # exceptions (RemovedActionError, HandlerNotFoundError,
+    # StaticImportRoleUndefinedError, ...) already use, so the user
+    # sees the same whole-playbook-rejected shape for all of them.
+    # Found while round-194's java-oracle/java-oracle-jre pair
+    # diverged (crystal rc=2 vs real rc=4) on the same
+    # `become_user:` rejection, traced to
+    # andrewrothstein.alpine-glibc-shim/tasks/main.yml:2:3
+    # (a sub-dependency of the role itself, not the role's own
+    # tasks). Doing this in the parser rather than at execution
+    # time is what real ansible does, and is also what fixes the
+    # half-failure: previously crystal would parse the include
+    # cleanly, run it, then hit a downstream task error with
+    # different (often more confusing) symptoms.
+    private def self.validate_include_keys(task_hash : Hash(YAML::Any, YAML::Any), kind : String, directive_key : String)
+      task_hash.each_key do |key|
+        key_str = key.to_s
+        # The include directive key itself ("include_tasks",
+        # "include_role") is the task's "action" - not a sibling
+        # attribute, and not in real ansible's allowlist, so skip
+        # it explicitly. Same for "name", which is on the
+        # allowlist anyway but the same skip-by-exception would
+        # land here; the allowlist check below covers it.
+        next if key_str == directive_key
+        next if TASK_INCLUDE_VALID_KEYWORDS.includes?(key_str)
+        # Match real ansible's exact error message so any tooling
+        # that greps for it stays compatible, and the user sees a
+        # familiar shape pointing them at the offending key. The
+        # typed exception (vs a bare `raise "..."`) is what the
+        # parse_tasks rescue chain looks for to bypass the
+        # graceful-degradation "Skipping task" path.
+        raise InvalidIncludeAttributeError.new(key_str, kind)
+      end
+    end
+
     # Parse an include_tasks: task - unlike import_tasks (spliced into the
     # task list at parse time), this is resolved at EXECUTION time: the
     # file path may be templated, when:/tags:/loop: apply to the include
@@ -2246,6 +2403,7 @@ module CrystalPlay
     # included task individually, and the executor evaluates it via
     # TaskExecutor#execute_include_tasks.
     private def self.parse_include_tasks(name : String, task_hash : Hash(YAML::Any, YAML::Any), include_yaml : YAML::Any, play : Play, file_dir : String) : Task
+      validate_include_keys(task_hash, "TaskInclude", "include_tasks")
       file_rel = include_yaml.as_h?.try(&.["file"]?).try(&.as_s?) || include_yaml.as_s?
       raise "include_tasks: missing a file path" unless file_rel
 
@@ -2347,6 +2505,12 @@ module CrystalPlay
     # loads the role fresh, matching its default (true) but not honoring
     # an explicit false.
     private def self.parse_include_role(name : String, task_hash : Hash(YAML::Any, YAML::Any), include_role_yaml : Hash(YAML::Any, YAML::Any), play : Play, file_dir : String, is_static : Bool = false) : Task
+      # See parse_include_tasks above for the rationale; import_role:
+      # (the is_static branch, also called from this same function) is
+      # intentionally NOT validated, mirroring real ansible's
+      # ImportRole inheriting the full Task fattributes. This check
+      # only fires for the include_role: shape.
+      validate_include_keys(task_hash, "IncludeRole", "include_role") unless is_static
       role_name = include_role_yaml["name"]?.try(&.as_s)
       raise "include_role: missing required 'name'" unless role_name
 
