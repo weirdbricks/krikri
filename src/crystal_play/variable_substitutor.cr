@@ -875,15 +875,38 @@ module CrystalPlay
           expr = inner.strip
           expr = expr.split("|").first.strip if expr.includes?("|")
           if expr.matches?(/\A[A-Za-z_][A-Za-z0-9_.\[\]"']*\z/)
-            if (v = VariableSubstitutor::VariableLookup.new(@vars).resolve(expr)) && (raw = v.raw).is_a?(String) &&
-               (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#"))
-              found = true
+            if v = VariableSubstitutor::VariableLookup.new(@vars).resolve(expr)
+              # Oefenweb.apt (round 195): `name: "{{ apt_dependencies }}"`
+              # where the var is a LIST of template strings (each element
+              # like `{{ cond | ternary('python-apt', 'python3-apt') }}`).
+              # Real Ansible templates the list elements when the
+              # variable itself resolves; the old String-only check
+              # never entered the re-pass, the list rendered with its
+              # inner templates still literal, and apt tried to install
+              # a package literally named "[{{ (ansible_facts['distribution'] =".
+              found = contains_template?(v.raw)
             end
           end
         end
         inner
       end
       found
+    end
+
+    # Recursively scans a resolved raw value (JSON::Any::Type) for any
+    # string that is itself a template (bounded depth).
+    private def contains_template?(value : JSON::Any::Type, depth : Int32 = 0) : Bool
+      return false if depth > 5
+      case v = value
+      when String
+        v.includes?("{{") || v.includes?("{%") || v.includes?("{#")
+      when Array(JSON::Any)
+        v.any? { |item| contains_template?(item.raw, depth + 1) }
+      when Hash(String, JSON::Any)
+        v.each_value.any? { |item| contains_template?(item.raw, depth + 1) }
+      else
+        false
+      end
     end
 
     private def expand_mustache_spans(text : String, & : String -> String) : String
