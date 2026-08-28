@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.630`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.631`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -76,6 +76,30 @@ are recorded in `ROLES_TESTED.md`'s round-191 rows.
 
 ## Real gaps (worth revisiting)
 
+- **Role-private `library/*.py` modules stay skipped** (documented
+  no-arbitrary-Python scope cut, now seen live twice): the
+  linux-system-roles family's `sr_fingerprint` success-fingerprint tasks
+  (crypto_policies, journald) ship the role's own Python module; real
+  ansible executes it with the target's Python while this engine skips
+  it and exits with the "unavailable modules" rc=4 signal. Both engines
+  otherwise agree; journald's only recap delta was those two skipped
+  tasks (both engines rc=0).
+- **`changed_when` with a missing dict attribute is lenient**
+  (cloudalchemy.pushgateway): the role's own `changed_when` references
+  `.diff` on a dict result that has none - real ansible-core 2.19 raises
+  while evaluating the conditional ("object of type 'dict' has no
+  attribute 'diff'") and fails the task; this engine treats the miss as
+  falsy and rc=0s. Matching 2.19 means raising on missing dotted
+  attributes inside conditionals - a wide behavior change needing its
+  own round.
+- **`include_vars:` with a failing templated path** (gantsign.oh-my-zsh,
+  harness-limited): when the path template itself can't resolve, this
+  engine reports `include_vars: file not found: undefined` where real
+  ansible fails a LATER task with "'users' is undefined". Both engines
+  fail the role; the failure point and message differ.
+- **±1-task recap deltas** (gantsign.java warm, cloudalchemy cold on
+  re-run pairs sharing controller /tmp state): single loop-item/task
+  counting differences; root cause not yet isolated.
 
 
 

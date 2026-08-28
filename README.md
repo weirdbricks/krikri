@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.630-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.631-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -387,6 +387,24 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.631`** - round 195 (60 untested roles, fresh pair per role,
+  cold+warm both engines) plus a 10-role re-verification pass: four
+  engine divergences closed. `delegate_to: localhost` tasks now execute
+  locally - both the executor's local-connection decision and the plugin
+  binaries' own file helpers previously trusted the ORIGIN host's
+  injected `ansible_connection=ssh` and tried to SSH-upload plugin
+  binaries to the controller ("Connection refused" crash; node_exporter,
+  mysqld_exporter, process_exporter, pushgateway). `uri` now surfaces
+  every response header as a snake_case result key (real ansible's
+  "transmogrify the headers" pass), so `head_query.content_disposition`
+  resolves (gantsign.postman). The distribution-FILE facts
+  (`ansible_distribution_file_{variety,path,parsed}`) are ported from
+  real ansible's OSDIST_LIST walk - including the quirk that
+  `ansible_distribution` on Rocky comes from /etc/redhat-release's first
+  token, not the os-release ID (process_exporter). A list-valued var
+  whose ELEMENTS are templates now re-templates them (Oefenweb.apt), and
+  the removed `warn:` param is rejected on command/shell with real
+  ansible's exact message (node_exporter/bind_exporter warm passes).
 - **`0.9.630`** - round 194 (30 untested roles, fresh server pair per
   role, cold+warm both engines): the three remaining engine divergences
   closed. `include_tasks:`/`include_role:` now reject `become:`/

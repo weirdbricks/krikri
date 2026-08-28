@@ -1102,6 +1102,75 @@ or already-clean roles as if they were new.
 | andrewrothstein.kubectl | ✅ Clean (round 194, 0.9.630, Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 15.21s vs cr 5.90s; warm py 11.87s vs cr 1.19s. |
 | andrewrothstein.sops | ✅ Clean (round 194, 0.9.630, Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 12.17s vs cr 6.45s; warm py 9.01s vs cr 0.98s. |
 
+## Round 195 (60-role marathon + 10-role re-verification, fresh G3.1GB pair per role, cold+warm both engines, 0.9.630 → 0.9.631)
+
+60 untested roles (30 Ubuntu 22.04 + 30 Rocky 9.6), fresh USEAST1 pair per role, both engines cold+warm, recaps compared. First pass: 44 recap-identical (incl. identical both-fails), 12 divergences, 2 not-runnable (Galaxy install failures: UnderGreen.prometheus-node-exporter, darkwizard242.unzip). Four engine bugs found and fixed in-round (0.9.631: delegate_to-localhost SSH crash, uri response headers, distribution_file_* facts, list-of-templates re-templating) plus the removed-`warn:` param rejection; 10 divergent roles re-verified on fresh pairs.
+
+Re-verified clean after fixes (rc parity all phases): cloudalchemy.node_exporter, cloudalchemy.mysqld_exporter, cloudalchemy.process_exporter, cloudalchemy.pushgateway (py-side role bug remains: its own changed_when refs .diff), gantsign.maven (first pass was a py-side mirror timeout), Oefenweb.apt, andrewrothstein.miniconda. Re-verified identical-both-fail: gantsign.postman (both engines fail on the role's ZIP download), cloudalchemy.bind_exporter warm (both reject `warn:` identically), linux-system-roles.cockpit/bootloader (apt-404 class). Scope-cut skips: linux-system-roles.crypto_policies, linux-system-roles.journald (sr_fingerprint role-private Python module).
+
+| Role | OS | Status |
+|---|---|---|
+| Stouts.limits | ubuntu | ✅ identical both-fail rc=1 (removed `include:` plugin, both engines) |
+| darkwizard242.python3 | rocky | ✅ clean |
+| cloudalchemy.node_exporter | ubuntu | ✅ clean after 0.9.631 delegate fix (first pass crashed whole binary) |
+| linux-system-roles.crypto_policies | rocky | ⚠️ scope-cut skip (sr_fingerprint); otherwise parity |
+| nginxinc.nginx_config | ubuntu | ✅ clean |
+| mrlesmithjr.squid | rocky | ✅ clean |
+| cloudalchemy.alertmanager | ubuntu | ✅ identical both-fail rc=1 (removed `include:`) |
+| Oefenweb.sysctl | rocky | ✅ identical both-fail rc=2 (role's unconditional apt on RHEL) |
+| mrlesmithjr.netplan | ubuntu | ✅ clean |
+| cloudalchemy.mysqld_exporter | rocky | ✅ clean after 0.9.631 plugin-local fix |
+| cloudalchemy.blackbox-exporter | ubuntu | ✅ identical both-fail rc=1 |
+| mrlesmithjr.ansible_dnsmasq | rocky | ✅ clean |
+| UnderGreen.prometheus-node-exporter | ubuntu | ❌ not runnable (Galaxy install failure) |
+| Oefenweb.ssh_server | rocky | ✅ identical both-fail rc=2 |
+| mrlesmithjr.zfs | ubuntu | ✅ clean |
+| bodsch.snapd | rocky | ✅ clean |
+| cloudalchemy.snmp-exporter | ubuntu | ✅ identical both-fail rc=1 |
+| gantsign.postman | rocky | ✅ identical both-fail rc=2 after 0.9.631 uri fix |
+| andrewrothstein.etcd-cluster | ubuntu | ✅ identical both-fail rc=2 |
+| Oefenweb.latest_r | rocky | ✅ identical both-fail rc=2 |
+| Stouts.mongodb | ubuntu | ✅ identical both-fail rc=1 |
+| Oefenweb.locales | rocky | ✅ identical both-fail rc=2 |
+| Stouts.grafana | ubuntu | ✅ identical both-fail rc=1 |
+| gantsign.intellij | rocky | ✅ identical both-fail rc=2 |
+| Oefenweb.postfix | ubuntu | ✅ clean |
+| gantsign.keyboard | rocky | ✅ clean |
+| gantsign.maven | ubuntu | ✅ clean on re-run (first pass: py-side mirror timeout) |
+| cloudalchemy.process_exporter | rocky | ✅ clean after 0.9.631 distribution_file facts fix |
+| Oefenweb.dnsmasq | ubuntu | ✅ identical both-fail rc=2 |
+| darkwizard242.unzip | rocky | ❌ not runnable (Galaxy install failure) |
+| gantsign.oh-my-zsh | ubuntu | ⚠️ both fail; different failure points (harness-limited; see KNOWN_MISSING) |
+| Oefenweb.keepalived | rocky | ✅ identical both-fail rc=2 |
+| andrewrothstein.miniconda | ubuntu | ✅ clean on re-run |
+| azavea.java | rocky | ✅ identical both-fail rc=2 |
+| UnderGreen.mongodb | ubuntu | ✅ identical both-fail rc=1 |
+| cloudalchemy.bind_exporter | rocky | ✅ warm both-fail identical after 0.9.631 `warn:` rejection |
+| Stouts.nginx | ubuntu | ✅ identical both-fail rc=1 |
+| darkwizard242.googlechrome | rocky | ✅ clean |
+| Stouts.python | ubuntu | ✅ identical both-fail rc=1 |
+| azavea.pip | rocky | ✅ identical both-fail rc=2 |
+| Stouts.hostname | ubuntu | ✅ identical both-fail rc=1 |
+| Stouts.sudo | rocky | ✅ identical both-fail rc=1 |
+| Stouts.collectd | ubuntu | ✅ identical both-fail rc=1 |
+| bodsch.fail2ban | rocky | ✅ clean |
+| mrlesmithjr.domain-join | ubuntu | ✅ identical both-fail rc=1 |
+| darkwizard242.azurecli | rocky | ✅ clean |
+| linux-system-roles.cockpit | ubuntu | ✅ identical both-fail rc=2/4 (apt-404 class) |
+| darkwizard242.cis_ubuntu_2004 | rocky | ✅ identical both-fail rc=2 |
+| linux-system-roles.journald | ubuntu | ⚠️ rc parity; ±2 sr_fingerprint scope-cut skips |
+| darkwizard242.adoptopenjdk | ubuntu | ✅ identical both-fail rc=2 |
+| gantsign.visual-studio-code | rocky | ✅ clean |
+| Stouts.openvpn | ubuntu | ✅ identical both-fail rc=2 |
+| Oefenweb.apt | ubuntu | ✅ clean after 0.9.631 list-templating fix |
+| darkwizard242.cni | ubuntu | ✅ identical both-fail rc=2 |
+| cloudalchemy.pushgateway | ubuntu | ⚠️ py-side role bug (changed_when .diff); crystal lenient — open item |
+| bodsch.awscli | rocky | ⚠️ both fail on missing bodsch.core collection (role-level) |
+| gantsign.java | ubuntu | ⚠️ ±1-task warm delta (open item) |
+| darkwizard242.goofys | rocky | ✅ clean |
+| linux-system-roles.bootloader | ubuntu | ✅ identical both-fail rc=2/4 (apt-404 class) |
+| azavea.papertrail | rocky | ✅ identical both-fail rc=2 |
+
 ### Round 192 marathon carry-over (19 roles, 0.9.629, Ubuntu 22.04 / Rocky 9.6)
 
 These 19 roles were run as part of the round-192 marathon but were not yet folded into this file (`alpine-glibc-shim` was the 20th; it already had a round-187 entry). Results pulled from scratch results; all run on fresh server pairs, cold + warm.
