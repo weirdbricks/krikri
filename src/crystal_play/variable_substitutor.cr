@@ -106,6 +106,27 @@ module CrystalPlay
     source
   end
 
+  # A chained-subscript/dot expression that ultimately resolves to
+  # nothing (the inner-most lookup misses, the entire expression
+  # renders to the literal text "undefined") - `pkg_upgrade_update_
+  # cmds[ansible_distribution_major_version]["update"]` on Rocky 9.6,
+  # where ansible_distribution_major_version is "9" but the role's
+  # vars/RedHat.yml only has keys "7" and "8", is the canonical case
+  # found in round-194's andrewrothstein.pkg-upgrade. Used by
+  # raise_if_strict_undefined's chained-subscript branch (which has
+  # to decide whether the inner expression ultimately renders to
+  # "undefined" without itself recursing into substitute_impl). The
+  # detection is the same one ExpressionEvaluator's lenient render
+  # path uses: just evaluate the expression and check whether the
+  # rendered string is exactly "undefined" - the sentinel this
+  # codebase hands back from any missing inner-most bare-ref lookup.
+  # Doesn't apply to the bare-ref or filter-chain shapes the OTHER
+  # raise_if_strict_undefined branches already cover.
+  def self.expression_resolves_to_undefined?(expr : String, vars : Hash(String, JSON::Any)) : Bool
+    rendered = VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate(expr)
+    rendered == "undefined"
+  end
+
   # VariableSubstitutor - Main class for variable substitution
   # Uses modular components from variable_substitutor/ directory
   class VarSubstitutor
@@ -487,11 +508,69 @@ module CrystalPlay
         # Not a bare reference - but a filter chain STARTING from an
         # undefined bare reference is just as strictly fatal in real
         # Ansible as the bare reference itself (see
-        # CrystalPlay.undefined_filter_chain_source). Every other shape
-        # still stays on the lenient path.
+        # CrystalPlay.undefined_filter_chain_source).
         if undefined_name = CrystalPlay.undefined_filter_chain_source(inner, @vars)
           raise UndefinedVariableError.new("'#{undefined_name}' is undefined")
         end
+        # A chained-subscript/dot expression whose actual lookup would
+        # fail - `pkg_upgrade_update_cmds[ansible_distribution_major_
+        # version]["update"]` is the canonical case (round 194's
+        # andrewrothstein.pkg-upgrade on Rocky 9.6: the role's vars/RedHat.
+        # yml only has keys for ansible_distribution_major_version 7
+        # and 8, so the second subscript misses, the whole expression
+        # resolves to nil, and on real ansible the `when: ... is defined`
+        # check evaluates False - so the task is SKIPPED, never run).
+        # REGEX_BARE_VAR_REF deliberately rejects unquoted identifiers
+        # inside the brackets (only `-?\d+` and `'...'`/`"..."` literal
+        # keys are recognized as a bare ref) precisely to keep a
+        # `dict[dynamic_var]` lookup from being misread as a flat
+        # `dict.dynamic_var` reference, but the *strict* path here needs
+        # to actually attempt the resolution rather than skip it. The
+        # leading `[A-Za-z_]` requirement on the first character rules
+        # out Jinja LITERAL expressions (list literals `['docker']` and
+        # dict literals `{'a': 1}` both start with `[` and aren't
+        # variable references at all - robertdebock.docker's own
+        # `docker_pip_packages: "{{ ['docker'] }}"` would otherwise hit
+        # this branch and the lookup would fail and the whole list
+        # literal would be misreported as undefined).
+        #
+        # Tried VariableLookup.resolve here first, but it has its own
+        # limit on nested-dynamic-key lookups (the
+        # `_docker_pip_packages[ansible_facts['os_family']]` shape
+        # robertdebock.docker uses, where the bracket contains another
+        # full chained-subscript, returns nil even when the whole
+        # chain resolves correctly) - false negative would mark
+        # docker's working `docker_pip_packages: "{{ ... }}"` as
+        # undefined and silently drop the install task. Tried wrapping
+        # the inner in a `{{ }}` and re-calling substitute_impl, but
+        # the substitute_impl -> raise_if_strict_undefined recursion
+        # is unbounded (a strict probe of the inner triggers the same
+        # probe on the inner-of-the-inner, ad infinitum). The
+        # actually-correct detection of "this whole expression
+        # ultimately resolves to nothing" is the same one
+        # ExpressionEvaluator already does in its lenient path: run the
+        # expression and see whether the rendered output is the literal
+        # text "undefined" (the sentinel for an undefined bare ref in
+        # the inner-most lookup). For pkg-upgrade's
+        # `pkg_upgrade_update_cmds[ansible_distribution_major_version]
+        # ["update"]` on Rocky 9, ansible_distribution_major_version
+        # resolves to "9", the dict lookup misses, and the inner-most
+        # fallback renders the bare-name "undefined" - the whole
+        # expression's text is therefore the 9-character string
+        # "undefined". For docker's
+        # `_docker_pip_packages[ansible_facts['os_family']]` on Debian,
+        # every level resolves, the final value is the list ["docker"],
+        # and ExpressionEvaluator's stringify returns its real text.
+        if inner.matches?(/\A[A-Za-z_]/) &&
+           (inner.includes?('.') || inner.includes?('[')) &&
+           !inner.includes?('(') && !inner.includes?('|') &&
+           CrystalPlay.expression_resolves_to_undefined?(inner, @vars)
+          raise UndefinedVariableError.new("'#{inner}' is undefined")
+        end
+        # Every other shape (literals, function calls, operators,
+        # filter chains whose source is defined, ...) is left alone
+        # regardless of strict: - see UndefinedVariableError's own
+        # comment for why that's deliberate, not a gap in this check.
         return
       end
       # `omit` is real Ansible's magic bareword for "drop this parameter
