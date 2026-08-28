@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.629-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.630-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -387,6 +387,21 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.630`** - round 194 (30 untested roles, fresh server pair per
+  role, cold+warm both engines): the three remaining engine divergences
+  closed. `include_tasks:`/`include_role:` now reject `become:`/
+  `become_user:` like real ansible-core's strict TaskInclude/IncludeRole
+  allowlist (rc=4, whole-playbook abort) - the java-oracle dependency
+  case; `dict[var]["key"]` chained-subscript `is defined` now reports
+  undefined when the inner lookup misses (pkg-upgrade on Rocky 9.6) so
+  the task is correctly skipped; and a strict `{% if undefined_var %}`
+  block-tag render now raises like real ansible's strict Jinja2
+  (openjdk's stat-arg finalization) instead of silently treating
+  `undefined == "jre"` as falsy.
+- **`0.9.630`** - round 193: legacy `action: <module> [k=v]` /
+  `{module:, args:}` directive now rewritten to the target module
+  (stefangweichinger.ansible_rclone handler no longer crashes the whole
+  binary with "Plugin binary not found: action").
 - **`0.9.629`** - round 192: recursive re-templating of task args now
   scoped to variable-origin leftovers (real ansible's single-pass
   semantics); literal brace text in command args passes through verbatim.

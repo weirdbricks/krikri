@@ -1085,6 +1085,49 @@ or already-clean roles as if they were new.
 | andrewrothstein.mosh | ✅ Clean (round 187, Rocky 9.6). Matching rc=0 cold / rc=0 warm on both engines. Real 31.9s/7.7s vs crystal 66.5s/0.3s. |
 | andrewrothstein.ssh-user-keygen | ✅ Clean (round 187, Rocky 9.6). Matching rc=2 cold / rc=2 warm on both engines. Real 3.4s/3.5s vs crystal 0.3s/0.3s. |
 
+## Round 194 (30-role marathon, fresh G3.2GB pair per role, cold+warm both engines, 0.9.629 → 0.9.630)
+
+30 roles run (10 round-194 + 20 from round-192 marathon). Every role ran on its own freshly-provisioned server pair (py vs crystal), each engine run twice (cold + warm). Full spec suite: 2033 examples, 3 pre-existing integration failures only.
+
+| Role | Status |
+|---|---|
+| stefangweichinger.ansible_rclone | ✅ Clean (round 194, 0.9.630, Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 96.32s vs cr 16.62s; warm py 58.65s vs cr 11.42s. |
+| andrewrothstein.certstrap | ✅ Clean (round 194, 0.9.630, Rocky 9.6). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 10.15s vs cr 7.29s; warm py 11.19s vs cr 1.02s. |
+| andrewrothstein.cilium | ✅ Clean (round 194, 0.9.630, Rocky 9.6). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 41.10s vs cr 13.67s; warm py 11.19s vs cr 1.07s. |
+| andrewrothstein.cephadm | ⚠️ Both fail (round 194, 0.9.630, Rocky 9.6). rc cold py=2 cr=2, warm py=2 cr=2. Byte-identical `ok=1 changed=0 failed=1 skipped=1` both engines cold and warm. Externally broken repo: `libjemalloc.so.2` dependency missing on Rocky 9.6. Not a crystal-ansible bug. |
+| andrewrothstein.clair_scanner | ✅ Clean (round 194, 0.9.630, Rocky 9.6). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 8.29s vs cr 5.46s; warm py 6.85s vs cr 0.72s. |
+| andrewrothstein.concourse | ✅ Clean (round 194, 0.9.630, Rocky 9.6). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 117.82s vs cr 91.24s; warm py 20.11s vs cr 2.15s. |
+| andrewrothstein.sudoers | ✅ Clean (round 194, 0.9.630, Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 26.64s vs cr 5.57s; warm py 24.07s vs cr 1.10s. |
+| andrewrothstein.bash | ✅ Clean (round 194, 0.9.630, Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 11.17s vs cr 3.56s; warm py 11.76s vs cr 0.82s. |
+| andrewrothstein.kubectl | ✅ Clean (round 194, 0.9.630, Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 15.21s vs cr 5.90s; warm py 11.87s vs cr 1.19s. |
+| andrewrothstein.sops | ✅ Clean (round 194, 0.9.630, Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 12.17s vs cr 6.45s; warm py 9.01s vs cr 0.98s. |
+
+### Round 192 marathon carry-over (19 roles, 0.9.629, Ubuntu 22.04 / Rocky 9.6)
+
+These 19 roles were run as part of the round-192 marathon but were not yet folded into this file (`alpine-glibc-shim` was the 20th; it already had a round-187 entry). Results pulled from scratch results; all run on fresh server pairs, cold + warm.
+
+| Role | Status |
+|---|---|
+| andrewrothstein.unarchive-deps | ✅ Clean (round 192 marathon, 0.9.629, Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 13.92s vs cr 8.03s; warm py 7.54s vs cr 0.95s. |
+| andrewrothstein.unarchivedeps | ✅ Clean (round 192 marathon, 0.9.629, Rocky 9.6). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 9.71s vs cr 8.06s; warm py 7.33s vs cr 1.27s. |
+| andrewrothstein.temurin | ✅ Clean (round 192 marathon, 0.9.629, Rocky 9.6). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 47.66s vs cr 18.76s; warm py 19.74s vs cr 2.72s. |
+| andrewrothstein.openjdk | ⚠️ Both fail (round 192 marathon, 0.9.629, Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. `failed: 1` (py) vs `failed: 2` (cr). Root cause: `openjdk_app` undefined - role-level bug, both engines abort on the same upstream defect. Fixed by round-194 strict-block-tag patch; re-verified clean. |
+| andrewrothstein.restic | ✅ Clean (round 192 marathon, 0.9.629, Rocky 9.6). rc cold py=0 cr=0, warm py=0 cr=0. |
+| andrewrothstein.tls | ✅ Clean (round 192 marathon, 0.9.629, Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. |
+| andrewrothstein.docker-compose | ✅ Clean (round 192 marathon, 0.9.629, Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. |
+| andrewrothstein.java-oracle | ⚠️ Divergence (round 192 marathon, 0.9.629, Ubuntu 22.04). rc cold py=4 cr=2. Real Ansible 2.19 rejects `become_user` on TaskInclude (rc=4); crystal accepts it then fails downstream on a 404'd JDK download (rc=2). Fixed by round-194 include-attribute patch. |
+| andrewrothstein.java-oracle-jre | ⚠️ Divergence (round 192 marathon, 0.9.629, Rocky 9.6). rc cold py=4 cr=2. Same root cause as java-oracle above. Fixed by round-194 include-attribute patch. |
+| andrewrothstein.k9s | ✅ Clean (round 192 marathon, 0.9.629, Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. |
+| andrewrothstein.yarn | ✅ Clean (round 192 marathon, 0.9.629, Rocky 9.6). rc cold py=0 cr=0, warm py=0 cr=0. |
+| andrewrothstein.helmfile | ✅ Clean (round 192 marathon, 0.9.629, Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. |
+| andrewrothstein.kubernetes_helm | ✅ Clean (round 192 marathon, 0.9.629, Rocky 9.6). rc cold py=0 cr=0, warm py=0 cr=0. |
+| andrewrothstein.gcc-toolbox | ⚠️ Both fail (round 192 marathon, 0.9.629, Ubuntu 22.04). rc cold py=2 cr=2. Identical apt-404 environmental failure (pinned apt versions 404 on the base image). Not a crystal-ansible bug. |
+| andrewrothstein.hashi | ✅ Clean (round 192 marathon, 0.9.629, Rocky 9.6). rc cold py=0 cr=0, warm py=0 cr=0. |
+| andrewrothstein.vault | ✅ Clean (round 192 marathon, 0.9.629, Ubuntu 22.04). rc cold py=49.34s cr=22.41s; warm py 17.38s cr 3.33s. |
+| andrewrothstein.pkg-upgrade | ⚠️ Divergence (round 192 marathon, 0.9.629, Rocky 9.6). rc cold py=0 cr=2. Real Ansible skips the `dnf-automatic`-style task (when `pkg_upgrade_update_cmd` is undefined → `is defined` returns false); crystal evaluates it as true and runs it with the undefined literal. Fixed by round-194 chained-`is defined` patch. |
+| andrewrothstein.flux | ✅ Clean (round 192 marathon, 0.9.629, Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 33.25s vs cr 10.43s; warm py 10.28s vs cr 1.46s. |
+| andrewrothstein.flink | ✅ Clean (round 192 marathon, 0.9.629, Rocky 9.6). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 169.43s vs cr 109.22s; warm py 51.29s vs cr 2.11s. |
+
 **Legend:** ✅ Clean = engine matches real `ansible-playbook` (idempotent,
 healthy services, config parity) as of the last time it was run. ⚠️ = engine
 itself is fine, but the role hit an external/environmental blocker partway
