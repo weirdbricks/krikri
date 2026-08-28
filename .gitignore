@@ -29,3 +29,10 @@ scripts/crinja_corpus/divergence_report.md
 # Local scratch notes from ad-hoc perf-review passes - not part of repo
 # history, findings that matter get folded into README.md/commit messages
 /SUGGESTED_PERFORMANCE_IMPROVEMENTS.md
+
+# Round retry queues - left over from a real-host benchmark round that
+# ran out of time / pairs mid-batch. Same scratch class as
+# SUGGESTED_PERFORMANCE_IMPROVEMENTS.md: findings that matter get folded
+# into KNOWN_MISSING.md commit messages, never into the repo history
+# themselves.
+/retry*.txt
