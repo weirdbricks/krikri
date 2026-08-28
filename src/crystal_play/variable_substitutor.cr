@@ -59,6 +59,78 @@ module CrystalPlay
   # denylist of the handful of filters a benchmark round happened to hit.
   UNDEFINED_TOLERANT_FILTERS = Set{"default", "d", "type_debug"}
 
+  # Same identifier-class regex as REGEX_BARE_VAR_REF but anchored for
+  # substring matches inside `{% %}` block-tag conditions. The full
+  # anchor isn't right for the block-tag use - we need to find every
+  # bare reference in the condition, not just ones that span the
+  # whole string.
+  SCAN_STRICT_BLOCK_TAG_REF = /\b([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[(?:-?\d+|'[^']*'|"[^"]*")\])*)\b/
+
+  # Jinja keywords and tests - identifiers the `{% %}` block-tag
+  # strict scan must NEVER flag, even when they appear in a
+  # `{% if %}` condition. Includes the basic block keywords
+  # (`if`/`else`/`endif`/etc.), the boolean operators (`and`/`or`/
+  # `not`/`in`/`is`), the constant literals (`true`/`false`/`none`),
+  # the Jinja2 test names that follow `is` (`is defined`, `is
+  # mapping`, `is failed`, `is iterable`, etc.), and Ansible's
+  # task-result tests (`is changed`/`is failed`/`is success`/etc.).
+  # Tuned against the round-194 andrewrothstein.openjdk
+  # openjdk_app==`<literal>` shape; `is defined`/`is failed` are
+  # the common two that need not flag.
+  SCAN_STRICT_BLOCK_TAG_KEYWORDS = Set{
+    "if", "elif", "else", "endif", "for", "endfor",
+    "set", "endset", "include", "extends", "block",
+    "endblock", "macro", "endmacro", "filter", "endfilter",
+    "call", "endcall", "in", "is", "not", "and", "or",
+    "true", "false", "none", "recursive", "loop", "self",
+    "super", "caller", "args", "kwargs", "varargs",
+    "import", "from", "as", "with", "without",
+    "scoped", "endscoped", "autoescape", "endautoescape",
+    "raw", "endraw", "do", "enddo",
+    "case", "when", "endcase", "default",
+    "applymacro", "endapplymacro",
+    "defined", "undefined", "divisibleby",
+    "even", "odd", "mapping", "sequence", "number",
+    "string", "boolean", "integer", "float",
+    "iterable", "callable", "sameas", "lower", "upper",
+    "eq", "ne", "lt", "le", "gt", "ge",
+    "failed", "changed", "succeeded", "success", "skipped", "reachable",
+  }
+
+  # Jinja2/Ansible built-in filter names - a filter invocation never
+  # means "look up this identifier as a var". The same allowlist
+  # shape as UNDEFINED_TOLERANT_FILTERS but more complete (the
+  # tolerant set is only the subset of filters that pass undefined
+  # through; this one is the set of filter NAMES the strict
+  # block-tag scan must not treat as a var). Includes the
+  # `ansible.builtin.X` collection-prefixed forms used in real
+  # playbooks (`ansible.builtin.default`, etc.) - stripped of
+  # the prefix by the bare-ref regex's own `\.` step, but only if
+  # the form is a filter invocation; bare `ansible.builtin.foo` is
+  # still a var lookup, so the whole allowlist is needed either
+  # way.
+  SCAN_STRICT_BLOCK_TAG_BUILTIN_FILTERS = Set{
+    "abs", "attr", "batch", "capitalize", "center", "count", "d",
+    "default", "dictsort", "e", "escape", "escapejs", "filesizeformat",
+    "first", "float", "forceescape", "format", "groupby", "indent",
+    "int", "items", "join", "last", "length", "list", "lower",
+    "map", "max", "min", "pprint", "random", "reject", "rejectattr",
+    "replace", "reverse", "round", "safe", "select", "selectattr",
+    "slice", "sort", "string", "striptags", "sum", "title", "tojson",
+    "trim", "truncate", "unique", "upper", "urlencode", "urlize",
+    "wordcount", "wordwrap", "xmlattr", "as_json", "as_yaml",
+    "b64decode", "b64encode", "sha1", "sha256", "md5", "flatten",
+    "combine", "items2dict", "dict2items", "to_datetime", "from_json",
+    "from_yaml", "to_yaml", "to_nice_yaml", "to_nice_json", "from_csv",
+    "regex_search", "regex_findall", "regex_replace", "product",
+    "log", "permutations", "combinations", "extract", "type_debug",
+    "shuffle", "comment", "password_hash", "b32decode",
+    "b32encode", "human_readable", "human_to_bytes", "to_bytes",
+    "subelements", "start_with", "end_with", "match", "search",
+    "ipaddr", "ipwrap", "bool", "checksum", "shorthash", "hash",
+    "mandatory", "match_regex", "search_regex", "ternary",
+  }
+
   # Returns the offending variable name when *expr* is a filter chain
   # whose SOURCE is a genuinely undefined bare variable reference and
   # whose FIRST filter is not one of UNDEFINED_TOLERANT_FILTERS - i.e.
@@ -396,6 +468,24 @@ module CrystalPlay
 
       if text.includes?("{%") || text.includes?("{#")
         return text if @@block_tag_escalation_depth >= MAX_BLOCK_TAG_ESCALATION_DEPTH
+        # strict: pre-render scan for undefined bare references inside
+        # `{% %}` block conditions. Crinja's lenient default
+        # `Undefined` makes `undefined == "jre"` quietly return
+        # false in `{% if openjdk_app == "jre" %}`, so the block
+        # renders to the false branch instead of raising - which is
+        # the round-194 andrewrothstein.openjdk divergence (the
+        # stat task's `path: "{{ openjdk_install_subdir }}"` arg
+        # finalization succeeds on crystal where real ansible
+        # raises "Finalization of task args for 'ansible.builtin.
+        # stat' failed: 'openjdk_app' is undefined"). The scan
+        # itself is narrow (bare-identifier-class references only,
+        # with Jinja keywords/filter names/loop-vars/string-literal
+        # contents all carved out) and runs BEFORE Crinja is
+        # invoked, so the renderer never sees the bad input. See
+        # scan_strict_block_tags_for_undefined's own comment for
+        # why this isn't solved by passing a strict undefined class
+        # to Crinja instead.
+        scan_strict_block_tags_for_undefined(text) if strict
         @@block_tag_escalation_depth += 1
         begin
           return renderer.render(text)
@@ -471,6 +561,22 @@ module CrystalPlay
       depth = 0
       while pending_re_template && (result.includes?("{{") || result.includes?("{%") || result.includes?("{#")) && depth < 5
         next_result = if result.includes?("{%") || result.includes?("{#")
+                        # strict: same scan as the top-level
+                        # substitute_impl branch - this re-templating
+                        # loop also has a {% %} path that bypasses
+                        # raise_if_strict_undefined, and the
+                        # round-194 andrewrothstein.openjdk case
+                        # hits it specifically: openjdk_install_
+                        # subdir is itself a {% if openjdk_app %}
+                        # -templated string, the first pass looks it
+                        # up and returns the still-`{{ }}`-bearing
+                        # raw value, the re-templating pass then
+                        # routes through this {% %} branch to
+                        # Crinja. Without the strict scan here,
+                        # Crinja's lenient default would silently
+                        # treat the undefined-in-`{% if %}` as
+                        # false and render the path anyway.
+                        scan_strict_block_tags_for_undefined(result) if strict
                         break if @@block_tag_escalation_depth >= MAX_BLOCK_TAG_ESCALATION_DEPTH
                         @@block_tag_escalation_depth += 1
                         begin
@@ -494,6 +600,115 @@ module CrystalPlay
         depth += 1
       end
 
+      result
+    end
+
+    # strict: helper for the `{% %}` block-tag path - the round-194
+    # openjdk case (andrewrothstein.openjdk on Ubuntu 22.04) had its
+    # vars/main.yml define openjdk_install_subdir as
+    # `{{ openjdk_install_dir }}/{% if openjdk_app == "jre" %}-jre{%
+    # endif %}suffix` and the stat task's `path: "{{ openjdk_install_
+    # subdir }}"` finalize-args render. Real ansible-core 2.19's
+    # strict Jinja2 environment raises on the `openjdk_app` undefined
+    # in the if-condition and the whole task aborts with rc=2 at
+    # "Finalization of task args for 'ansible.builtin.stat' failed:
+    # 'openjdk_app' is undefined". Crystal's Crinja-based render is
+    # lenient: the `{% if openjdk_app == "jre" %}` block silently
+    # treats `undefined == "jre"` as false, the value renders, the
+    # stat task succeeds, the `when: not result.stat.exists` block
+    # runs, and two more tasks fail with the same `openjdk_app`
+    # undefined (round-194 marathon, role 5).
+    #
+    # raise_if_strict_undefined only fires for the `{{ }}` path - the
+    # `{% %}` path is separate, since substitute_impl routes `{% %}`
+    # straight to Crinja for performance. This scan bridges the gap.
+    # String literals are stripped first so a `== "jre"` RHS isn't
+    # itself flagged; a `for X in Y` loop variable is skipped via
+    # the `loop_var` carve-out; the bare-ref scan uses the same
+    # identifier shape as REGEX_BARE_VAR_REF.
+    private def scan_strict_block_tags_for_undefined(text : String) : Nil
+      i = 0
+      while i < text.size
+        # Scan forward from i to the next `{%` block-tag opener (NOT
+        # `{{`, which is an expression span handled elsewhere). The
+        # previous cursor init broke out of the loop the instant
+        # text[i..i+1] wasn't `{%`, so a text that STARTS with a `{{`
+        # span before its `{%` blocks (openjdk_install_subdir =
+        # "{{ openjdk_install_dir }}/jdk...{% if openjdk_app %}")
+        # never had its later `{% if %}` scanned at all.
+        open_at = text.index("{%", i)
+        break unless open_at
+        close = text.index("%}", open_at + 2)
+        break unless close
+        i = open_at + 2
+        inner = text[i...close]
+        stripped = inner.strip
+
+        # if/elif is a condition, for has a loop var before `in`,
+        # set has a set-target before `=`. else/endif/etc. have
+        # nothing to scan, skip.
+        loop_var : String? = nil
+        cond : String
+        if stripped.starts_with?("for ")
+          tail = stripped.sub(/^for\s+/, "")
+          in_idx = tail.index(" in ")
+          if in_idx
+            loop_var = tail[0...in_idx].strip
+            cond = tail[(in_idx + 4)..].strip
+          else
+            cond = tail
+          end
+        elsif stripped.starts_with?("set ")
+          eq_idx = stripped.index('=')
+          if eq_idx
+            loop_var = stripped[4...eq_idx].strip
+            cond = stripped[(eq_idx + 1)..].strip
+          else
+            cond = stripped
+          end
+        elsif stripped.starts_with?("if ") || stripped.starts_with?("elif ")
+          cond = stripped.sub(/^(if|elif)\s+/, "")
+        else
+          i = close + 2
+          next
+        end
+
+        cond_no_strings = strip_string_literals(cond)
+
+        cond_no_strings.scan(SCAN_STRICT_BLOCK_TAG_REF) do |m|
+          ident = m[0]
+          next if SCAN_STRICT_BLOCK_TAG_KEYWORDS.includes?(ident)
+          next if SCAN_STRICT_BLOCK_TAG_BUILTIN_FILTERS.includes?(ident)
+          next if @vars.has_key?(ident)
+          next if loop_var == ident
+          # A bare identifier immediately preceded by `|` is a
+          # filter invocation - the filter's own strictness
+          # handling decides whether undefined-source is fatal.
+          idx = cond_no_strings.index(ident)
+          if idx && idx > 0 && cond_no_strings[idx - 1] == '|'
+            next
+          end
+          raise UndefinedVariableError.new("'#{ident}' is undefined")
+        end
+        i = close + 2
+      end
+    end
+
+    # Removes every single- and double-quoted string literal from
+    # *text* so the bare-ref scan above doesn't treat their contents
+    # as variable references. The regex's `(?:\\.|(?!\1).)*` middle
+    # part consumes a backslash-and-anything as one character
+    # (right for "the next character is escaped"). Sufficient for
+    # the real-ansible-playbook shapes the openjdk regression
+    # covered, and the alternative (writing a real Jinja2 lexer)
+    # is far heavier than this fix needs.
+    private def strip_string_literals(text : String) : String
+      result = text.dup
+      loop do
+        m = result.match(/(['"])((?:\\.|(?!\1).)*)\1/)
+        break unless m
+        result = result.sub(m[0], "")
+      end
       result
     end
 
