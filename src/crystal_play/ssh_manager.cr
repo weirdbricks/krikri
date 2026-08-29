@@ -526,14 +526,22 @@ module CrystalPlay
       # flat second on the way out was eating a third of item 1's own
       # measured warm-run saving on devsec.hardening.os_hardening -
       # visible as an exactly-1.001s "unaccounted" row in the item-0
-      # timing profile, which is what made it obvious. Daemons exit on
-      # EOF in low milliseconds, so a 20ms poll to the same 1s ceiling
-      # keeps the identical worst-case bound and gives the whole grace
-      # period back in the normal case.
+      # timing profile, which is what made it obvious.
+      #
+      # The backoff starts at 1ms rather than a fixed 20ms interval
+      # because a daemon sees EOF and exits in about a millisecond: at a
+      # flat 20ms this loop reliably burned two whole ticks (a 0.041s
+      # "unaccounted" row - measured, on every single run), which is
+      # material on a short play. Item 2 made that worse by giving even
+      # a facts-only play a daemon to shut down. Doubling to a 20ms
+      # ceiling keeps a long-tail straggler cheap to wait on, and the 1s
+      # hard deadline is unchanged.
       deadline = Time.monotonic + 1.second
+      interval = 1.millisecond
       while Time.monotonic < deadline
         break if processes.all?(&.terminated?)
-        sleep 20.milliseconds
+        sleep interval
+        interval = {interval * 2, 20.milliseconds}.min
       end
 
       processes.each do |process|

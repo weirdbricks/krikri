@@ -23,12 +23,13 @@ describe "daemon become eligibility" do
     CrystalPlay::PluginManager.daemon_eligible?("ansible.builtin.copy", true).should be_true
   end
 
-  it "still disqualifies facts, with or without become:" do
-    # `facts` is not in the fat plugin binary's dispatch table, so a
-    # daemon request for it would only ever hit the "unknown plugin"
-    # fallback. That exclusion is item 2's to remove, not item 1's.
-    CrystalPlay::PluginManager.daemon_eligible?("facts", false).should be_false
-    CrystalPlay::PluginManager.daemon_eligible?("facts", true).should be_false
+  it "no longer disqualifies facts either (item 2)" do
+    # `facts` was excluded while it was missing from the fat plugin
+    # binary's dispatch table - a daemon request for it would only ever
+    # have hit the "unknown plugin" fallback. Item 2 put it in the fat
+    # binary, so the exclusion set is now empty.
+    CrystalPlay::PluginManager.daemon_eligible?("facts", false).should be_true
+    CrystalPlay::PluginManager::DAEMON_INELIGIBLE_PLUGINS.should be_empty
   end
 
   it "keeps the become_user allow-list that guards the daemon command line" do

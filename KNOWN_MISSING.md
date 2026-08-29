@@ -10,12 +10,106 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.633`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.634`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
+
+## Performance item 2 (OPUS_PERFORMANCE_IMPROVEMENTS.md, 0.9.634)
+
+**`facts` under the persistent daemon.** NOT-BREAKING; the fact payload
+is unchanged and every measured pair produced an identical `PLAY RECAP`.
+
+`facts` was the last module held off the daemon path. The one-line part
+was dropping it from `DAEMON_INELIGIBLE_PLUGINS`; the actual work was
+the reason it was excluded, which was never fact-gathering semantics but
+SHAPE: `plugins/facts.cr` had no `*Plugin < BasePlugin` class and no
+`input = STDIN.gets_to_end` trailer, which is what `build.sh`'s
+fat-binary generator keys on, so `facts` was not in the fat binary at
+all and a daemon request for it would only have hit the generated
+dispatcher's "unknown plugin" fallback.
+
+The gathering body is now `CrystalPlay::FactsGatherer`
+(`src/crystal_play/plugin_helpers/facts_gatherer.cr`), lifted out
+VERBATIM - the only change is being wrapped in a module, which matters
+once it is linked alongside 80+ other plugins, since it defines
+top-level `capture`/`gather_*` helpers. Its two C bindings stay at top
+level deliberately: nesting `lib LibC` makes it a new lib rather than a
+re-opening of the stdlib's and loses `GidT`. `build.sh` grew a
+`FAT_EXTRA_MODULES` list for modules that belong in the fat binary but
+need a hand-written require + dispatch case instead of the generic
+source-splicing loop; `facts` is its only member. `plugins/facts.cr`
+remains as a thin standalone driver calling the same
+`FactsGatherer.run`, so there is exactly one implementation.
+
+It was deliberately NOT reshaped into a `BasePlugin` subclass, which
+would have needed no generator change at all: `run_and_capture` returns
+a `PluginResult`, whose `to_json` round-trips every extra field through
+`JSON.parse(value.to_json)` - a serialize-then-reparse of the entire
+fact dict, on the exact hot path this item exists to make cheaper - and
+would have added an always-empty `msg` to a payload that never had one.
+
+Measured on a fresh 2-host Atlantic.net `G3.2GB` Ubuntu 22.04 pair, one
+binary per host, runs issued simultaneously:
+
+| workload | before | after | |
+|---|---|---|---|
+| 10 plays x 1 gather, wall clock | 3.03 / 3.05s | 1.89 / 2.11s | **1.52x** |
+| ...the fact-gathering phase alone (10 gathers) | 2.87s | 1.69s | **1.70x** |
+| 1 play x 1 gather, wall clock (mean of 4) | 0.468s | 0.492s | **0.025s SLOWER** |
+| devsec.hardening.os_hardening warm (1 gather of 79 round trips) | 15.65 / 17.05s | 16.55 / 16.22s | cannot resolve |
+
+**The win is per-gather-PER-HOST, i.e. it scales with PLAYS only - not
+with hosts, and not with role length.** This was measured directly on a
+second 8-host round (4 targets per engine, os_hardening, warm, both
+`--forks 25` and `--forks 1`, plus a swapped-host control):
+
+| 4 hosts x 1 play, fact-gathering phase (4 gathers) | before | after |
+|---|---|---|
+| parallel (`--forks 25`), both orientations | 0.777 / 0.766s | 0.841 / 0.754s |
+| serial (`--forks 1`), both orientations | 0.877 / 0.961s | 0.882 / 0.900s |
+
+No win at all - the gathers cost the same either way, in both fork modes
+and in both host-set orientations. The reason is visible one line down
+in the same profile: `daemon start` went from **4 to 8**, exactly one
+extra per host. Daemons are keyed per host, so N hosts x 1 gather is N
+independent single-gather cases, each spawning its own daemon for its
+own single request and amortizing nothing. Only repeated gathers against
+the SAME host amortize, and that means multiple plays.
+
+So: the first gather on a given host is roughly break-even because it
+absorbs that host's daemon startup inside its own round trip (0.284s ->
+0.255s on the 1-play case); every LATER gather on that same host is
+pure profit at ~0.13s, which is entirely what produces the 10-play
+2.87s -> 1.69s figure. A single-play run gains nothing however many
+hosts it targets, and a single-play single-host run pays ~25ms.
+Accepted rather than gated on a play count, which would mean threading a
+"will this host gather again?" prediction through the executor for 25
+milliseconds.
+
+The whole-run wall clock on the 4-host round is NOT reported as a
+before/after ratio, deliberately: the two host sets differed by ~0.9s on
+an ~18s run and the environment drifted faster between the first and
+second measurement blocks than the effect being measured (identical
+`--forks 1` runs came in at 65s early and 59s later). Orientation
+swapping cancels the host-set bias but not the drift, since orientation
+and time were confounded in this round. The fact-gathering bucket is the
+direct measure and it is unambiguous. Every one of the 8 runs produced
+an identical per-host recap (`ok=95 changed=0 failed=0 skipped=52`).
+
+That 25ms is what is left after `close_all_daemons`'s exit poll went
+from a flat 20ms interval to a 1ms-doubling backoff (same 1s hard
+deadline) - a daemon was reliably burning two whole 20ms ticks. Before
+that fix the single-gather cost was 0.103s and went the same direction
+in 4 of 4 runs; after it, 0.025s and 3 of 4. Worth recording how that
+was nearly missed: the profile's own "unaccounted" row only moved
+0.041s -> 0.032s, which looked like the fix had barely worked, and the
+wall-clock means were what actually showed it removing three quarters of
+the regression. Read the number the user feels, not the nearest bucket.
+
+
 
 ## Performance items 0-1 (OPUS_PERFORMANCE_IMPROVEMENTS.md, 0.9.632 -> 0.9.633)
 

@@ -1,6 +1,6 @@
 require "../spec_helper"
 
-# SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15 - drives the REAL
+# OPUS_PERFORMANCE_IMPROVEMENTS.md items 1-3 - drives the REAL
 # compiled `.fat-plugin --daemon` binary as a local subprocess (no SSH
 # involved at all), the same "exercise the real entrypoint, not a
 # reimplementation of it" spirit `PluginSpecHelper` already uses for
@@ -23,6 +23,45 @@ end
 
 describe "fat plugin binary --daemon mode" do
   daemon_binary = File.join(PluginSpecHelper::PLUGINS_DIR, ".fat-plugin")
+
+  # OPUS_PERFORMANCE_IMPROVEMENTS.md item 2. `facts` was the one real
+  # remote module missing from this binary's dispatch table, so it was
+  # explicitly held off the daemon path (DAEMON_INELIGIBLE_PLUGINS) -
+  # otherwise every fact gather, the one task that runs on every host in
+  # every play, would have hit the "unknown plugin" fallback. This is
+  # the check that the exclusion is genuinely no longer needed: a real
+  # `--daemon` process must answer a facts request with real facts, and
+  # must still serve an ordinary module afterwards on the same pipe.
+  it "serves facts over the daemon, on the same process as any other module" do
+    pending! "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
+
+    process = Process.new(daemon_binary, ["--daemon"],
+      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+
+    begin
+      base_config = {"host" => {"name" => "localhost", "user" => ENV["USER"]? || "root", "port" => 22}, "vars" => {} of String => String}
+
+      facts = daemon_send(process, "facts", base_config.merge({"params" => {} of String => String}))
+      facts["failed"]?.try(&.as_bool).should be_false
+      gathered = facts["ansible_facts"].as_h
+      gathered["ansible_system"]?.should_not be_nil
+      gathered["ansible_distribution"]?.should_not be_nil
+      # Not the "unknown plugin: facts" shape the exclusion existed to
+      # avoid - that one carries a msg and no ansible_facts at all.
+      facts["msg"]?.should be_nil
+
+      # gather_subset still reaches the gatherer through the wire config.
+      minimal = daemon_send(process, "facts", base_config.merge({"params" => {"gather_subset" => "min"}}))
+      minimal["ansible_facts"].as_h.size.should be < gathered.size
+
+      # One daemon, both kinds of module.
+      after = daemon_send(process, "command", base_config.merge({"params" => {"_raw_params" => "echo after-facts"}}))
+      after["stdout"]?.try(&.as_s).should eq("after-facts")
+    ensure
+      process.input.close rescue nil
+      process.wait rescue nil
+    end
+  end
 
   it "serves multiple requests over the SAME long-lived process, matching one-shot output" do
     pending! "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)

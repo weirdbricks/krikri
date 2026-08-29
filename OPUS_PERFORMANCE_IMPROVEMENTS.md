@@ -36,7 +36,7 @@ Implement every NOT-BREAKING item before starting any BREAKING one.
 |---|---|---|---|
 | 0 | `--timing-profile` | NOT-BREAKING | **DONE (0.9.632)** - none (enables the rest) |
 | 1 | `become:` under the daemon | NOT-BREAKING | **DONE (0.9.633)** - 4.0x on an all-solo `become:` workload, 2.5x on the round trips it moves, 1.13x whole-run warm on os_hardening |
-| 2 | `facts` under the daemon | NOT-BREAKING | large |
+| 2 | `facts` under the daemon | NOT-BREAKING | **DONE (0.9.634)** - 1.5x on a many-PLAY run; no gain from extra hosts (daemons are per host); ~25ms COST on a single-gather run |
 | 3 | Batched groups under the daemon | NOT-BREAKING | compounds 1-2 |
 | 4 | Stateful vars context (deltas) | NOT-BREAKING | grows with role length |
 | 5 | Ship the play, not the tasks | NOT-BREAKING | N x RTT -> ~1 RTT |
@@ -128,9 +128,34 @@ why item 0 comes first.
 **Estimated win.** Large. Potentially converts most tasks in most real
 roles from ssh-fork+bash+base64+exec to a pipe write.
 
-### 2. `facts` is daemon-ineligible
+### 2. `facts` is daemon-ineligible — DONE (0.9.634)
 
 *NOT-BREAKING. Identical fact payload, different process.*
+
+**Landed, with one estimate corrected.** The "Fix" below was right that
+the ineligible-set entry is one line, but the real work was that
+`facts` was not in the fat binary at all (no `BasePlugin` class, no
+`STDIN.gets_to_end` trailer for the generator to splice), so the body
+had to be lifted into `CrystalPlay::FactsGatherer` and given a
+hand-written dispatch case via `build.sh`'s new `FAT_EXTRA_MODULES`.
+
+**The "frequently the slowest single step of a warm run" framing was
+wrong for a single-play role.** One gather is one round trip out of
+dozens; on devsec.hardening.os_hardening it is ~0.2s of a ~16s warm run,
+and that run's own +-1s spread cannot resolve the change at all. The win
+is real but scales with gathers PER HOST - which means PLAYS, not hosts
+and not role length. Measured on a 4-host round: the fact-gathering
+phase cost the same before and after in both fork modes, because
+`daemon start` went 4 -> 8, one extra daemon per host. Daemons are keyed
+per host, so N hosts x 1 gather is N independent single-gather cases
+that amortize nothing. 1.5x on a 10-play run; ~25ms cost on a
+single-gather run; nothing either way for a single-play run however
+many hosts it targets. See KNOWN_MISSING.md's item 2 entry.
+
+**This is the argument for item 6** (an agent outliving the run): the
+daemon startup that has to be amortized here is exactly the bootstrap
+cost item 6 removes, and it would turn every first-gather-per-host from
+break-even into a win.
 
 `DAEMON_INELIGIBLE_PLUGINS = Set{"facts"}` (`plugin_manager.cr:94`), and
 `gather_facts_for_host` (`executor.cr:1080`) goes through
@@ -383,9 +408,11 @@ All of Tier 1 (items 0-8) is NOT-BREAKING and lands first. Tier 2
 (items 9-12) is BREAKING and is not started until Tier 1 is done.
 
 1. ~~Item 0 (`--timing-profile`)~~ - done, 0.9.632.
-2. ~~Item 1~~ - done, 0.9.633. Item 2 next - small, self-contained, no
-   protocol change.
-3. Items 3, 4 - protocol work, compounding.
+2. ~~Items 1 and 2~~ - done, 0.9.633 / 0.9.634.
+3. Items 3, 4 - protocol work, compounding. Item 3 is now the one that
+   matters most: os_hardening still sends 44 of its 79 round trips as
+   batched `ssh`+`bash`+base64 groups that route around the daemon
+   entirely.
 4. Item 5 - the architectural step.
 5. Items 6, 7, 8 - fixed-cost removal, sized by item 0.
 6. Tier 2, flag by flag, only then.

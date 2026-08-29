@@ -408,13 +408,9 @@ PLUGINS=(
     "redhat_subscription"
 )
 
-# These 6 stay real, independent binaries instead of joining the fat
-# binary below:
-#   - facts: gathers real facts from the target - its own driver has no
-#     class/STDIN-config shape at all (top-level `gather_facts`, no
-#     config parsing), unlike every other plugin's uniform
-#     `*Plugin < BasePlugin` + `STDIN.gets_to_end` shape the fat-binary
-#     generator below depends on.
+# These 5 stay real, independent binaries instead of joining the fat
+# binary below (`facts` used to be a 6th - see FAT_EXTRA_MODULES below
+# for why it no longer is):
 #   - debug/assert/fail/set_fact/pause: controller-side action plugins
 #     as of 0.9.482 (see action_plugin_manager.cr) - normal task
 #     execution never dispatches these as a module at all anymore, so
@@ -423,7 +419,24 @@ PLUGINS=(
 #     binary doesn't have to link the whole templating engine (these 2
 #     - debug/assert - were the largest binaries in the tree) for a
 #     path that's no longer the normal one.
-STANDALONE_PLUGINS=("facts" "debug" "assert" "fail" "set_fact" "pause")
+STANDALONE_PLUGINS=("debug" "assert" "fail" "set_fact" "pause")
+
+# Plugins that belong IN the fat binary but whose source does not fit
+# the generator's uniform "`class XPlugin < BasePlugin` + `input =
+# STDIN.gets_to_end` trailer" shape, so they are linked through a
+# hand-written require + dispatch case instead of the generic loop.
+#
+# `facts` is the only one (OPUS_PERFORMANCE_IMPROVEMENTS.md item 2). It
+# was excluded from the fat binary AND therefore from the persistent
+# daemon purely because of that shape, which meant the one task that
+# runs on every host in every play - frequently the slowest single step
+# of a warm run - paid a fresh ssh fork and remote process spawn every
+# time. Its gathering body now lives in
+# `src/crystal_play/plugin_helpers/facts_gatherer.cr`
+# (`CrystalPlay::FactsGatherer.run`), which both this binary and the
+# still-buildable standalone `plugins/facts.cr` driver call, so there is
+# exactly one implementation and its output is unchanged.
+FAT_EXTRA_MODULES=("facts")
 
 # Every other plugin: one binary (see build_fat_plugin below) instead of
 # 81 separate ones. All 81 share the exact same shape - one
@@ -441,6 +454,12 @@ for plugin in "${PLUGINS[@]}"; do
     done
     [ "$is_standalone" = false ] && FAT_PLUGINS+=("$plugin")
 done
+
+# FAT_PLUGINS drives hardlinking and staleness checks as well as source
+# inclusion, so the extra modules join it here; the generator below
+# skips them in its source-inclusion and dispatch loops and emits their
+# hand-written equivalents instead.
+FAT_PLUGINS+=("${FAT_EXTRA_MODULES[@]}")
 
 # Builds (only when actually stale) ONE binary covering every plugin in
 # FAT_PLUGINS, dispatched at runtime by argv[0]'s basename (the same
@@ -483,7 +502,16 @@ build_fat_plugin() {
         {
             echo 'require "json"'
             echo 'require "../src/crystal_play/plugin_daemon"'
+            echo 'require "../src/crystal_play/plugin_helpers/facts_gatherer"'
             for plugin in "${FAT_PLUGINS[@]}"; do
+                is_extra=false
+                for extra in "${FAT_EXTRA_MODULES[@]}"; do
+                    [ "$plugin" = "$extra" ] && is_extra=true && break
+                done
+                # Extras have no BasePlugin-shaped source to splice in -
+                # their implementation is required above and dispatched
+                # by hand below.
+                [ "$is_extra" = true ] && continue
                 # Requires stay relative to plugins/ (unchanged) since
                 # the generated file lives there too. Strips the
                 # shebang line and everything from the shared 4-line
@@ -521,10 +549,20 @@ build_fat_plugin() {
             echo '  def self.call(name : String, config : JSON::Any) : String?'
             echo '    case name'
             for plugin in "${FAT_PLUGINS[@]}"; do
+                is_extra=false
+                for extra in "${FAT_EXTRA_MODULES[@]}"; do
+                    [ "$plugin" = "$extra" ] && is_extra=true && break
+                done
+                [ "$is_extra" = true ] && continue
                 cls=$(grep -oP 'class \K\w+Plugin(?= < BasePlugin)' "plugins/$plugin.cr" | head -1)
                 echo "    when \"$plugin\""
                 echo "      CrystalPlay::$cls.new(config).run_and_capture"
             done
+            # FAT_EXTRA_MODULES: hand-written, since these have no
+            # BasePlugin class for the loop above to name. FactsGatherer
+            # .run returns the same JSON string run_and_capture does.
+            echo '    when "facts"'
+            echo '      CrystalPlay::FactsGatherer.run(config)'
             echo '    else'
             echo '      nil'
             echo '    end'

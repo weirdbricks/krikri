@@ -73,17 +73,24 @@ module CrystalPlay
       @@daemon_enabled
     end
 
-    # `facts` (gather_facts) is the one real remote module that isn't
-    # part of the fat plugin binary's own dispatch table
-    # (`build.sh`'s STANDALONE_PLUGINS) - a daemon request for it would
-    # only ever hit the generated dispatcher's "unknown plugin" fallback,
-    # so it's excluded up front rather than paying a round trip to learn
-    # that. `debug`/`assert`/`fail`/`set_fact`/`pause` need no entry here
+    # Empty, and deliberately kept rather than deleted: it is the one
+    # place a module can be pulled back off the daemon path if one ever
+    # needs to be.
+    #
+    # `facts` (gather_facts) used to be the sole entry, because it was
+    # the one real remote module missing from the fat plugin binary's
+    # dispatch table - a daemon request for it would only have hit the
+    # generated dispatcher's "unknown plugin" fallback. That exclusion
+    # cost a fresh ssh fork and remote process spawn for the one task
+    # that runs on every host in every play, so
+    # OPUS_PERFORMANCE_IMPROVEMENTS.md item 2 put `facts` INTO the fat
+    # binary (`build.sh`'s FAT_EXTRA_MODULES) and removed it from here.
+    # `debug`/`assert`/`fail`/`set_fact`/`pause` need no entry here
     # at all: `ActionPluginManager.skips_module_dispatch?` already keeps
     # every one of them from ever reaching #execute_remote_plugin in the
     # first place (verified directly - they're controller-side action
-    # plugins as of item #12, no target-side module dispatch ever
-    # happens for them, remote or local).
+    # plugins, no target-side module dispatch ever happens for them,
+    # remote or local).
     #
     # `become:` used to be excluded here unconditionally - the original
     # landing's documented scope cut. OPUS_PERFORMANCE_IMPROVEMENTS.md
@@ -97,7 +104,7 @@ module CrystalPlay
     # -n -u <become_user> --` wrapper #remote_plugin_target already
     # builds for the one-shot path, keyed on become_user in
     # SSHManager's own daemon table.
-    DAEMON_INELIGIBLE_PLUGINS = Set{"facts"}
+    DAEMON_INELIGIBLE_PLUGINS = Set(String).new
 
     def self.daemon_eligible?(plugin_name : String, become : Bool) : Bool
       _ = become

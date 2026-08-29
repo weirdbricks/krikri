@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.633-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.634-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -387,6 +387,17 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.634`** - fact gathering runs through the persistent daemon too.
+  `facts` was the last module excluded from it, and the reason was
+  shape, not semantics: it had neither the `BasePlugin` class nor the
+  `STDIN.gets_to_end` trailer the fat-binary generator keys on, so it
+  was not in that binary at all. Its gathering body moved verbatim into
+  `CrystalPlay::FactsGatherer`, which both the fat binary and the
+  standalone driver now call. Worth ~1.5x on a run that gathers the same
+  host many times (i.e. many plays); daemons are keyed per host, so
+  extra HOSTS do not amortize it and a single-play run gains nothing
+  however many it targets. A single-host single-play run pays ~25ms for
+  the daemon it now spawns and shuts down.
 - **`0.9.633`** - `become:` tasks now run through the persistent remote
   daemon instead of the per-task ssh-fork fallback. Nearly every task in
   nearly every real Galaxy role sets `become: true`, and every one of

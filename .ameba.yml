@@ -13,6 +13,7 @@ Layout/TrailingWhitespace:
   - plugins/copy.cr
   - plugins/lineinfile.cr
   - plugins/facts.cr
+  - src/crystal_play/plugin_helpers/facts_gatherer.cr
   - plugins/template.cr
   - plugins/shell.cr
   - plugins/file.cr
@@ -77,6 +78,7 @@ Lint/Formatting:
   - plugins/copy.cr
   - plugins/lineinfile.cr
   - plugins/facts.cr
+  - src/crystal_play/plugin_helpers/facts_gatherer.cr
   - plugins/template.cr
   - plugins/shell.cr
   - plugins/file.cr
@@ -148,6 +150,7 @@ Metrics/CyclomaticComplexity:
   - plugins/apt.cr
   - plugins/copy.cr
   - plugins/facts.cr
+  - src/crystal_play/plugin_helpers/facts_gatherer.cr
   - plugins/template.cr
   - plugins/shell.cr
   - plugins/service.cr
@@ -281,6 +284,7 @@ Performance/ChainedCallWithNoBang:
   Description: Identifies usage of chained calls not utilizing the bang method variants
   Excluded:
   - plugins/facts.cr
+  - src/crystal_play/plugin_helpers/facts_gatherer.cr
   - src/crystal_play/task_executor/result_display.cr
   CallNames:
   - uniq
