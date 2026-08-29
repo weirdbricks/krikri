@@ -1608,7 +1608,7 @@ module CrystalPlay
         Crinja::Value.new(result.map { |row| Crinja::Value.new(row) })
       when "varnames"
         patterns = variadic_terms.compact_map { |t| Regex.new(t.to_s) rescue nil }
-        names = env.context.keys.select { |name| patterns.any?(&.matches?(name)) }
+        names = env.context.keys.select { |nm| patterns.any?(&.matches?(nm)) }
         Crinja::Value.new(names.map { |n| Crinja::Value.new(n) })
       when "indexed_items"
         arr = arg1.sequence? ? arg1.to_a : [] of Crinja::Value

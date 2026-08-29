@@ -1214,16 +1214,15 @@ module CrystalPlay
         # and unrelated to whether this construct is converged or not):
         # `10 // 0` overflowed converting `Float64::INFINITY.floor` to
         # `Int64` - fixed directly in `#combine_mult_div` below.
-        
-          render_via_crinja(expr)
-        rescue
-          values = parts.map { |p| resolve_plus_operand(p) }
-          result = values[0]
-          ops.each_with_index do |op, idx|
-            result = combine_mult_div(result, values[idx + 1], op)
-          end
-          @lookup.format_value(result)
-        
+
+        render_via_crinja(expr)
+      rescue
+        values = parts.map { |p| resolve_plus_operand(p) }
+        result = values[0]
+        ops.each_with_index do |op, idx|
+          result = combine_mult_div(result, values[idx + 1], op)
+        end
+        @lookup.format_value(result)
       end
 
       private def combine_mult_div(a : JSON::Any, b : JSON::Any, op : String) : JSON::Any
@@ -2541,12 +2540,10 @@ module CrystalPlay
         # convergence fixes for free on the Crinja-success path, and
         # leaves exactly as broken as before on the (should-be-rare)
         # fallback path.
-        begin
-          value = render_via_crinja_value(expr)
-          value ? @lookup.format_value(value) : "undefined"
-        rescue
-          evaluate_with_filter_fallback(expr)
-        end
+        value = render_via_crinja_value(expr)
+        value ? @lookup.format_value(value) : "undefined"
+      rescue
+        evaluate_with_filter_fallback(expr)
       end
 
       private def evaluate_with_filter_fallback(expr : String) : String

@@ -57,121 +57,119 @@ module CrystalPlay
 
     # Render Jinja2 template with variables
     private def render_template(template_content : String, template_path : String) : String?
-      begin
-        # Jinja2's `{%+ ... %}`/`{% ... +%}` whitespace-control modifier
-        # (explicitly keeping whitespace trim_blocks/lstrip_blocks would
-        # otherwise strip around this one tag) - Crinja's parser doesn't
-        # recognize `+` as a modifier at all here, and fails outright with
-        # "no tag with name '+' registered", failing the whole template
-        # render. konstruktoid-hardening's sshd_config.j2 uses this around
-        # its `Match Address/Group/User` section headers. Since this
-        # renderer already forces lstrip_blocks off unconditionally (see
-        # below), the left-side `+` is always a no-op here already; the
-        # right-side `+%}` losing its trim_blocks override (when
-        # trim_blocks is on) is an imperfect but acceptable trade against
-        # the alternative of failing the entire render.
-        #
-        # MUST run before #rewrite_inline_ternaries: TAG_IF_ELIF's own
-        # regex only recognizes a bare `{%`/plain `-` prefix, not `{%+` -
-        # so a `{%+ if X +%}` tag left unstripped skips the pytruthy
-        # rewrite entirely and reaches Crinja's *native* `{% if %}`
-        # evaluation instead, which has its own real bug (Crinja::Value#
-        # truthy? treats an empty string as truthy - see real_truthy?'s
-        # own comment in jinja_filters.cr). Found via this exact
-        # template's `{%+ if sshd_sftp_only_group +%}` (default `""`):
-        # rendered "Match Group " with the condition's own variable
-        # empty and unset, instead of skipping the block entirely.
-        template_content = template_content.gsub(/\{%\+/, "{%").gsub(/\+%\}/, "%}")
+      # Jinja2's `{%+ ... %}`/`{% ... +%}` whitespace-control modifier
+      # (explicitly keeping whitespace trim_blocks/lstrip_blocks would
+      # otherwise strip around this one tag) - Crinja's parser doesn't
+      # recognize `+` as a modifier at all here, and fails outright with
+      # "no tag with name '+' registered", failing the whole template
+      # render. konstruktoid-hardening's sshd_config.j2 uses this around
+      # its `Match Address/Group/User` section headers. Since this
+      # renderer already forces lstrip_blocks off unconditionally (see
+      # below), the left-side `+` is always a no-op here already; the
+      # right-side `+%}` losing its trim_blocks override (when
+      # trim_blocks is on) is an imperfect but acceptable trade against
+      # the alternative of failing the entire render.
+      #
+      # MUST run before #rewrite_inline_ternaries: TAG_IF_ELIF's own
+      # regex only recognizes a bare `{%`/plain `-` prefix, not `{%+` -
+      # so a `{%+ if X +%}` tag left unstripped skips the pytruthy
+      # rewrite entirely and reaches Crinja's *native* `{% if %}`
+      # evaluation instead, which has its own real bug (Crinja::Value#
+      # truthy? treats an empty string as truthy - see real_truthy?'s
+      # own comment in jinja_filters.cr). Found via this exact
+      # template's `{%+ if sshd_sftp_only_group +%}` (default `""`):
+      # rendered "Match Group " with the condition's own variable
+      # empty and unset, instead of skipping the block entirely.
+      template_content = template_content.gsub(/\{%\+/, "{%").gsub(/\+%\}/, "%}")
 
-        # Crinja 0.9.0 cannot parse Jinja2's inline conditional expression
-        # `{{ A if C else B }}`. Real Ansible supports it and real roles
-        # (dev-sec os_hardening's login.defs and ufw templates) use it, so
-        # rewrite the idiomatic form into the ternary filter we provide
-        # (`{{ C | ternary(A, B) }}`) before Crinja sees it. Only the
-        # literal `X if C else Y` shape is rewritten; `{% if %}` blocks are
-        # left untouched.
-        template_content = rewrite_inline_ternaries(template_content)
+      # Crinja 0.9.0 cannot parse Jinja2's inline conditional expression
+      # `{{ A if C else B }}`. Real Ansible supports it and real roles
+      # (dev-sec os_hardening's login.defs and ufw templates) use it, so
+      # rewrite the idiomatic form into the ternary filter we provide
+      # (`{{ C | ternary(A, B) }}`) before Crinja sees it. Only the
+      # literal `X if C else Y` shape is rewritten; `{% if %}` blocks are
+      # left untouched.
+      template_content = rewrite_inline_ternaries(template_content)
 
-        # A `#jinja2: key:value, key2:value2` directive on the template's
-        # very first line (real Ansible's own per-template override for
-        # trim_blocks/lstrip_blocks/etc. - dev-sec ssh_hardening's
-        # opensshd.conf.j2 opens with exactly this) is metadata for the
-        # renderer, not template content - real Ansible strips it before
-        # rendering. Previously left in place, it rendered as a literal
-        # "#jinja2: ..." line in the *output* file - harmless in most
-        # templates (just an extra comment) but fatal here, since this
-        # particular output is `sshd_config`, whose `validate:` command
-        # (`sshd -T -f %s`) rejects any line it doesn't recognize and
-        # failed the whole task.
-        directive_overrides, template_content = extract_jinja2_directive(template_content)
+      # A `#jinja2: key:value, key2:value2` directive on the template's
+      # very first line (real Ansible's own per-template override for
+      # trim_blocks/lstrip_blocks/etc. - dev-sec ssh_hardening's
+      # opensshd.conf.j2 opens with exactly this) is metadata for the
+      # renderer, not template content - real Ansible strips it before
+      # rendering. Previously left in place, it rendered as a literal
+      # "#jinja2: ..." line in the *output* file - harmless in most
+      # templates (just an extra comment) but fatal here, since this
+      # particular output is `sshd_config`, whose `validate:` command
+      # (`sshd -T -f %s`) rejects any line it doesn't recognize and
+      # failed the whole task.
+      directive_overrides, template_content = extract_jinja2_directive(template_content)
 
-        # Create Crinja environment
-        env = Crinja.new
-        # Real Ansible resolves `{% include %}`/`{% import %}` inside a
-        # template relative to the TEMPLATE's own directory first (Jinja2
-        # FileSystemLoader behavior with the loader searchpath rooted at
-        # the role's templates dir). The default Crinja loader searches
-        # only the process CWD (the work dir), so Oefenweb.haproxy's
-        # haproxy.cfg.j2 - which is built entirely from
-        # `{% include 'global.cfg.j2' %}`-style includes of its sibling
-        # partials - failed with "template global.cfg.j2 could not be
-        # found by FileSystemLoader(<work dir>)" where real ansible
-        # rc=0'd (round 196). Search the template's own dir plus every
-        # ancestor up to and including the role's templates/ root.
-        if (tpl_dir = File.dirname(File.expand_path(template_path))) &&
-           tpl_dir.starts_with?("/")
-          searchpaths = [tpl_dir]
-          dir = tpl_dir
-          while (dir = File.dirname(dir)) != "/" && dir.split("/").includes?("templates")
-            searchpaths << dir
-            break if File.basename(dir) == "templates"
-          end
-          env.loader = Crinja::Loader::FileSystemLoader.new(searchpaths)
+      # Create Crinja environment
+      env = Crinja.new
+      # Real Ansible resolves `{% include %}`/`{% import %}` inside a
+      # template relative to the TEMPLATE's own directory first (Jinja2
+      # FileSystemLoader behavior with the loader searchpath rooted at
+      # the role's templates dir). The default Crinja loader searches
+      # only the process CWD (the work dir), so Oefenweb.haproxy's
+      # haproxy.cfg.j2 - which is built entirely from
+      # `{% include 'global.cfg.j2' %}`-style includes of its sibling
+      # partials - failed with "template global.cfg.j2 could not be
+      # found by FileSystemLoader(<work dir>)" where real ansible
+      # rc=0'd (round 196). Search the template's own dir plus every
+      # ancestor up to and including the role's templates/ root.
+      if (tpl_dir = File.dirname(File.expand_path(template_path))) &&
+         tpl_dir.starts_with?("/")
+        searchpaths = [tpl_dir]
+        dir = tpl_dir
+        while (dir = File.dirname(dir)) != "/" && dir.split("/").includes?("templates")
+          searchpaths << dir
+          break if File.basename(dir) == "templates"
         end
-
-        # Configure Crinja to match Ansible defaults. A directive value
-        # (explicit true OR false) always wins over the param default -
-        # `directive_overrides.fetch` (not `||`) so an explicit `false`
-        # in the directive isn't treated as "unset, fall through".
-        trim_blocks = directive_overrides.fetch("trim_blocks", true?(@params["trim_blocks"]?, default: true))
-
-        env.config.trim_blocks = trim_blocks
-
-        # Crinja's lstrip_blocks is broken: even a bare, unindented `{% if %}`
-        # on its own line (no leading whitespace to strip) makes it eat the
-        # *preceding* line's newline too, and an indented tag eats every
-        # newline in the whole block ("A\n    {% if %}\nB\n    {% endif %}\nC\n"
-        # renders as "ABC" instead of "A\nB\nC\n"). Real templates set
-        # `lstrip_blocks: True` via the `#jinja2:` directive precisely to get
-        # clean, newline-correct output (konstruktoid-hardening's
-        # resolved.conf.j2 does), so honoring the broken implementation would
-        # produce worse output than ignoring the request - always render with
-        # it off regardless of what was requested.
-        env.config.lstrip_blocks = false
-
-        # Prepare template variables
-        template_vars = prepare_template_vars
-
-        # Add Ansible-specific variables
-        template_vars["ansible_managed"] = Crinja::Value.new("Ansible managed")
-        template_vars["template_host"] = Crinja::Value.new(@host.name)
-        template_vars["template_path"] = Crinja::Value.new(template_path)
-        template_vars["template_fullpath"] = Crinja::Value.new(File.expand_path(template_path))
-        template_vars["template_run_date"] = Crinja::Value.new(Time.utc.to_s("%Y-%m-%d %H:%M:%S UTC"))
-
-        # Render template
-        template = env.from_string(template_content)
-        rendered = template.render(template_vars)
-
-        # Ensure rendered content ends with newline (matches Ansible behavior and file conventions)
-        # This prevents idempotency issues with heredoc writes that add trailing newlines
-        rendered += "\n" unless rendered.ends_with?("\n")
-
-        rendered
-      rescue ex
-        @render_error = ex.message
-        nil
+        env.loader = Crinja::Loader::FileSystemLoader.new(searchpaths)
       end
+
+      # Configure Crinja to match Ansible defaults. A directive value
+      # (explicit true OR false) always wins over the param default -
+      # `directive_overrides.fetch` (not `||`) so an explicit `false`
+      # in the directive isn't treated as "unset, fall through".
+      trim_blocks = directive_overrides.fetch("trim_blocks", true?(@params["trim_blocks"]?, default: true))
+
+      env.config.trim_blocks = trim_blocks
+
+      # Crinja's lstrip_blocks is broken: even a bare, unindented `{% if %}`
+      # on its own line (no leading whitespace to strip) makes it eat the
+      # *preceding* line's newline too, and an indented tag eats every
+      # newline in the whole block ("A\n    {% if %}\nB\n    {% endif %}\nC\n"
+      # renders as "ABC" instead of "A\nB\nC\n"). Real templates set
+      # `lstrip_blocks: True` via the `#jinja2:` directive precisely to get
+      # clean, newline-correct output (konstruktoid-hardening's
+      # resolved.conf.j2 does), so honoring the broken implementation would
+      # produce worse output than ignoring the request - always render with
+      # it off regardless of what was requested.
+      env.config.lstrip_blocks = false
+
+      # Prepare template variables
+      template_vars = prepare_template_vars
+
+      # Add Ansible-specific variables
+      template_vars["ansible_managed"] = Crinja::Value.new("Ansible managed")
+      template_vars["template_host"] = Crinja::Value.new(@host.name)
+      template_vars["template_path"] = Crinja::Value.new(template_path)
+      template_vars["template_fullpath"] = Crinja::Value.new(File.expand_path(template_path))
+      template_vars["template_run_date"] = Crinja::Value.new(Time.utc.to_s("%Y-%m-%d %H:%M:%S UTC"))
+
+      # Render template
+      template = env.from_string(template_content)
+      rendered = template.render(template_vars)
+
+      # Ensure rendered content ends with newline (matches Ansible behavior and file conventions)
+      # This prevents idempotency issues with heredoc writes that add trailing newlines
+      rendered += "\n" unless rendered.ends_with?("\n")
+
+      rendered
+    rescue ex
+      @render_error = ex.message
+      nil
     end
 
     # Rewrites Jinja2 inline conditional expressions `{{ A if C else B }}`
