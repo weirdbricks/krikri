@@ -53,7 +53,7 @@ module CrystalPlay
     # Resolved path of the running binary - see get_local_plugin_path.
     @@executable_path : String?
 
-    # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15 - opt-in only, set
+    # OPUS_PERFORMANCE_IMPROVEMENTS.md items 1-3 - opt-in only, set
     # by `--persistent-daemon` on the CLI (crystal-play.cr). Default
     # `false` means #execute_remote_plugin's behavior is byte-for-byte
     # unchanged from before this item landed - nothing here is reached
@@ -85,17 +85,22 @@ module CrystalPlay
     # plugins as of item #12, no target-side module dispatch ever
     # happens for them, remote or local).
     #
-    # `become:` is excluded unconditionally - this first landing's own
-    # documented scope cut (SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item
-    # #15's own "story for become:" open question): a daemon holds one
-    # open SSH session as a single fixed user, and per-task `sudo -n -u
-    # <user> --` currently wraps the whole target invocation
-    # (#remote_plugin_target) - replicating that inside a long-lived
-    # daemon process is real, separate design work, not attempted here.
+    # `become:` used to be excluded here unconditionally - the original
+    # landing's documented scope cut. OPUS_PERFORMANCE_IMPROVEMENTS.md
+    # item 1 closed it: nearly every real Galaxy role runs `become:
+    # true`, so excluding it meant the single biggest measured
+    # optimization in the project was switched off for the
+    # overwhelming majority of tasks in the overwhelming majority of
+    # real playbooks. A daemon is still one resident process running as
+    # one fixed user - that part was never the problem - so a `become:`
+    # task simply gets its OWN daemon, spawned through the same `sudo
+    # -n -u <become_user> --` wrapper #remote_plugin_target already
+    # builds for the one-shot path, keyed on become_user in
+    # SSHManager's own daemon table.
     DAEMON_INELIGIBLE_PLUGINS = Set{"facts"}
 
     def self.daemon_eligible?(plugin_name : String, become : Bool) : Bool
-      return false if become
+      _ = become
       !DAEMON_INELIGIBLE_PLUGINS.includes?(simple_plugin_name(plugin_name))
     end
 
@@ -751,7 +756,7 @@ module CrystalPlay
 
       ensure_uploaded(host, plugin_name, vars)
 
-      # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15: try the
+      # OPUS_PERFORMANCE_IMPROVEMENTS.md items 1-3: try the
       # persistent daemon connection first when opted in and eligible -
       # on ANY failure (never established, broken pipe, timed out,
       # target rebooted mid-play and the old pipe is stale) this rescues
@@ -776,7 +781,19 @@ module CrystalPlay
       # path only matters the very first time a host needs a daemon;
       # every later call for a DIFFERENT module on the same host reuses
       # the cached process without re-touching this argument at all.
-      if @@daemon_enabled && daemon_eligible?(plugin_name, become)
+      # OPUS_PERFORMANCE_IMPROVEMENTS.md item 1: a `become:` task uses a
+      # daemon of its own, spawned as become_user - so the daemon_user
+      # here is the become_user for a privileged task and nil for an
+      # unprivileged one, which is exactly SSHManager's daemon key.
+      # `become_user` has already been validated against
+      # `valid_become_user?` by whoever resolved become for this task
+      # (see #resolve_become and #remote_plugin_target's own note) -
+      # required, because it is interpolated into the daemon's own ssh
+      # command line the same way the one-shot target string is.
+      daemon_user = become ? (become_user || "root") : nil
+
+      if @@daemon_enabled && daemon_eligible?(plugin_name, become) &&
+         !SSHManager.daemon_unavailable?(connection_host, host.user || "root", host.port, daemon_user)
         begin
           return SSHManager.daemon_send(
             connection_host,
@@ -785,7 +802,8 @@ module CrystalPlay
             "#{REMOTE_PLUGIN_DIR}/#{simple_plugin_name(plugin_name)}",
             simple_plugin_name(plugin_name),
             JSON.parse(config),
-            identity_file: vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
+            identity_file: vars["ansible_ssh_private_key_file"]?.try(&.as_s?),
+            become_user: daemon_user
           )
         rescue
           # Fall through to the per-task path below.

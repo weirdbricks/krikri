@@ -274,7 +274,9 @@ module CrystalPlay
       end
     end
     
-    # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15 - the persistent
+    # OPUS_PERFORMANCE_IMPROVEMENTS.md items 1-3 (formerly
+    # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15, a doc since
+    # deleted) - the persistent
     # remote executor's controller half. `exec`/`exec_script` above pay
     # a fresh local `ssh` fork + remote process spawn on EVERY call,
     # multiplexed over the same ControlMaster TCP session but never
@@ -295,7 +297,43 @@ module CrystalPlay
     # comment already documents - a given host's daemon connection is
     # never touched by two fibers at once, so no correlation ID or lock
     # is needed on top of this Hash.
-    @@daemon_processes = Hash({String, String, Int32}, Process).new
+    # OPUS_PERFORMANCE_IMPROVEMENTS.md item 1: keyed on the become_user
+    # too, not just (host, user, port). A daemon is one resident process
+    # running as one fixed user, so `become: true` tasks cannot share
+    # the unprivileged host connection's daemon - but they can have
+    # their own, spawned as `sudo -n -u <become_user> -- <binary>
+    # --daemon`. A play mixing privileged and unprivileged tasks holds
+    # two resident daemons per host, which is fine. `nil` in the last
+    # slot is the no-become daemon.
+    alias DaemonKey = {String, String, Int32, String?}
+
+    @@daemon_processes = Hash(DaemonKey, Process).new
+
+    # Consecutive daemon failures per key. A daemon that cannot be
+    # started at all - `sudo -n` refused because this host wants a
+    # password, `requiretty` in sudoers, a NOPASSWD rule that covers
+    # the one-shot command but not this one - would otherwise cost a
+    # wasted ssh spawn on EVERY task for the rest of the run before
+    # falling back, turning item 1 into a net slowdown on exactly the
+    # hosts where it doesn't apply. After MAX_DAEMON_FAILURES in a row
+    # the key stops being tried and every task for it takes the
+    # per-task path directly.
+    #
+    # Consecutive, not cumulative, and reset by any success: a daemon
+    # dying once because `ansible.builtin.reboot` killed the SSH
+    # session mid-play must still be lazily respawned afterwards (see
+    # #daemon_send's own comment - that is the whole reconnect story),
+    # and a threshold of 3 leaves ample room for that while still
+    # bounding a hard failure to three wasted attempts.
+    @@daemon_failures = Hash(DaemonKey, Int32).new(0)
+    MAX_DAEMON_FAILURES = 3
+
+    # Whether a daemon for this key is worth attempting at all. Public
+    # so PluginManager can skip the attempt before building a request,
+    # rather than learning about it from a raised exception.
+    def self.daemon_unavailable?(host : String, user : String, port : Int32, become_user : String?) : Bool
+      @@daemon_failures[{host, user, port, become_user}] >= MAX_DAEMON_FAILURES
+    end
 
     # Sends one request and returns the plugin's own JSON result,
     # unwrapped - unlike `exec`/`exec_script`, there is no exit-code-vs-
@@ -321,11 +359,13 @@ module CrystalPlay
       module_name : String,
       config : JSON::Any,
       identity_file : String? = nil,
-      timeout : Int32 = DEFAULT_EXEC_TIMEOUT_SECONDS
+      timeout : Int32 = DEFAULT_EXEC_TIMEOUT_SECONDS,
+      become_user : String? = nil
     ) : JSON::Any
       init
-      key = {host, user, port}
-      process = @@daemon_processes[key]? || spawn_daemon(host, user, port, remote_binary_path, identity_file)
+      key = {host, user, port, become_user}
+      process = @@daemon_processes[key]? ||
+                spawn_daemon(host, user, port, remote_binary_path, identity_file, become_user)
 
       request = {"module" => module_name, "config" => config}.to_json
 
@@ -336,13 +376,21 @@ module CrystalPlay
         end
       end
 
+      @@daemon_failures.delete(key)
       JSON.parse(response)
     rescue ex
-      kill_daemon(host, user, port)
+      @@daemon_failures[{host, user, port, become_user}] += 1
+      kill_daemon(host, user, port, become_user)
       raise ex
     end
 
-    private def self.spawn_daemon(host : String, user : String, port : Int32, remote_binary_path : String, identity_file : String?) : Process
+    # *become_user* non-nil spawns the daemon under `sudo -n -u <user>
+    # --`, the exact wrapper `PluginManager.remote_plugin_target`
+    # already builds for the one-shot path - deliberately the same
+    # escalation, so a host where the one-shot become path works has a
+    # daemon that works too, and one where it doesn't fails the same
+    # way (loudly, at spawn, then falls back).
+    private def self.spawn_daemon(host : String, user : String, port : Int32, remote_binary_path : String, identity_file : String?, become_user : String? = nil) : Process
       control_path = get_control_path(host, user, port)
 
       ssh_cmd = [
@@ -357,7 +405,7 @@ module CrystalPlay
       ] + identity_args(identity_file) + [
         "-p", port.to_s,
         "#{user}@#{host}",
-        "#{remote_binary_path} --daemon",
+        daemon_remote_command(remote_binary_path, become_user),
       ]
 
       process = TimingProfile.measure("transport.daemon_spawn", "transport.spawn") do
@@ -369,8 +417,17 @@ module CrystalPlay
           error: Process::Redirect::Close
         )
       end
-      @@daemon_processes[{host, user, port}] = process
+      @@daemon_processes[{host, user, port, become_user}] = process
       process
+    end
+
+    # become_user is interpolated into a shell command line here, same
+    # as the one-shot path's own target string - it is expected to have
+    # already passed `PluginManager.valid_become_user?` at the call
+    # site, which is where that allow-list is enforced for both paths.
+    private def self.daemon_remote_command(remote_binary_path : String, become_user : String?) : String
+      return "#{remote_binary_path} --daemon" unless become_user
+      "sudo -n -u #{become_user} -- #{remote_binary_path} --daemon"
     end
 
     private def self.write_daemon_frame(io : IO, payload : String) : Nil
@@ -425,8 +482,8 @@ module CrystalPlay
     # rescue, where something has already gone wrong and the priority is
     # dropping the stale connection so the NEXT call spawns a fresh one,
     # not waiting around for a clean exit that may never come.
-    private def self.kill_daemon(host : String, user : String, port : Int32) : Nil
-      process = @@daemon_processes.delete({host, user, port})
+    private def self.kill_daemon(host : String, user : String, port : Int32, become_user : String? = nil) : Nil
+      process = @@daemon_processes.delete({host, user, port, become_user})
       return unless process
 
       begin
@@ -459,7 +516,25 @@ module CrystalPlay
         end
       end
 
-      sleep 1.second
+      # Poll for the batch to exit rather than sleeping a flat second.
+      # This used to be `sleep 1.second` unconditionally, which was a
+      # rounding error while `become:` tasks were daemon-ineligible (a
+      # typical all-`become:` role held no daemons at all, so this
+      # returned early at the `processes.empty?` guard above and cost
+      # nothing). OPUS_PERFORMANCE_IMPROVEMENTS.md item 1 changed that:
+      # now essentially every real run holds at least one daemon, and a
+      # flat second on the way out was eating a third of item 1's own
+      # measured warm-run saving on devsec.hardening.os_hardening -
+      # visible as an exactly-1.001s "unaccounted" row in the item-0
+      # timing profile, which is what made it obvious. Daemons exit on
+      # EOF in low milliseconds, so a 20ms poll to the same 1s ceiling
+      # keeps the identical worst-case bound and gives the whole grace
+      # period back in the normal case.
+      deadline = Time.monotonic + 1.second
+      while Time.monotonic < deadline
+        break if processes.all?(&.terminated?)
+        sleep 20.milliseconds
+      end
 
       processes.each do |process|
         begin

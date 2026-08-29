@@ -174,9 +174,9 @@ module CrystalPlay
       io.puts format_row("  unaccounted", nil, unaccounted, total)
       io.puts ""
 
-      emit_section(io, "transport (nested inside task execution)", TRANSPORT_ROWS, total)
+      emit_section(io, "transport (spans the upload and execution phases both)", TRANSPORT_ROWS, total)
       io.puts ""
-      emit_section(io, "controller-side (nested inside task execution)", CONTROLLER_ROWS, total)
+      emit_section(io, "controller-side (nested inside the phases above)", CONTROLLER_ROWS, total)
     end
 
     private def self.emit_section(io : IO, title : String, rows : Array(Row), total : Time::Span) : Nil

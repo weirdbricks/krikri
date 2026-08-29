@@ -10,12 +10,86 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.631`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.633`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
+
+## Performance items 0-1 (OPUS_PERFORMANCE_IMPROVEMENTS.md, 0.9.632 -> 0.9.633)
+
+First two items of the new performance plan, both NOT-BREAKING (an
+unmodified real Ansible playbook observes the identical result). One
+real engine bug found on the way, fixed and re-verified live.
+
+**Item 0 - `--timing-profile` (0.9.632).** Every other item in the plan
+was an estimate until a run's wall clock could be attributed to
+something. New `src/crystal_play/timing_profile.cr` buckets a run into
+playbook/inventory parse, plugin upload, task execution and fact
+gathering; ssh exec / exec_script / local ssh process spawn / daemon
+request / daemon start / scp / rsync / local plugin exec; and
+controller-side templating, conditionals, crinja and result display.
+Off by default and a bare `yield` when off. Overlapping buckets declare
+a group so nesting never double-counts, and the guard is per-fiber so
+`--forks > 1` concurrency is not mistaken for re-entrancy.
+
+**Item 1 - `become:` under the persistent daemon (0.9.633).** Every
+`become: true` task was daemon-ineligible, which is nearly every task
+in nearly every real Galaxy role - the project's single biggest
+measured optimization was switched off for the overwhelming majority of
+real work, and the published warm speedups were largely produced by the
+per-task FALLBACK path. Daemons are now keyed on `(host, user, port,
+become_user)` and a privileged one is spawned through the same `sudo -n
+-u <become_user> --` wrapper the one-shot path already builds, so a
+host where one-shot become works has a working daemon, and one where it
+doesn't fails the same way and falls back. A key that fails to start 3
+times in a row stops being attempted, so a host whose sudoers refuses
+`sudo -n` pays three wasted ssh spawns rather than one per task.
+
+Measured on a fresh 2-host Atlantic.net `G3.2GB` Ubuntu 22.04 pair, one
+binary per host (before = the commit immediately preceding, with the
+`is in` fix below backported so both sides run the identical task set),
+runs issued simultaneously so both see the same network. Every pair
+below produced an identical `PLAY RECAP`, which is the point - item 1
+changes no verdicts:
+
+| workload | before | after | |
+|---|---|---|---|
+| 40 solo `become:` tasks, task-execution phase | 11.00s mean of 3 | 2.77s mean of 3 | **4.0x** |
+| devsec.hardening.os_hardening warm, wall clock | 19.70 / 20.33s | 17.55 / 17.88s | **1.13x** |
+| ...the 34 of its 79 round trips that moved to the daemon | 4.02s (0.118s/task) | 1.61s (0.047s/task) | **2.5x** |
+| devsec.hardening.os_hardening cold, wall clock | 30.15s | 29.41s | 1.03x |
+
+The whole-run figure is bounded by how many of a role's round trips are
+solo rather than batched: os_hardening batches 45 of its 79, and a
+batched group still takes the `ssh`+`bash`+base64 path (that is item 3,
+which makes batching and the daemon compose). The synthetic case, where
+every task is solo, is what item 1 is worth when nothing routes around
+it. Cold barely moves because a cold run is dominated by real apt and
+package work rather than transport. A swapped-host control (before
+binary on the after host and vice versa) reproduced the same direction,
+ruling out per-VM speed bias.
+
+`SSHManager.close_all_daemons` also stopped sleeping a flat second on
+the way out. That was a rounding error while `become:` tasks held no
+daemons; with item 1 essentially every real run holds one, and the flat
+second was eating a third of the warm saving - visible as an
+exactly-1.001s "unaccounted" row in item 0's own profile, which is what
+made it obvious. It now polls at 20ms to the same 1s ceiling.
+
+**Fixed 0.9.633 - Jinja2's `in` TEST spelling was unsupported.**
+`x is in y` / `x is not in y` (Jinja 2.10+) is the containment operator
+spelled as a test. `ConditionalEvaluator`'s `not in` OPERATOR handler
+ran first and split `item is not in os_always_ignore_users` on
+" not in ", handing the containment check a left operand of `item is` -
+so every looped item failed with "Error while evaluating conditional:
+'item is' is undefined" instead of skipping or running. Found live
+benchmarking devsec.hardening.os_hardening (its `user_accounts.yml`
+gates every interactive-user task this way); verified against real
+ansible-core 2.19.4 before fixing. Live re-verify: `ok=95 changed=0
+failed=0 skipped=52`, rc=0, idempotent.
+
 
 ## Round 191 (60-role marathon, fresh G3.2GB pair per role, cold+warm both engines, 0.9.625 → 0.9.627)
 

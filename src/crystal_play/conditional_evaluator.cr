@@ -255,6 +255,19 @@ module CrystalPlay
       # left operand (`'x' not` / ` in list`) and never match. dev-sec
       # os_hardening gates tasks on `'"change_user" not in
       # os_security_users_allow'`.
+      # Jinja2's `in` TEST (`x is in y` / `x is not in y`, added in
+      # Jinja 2.10) is the same containment check as the `in` OPERATOR
+      # spelled as a test, so it is normalized to the operator form
+      # here - before the two handlers below, which would otherwise
+      # split `item is not in ignore` on " not in " and hand
+      # evaluate_in a left operand of "item is" ("'item is' is
+      # undefined", failing the task outright). Found live benchmarking
+      # devsec.hardening.os_hardening, whose user_accounts.yml gates
+      # every interactive-user task on `item is not in
+      # os_always_ignore_users`; verified against real ansible-core
+      # 2.19.4, which skips/runs exactly as the operator form does.
+      condition = condition.gsub(" is not in ", " not in ").gsub(" is in ", " in ")
+
       if condition.includes?(" not in ")
         return !evaluate_in(condition.gsub(" not in ", " in "), vars, raise_undefined)
       end

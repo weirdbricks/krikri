@@ -75,9 +75,11 @@ inventory_explicit = false
 check_mode = false
 diff_mode = false
 batching_enabled = true
-# SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15: persistent remote
-# executor - one long-lived ssh+plugin-daemon session per host instead
-# of forking ssh+exec per task. Was opt-in behind --persistent-daemon
+# OPUS_PERFORMANCE_IMPROVEMENTS.md items 1-3 (formerly
+# SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15, a doc since deleted):
+# persistent remote executor - one long-lived ssh+plugin-daemon session
+# per (host, become_user) instead of forking ssh+exec per task. Was
+# opt-in behind --persistent-daemon
 # from 0.9.496 through 0.9.499; promoted to default at 0.9.501 based
 # on the 10-role real-host benchmark (commit 54da326, ~6.3× mean warm
 # speedup) and the absence of regressions across the per-role round
@@ -85,9 +87,10 @@ batching_enabled = true
 # remains available for parity benchmarking against the old path or
 # for hitting specific debug/edge-case scenarios where the per-task
 # ssh fork is actually wanted. The per-task path is still used as
-# fallback for become:, gather_facts:, batched task groups, remote
-# async, and any daemon-connection failure - so dropping the flag never
-# reduces functionality, only throughput.
+# fallback for gather_facts:, batched task groups, remote async, and
+# any daemon-connection failure - so dropping the flag never reduces
+# functionality, only throughput. `become:` was on that fallback list
+# until item 1 gave privileged tasks a daemon of their own.
 persistent_daemon = true
 # real ansible-playbook's default (5) exists because a "fork" there is a
 # forked Python interpreter per host - expensive enough that 5 concurrent
@@ -159,11 +162,11 @@ begin
       batching_enabled = false
     end
 
-    parser.on("--persistent-daemon", "(SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15, on by default since 0.9.501): keep one persistent ssh+plugin-daemon connection per remote host instead of forking ssh+exec per task, for solo (non-batched, non-become:) remote tasks. become:/batched tasks and remote fact-gathering always use the existing per-task path regardless of this flag. Equivalent to the default; accepted for backward compatibility with playbooks/aliases that set it explicitly.") do
+    parser.on("--persistent-daemon", "(OPUS_PERFORMANCE_IMPROVEMENTS.md items 1-3, on by default since 0.9.501): keep one persistent ssh+plugin-daemon connection per remote host and become_user instead of forking ssh+exec per task, for solo (non-batched) remote tasks. Batched task groups and remote fact-gathering always use the existing per-task path regardless of this flag. Equivalent to the default; accepted for backward compatibility with playbooks/aliases that set it explicitly.") do
       persistent_daemon = true
     end
 
-    parser.on("--no-persistent-daemon", "Opt out of the default persistent-daemon mode (item #15) and use the per-task ssh-fork path instead. Provided for parity benchmarking against the pre-0.9.501 architecture and for hitting specific edge-case scenarios where the per-task path is actually wanted. The per-task path remains in place as the fallback for become:, gather_facts:, batched task groups, and remote async regardless of this flag.") do
+    parser.on("--no-persistent-daemon", "Opt out of the default persistent-daemon mode and use the per-task ssh-fork path instead. Provided for parity benchmarking against the pre-0.9.501 architecture and for hitting specific edge-case scenarios where the per-task path is actually wanted. The per-task path remains in place as the fallback for gather_facts:, batched task groups, remote async, and any daemon that could not be started, regardless of this flag.") do
       persistent_daemon = false
     end
 
@@ -922,7 +925,7 @@ end
 # accumulates across every play the same way real Ansible's set does.
 any_failed = !permanently_failed_hosts.empty?
 
-# SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15: close any persistent
+# OPUS_PERFORMANCE_IMPROVEMENTS.md items 1-3: close any persistent
 # daemon connections before either exit path below - a no-op when
 # --persistent-daemon was never passed (the Hash it iterates is simply
 # empty), so this is safe to call unconditionally.

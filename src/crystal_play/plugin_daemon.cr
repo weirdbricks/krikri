@@ -1,7 +1,9 @@
 require "json"
 
 module CrystalPlay
-  # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15 - the persistent
+  # OPUS_PERFORMANCE_IMPROVEMENTS.md items 1-3 (formerly
+  # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15, a doc since
+  # deleted) - the persistent
   # remote executor. Today's per-task remote path forks a local `ssh`
   # client, a remote `bash -s`, and `exec`s a fresh plugin process for
   # EVERY task (`PluginManager.execute_remote_plugin`) - real work
@@ -15,9 +17,9 @@ module CrystalPlay
   # `ssh_manager.cr`'s `daemon_send`.
   #
   # Deliberately opt-in and narrowly scoped - see this class's own
-  # design notes in SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15 for
-  # what's out of scope in this first landing (become:, batching,
-  # remote async:, vars-context residency). Nothing here changes
+  # design notes in OPUS_PERFORMANCE_IMPROVEMENTS.md items 1-5 for
+  # what remains out of scope (batching, remote async:, vars-context
+  # residency; become: is no longer - see item 1). Nothing here changes
   # default behavior: this module is only ever invoked by `--daemon`,
   # which nothing reaches unless `--persistent-daemon` was passed on the
   # controller.

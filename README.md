@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.631-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.633-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -387,6 +387,22 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.633`** - `become:` tasks now run through the persistent remote
+  daemon instead of the per-task ssh-fork fallback. Nearly every task in
+  nearly every real Galaxy role sets `become: true`, and every one of
+  them was daemon-ineligible, so the engine's largest optimization was
+  switched off for the overwhelming majority of real work. A privileged
+  daemon is spawned through the same `sudo -n -u <become_user> --`
+  wrapper the one-shot path already used, keyed per become_user, and
+  falls back exactly as before if it cannot start. Also fixes Jinja2's
+  `in` TEST spelling (`x is in y` / `x is not in y`), which the `not in`
+  operator handler was mis-splitting into an undefined `item is` operand
+  (devsec.hardening.os_hardening's `user_accounts.yml`).
+- **`0.9.632`** - new `--timing-profile` flag: a wall-clock attribution
+  block after the PLAY RECAP, splitting a run into parse, plugin upload,
+  fact gathering and task execution, then into each transport path (ssh
+  fork, daemon pipe, scp/rsync, local exec) and controller-side
+  templating/conditionals/display. Off by default.
 - **`0.9.631`** - round 195 (60 untested roles, fresh pair per role,
   cold+warm both engines) plus a 10-role re-verification pass: four
   engine divergences closed. `delegate_to: localhost` tasks now execute
