@@ -2799,7 +2799,7 @@ module CrystalPlay
           else
             current << char
           end
-        elsif (char == '{' && (next_char == '{' || next_char == '%'))
+        elsif char == '{' && (next_char == '{' || next_char == '%')
           current << char << next_char.not_nil!
           brace_depth += 1
           i += 1

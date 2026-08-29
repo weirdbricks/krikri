@@ -48,13 +48,13 @@ describe "strategy:" do
   it "keeps a barrier between tasks by default" do
     code, lines = run_strategy(nil)
     code.should eq(0)
-    lines.count { |l| l.starts_with?("TASK [slow") }.should eq(1)
-    lines.index("TASK [second]").not_nil!.should be > lines.index("changed:h1").not_nil!
+    lines.count(&.starts_with?("TASK [slow")).should eq(1)
+    lines.index!("TASK [second]").should be > lines.index!("changed:h1")
   end
 
   it "behaves the same for an explicit linear" do
     _, lines = run_strategy("linear")
-    lines.count { |l| l.starts_with?("TASK [slow") }.should eq(1)
+    lines.count(&.starts_with?("TASK [slow")).should eq(1)
   end
 
   # free: h2 races through BOTH its tasks while h1 is still sleeping in
@@ -63,7 +63,7 @@ describe "strategy:" do
   it "lets a fast host run ahead with free" do
     code, lines = run_strategy("free")
     code.should eq(0)
-    lines.count { |l| l.starts_with?("TASK [slow") }.should eq(2)
+    lines.count(&.starts_with?("TASK [slow")).should eq(2)
     lines.should eq([
       "TASK [slow on h1]", "changed:h2",
       "TASK [second]", "changed:h2",
@@ -76,7 +76,7 @@ describe "strategy:" do
   # engine has no equivalent of.
   it "treats host_pinned as free" do
     _, lines = run_strategy("host_pinned")
-    lines.count { |l| l.starts_with?("TASK [slow") }.should eq(2)
+    lines.count(&.starts_with?("TASK [slow")).should eq(2)
   end
 
   # Real Ansible REFUSES an unknown strategy - it does not fall back to

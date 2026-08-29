@@ -901,7 +901,7 @@ describe "crystal-ansible CLI (--check mode)" do
     # (real ansible-playbook's completion order), so the two runs can
     # legitimately order two adjacent host lines differently. What must
     # not change with --forks is WHAT happened - every line, once.
-    forks1_output.lines.sort.should eq(default_output.lines.sort)
+    forks1_output.lines.sort!.should eq(default_output.lines.sort!)
   end
 
   it "--forks N runs every host per task, still runs run_once: only on the first host, and keeps each host's output un-interleaved" do

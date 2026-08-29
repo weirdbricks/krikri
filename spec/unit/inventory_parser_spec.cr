@@ -376,7 +376,7 @@ describe CrystalPlay::InventoryParser do
 
       inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "dynamic-inventory"))
 
-      inventory.groups["web"].hosts.keys.sort.should eq(["web1", "web2"])
+      inventory.groups["web"].hosts.keys.sort!.should eq(["web1", "web2"])
     end
 
     it "falls back to --host <name> per host when _meta is absent" do

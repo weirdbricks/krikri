@@ -10,7 +10,7 @@ describe CrystalPlay::PluginHelpers::PostgresqlAcl do
     it "parses a real relacl value, grant-option and plain privileges alike" do
       parsed = CrystalPlay::PluginHelpers::PostgresqlAcl.parse("{postgres=arwdDxtm/postgres,bob=rw/postgres,alice=r*/postgres}")
 
-      parsed["postgres"].keys.sort.should eq(['D', 'a', 'd', 'm', 'r', 't', 'w', 'x'])
+      parsed["postgres"].keys.sort!.should eq(['D', 'a', 'd', 'm', 'r', 't', 'w', 'x'])
       parsed["bob"].should eq({'r' => false, 'w' => false})
       parsed["alice"].should eq({'r' => true})
     end

@@ -720,7 +720,7 @@ module CrystalPlay
       return {} of String => String unless parts.size == 6
 
       block_size, block_total, block_free, block_available, inode_total, inode_free =
-        parts.map { |p| p.to_i64? }
+        parts.map(&.to_i64?)
 
       return {} of String => String if block_size.nil? || block_total.nil? || block_free.nil? ||
                                        block_available.nil? || inode_total.nil? || inode_free.nil?

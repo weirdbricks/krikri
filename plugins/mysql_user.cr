@@ -174,7 +174,7 @@ module CrystalPlay
       return {nil, false} unless password || plugin
 
       if password
-        return plugin_or_password_update(db, name, host, password, update_password, check_mode)
+        plugin_or_password_update(db, name, host, password, update_password, check_mode)
       else
         # Non-password auth: diff the account's current plugin (and, when a
         # hash/auth string was given, its authentication_string) against the

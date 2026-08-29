@@ -121,7 +121,7 @@ module CrystalPlay
         return PluginResult.new(changed: false, failed: true, msg: "Failed to get keyid") if pairs.empty?
 
         if fingerprint_param = @params["fingerprint"]?
-          wanted = fingerprint_param.split(',').map { |f| f.strip.gsub(" ", "").upcase }.reject(&.empty?)
+          wanted = fingerprint_param.split(',').map(&.strip.gsub(" ", "").upcase).reject(&.empty?)
           unless wanted.empty?
             have = pairs.map { |(_, fp)| fp }
             unless wanted.any? { |w| have.includes?(w) }

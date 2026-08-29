@@ -42,7 +42,7 @@ module CrystalPlay
         parts = l.strip.split(/[ \t]+/)
         next unless parts.first? == user
         existing = true
-        if (m = l.match(/\[(.*)\]/))
+        if m = l.match(/\[(.*)\]/)
           current_tags = m[1].split(",").map(&.strip)
         end
       end

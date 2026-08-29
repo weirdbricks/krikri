@@ -1074,7 +1074,7 @@ module CrystalPlay
         # failure mode every other type test here originally had: fell
         # through to #evaluate_truthiness, always false, so `is not none`
         # on a real, correctly-set string default failed the assert.
-        value.raw.is_a?(Nil)
+        value.raw.nil?
       else
         false
       end

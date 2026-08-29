@@ -1214,7 +1214,7 @@ module CrystalPlay
         # and unrelated to whether this construct is converged or not):
         # `10 // 0` overflowed converting `Float64::INFINITY.floor` to
         # `Int64` - fixed directly in `#combine_mult_div` below.
-        return begin
+        
           render_via_crinja(expr)
         rescue
           values = parts.map { |p| resolve_plus_operand(p) }
@@ -1223,7 +1223,7 @@ module CrystalPlay
             result = combine_mult_div(result, values[idx + 1], op)
           end
           @lookup.format_value(result)
-        end
+        
       end
 
       private def combine_mult_div(a : JSON::Any, b : JSON::Any, op : String) : JSON::Any
@@ -1520,7 +1520,7 @@ module CrystalPlay
           # `'item' is undefined`). Defaults match ansible-core 2.19's own
           # DEFAULT_*/COLOR_* constants when no ansible.cfg override is set.
           wantlist = parts[1..].any? { |part| part.strip.downcase.starts_with?("wantlist=true") }
-          names = parts[1..].reject { |part| part.strip.downcase.starts_with?("wantlist=") }.compact_map { |part|
+          names = parts[1..].reject(&.strip.downcase.starts_with?("wantlist=")).compact_map { |part|
             quoted_string_literal(part.strip).try(&.as_s?) || evaluate(part.strip).presence
           }
           return "undefined" if names.empty?
@@ -1687,7 +1687,7 @@ module CrystalPlay
           # list of lists - the classic with_together: parallel-
           # iteration source.
           lists = parts[1..].map { |part| lookup_array(evaluate_lookup_term(part.strip)) }
-          size = lists.map(&.size).max? || 0
+          size = lists.max_of?(&.size) || 0
           (0...size).map { |i| lists.map { |list| list[i]? || JSON::Any.new(nil) } }.to_json
         when "nested"
           # lookup('nested', list1, list2, ...) - real Ansible's own
@@ -1718,7 +1718,7 @@ module CrystalPlay
           # own varnames lookup: returns every variable NAME (not
           # value) whose name matches ANY of the given regex patterns.
           patterns = parts[1..].compact_map { |part| quoted_string_literal(part.strip).try(&.as_s?) }.compact_map { |p| Regex.new(p) rescue nil }
-          @vars.keys.select { |name| patterns.any? { |pattern| pattern.matches?(name) } }.to_json
+          @vars.keys.select { |name| patterns.any?(&.matches?(name)) }.to_json
         when "sequence"
           # lookup('sequence', 'start=1 end=5 stride=1 format=web%02d')
           # - real Ansible's own sequence lookup: generates a numeric
@@ -2541,11 +2541,11 @@ module CrystalPlay
         # convergence fixes for free on the Crinja-success path, and
         # leaves exactly as broken as before on the (should-be-rare)
         # fallback path.
-        return begin
+        begin
           value = render_via_crinja_value(expr)
-          value ? @lookup.format_value(value) : "undefined"
+          return value ? @lookup.format_value(value) : "undefined"
         rescue
-          evaluate_with_filter_fallback(expr)
+          return evaluate_with_filter_fallback(expr)
         end
       end
 

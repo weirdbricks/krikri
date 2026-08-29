@@ -571,7 +571,7 @@ module CrystalPlay
       other = arguments.varargs[0]?
       left = target.sequence? ? target.to_a : [] of Crinja::Value
       right = (other && other.sequence?) ? other.to_a : [] of Crinja::Value
-      combined = (left + right).uniq { |item| item.to_s }
+      combined = (left + right).uniq(&.to_s)
       Crinja::Value.new(combined)
     end
 
@@ -814,8 +814,8 @@ module CrystalPlay
     # exactly one of target/other, not both.
     Crinja.filter(:symmetric_difference) do
       other = arguments.varargs[0]?
-      left = (target.sequence? ? target.to_a : [] of Crinja::Value).uniq { |i| i.to_s }
-      right = (other && other.sequence? ? other.to_a : [] of Crinja::Value).uniq { |i| i.to_s }
+      left = (target.sequence? ? target.to_a : [] of Crinja::Value).uniq(&.to_s)
+      right = (other && other.sequence? ? other.to_a : [] of Crinja::Value).uniq(&.to_s)
       result = left.reject { |i| right.any? { |r| r.to_s == i.to_s } } + right.reject { |i| left.any? { |l| l.to_s == i.to_s } }
       Crinja::Value.new(result)
     end
@@ -1233,8 +1233,8 @@ module CrystalPlay
     # prometheus.prometheus.alertmanager's own `systemd.service.j2`:
     # `{% if (alertmanager_web_config.values() | map('length') |
     # select('gt', 0) | list is any) %}`.
-    Crinja.test(:any) { target.each.any? { |item| item.truthy? } }
-    Crinja.test(:all) { target.each.all? { |item| item.truthy? } }
+    Crinja.test(:any) { target.each.any?(&.truthy?) }
+    Crinja.test(:all) { target.each.all?(&.truthy?) }
 
     # `subset`/`superset`/`contains` - real Ansible's own tests
     # (ansible.builtin, not standard Jinja2), common in `assert:`-heavy
@@ -1600,7 +1600,7 @@ module CrystalPlay
         Crinja::Value.new(variadic_terms.flat_map { |t| t.sequence? ? t.to_a : [t] })
       when "together"
         arrays = variadic_terms.map { |t| t.sequence? ? t.to_a : [] of Crinja::Value }
-        size = arrays.map(&.size).max? || 0
+        size = arrays.max_of?(&.size) || 0
         Crinja::Value.new((0...size).map { |i| Crinja::Value.new(arrays.map { |arr| arr[i]? || Crinja::Value.new(nil) }) })
       when "nested"
         arrays = variadic_terms.map { |t| t.sequence? ? t.to_a : [] of Crinja::Value }

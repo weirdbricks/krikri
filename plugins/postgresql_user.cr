@@ -107,7 +107,21 @@ module CrystalPlay
     ) : PluginResult
       changed = false
 
-      unless existing_flags
+      if existing_flags
+        if password
+          return PluginResult.new(changed: true, failed: false, msg: "Role #{name}'s password would be updated") if check_mode
+
+          db.exec "ALTER ROLE #{quote_ident(name)} PASSWORD #{quote_str(password)}"
+          changed = true
+        end
+
+        if desired_flags && flags_differ?(existing_flags, desired_flags)
+          return PluginResult.new(changed: true, failed: false, msg: "Role #{name}'s attributes would be updated") if check_mode
+
+          db.exec "ALTER ROLE #{quote_ident(name)} #{PluginHelpers::PostgresqlRoleFlags.to_sql(desired_flags)}"
+          changed = true
+        end
+      else
         return PluginResult.new(changed: true, failed: false, msg: "Role #{name} would be created") if check_mode
 
         clause = String.build do |s|
@@ -126,20 +140,6 @@ module CrystalPlay
         # empty attributes on real Ansible's identically-configured run.
         db.exec "CREATE USER #{quote_ident(name)}#{clause}"
         changed = true
-      else
-        if password
-          return PluginResult.new(changed: true, failed: false, msg: "Role #{name}'s password would be updated") if check_mode
-
-          db.exec "ALTER ROLE #{quote_ident(name)} PASSWORD #{quote_str(password)}"
-          changed = true
-        end
-
-        if desired_flags && flags_differ?(existing_flags, desired_flags)
-          return PluginResult.new(changed: true, failed: false, msg: "Role #{name}'s attributes would be updated") if check_mode
-
-          db.exec "ALTER ROLE #{quote_ident(name)} #{PluginHelpers::PostgresqlRoleFlags.to_sql(desired_flags)}"
-          changed = true
-        end
       end
 
       PluginResult.new(changed: changed, failed: false, msg: changed ? "Updated role #{name}" : "Role #{name} already up to date")

@@ -157,7 +157,7 @@ if hosts.empty?
 end
 
 if user = remote_user
-  hosts.each { |host| host.user = user }
+  hosts.each(&.user=(user))
 end
 
 task = CrystalPlay::Task.new(name: "ansible ad-hoc command", module_name: resolved_module)

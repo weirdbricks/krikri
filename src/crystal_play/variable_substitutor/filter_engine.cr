@@ -404,7 +404,7 @@ module CrystalPlay
           # checksum/filename pairs.
           if attr = parse_kwarg(filter_args, "attribute")
             JSON::Any.new(as_array(value).map { |item| item.raw.is_a?(Hash) ? (item[attr]? || JSON::Any.new(nil)) : JSON::Any.new(nil) })
-          elsif (inner_name = parse_filter_args(filter_args)[0]?)
+          elsif inner_name = parse_filter_args(filter_args)[0]?
             inner_args = split_top_level_args(filter_args)[1..].join(", ")
             inner_expr = inner_args.empty? ? inner_name : "#{inner_name}(#{inner_args})"
             JSON::Any.new(as_array(value).map { |item| apply(item, inner_expr) })
@@ -772,7 +772,7 @@ module CrystalPlay
           other = resolve_expression(filter_args)
           left = value.as_a? || [] of JSON::Any
           right = other.as_a? || [] of JSON::Any
-          combined = (left + right).uniq { |item| item.to_json }
+          combined = (left + right).uniq(&.to_json)
           JSON::Any.new(combined)
         when "path_join"
           # path_join(list) - real Ansible filter: joins a list of path
@@ -826,9 +826,9 @@ module CrystalPlay
           # zip(*others)/zip_longest(*others, fillvalue=None) - real
           # Ansible filters, Python's own zip()/itertools.zip_longest().
           longest = filter_name == "zip_longest"
-          lists = [as_array(value)] + split_top_level_args(filter_args).reject { |a| a.strip.starts_with?("fillvalue") }.map { |arg| as_array(resolve_expression(arg)) }
+          lists = [as_array(value)] + split_top_level_args(filter_args).reject(&.strip.starts_with?("fillvalue")).map { |arg| as_array(resolve_expression(arg)) }
           fillvalue = parse_kwarg_expr(filter_args, "fillvalue") || JSON::Any.new(nil)
-          size = longest ? (lists.map(&.size).max? || 0) : (lists.map(&.size).min? || 0)
+          size = longest ? (lists.max_of?(&.size) || 0) : (lists.min_of?(&.size) || 0)
           rows = (0...size).map do |i|
             JSON::Any.new(lists.map { |list| list[i]? || fillvalue })
           end
@@ -938,8 +938,8 @@ module CrystalPlay
           # symmetric_difference(other) - real Ansible filter: elements
           # in exactly one of value/other, not both.
           other = resolve_expression(filter_args)
-          left = (value.as_a? || [] of JSON::Any).uniq { |i| i.to_json }
-          right = (other.as_a? || [] of JSON::Any).uniq { |i| i.to_json }
+          left = (value.as_a? || [] of JSON::Any).uniq(&.to_json)
+          right = (other.as_a? || [] of JSON::Any).uniq(&.to_json)
           result = (left.reject { |i| right.any? { |r| r.to_json == i.to_json } }) +
                    (right.reject { |i| left.any? { |l| l.to_json == i.to_json } })
           JSON::Any.new(result)

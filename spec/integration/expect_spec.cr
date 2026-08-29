@@ -112,7 +112,7 @@ describe "expect plugin" do
     })
 
     result["failed"].as_bool.should be_false
-    match = result["stdout"].as_s.match(/sid=(\d+) pid=(\d+)/).not_nil!
+    match = result["stdout"].as_s.match!(/sid=(\d+) pid=(\d+)/)
     # A real session leader's own session id equals its own pid - the
     # thing setsid()/TIOCSCTTY exists to arrange, unreachable via a plain
     # inherited pty fd with no fork-time hook (Process.new's own spawn,

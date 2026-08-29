@@ -610,7 +610,7 @@ module CrystalPlay
     end
 
     private def find_container(api : Docr::API, name : String) : Docr::Types::ContainerSummary?
-      api.containers.list(all: true).find { |c| c.names.map(&.lchop('/')).includes?(name) }
+      api.containers.list(all: true).find(&.names.map(&.lchop('/')).includes?(name))
     end
 
     private def parsed_networks : Array(RequestedNetwork)

@@ -331,7 +331,7 @@ module CrystalPlay
 
       lines.any? do |line|
         next false if EMPTY_FILE_WARNING.matches?(line)
-        next true if ALWAYS_MEANINGFUL_DIFF_PATTERNS.any? { |pattern| pattern.matches?(line) } || MISSING_FILE_WARNING.matches?(line)
+        next true if ALWAYS_MEANINGFUL_DIFF_PATTERNS.any?(&.matches?(line)) || MISSING_FILE_WARNING.matches?(line)
         next true if !owner_set && UID_DIFF_PATTERN.matches?(line)
         next true if !group_set && GID_DIFF_PATTERN.matches?(line)
         next true if !mode_set && MODE_DIFF_PATTERN.matches?(line)

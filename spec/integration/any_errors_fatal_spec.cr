@@ -29,7 +29,7 @@ private def run_play(keywords : String) : {Int32, Array(String)}
   stdout_io = IO::Memory.new
   status = Process.run(BINARY, ["-i", "inv.ini", "pb.yml"],
     output: stdout_io, error: stdout_io, chdir: dir)
-  {status.exit_code, stdout_io.to_s.scan(/LATER-h\d/).map(&.[0]).sort}
+  {status.exit_code, stdout_io.to_s.scan(/LATER-h\d/).map(&.[0]).sort!}
 ensure
   FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
 end

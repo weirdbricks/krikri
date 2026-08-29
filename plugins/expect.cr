@@ -192,7 +192,7 @@ module CrystalPlay
 
         responses.each_with_index do |(pattern, answers), idx|
           next if next_answer[idx] >= answers.size
-          next unless (md = pattern.match(text, search_from[idx]))
+          next unless md = pattern.match(text, search_from[idx])
 
           payload = (answers[next_answer[idx]] + "\n").to_slice
           LibC.write(amaster, payload.to_unsafe, payload.size)
