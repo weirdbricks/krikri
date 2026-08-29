@@ -100,6 +100,22 @@ are recorded in `ROLES_TESTED.md`'s round-191 rows.
 - **±1-task recap deltas** (gantsign.java warm, cloudalchemy cold on
   re-run pairs sharing controller /tmp state): single loop-item/task
   counting differences; root cause not yet isolated.
+- **`community.general.ufw` rule idempotency delta** (Oefenweb.ufw,
+  round 196 re-run): both engines now run the role rc=0, but on the warm
+  pass crystal reports changed=4 where real ansible reports changed=0 -
+  this engine's built `ufw` command differs enough from real
+  community.general's own construction that ufw treats the re-applied
+  rules as new. Real rule-tuple diffing (the module's actual
+  idempotency check) needs netfilter access to verify; deferred.
+- **`template:` search path** (Oefenweb.haproxy, round 196): a template
+  task inside the role failed here with "global.cfg.j2 could not be
+  found by FileSystemLoader(<work dir>)" while real ansible found it in
+  the role's own templates/ directory. Only this role shape has hit it
+  so far; needs a loader-path fix in the templating engine.
+- **collection modules**: `community.general.redhat_subscription`
+  (linux-system-roles.rhc), `community.rabbitmq.rabbitmq_plugin/_user`
+  (mrlesmithjr.rabbitmq) - unimplemented, rc=4 "unavailable modules"
+  vs real ansible rc=0. Same class as the community.crypto notes below.
 
 
 

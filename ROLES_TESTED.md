@@ -1171,6 +1171,53 @@ Re-verified clean after fixes (rc parity all phases): cloudalchemy.node_exporter
 | linux-system-roles.bootloader | ubuntu | ✅ identical both-fail rc=2/4 (apt-404 class) |
 | azavea.papertrail | rocky | ✅ identical both-fail rc=2 |
 
+## Round 196 (40-role marathon + re-verification, fresh pair per role, cold+warm both engines, 0.9.631)
+
+40 untested roles (20 Ubuntu 22.04 + 20 Rocky 9.6), fresh pair per role, both engines cold+warm. First pass: 28 recap-identical; 12 divergences triaged into: 3 engine bugs fixed in-round and re-verified on fresh pairs (ufw policy:/direction: alias + rule-builder truthiness for default('')-empty params + stderr surfaced; apt/apt_repository fail on non-Debian hosts like real ansible; filtered single-element with_items array lost `item`), 6 scope-cut/collection-module gaps (linux-system-roles sr_fingerprint ×4 + rhc's community.general.redhat_subscription; mrlesmithjr.rabbitmq's community.rabbitmq modules), 2 role-level (bodsch.docker/nginx missing bodsch.core collection — both engines fail), 1 py-side role-conditional class (mariadb_galera_cluster, both engines fail on the role's own when:-bugs), and 1 open idempotency delta (Oefenweb.ufw warm: crystal reports more changed than real — ufw rule dedup differs by command syntax; open item).
+
+| Role | OS | Status |
+|---|---|---|
+| geerlingguy.homebrew | ubuntu | ✅ identical both-fail rc=2 (macOS-only role) |
+| andrewrothstein.kind | rocky | ✅ clean |
+| andrewrothstein.kubernetes-helm | ubuntu | ✅ clean |
+| andrewrothstein.conda-env | rocky | ✅ identical both-fail rc=2 |
+| mrlesmithjr.manage_lvm | ubuntu | ✅ clean |
+| Oefenweb.wordpress | rocky | ✅ identical both-fail rc=1 |
+| gantsign.minikube | ubuntu | ✅ clean |
+| Oefenweb.ssh_keys | rocky | ✅ clean after 0.9.631 filtered-single-element loop fix (first pass: 'item' is undefined) |
+| Oefenweb.ufw | ubuntu | ⚠️ runs clean after fix; warm changed-count delta open (ufw rule idempotency) |
+| linux-system-roles.nbde_client | rocky | ⚠️ sr_fingerprint scope cut (rc=4 vs 0, otherwise same shape) |
+| Oefenweb.yarn | ubuntu | ✅ clean |
+| linux-system-roles.rhc | rocky | ⚠️ scope cut (sr_fingerprint + redhat_subscription); py also fails 1 task |
+| Oefenweb.haproxy | ubuntu | ⚠️ crystal template-search-path failure (open) — py rc=0 |
+| linux-system-roles.nbde_server | rocky | ⚠️ sr_fingerprint + nbde_server_tang scope cut |
+| Oefenweb.supervisor | ubuntu | ✅ identical both-fail rc=2 |
+| mrlesmithjr.mariadb_galera_cluster | rocky | ⚠️ both fail on the role's own conditional bugs (different messages) |
+| Oefenweb.limits | ubuntu | ✅ clean |
+| linux-system-roles.tuned | rocky | ✅ clean |
+| Oefenweb.sudoers | ubuntu | ✅ clean |
+| Oefenweb.dns | rocky | ✅ identical both-fail rc=2 after apt non-Debian fix (first pass: crystal false-success rc=0) |
+| mrlesmithjr.cloud-init | ubuntu | ✅ clean |
+| Oefenweb.sysfs | rocky | ✅ identical both-fail rc=2 |
+| gantsign.inotify | ubuntu | ✅ clean |
+| linux-system-roles.systemd | rocky | ⚠️ sr_fingerprint scope cut |
+| gantsign.visual-studio-code-extensions | ubuntu | ✅ identical both-fail rc=2/4 |
+| linux-system-roles.podman | rocky | ⚠️ sr_fingerprint scope cut |
+| mrlesmithjr.rabbitmq | ubuntu | ⚠️ community.rabbitmq module gap (rc=4 vs 0) |
+| linux-system-roles.ad_integration | rocky | ✅ identical both-fail rc=2 |
+| gantsign.zswap | ubuntu | ✅ clean |
+| gantsign.pyenv | rocky | ✅ clean |
+| darkwizard242.jq | ubuntu | ✅ clean |
+| bodsch.docker | rocky | ⚠️ both fail on missing bodsch.core collection (role-level) |
+| Stouts.rabbitmq | ubuntu | ✅ identical both-fail rc=1 |
+| darkwizard242.go | rocky | ✅ identical both-fail rc=2 |
+| darkwizard242.lazydocker | ubuntu | ✅ clean |
+| azavea.docker | rocky | ✅ identical both-fail rc=2 |
+| bodsch.nginx | ubuntu | ⚠️ both fail on missing bodsch.core collection (role-level) |
+| bodsch.syslog_ng | rocky | ✅ identical both-fail rc=2 |
+| azavea.postgresql | ubuntu | ✅ clean |
+| darkwizard242.terraform | rocky | ⚠️ warm ±1 changed delta (open) |
+
 ### Round 192 marathon carry-over (19 roles, 0.9.629, Ubuntu 22.04 / Rocky 9.6)
 
 These 19 roles were run as part of the round-192 marathon but were not yet folded into this file (`alpine-glibc-shim` was the 20th; it already had a round-187 entry). Results pulled from scratch results; all run on fresh server pairs, cold + warm.
