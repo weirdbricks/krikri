@@ -100,6 +100,26 @@ module CrystalPlay
       
       # Check if file exists and compare
       if File.exists?(dest)
+        # force: false means "only create it if it is not there" - real
+        # Ansible leaves an existing file completely alone, content and
+        # all. This branch used to ignore `force` entirely (the `src:`
+        # path above has always honoured it), so a `copy:` with
+        # `content:` + `force: false` OVERWROTE an existing file rather
+        # than skipping it. Found live on mrlesmithjr.mdadm, whose
+        # "Ensure mdadm conf file exists" task is exactly
+        # `content: "" / force: false` against the distro's own
+        # /etc/mdadm/mdadm.conf: real ansible-playbook left the 688-byte
+        # file untouched and reported ok, this truncated it to 0 bytes
+        # and reported changed. Real data loss, not just a wrong verdict.
+        unless is_true?(@params["force"]?, default: true)
+          return PluginResult.new(
+            changed: false,
+            failed: false,
+            msg: "File already exists (use force=yes to overwrite)",
+            dest: dest
+          )
+        end
+
         begin
           existing_content = File.read(dest)
           existing_md5 = Digest::MD5.hexdigest(existing_content)
