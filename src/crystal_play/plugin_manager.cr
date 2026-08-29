@@ -31,6 +31,127 @@ module CrystalPlay
     # Cache of plugins already uploaded to remote hosts
     @@uploaded_plugins = Hash(String, Set(String)).new
 
+    # OPUS_PERFORMANCE_IMPROVEMENTS.md item 6a - the safe half of "an
+    # agent that outlives the run".
+    #
+    # A warm run's bootstrap is two round trips before any real work:
+    # one `exec_script` listing the remote `.md5` files to decide what
+    # needs uploading, and one fact gather. Measured with item 0's
+    # profile across ten real roles, that bootstrap is 4.9% of a
+    # 15-second run but **59-74% of a sub-second one** - it dominates
+    # exactly the small roles that items 1-3 cannot help, because they
+    # have too few tasks to batch.
+    #
+    # This removes the first of those two. The remote binaries already
+    # persist between runs (REMOTE_PLUGIN_DIR is under /var/tmp), so the
+    # listing round trip is pure re-verification of something that was
+    # true when we last looked. Recording the verified md5 set on the
+    # CONTROLLER lets a later run skip it.
+    #
+    # Deliberately NOT the systemd unit the plan describes: that would
+    # install a persistent service on every managed host, which is a
+    # real operational and security imposition that no amount of speed
+    # justifies doing by default. Fact caching, the other half of the
+    # plan's item 6, is not here either - see #facts_cacheable? for the
+    # measurement showing it cannot be made airtight.
+    #
+    # Safety rests entirely on the recovery path: if the remote binary
+    # turns out to be missing after all (a /var/tmp sweep, a rebuilt
+    # host, a `tmp.mount` remount), #recover_missing_plugin! invalidates
+    # this state and re-uploads. Without that this would be a
+    # correctness bug, not an optimization - see its own comment.
+    HOST_STATE_TTL = 24.hours
+
+    @@host_state : Hash(String, Hash(String, String))? = nil
+    @@host_state_dirty = false
+    @@host_state_cache_enabled = true
+
+    def self.host_state_cache_enabled=(value : Bool)
+      @@host_state_cache_enabled = value
+    end
+
+    def self.host_state_path : String
+      base = ENV["XDG_CACHE_HOME"]? || File.join(Path.home.to_s, ".cache")
+      File.join(base, "crystal-ansible", "plugin-state.json")
+    end
+
+    # {host_key => {plugin_name => md5}}, plus a "_verified_at" key per
+    # host carrying the epoch seconds of the last real verification.
+    private def self.host_state : Hash(String, Hash(String, String))
+      cached = @@host_state
+      return cached if cached
+
+      loaded = begin
+        path = host_state_path
+        if File.exists?(path)
+          parsed = Hash(String, Hash(String, String)).from_json(File.read(path))
+          parsed
+        else
+          Hash(String, Hash(String, String)).new
+        end
+      rescue
+        # A corrupt or unreadable cache is never fatal - it only ever
+        # means "verify the slow way this time".
+        Hash(String, Hash(String, String)).new
+      end
+
+      @@host_state = loaded
+    end
+
+    # True when every *plugin_names* entry was verified present on this
+    # host with exactly the md5 the local binary has now, recently
+    # enough to trust. Any doubt at all returns false and the caller
+    # does the full listing round trip.
+    private def self.host_state_satisfies?(host_key : String, plugin_names : Array(String)) : Bool
+      return false unless @@host_state_cache_enabled
+
+      entry = host_state[host_key]?
+      return false unless entry
+
+      verified_at = entry["_verified_at"]?.try(&.to_i64?)
+      return false unless verified_at
+      return false if Time.utc.to_unix - verified_at > HOST_STATE_TTL.total_seconds.to_i64
+
+      plugin_names.all? do |name|
+        recorded = entry[name]?
+        next false unless recorded
+        recorded == cached_md5(get_local_plugin_path(name))
+      end
+    end
+
+    private def self.record_host_state(host_key : String, md5s : Hash(String, String)) : Nil
+      entry = host_state[host_key]? || Hash(String, String).new
+      md5s.each { |name, md5| entry[name] = md5 }
+      entry["_verified_at"] = Time.utc.to_unix.to_s
+      host_state[host_key] = entry
+      @@host_state_dirty = true
+    end
+
+    # Drops everything known about a host, so the next check verifies
+    # the slow way. Called from the missing-binary recovery path.
+    def self.invalidate_host_state(host_key : String) : Nil
+      return unless host_state.has_key?(host_key)
+      host_state.delete(host_key)
+      @@host_state_dirty = true
+      flush_host_state
+    end
+
+    # Written once at the end of a run (crystal-play.cr), not on every
+    # mutation - this is a cache, and losing the last run's entry only
+    # costs one round trip next time.
+    def self.flush_host_state : Nil
+      return unless @@host_state_dirty
+      state = @@host_state
+      return unless state
+
+      path = host_state_path
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, state.to_json)
+      @@host_state_dirty = false
+    rescue
+      # Never let a cache write failure affect the run.
+    end
+
     # Plugins already staged to REMOTE_PLUGIN_DIR for a *local*-connection
     # become_user execution this process - see #staged_local_plugin_path.
     @@staged_local_plugins = Set(String).new
@@ -424,6 +545,16 @@ module CrystalPlay
       candidates = plugin_names.reject { |name| @@uploaded_plugins[host_key].includes?(name) }
       return if candidates.empty?
 
+      # Item 6a: a previous run already verified these exact binaries on
+      # this host, so skip the listing round trip entirely. If that
+      # belief turns out to be wrong, #recover_missing_plugin! catches
+      # it at dispatch time and re-uploads - which is what makes this an
+      # optimization rather than a correctness bug.
+      if host_state_satisfies?(host_key, candidates)
+        candidates.each { |name| @@uploaded_plugins[host_key].add(name) }
+        return
+      end
+
       # Round trip 1: create the dir and dump every existing remote .md5
       # in one pass, so we don't need one `cat` per plugin to check it.
       list_script = <<-SCRIPT
@@ -456,6 +587,12 @@ module CrystalPlay
         remote_md5s[plugin_name]? != local_md5s[plugin_name]
       end
       (candidates - plugins_to_upload).each { |name| @@uploaded_plugins[host_key].add(name) }
+
+      # Everything we just confirmed present is worth remembering for
+      # the next run, whether or not anything needed uploading.
+      verified = Hash(String, String).new
+      (candidates - plugins_to_upload).each { |name| verified[name] = local_md5s[name] }
+      record_host_state(host_key, verified) unless verified.empty?
 
       return if plugins_to_upload.empty?
 
@@ -572,6 +709,13 @@ module CrystalPlay
       SSHManager.exec_script(connection_host, user, write_script, host.port, identity_file: identity_file)
 
       plugins_to_upload.each { |name| @@uploaded_plugins[host_key].add(name) }
+
+      # Item 6a: freshly uploaded binaries are verified-by-construction,
+      # so record them too - otherwise the run after a version bump
+      # would still pay the listing round trip.
+      just_uploaded = Hash(String, String).new
+      plugins_to_upload.each { |name| just_uploaded[name] = local_md5s[name] }
+      record_host_state(host_key, just_uploaded)
 
       verb = rsync_ok ? "Successfully uploaded" : "Uploaded"
       via = rsync_ok ? "" : " via scp"
@@ -875,7 +1019,84 @@ module CrystalPlay
         identity_file: vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
       )
 
-      interpret_remote_result(result[:exit_code], result[:stdout], result[:stderr])
+      interpreted = interpret_remote_result(result[:exit_code], result[:stdout], result[:stderr])
+
+      # Item 6a's safety net. Skipping the verification round trip means
+      # trusting that a binary recorded as present still IS present. It
+      # might not be: /var/tmp gets swept, a host gets rebuilt behind
+      # the same address, or a hardening role remounts /tmp mid-play
+      # (the reason REMOTE_PLUGIN_DIR lives under /var/tmp at all).
+      #
+      # Rather than let that surface as an inscrutable task failure -
+      # which is what happened BEFORE this item too, since nothing
+      # re-uploaded mid-run either - detect it, drop the stale belief,
+      # upload for real, and retry once. Bounded to a single retry so a
+      # genuinely broken target still fails instead of looping.
+      if missing_remote_binary?(interpreted, target)
+        recover_missing_plugin!(host, plugin_name, vars)
+        retry_result = SSHManager.exec_script(
+          connection_host,
+          host.user || "root",
+          script,
+          host.port,
+          identity_file: vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
+        )
+        return interpret_remote_result(retry_result[:exit_code], retry_result[:stdout], retry_result[:stderr])
+      end
+
+      interpreted
+    end
+
+    # Does this failure look like "the plugin binary is not on the
+    # target"? Deliberately narrow: a real module failing normally
+    # returns parseable JSON, so this only fires on the shell's own
+    # "command not found"/"No such file" shapes.
+    # Spec seams. The real methods stay private because nothing outside
+    # this class should be making these decisions; these exist so the
+    # two properties the safety argument rests on can be pinned.
+    def self.missing_remote_binary_for_spec?(result : JSON::Any) : Bool
+      missing_remote_binary?(result, "#{REMOTE_PLUGIN_DIR}/command")
+    end
+
+    def self.host_state_satisfies_for_spec?(host_key : String, names : Array(String)) : Bool
+      host_state_satisfies?(host_key, names)
+    end
+
+    private def self.missing_remote_binary?(result : JSON::Any, target : String) : Bool
+      return false unless result["failed"]?.try(&.as_bool?)
+
+      text = "#{result["stdout"]?.try(&.as_s?)}#{result["stderr"]?.try(&.as_s?)}"
+      return false if text.empty?
+      return false unless text.includes?("No such file or directory") ||
+                          text.includes?("command not found")
+
+      # The message has to be about OUR binary, not about some path the
+      # module itself was asked to operate on.
+      text.includes?(REMOTE_PLUGIN_DIR) || target.includes?(REMOTE_PLUGIN_DIR)
+    end
+
+    # Batch-path counterpart: one invalidation, one upload covering
+    # every module the group needs.
+    def self.recover_missing_plugins!(host : Host, plugin_names : Array(String), vars : Hash(String, JSON::Any)) : Nil
+      connection_host = get_connection_host(host, vars)
+      host_key = "#{host.user}@#{connection_host}:#{host.port}"
+      simple_names = plugin_names.map { |name| simple_plugin_name(name) }.uniq!
+
+      invalidate_host_state(host_key)
+      if set = @@uploaded_plugins[host_key]?
+        simple_names.each { |name| set.delete(name) }
+      end
+      upload_plugins_to_host(host, simple_names)
+    end
+
+    private def self.recover_missing_plugin!(host : Host, plugin_name : String, vars : Hash(String, JSON::Any)) : Nil
+      connection_host = get_connection_host(host, vars)
+      host_key = "#{host.user}@#{connection_host}:#{host.port}"
+      simple_name = simple_plugin_name(plugin_name)
+
+      invalidate_host_state(host_key)
+      @@uploaded_plugins[host_key]?.try(&.delete(simple_name))
+      upload_plugins_to_host(host, [simple_name])
     end
 
     # Resolves a plugin's remote path (`REMOTE_PLUGIN_DIR/<simple name>`)
@@ -1138,6 +1359,8 @@ module CrystalPlay
       @@uploaded_plugins.clear
       @@local_md5_cache.clear
       @@local_md5_representatives.clear
+      @@host_state = nil
+      @@host_state_dirty = false
     end
   end
 end

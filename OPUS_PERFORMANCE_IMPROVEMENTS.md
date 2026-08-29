@@ -40,7 +40,7 @@ Implement every NOT-BREAKING item before starting any BREAKING one.
 | 3 | Batched groups under the daemon | NOT-BREAKING | **DONE (0.9.635)** - 2.57x warm on os_hardening, 4.7x on the groups that moved |
 | 4 | Stateful vars context (deltas) | NOT-BREAKING | **CLOSED (0.9.635) - NOT NEEDED**, premise was already false |
 | 5 | Ship the play, not the tasks | NOT-BREAKING | N x RTT -> ~1 RTT |
-| 6 | Agent outliving the run | NOT-BREAKING* | removes bootstrap cost |
+| 6 | Agent outliving the run | NOT-BREAKING* | **6a DONE (0.9.637)** - 1.3-1.4x on small roles; **6b (fact cache) REJECTED** - cannot be made airtight |
 | 7 | Stop forking `ssh` per exec | NOT-BREAKING | fixed-cost removal |
 | 8 | Controller-side caching/memoization | NOT-BREAKING | unmeasured |
 | 9 | Idempotency memoization | **BREAKING** | warm runs stop checking |
@@ -344,9 +344,45 @@ meaningful set of real roles - plus explicit `delegate_to` /
 `connection: local` / handler / `block:`+`rescue:` coverage, which is
 where the fallback boundary lives.
 
-### 6. An agent that outlives the run
+### 6. An agent that outlives the run — SPLIT: 6a DONE (0.9.637), 6b REJECTED
 
 *NOT-BREAKING only if invalidation is airtight; otherwise demote to BREAKING behind a flag.*
+
+**The item's own condition decided it.** Measured directly: with no
+boot-id, dpkg or `/etc` signal moving, `ansible_date_time`,
+`ansible_memfree_mb` and `ansible_mounts` all change within 2 SECONDS.
+A fact cache therefore cannot be made airtight, and per this item's own
+escape hatch that half is not shipped on by default. It is not shipped
+at all yet - 6b would be an opt-in flag, and is left unbuilt.
+
+**6a - the safe half - landed.** Bootstrap is two round trips before
+any real work: one `exec_script` listing remote `.md5` files, and one
+fact gather. Item 0's profile over the ten round-197 roles shows that
+bootstrap is 4.9% of a 15-second run but **59-74% of a sub-second one**
+- it dominates exactly the small roles items 1-3 cannot help, because
+they have too few tasks to batch. 6a removes the first round trip by
+recording on the CONTROLLER which binaries were verified on which host
+(TTL-bounded, keyed on the current local md5).
+
+Deliberately NOT the systemd unit this item describes: that installs a
+persistent service on every managed host, which is an operational and
+security imposition no amount of speed justifies by default.
+
+**Measured** (2-host pair, warm `robertdebock.cron`, both orientations,
+identical recaps): 0.624s -> 0.442s, **1.41x**, 182ms saved; the upload
+bucket itself goes 0.102s -> 0.020s. A later re-measurement on a slower
+network gave 1.29x - same direction, and the ratio moves with RTT
+because what is removed IS a round trip.
+
+**The live testing caught a real regression before it shipped**, which
+is the part worth remembering. Deleting `REMOTE_PLUGIN_DIR` behind the
+cache's back made the next run lose a task (`ok=4 failed=1`) where the
+pre-6a engine completed cleanly - because the recovery path had only
+been wired into the one-shot dispatch, not the BATCH path that item 3
+now sends most tasks through. Fixed, re-verified (`ok=9 failed=0`), and
+pinned. Four failure modes are now exercised live: binaries deleted,
+poisoned md5 in the state file, expired TTL, and
+`--no-plugin-state-cache`.
 
 With item 5 landed, the next fixed cost is bootstrapping: connect,
 upload-check the plugin binaries, gather facts, hydrate context - paid

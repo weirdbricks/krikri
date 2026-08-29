@@ -158,6 +158,10 @@ begin
       CrystalPlay::TimingProfile.enable
     end
 
+    parser.on("--no-plugin-state-cache", "(OPUS_PERFORMANCE_IMPROVEMENTS.md item 6a) Always re-verify which plugin binaries are present on each target, instead of trusting the controller-side record of a previous run's verification. The record is TTL-bounded and self-heals if a binary turns out to be missing, so this is for debugging and for pinning down a suspected staleness problem rather than something a normal run needs.") do
+      CrystalPlay::PluginManager.host_state_cache_enabled = false
+    end
+
     parser.on("--no-batching", "Disable batching consecutive independent tasks into fewer SSH round trips (on by default since 0.9.63)") do
       batching_enabled = false
     end
@@ -930,6 +934,13 @@ any_failed = !permanently_failed_hosts.empty?
 # --persistent-daemon was never passed (the Hash it iterates is simply
 # empty), so this is safe to call unconditionally.
 CrystalPlay::SSHManager.close_all_daemons
+
+# OPUS_PERFORMANCE_IMPROVEMENTS.md item 6a: persist which plugin
+# binaries were verified present on which hosts, so the next run can
+# skip the verification round trip. Written once here rather than on
+# every mutation - it is a cache, and losing it only costs one round
+# trip next time.
+CrystalPlay::PluginManager.flush_host_state
 
 # OPUS_PERFORMANCE_IMPROVEMENTS.md item #0: emitted after the recap and
 # after the daemon connections are torn down (so daemon shutdown cost is

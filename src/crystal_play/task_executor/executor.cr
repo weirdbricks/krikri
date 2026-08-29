@@ -3472,6 +3472,35 @@ module CrystalPlay
         return result
       end
 
+      interpreted = interpret_batch_script(host, connection_host, steps)
+
+      # OPUS_PERFORMANCE_IMPROVEMENTS.md item 6a's safety net, on the
+      # BATCH path. Item 6a lets a run skip the "which plugin binaries
+      # are present on this host" round trip when a previous run already
+      # verified them. If that belief is wrong - /var/tmp swept, host
+      # rebuilt behind the same address - the binary is missing and the
+      # group fails.
+      #
+      # Caught by deliberately deleting REMOTE_PLUGIN_DIR behind the
+      # cache's back on a live host: without this the first run
+      # afterwards lost a task (ok=4 failed=1) where the pre-item-6a
+      # engine completed cleanly, because that engine always did the
+      # listing round trip. That is a regression, not a pre-existing
+      # rough edge, which is why the recovery has to cover this path and
+      # not just PluginManager#execute_remote_plugin's one-shot path.
+      #
+      # Re-running the whole group is safe here specifically because a
+      # missing binary means NOTHING in it ran: every step dispatches
+      # the same binary, and the script fail-fasts at the first one.
+      if interpreted.any? { |_, step| PluginManager.missing_remote_binary_for_spec?(step) }
+        PluginManager.recover_missing_plugins!(host, steps.map(&.module_name).uniq!, host.vars)
+        return interpret_batch_script(host, connection_host, steps)
+      end
+
+      interpreted
+    end
+
+    private def interpret_batch_script(host : Host, connection_host : String, steps : Array(BatchScript::Step)) : Hash(Int32, JSON::Any)
       script_results = run_batch_script(host, connection_host, steps)
       interpreted = Hash(Int32, JSON::Any).new
       script_results.each do |idx, step_result|
