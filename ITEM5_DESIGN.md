@@ -188,6 +188,65 @@ risk:
 
 ---
 
+## 5b. Measured partitioning (`scripts/agent_partition_report.cr`)
+
+The measurement §6 asks for, now built and run. It parses and classifies
+only — no hosts, no execution. Corpus: the 10 roles from the 0.9.635
+regression sweep plus os_hardening.
+
+Two modes, because the distinction turned out to decide the answer:
+
+- **strict** — classify as the engine behaves today.
+- **movable** — assume `debug`/`assert`/`fail`/`set_fact` move into the
+  agent. They touch no controller resource; they evaluate an expression
+  against the vars context, and `debug`'s output streams back like any
+  other result. They are controller-side today as an implementation
+  choice (`ActionPluginManager`), not a constraint. `pause:` is
+  genuinely controller-bound — it reads the operator's terminal.
+
+That split matters a lot: **in strict mode the single biggest blocker is
+`assert`/`debug` — 76 of 138 tasks.** `robertdebock.functions` is 22
+tasks of pure `assert`, which strict mode partitions into *zero* agent
+runs. Any real item 5 would have to move the pure action plugins first,
+so movable is the honest mode to plan against.
+
+Result over the corpus (138 statically-visible tasks):
+
+| | count |
+|---|---|
+| agent runs (movable) | 24 |
+| controller tasks that still dispatch remotely | 10 |
+| **round trips under item 5** | **~34** |
+
+**The critical correction this produced.** My first cut reported "6.6x
+fewer round trips" by comparing against 138. That is wrong twice over:
+
+1. A controller-bound `template:`/`copy:` **still dispatches remotely**
+   after staging, so it still costs a round trip. Only the pure action
+   plugins and includes are free.
+2. **The baseline is not one trip per task.** Item 3 already collapses
+   consecutive tasks into one trip. Measured on os_hardening: **79 round
+   trips for ~95 runtime tasks.** Item 5's marginal value is
+   *(today's batched trips) − 34*, not *138 − 34*.
+
+Remaining blockers in movable mode, over the whole corpus: 10
+include/import, 4 `template:`, 3 `copy:`, 3 `unarchive:`. Note what is
+*absent* — not a single `lookup()`, `hostvars`, `delegate_to` or
+`run_once` in this corpus. §1b's concern is real but rare; **§1a's
+controller-file problem and dynamic includes are what actually
+fragment a role.**
+
+**Caveat, stated because it bounds all of the above.** The parser does
+not expand `include_tasks:`/`include_role:` — they are dynamic by
+definition. So os_hardening shows 2 statically-visible tasks against
+~95 at run time. The per-role absolute numbers are therefore not runtime
+task counts; the *shape* is the finding. A role that is mostly includes
+is also, on these rules, a role that fragments heavily — each include is
+its own boundary — so the direction of that error is against item 5, not
+for it.
+
+---
+
 ## 6. Recommendation
 
 **Do not start item 5 as specified.** Its "relocation, not new work"
@@ -205,3 +264,13 @@ number decides whether the rest is worth building.
 
 Suggested order: measure the partitioning first, then item 6, then
 revisit.
+
+**Update after measuring (§5b): the recommendation hardens.** Item 5
+buys ~34 round trips against a batched baseline that is already 79 on
+os_hardening — call it a ~2x reduction in trips, not the order of
+magnitude "N x RTT -> ~1 RTT" implies, and that is before the
+per-module process work that item 5 does not remove at all. Meanwhile
+the corpus shows the blockers are controller-file access and dynamic
+includes, not the exotic cases. That points at the cheaper §5
+alternative — sending file content once per digest instead of per task —
+as the better next move, with item 6 alongside it.
