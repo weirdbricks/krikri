@@ -14,6 +14,7 @@ require "./src/crystal_play/task_executor/output_routing"
 require "option_parser"
 require "colorize"
 require "./src/crystal_play/version"
+require "./src/crystal_play/timing_profile"
 require "./src/crystal_play/playbook_parser"
 require "./src/crystal_play/tag_filter"
 require "./src/crystal_play/extra_vars_parser"
@@ -148,6 +149,10 @@ begin
 
     parser.on("-d", "--diff", "Show file differences when changing files") do
       diff_mode = true
+    end
+
+    parser.on("--timing-profile", "(OPUS_PERFORMANCE_IMPROVEMENTS.md item #0) Print a wall-clock attribution block after the PLAY RECAP: how much of the run went to playbook/inventory parse, plugin upload, fact gathering, each transport path (ssh fork, daemon pipe, scp/rsync, local exec) and controller-side templating/conditionals/display. Off by default; measurement itself is a bare block yield when off.") do
+      CrystalPlay::TimingProfile.enable
     end
 
     parser.on("--no-batching", "Disable batching consecutive independent tasks into fewer SSH round trips (on by default since 0.9.63)") do
@@ -414,7 +419,7 @@ end
 # Parse playbook
 playbook = nil
 begin
-  playbook = CrystalPlay::PlaybookParser.parse(playbook_file)
+  playbook = CrystalPlay::TimingProfile.measure("parse.playbook") { CrystalPlay::PlaybookParser.parse(playbook_file) }
 
   # Reaching here means the playbook parsed. A parse failure was already
   # reported and exited 4 by this block's own rescue - which is exactly
@@ -528,7 +533,7 @@ end
 # reference is to a real Inventory either way.
 inventory = CrystalPlay::Inventory.new
 begin
-  inventory = CrystalPlay::InventoryParser.parse(inventory_file)
+  inventory = CrystalPlay::TimingProfile.measure("parse.inventory") { CrystalPlay::InventoryParser.parse(inventory_file) }
 
   if verbose
     stats = CrystalPlay::InventoryParser.stats(inventory)
@@ -658,7 +663,9 @@ if playbook && inventory
   # real ansible-playbook carries on with every other host and exits 4.
   # This used to raise, uncaught, killing the run with a stack trace and
   # discarding the reachable hosts' results entirely.
-  CrystalPlay::PluginManager.batch_upload_plugins_for_playbook(playbook, inventory, forks).each do |name|
+  CrystalPlay::TimingProfile.measure("upload.plugins") do
+    CrystalPlay::PluginManager.batch_upload_plugins_for_playbook(playbook, inventory, forks)
+  end.each do |name|
     unreachable_hosts << name
   end
 end
@@ -824,7 +831,7 @@ playbook.plays.each_with_index do |play, play_index|
 
   # Run tasks
   begin
-    executor.run
+    CrystalPlay::TimingProfile.measure("execute", "execute") { executor.run }
   rescue ex : CrystalPlay::HandlerNotFoundError
     # Real Ansible aborts the whole run at the notifying task, prints
     # this one line, and exits 1 with NO play recap (verified against
@@ -920,6 +927,12 @@ any_failed = !permanently_failed_hosts.empty?
 # --persistent-daemon was never passed (the Hash it iterates is simply
 # empty), so this is safe to call unconditionally.
 CrystalPlay::SSHManager.close_all_daemons
+
+# OPUS_PERFORMANCE_IMPROVEMENTS.md item #0: emitted after the recap and
+# after the daemon connections are torn down (so daemon shutdown cost is
+# outside the numbers), and before every exit path below, so a failed or
+# unreachable run still gets its profile.
+CrystalPlay::TimingProfile.report
 
 if check_mode
   puts "NOTE: Running in check mode - no changes were made".colorize(:yellow).bold

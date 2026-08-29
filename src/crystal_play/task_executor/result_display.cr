@@ -1,6 +1,7 @@
 require "json"
 require "colorize"
 require "../host"
+require "../timing_profile"
 
 module CrystalPlay
   # ResultDisplay - Handles displaying task results and diffs
@@ -9,6 +10,12 @@ module CrystalPlay
     # item_label is set for looped tasks, rendering `ok: [host] => (item=x)`
     # to match how Ansible annotates per-iteration output.
     def self.display_result(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false)
+      TimingProfile.measure("display.result", "display") do
+        display_result_measured(host, result, diff_mode, item_label, ignore_errors, no_log)
+      end
+    end
+
+    private def self.display_result_measured(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false)
       changed = result["changed"]?.try(&.as_bool) || false
       failed = result["failed"]?.try(&.as_bool) || false
       msg = result["msg"]?.try(&.as_s) || ""

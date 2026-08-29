@@ -6,6 +6,7 @@ require "./variable_substitutor/array_slicer"
 require "./variable_substitutor/variable_lookup"
 require "./variable_substitutor/crinja_renderer"
 require "./variable_substitutor/lazy_crinja_context"
+require "./timing_profile"
 
 module CrystalPlay
   # Sentinel a rendered param value is compared against to detect real
@@ -411,6 +412,12 @@ module CrystalPlay
     # CrinjaRenderer#evaluate_value!'s comment for the same trap found
     # from the other side.
     def substitute(text : String, strict : Bool = false, output : Bool = false, native : Bool = false) : String
+      TimingProfile.measure("controller.templating", "controller") do
+        substitute_measured(text, strict, output, native)
+      end
+    end
+
+    private def substitute_measured(text : String, strict : Bool = false, output : Bool = false, native : Bool = false) : String
       rendered = substitute_impl(text, strict, output, native)
       if rendered.includes?("$ANSIBLE_VAULT")
         # Real Ansible distinguishes the two cases in its message:

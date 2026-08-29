@@ -9,6 +9,7 @@ require "./playbook_parser"
 require "./inventory_parser"
 require "./task_executor/output_routing"
 require "./action_plugin_manager"
+require "./timing_profile"
 
 module CrystalPlay
   # Plugin Manager - Handles plugin execution locally or remotely
@@ -666,6 +667,12 @@ module CrystalPlay
 
     # Execute plugin locally
     private def self.execute_local_plugin(plugin_name : String, config : String, become : Bool, become_user : String?) : JSON::Any
+      TimingProfile.measure("transport.local_exec", "transport") do
+        execute_local_plugin_impl(plugin_name, config, become, become_user)
+      end
+    end
+
+    private def self.execute_local_plugin_impl(plugin_name : String, config : String, become : Bool, become_user : String?) : JSON::Any
       plugin_path = get_local_plugin_path(plugin_name)
       plugin_path = staged_local_plugin_path(plugin_name, plugin_path) if become && become_user
 

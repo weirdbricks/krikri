@@ -4,6 +4,7 @@ require "./variable_substitutor/variable_lookup"
 require "./variable_substitutor/expression_evaluator"
 require "./variable_substitutor/crinja_renderer"
 require "./vault"
+require "./timing_profile"
 
 module CrystalPlay
   # ConditionalEvaluator - Evaluates Ansible when: conditions
@@ -93,6 +94,12 @@ module CrystalPlay
     end
 
     def self.evaluate(condition : String, vars : Hash(String, JSON::Any), strict : Bool = false, raise_undefined : Bool = false) : Bool
+      TimingProfile.measure("controller.conditionals", "controller") do
+        evaluate_measured(condition, vars, strict, raise_undefined)
+      end
+    end
+
+    private def self.evaluate_measured(condition : String, vars : Hash(String, JSON::Any), strict : Bool = false, raise_undefined : Bool = false) : Bool
       # Strip whitespace, then unwrap a fully-parenthesized expression.
       # condition_to_string wraps each list-`when:` clause in parens
       # (`(a != 'x') and (b != 'y')`), and the recursion here hands each

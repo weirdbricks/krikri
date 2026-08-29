@@ -1,3 +1,4 @@
+require "../timing_profile"
 require "json"
 require "crinja"
 require "../variable_substitutor"
@@ -93,6 +94,12 @@ module CrystalPlay
       # "give back the original unrendered text" behavior, which would
       # be actively wrong for a caller expecting a real evaluated value.
       def render!(text : String) : String
+        TimingProfile.measure("controller.crinja", "controller.crinja") do
+          render_measured!(text)
+        end
+      end
+
+      private def render_measured!(text : String) : String
         # @vars is fixed for the lifetime of a renderer (VarSubstitutor
         # #set_variable constructs a new renderer rather than mutating),
         # so the lazy per-key JSON::Any -> Crinja::Value conversion (see

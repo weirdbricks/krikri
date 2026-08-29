@@ -16,6 +16,7 @@ require "../task_batcher"
 require "../batch_script"
 require "../ssh_manager"
 require "../custom_stats"
+require "../timing_profile"
 require "random/secure"
 
 require "../cli_options"
@@ -1078,6 +1079,12 @@ module CrystalPlay
     # {false, message} on failure - stats/display are handled by the
     # caller afterward, in deterministic host order, not here.
     private def gather_facts_for_host(host : Host) : {Bool, String?}
+      TimingProfile.measure("execute.facts", "execute.facts") do
+        gather_facts_for_host_measured(host)
+      end
+    end
+
+    private def gather_facts_for_host_measured(host : Host) : {Bool, String?}
       vars_context = Hash(String, JSON::Any).new
       host.vars.each { |key, value| vars_context[key] = value }
 

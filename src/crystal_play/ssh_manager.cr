@@ -5,6 +5,7 @@ require "json"
 # SSH Manager - CLI-based implementation
 # Uses native SSH command with ControlMaster for connection pooling
 require "./cli_options"
+require "./timing_profile"
 
 module CrystalPlay
   class SSHManager
@@ -170,28 +171,32 @@ module CrystalPlay
       stdout = IO::Memory.new
       stderr = IO::Memory.new
 
-      begin
-        process = Process.new(
-          ssh_cmd[0],
-          ssh_cmd[1..],
-          output: stdout,
-          error: stderr
-        )
+      TimingProfile.measure("transport.ssh_exec", "transport") do
+        begin
+          process = TimingProfile.measure("transport.ssh_spawn", "transport.spawn") do
+            Process.new(
+              ssh_cmd[0],
+              ssh_cmd[1..],
+              output: stdout,
+              error: stderr
+            )
+          end
 
-        run_with_timeout(process, timeout) do |proc|
-          status = proc.wait
+          run_with_timeout(process, timeout) do |proc|
+            status = proc.wait
+            {
+              exit_code: status.exit_code,
+              stdout: stdout.to_s,
+              stderr: stderr.to_s,
+            }
+          end
+        rescue ex
           {
-            exit_code: status.exit_code,
-            stdout: stdout.to_s,
-            stderr: stderr.to_s,
+            exit_code: 255,
+            stdout: "",
+            stderr: "SSH execution failed: #{ex.message}",
           }
         end
-      rescue ex
-        {
-          exit_code: 255,
-          stdout: "",
-          stderr: "SSH execution failed: #{ex.message}"
-        }
       end
     end
 
@@ -236,32 +241,36 @@ module CrystalPlay
       stdout = IO::Memory.new
       stderr = IO::Memory.new
 
-      begin
-        process = Process.new(
-          ssh_cmd[0],
-          ssh_cmd[1..],
-          input: Process::Redirect::Pipe,
-          output: stdout,
-          error: stderr
-        )
+      TimingProfile.measure("transport.ssh_script", "transport") do
+        begin
+          process = TimingProfile.measure("transport.ssh_spawn", "transport.spawn") do
+            Process.new(
+              ssh_cmd[0],
+              ssh_cmd[1..],
+              input: Process::Redirect::Pipe,
+              output: stdout,
+              error: stderr
+            )
+          end
 
-        run_with_timeout(process, timeout) do |proc|
-          proc.input.print(script)
-          proc.input.close
+          run_with_timeout(process, timeout) do |proc|
+            proc.input.print(script)
+            proc.input.close
 
-          status = proc.wait
+            status = proc.wait
+            {
+              exit_code: status.exit_code,
+              stdout: stdout.to_s,
+              stderr: stderr.to_s,
+            }
+          end
+        rescue ex
           {
-            exit_code: status.exit_code,
-            stdout: stdout.to_s,
-            stderr: stderr.to_s,
+            exit_code: 255,
+            stdout: "",
+            stderr: "SSH script execution failed: #{ex.message}",
           }
         end
-      rescue ex
-        {
-          exit_code: 255,
-          stdout: "",
-          stderr: "SSH script execution failed: #{ex.message}",
-        }
       end
     end
     
@@ -320,9 +329,11 @@ module CrystalPlay
 
       request = {"module" => module_name, "config" => config}.to_json
 
-      response = run_io_with_timeout(timeout) do
-        write_daemon_frame(process.input, request)
-        read_daemon_frame(process.output)
+      response = TimingProfile.measure("transport.daemon_send", "transport") do
+        run_io_with_timeout(timeout) do
+          write_daemon_frame(process.input, request)
+          read_daemon_frame(process.output)
+        end
       end
 
       JSON.parse(response)
@@ -349,13 +360,15 @@ module CrystalPlay
         "#{remote_binary_path} --daemon",
       ]
 
-      process = Process.new(
-        ssh_cmd[0],
-        ssh_cmd[1..],
-        input: Process::Redirect::Pipe,
-        output: Process::Redirect::Pipe,
-        error: Process::Redirect::Close
-      )
+      process = TimingProfile.measure("transport.daemon_spawn", "transport.spawn") do
+        Process.new(
+          ssh_cmd[0],
+          ssh_cmd[1..],
+          input: Process::Redirect::Pipe,
+          output: Process::Redirect::Pipe,
+          error: Process::Redirect::Close
+        )
+      end
       @@daemon_processes[{host, user, port}] = process
       process
     end
@@ -492,12 +505,14 @@ module CrystalPlay
 
       out_io = IO::Memory.new
       err_io = IO::Memory.new
-      result = Process.run(
-        scp_cmd[0],
-        scp_cmd[1..],
-        output: out_io,
-        error: err_io
-      )
+      result = TimingProfile.measure("transport.scp_upload", "transport") do
+        Process.run(
+          scp_cmd[0],
+          scp_cmd[1..],
+          output: out_io,
+          error: err_io
+        )
+      end
 
       unless result.exit_code == 0
         detail = (err_io.to_s + out_io.to_s).strip
@@ -541,12 +556,14 @@ module CrystalPlay
         local_path
       ]
 
-      result = Process.run(
-        scp_cmd[0],
-        scp_cmd[1..],
-        output: Process::Redirect::Pipe,
-        error: Process::Redirect::Pipe
-      )
+      result = TimingProfile.measure("transport.scp_download", "transport") do
+        Process.run(
+          scp_cmd[0],
+          scp_cmd[1..],
+          output: Process::Redirect::Pipe,
+          error: Process::Redirect::Pipe
+        )
+      end
 
       unless result.exit_code == 0
         raise "Failed to download #{host}:#{remote_path} to #{local_path}"
@@ -596,13 +613,15 @@ module CrystalPlay
         "#{user}@#{host}:#{remote_path}"
       ]
       
-      result = Process.run(
-        rsync_cmd[0],
-        rsync_cmd[1..],
-        output: Process::Redirect::Pipe,
-        error: Process::Redirect::Pipe
-      )
-      
+      result = TimingProfile.measure("transport.rsync", "transport") do
+        Process.run(
+          rsync_cmd[0],
+          rsync_cmd[1..],
+          output: Process::Redirect::Pipe,
+          error: Process::Redirect::Pipe
+        )
+      end
+
       if result.exit_code == 0
         @@stats["files_uploaded"] += 1
         true
@@ -639,12 +658,14 @@ module CrystalPlay
         "-e", "ssh -o ControlMaster=auto -o ControlPath=#{control_path} -o ControlPersist=600 -o StrictHostKeyChecking=#{strict_host_key_checking}#{identity_ssh_opt(identity_file)} -p #{port}",
       ] + local_files + ["#{user}@#{host}:#{remote_dir}/"]
 
-      result = Process.run(
-        rsync_cmd[0],
-        rsync_cmd[1..],
-        output: Process::Redirect::Close,
-        error: Process::Redirect::Close
-      )
+      result = TimingProfile.measure("transport.rsync", "transport") do
+        Process.run(
+          rsync_cmd[0],
+          rsync_cmd[1..],
+          output: Process::Redirect::Close,
+          error: Process::Redirect::Close
+        )
+      end
 
       if result.exit_code == 0
         @@stats["files_uploaded"] += local_files.size
