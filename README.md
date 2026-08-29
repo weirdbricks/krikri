@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.636-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.638-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -391,6 +391,22 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.638`** - implements the `vars` magic variable for
+  `when:`/`assert:` (a dict of every variable in scope). The Crinja path
+  already had one; the hand-rolled conditional evaluator did not, so
+  `X in vars` failed with "'vars' is undefined" - which blocked the
+  whole `prometheus.prometheus` collection, whose preflight uses exactly
+  that. Round 198's 10-role python-vs-crystal sweep otherwise matched
+  18/20 cold+warm comparisons: mean **1.41x cold, 10.36x warm**.
+- **`0.9.637`** - skips the plugin-verification round trip when a
+  previous run already verified the same binaries on that host
+  (controller-side record, TTL-bounded, keyed on the current local md5).
+  Bootstrap is under 5% of a long run but **59-74% of a sub-second one**,
+  so this targets the small roles batching cannot help: measured
+  **1.41x** warm on `robertdebock.cron`. Self-heals if the binaries turn
+  out to be missing - a host rebuilt behind the same address re-uploads
+  rather than failing; `testing/ipreuse/` reproduces that case
+  deterministically. `--no-plugin-state-cache` opts out.
 - **`0.9.636`** - fixes a data-loss bug in `copy:`: with `content:` plus
   `force: false`, an existing destination was overwritten instead of
   left alone (the `src:` path honoured `force`, the `content:` path

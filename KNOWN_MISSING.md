@@ -10,12 +10,76 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.636`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.638`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
+
+## Round 198 (10-role round validating item 6a, 0.9.637 -> 0.9.638)
+
+10 roles drawn at random from the verified-clean list, excluding both
+previous rounds' picks. Fresh 2-host pair per role, real
+`ansible-playbook` 2.19.4 on one host and crystal on the other, cold and
+warm.
+
+**Accuracy: 18 of 20 comparisons byte-identical.** Both mismatches are
+the same role and neither is item 6a's doing.
+
+**Fixed 0.9.638 - the `vars` magic variable was missing from
+`when:`/`assert:`.** `prometheus.prometheus`'s preflight does
+`__common_parent_role_short_name ~ '_skip_install' not in vars`;
+crystal failed it with "'vars' is undefined" at task 6 where python
+completed all 33. The Crinja path already synthesised a `vars` dict -
+the hand-rolled `ConditionalEvaluator` did not. See that commit; note
+the two nesting traps the differential testing caught (the snapshot must
+exclude itself, on BOTH evaluator paths, because contexts layer on
+cached base contexts).
+
+### Benchmark numbers (python vs crystal, seconds)
+
+| role | py cold | cr cold | py warm | cr warm | warm |
+|---|---|---|---|---|---|
+| robertdebock.openssh (61 tasks) | 13.54 | **9.10** | 9.78 | **0.58** | 16.9x |
+| buluma.handbrake | 67.91 | **40.17** | 29.56 | **1.77** | 16.7x |
+| buluma.apt_repository | 4.39 | 8.51 | 2.59 | **0.29** | 8.9x |
+| buluma.cni | 26.08 | **11.92** | 20.95 | **3.28** | 6.4x |
+| robertdebock.mitogen | 7.96 | 8.53 | 5.71 | **0.98** | 5.8x |
+| andrewrothstein.supervisord | 8.60 | 10.87 | 5.35 | **1.44** | 3.7x |
+| buluma.samba | 10.30 | **9.84** | 5.62 | **1.52** | 3.7x |
+| andrewrothstein.dnsmasq | 7.15 | 7.59 | 4.60 | **1.25** | 3.7x |
+| robertdebock.enpass | 13.12 | **10.91** | 4.49 | **1.28** | 3.5x |
+
+Mean **cold 1.41x, warm 10.36x** (median warm 6.11x). Totals 293.1s
+python vs 139.2s crystal. Cold is up from round 197's 1.04x, consistent
+with 6a removing a fixed cost - though the role set differs, so that is
+not a controlled comparison and should not be quoted as one.
+
+### What actually validated item 6a
+
+Not the random roles. Across rounds 197 and 198 - 20 roles, 40
+comparisons - **every bug found was pre-existing and unrelated to the
+performance work** (`copy: force`, Jinja's `is in` test, `vars`). Zero
+were caused by items 0-6a. Useful signal, but it means random sampling
+is not what tests 6a.
+
+What tested 6a was targeted adversarial work, and it earned its keep:
+deleting `REMOTE_PLUGIN_DIR` behind the cache's back exposed a REAL
+regression before it shipped - the recovery path had only been wired
+into the one-shot dispatch, not the batch path that item 3 sends most
+tasks through. Four failure modes are now exercised live (binaries
+deleted, poisoned md5, expired TTL, `--no-plugin-state-cache`), plus:
+
+**The IP-reuse hazard, now deterministic.** 6a keys its record on
+`user@host:port`, so the dangerous case is a DIFFERENT machine at the
+same address. Neither round produced a recycled IP from Atlantic.net
+across 20 hosts, so that case had only been covered by construction.
+`testing/ipreuse/` now reproduces it in seconds with containers on a
+reused forwarded port: four consecutive impostor swaps all clean, plus a
+12-task batching play (`ok=13 changed=12 failed=0`) - the batch variant
+being the one a naive test would have missed.
+
 
 ## Round 197 (10-role python-vs-crystal round, fresh pair per role, 0.9.636)
 

@@ -1249,3 +1249,13 @@ healthy services, config parity) as of the last time it was run. ⚠️ = engine
 itself is fine, but the role hit an external/environmental blocker partway
 through. ❌ = role could not be run at all (Galaxy removal or a bug in the
 role itself, not crystal-ansible).
+| prometheus.prometheus.pushgateway | ✅ Fixed (round 198, 0.9.638, Ubuntu 22.04). One real bug: the `vars` magic variable was missing from the hand-rolled conditional evaluator, so the collection's own preflight (`__common_parent_role_short_name ~ '_skip_install' not in vars`) failed with "'vars' is undefined" at task 6 where real ansible-playbook completed all 33. Fixed by giving `build_vars_context` a real `vars` key; verified against ansible-core 2.19.4. |
+| robertdebock.openssh | ✅ Clean (round 198, 0.9.638, Ubuntu 22.04). 61 tasks, identical recap cold (`ok=61 changed=2`) and warm (`ok=60 changed=0`); warm 16.9x faster (0.58s vs 9.78s). |
+| buluma.handbrake | ✅ Clean (round 198, 0.9.638, Ubuntu 22.04). Identical recap both phases (both engines `failed=1` on the role's own upstream breakage); warm 16.7x faster (1.77s vs 29.56s). |
+| buluma.cni | ✅ Clean (round 198, 0.9.638, Ubuntu 22.04). Identical `ok=7 changed=6` cold, `changed=2` warm on both engines. |
+| buluma.apt_repository | ✅ Clean (round 198, 0.9.638, Ubuntu 22.04). |
+| buluma.samba | ✅ Clean (round 198, 0.9.638, Ubuntu 22.04). Both engines `failed=1` identically. |
+| robertdebock.mitogen | ✅ Clean (round 198, 0.9.638, Ubuntu 22.04). Both engines `failed=1` identically. |
+| robertdebock.enpass | ✅ Clean (round 198, 0.9.638, Ubuntu 22.04). Both engines `failed=1` identically. |
+| andrewrothstein.dnsmasq | ✅ Clean (round 198, 0.9.638, Ubuntu 22.04). Both engines `failed=1` identically. |
+| andrewrothstein.supervisord | ✅ Clean (round 198, 0.9.638, Ubuntu 22.04). Both engines `failed=1` identically. |
