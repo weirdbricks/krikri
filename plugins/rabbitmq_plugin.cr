@@ -34,13 +34,23 @@ module CrystalPlay
         return PluginResult.new(changed: false, failed: true,
           msg: "Failed to list RabbitMQ plugins: #{enabled_out[:stderr]}")
       end
-      enabled_lines = enabled_out[:stdout].lines
-        .reject { |l| l.empty? || l.starts_with?(' ') || l.starts_with?("^") }
-        .map { |l| l.split.first? || l }
+      # rabbitmq-plugins list -e output lines look like
+      # "E* rabbitmq_management 4.x" / "e* rabbitmq_foo ..." - the enabled
+      # marker prefix and indentation vary by version, so match the
+      # plugin name as a whole word anywhere in the output rather than
+      # requiring it to be the first token (the strict first-token parse
+      # never matched, so every warm pass re-ran the enable command and
+      # reported changed - mrlesmithjr.rabbitmq, round 196 re-run).
+      # ANSI color codes (rabbitmq-plugins colorizes its listing on some
+      # versions) would break name matching - strip them. list -e only
+      # lists ENABLED plugins, so any word-boundary occurrence of the
+      # plugin name means enabled.
+      enabled_text = (enabled_out[:stdout] + "\n" + enabled_out[:stderr])
+        .gsub(/\e\[[0-9;]*m/, "")
 
       changed = false
       plugins.each do |plugin|
-        is_enabled = enabled_lines.any? { |l| l.split(/[ \t]/).first == plugin || l.starts_with?(plugin) }
+        is_enabled = enabled_text.match(/\b#{Regex.escape(plugin)}\b/) != nil
         if state == "enabled" && !is_enabled
           r = remote_exec("#{bin} enable #{plugin}")
           return PluginResult.new(changed: false, failed: true,

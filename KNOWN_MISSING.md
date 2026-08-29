@@ -100,6 +100,14 @@ are recorded in `ROLES_TESTED.md`'s round-191 rows.
 - **±1-task recap deltas** (gantsign.java warm, cloudalchemy cold on
   re-run pairs sharing controller /tmp state): single loop-item/task
   counting differences; root cause not yet isolated.
+- **`community.rabbitmq` warm deltas** (mrlesmithjr.rabbitmq re-run):
+  both engines now run the role rc=0 with the new native
+  rabbitmq_plugin/rabbitmq_user plugins, but crystal's warm pass reports
+  changed=2 where real reports changed=0 (one plugin enable + one user
+  item). The plugin-side detection was hardened twice (marker regex,
+  ANSI strip, stderr merge) - the remaining delta needs the literal
+  `rabbitmq-plugins list -e` / `rabbitmqctl list_users` output from a
+  live host to pin down.
 - **`community.general.ufw` rule idempotency delta** (Oefenweb.ufw,
   round 196 re-run): both engines now run the role rc=0, but on the warm
   pass crystal reports changed=4 where real ansible reports changed=0 -

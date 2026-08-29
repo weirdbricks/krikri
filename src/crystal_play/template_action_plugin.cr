@@ -107,6 +107,27 @@ module CrystalPlay
 
         # Create Crinja environment
         env = Crinja.new
+        # Real Ansible resolves `{% include %}`/`{% import %}` inside a
+        # template relative to the TEMPLATE's own directory first (Jinja2
+        # FileSystemLoader behavior with the loader searchpath rooted at
+        # the role's templates dir). The default Crinja loader searches
+        # only the process CWD (the work dir), so Oefenweb.haproxy's
+        # haproxy.cfg.j2 - which is built entirely from
+        # `{% include 'global.cfg.j2' %}`-style includes of its sibling
+        # partials - failed with "template global.cfg.j2 could not be
+        # found by FileSystemLoader(<work dir>)" where real ansible
+        # rc=0'd (round 196). Search the template's own dir plus every
+        # ancestor up to and including the role's templates/ root.
+        if (tpl_dir = File.dirname(File.expand_path(template_path))) &&
+           tpl_dir.starts_with?("/")
+          searchpaths = [tpl_dir]
+          dir = tpl_dir
+          while (dir = File.dirname(dir)) != "/" && dir.split("/").includes?("templates")
+            searchpaths << dir
+            break if File.basename(dir) == "templates"
+          end
+          env.loader = Crinja::Loader::FileSystemLoader.new(searchpaths)
+        end
 
         # Configure Crinja to match Ansible defaults. A directive value
         # (explicit true OR false) always wins over the param default -
