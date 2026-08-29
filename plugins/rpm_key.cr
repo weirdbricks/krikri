@@ -124,7 +124,7 @@ module CrystalPlay
           wanted = fingerprint_param.split(',').map(&.strip.gsub(" ", "").upcase).reject(&.empty?)
           unless wanted.empty?
             have = pairs.map { |(_, fp)| fp }
-            unless wanted.any? { |w| have.includes?(w) }
+            unless wanted.any? { |wval| have.includes?(wval) }
               return PluginResult.new(changed: false, failed: true, msg: "The specified fingerprint, '#{wanted.join(", ")}', does not match any key fingerprints in '#{have.join(", ")}'")
             end
           end

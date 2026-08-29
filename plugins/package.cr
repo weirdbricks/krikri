@@ -563,7 +563,7 @@ module CrystalPlay
         # the "not installed and only upgrades are requested" case
         # entirely.
         summary = upgrade_result[:stdout][/(\d+) upgraded, (\d+) newly installed/]?
-        was_upgraded = summary ? summary.scan(/\d+/).sum { |m| m[0].to_i } > 0 : upgrade_result[:exit_code] == 0
+        was_upgraded = summary ? summary.scan(/\d+/).sum { |mat| mat[0].to_i } > 0 : upgrade_result[:exit_code] == 0
 
         PluginResult.new(
           changed: was_upgraded,

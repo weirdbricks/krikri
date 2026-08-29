@@ -30,9 +30,9 @@ private def run_strategy(strategy : String?) : {Int32, Array(String)}
   status = Process.run(BINARY, ["-i", "inv.ini", "-f", "5", "pb.yml"],
     output: stdout_io, error: stdout_io, chdir: dir)
   # The banner/result sequence IS the observable difference.
-  lines = stdout_io.to_s.lines.compact_map do |ln|
-    if ln.starts_with?("TASK [")
-      ln.strip
+  lines = stdout_io.to_s.lines.compact_map do |lv2|
+    if lv2.starts_with?("TASK [")
+      lv2.strip
     elsif line =~ /^(changed|ok): \[(h\d)\]/
       "#{$1}:#{$2}"
     end

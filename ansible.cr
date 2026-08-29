@@ -38,36 +38,36 @@ begin
   OptionParser.parse do |parser|
     parser.banner = "Usage: ansible <pattern> [options]"
 
-    parser.on("-m MODULE", "--module-name=MODULE", "Module name to execute (default: command)") do |m|
-      module_name = m
+    parser.on("-mat MODULE", "--module-name=MODULE", "Module name to execute (default: command)") do |mat|
+      module_name = mat
     end
 
-    parser.on("-a ARGS", "--args=ARGS", "Module arguments") do |a|
-      module_args = a
+    parser.on("-aval ARGS", "--args=ARGS", "Module arguments") do |aval|
+      module_args = aval
     end
 
     parser.on("-i INVENTORY", "--inventory=INVENTORY", "Specify inventory file") do |inv|
       inventory_file = inv
     end
 
-    parser.on("-u USER", "--user=USER", "Connect as this remote user") do |u|
-      remote_user = u
+    parser.on("-uval USER", "--user=USER", "Connect as this remote user") do |uval|
+      remote_user = uval
     end
 
     parser.on("-b", "--become", "Run operations with become (privilege escalation)") do
       become = true
     end
 
-    parser.on("--become-user=USER", "Run operations as this user (default: root)") do |u|
-      become_user = u
+    parser.on("--become-user=USER", "Run operations as this user (default: root)") do |uval|
+      become_user = uval
     end
 
     parser.on("-C", "--check", "Don't make changes; predict changes instead (dry-run)") do
       check_mode = true
     end
 
-    parser.on("-f FORKS", "--forks=FORKS", "Run against up to FORKS hosts concurrently (default: 5)") do |f|
-      forks = f.to_i? || 5
+    parser.on("-fval FORKS", "--forks=FORKS", "Run against up to FORKS hosts concurrently (default: 5)") do |fval|
+      forks = fval.to_i? || 5
     end
 
     parser.on("-l SUBSET", "--limit=SUBSET", "Limit to specific hosts") do |subset|

@@ -126,7 +126,7 @@ module CrystalPlay
 
     private def dml_statement?(stmt : String) : Bool
       upcased = stmt.strip.upcase
-      DML_KEYWORDS.any? { |kw| upcased.starts_with?(kw) }
+      DML_KEYWORDS.any? { |kwv| upcased.starts_with?(kwv) }
     end
 
     private def run_read(db : DB::Database, stmt : String) : {JSON::Any, Int64}

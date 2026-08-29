@@ -21,7 +21,7 @@ module CrystalPlay
       state = @params["state"]? || "present"
       password = @params["password"]?
       vhost = @params["vhost"]? || "/"
-      tags = @params["tags"]?.try { |t| t.split(',').map(&.strip).reject(&.empty?) }
+      tags = @params["tags"]?.try { |tval| tval.split(',').map(&.strip).reject(&.empty?) }
       conf_priv = @params["configure_priv"]? || ".*"
       read_priv = @params["read_priv"]? || ".*"
       write_priv = @params["write_priv"]? || ".*"
@@ -38,11 +38,11 @@ module CrystalPlay
       existing = false
       current_tags : Array(String)? = nil
       list_text = list_out[:stdout] + "\n" + list_out[:stderr]
-      list_text.each_line do |l|
-        parts = l.strip.split(/[ \t]+/)
+      list_text.each_line do |lval|
+        parts = lval.strip.split(/[ \t]+/)
         next unless parts.first? == user
         existing = true
-        if m = l.match(/\[(.*)\]/)
+        if m = lval.match(/\[(.*)\]/)
           current_tags = m[1].split(",").map(&.strip)
         end
       end
@@ -72,7 +72,7 @@ module CrystalPlay
         # skip the call when the user's current tags already match the
         # requested set (order-insensitive) - real module behavior
         unless current_tags && current_tags.sort == tags.sort
-          tags_json = "[" + tags.map { |t| "\"#{t}\"" }.join(",") + "]"
+          tags_json = "[" + tags.map { |tval| "\"#{tval}\"" }.join(",") + "]"
           r = remote_exec("rabbitmqctl set_user_tags #{user} #{tags_json}")
           return PluginResult.new(changed: false, failed: true,
             msg: "Failed to set tags for #{user}: #{r[:stderr]}") if r[:exit_code] != 0

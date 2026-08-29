@@ -86,13 +86,13 @@ module CrystalPlay
         dbname: @params["login_db"]? || @params["db"]? || "postgres",
       )
 
-      DB.open(uri) do |db|
-        existing_flags = current_flags(db, name)
+      DB.open(uri) do |dbcon|
+        existing_flags = current_flags(dbcon, name)
 
         if state == "absent"
-          ensure_absent(db, name, !!existing_flags, check_mode)
+          ensure_absent(dbcon, name, !!existing_flags, check_mode)
         else
-          ensure_present(db, name, existing_flags, password, desired_flags, check_mode)
+          ensure_present(dbcon, name, existing_flags, password, desired_flags, check_mode)
         end
       end
     rescue ex : DB::ConnectionRefused
@@ -124,9 +124,9 @@ module CrystalPlay
       else
         return PluginResult.new(changed: true, failed: false, msg: "Role #{name} would be created") if check_mode
 
-        clause = String.build do |s|
-          s << " " << PluginHelpers::PostgresqlRoleFlags.to_sql(desired_flags) if desired_flags
-          s << " PASSWORD " << quote_str(password) if password
+        clause = String.build do |str|
+          str << " " << PluginHelpers::PostgresqlRoleFlags.to_sql(desired_flags) if desired_flags
+          str << " PASSWORD " << quote_str(password) if password
         end
         # Real Ansible's own user_add() uses `CREATE USER`, not `CREATE
         # ROLE` - they're otherwise identical in Postgres, but `CREATE

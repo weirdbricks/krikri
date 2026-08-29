@@ -1217,7 +1217,7 @@ module CrystalPlay
 
         render_via_crinja(expr)
       rescue
-        values = parts.map { |p| resolve_plus_operand(p) }
+        values = parts.map { |pth| resolve_plus_operand(pth) }
         result = values[0]
         ops.each_with_index do |op, idx|
           result = combine_mult_div(result, values[idx + 1], op)
@@ -1523,7 +1523,7 @@ module CrystalPlay
             quoted_string_literal(part.strip).try(&.as_s?) || evaluate(part.strip).presence
           }
           return "undefined" if names.empty?
-          values = names.map { |n| ansible_config_value(n) }
+          values = names.map { |nval| ansible_config_value(nval) }
           if wantlist || names.size > 1
             values.to_json
           else
@@ -1716,7 +1716,7 @@ module CrystalPlay
           # lookup('varnames', 'regex1', 'regex2', ...) - real Ansible's
           # own varnames lookup: returns every variable NAME (not
           # value) whose name matches ANY of the given regex patterns.
-          patterns = parts[1..].compact_map { |part| quoted_string_literal(part.strip).try(&.as_s?) }.compact_map { |p| Regex.new(p) rescue nil }
+          patterns = parts[1..].compact_map { |part| quoted_string_literal(part.strip).try(&.as_s?) }.compact_map { |pth| Regex.new(pth) rescue nil }
           @vars.keys.select { |name| patterns.any?(&.matches?(name)) }.to_json
         when "sequence"
           # lookup('sequence', 'start=1 end=5 stride=1 format=web%02d')

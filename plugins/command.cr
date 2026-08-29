@@ -120,7 +120,7 @@ module CrystalPlay
       end
 
       # Get optional parameters
-      chdir = @params["chdir"]?.try { |c| expand_tilde(c) }
+      chdir = @params["chdir"]?.try { |itm| expand_tilde(itm) }
       stdin_data = @params["stdin"]?
 
       # Change directory if requested. No need to track/restore the

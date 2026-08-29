@@ -218,13 +218,13 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     # each raw export line). Only map(attribute='x') was implemented -
     # the filter-name positional form silently no-op'd, so the whole
     # export line (options text included) got used as a directory path.
-    list = JSON::Any.new(["a,b,c", "d,e,f"].map { |s| JSON::Any.new(s) })
+    list = JSON::Any.new(["a,b,c", "d,e,f"].map { |str| JSON::Any.new(str) })
     result = engine.apply(list, %(map('split', ','))).as_a.map { |item| item.as_a.map(&.as_s) }
     result.should eq([["a", "b", "c"], ["d", "e", "f"]])
   end
 
   it "map('split') then map('first') extracts the first whitespace-separated word from each item" do
-    list = JSON::Any.new(["/srv/nfs/share  *(ro,sync)", "/srv/nfs/other  10.0.0.0/24(rw)"].map { |s| JSON::Any.new(s) })
+    list = JSON::Any.new(["/srv/nfs/share  *(ro,sync)", "/srv/nfs/other  10.0.0.0/24(rw)"].map { |str| JSON::Any.new(str) })
     split_result = engine.apply(list, "map('split')")
     result = engine.apply(split_result, "map('first')").as_a.map(&.as_s)
     result.should eq(["/srv/nfs/share", "/srv/nfs/other"])
@@ -490,10 +490,10 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     # was misread as a bare expression instead of a string literal,
     # silently degrading to an effectively empty pattern that matched
     # the empty string at every position instead of the real groups.
-    v = JSON::Any.new(["abc123  file1.tar.gz", "def456  file2.tar.gz"].map { |s| JSON::Any.new(s) })
+    v = JSON::Any.new(["abc123  file1.tar.gz", "def456  file2.tar.gz"].map { |str| JSON::Any.new(str) })
     engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
     result = engine.apply(v, %(map('regex_findall', '^([a-fA-F0-9]+)\\s+(.+)$'))).as_a
-    result.map { |m| m.as_a[0].as_a.map(&.as_s) }.should eq([["abc123", "file1.tar.gz"], ["def456", "file2.tar.gz"]])
+    result.map { |mat| mat.as_a[0].as_a.map(&.as_s) }.should eq([["abc123", "file1.tar.gz"], ["def456", "file2.tar.gz"]])
   end
 
   it "dict(iterable_of_pairs) builds a dict from a positional iterable, not just kwargs" do
@@ -525,7 +525,7 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     input = JSON.parse(%({"a": 1, "b": 2, "c": 3}))
     result = engine.apply(input, "dict2items").as_a
     result.size.should eq(3)
-    result.map(&.as_h).map { |h| {h["key"].as_s => h["value"].as_i} }.should eq([{"a" => 1_i64}, {"b" => 2_i64}, {"c" => 3_i64}])
+    result.map(&.as_h).map { |hval| {hval["key"].as_s => hval["value"].as_i} }.should eq([{"a" => 1_i64}, {"b" => 2_i64}, {"c" => 3_i64}])
   end
 
   it "dict2items honors custom key_name and value_name kwargs" do
@@ -776,12 +776,12 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
 
   it "combinations generates every n-length combination" do
     result = engine.apply(JSON.parse(%([1, 2, 3])), "combinations(2)").as_a
-    result.map { |c| c.as_a.map(&.as_i) }.should eq([[1, 2], [1, 3], [2, 3]])
+    result.map { |itm| itm.as_a.map(&.as_i) }.should eq([[1, 2], [1, 3], [2, 3]])
   end
 
   it "permutations generates every n-length ordered arrangement" do
     result = engine.apply(JSON.parse(%([1, 2])), "permutations").as_a
-    result.map { |p| p.as_a.map(&.as_i) }.should eq([[1, 2], [2, 1]])
+    result.map { |pth| pth.as_a.map(&.as_i) }.should eq([[1, 2], [2, 1]])
   end
 
   it "rekey_on_member converts a list of dicts into a dict keyed by a field" do

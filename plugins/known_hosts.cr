@@ -96,11 +96,11 @@ module CrystalPlay
     # lines (key type + base64 blob) matter for comparing against the
     # desired key:, since the host portion may be hashed on disk.
     private def keys_equivalent?(existing_block : String, desired : String) : Bool
-      existing_keys = existing_block.lines.reject(&.starts_with?('#')).map { |l| key_fields(l) }.reject(Nil)
-      desired_keys = desired.lines.reject(&.blank?).map { |l| key_fields(l) }.reject(Nil)
+      existing_keys = existing_block.lines.reject(&.starts_with?('#')).map { |lval| key_fields(lval) }.reject(Nil)
+      desired_keys = desired.lines.reject(&.blank?).map { |lval| key_fields(lval) }.reject(Nil)
       return false if desired_keys.empty?
 
-      desired_keys.all? { |dk| existing_keys.includes?(dk) }
+      desired_keys.all? { |dkv| existing_keys.includes?(dkv) }
     end
 
     # Reduces a known_hosts line to (key_type, key_blob), dropping the

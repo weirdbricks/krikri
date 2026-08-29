@@ -135,7 +135,7 @@ module CrystalPlay
           # an error) - without this, an unrecognized filter name fell
           # to the passthrough below, leaving the RAW glob pattern
           # string as if it were already a real, matched file path.
-          JSON::Any.new(Dir.glob(as_string(value)).sort!.map { |p| JSON::Any.new(p) })
+          JSON::Any.new(Dir.glob(as_string(value)).sort!.map { |pth| JSON::Any.new(pth) })
         when "realpath"
           JSON::Any.new(File.realpath(as_string(value)))
         when "default", "d"
@@ -940,8 +940,8 @@ module CrystalPlay
           other = resolve_expression(filter_args)
           left = (value.as_a? || [] of JSON::Any).uniq(&.to_json)
           right = (other.as_a? || [] of JSON::Any).uniq(&.to_json)
-          result = (left.reject { |i| right.any? { |r| r.to_json == i.to_json } }) +
-                   (right.reject { |i| left.any? { |l| l.to_json == i.to_json } })
+          result = (left.reject { |i| right.any? { |rval| rval.to_json == i.to_json } }) +
+                   (right.reject { |i| left.any? { |lval| lval.to_json == i.to_json } })
           JSON::Any.new(result)
         when "combinations"
           # combinations(n) - real Ansible filter, Python's own
@@ -949,7 +949,7 @@ module CrystalPlay
           # (order-independent, no repeats) of value's own elements.
           args = split_top_level_args(filter_args)
           n = args[0]?.try { |arg| as_string(resolve_expression(arg)).to_i? } || 2
-          JSON::Any.new(combinations(as_array(value), n).map { |c| JSON::Any.new(c) })
+          JSON::Any.new(combinations(as_array(value), n).map { |itm| JSON::Any.new(itm) })
         when "permutations"
           # permutations(n=None) - real Ansible filter, Python's own
           # itertools.permutations(value, n): every n-length ordered
@@ -957,7 +957,7 @@ module CrystalPlay
           args = split_top_level_args(filter_args)
           arr = as_array(value)
           n = args[0]?.try { |arg| as_string(resolve_expression(arg)).to_i? } || arr.size
-          JSON::Any.new(permutations(arr, n).map { |p| JSON::Any.new(p) })
+          JSON::Any.new(permutations(arr, n).map { |pth| JSON::Any.new(pth) })
         when "rekey_on_member"
           # rekey_on_member(member, duplicates='error') - real Ansible
           # filter: converts a list of dicts into a dict keyed by each
@@ -1957,7 +1957,7 @@ module CrystalPlay
       private def normalize_path(path : String) : String
         return "." if path.empty?
         absolute = path.starts_with?('/')
-        parts = path.split('/').reject { |p| p.empty? || p == "." }
+        parts = path.split('/').reject { |pth| pth.empty? || pth == "." }
 
         result = [] of String
         parts.each do |part|
@@ -1979,9 +1979,9 @@ module CrystalPlay
       # every path in *paths*.
       private def common_path(paths : Array(String)) : String
         return "" if paths.empty?
-        segments = paths.map { |p| p.split('/').reject(&.empty?) }
+        segments = paths.map { |pth| pth.split('/').reject(&.empty?) }
         first = segments.first
-        common = first.each_with_index.take_while { |seg, i| segments.all? { |s| s[i]? == seg } }.map(&.[0])
+        common = first.each_with_index.take_while { |seg, i| segments.all? { |str| str[i]? == seg } }.map(&.[0])
         prefix = paths.first.starts_with?('/') ? "/" : ""
         "#{prefix}#{common.join("/")}"
       end
@@ -1994,7 +1994,7 @@ module CrystalPlay
 
         head = array.first
         tail = array[1..]
-        with_head = combinations(tail, n - 1).map { |c| [head] + c }
+        with_head = combinations(tail, n - 1).map { |itm| [head] + itm }
         without_head = combinations(tail, n)
         with_head + without_head
       end
@@ -2008,7 +2008,7 @@ module CrystalPlay
         result = [] of Array(JSON::Any)
         array.each_with_index do |item, i|
           rest = array[0...i] + array[(i + 1)..]
-          permutations(rest, n - 1).each { |p| result << ([item] + p) }
+          permutations(rest, n - 1).each { |pth| result << ([item] + pth) }
         end
         result
       end

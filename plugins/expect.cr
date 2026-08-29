@@ -77,7 +77,7 @@ module CrystalPlay
       end
 
       timeout = @params["timeout"]?.try(&.to_i?) || 30
-      chdir = @params["chdir"]?.try { |c| expand_tilde(c) }
+      chdir = @params["chdir"]?.try { |itm| expand_tilde(itm) }
       echo = @params["echo"]?.try { |v| ["true", "yes", "1"].includes?(v.downcase) } || false
 
       run_expect(command, responses, timeout, chdir, echo)
@@ -133,7 +133,7 @@ module CrystalPlay
 
         argv_strs = ["/bin/sh", "-c", full_command]
         argv = Pointer(LibC::Char*).malloc(argv_strs.size + 1)
-        argv_strs.each_with_index { |s, i| argv[i] = s.to_unsafe }
+        argv_strs.each_with_index { |str, i| argv[i] = str.to_unsafe }
         argv[argv_strs.size] = Pointer(LibC::Char).null
         LibC.execvp("/bin/sh", argv)
         LibC._exit(127) # only reached if execvp itself failed

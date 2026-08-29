@@ -99,8 +99,8 @@ module CrystalPlay
 
     private def run(path_param : String, dest : String, format : String) : PluginResult
       dest = expand_tilde(dest)
-      requested_paths = path_param.split(",").map(&.strip).reject(&.empty?).map { |p| expand_tilde(p) }
-      requested_excludes = (@params["exclude_path"]? || "").split(",").map(&.strip).reject(&.empty?).map { |p| expand_tilde(p) }
+      requested_paths = path_param.split(",").map(&.strip).reject(&.empty?).map { |pth| expand_tilde(pth) }
+      requested_excludes = (@params["exclude_path"]? || "").split(",").map(&.strip).reject(&.empty?).map { |pth| expand_tilde(pth) }
       force_archive = true?(@params["force_archive"]?, default: false)
       remove = true?(@params["remove"]?, default: false)
       exclusion_patterns = (@params["exclusion_patterns"]? || "").split(",").map(&.strip).reject(&.empty?)
@@ -301,15 +301,15 @@ module CrystalPlay
         true
       when "xz"
         File.open(tmp_dest, "w") do |file|
-          Compress::XZ::Writer.open(file) do |xz|
-            File.open(source) { |src| IO.copy(src, xz) }
+          Compress::XZ::Writer.open(file) do |xzio|
+            File.open(source) { |src| IO.copy(src, xzio) }
           end
         end
         true
       else
         File.open(tmp_dest, "w") do |file|
-          Compress::Gzip::Writer.open(file) do |gz|
-            File.open(source) { |src| IO.copy(src, gz) }
+          Compress::Gzip::Writer.open(file) do |gzio|
+            File.open(source) { |src| IO.copy(src, gzio) }
           end
         end
         true
@@ -339,9 +339,9 @@ module CrystalPlay
       File.open(tmp_dest, "w") do |file|
         case format
         when "gz"
-          Compress::Gzip::Writer.open(file) { |gz| write_tar_entries(gz, root, members, relative_members) }
+          Compress::Gzip::Writer.open(file) { |gzio| write_tar_entries(gzio, root, members, relative_members) }
         when "xz"
-          Compress::XZ::Writer.open(file) { |xz| write_tar_entries(xz, root, members, relative_members) }
+          Compress::XZ::Writer.open(file) { |xzio| write_tar_entries(xzio, root, members, relative_members) }
         when "bz2"
           Compress::BZ2::Writer.open(file) { |bz2| write_tar_entries(bz2, root, members, relative_members) }
         else
@@ -478,13 +478,13 @@ module CrystalPlay
       when "xz"
         digest = OpenSSL::Digest.new("MD5")
         File.open(path) do |file|
-          Compress::XZ::Reader.open(file) { |xz| digest.update(xz.gets_to_end) }
+          Compress::XZ::Reader.open(file) { |xzio| digest.update(xzio.gets_to_end) }
         end
         digest.final.hexstring
       else
         digest = OpenSSL::Digest.new("MD5")
         File.open(path) do |file|
-          Compress::Gzip::Reader.open(file) { |gz| digest.update(gz.gets_to_end) }
+          Compress::Gzip::Reader.open(file) { |gzio| digest.update(gzio.gets_to_end) }
         end
         digest.final.hexstring
       end
@@ -511,9 +511,9 @@ module CrystalPlay
       File.open(path) do |file|
         case format
         when "gz"
-          Compress::Gzip::Reader.open(file) { |gz| read_tar_signature(gz, names, digest) }
+          Compress::Gzip::Reader.open(file) { |gzio| read_tar_signature(gzio, names, digest) }
         when "xz"
-          Compress::XZ::Reader.open(file) { |xz| read_tar_signature(xz, names, digest) }
+          Compress::XZ::Reader.open(file) { |xzio| read_tar_signature(xzio, names, digest) }
         when "bz2"
           Compress::BZ2::Reader.open(file) { |bz2| read_tar_signature(bz2, names, digest) }
         else

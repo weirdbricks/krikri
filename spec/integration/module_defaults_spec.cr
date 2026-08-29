@@ -18,7 +18,7 @@ private def markers(playbook : String) : Array(String)
 
   stdout_io = IO::Memory.new
   Process.run(BINARY, ["-i", "inv.ini", "pb.yml"], output: stdout_io, error: stdout_io, chdir: dir)
-  stdout_io.to_s.scan(/^\s{2}([A-Z_]+)$/m).map { |m| m[1] }
+  stdout_io.to_s.scan(/^\s{2}([A-Z_]+)$/m).map { |mat| mat[1] }
 ensure
   FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
 end

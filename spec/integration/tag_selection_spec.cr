@@ -58,7 +58,7 @@ private def ran_markers(yaml : String, args : Array(String)) : Array(String)
   File.write(playbook, yaml)
   stdout_io = IO::Memory.new
   Process.run(BINARY, ["-i", INVENTORY] + args + [playbook], output: stdout_io, error: stdout_io)
-  stdout_io.to_s.scan(/^\s{2}([A-Z]+)$/m).map { |m| m[1] }
+  stdout_io.to_s.scan(/^\s{2}([A-Z]+)$/m).map { |mat| mat[1] }
 ensure
   File.delete(playbook) if playbook && File.exists?(playbook)
 end

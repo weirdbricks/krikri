@@ -980,30 +980,30 @@ module CrystalPlay
         quote_char = ' '
         escaped = false
         pending_space = false
-        condition.each_char do |ch|
+        condition.each_char do |ch_blk|
           if in_quote
-            buf << ch
+            buf << ch_blk
             if escaped
               escaped = false
-            elsif ch == '\\'
+            elsif ch_blk == '\\'
               escaped = true
-            elsif ch == quote_char
+            elsif ch_blk == quote_char
               in_quote = false
             end
             next
           end
-          if ch == '"' || ch == '\''
+          if ch_blk == '"' || ch_blk == '\''
             buf << ' ' if pending_space
             pending_space = false
             in_quote = true
-            quote_char = ch
-            buf << ch
-          elsif ch.whitespace?
+            quote_char = ch_blk
+            buf << ch_blk
+          elsif ch_blk.whitespace?
             pending_space = true
           else
             buf << ' ' if pending_space
             pending_space = false
-            buf << ch
+            buf << ch_blk
           end
         end
       end

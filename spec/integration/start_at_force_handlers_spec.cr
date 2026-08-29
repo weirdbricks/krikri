@@ -18,7 +18,7 @@ ensure
 end
 
 private def markers(output : String) : Array(String)
-  output.scan(/^\s{2}([A-Z0-9-]+)$/m).map { |m| m[1] }
+  output.scan(/^\s{2}([A-Z0-9-]+)$/m).map { |mat| mat[1] }
 end
 
 private TWO_PLAYS = <<-YAML

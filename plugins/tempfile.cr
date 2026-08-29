@@ -28,7 +28,7 @@ module CrystalPlay
       prefix = @params["prefix"]?
       prefix = "ansible." if prefix.nil? || prefix.empty?
       suffix = @params["suffix"]? || ""
-      dir = @params["path"]?.try { |p| expand_tilde(p) }
+      dir = @params["path"]?.try { |pth| expand_tilde(pth) }
 
       if dir && !remote_dir_exists?(dir)
         return PluginResult.new(changed: false, failed: true, msg: "could not find or access the requested directory: #{dir}")

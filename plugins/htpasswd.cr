@@ -162,8 +162,8 @@ module CrystalPlay
     end
 
     private def random_salt(len : Int32) : String
-      String.build do |s|
-        len.times { s << SALT_CHARS[Random.rand(SALT_CHARS.size)] }
+      String.build do |str|
+        len.times { str << SALT_CHARS[Random.rand(SALT_CHARS.size)] }
       end
     end
 

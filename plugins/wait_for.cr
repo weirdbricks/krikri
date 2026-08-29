@@ -189,7 +189,7 @@ module CrystalPlay
     end
 
     # Returns {satisfied, match} - match is only ever set for a successful
-    # search_regex hit (used to populate match_groups/match_groupdict).
+    # search_regex hit (used to populate match_groups/mch_groupdict).
     # Only called with a port or a path - the no-condition "just sleep"
     # case is handled directly in execute before this is ever reached.
     private def check_condition(port : Int32?, path : String?, up : Bool, deadline : Time::Span) : {Bool, Regex::MatchData?}

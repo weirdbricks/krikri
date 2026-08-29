@@ -332,7 +332,7 @@ module CrystalPlay
 
       # Install new packages
       unless to_install.empty?
-        pkg_list = to_install.map { |p| quote_package(p) }.join(" ")
+        pkg_list = to_install.map { |pth| quote_package(pth) }.join(" ")
         cmd = "yum install #{options} #{pkg_list}"
 
         result = remote_exec_tolerating_unknown_repo(cmd)
@@ -372,7 +372,7 @@ module CrystalPlay
 
       # Update packages (if update_only mode)
       unless to_update.empty?
-        pkg_list = to_update.map { |p| quote_package(p) }.join(" ")
+        pkg_list = to_update.map { |pth| quote_package(pth) }.join(" ")
         cmd = "yum update #{options} #{pkg_list}"
 
         result = remote_exec_tolerating_unknown_repo(cmd)
@@ -443,7 +443,7 @@ module CrystalPlay
 
       # Build remove command
       autoremove_flag = true?(@params["autoremove"]?) ? "" : "--setopt=clean_requirements_on_remove=False"
-      pkg_list = to_remove.map { |p| quote_package(p) }.join(" ")
+      pkg_list = to_remove.map { |pth| quote_package(pth) }.join(" ")
       cmd = "yum remove #{options} #{autoremove_flag} #{pkg_list}"
 
       result = remote_exec_tolerating_unknown_repo(cmd)
@@ -475,7 +475,7 @@ module CrystalPlay
 
     # Update packages to latest version
     private def handle_update(names : Array(String), options : String) : PluginResult
-      pkg_list = names.map { |p| quote_package(p) }.join(" ")
+      pkg_list = names.map { |pth| quote_package(pth) }.join(" ")
       cmd = "yum update #{options} #{pkg_list}"
 
       result = remote_exec_tolerating_unknown_repo(cmd)

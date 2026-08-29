@@ -13,7 +13,7 @@ module CrystalPlay
         append_param(rule, params["protocol"]?, "-p")
         append_param(rule, params["source"]?, "-s")
         append_param(rule, params["destination"]?, "-d")
-        each_csv(params["match"]?) { |m| rule.concat(["-m", m]) }
+        each_csv(params["match"]?) { |mat| rule.concat(["-mat", mat]) }
         append_param(rule, params["jump"]?, "-j")
         append_param(rule, params["log_prefix"]?, "--log-prefix")
         append_param(rule, params["log_level"]?, "--log-level")

@@ -391,7 +391,7 @@ module CrystalPlay
       group = inventory.get_or_create_group(group_name)
 
       if hosts_array = group_data.as_a?
-        hosts_array.each { |h| group.add_host(get_or_create_dynamic_host(inventory, h.as_s)) }
+        hosts_array.each { |hval| group.add_host(get_or_create_dynamic_host(inventory, hval.as_s)) }
         return
       end
 
@@ -399,7 +399,7 @@ module CrystalPlay
       return unless hash
 
       if hosts_list = hash["hosts"]?.try(&.as_a?)
-        hosts_list.each { |h| group.add_host(get_or_create_dynamic_host(inventory, h.as_s)) }
+        hosts_list.each { |hval| group.add_host(get_or_create_dynamic_host(inventory, hval.as_s)) }
       end
 
       if vars_hash = hash["vars"]?.try(&.as_h?)
@@ -407,9 +407,9 @@ module CrystalPlay
       end
 
       if children = hash["children"]?.try(&.as_a?)
-        children.each do |c|
-          group.add_child(c.as_s)
-          inventory.get_or_create_group(c.as_s)
+        children.each do |itm|
+          group.add_child(itm.as_s)
+          inventory.get_or_create_group(itm.as_s)
         end
       end
     end
@@ -754,7 +754,7 @@ module CrystalPlay
     # keys to every given host, skipping any key the host already has -
     # see load_group_and_host_vars for the precedence this establishes.
     private def self.apply_vars_file(hosts : Array(Host), base_path : String)
-      path = {"#{base_path}.yml", "#{base_path}.yaml"}.find { |p| File.exists?(p) }
+      path = {"#{base_path}.yml", "#{base_path}.yaml"}.find { |pth| File.exists?(pth) }
       return unless path
 
       begin
@@ -1046,7 +1046,7 @@ module CrystalPlay
       {
         "hosts"  => inventory.hosts.size,
         "groups" => inventory.groups.size - 2, # Exclude 'all' and 'ungrouped'
-        "vars"   => inventory.groups.sum { |_, g| g.vars.size },
+        "vars"   => inventory.groups.sum { |__blk, gval| gval.vars.size },
       }
     end
   end

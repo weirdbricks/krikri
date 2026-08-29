@@ -174,8 +174,8 @@ begin
       persistent_daemon = false
     end
 
-    parser.on("-f FORKS", "--forks=FORKS", "Run each task against up to FORKS hosts concurrently (default: 25 - higher than ansible-playbook's own default of 5, since a \"fork\" here is a cheap fiber, not a forked Python interpreter; --forks 5 matches real ansible-playbook's default exactly, --forks 1 restores one-host-at-a-time)") do |f|
-      forks = f.to_i? || 25
+    parser.on("-fval FORKS", "--forks=FORKS", "Run each task against up to FORKS hosts concurrently (default: 25 - higher than ansible-playbook's own default of 5, since a \"fork\" here is a cheap fiber, not a forked Python interpreter; --forks 5 matches real ansible-playbook's default exactly, --forks 1 restores one-host-at-a-time)") do |fval|
+      forks = fval.to_i? || 25
     end
 
     parser.on("--gathering=MODE", "Fact gathering policy, matching ansible-playbook: implicit (default, every play re-gathers), explicit (only plays with gather_facts: true), or smart (each host gathered at most once per run; use meta: clear_facts to force a re-gather)") do |mode|
@@ -198,38 +198,38 @@ begin
     parser.on("--syntax-check", "Parse the playbook and report any syntax errors, without running it") do
       syntax_check_only = true
     end
-    parser.on("-u USER", "--user=USER", "Connect as this user (sets ansible_user for every host)") do |u|
-      remote_user = u
+    parser.on("-uval USER", "--user=USER", "Connect as this user (sets ansible_user for every host)") do |uval|
+      remote_user = uval
     end
-    parser.on("--private-key=FILE", "--key-file=FILE", "SSH private key to connect with (sets ansible_ssh_private_key_file)") do |f|
-      private_key_file = f
+    parser.on("--private-key=FILE", "--key-file=FILE", "SSH private key to connect with (sets ansible_ssh_private_key_file)") do |fval|
+      private_key_file = fval
     end
-    parser.on("-c TYPE", "--connection=TYPE", "Connection type to use (sets ansible_connection)") do |c|
-      connection_override = c
+    parser.on("-itm TYPE", "--connection=TYPE", "Connection type to use (sets ansible_connection)") do |itm|
+      connection_override = itm
     end
     parser.on("-b", "--become", "Run operations with become") do
       become_flag = true
     end
-    parser.on("--become-user=USER", "Become this user (default root)") do |u|
-      become_user_override = u
+    parser.on("--become-user=USER", "Become this user (default root)") do |uval|
+      become_user_override = uval
     end
-    parser.on("--become-method=METHOD", "Privilege escalation method to use") do |m|
-      become_method_override = m
+    parser.on("--become-method=METHOD", "Privilege escalation method to use") do |mat|
+      become_method_override = mat
     end
-    parser.on("-T SECONDS", "--timeout=SECONDS", "SSH connection timeout in seconds (default 10)") do |t|
-      CrystalPlay::CliOptions.timeout = t.to_i? || 10
+    parser.on("-T SECONDS", "--timeout=SECONDS", "SSH connection timeout in seconds (default 10)") do |tval|
+      CrystalPlay::CliOptions.timeout = tval.to_i? || 10
     end
-    parser.on("--ssh-common-args=ARGS", "Extra arguments appended to every ssh invocation") do |a|
-      CrystalPlay::CliOptions.ssh_common_args = a
+    parser.on("--ssh-common-args=ARGS", "Extra arguments appended to every ssh invocation") do |aval|
+      CrystalPlay::CliOptions.ssh_common_args = aval
     end
-    parser.on("--ssh-extra-args=ARGS", "Extra arguments appended to every ssh invocation") do |a|
-      CrystalPlay::CliOptions.ssh_extra_args = a
+    parser.on("--ssh-extra-args=ARGS", "Extra arguments appended to every ssh invocation") do |aval|
+      CrystalPlay::CliOptions.ssh_extra_args = aval
     end
-    parser.on("--scp-extra-args=ARGS", "Accepted for compatibility; this engine does not shell out to scp") do |a|
-      CrystalPlay::CliOptions.scp_extra_args = a
+    parser.on("--scp-extra-args=ARGS", "Accepted for compatibility; this engine does not shell out to scp") do |aval|
+      CrystalPlay::CliOptions.scp_extra_args = aval
     end
-    parser.on("--sftp-extra-args=ARGS", "Accepted for compatibility; this engine does not shell out to sftp") do |a|
-      CrystalPlay::CliOptions.sftp_extra_args = a
+    parser.on("--sftp-extra-args=ARGS", "Accepted for compatibility; this engine does not shell out to sftp") do |aval|
+      CrystalPlay::CliOptions.sftp_extra_args = aval
     end
     parser.on("-k", "--ask-pass", "Prompt for the connection password") do
       ask_pass = true
@@ -240,17 +240,17 @@ begin
     parser.on("--step", "Confirm each task before running it") do
       CrystalPlay::CliOptions.step = true
     end
-    parser.on("--connection-password-file=FILE", "--conn-pass-file=FILE", "Read the connection password from this file") do |f|
-      connection_password_file = f
+    parser.on("--connection-password-file=FILE", "--conn-pass-file=FILE", "Read the connection password from this file") do |fval|
+      connection_password_file = fval
     end
-    parser.on("--become-password-file=FILE", "--become-pass-file=FILE", "Read the privilege escalation password from this file") do |f|
-      become_password_file = f
+    parser.on("--become-password-file=FILE", "--become-pass-file=FILE", "Read the privilege escalation password from this file") do |fval|
+      become_password_file = fval
     end
     parser.on("--flush-cache", "Clear the fact cache before running") do
       flush_cache = true
     end
-    parser.on("-M PATH", "--module-path=PATH", "Accepted for compatibility; modules here are compiled binaries, not a search path") do |m|
-      module_path_args << m
+    parser.on("-M PATH", "--module-path=PATH", "Accepted for compatibility; modules here are compiled binaries, not a search path") do |mat|
+      module_path_args << mat
     end
     parser.on("--vault-id=ID", "Vault identity as label@source (a password file, or @prompt); repeatable") do |v|
       vault_id_args << v
@@ -264,8 +264,8 @@ begin
     parser.on("-J", "--ask-vault-password", "Prompt for the vault password") do
       ask_vault_pass = true
     end
-    parser.on("--start-at-task=NAME", "Start the playbook at the task with this name, skipping everything before it") do |n|
-      start_at_task = n
+    parser.on("--start-at-task=NAME", "Start the playbook at the task with this name, skipping everything before it") do |nval|
+      start_at_task = nval
     end
     parser.on("--force-handlers", "Run handlers even if a task fails, instead of dropping them") do
       force_handlers = true
@@ -282,11 +282,11 @@ begin
     parser.on("-e EXTRA_VARS", "--extra-vars=EXTRA_VARS", "Set additional variables as key=value, JSON, or @file (highest precedence; repeatable)") do |e|
       extra_vars_args << e
     end
-    parser.on("--skip-tags=TAGS", "Only run tasks whose tags do NOT match these") do |t|
-      skip_tags = t.split(",").map(&.strip).reject(&.empty?)
+    parser.on("--skip-tags=TAGS", "Only run tasks whose tags do NOT match these") do |tval|
+      skip_tags = tval.split(",").map(&.strip).reject(&.empty?)
     end
-    parser.on("-t TAGS", "--tags=TAGS", "Only run tasks with these tags") do |t|
-      tags = t.split(",").map(&.strip).reject(&.empty?)
+    parser.on("-tval TAGS", "--tags=TAGS", "Only run tasks with these tags") do |tval|
+      tags = tval.split(",").map(&.strip).reject(&.empty?)
     end
 
     parser.on("--vault-password-file=FILE", "Vault password file") do |file|
@@ -894,7 +894,7 @@ unreachable_hosts.each do |name|
   end
 end
 
-CrystalPlay::ResultDisplay.show_recap(all_hosts.uniq { |h| h.name }, combined_results)
+CrystalPlay::ResultDisplay.show_recap(all_hosts.uniq { |hval| hval.name }, combined_results)
 
 puts ""
 

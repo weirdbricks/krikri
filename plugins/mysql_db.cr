@@ -110,14 +110,14 @@ module CrystalPlay
         config_file: @params["config_file"]? || "~/.my.cnf",
       )
 
-      DB.open(uri) do |db|
-        exists = db.query_all("SHOW DATABASES", as: String).includes?(name)
+      DB.open(uri) do |dbcon|
+        exists = dbcon.query_all("SHOW DATABASES", as: String).includes?(name)
 
         case state
         when "present"
-          ensure_present(db, name, exists, check_mode)
+          ensure_present(dbcon, name, exists, check_mode)
         when "absent"
-          ensure_absent(db, name, exists, check_mode)
+          ensure_absent(dbcon, name, exists, check_mode)
         else
           PluginResult.new(changed: false, failed: true, msg: "state must be 'present' or 'absent', got '#{state}'")
         end
@@ -138,9 +138,9 @@ module CrystalPlay
         return PluginResult.new(changed: false, failed: true, msg: "encoding/collation may only contain letters, digits, and underscores")
       end
 
-      clause = String.build do |s|
-        s << " CHARACTER SET " << encoding if encoding
-        s << " COLLATE " << collation if collation
+      clause = String.build do |str|
+        str << " CHARACTER SET " << encoding if encoding
+        str << " COLLATE " << collation if collation
       end
 
       db.exec "CREATE DATABASE #{quote_ident(name)}#{clause}"

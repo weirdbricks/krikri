@@ -433,7 +433,7 @@ module CrystalPlay
     # Queries every table/sequence currently in schema, fresh each run -
     # real Ansible's own ALL_IN_SCHEMA behavior (dynamic membership, not
     # a fixed list captured once). relkind filter for tables matches real
-    # Ansible's own query exactly (r/v/m/p/f - ordinary/view/materialized
+    # Ansible's own query exactly (r/v/m/p/f - ordinary/view/merialized
     # view/partitioned/foreign tables), not just 'r'.
     private def all_objs_in_schema(db : DB::Database, type : String, schema : String) : Array(String)
       # Routines come back as fully-qualified signatures, the same form

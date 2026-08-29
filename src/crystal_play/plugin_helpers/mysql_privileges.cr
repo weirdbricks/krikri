@@ -58,7 +58,7 @@ module CrystalPlay
       end
 
       private def self.normalize_privileges(raw : Enumerable(String)) : Set(String)
-        raw.map(&.strip.upcase).reject(&.empty?).map { |p| p == "ALL PRIVILEGES" ? "ALL" : p }.to_set
+        raw.map(&.strip.upcase).reject(&.empty?).map { |pth| pth == "ALL PRIVILEGES" ? "ALL" : pth }.to_set
       end
 
       private def self.normalize_target(raw : String) : String

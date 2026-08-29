@@ -1799,7 +1799,7 @@ module CrystalPlay
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
       task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
-      task.throttle = task_hash["throttle"]?.try { |tv| safe_yaml_to_string(tv).to_i? } || 0
+      task.throttle = task_hash["throttle"]?.try { |tv_blk| safe_yaml_to_string(tv_blk).to_i? } || 0
       task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
       task.debugger = task_hash["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
       task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
@@ -2049,7 +2049,7 @@ module CrystalPlay
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
       task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
-      task.throttle = task_hash["throttle"]?.try { |tv| safe_yaml_to_string(tv).to_i? } || 0
+      task.throttle = task_hash["throttle"]?.try { |tv_blk| safe_yaml_to_string(tv_blk).to_i? } || 0
       task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
       task.debugger = task_hash["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
       task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
@@ -2230,7 +2230,7 @@ module CrystalPlay
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
       task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
-      task.throttle = task_hash["throttle"]?.try { |tv| safe_yaml_to_string(tv).to_i? } || 0
+      task.throttle = task_hash["throttle"]?.try { |tv_blk| safe_yaml_to_string(tv_blk).to_i? } || 0
       task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
       task.debugger = task_hash["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
       task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
@@ -2423,7 +2423,7 @@ module CrystalPlay
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
       task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
-      task.throttle = task_hash["throttle"]?.try { |tv| safe_yaml_to_string(tv).to_i? } || 0
+      task.throttle = task_hash["throttle"]?.try { |tv_blk| safe_yaml_to_string(tv_blk).to_i? } || 0
       task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
       task.debugger = task_hash["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
       task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
@@ -2538,7 +2538,7 @@ module CrystalPlay
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
       task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
-      task.throttle = task_hash["throttle"]?.try { |tv| safe_yaml_to_string(tv).to_i? } || 0
+      task.throttle = task_hash["throttle"]?.try { |tv_blk| safe_yaml_to_string(tv_blk).to_i? } || 0
       task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
       task.debugger = task_hash["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
       task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)

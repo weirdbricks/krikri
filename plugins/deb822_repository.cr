@@ -186,7 +186,7 @@ module CrystalPlay
       download_binary(url, tmp_path)
 
       # Detect ASCII-armored content by checking the first bytes
-      armored = File.open(tmp_path, "r") { |f| (f.gets(60) || "").starts_with?("-----BEGIN PGP") }
+      armored = File.open(tmp_path, "r") { |fval| (fval.gets(60) || "").starts_with?("-----BEGIN PGP") }
 
       ext = armored ? ".asc" : ".gpg"
       keyring_path = File.join(keyring_dir, "#{name}#{ext}")

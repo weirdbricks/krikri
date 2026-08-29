@@ -39,7 +39,7 @@ private def hosts_for(pattern : String, limit : String? = nil) : Array(String)
   args.concat(["-l", limit]) if limit
   stdout_io = IO::Memory.new
   Process.run(BINARY, args + ["pb.yml"], output: stdout_io, error: stdout_io, chdir: dir)
-  stdout_io.to_s.scan(/H=([a-z0-9]+)/).map { |m| m[1] }.sort!
+  stdout_io.to_s.scan(/H=([a-z0-9]+)/).map { |mat| mat[1] }.sort!
 ensure
   FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
 end

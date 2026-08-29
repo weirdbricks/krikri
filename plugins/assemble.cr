@@ -39,7 +39,7 @@ module CrystalPlay
       end
 
       ignore_hidden = true?(@params["ignore_hidden"]?)
-      regexp = @params["regexp"]?.try { |r| Regex.new(r) rescue nil }
+      regexp = @params["regexp"]?.try { |rval| Regex.new(rval) rescue nil }
       delimiter = @params["delimiter"]?
 
       fragments = Dir.children(src).sort.select do |name|

@@ -28,7 +28,7 @@ module CrystalPlay
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: chdir") unless chdir
 
       target = @params["target"]?
-      targets = @params["targets"]?.try { |t| Array(String).from_json(t) }
+      targets = @params["targets"]?.try { |tval| Array(String).from_json(tval) }
       make_bin = @params["make"]? || "make"
 
       command = [make_bin]

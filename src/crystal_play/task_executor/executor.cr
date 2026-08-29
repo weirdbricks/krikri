@@ -1635,7 +1635,7 @@ module CrystalPlay
         vars_context["ansible_role_name"] = JSON::Any.new(role_name)
       end
       if parent_names = task.role_parent_names
-        vars_context["ansible_parent_role_names"] = JSON::Any.new(parent_names.map { |n| JSON::Any.new(n) })
+        vars_context["ansible_parent_role_names"] = JSON::Any.new(parent_names.map { |nval| JSON::Any.new(nval) })
       end
       if collection_name = task.ansible_collection_name
         vars_context["ansible_collection_name"] = JSON::Any.new(collection_name)
@@ -1681,7 +1681,7 @@ module CrystalPlay
       # which a LATER task's `grep ... /tmp/inventory.txt` then failed
       # against (no match in an empty file) - while real ansible-
       # playbook, which has always populated this var, succeeded.
-      play_host_names = @hosts.map { |h| JSON::Any.new(h.name) }
+      play_host_names = @hosts.map { |hval| JSON::Any.new(hval.name) }
       vars_context["ansible_play_hosts_all"] = JSON::Any.new(play_host_names)
       vars_context["ansible_play_hosts"] = JSON::Any.new(play_host_names)
       vars_context["ansible_version"] = ANSIBLE_VERSION_MAGIC_VAR
@@ -6395,7 +6395,7 @@ module CrystalPlay
         vars_context["ansible_role_name"] = JSON::Any.new(role_name)
       end
       if parent_names = handler.role_parent_names
-        vars_context["ansible_parent_role_names"] = JSON::Any.new(parent_names.map { |n| JSON::Any.new(n) })
+        vars_context["ansible_parent_role_names"] = JSON::Any.new(parent_names.map { |nval| JSON::Any.new(nval) })
       end
       if collection_name = handler.ansible_collection_name
         vars_context["ansible_collection_name"] = JSON::Any.new(collection_name)
@@ -6424,7 +6424,7 @@ module CrystalPlay
 
       # ansible_play_hosts_all/ansible_play_hosts - see #build_vars_context's
       # own identical comment (the regular-task path) for the full story.
-      play_host_names = @hosts.map { |h| JSON::Any.new(h.name) }
+      play_host_names = @hosts.map { |hval| JSON::Any.new(hval.name) }
       vars_context["ansible_play_hosts_all"] = JSON::Any.new(play_host_names)
       vars_context["ansible_play_hosts"] = JSON::Any.new(play_host_names)
       vars_context["ansible_version"] = ANSIBLE_VERSION_MAGIC_VAR

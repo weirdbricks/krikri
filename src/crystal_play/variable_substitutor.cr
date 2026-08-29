@@ -682,8 +682,8 @@ module CrystalPlay
 
         cond_no_strings = strip_string_literals(cond)
 
-        cond_no_strings.scan(SCAN_STRICT_BLOCK_TAG_REF) do |m|
-          ident = m[0]
+        cond_no_strings.scan(SCAN_STRICT_BLOCK_TAG_REF) do |mat|
+          ident = mat[0]
           next if SCAN_STRICT_BLOCK_TAG_KEYWORDS.includes?(ident)
           next if SCAN_STRICT_BLOCK_TAG_BUILTIN_FILTERS.includes?(ident)
           next if @vars.has_key?(ident)

@@ -38,8 +38,8 @@ end
 # - controller with sshd reachable). Most dev boxes don't have this;
 # the SSH-routed half of this spec is skipped when it's absent.
 private def sshd_listening? : Bool
-  Process.run("ss", ["-tln", "-H"], output: STDOUT, error: STDERR) do |p|
-    p.output.gets_to_end.includes?(":22 ")
+  Process.run("ss", ["-tln", "-H"], output: STDOUT, error: STDERR) do |pth|
+    pth.output.gets_to_end.includes?(":22 ")
   end
 rescue
   false

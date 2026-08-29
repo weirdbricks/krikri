@@ -572,10 +572,10 @@ module CrystalPlay
       exposed_ports, port_bindings = build_ports
 
       expected_published = port_bindings.transform_values do |bindings|
-        bindings.map { |b| "#{b.host_ip.presence || "0.0.0.0"}:#{b.host_port}" }.to_set
+        bindings.map { |bnd| "#{bnd.host_ip.presence || "0.0.0.0"}:#{bnd.host_port}" }.to_set
       end
       actual_published = (host_config.port_bindings || Hash(String, Array(Docr::Types::PortBinding)).new).transform_values do |bindings|
-        bindings.map { |b| "#{b.host_ip.presence || "0.0.0.0"}:#{b.host_port}" }.to_set
+        bindings.map { |bnd| "#{bnd.host_ip.presence || "0.0.0.0"}:#{bnd.host_port}" }.to_set
       end
       published_ok = strict ? actual_published == expected_published : dict_set_subset?(expected_published, actual_published)
       return false unless published_ok

@@ -22,7 +22,7 @@ module CrystalPlay
       link = @params["link"]?
       priority_param = @params["priority"]?.try(&.to_i)
       state = @params["state"]? || "selected"
-      subcommands = @params["subcommands"]?.try { |s| Array(JSON::Any).from_json(s) }
+      subcommands = @params["subcommands"]?.try { |str| Array(JSON::Any).from_json(str) }
 
       current_mode, current_path, current_link, current_alternatives = parse_display(name)
 
@@ -39,11 +39,11 @@ module CrystalPlay
           priority = priority_param || current_alternatives[path]?.try(&.[:priority]) || 50
           cmd = ["update-alternatives", "--install", effective_link, name, path, priority.to_s]
           if subcommands
-            subcommands.each do |s|
-              cmd += ["--slave", s["link"].as_s, s["name"].as_s, s["path"].as_s]
+            subcommands.each do |str|
+              cmd += ["--slave", str["link"].as_s, str["name"].as_s, str["path"].as_s]
             end
           end
-          remote_exec(cmd.map { |c| shell_quote(c) }.join(' '))
+          remote_exec(cmd.map { |itm| shell_quote(itm) }.join(' '))
           changed = true
           messages << "Install alternative '#{path}' for '#{name}'."
         end
@@ -92,8 +92,8 @@ module CrystalPlay
         current_link = m[1].strip
       end
 
-      output.scan(/^(\/\S*)\s-\s(?:family\s(\S+)\s)?priority\s(\d+)/m) do |am|
-        current_alternatives[am[1]] = {priority: am[3].to_i}
+      output.scan(/^(\/\S*)\s-\s(?:family\s(\S+)\s)?priority\s(\d+)/m) do |am_blk|
+        current_alternatives[am_blk[1]] = {priority: am_blk[3].to_i}
       end
 
       {current_mode, current_path, current_link, current_alternatives}

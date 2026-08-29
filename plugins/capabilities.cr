@@ -38,19 +38,19 @@ module CrystalPlay
 
       cap_name, cap_op, cap_flags = parse_cap(capability, op_required: state == "present")
       current_caps = getcap(path)
-      cap_names = current_caps.map { |c| c[0] }
+      cap_names = current_caps.map { |itm| itm[0] }
 
       if state == "present" && !current_caps.includes?({cap_name, cap_op, cap_flags})
         return PluginResult.new(changed: true, failed: false, msg: "capabilities changed") if check_mode
 
-        new_caps = current_caps.reject { |c| c[0] == cap_name }
+        new_caps = current_caps.reject { |itm| itm[0] == cap_name }
         new_caps << {cap_name, cap_op, cap_flags}
         stdout = setcap(path, new_caps)
         PluginResult.new(changed: true, failed: false, msg: "capabilities changed", state: state, stdout: stdout)
       elsif state == "absent" && cap_names.includes?(cap_name)
         return PluginResult.new(changed: true, failed: false, msg: "capabilities changed") if check_mode
 
-        new_caps = current_caps.reject { |c| c[0] == cap_name }
+        new_caps = current_caps.reject { |itm| itm[0] == cap_name }
         stdout = setcap(path, new_caps)
         PluginResult.new(changed: true, failed: false, msg: "capabilities changed", state: state, stdout: stdout)
       else

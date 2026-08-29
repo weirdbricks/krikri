@@ -39,32 +39,32 @@ describe "inventory host ranges" do
   # and every real host in it was invisible.
   it "expands a zero-padded numeric range, keeping the padding" do
     out = run_inventory("[g]\nweb[01:03] ansible_connection=local\n", SHOW_HOST)
-    out.scan(/H=(\S+)/).map { |m| m[1] }.sort!.should eq(["web01", "web02", "web03"])
+    out.scan(/H=(\S+)/).map { |mat| mat[1] }.sort!.should eq(["web01", "web02", "web03"])
   end
 
   it "expands an unpadded numeric range" do
     out = run_inventory("[g]\nn[1:3] ansible_connection=local\n", SHOW_HOST)
-    out.scan(/H=(\S+)/).map { |m| m[1] }.sort!.should eq(["n1", "n2", "n3"])
+    out.scan(/H=(\S+)/).map { |mat| mat[1] }.sort!.should eq(["n1", "n2", "n3"])
   end
 
   it "expands an alphabetic range" do
     out = run_inventory("[g]\nh[a:c] ansible_connection=local\n", SHOW_HOST)
-    out.scan(/H=(\S+)/).map { |m| m[1] }.sort!.should eq(["ha", "hb", "hc"])
+    out.scan(/H=(\S+)/).map { |mat| mat[1] }.sort!.should eq(["ha", "hb", "hc"])
   end
 
   it "honors a step" do
     out = run_inventory("[g]\nx[01:10:3] ansible_connection=local\n", SHOW_HOST)
-    out.scan(/H=(\S+)/).map { |m| m[1] }.sort!.should eq(["x01", "x04", "x07", "x10"])
+    out.scan(/H=(\S+)/).map { |mat| mat[1] }.sort!.should eq(["x01", "x04", "x07", "x10"])
   end
 
   it "keeps text on both sides of the range" do
     out = run_inventory("[g]\nsrv[1:2].ex.com ansible_connection=local\n", SHOW_HOST)
-    out.scan(/H=(\S+)/).map { |m| m[1] }.sort!.should eq(["srv1.ex.com", "srv2.ex.com"])
+    out.scan(/H=(\S+)/).map { |mat| mat[1] }.sort!.should eq(["srv1.ex.com", "srv2.ex.com"])
   end
 
   it "leaves a plain hostname alone" do
     out = run_inventory("[g]\nplain1 ansible_connection=local\n", SHOW_HOST)
-    out.scan(/H=(\S+)/).map { |m| m[1] }.should eq(["plain1"])
+    out.scan(/H=(\S+)/).map { |mat| mat[1] }.should eq(["plain1"])
   end
 end
 

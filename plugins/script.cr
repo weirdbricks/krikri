@@ -54,7 +54,7 @@ module CrystalPlay
 
       remote_exec("chmod +x #{shell_quote(script_path)}")
 
-      chdir = @params["chdir"]?.try { |c| expand_tilde(c) }
+      chdir = @params["chdir"]?.try { |itm| expand_tilde(itm) }
       executable = @params["executable"]?
 
       invocation = executable ? "#{executable} #{shell_quote(script_path)}" : shell_quote(script_path)

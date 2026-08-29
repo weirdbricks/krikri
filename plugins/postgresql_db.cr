@@ -105,14 +105,14 @@ module CrystalPlay
         dbname: @params["maintenance_db"]? || "postgres",
       )
 
-      DB.open(uri) do |db|
-        exists = db.query_all("SELECT datname FROM pg_database", as: String).includes?(name)
+      DB.open(uri) do |dbcon|
+        exists = dbcon.query_all("SELECT datname FROM pg_database", as: String).includes?(name)
 
         case state
         when "present"
-          ensure_present(db, name, exists, check_mode)
+          ensure_present(dbcon, name, exists, check_mode)
         when "absent"
-          ensure_absent(db, name, exists, check_mode)
+          ensure_absent(dbcon, name, exists, check_mode)
         else
           PluginResult.new(changed: false, failed: true, msg: "state must be 'present' or 'absent', got '#{state}'")
         end
@@ -144,12 +144,12 @@ module CrystalPlay
         return PluginResult.new(changed: false, failed: true, msg: "owner may only contain letters, digits, and underscores")
       end
 
-      clause = String.build do |s|
+      clause = String.build do |str|
         if o = owner
-          s << " OWNER " << quote_ident(o)
+          str << " OWNER " << quote_ident(o)
         end
         if e = encoding
-          s << " ENCODING " << quote_str(e)
+          str << " ENCODING " << quote_str(e)
         end
       end
 

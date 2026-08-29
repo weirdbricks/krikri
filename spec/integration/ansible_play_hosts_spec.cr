@@ -43,7 +43,7 @@ describe "ansible_play_hosts / ansible_play_hosts_all magic vars" do
     status.success?.should be_true
     rendered = File.read(dest)
     rendered.should_not eq("")
-    rendered.lines.count { |l| !l.empty? }.should eq(2)
+    rendered.lines.count { |lval| !l.empty? }.should eq(2)
     output.to_s.should_not contain("msg\": \"\"")
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)

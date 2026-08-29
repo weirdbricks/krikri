@@ -290,7 +290,7 @@ module CrystalPlay
       # `--upgrade`/`extra_args` are never comma-joined so they pass
       # through the `elsif spec` branch above and are handled directly
       # below, one per name.
-      quoted_target = requirements ? target : target.split(',').map { |t| Process.quote(t.strip) }.join(" ")
+      quoted_target = requirements ? target : target.split(',').map { |tval| Process.quote(tval.strip) }.join(" ")
       cmd = with_umask(with_chdir("#{pip_bin} install #{upgrade ? "--upgrade " : ""}#{extra} #{quoted_target}".strip))
       result = remote_exec(cmd)
 

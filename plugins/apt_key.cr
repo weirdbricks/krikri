@@ -141,7 +141,7 @@ module CrystalPlay
         # never converging. Found benchmarking geerlingguy.blackfire's
         # own "Add packagecloud apt key." task (url: only, no id:).
         fingerprints = key_fingerprints(tmp_path)
-        if fingerprints.any? { |fp| key_present?(fp) }
+        if fingerprints.any? { |fpv| key_present?(fpv) }
           return PluginResult.new(changed: false, failed: false, msg: "Key already present")
         end
 

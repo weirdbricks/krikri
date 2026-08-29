@@ -69,7 +69,7 @@ module CrystalPlay
   # Read-only, never-`changed`, like stat.
   class FindPlugin < BasePlugin
     # Bundles every filter/output option parsed from @params once, rather
-    # than threading a dozen separate arguments through execute/match -
+    # than threading a dozen separate arguments through execute/mch -
     # what pushed execute's own cyclomatic complexity over ameba's
     # threshold once age/contains joined the existing pattern/size/type
     # filters.

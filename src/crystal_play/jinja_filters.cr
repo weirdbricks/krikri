@@ -648,7 +648,7 @@ module CrystalPlay
     # list argument. Same up-to-2-extra-lists cap as zip above.
     Crinja.filter({other1: Crinja::UNDEFINED, other2: Crinja::UNDEFINED}, :product) do
       lists = [target] + [arguments["other1"], arguments["other2"]].reject(&.undefined?)
-      arrays = lists.map { |l| l.sequence? ? l.to_a : [] of Crinja::Value }
+      arrays = lists.map { |lval| lval.sequence? ? lval.to_a : [] of Crinja::Value }
       result = arrays.reduce([[] of Crinja::Value]) do |acc, arr|
         acc.flat_map { |row| arr.map { |item| row + [item] } }
       end
@@ -757,7 +757,7 @@ module CrystalPlay
     def self.normalize_path(path : String) : String
       return "." if path.empty?
       absolute = path.starts_with?('/')
-      parts = path.split('/').reject { |p| p.empty? || p == "." }
+      parts = path.split('/').reject { |pth| pth.empty? || pth == "." }
 
       result = [] of String
       parts.each do |part|
@@ -776,9 +776,9 @@ module CrystalPlay
 
     def self.common_path(paths : Array(String)) : String
       return "" if paths.empty?
-      segments = paths.map { |p| p.split('/').reject(&.empty?) }
+      segments = paths.map { |pth| pth.split('/').reject(&.empty?) }
       first = segments.first
-      common = first.each_with_index.take_while { |seg, i| segments.all? { |s| s[i]? == seg } }.map(&.[0])
+      common = first.each_with_index.take_while { |seg, i| segments.all? { |str| str[i]? == seg } }.map(&.[0])
       prefix = paths.first.starts_with?('/') ? "/" : ""
       "#{prefix}#{common.join("/")}"
     end
@@ -816,7 +816,7 @@ module CrystalPlay
       other = arguments.varargs[0]?
       left = (target.sequence? ? target.to_a : [] of Crinja::Value).uniq(&.to_s)
       right = (other && other.sequence? ? other.to_a : [] of Crinja::Value).uniq(&.to_s)
-      result = left.reject { |i| right.any? { |r| r.to_s == i.to_s } } + right.reject { |i| left.any? { |l| l.to_s == i.to_s } }
+      result = left.reject { |i| right.any? { |rval| rval.to_s == i.to_s } } + right.reject { |i| left.any? { |lval| lval.to_s == i.to_s } }
       Crinja::Value.new(result)
     end
 
@@ -827,7 +827,7 @@ module CrystalPlay
       return [] of Array(Crinja::Value) if n > array.size || array.empty?
       head = array.first
       tail = array[1..]
-      combinations(tail, n - 1).map { |c| [head] + c } + combinations(tail, n)
+      combinations(tail, n - 1).map { |itm| [head] + itm } + combinations(tail, n)
     end
 
     def self.permutations(array : Array(Crinja::Value), n : Int32) : Array(Array(Crinja::Value))
@@ -836,19 +836,19 @@ module CrystalPlay
       result = [] of Array(Crinja::Value)
       array.each_with_index do |item, i|
         rest = array[0...i] + array[(i + 1)..]
-        permutations(rest, n - 1).each { |p| result << ([item] + p) }
+        permutations(rest, n - 1).each { |pth| result << ([item] + pth) }
       end
       result
     end
 
     Crinja.filter({n: 2}, :combinations) do
       arr = target.sequence? ? target.to_a : [] of Crinja::Value
-      Crinja::Value.new(JinjaFilters.combinations(arr, arguments["n"].to_i).map { |c| Crinja::Value.new(c) })
+      Crinja::Value.new(JinjaFilters.combinations(arr, arguments["n"].to_i).map { |itm| Crinja::Value.new(itm) })
     end
     Crinja.filter({n: Crinja::UNDEFINED}, :permutations) do
       arr = target.sequence? ? target.to_a : [] of Crinja::Value
       n = arguments["n"].undefined? ? arr.size : arguments["n"].to_i
-      Crinja::Value.new(JinjaFilters.permutations(arr, n).map { |p| Crinja::Value.new(p) })
+      Crinja::Value.new(JinjaFilters.permutations(arr, n).map { |pth| Crinja::Value.new(pth) })
     end
 
     # `rekey_on_member(member, duplicates='error')` - real Ansible
@@ -1534,9 +1534,9 @@ module CrystalPlay
       when "config"
         # Multi-arg config lookup - see ExpressionEvaluator's own config
         # branch for the full rationale (buluma.multi, round 190).
-        names = variadic_terms.map(&.to_s).reject { |t| t.downcase.starts_with?("wantlist=") || t.empty? }
-        values = names.map { |n| JinjaFilters.ansible_config_value(n) }
-        if names.size > 1 || variadic_terms.any? { |t| t.to_s.downcase.starts_with?("wantlist=true") }
+        names = variadic_terms.map(&.to_s).reject { |tval| tval.downcase.starts_with?("wantlist=") || tval.empty? }
+        values = names.map { |nval| JinjaFilters.ansible_config_value(nval) }
+        if names.size > 1 || variadic_terms.any? { |tval| tval.to_s.downcase.starts_with?("wantlist=true") }
           Crinja::Value.new(values)
         else
           Crinja::Value.new(values[0]? || "")
@@ -1597,24 +1597,24 @@ module CrystalPlay
       when "list"
         Crinja::Value.new(variadic_terms)
       when "items"
-        Crinja::Value.new(variadic_terms.flat_map { |t| t.sequence? ? t.to_a : [t] })
+        Crinja::Value.new(variadic_terms.flat_map { |tval| tval.sequence? ? tval.to_a : [tval] })
       when "together"
-        arrays = variadic_terms.map { |t| t.sequence? ? t.to_a : [] of Crinja::Value }
+        arrays = variadic_terms.map { |tval| tval.sequence? ? tval.to_a : [] of Crinja::Value }
         size = arrays.max_of?(&.size) || 0
         Crinja::Value.new((0...size).map { |i| Crinja::Value.new(arrays.map { |arr| arr[i]? || Crinja::Value.new(nil) }) })
       when "nested"
-        arrays = variadic_terms.map { |t| t.sequence? ? t.to_a : [] of Crinja::Value }
+        arrays = variadic_terms.map { |tval| tval.sequence? ? tval.to_a : [] of Crinja::Value }
         result = arrays.reduce([[] of Crinja::Value]) { |acc, arr| acc.flat_map { |row| arr.map { |item| row + [item] } } }
         Crinja::Value.new(result.map { |row| Crinja::Value.new(row) })
       when "varnames"
-        patterns = variadic_terms.compact_map { |t| Regex.new(t.to_s) rescue nil }
-        names = env.context.keys.select { |nm| patterns.any?(&.matches?(nm)) }
-        Crinja::Value.new(names.map { |n| Crinja::Value.new(n) })
+        patterns = variadic_terms.compact_map { |tval| Regex.new(tval.to_s) rescue nil }
+        names = env.context.keys.select { |nm_blk| patterns.any?(&.matches?(nm_blk)) }
+        Crinja::Value.new(names.map { |nval| Crinja::Value.new(nval) })
       when "indexed_items"
         arr = arg1.sequence? ? arg1.to_a : [] of Crinja::Value
         Crinja::Value.new(arr.map_with_index { |item, i| Crinja::Value.new([Crinja::Value.new(i), item]) })
       when "random_choice"
-        items = variadic_terms.flat_map { |t| t.sequence? ? t.to_a : [t] }
+        items = variadic_terms.flat_map { |tval| tval.sequence? ? tval.to_a : [tval] }
         items.empty? ? Crinja::Value.new(nil) : items.sample
       when "subelements"
         source = arg1.sequence? ? arg1.to_a : [] of Crinja::Value

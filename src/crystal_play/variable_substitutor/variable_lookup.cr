@@ -85,12 +85,12 @@ module CrystalPlay
         depth = 0
         quote : Char? = nil
 
-        expr.each_char.with_index do |c, i|
+        expr.each_char.with_index do |itm, i|
           if q = quote
-            quote = nil if c == q
-          elsif c == '\'' || c == '"'
-            quote = c
-          elsif depth == 0 && c == char
+            quote = nil if itm == q
+          elsif itm == '\'' || itm == '"'
+            quote = itm
+          elsif depth == 0 && itm == char
             # Checked BEFORE the generic bracket-depth adjustment below -
             # when *char* is itself one of "([{"/")]}" (searching for a
             # literal '[' or '(', not just using them for nesting), the
@@ -99,9 +99,9 @@ module CrystalPlay
             # top level" - a genuine top-level '[' or '(' would never be
             # returned at all.
             return i
-          elsif "([{".includes?(c)
+          elsif "([{".includes?(itm)
             depth += 1
-          elsif ")]}".includes?(c)
+          elsif ")]}".includes?(itm)
             depth -= 1
           end
         end

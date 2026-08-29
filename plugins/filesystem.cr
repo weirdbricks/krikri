@@ -42,7 +42,7 @@ module CrystalPlay
       dev = @params["dev"]?
       return PluginResult.new(changed: false, failed: true, msg: "dev is required") unless dev
 
-      state = @params["state"]?.try { |s| s.empty? ? nil : s } || "present"
+      state = @params["state"]?.try { |str| str.empty? ? nil : str } || "present"
       force = true?(@params["force"]?)
       opts = @params["opts"]?.try(&.split) || [] of String
       check_mode = true?(@params["check_mode"]?)
@@ -87,7 +87,7 @@ module CrystalPlay
 
       return PluginResult.new(changed: true, failed: false, msg: "") if check_mode
 
-      cmd = (mkfs_argv + force_flags + opts + [dev]).map { |c| shell_quote(c) }.join(' ')
+      cmd = (mkfs_argv + force_flags + opts + [dev]).map { |itm| shell_quote(itm) }.join(' ')
       mkfs_result = remote_exec(cmd)
       unless mkfs_result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true, msg: "#{mkfs_argv.first} failed: #{mkfs_result[:stderr]}")

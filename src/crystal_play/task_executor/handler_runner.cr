@@ -239,7 +239,7 @@ module CrystalPlay
       # ansible_parent_role_names | first }} : Restart {{
       # _common_service_name }}" never matched "Restart pushgateway"
       # (the handler's own bare rendered name) at all before this.
-      notified.any? { |n| (idx = n.rindex(" : ")) && n[(idx + 3)..] == rendered_name }
+      notified.any? { |nval| (idx = nval.rindex(" : ")) && nval[(idx + 3)..] == rendered_name }
     end
   end
 end
