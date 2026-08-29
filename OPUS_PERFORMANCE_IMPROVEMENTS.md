@@ -41,7 +41,7 @@ Implement every NOT-BREAKING item before starting any BREAKING one.
 | 4 | Stateful vars context (deltas) | NOT-BREAKING | **CLOSED (0.9.635) - NOT NEEDED**, premise was already false |
 | 5 | Ship the play, not the tasks | NOT-BREAKING | **DESIGN PASS SAYS DO NOT BUILD AS SPECIFIED** (ITEM5_DESIGN.md) - measured ~2x fewer trips, not the order of magnitude claimed |
 | 6 | Agent outliving the run | NOT-BREAKING* | **6a DONE (0.9.637)** - 1.3-1.4x on small roles; **6b (fact cache) REJECTED** - cannot be made airtight |
-| 7 | Stop forking `ssh` per exec | NOT-BREAKING | fixed-cost removal |
+| 7 | Stop forking `ssh` per exec | NOT-BREAKING | **CLOSED (0.9.638) - LARGELY SUPERSEDED** by the daemon (items 1-3, 6a); 0-1 forks left per warm run |
 | 8 | Controller-side caching/memoization | NOT-BREAKING | unmeasured |
 | 9 | Idempotency memoization | **BREAKING** | warm runs stop checking |
 | 10 | Out-of-order / parallel within a host | **BREAKING** | main cold-run lever |
@@ -400,9 +400,37 @@ re-gathering unless every signal says nothing moved. This one is Tier 1
 only if the invalidation is airtight - if it cannot be made airtight,
 demote it to Tier 2 behind a flag rather than shipping stale facts.
 
-### 7. Stop forking `ssh` per exec
+### 7. Stop forking `ssh` per exec — CLOSED, largely superseded
 
 *NOT-BREAKING. Transport only.*
+
+**Closed without building, 0.9.638.** This item is written as "with item
+5/6 in place the transport becomes a single long-lived stream" - but the
+persistent daemon of items 1-3 already delivers most of that, and item 5
+is itself closed.
+
+The daemon holds one long-lived `ssh` process per
+`(host, user, port, become_user)`, so nothing daemon-eligible forks per
+task any more. What still forks:
+
+- batch groups whose steps disagree on `become_user`, which take the
+  script fallback (item 3's documented eligibility rule);
+- `scp`/`rsync` file transfers for `copy:`/`template:` staging;
+- daemon startup itself, once per key.
+
+**Measured** on the round-198 warm runs, per role: `ssh_script` counts
+of **0-1** (e.g. `buluma.samba` 0, `robertdebock.openssh` 1,
+`prometheus.prometheus.pushgateway` 1) against 1-4 daemon requests.
+Item 6a removed the one that used to be unconditional. So the remaining
+prize is tens of milliseconds per run, for a transport rewrite (mTLS or
+a bespoke framed protocol) - a bad trade.
+
+**What survives is the throwaway line at the end of the original item**,
+which is a config question rather than a rewrite: whether the `--forks`
+default (25 here, deliberately unlike real ansible's 5 - see
+crystal-play.cr's own comment) and `ControlPersist=600` are right for
+multi-play runs. Worth a measurement if anyone wants it; it is not
+blocked on anything.
 
 Every `SSHManager.exec` / `exec_script` forks a local `ssh` client
 process. ControlMaster amortizes the handshake, but not the fork, the
@@ -514,7 +542,10 @@ All of Tier 1 (items 0-8) is NOT-BREAKING and lands first. Tier 2
 2. ~~Items 1 and 2~~ - done, 0.9.633 / 0.9.634.
 3. ~~Item 3~~ - done, 0.9.635. ~~Item 4~~ - investigated and closed as
    not needed; the wire payload is already ~220 bytes per task.
-4. Item 5 is now the only remaining Tier 1 lever of consequence.
+4. Items 5, 6b and 7 are all closed without building - see each. Tier 1
+   has no remaining lever of consequence; item 8 is a cheap measurement
+   that will probably close the same way, and after that only the
+   BREAKING Tier 2 items remain.
 4. Item 5 - the architectural step.
 5. Items 6, 7, 8 - fixed-cost removal, sized by item 0.
 6. Tier 2, flag by flag, only then.
