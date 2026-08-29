@@ -40,6 +40,24 @@ module CrystalPlay
     end
 
     def execute : PluginResult
+      # Real ansible's apt module on a non-Debian-family host: it first
+      # auto-installs its python3-apt dependency ("Updating cache and
+      # auto-installing missing dependency: python3-apt" warning) via
+      # AnsibleModule.run_command, which fails ENOENT with exactly
+      # {"changed": false, "cmd": "update", "msg": "Error executing
+      # command.", "rc": 2} - observed live on Rocky 9.6 with Oefenweb.dns
+      # (round 196). Without this guard this engine's dpkg-query-based
+      # absent path quietly reported "Package ... not installed" rc=0.
+      unless File.exists?("/usr/bin/apt-get") || File.exists?("/usr/local/bin/apt-get")
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Error executing command.",
+          cmd: "update",
+          rc: 2
+        )
+      end
+
       # Get state (default: present)
       state = @params["state"]? || "present"
       update_cache = is_true?(@params["update_cache"]?)

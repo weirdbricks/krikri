@@ -89,6 +89,24 @@ module CrystalPlay
     KEYSERVER      = "hkp://keyserver.ubuntu.com:80"
 
     def execute : PluginResult
+      # Real ansible's apt_repository runs `apt-get update` (and its own
+      # add/remove paths shell out to apt-key/apt-get); on a host without
+      # apt-get (any non-Debian family host) it fails with exactly
+      # {"changed": false, "cmd": "update", "msg": "Error executing
+      # command.", "rc": 2} - found live on Rocky 9.6 with Oefenweb.dns
+      # (round 196), where this engine silently "succeeded" its way
+      # through the role (rc=0) while real ansible failed the
+      # repository task rc=2. The paths below were written for real
+      # Debian-family hosts; on anything else they'd fabricate success.
+      unless File.exists?("/usr/bin/apt-get") || File.exists?("/usr/local/bin/apt-get")
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Error executing command.",
+          cmd: "update",
+          rc: 2
+        )
+      end
       repo = @params["repo"]?
       unless repo
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: repo")

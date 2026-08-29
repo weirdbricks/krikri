@@ -54,7 +54,13 @@ module CrystalPlay
         return run_simple(PluginHelpers::UfwCommand.logging_command(logging))
       end
 
-      if default_value = @params["default"]?
+      if default_value = @params["default"]? || @params["policy"]?
+        # `policy` is real community.general's ALIAS for `default`
+        # (argument_spec: default=dict(aliases=['policy'], ...)) - found
+        # via Oefenweb.ufw (round 196), whose tasks use the newer
+        # `policy:`/`direction:` pair; this plugin only knew `default:`
+        # and rejected the task with "one of state, logging, default, or
+        # rule is required" where real ansible rc=0'd.
         cmd = PluginHelpers::UfwCommand.default_command(default_value, @params["direction"]?)
         return run_simple(cmd)
       end
