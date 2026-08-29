@@ -2698,6 +2698,15 @@ module CrystalPlay
 
         parsed = parse_list_result(result, vars_context)
         return parsed unless parsed.nil?
+        # A filtered single-element array source (`with_items: ["{{ x |
+        # dirname }}"]`, Oefenweb.ssh_keys, round 196) evaluates to a
+        # SCALAR - parse_list_result only recognizes list shapes, so it
+        # returned nil here and the function bailed with no loop items at
+        # all: the task ran once with `item` unbound ("'item' is
+        # undefined") where real ansible flattens the one-element array
+        # one level and iterates ONCE with the scalar as `item`. Same
+        # array-wrapped fallback the direct-resolution path below applies.
+        return [JSON::Any.new(result)] if task.loop_template_array_wrapped
         return nil
       end
 
