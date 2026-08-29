@@ -922,6 +922,12 @@ module CrystalPlay
       "community.general.dnf_versionlock",
       "community.docker.docker_image_build",
       "amazon.aws.ec2_metadata_facts",
+      # round 196: native ports of the collection modules the corpus
+      # actually calls (previously rc=4 "unavailable modules" where real
+      # ansible ran them - mrlesmithjr.rabbitmq and linux-system-roles.rhc).
+      "community.rabbitmq.rabbitmq_plugin",
+      "community.rabbitmq.rabbitmq_user",
+      "community.general.redhat_subscription",
     }
 
     # The collections a bare (non-FQCN) module name resolves against, in

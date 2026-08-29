@@ -51,7 +51,7 @@ module CrystalPlay
       end
 
       if logging = @params["logging"]?
-        return run_simple(PluginHelpers::UfwCommand.logging_command(logging))
+        return run_simple(PluginHelpers::UfwCommand.logging_command(logging), ufw_state_key: "logging", ufw_state_value: normalize_logging_value(logging))
       end
 
       if default_value = @params["default"]? || @params["policy"]?
@@ -61,8 +61,9 @@ module CrystalPlay
         # `policy:`/`direction:` pair; this plugin only knew `default:`
         # and rejected the task with "one of state, logging, default, or
         # rule is required" where real ansible rc=0'd.
+        direction = @params["direction"]? || "incoming"
         cmd = PluginHelpers::UfwCommand.default_command(default_value, @params["direction"]?)
-        return run_simple(cmd)
+        return run_simple(cmd, ufw_state_key: "default-#{direction}", ufw_state_value: default_value)
       end
 
       if @params["rule"]?
@@ -114,13 +115,56 @@ module CrystalPlay
       result[:stdout].includes?(" active")
     end
 
-    private def run_simple(cmd : String) : PluginResult
+    private def run_simple(cmd : String, ufw_state_key : String? = nil, ufw_state_value : String? = nil) : PluginResult
       if is_true?(@params["check_mode"]?)
         return PluginResult.new(changed: true, failed: false, msg: "Would run: #{cmd} (check mode)")
       end
 
+      # Idempotency: real community.general.ufw parses `ufw status
+      # verbose` BEFORE applying a default-policy or logging change and
+      # skips the command when the requested value is already in effect
+      # ("already set" path). Blindly re-running made every warm pass
+      # report changed=true where real ansible reported ok (Oefenweb.ufw,
+      # round 196: warm crystal changed=4 vs real changed=0).
+      if key = ufw_state_key
+        if (value = ufw_state_value) && ufw_status_matches?(key, value)
+          return PluginResult.new(changed: false, failed: false, msg: "Already set to #{value}")
+        end
+      end
+
       result = remote_exec(cmd)
       PluginResult.new(changed: result[:exit_code] == 0, failed: result[:exit_code] != 0, msg: result[:stdout])
+    end
+
+    # `ufw status verbose` reports e.g.:
+    #   Default: deny (incoming), allow (outgoing), disabled (routed)
+    #   Logging: on (low)
+    # Maps *key* to the line to inspect and *value* to the token the real
+    # module considers equal (logging 'on'/'low' both mean "on (low)").
+    private def ufw_status_matches?(key : String, value : String) : Bool
+      status = remote_exec("ufw status verbose")
+      return false if status[:exit_code] != 0
+
+      status[:stdout].each_line do |line|
+        case key
+        when .starts_with?("default-")
+          direction = key.sub("default-", "")
+          if line.includes?("Default:")
+            return line.includes?("#{value} (#{direction})")
+          end
+        when "logging"
+          if line.includes?("Logging:")
+            return line.includes?(value)
+          end
+        end
+      end
+      false
+    end
+
+    # real module's logging value normalization: 'on' is accepted as a
+    # synonym of 'low' - ufw status verbose shows "on (low)" for both.
+    private def normalize_logging_value(value : String) : String
+      value == "on" ? "on (low)" : value
     end
 
     private def run_rule : PluginResult

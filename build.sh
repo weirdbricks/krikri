@@ -403,6 +403,9 @@ PLUGINS=(
     "dnf_versionlock"
     "docker_image_build"
     "ec2_metadata_facts"
+    "rabbitmq_plugin"
+    "rabbitmq_user"
+    "redhat_subscription"
 )
 
 # These 6 stay real, independent binaries instead of joining the fat
