@@ -362,6 +362,14 @@ module CrystalPlay
     # context; assert: `that:` conditions evaluate against it the same
     # way `when:` does). Everyone else gets a pruned config instead of
     # the full vars_context - see build_plugin_config's use of this.
+    # Unreachable on the normal execution path, and kept only as the
+    # explicit statement of the rule: `debug`/`assert` are the only
+    # modules that read the vars context inside the plugin process, and
+    # both are controller-side action plugins
+    # (`ActionPluginManager::CONTROLLER_ONLY_MODULES`), so neither ever
+    # reaches a module dispatch. Removing this would make
+    # `build_plugin_config`'s pruning look unconditional and invite
+    # someone to "simplify" it into always sending the full context.
     NEEDS_FULL_VARS = Set{"debug", "assert"}
 
     def self.needs_full_vars?(module_name : String) : Bool
@@ -819,10 +827,29 @@ module CrystalPlay
 
       target = remote_plugin_target(plugin_name, become, become_user)
 
-      # Execute plugin remotely with config via stdin. *config* embeds the
-      # task's whole vars_context - ansible_facts, every registered var
-      # accumulated so far in the play, gathered package facts, etc. - and
-      # can grow to hundreds of KB deep into a long-running role.
+      # Execute plugin remotely with config via stdin.
+      #
+      # HISTORICAL, and worth stating precisely because it misled a later
+      # performance plan: *config* USED to embed the task's whole
+      # vars_context - ansible_facts, every registered var accumulated so
+      # far in the play, gathered package facts - and could reach
+      # hundreds of KB deep into a long role. It no longer does.
+      # `TaskExecutor#build_plugin_config` prunes the wire vars to three
+      # connection keys for every module except `debug`/`assert`, and
+      # those two are in `ActionPluginManager::CONTROLLER_ONLY_MODULES`,
+      # so they never reach a module dispatch at all - which makes
+      # `PluginManager::NEEDS_FULL_VARS` unreachable on the normal path.
+      # Measured on a play including `package_facts:`, every task's
+      # config is 215-242 bytes and stays flat as the context grows
+      # (62 -> 65 vars, payload unchanged). See
+      # OPUS_PERFORMANCE_IMPROVEMENTS.md item 4, which was written
+      # against this stale comment and closed as already-satisfied.
+      #
+      # The execve() reasoning below is still live and still the reason
+      # this path uses exec_script rather than exec - a task's PARAMS can
+      # legitimately be large (copy:/template: inline their content), and
+      # that has nothing to do with the vars context.
+      #
       # `SSHManager.exec` builds a single `/bin/bash -c <string>` argv
       # element, so embedding config directly in that string (as this used
       # to) makes *that one argument* grow with it - and eventually blows

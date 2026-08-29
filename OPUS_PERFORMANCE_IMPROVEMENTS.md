@@ -38,7 +38,7 @@ Implement every NOT-BREAKING item before starting any BREAKING one.
 | 1 | `become:` under the daemon | NOT-BREAKING | **DONE (0.9.633)** - 4.0x on an all-solo `become:` workload, 2.5x on the round trips it moves, 1.13x whole-run warm on os_hardening |
 | 2 | `facts` under the daemon | NOT-BREAKING | **DONE (0.9.634)** - 1.5x on a many-PLAY run; no gain from extra hosts (daemons are per host); ~25ms COST on a single-gather run |
 | 3 | Batched groups under the daemon | NOT-BREAKING | **DONE (0.9.635)** - 2.57x warm on os_hardening, 4.7x on the groups that moved |
-| 4 | Stateful vars context (deltas) | NOT-BREAKING | grows with role length |
+| 4 | Stateful vars context (deltas) | NOT-BREAKING | **CLOSED (0.9.635) - NOT NEEDED**, premise was already false |
 | 5 | Ship the play, not the tasks | NOT-BREAKING | N x RTT -> ~1 RTT |
 | 6 | Agent outliving the run | NOT-BREAKING* | removes bootstrap cost |
 | 7 | Stop forking `ssh` per exec | NOT-BREAKING | fixed-cost removal |
@@ -220,7 +220,57 @@ re-embedding it per group.
 **Estimated win.** Compounds 1-2. Also makes the benchmark honest -
 today's published numbers deliberately disable a default-on feature.
 
-### 4. The full vars context is re-serialized and re-sent per task
+### 4. The full vars context is re-serialized and re-sent per task — CLOSED, NOT NEEDED
+
+*Investigated 2026-08-29 against 0.9.635 and closed without implementing:
+the premise below is obsolete.*
+
+**This item was written against a stale comment.** It quotes
+`plugin_manager.cr`'s claim that the config "embeds the task's whole
+vars_context... hundreds of KB". That was true once; it is not true now.
+`TaskExecutor#build_plugin_config` prunes the wire vars to three
+connection keys (`ansible_connection`, `ansible_host`,
+`ansible_ssh_private_key_file`) for every module except `debug`/`assert`
+- and those two are in `ActionPluginManager::CONTROLLER_ONLY_MODULES`,
+so they never reach a module dispatch at all. In practice NOTHING ships
+the full context.
+
+**Measured**, by instrumenting `build_plugin_config` and running a play
+that includes `package_facts:` (the exact case the old comment cited as
+~570 KB):
+
+| task | config bytes | vars shipped / vars in context |
+|---|---|---|
+| `package_facts` | 215 | 2 / 62 |
+| `command` | 223 | 2 / 63 |
+| `file` | 242 | 2 / 65 |
+| `command` | 223 | 2 / 65 |
+
+The context grew 62 -> 65 vars across the play and the payload did not
+grow. Every task ships ~220 bytes.
+
+Both wire paths were checked, not just the one the item names: the only
+other place that serializes `vars` is `gather_facts_for_host`, which
+does send the full host vars - but that is the first task of a play,
+before facts and registers accumulate, so it is O(1) per play, not
+O(tasks).
+
+So "O(tasks x context) -> O(context + tasks)" is already
+"O(tasks x 220 bytes)". The win is ~zero, against a real cost: a
+stateful daemon plus the `--verify-context` guard this item itself asks
+for, to protect a correctness risk it itself flags.
+
+**What the remaining per-task cost actually is.** 40 solo `become:`
+tasks running `/bin/true` cost ~69ms each through the daemon (item 1's
+benchmark). `/bin/true` is ~1ms and the payload is 220 bytes, so that is
+round-trip plus per-module process work on the target - not wire size.
+That is item 5's territory, which is now the only remaining Tier 1 lever
+of consequence.
+
+---
+
+*Original text follows, kept because the reasoning is sound and only its
+starting fact was wrong.*
 
 *NOT-BREAKING. Wire format changes completely; the context the module sees does not.*
 
@@ -426,9 +476,9 @@ All of Tier 1 (items 0-8) is NOT-BREAKING and lands first. Tier 2
 
 1. ~~Item 0 (`--timing-profile`)~~ - done, 0.9.632.
 2. ~~Items 1 and 2~~ - done, 0.9.633 / 0.9.634.
-3. ~~Item 3~~ - done, 0.9.635. Item 4 next: with batching and the
-   daemon composed, the remaining per-task cost on the wire is the vars
-   context, re-serialized and re-sent for every step.
+3. ~~Item 3~~ - done, 0.9.635. ~~Item 4~~ - investigated and closed as
+   not needed; the wire payload is already ~220 bytes per task.
+4. Item 5 is now the only remaining Tier 1 lever of consequence.
 4. Item 5 - the architectural step.
 5. Items 6, 7, 8 - fixed-cost removal, sized by item 0.
 6. Tier 2, flag by flag, only then.
