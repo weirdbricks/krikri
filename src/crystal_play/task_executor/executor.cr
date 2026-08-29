@@ -1751,6 +1751,32 @@ module CrystalPlay
       # extra-var" behavior).
       @extra_vars.each { |key, value| vars_context[key] = value }
 
+      # Real Ansible's `vars` magic variable: a dict of every variable in
+      # scope, most often used for a membership test rather than to read
+      # a value - `prometheus.prometheus`'s own preflight does
+      # `__common_parent_role_short_name ~ '_skip_install' not in vars`,
+      # which is what surfaced its absence (round 198: crystal failed
+      # that task with "'vars' is undefined" while real ansible-playbook
+      # completed all 33 tasks, blocking the whole collection).
+      #
+      # Built LAST so it sees every other magic var, and deliberately
+      # excludes itself - `vars["vars"]` would be an infinite structure,
+      # and real Ansible does not expose one either.
+      #
+      # Cheap despite appearances: JSON::Any wraps a reference, so this
+      # is a hash of N pointer copies, not a deep copy of the context.
+      # Skipping "vars" is not belt-and-braces: vars_context is layered
+      # on cached base contexts (see base_context_a/b), so an earlier
+      # task's `vars` key is genuinely present here and would nest one
+      # snapshot inside the next, growing per task. Verified against real
+      # ansible-core 2.19.4, which reports `'vars' not in vars`.
+      self_view = Hash(String, JSON::Any).new(initial_capacity: vars_context.size)
+      vars_context.each do |key, value|
+        next if key == "vars"
+        self_view[key] = value
+      end
+      vars_context["vars"] = JSON::Any.new(self_view)
+
       vars_context
     end
 

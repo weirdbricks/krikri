@@ -116,6 +116,17 @@ module CrystalPlay
       private def build_vars_dict : Crinja::Value
         dict = Crinja::Dictionary.new
         @raw_vars.each_key do |key|
+          # `vars` never contains itself. This used to be true for free -
+          # nothing put a real "vars" key into the context, so this loop
+          # could not see one. TaskExecutor#build_vars_context now
+          # provides a real `vars` (so the hand-rolled
+          # ConditionalEvaluator can answer `X in vars` too, which is
+          # what prometheus.prometheus's preflight needs), which means
+          # this loop DOES see it and would nest a snapshot inside the
+          # snapshot. Verified against real ansible-core 2.19.4:
+          # `'vars' in vars` is False there, and was False here before
+          # that change - this keeps it that way.
+          next if key == "vars"
           dict[Crinja::Value.new(key)] = scope.has_key?(key) ? scope[key] : (scope[key] = convert(key))
         end
         Crinja::Value.new(dict)
