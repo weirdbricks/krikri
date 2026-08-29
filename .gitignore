@@ -36,3 +36,12 @@ scripts/crinja_corpus/divergence_report.md
 # into KNOWN_MISSING.md commit messages, never into the repo history
 # themselves.
 /retry*.txt
+
+# ansible-lint working artifacts. Running `ansible-lint` anywhere under
+# the repo drops a `.ansible/` cache (its own collections dir plus a
+# .lock) beside the checkout, plus its own rule cache. Both are
+# regenerated on demand and neither is ours - this appeared for real
+# after linting a stress playbook during the 0.9.635 verification
+# round.
+/.ansible/
+/.ansible-lint-cache/
