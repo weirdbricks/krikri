@@ -53,9 +53,15 @@ module CrystalPlay
         append_interface(parts, params)
         parts << "log" if truthy?(params["log"]?)
         append_endpoints(parts, params)
-        parts << "proto #{params["proto"]}" if params["proto"]?
-        parts << "app '#{params["name"]}'" if params["name"]?
-        parts << "comment '#{params["comment"]}'" if params["comment"]?
+        # Real Ansible checks these with `if p['proto']:`-style TRUTHINESS,
+        # not presence: Oefenweb.ufw (round 196) maps missing item keys
+        # via `default('')`, so the params carry empty STRINGS - appending
+        # "port "/"proto "/"app ''" for those produced malformed commands
+        # ("ERROR: Wrong number of arguments") where real ansible skipped
+        # the clause entirely.
+        parts << "proto #{params["proto"]}" if (v = params["proto"]?) && !v.empty?
+        parts << "app '#{params["name"]}'" if (v = params["name"]?) && !v.empty?
+        parts << "comment '#{params["comment"]}'" if (v = params["comment"]?) && !v.empty?
 
         parts.join(" ")
       end
@@ -73,10 +79,17 @@ module CrystalPlay
       # 'to' or 'from' clause" - found running konstruktoid-hardening's
       # "Allow outgoing specified ports" task, which does exactly this.
       private def self.append_endpoints(parts : Array(String), params : Hash(String, String))
+        # from_ip/to_ip are ALWAYS emitted (real Ansible's own argument
+        # defaults are 'any', so "from any"/"to any" appear even for a
+        # bare port rule - omitting them makes real ufw reject the
+        # command with "Need 'to' or 'from' clause"). The PORTS are
+        # truthiness-gated: empty strings coming from a role's
+        # `default('')` mapping (Oefenweb.ufw, round 196) must not emit
+        # a dangling "port " clause ("ERROR: Wrong number of arguments").
         parts << "from #{params["from_ip"]? || "any"}"
-        parts << "port #{params["from_port"]}" if params["from_port"]?
+        parts << "port #{params["from_port"]}" if (v = params["from_port"]?) && !v.empty?
         parts << "to #{params["to_ip"]? || "any"}"
-        parts << "port #{params["to_port"]}" if params["to_port"]?
+        parts << "port #{params["to_port"]}" if (v = params["to_port"]?) && !v.empty?
       end
 
       private def self.append_interface(parts : Array(String), params : Hash(String, String))

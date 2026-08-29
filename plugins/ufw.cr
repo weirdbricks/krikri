@@ -129,7 +129,16 @@ module CrystalPlay
 
       result = remote_exec(cmd)
       changed = PluginHelpers::UfwCommand.changed_from_output?(result[:stdout])
-      PluginResult.new(changed: changed, failed: result[:exit_code] != 0, msg: result[:stdout])
+      # Surface stderr on failure - real Ansible shows the ufw binary's
+      # stderr in the task failure, and dropping it (as this used to)
+      # made rule failures undiagnosable (Oefenweb.ufw, round 196:
+      # failed with an empty message because ufw wrote its error to
+      # stderr only).
+      msg = result[:stdout]
+      if result[:exit_code] != 0 && !result[:stderr].empty?
+        msg = "#{msg}\n#{result[:stderr]}".strip
+      end
+      PluginResult.new(changed: changed, failed: result[:exit_code] != 0, msg: msg)
     end
 
     # `insert_relative_to:` other than the default `zero` needs to query
