@@ -39,7 +39,7 @@ Implement every NOT-BREAKING item before starting any BREAKING one.
 | 2 | `facts` under the daemon | NOT-BREAKING | **DONE (0.9.634)** - 1.5x on a many-PLAY run; no gain from extra hosts (daemons are per host); ~25ms COST on a single-gather run |
 | 3 | Batched groups under the daemon | NOT-BREAKING | **DONE (0.9.635)** - 2.57x warm on os_hardening, 4.7x on the groups that moved |
 | 4 | Stateful vars context (deltas) | NOT-BREAKING | **CLOSED (0.9.635) - NOT NEEDED**, premise was already false |
-| 5 | Ship the play, not the tasks | NOT-BREAKING | N x RTT -> ~1 RTT |
+| 5 | Ship the play, not the tasks | NOT-BREAKING | **DESIGN PASS SAYS DO NOT BUILD AS SPECIFIED** (ITEM5_DESIGN.md) - measured ~2x fewer trips, not the order of magnitude claimed |
 | 6 | Agent outliving the run | NOT-BREAKING* | **6a DONE (0.9.637)** - 1.3-1.4x on small roles; **6b (fact cache) REJECTED** - cannot be made airtight |
 | 7 | Stop forking `ssh` per exec | NOT-BREAKING | fixed-cost removal |
 | 8 | Controller-side caching/memoization | NOT-BREAKING | unmeasured |
