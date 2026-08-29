@@ -49,8 +49,7 @@ module CrystalPlay
 
       exists_result = remote_exec("test -e #{shell_quote(dev)}")
       unless exists_result[:exit_code] == 0
-        return state == "present" ? PluginResult.new(changed: false, failed: true, msg: "Device #{dev} not found.") \
-                                   : PluginResult.new(changed: false, failed: false, msg: "Device #{dev} not found.")
+        return state == "present" ? PluginResult.new(changed: false, failed: true, msg: "Device #{dev} not found.") : PluginResult.new(changed: false, failed: false, msg: "Device #{dev} not found.")
       end
 
       blkid_result = remote_exec("blkid -c /dev/null -o value -s TYPE #{shell_quote(dev)}")

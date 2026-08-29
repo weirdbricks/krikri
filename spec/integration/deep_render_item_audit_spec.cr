@@ -5,8 +5,8 @@ require "../spec_helper"
 # TaskExecutor#deep_render_item, a private method not reachable from a
 # unit spec without constructing a whole TaskExecutor.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY        = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
-private INVENTORY     = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "loop: item whose native-type value is itself unrendered Jinja" do
   it "falls through to full substitution rather than handing back literal unparsed {{ }} text" do

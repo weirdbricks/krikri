@@ -29,13 +29,13 @@ module CrystalPlay
     # same misparse started hard-failing the task ("'')' is undefined")
     # for the extremely common `x is version_compare(min, '>=')`
     # version-gate idiom.
-    REGEX_VERSION_TEST     = /\A(.+?)\s+is\s+version(?:_compare)?\(\s*(.+?)\s*,\s*(.+?)\s*\)\z/
+    REGEX_VERSION_TEST      = /\A(.+?)\s+is\s+version(?:_compare)?\(\s*(.+?)\s*,\s*(.+?)\s*\)\z/
     REGEX_MATCH_SEARCH_TEST = /^(.+?)\s+is\s+(not\s+)?(match|search)\((.+)\)\s*$/
-    REGEX_SUBSET_TEST      = /^(.+?)\s+is\s+(not\s+)?(subset|superset|contains)\((.+)\)\s*$/
-    REGEX_SAME_FILE_TEST   = /^(.+?)\s+is\s+(not\s+)?same_file\((.+)\)\s*$/
-    REGEX_GENERIC_IS_TEST  = /\bis\s+(not\s+)?\w/
-    REGEX_BARE_CALL        = /\A\w+\s*\(.*\)\z/
-    REGEX_DIGITS           = /\d+/
+    REGEX_SUBSET_TEST       = /^(.+?)\s+is\s+(not\s+)?(subset|superset|contains)\((.+)\)\s*$/
+    REGEX_SAME_FILE_TEST    = /^(.+?)\s+is\s+(not\s+)?same_file\((.+)\)\s*$/
+    REGEX_GENERIC_IS_TEST   = /\bis\s+(not\s+)?\w/
+    REGEX_BARE_CALL         = /\A\w+\s*\(.*\)\z/
+    REGEX_DIGITS            = /\d+/
 
     # Process-wide compiled regex cache for dynamic `is match(...)` / `is search(...)` patterns.
     @@compiled_regex_cache = Hash(String, Regex).new
@@ -1597,7 +1597,7 @@ module CrystalPlay
       case value
       when Int64  then value.to_f64
       when String then value.to_f64?
-      else nil
+      else             nil
       end
     end
 

@@ -7,7 +7,7 @@ require "../src/crystal_play/variable_substitutor/variable_lookup"
 module CrystalPlay
   # Debug plugin - prints messages and variable values
   # Compatible with Ansible's ansible.builtin.debug module
-  # 
+  #
   # Parameters:
   #   msg: Message to print (supports variable substitution)
   #   var: Variable name to print (prints variable name and value)
@@ -31,7 +31,7 @@ module CrystalPlay
       # Get verbosity level (default: 0)
       required_verbosity = @params["verbosity"]?.try(&.to_i) || 0
       current_verbosity = @params["_verbosity"]?.try(&.to_i) || 0
-      
+
       # Skip if verbosity too low
       if current_verbosity < required_verbosity
         return PluginResult.new(
@@ -41,11 +41,11 @@ module CrystalPlay
           skipped: true
         )
       end
-      
+
       # Get msg or var parameter
       msg = @params["msg"]?
       var_name = @params["var"]?
-      
+
       # Neither msg nor var is not an error: real ansible.builtin.debug
       # documents `msg` as defaulting to "Hello world!" and prints that
       # (verified against ansible-core 2.19.4 - a bare `debug:` task
@@ -54,25 +54,25 @@ module CrystalPlay
       # exactly what a task relying on module_defaults for its msg looks
       # like - broke the play.
       msg = "Hello world!" if !msg && !var_name
-      
+
       # Build the debug output
       debug_output = if var_name
-        # Print variable name and value
-        # The var_name might be a path like "result.stdout" or just "myvar"
-        var_value = lookup_variable(var_name)
-        
-        if var_value
-          # Format as readable output
-          value_str = format_value(var_value)
-          "#{var_name}: #{value_str}"
-        else
-          "#{var_name}: VARIABLE IS NOT DEFINED!"
-        end
-      else
-        # Print message (already substituted by task executor)
-        msg.to_s
-      end
-      
+                       # Print variable name and value
+                       # The var_name might be a path like "result.stdout" or just "myvar"
+                       var_value = lookup_variable(var_name)
+
+                       if var_value
+                         # Format as readable output
+                         value_str = format_value(var_value)
+                         "#{var_name}: #{value_str}"
+                       else
+                         "#{var_name}: VARIABLE IS NOT DEFINED!"
+                       end
+                     else
+                       # Print message (already substituted by task executor)
+                       msg.to_s
+                     end
+
       # Debug always succeeds and never changes anything
       PluginResult.new(
         changed: false,
@@ -80,7 +80,7 @@ module CrystalPlay
         msg: debug_output
       )
     end
-    
+
     # Look up a variable (supports nested paths like "result.stdout")
     # `var:` takes a bare expression, not a {{ }}-wrapped one, so it never
     # went through VarSubstitutor#substitute (which only processes text
@@ -93,7 +93,7 @@ module CrystalPlay
     private def lookup_variable(var_name : String) : JSON::Any?
       VariableSubstitutor::VariableLookup.new(@vars).resolve(var_name)
     end
-    
+
     # Format a JSON::Any value for display
     private def format_value(value : JSON::Any) : String
       case value.raw

@@ -1,7 +1,6 @@
 require "../spec_helper"
 require "../../src/crystal_play/variable_substitutor"
 
-
 # Regression cover for the 0.9.79 performance work: the Crinja environment
 # is now shared process-wide, the JSON::Any -> Crinja::Value conversion is
 # memoized per renderer, and VarSubstitutor builds its evaluator/renderer

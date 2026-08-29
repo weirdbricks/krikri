@@ -140,7 +140,7 @@ module CrystalPlay
     end
 
     private def apply(lines : Array(String), section : String?, option : String?, value : String?,
-                       state : String, create : Bool, exclusive : Bool, no_extra_spaces : Bool) : {Array(String), Bool}
+                      state : String, create : Bool, exclusive : Bool, no_extra_spaces : Bool) : {Array(String), Bool}
       new_lines = lines.dup
       changed = false
 

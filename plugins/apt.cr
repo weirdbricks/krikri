@@ -172,13 +172,13 @@ module CrystalPlay
           # when called with no package/upgrade/deb - not based on
           # output at all.
           did_something = case cmd
-                           when .includes?("autoremove")
-                             result[:stdout].includes?("The following packages will be REMOVED")
-                           when .includes?("autoclean")
-                             result[:stdout].includes?("Del ")
-                           else
-                             true
-                           end
+                          when .includes?("autoremove")
+                            result[:stdout].includes?("The following packages will be REMOVED")
+                          when .includes?("autoclean")
+                            result[:stdout].includes?("Del ")
+                          else
+                            true
+                          end
 
           if did_something
             changed = true

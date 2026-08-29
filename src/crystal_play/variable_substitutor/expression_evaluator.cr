@@ -8,6 +8,7 @@ require "./array_slicer"
 require "./variable_lookup"
 require "./crinja_renderer"
 require "../variable_substitutor"
+
 module CrystalPlay
   module VariableSubstitutor
     # ExpressionEvaluator - Orchestrates evaluation of all expression types
@@ -958,14 +959,14 @@ module CrystalPlay
 
         if_idx = top_level_keyword_index(expr, " if ")
         result = if if_idx
-                    else_idx = top_level_keyword_index(expr, " else ", if_idx + 4)
-                    if else_idx
-                      truthy = expr[0...if_idx].strip
-                      cond = expr[(if_idx + 4)...else_idx].strip
-                      falsy = expr[(else_idx + 6)..].strip
-                      (truthy.empty? || cond.empty? || falsy.empty?) ? nil : {truthy, cond, falsy}
-                    end
-                  end
+                   else_idx = top_level_keyword_index(expr, " else ", if_idx + 4)
+                   if else_idx
+                     truthy = expr[0...if_idx].strip
+                     cond = expr[(if_idx + 4)...else_idx].strip
+                     falsy = expr[(else_idx + 6)..].strip
+                     (truthy.empty? || cond.empty? || falsy.empty?) ? nil : {truthy, cond, falsy}
+                   end
+                 end
 
         @@split_ternary_cache[expr] = result
         result
@@ -985,10 +986,10 @@ module CrystalPlay
 
         if_idx = top_level_keyword_index(expr, " if ")
         result = if if_idx
-                    truthy = expr[0...if_idx].strip
-                    cond = expr[(if_idx + 4)..].strip
-                    (truthy.empty? || cond.empty?) ? nil : {truthy, cond}
-                  end
+                   truthy = expr[0...if_idx].strip
+                   cond = expr[(if_idx + 4)..].strip
+                   (truthy.empty? || cond.empty?) ? nil : {truthy, cond}
+                 end
 
         @@split_ternary_no_else_cache[expr] = result
         result
@@ -1460,20 +1461,20 @@ module CrystalPlay
       # are covered; anything else returns "" rather than inventing a value.
       private def ansible_config_value(name : String) : String
         case name.upcase
-        when "COLOR_OK" then "green"
-        when "COLOR_CHANGED" then "yellow"
-        when "COLOR_SKIP" then "cyan"
-        when "COLOR_UNREACHABLE" then "bright red"
+        when "COLOR_OK"                    then "green"
+        when "COLOR_CHANGED"               then "yellow"
+        when "COLOR_SKIP"                  then "cyan"
+        when "COLOR_UNREACHABLE"           then "bright red"
         when "COLOR_ERROR", "COLOR_FAILED" then "red"
-        when "COLOR_DEBUG" then "dark gray"
-        when "COLOR_VERBOSE" then "blue"
-        when "COLOR_WARN" then "bright purple"
-        when "DEFAULT_BECOME_USER" then "root"
-        when "DEFAULT_ROLES_PATH" then "~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles"
-        when "DEFAULT_HOST_LIST" then "/etc/ansible/hosts"
-        when "RETRY_FILES_SAVE_PATH" then ""
-        when "DEFAULT_TIMEOUT" then "10"
-        when "DEFAULT_FORKS" then "5"
+        when "COLOR_DEBUG"                 then "dark gray"
+        when "COLOR_VERBOSE"               then "blue"
+        when "COLOR_WARN"                  then "bright purple"
+        when "DEFAULT_BECOME_USER"         then "root"
+        when "DEFAULT_ROLES_PATH"          then "~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles"
+        when "DEFAULT_HOST_LIST"           then "/etc/ansible/hosts"
+        when "RETRY_FILES_SAVE_PATH"       then ""
+        when "DEFAULT_TIMEOUT"             then "10"
+        when "DEFAULT_FORKS"               then "5"
         else
           # Honour a matching ANSIBLE_<NAME> env var when present (real
           # Ansible's own resolution order: env > cfg > default).
@@ -2204,10 +2205,10 @@ module CrystalPlay
       private def evaluate_range(args : String) : JSON::Any
         parts = split_top_level_commas(args).map { |part| resolve_plus_operand(part).as_i }
         start, stop, step = case parts.size
-                             when 1 then {0, parts[0], 1}
-                             when 2 then {parts[0], parts[1], 1}
-                             else        {parts[0], parts[1], parts[2]}
-                             end
+                            when 1 then {0, parts[0], 1}
+                            when 2 then {parts[0], parts[1], 1}
+                            else        {parts[0], parts[1], parts[2]}
+                            end
         return JSON::Any.new([] of JSON::Any) if step == 0
 
         values = [] of JSON::Any
@@ -2364,9 +2365,9 @@ module CrystalPlay
 
         private def advance_unquoted(char : Char)
           case char
-          when '\'', '"'           then self.quote = char
-          when '(', '[', '{'       then self.depth += 1
-          when ')', ']', '}'       then self.depth -= 1
+          when '\'', '"'     then self.quote = char
+          when '(', '[', '{' then self.depth += 1
+          when ')', ']', '}' then self.depth -= 1
           end
         end
 

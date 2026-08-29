@@ -104,8 +104,7 @@ module CrystalPlay
       # A name: key that's genuinely absent (not just empty) together
       # with no requirements: is the real required_one_of failure.
       if name.nil? && requirements.nil?
-        return raw_name ? PluginResult.new(changed: false, failed: false, msg: "No valid name or requirements file found.") \
-                         : PluginResult.new(changed: false, failed: true, msg: "name or requirements is required")
+        return raw_name ? PluginResult.new(changed: false, failed: false, msg: "No valid name or requirements file found.") : PluginResult.new(changed: false, failed: true, msg: "name or requirements is required")
       end
 
       pip_bin = resolve_pip_binary

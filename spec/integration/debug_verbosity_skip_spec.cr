@@ -2,8 +2,8 @@ require "../spec_helper"
 
 # Runs the compiled binary against a real playbook.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY        = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
-private INVENTORY     = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "debug: verbosity: gate" do
   it "shows as a real skipping: task, counted under skipped=, not ok=, when run verbosity is below the gate" do

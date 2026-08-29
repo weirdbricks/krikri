@@ -159,7 +159,7 @@ module CrystalPlay
                   post_status = remote_exec("ufw status verbose")[:stdout]
                   ran_ok &&
                     extract_status_fragment(pre_status.not_nil!, ufw_state_key) !=
-                    extract_status_fragment(post_status, ufw_state_key)
+                      extract_status_fragment(post_status, ufw_state_key)
                 else
                   ran_ok
                 end

@@ -7,11 +7,11 @@ module CrystalPlay
     property user : String?
     property port : Int32
     property vars : Hash(String, JSON::Any)
-    
+
     def initialize(@name : String, @user : String? = nil, @port : Int32 = 22)
       @vars = Hash(String, JSON::Any).new
     end
-    
+
     # Create from JSON (for plugin communication). Uses the `?` variants
     # (as_s?/as_i?) rather than `.try(&.as_s)`: `try` only guards against a
     # missing key (Crystal nil), not a key present with a JSON `null`

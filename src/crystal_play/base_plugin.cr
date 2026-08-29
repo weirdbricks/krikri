@@ -18,13 +18,13 @@ module CrystalPlay
     property msg : String
     property diff : JSON::Any?
     property extra : Hash(String, JSON::Any)
-    
+
     def initialize(
       changed : Bool,
       failed : Bool,
       msg : String,
       diff : JSON::Any? = nil,
-      **kwargs
+      **kwargs,
     )
       @changed = changed
       @failed = failed
@@ -35,27 +35,27 @@ module CrystalPlay
         @extra[key.to_s] = JSON.parse(value.to_json)
       end
     end
-    
+
     def to_json(io : IO)
       result = Hash(String, JSON::Any::Type).new
       result["changed"] = @changed
       result["failed"] = @failed
       result["msg"] = @msg
-      
+
       # Add diff if present
       if diff = @diff
-        result["diff"] = diff.raw  # Extract the raw value from JSON::Any
+        result["diff"] = diff.raw # Extract the raw value from JSON::Any
       end
-      
+
       # Add extra fields
       @extra.each do |key, value|
-        result[key] = value.raw  # Extract the raw value from JSON::Any
+        result[key] = value.raw # Extract the raw value from JSON::Any
       end
-      
+
       result.to_json(io)
     end
   end
-  
+
   # Base class for all plugins
   abstract class BasePlugin
     property host : Host
@@ -63,10 +63,10 @@ module CrystalPlay
     property vars : Hash(String, JSON::Any)
     property config : JSON::Any
     property diff_mode : Bool
-    
+
     def initialize(@config : JSON::Any)
       @host = Host.from_json(@config["host"])
-      
+
       # Parse params
       @params = Hash(String, String).new
       if params_json = @config["params"]?
@@ -74,7 +74,7 @@ module CrystalPlay
           @params[key] = value.to_s
         end
       end
-      
+
       # Parse vars
       @vars = Hash(String, JSON::Any).new
       if vars_json = @config["vars"]?
@@ -82,14 +82,14 @@ module CrystalPlay
           @vars[key] = value
         end
       end
-      
+
       # Check for diff mode
       @diff_mode = is_true?(@params["diff_mode"]?)
     end
-    
+
     # Abstract method - must be implemented by subclasses
     abstract def execute : PluginResult
-    
+
     # Run the plugin and output JSON result
     def run
       puts run_and_capture
@@ -116,10 +116,10 @@ module CrystalPlay
       STDERR.puts ex.backtrace.join("\n")
       error_result.to_json
     end
-    
+
     # Helper methods for remote execution
     # Supports both SSH and local connections
-    
+
     # Check if this host should use local connection
     protected def is_local_connection? : Bool
       # The CONFIG's host is authoritative for where this plugin process
@@ -147,14 +147,14 @@ module CrystalPlay
 
       false
     end
-    
+
     # Get the actual hostname to connect to (checks ansible_host variable)
     protected def get_connection_host : String
       # Check for ansible_host variable (overrides inventory hostname)
       if ansible_host = @vars["ansible_host"]?
         return ansible_host.as_s
       end
-      
+
       # Fall back to inventory hostname
       @host.name
     end
@@ -239,7 +239,7 @@ module CrystalPlay
         )
       end
     end
-    
+
     protected def remote_file_exists?(path : String) : Bool
       if is_local_connection?
         LocalExecutor.file_exists?(path)
@@ -248,7 +248,7 @@ module CrystalPlay
         result[:exit_code] == 0
       end
     end
-    
+
     protected def remote_dir_exists?(path : String) : Bool
       if is_local_connection?
         LocalExecutor.dir_exists?(path)
@@ -407,18 +407,18 @@ module CrystalPlay
     # Generate unified diff
     protected def generate_unified_diff(before : String, after : String, before_header : String = "before", after_header : String = "after") : JSON::Any
       JSON.parse({
-        "before" => before,
-        "after" => after,
+        "before"        => before,
+        "after"         => after,
         "before_header" => before_header,
-        "after_header" => after_header
+        "after_header"  => after_header,
       }.to_json)
     end
-    
+
     # Generate attribute diff
     protected def generate_attribute_diff(before : Hash(String, String), after : Hash(String, String)) : JSON::Any
       JSON.parse({
         "before" => before,
-        "after" => after
+        "after"  => after,
       }.to_json)
     end
   end

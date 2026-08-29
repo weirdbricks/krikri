@@ -299,13 +299,13 @@ module CrystalPlay
     # true) purely because of that one benign warning line, verified via
     # real ansible-playbook staying changed: false on the identical
     # rerun.
-    UID_DIFF_PATTERN  = /: Uid differs$/
-    GID_DIFF_PATTERN  = /: Gid differs$/
-    MODE_DIFF_PATTERN = /: Mode differs$/
+    UID_DIFF_PATTERN                = /: Uid differs$/
+    GID_DIFF_PATTERN                = /: Gid differs$/
+    MODE_DIFF_PATTERN               = /: Mode differs$/
     ALWAYS_MEANINGFUL_DIFF_PATTERNS = [
       /: Mod time differs$/, /: Invalid owner/, /: Invalid group/, /: Symlink differs$/,
     ]
-    EMPTY_FILE_WARNING = /: : Warning: Cannot stat: No such file or directory$/
+    EMPTY_FILE_WARNING   = /: : Warning: Cannot stat: No such file or directory$/
     MISSING_FILE_WARNING = /: Warning: Cannot stat: No such file or directory$/
 
     private def tar_changed?(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool, extra_opts : Array(String) = [] of String) : Bool
@@ -327,7 +327,7 @@ module CrystalPlay
       # from the 0755 crystal-ansible (correctly) chmod'd them to.
       owner_set = !@params["owner"]?.nil?
       group_set = !@params["group"]?.nil?
-      mode_set  = !@params["mode"]?.nil?
+      mode_set = !@params["mode"]?.nil?
 
       lines.any? do |line|
         next false if EMPTY_FILE_WARNING.matches?(line)

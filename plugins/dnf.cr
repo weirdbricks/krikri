@@ -6,12 +6,12 @@ require "../src/crystal_play/base_plugin"
 module CrystalPlay
   # DNF plugin - manages packages with the dnf package manager
   # Compatible with Ansible's ansible.builtin.dnf module
-  # 
+  #
   # Supports key Ansible dnf module parameters:
   # - name: Package name(s), group (@group), URL, or local RPM file
   # - state: present, installed, absent, removed, latest
   # - enablerepo: Repository to enable for this operation
-  # - disablerepo: Repository to disable for this operation  
+  # - disablerepo: Repository to disable for this operation
   # - disable_gpg_check: Disable GPG signature checking
   # - update_only: Only update packages, don't install new ones
   # - autoremove: Remove unneeded dependencies
@@ -79,20 +79,20 @@ module CrystalPlay
           msg: "Missing required parameter: name"
         )
       end
-      
+
       # Get state (default: present)
       state = @params["state"]? || "present"
-      
+
       # Normalize state aliases
       state = case state
-      when "installed"
-        "present"
-      when "removed"
-        "absent"
-      else
-        state
-      end
-      
+              when "installed"
+                "present"
+              when "removed"
+                "absent"
+              else
+                state
+              end
+
       # Validate state
       unless ["present", "absent", "latest"].includes?(state)
         return PluginResult.new(
@@ -101,20 +101,20 @@ module CrystalPlay
           msg: "Invalid state: #{state}. Must be present, absent, or latest"
         )
       end
-      
+
       # Handle special case: autoremove without package name
       if is_true?(@params["autoremove"]?) && names == ["*"]
         return handle_autoremove
       end
-      
+
       # Handle special case: upgrade all packages
       if names == ["*"] && state == "latest"
         return handle_upgrade_all
       end
-      
+
       # Build DNF command options
       dnf_options = build_dnf_options
-      
+
       # Process based on state
       case state
       when "present"
@@ -131,11 +131,11 @@ module CrystalPlay
         )
       end
     end
-    
+
     # Parse package names from various parameter formats
     private def parse_package_names : Array(String)
       names = [] of String
-      
+
       # Try 'name' parameter (can be string or list) - `pkg:` is a
       # documented alias of `name:` for real Ansible's dnf module (see
       # its own argument_spec: `aliases: [pkg]`).
@@ -151,35 +151,35 @@ module CrystalPlay
         # the same bug, found via konstruktoid-hardening's package
         # installation task).
         parsed_json = if trimmed.starts_with?('[') && trimmed.ends_with?(']')
-                         begin
-                           Array(String).from_json(trimmed)
-                         rescue
-                           # A Python-repr list (single-quoted strings) isn't
-                           # valid JSON - same fallback as apt.cr's/package.cr's
-                           # own copies of this logic (see there for the full
-                           # rationale: a Jinja `{% if %}...{{ [list] }}...
-                           # {% endif %}` template idiom renders as Python's
-                           # `str(list)` form, not JSON). Proactive fix - not
-                           # yet caught live for dnf specifically, but the
-                           # exact same bug class already found independently
-                           # in two other plugins this way.
-                           begin
-                             Array(String).from_json(trimmed.gsub('\'', '"'))
-                           rescue
-                             nil
-                           end
-                         end
-                       end
+                        begin
+                          Array(String).from_json(trimmed)
+                        rescue
+                          # A Python-repr list (single-quoted strings) isn't
+                          # valid JSON - same fallback as apt.cr's/package.cr's
+                          # own copies of this logic (see there for the full
+                          # rationale: a Jinja `{% if %}...{{ [list] }}...
+                          # {% endif %}` template idiom renders as Python's
+                          # `str(list)` form, not JSON). Proactive fix - not
+                          # yet caught live for dnf specifically, but the
+                          # exact same bug class already found independently
+                          # in two other plugins this way.
+                          begin
+                            Array(String).from_json(trimmed.gsub('\'', '"'))
+                          rescue
+                            nil
+                          end
+                        end
+                      end
 
         names = if parsed_json
-                   parsed_json
-                 elsif name_param.includes?(",")
-                   name_param.split(",").map(&.strip)
-                 else
-                   [name_param]
-                 end
+                  parsed_json
+                elsif name_param.includes?(",")
+                  name_param.split(",").map(&.strip)
+                else
+                  [name_param]
+                end
       end
-      
+
       # Try 'list' parameter (array of packages)
       if list_param = @params["list"]?
         begin
@@ -190,15 +190,15 @@ module CrystalPlay
           names << list_param
         end
       end
-      
+
       # Try free-form parameter
       if names.empty? && (raw_param = @params["_raw_params"]?)
         names = raw_param.split.reject(&.empty?)
       end
-      
+
       names.uniq
     end
-    
+
     # Real ansible.builtin.dnf's module code goes through dnf's Python API
     # directly, which treats an `enablerepo:` naming a repo ID that isn't
     # configured on the host (e.g. `enablerepo: epel` with no epel-release
@@ -223,23 +223,23 @@ module CrystalPlay
     # Build DNF command line options
     private def build_dnf_options : String
       options = [] of String
-      
+
       # Always use -y for non-interactive
       options << "-y"
-      
+
       # Enable/disable repos
       if enablerepo = @params["enablerepo"]?
         enablerepo.split(",").each do |repo|
           options << "--enablerepo=#{repo.strip}"
         end
       end
-      
+
       if disablerepo = @params["disablerepo"]?
         disablerepo.split(",").each do |repo|
           options << "--disablerepo=#{repo.strip}"
         end
       end
-      
+
       # GPG check - see yum.cr's identical fix for the full story: real
       # ansible's dnf module forces `conf.localpkg_gpgcheck = not
       # disable_gpg_check`, overriding dnf's own actual default (gpgcheck
@@ -256,41 +256,41 @@ module CrystalPlay
       if is_true?(@params["security"]?)
         options << "--security"
       end
-      
+
       if is_true?(@params["bugfix"]?)
         options << "--bugfix"
       end
-      
+
       # Weak dependencies
       if is_false?(@params["install_weak_deps"]?)
         options << "--setopt=install_weak_deps=False"
       end
-      
+
       # Skip broken packages
       if is_true?(@params["skip_broken"]?)
         options << "--skip-broken"
       end
-      
+
       # Allow downgrade
       if is_true?(@params["allow_downgrade"]?)
         options << "--allowerasing"
       end
-      
+
       # Best (default in dnf, but explicit is good)
       options << "--best" unless is_true?(@params["skip_broken"]?)
-      
+
       options.join(" ")
     end
-    
+
     # Install packages
     private def handle_install(names : Array(String), options : String) : PluginResult
       # Check if update_only is set
       update_only = is_true?(@params["update_only"]?)
-      
+
       to_install = [] of String
       to_update = [] of String
       already_installed = [] of String
-      
+
       # Check each package's status
       names.each do |pkg|
         if is_package_group?(pkg)
@@ -317,16 +317,16 @@ module CrystalPlay
           end
         end
       end
-      
+
       changed = false
       messages = [] of String
       all_output = [] of String
-      
+
       # Install new packages
       unless to_install.empty?
         pkg_list = to_install.map { |p| quote_package(p) }.join(" ")
         cmd = "dnf install #{options} #{pkg_list}"
-        
+
         result = remote_exec_tolerating_unknown_repo(cmd)
         all_output << result[:stdout]
 
@@ -366,10 +366,10 @@ module CrystalPlay
       unless to_update.empty?
         pkg_list = to_update.map { |p| quote_package(p) }.join(" ")
         cmd = "dnf update #{options} #{pkg_list}"
-        
+
         result = remote_exec_tolerating_unknown_repo(cmd)
         all_output << result[:stdout]
-        
+
         if result[:exit_code] == 0
           # Check if anything was actually updated
           if result[:stdout].includes?("Upgraded:") || result[:stdout].includes?("Installed:")
@@ -387,14 +387,14 @@ module CrystalPlay
           )
         end
       end
-      
+
       # Report already installed
       unless already_installed.empty?
         messages << "Already installed: #{already_installed.join(", ")}"
       end
-      
+
       msg = messages.empty? ? "No changes needed" : messages.join("; ")
-      
+
       PluginResult.new(
         changed: changed,
         failed: false,
@@ -403,12 +403,12 @@ module CrystalPlay
         exit_code: 0
       )
     end
-    
+
     # Remove packages
     private def handle_remove(names : Array(String), options : String) : PluginResult
       to_remove = [] of String
       already_absent = [] of String
-      
+
       # Check which packages need to be removed
       names.each do |pkg|
         if is_package_group?(pkg)
@@ -422,7 +422,7 @@ module CrystalPlay
           end
         end
       end
-      
+
       # Nothing to do
       if to_remove.empty?
         return PluginResult.new(
@@ -432,20 +432,20 @@ module CrystalPlay
           exit_code: 0
         )
       end
-      
+
       # Build remove command
       autoremove_flag = is_true?(@params["autoremove"]?) ? "" : "--setopt=clean_requirements_on_remove=False"
       pkg_list = to_remove.map { |p| quote_package(p) }.join(" ")
       cmd = "dnf remove #{options} #{autoremove_flag} #{pkg_list}"
-      
+
       result = remote_exec_tolerating_unknown_repo(cmd)
-      
+
       success = result[:exit_code] == 0
-      
+
       if success
         msg_parts = ["Removed: #{to_remove.join(", ")}"]
         msg_parts << "Already absent: #{already_absent.join(", ")}" unless already_absent.empty?
-        
+
         PluginResult.new(
           changed: true,
           failed: false,
@@ -464,24 +464,24 @@ module CrystalPlay
         )
       end
     end
-    
+
     # Update packages to latest version
     private def handle_update(names : Array(String), options : String) : PluginResult
       pkg_list = names.map { |p| quote_package(p) }.join(" ")
       cmd = "dnf update #{options} #{pkg_list}"
-      
+
       result = remote_exec_tolerating_unknown_repo(cmd)
-      
+
       success = result[:exit_code] == 0
-      
+
       if success
         # Check if anything was actually updated
-        changed = result[:stdout].includes?("Upgraded:") || 
+        changed = result[:stdout].includes?("Upgraded:") ||
                   result[:stdout].includes?("Installed:") ||
                   result[:stdout].includes?("Obsoleted:")
-        
+
         msg = changed ? "Packages updated to latest version" : "Packages already at latest version"
-        
+
         PluginResult.new(
           changed: changed,
           failed: false,
@@ -500,22 +500,22 @@ module CrystalPlay
         )
       end
     end
-    
+
     # Upgrade all packages
     private def handle_upgrade_all : PluginResult
       options = build_dnf_options
       cmd = "dnf upgrade #{options}"
-      
+
       result = remote_exec_tolerating_unknown_repo(cmd)
-      
+
       success = result[:exit_code] == 0
-      
+
       if success
-        changed = result[:stdout].includes?("Upgraded:") || 
+        changed = result[:stdout].includes?("Upgraded:") ||
                   result[:stdout].includes?("Installed:")
-        
+
         msg = changed ? "System upgraded" : "All packages already up to date"
-        
+
         PluginResult.new(
           changed: changed,
           failed: false,
@@ -534,21 +534,21 @@ module CrystalPlay
         )
       end
     end
-    
+
     # Handle autoremove operation
     private def handle_autoremove : PluginResult
       options = build_dnf_options
       cmd = "dnf autoremove #{options}"
-      
+
       result = remote_exec_tolerating_unknown_repo(cmd)
-      
+
       success = result[:exit_code] == 0
-      
+
       if success
         changed = result[:stdout].includes?("Removed:")
-        
+
         msg = changed ? "Removed unneeded packages" : "No unneeded packages to remove"
-        
+
         PluginResult.new(
           changed: changed,
           failed: false,
@@ -567,7 +567,7 @@ module CrystalPlay
         )
       end
     end
-    
+
     # Check if a package is installed
     private def package_installed?(name : String) : Bool
       # Strip version specifiers for checking
@@ -603,20 +603,20 @@ module CrystalPlay
       result = remote_exec("rpm -q --whatprovides #{base_name} 2>/dev/null")
       result[:exit_code] == 0
     end
-    
+
     # Check if name is a package group (starts with @)
     private def is_package_group?(name : String) : Bool
       name.starts_with?("@")
     end
-    
+
     # Check if name is a URL or file path
     private def is_url_or_file?(name : String) : Bool
-      name.starts_with?("http://") || 
-      name.starts_with?("https://") || 
-      name.starts_with?("ftp://") ||
-      name.starts_with?("/")
+      name.starts_with?("http://") ||
+        name.starts_with?("https://") ||
+        name.starts_with?("ftp://") ||
+        name.starts_with?("/")
     end
-    
+
     # Quote package name if it contains special characters
     private def quote_package(name : String) : String
       if name.includes?(" ") || name.includes?(">") || name.includes?("<")
@@ -625,13 +625,13 @@ module CrystalPlay
         name
       end
     end
-    
+
     # Helper: Check if parameter is truthy
     private def is_true?(value : String?) : Bool
       return false unless value
       ["true", "yes", "1", "on"].includes?(value.downcase)
     end
-    
+
     # Helper: Check if parameter is falsy
     private def is_false?(value : String?) : Bool
       return false unless value

@@ -5,8 +5,8 @@ require "../spec_helper"
 # skip path), a private method not reachable from a unit spec without
 # constructing a whole TaskExecutor.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY        = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
-private INVENTORY     = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "register: on a task skipped via its enclosing block's when:" do
   it "still sets the variable to a skipped/changed:false result, overwriting an earlier register under the same name" do

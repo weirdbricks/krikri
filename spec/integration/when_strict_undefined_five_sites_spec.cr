@@ -15,8 +15,8 @@ require "file_utils"
 #      through a filter/default() chain - scope must not widen beyond
 #      0.9.548's own REGEX_BARE_VAR_REF-shaped boundary.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY        = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
-private INVENTORY     = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_playbook(yaml : String, inventory : String = INVENTORY)
   playbook = File.tempname("when-strict-five-sites", ".yml")
@@ -165,7 +165,6 @@ describe "strict-undefined when: - execute_block (single-host block:)" do
     # "block two" never runs (the halt from "block one" skips it).
     output.should contain("failed=2")
   end
-
 end
 
 describe "strict-undefined when: - run_include_tasks_once (include_tasks:)" do

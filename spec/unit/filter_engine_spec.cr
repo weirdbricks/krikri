@@ -115,7 +115,7 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     # unknown-filter passthrough, returning the value completely
     # unchanged - the still-"v"-prefixed version then built a download
     # URL with a doubled "v" that doesn't exist as a real release.
-    result = engine.apply(s("v1.12.1"), %(regex_replace('^v?([0-9\.]+)$', '\\1')))
+    result = engine.apply(s("v1.12.1"), %(regex_replace('^v?([0-9.]+)$', '\\1')))
     result.as_s.should eq("1.12.1")
   end
 

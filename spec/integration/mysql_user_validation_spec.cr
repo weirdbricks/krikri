@@ -24,10 +24,10 @@ describe "mysql_user plugin parameter validation" do
 
   it "fails when plugin_hash_string and plugin_auth_string are both given" do
     result = PluginSpecHelper.run("mysql_user", {
-      "name"                => "alice",
-      "plugin"              => "AWSAuthenticationPlugin",
-      "plugin_hash_string"  => "hash1",
-      "plugin_auth_string"  => "hash2",
+      "name"               => "alice",
+      "plugin"             => "AWSAuthenticationPlugin",
+      "plugin_hash_string" => "hash1",
+      "plugin_auth_string" => "hash2",
     })
 
     result["failed"].as_bool.should be_true
@@ -59,8 +59,8 @@ describe "mysql_user plugin parameter validation" do
     # connection (proving validation didn't reject a legitimate shape), but
     # an invalid combination must fail fast on validation, not on connect.
     result = PluginSpecHelper.run("mysql_user", {
-      "name"   => "alice",
-      "plugin" => "unix_socket",
+      "name"               => "alice",
+      "plugin"             => "unix_socket",
       "plugin_hash_string" => "hash",
       "plugin_auth_string" => "other",
     })

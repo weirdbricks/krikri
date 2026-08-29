@@ -30,14 +30,14 @@ describe CrystalPlay::ConditionalEvaluator do
       # ansible_distribution_major_version is "9", and the chained
       # subscript resolves to nothing.
       vars = {
-        "ansible_distribution"                => JSON::Any.new("Rocky"),
+        "ansible_distribution"               => JSON::Any.new("Rocky"),
         "ansible_distribution_major_version" => JSON::Any.new("9"),
-        "ansible_os_family"                   => JSON::Any.new("RedHat"),
-        "pkg_upgrade_update_cmds" => JSON::Any.new({
+        "ansible_os_family"                  => JSON::Any.new("RedHat"),
+        "pkg_upgrade_update_cmds"            => JSON::Any.new({
           "7" => JSON::Any.new({"update" => JSON::Any.new("yum update -q -y"), "upgrade" => JSON::Any.new("yum upgrade -q -y")}),
           "8" => JSON::Any.new({"update" => JSON::Any.new("dnf update -q -y"), "upgrade" => JSON::Any.new("dnf upgrade -q -y")}),
         }),
-        "pkg_upgrade_update_cmd"   => JSON::Any.new("{{ pkg_upgrade_update_cmds[ansible_distribution_major_version][\"update\"] }}"),
+        "pkg_upgrade_update_cmd"  => JSON::Any.new("{{ pkg_upgrade_update_cmds[ansible_distribution_major_version][\"update\"] }}"),
         "pkg_upgrade_upgrade_cmd" => JSON::Any.new("{{ pkg_upgrade_update_cmds[ansible_distribution_major_version][\"upgrade\"] }}"),
       } of String => JSON::Any
 
@@ -51,14 +51,14 @@ describe CrystalPlay::ConditionalEvaluator do
       # whole expression renders to "yum update -q -y". Both engines
       # agree: defined.
       vars = {
-        "ansible_distribution"                => JSON::Any.new("Rocky"),
+        "ansible_distribution"               => JSON::Any.new("Rocky"),
         "ansible_distribution_major_version" => JSON::Any.new("7"),
-        "ansible_os_family"                   => JSON::Any.new("RedHat"),
-        "pkg_upgrade_update_cmds" => JSON::Any.new({
+        "ansible_os_family"                  => JSON::Any.new("RedHat"),
+        "pkg_upgrade_update_cmds"            => JSON::Any.new({
           "7" => JSON::Any.new({"update" => JSON::Any.new("yum update -q -y"), "upgrade" => JSON::Any.new("yum upgrade -q -y")}),
           "8" => JSON::Any.new({"update" => JSON::Any.new("dnf update -q -y"), "upgrade" => JSON::Any.new("dnf upgrade -q -y")}),
         }),
-        "pkg_upgrade_update_cmd"   => JSON::Any.new("{{ pkg_upgrade_update_cmds[ansible_distribution_major_version][\"update\"] }}"),
+        "pkg_upgrade_update_cmd" => JSON::Any.new("{{ pkg_upgrade_update_cmds[ansible_distribution_major_version][\"update\"] }}"),
       } of String => JSON::Any
 
       CrystalPlay::ConditionalEvaluator.evaluate("pkg_upgrade_update_cmd is defined", vars).should be_true

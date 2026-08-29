@@ -72,7 +72,6 @@ module CrystalPlay
   module FactsGatherer
     extend self
 
-
     # Runs *command* with *args* directly (no shell), capturing stdout only
     # (stderr discarded) - equivalent to `` `command 2>/dev/null` `` but without
     # forking an intermediate `/bin/sh -c`. Returns "" if the binary can't be
@@ -113,11 +112,11 @@ module CrystalPlay
       enabled = subset.empty? || subset.includes?("all")
       subset.each do |token|
         case token
-        when "all"          then enabled = true
-        when "!all"         then enabled = false
-        when family         then enabled = true
-        when "!#{family}"   then enabled = false
-        when "min", "!min"  then next
+        when "all"         then enabled = true
+        when "!all"        then enabled = false
+        when family        then enabled = true
+        when "!#{family}"  then enabled = false
+        when "min", "!min" then next
         end
       end
       enabled
@@ -148,10 +147,10 @@ module CrystalPlay
       hostname = System.hostname
       facts["ansible_hostname"] = hostname
       facts["ansible_nodename"] = hostname
-  
+
       fqdn = capture("hostname", ["-f"])
       facts["ansible_fqdn"] = fqdn unless fqdn.empty?
-  
+
       if !fqdn.empty? && fqdn.includes?(".")
         domain = fqdn.sub(/^#{Regex.escape(hostname)}\./, "")
         facts["ansible_domain"] = domain unless domain.empty?
@@ -161,21 +160,21 @@ module CrystalPlay
     # Gather OS facts
     def gather_os_facts(facts)
       os_info = parse_os_release
-  
+
       if os_info
         if id = os_info["ID"]?
           distribution = case id
-          when "ubuntu" then "Ubuntu"
-          when "debian" then "Debian"  
-          when /centos/ then "CentOS"
-          when /rhel/ then "RedHat"
-          when "fedora" then "Fedora"
-          when "rocky" then "Rocky"
-          when "almalinux" then "AlmaLinux"
-          else id.capitalize
-          end
+                         when "ubuntu"    then "Ubuntu"
+                         when "debian"    then "Debian"
+                         when /centos/    then "CentOS"
+                         when /rhel/      then "RedHat"
+                         when "fedora"    then "Fedora"
+                         when "rocky"     then "Rocky"
+                         when "almalinux" then "AlmaLinux"
+                         else                  id.capitalize
+                         end
           facts["ansible_distribution"] = distribution
-      
+
           # OS family. A DERIVATIVE distro (Linux Mint, Pop!_OS, Amazon
           # Linux, ...) is not in the list above, and falling through to
           # "Linux" is wrong: real Ansible reports the family of the distro
@@ -197,13 +196,13 @@ module CrystalPlay
           end
           facts["ansible_os_family"] = os_family || distribution
         end
-    
+
         if version = os_info["VERSION_ID"]?
           facts["ansible_distribution_version"] = version
           major = version.split(".").first
           facts["ansible_distribution_major_version"] = major
         end
-    
+
         # Real Ansible's DistributionFactCollector always sets this fact,
         # falling back to "" when the OS has no release codename at all
         # (RHEL-family /etc/os-release ships no VERSION_CODENAME, unlike
@@ -527,23 +526,23 @@ module CrystalPlay
 
     def parse_os_release : Hash(String, String)?
       info = {} of String => String
-  
+
       ["/etc/os-release", "/usr/lib/os-release"].each do |path|
         next unless File.exists?(path)
-    
+
         File.read_lines(path).each do |line|
           line = line.strip
           next if line.empty? || line.starts_with?("#")
           next unless line.includes?("=")
-      
+
           key, value = line.split("=", 2)
           value = value.gsub(/^["']|["']$/, "")
           info[key] = value
         end
-    
+
         return info unless info.empty?
       end
-  
+
       nil
     end
 
@@ -577,7 +576,7 @@ module CrystalPlay
         default_ipv4["gateway"] = gateway unless gateway.empty?
         facts["ansible_default_ipv4"] = default_ipv4
       end
-  
+
       all_ipv4 = `ip -4 addr show 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1`.strip
       unless all_ipv4.empty?
         addresses = all_ipv4.split("\n").map(&.strip).reject(&.empty?)
@@ -589,42 +588,42 @@ module CrystalPlay
       # Memory facts - manual parsing of /proc/meminfo
       if File.exists?("/proc/meminfo")
         meminfo = File.read("/proc/meminfo")
-    
+
         if match = meminfo.match(/MemTotal:\s+(\d+)/)
           facts["ansible_memtotal_mb"] = match[1].to_i64 // 1024
         end
-    
+
         if match = meminfo.match(/MemAvailable:\s+(\d+)/)
           facts["ansible_memfree_mb"] = match[1].to_i64 // 1024
         end
-    
+
         if match = meminfo.match(/SwapTotal:\s+(\d+)/)
           facts["ansible_swaptotal_mb"] = match[1].to_i64 // 1024
         end
-    
+
         if match = meminfo.match(/SwapFree:\s+(\d+)/)
           facts["ansible_swapfree_mb"] = match[1].to_i64 // 1024
         end
       end
-  
+
       # CPU facts
       # Use Crystal's native System.cpu_count for vcpus
       vcpus = System.cpu_count.to_i64
       facts["ansible_processor_vcpus"] = vcpus if vcpus > 0
-  
+
       # For physical processors and cores per processor, still need /proc/cpuinfo
       if File.exists?("/proc/cpuinfo")
         cpuinfo = File.read("/proc/cpuinfo")
-    
+
         physical_ids = cpuinfo.scan(/physical id\s+:\s+(\d+)/).map(&.[1]).uniq
         count = physical_ids.size.to_i64
         count = 1_i64 if count == 0
         facts["ansible_processor_count"] = count
-    
+
         if match = cpuinfo.match(/cpu cores\s+:\s+(\d+)/)
           facts["ansible_processor_cores"] = match[1].to_i64
         end
-    
+
         if match = cpuinfo.match(/model name\s+:\s+(.+)/)
           facts["ansible_processor"] = [match[1].strip]
         end
@@ -727,15 +726,15 @@ module CrystalPlay
                                        block_available.nil? || inode_total.nil? || inode_free.nil?
 
       {
-        "size_total"       => (block_size * block_total).to_s,
-        "size_available"   => (block_size * block_available).to_s,
-        "block_size"       => block_size.to_s,
-        "block_total"      => block_total.to_s,
-        "block_available"  => block_available.to_s,
-        "block_used"       => (block_total - block_free).to_s,
-        "inode_total"      => inode_total.to_s,
-        "inode_available"  => inode_free.to_s,
-        "inode_used"       => (inode_total - inode_free).to_s,
+        "size_total"      => (block_size * block_total).to_s,
+        "size_available"  => (block_size * block_available).to_s,
+        "block_size"      => block_size.to_s,
+        "block_total"     => block_total.to_s,
+        "block_available" => block_available.to_s,
+        "block_used"      => (block_total - block_free).to_s,
+        "inode_total"     => inode_total.to_s,
+        "inode_available" => inode_free.to_s,
+        "inode_used"      => (inode_total - inode_free).to_s,
       }
     end
 
@@ -834,22 +833,22 @@ module CrystalPlay
     def gather_environment_facts(facts)
       env_vars = ["PATH", "HOME", "USER", "SHELL", "TERM", "LANG"]
       env = {} of String => String
-  
+
       env_vars.each do |var|
         if value = ENV[var]?
           env[var] = value
         end
       end
-  
+
       facts["ansible_env"] = env unless env.empty?
     end
 
     def gather_date_time_facts(facts)
       now = Time.utc
       local = Time.local
-  
+
       date_time = {} of String => String
-  
+
       date_time["epoch"] = now.to_unix.to_s
       date_time["iso8601"] = now.to_s("%Y-%m-%dT%H:%M:%SZ")
       date_time["date"] = local.to_s("%Y-%m-%d")
@@ -862,13 +861,12 @@ module CrystalPlay
       date_time["second"] = local.second.to_s.rjust(2, '0')
       date_time["weekday"] = local.to_s("%A")
       date_time["weekday_number"] = local.day_of_week.value.to_s
-  
+
       tz = local.zone.name
       date_time["tz"] = tz unless tz.empty?
-  
+
       facts["ansible_date_time"] = date_time
     end
-
 
     # The former `# Entry point` block, with the two differences that
     # make it serve both callers: *config* arrives already parsed (the

@@ -115,7 +115,6 @@ module CrystalPlay
       result = remote_exec("#{bin} -t #{table} -C #{chain} #{rule_flags.join(" ")} > /dev/null 2>&1")
       result[:exit_code] == 0
     end
-
   end
 end
 

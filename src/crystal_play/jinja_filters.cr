@@ -100,17 +100,17 @@ module CrystalPlay
       style = (arguments.varargs[0]?.try(&.to_s) || arguments.kwargs["style"]?.try(&.to_s) || "plain")
 
       beginning, style_decoration, ending = case style
-                                             when "erlang"
-                                               {"", "% ", ""}
-                                             when "c"
-                                               {"", "// ", ""}
-                                             when "cblock"
-                                               {"/*", " * ", " */"}
-                                             when "xml"
-                                               {"<!--", " - ", "-->"}
-                                             else
-                                               {"", "# ", ""}
-                                             end
+                                            when "erlang"
+                                              {"", "% ", ""}
+                                            when "c"
+                                              {"", "// ", ""}
+                                            when "cblock"
+                                              {"/*", " * ", " */"}
+                                            when "xml"
+                                              {"<!--", " - ", "-->"}
+                                            else
+                                              {"", "# ", ""}
+                                            end
 
       prepostfix = arguments.kwargs["decoration"]?.try(&.to_s) || style_decoration
       beginning = arguments.kwargs["beginning"]?.try(&.to_s) || beginning
@@ -409,14 +409,14 @@ module CrystalPlay
     # 19).
     Crinja.filter(:type_debug) do
       type_name = case target.raw
-                  when Array  then "list"
-                  when Hash   then "dict"
-                  when String then "str"
+                  when Array        then "list"
+                  when Hash         then "dict"
+                  when String       then "str"
                   when Int64, Int32 then "int"
-                  when Float64 then "float"
-                  when Bool   then "bool"
-                  when Nil    then "NoneType"
-                  else "str"
+                  when Float64      then "float"
+                  when Bool         then "bool"
+                  when Nil          then "NoneType"
+                  else                   "str"
                   end
       Crinja::Value.new(type_name)
     end
@@ -705,12 +705,12 @@ module CrystalPlay
       unit = match[2].downcase
       multiplier = case unit
                    when "", "b", "bytes" then 1_i64
-                   when "kb"              then 1024_i64
-                   when "mb"              then 1024_i64 ** 2
-                   when "gb"              then 1024_i64 ** 3
-                   when "tb"              then 1024_i64 ** 4
-                   when "pb"              then 1024_i64 ** 5
-                   else                        1_i64
+                   when "kb"             then 1024_i64
+                   when "mb"             then 1024_i64 ** 2
+                   when "gb"             then 1024_i64 ** 3
+                   when "tb"             then 1024_i64 ** 4
+                   when "pb"             then 1024_i64 ** 5
+                   else                       1_i64
                    end
       (number * multiplier).to_i64
     end
@@ -1315,11 +1315,12 @@ module CrystalPlay
       value = target[field]
       return false if value.undefined?
       case raw = value.raw
-      when Bool then raw
+      when Bool         then raw
       when Int32, Int64 then raw != 0
-      else false
+      else                   false
       end
     end
+
     Crinja.test(:started) { JinjaFilters.async_field_truthy?(target, "started") }
     Crinja.test(:finished) { JinjaFilters.async_field_truthy?(target, "finished") }
     Crinja.test(:timedout) { JinjaFilters.async_field_truthy?(target, "timedout") }
@@ -1691,20 +1692,20 @@ module CrystalPlay
 
     def self.ansible_config_value(name : String) : String
       case name.upcase
-      when "COLOR_OK" then "green"
-      when "COLOR_CHANGED" then "yellow"
-      when "COLOR_SKIP" then "cyan"
-      when "COLOR_UNREACHABLE" then "bright red"
+      when "COLOR_OK"                    then "green"
+      when "COLOR_CHANGED"               then "yellow"
+      when "COLOR_SKIP"                  then "cyan"
+      when "COLOR_UNREACHABLE"           then "bright red"
       when "COLOR_ERROR", "COLOR_FAILED" then "red"
-      when "COLOR_DEBUG" then "dark gray"
-      when "COLOR_VERBOSE" then "blue"
-      when "COLOR_WARN" then "bright purple"
-      when "DEFAULT_BECOME_USER" then "root"
-      when "DEFAULT_ROLES_PATH" then "~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles"
-      when "DEFAULT_HOST_LIST" then "/etc/ansible/hosts"
-      when "RETRY_FILES_SAVE_PATH" then ""
-      when "DEFAULT_TIMEOUT" then "10"
-      when "DEFAULT_FORKS" then "5"
+      when "COLOR_DEBUG"                 then "dark gray"
+      when "COLOR_VERBOSE"               then "blue"
+      when "COLOR_WARN"                  then "bright purple"
+      when "DEFAULT_BECOME_USER"         then "root"
+      when "DEFAULT_ROLES_PATH"          then "~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles"
+      when "DEFAULT_HOST_LIST"           then "/etc/ansible/hosts"
+      when "RETRY_FILES_SAVE_PATH"       then ""
+      when "DEFAULT_TIMEOUT"             then "10"
+      when "DEFAULT_FORKS"               then "5"
       else
         ENV["ANSIBLE_#{name.upcase}"]? || ""
       end

@@ -9,8 +9,8 @@ require "http/server"
 # the whole process as an unhandled exception.
 
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY        = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
-private INVENTORY     = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 lookup_url_failure_server = HTTP::Server.new do |context|
   context.response.status_code = 404

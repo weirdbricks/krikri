@@ -360,8 +360,8 @@ module CrystalPlay
     end
 
     EXTRA_COMPARISON_FIELDS = %w[entrypoint env labels volumes restart_policy network_mode privileged auto_remove ports healthcheck
-                                  memory memory_reservation memory_swap memory_swappiness cpus cpu_shares cpuset_cpus cpuset_mems
-                                  oom_kill_disable oom_score_adj pids_limit]
+      memory memory_reservation memory_swap memory_swappiness cpus cpu_shares cpuset_cpus cpuset_mems
+      oom_kill_disable oom_score_adj pids_limit]
 
     private def extra_fields_given? : Bool
       EXTRA_COMPARISON_FIELDS.any? { |field| @params[field]? }

@@ -292,13 +292,13 @@ module CrystalPlay
       @vars = Hash(String, JSON::Any).new
       vars.each do |key, value|
         @vars[key] = case value
-        when JSON::Any
-          value
-        when String
-          JSON::Any.new(value)
-        else
-          JSON.parse(value.to_json)
-        end
+                     when JSON::Any
+                       value
+                     when String
+                       JSON::Any.new(value)
+                     else
+                       JSON.parse(value.to_json)
+                     end
       end
 
       # A caller that already has the real per-host vars_context (every
@@ -390,7 +390,7 @@ module CrystalPlay
       end
       @magic_vars_added = true
     end
-    
+
     # Raised when a template renders a vault blob none of the supplied
     # secrets could open. Vault.maybe_decrypt_json leaves such a value
     # encrypted rather than failing the parse, so the failure lands here,

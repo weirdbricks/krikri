@@ -4,8 +4,8 @@ require "../spec_helper"
 # rendering through Crinja's own lexer whitespace handling, vendored
 # from the crystal-play fork of the crinja shard).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY        = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
-private INVENTORY     = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "a {{ }} expression whose leading whitespace is a non-ASCII Unicode space" do
   it "renders correctly with a U+00A0 NO-BREAK SPACE right after {{, matching real Ansible" do

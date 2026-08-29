@@ -6,8 +6,8 @@ require "file_utils"
 # TaskExecutor#resolve_fileglob, a private method not reachable from a
 # unit spec without constructing a whole TaskExecutor.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY        = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
-private INVENTORY     = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "with_fileglob: templating a list variable" do
   it "treats each list element as its own glob pattern, not the JSON array text as one pattern" do

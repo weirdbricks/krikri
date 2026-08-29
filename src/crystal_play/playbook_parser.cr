@@ -2354,6 +2354,7 @@ module CrystalPlay
     class InvalidIncludeAttributeError < Exception
       getter key : String
       getter kind : String
+
       def initialize(@key : String, @kind : String)
         super("'#{@key}' is not a valid attribute for a #{@kind}")
       end

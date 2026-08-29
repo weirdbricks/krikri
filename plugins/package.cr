@@ -6,9 +6,9 @@ require "../src/crystal_play/plugin_helpers/apt_lock_retry"
 
 module CrystalPlay
   # Package Plugin - OS-agnostic package management
-  # 
+  #
   # Auto-detects package manager (dnf, yum, apt) and delegates
-  # 
+  #
   # Parameters:
   #   name (required): Package name
   #   state (optional): present, absent, latest (default: present)
@@ -21,12 +21,12 @@ module CrystalPlay
   class PackagePlugin < BasePlugin
     include AptLockRetry
     property check_mode : Bool
-    
+
     def initialize(config : JSON::Any)
       super(config)
       @check_mode = is_true?(@params["check_mode"]?)
     end
-    
+
     def execute : PluginResult
       # Validate required parameters. `name:` isn't required when
       # update_cache: true is given with nothing else - real Ansible's
@@ -120,10 +120,10 @@ module CrystalPlay
       end
 
       state = @params["state"]? || "present"
-      
+
       # Detect package manager
       package_manager = detect_package_manager()
-      
+
       unless package_manager
         return PluginResult.new(
           changed: false,
@@ -131,7 +131,7 @@ module CrystalPlay
           msg: "Could not detect package manager (tried: dnf, yum, apt)"
         )
       end
-      
+
       # Delegate to appropriate package manager
       case package_manager
       when "dnf", "yum"
@@ -146,7 +146,7 @@ module CrystalPlay
         )
       end
     end
-    
+
     # `name:` may be several space-separated package names (this module's
     # own space-joining of a templated list var - see the JSON-array
     # handling in #execute above). True only if *every* one is installed,
@@ -235,22 +235,22 @@ module CrystalPlay
     end
 
     # Detect which package manager is available
-    private def detect_package_manager() : String?
+    private def detect_package_manager : String?
       # Try dnf first (newer)
       result = remote_exec("which dnf 2>/dev/null")
       return "dnf" if result[:exit_code] == 0
-      
+
       # Try yum (older RHEL/CentOS)
       result = remote_exec("which yum 2>/dev/null")
       return "yum" if result[:exit_code] == 0
-      
+
       # Try apt (Debian/Ubuntu)
       result = remote_exec("which apt-get 2>/dev/null")
       return "apt" if result[:exit_code] == 0
-      
+
       nil
     end
-    
+
     # Handle DNF/YUM package management
     private def handle_dnf(name : String, state : String, single_name : Bool = false) : PluginResult
       # Check if package is installed - each name checked individually
@@ -356,7 +356,6 @@ module CrystalPlay
             )
           end
         end
-      
       when "absent"
         if !is_installed
           return PluginResult.new(
@@ -372,7 +371,7 @@ module CrystalPlay
               msg: "Would remove #{name} (check mode)"
             )
           end
-          
+
           remove_result = remote_exec("dnf remove -y #{shell_pkg} || yum remove -y #{shell_pkg}")
           if remove_result[:exit_code] == 0
             return PluginResult.new(
@@ -388,7 +387,6 @@ module CrystalPlay
             )
           end
         end
-      
       when "latest"
         if @check_mode
           check_update = remote_exec("dnf check-update #{shell_pkg} || yum check-update #{shell_pkg}")
@@ -407,17 +405,16 @@ module CrystalPlay
             )
           end
         end
-        
+
         update_result = remote_exec("dnf install -y #{shell_pkg} || yum install -y #{shell_pkg}")
         # Check if actually updated
         was_updated = !update_result[:stdout].includes?("Nothing to do")
-        
+
         return PluginResult.new(
           changed: was_updated,
           failed: false,
           msg: was_updated ? "Package #{name} updated to latest" : "Package #{name} already at latest version"
         )
-      
       else
         return PluginResult.new(
           changed: false,
@@ -426,7 +423,7 @@ module CrystalPlay
         )
       end
     end
-    
+
     # Handle APT package management
     private def handle_apt(name : String, state : String, single_name : Bool = false) : PluginResult
       # Check if package is installed - each name checked individually
@@ -461,7 +458,7 @@ module CrystalPlay
               msg: "Would install #{name} (check mode)"
             )
           end
-          
+
           install_result = apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive apt-get install -y #{shell_pkg}", lock_timeout, ->remote_exec(String))
           if install_result[:exit_code] == 0
             # A requested name can be a virtual package already
@@ -498,7 +495,6 @@ module CrystalPlay
             )
           end
         end
-      
       when "absent"
         if !is_installed
           return PluginResult.new(
@@ -514,7 +510,7 @@ module CrystalPlay
               msg: "Would remove #{name} (check mode)"
             )
           end
-          
+
           remove_result = apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive apt-get remove -y #{shell_pkg}", lock_timeout, ->remote_exec(String))
           if remove_result[:exit_code] == 0
             return PluginResult.new(
@@ -530,7 +526,6 @@ module CrystalPlay
             )
           end
         end
-      
       when "latest"
         if @check_mode
           check_upgrade = remote_exec("apt-get install --simulate #{shell_pkg} 2>&1 | grep -i upgrade")
@@ -548,7 +543,7 @@ module CrystalPlay
             )
           end
         end
-        
+
         # `--only-upgrade` skips a package that isn't ALREADY installed
         # entirely (exit 0, "0 upgraded, 0 newly installed") - real
         # Ansible's own state: latest installs a not-yet-present package
@@ -575,7 +570,6 @@ module CrystalPlay
           failed: false,
           msg: was_upgraded ? "Package #{name} upgraded to latest" : "Package #{name} already at latest version"
         )
-      
       else
         return PluginResult.new(
           changed: false,
@@ -584,7 +578,7 @@ module CrystalPlay
         )
       end
     end
-    
+
     # Helper to convert string/bool to boolean
     private def is_true?(value) : Bool
       return false if value.nil?

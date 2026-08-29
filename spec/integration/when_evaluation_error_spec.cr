@@ -5,8 +5,8 @@ require "../spec_helper"
 # PROCESS with an unhandled exception rather than failing just the one
 # task - not reachable from a unit spec without a live TaskExecutor run.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY        = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
-private INVENTORY     = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "when: evaluation raising an exception" do
   # Real bug found while auditing previously-documented-but-unfixed

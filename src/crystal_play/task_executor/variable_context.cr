@@ -13,7 +13,7 @@ module CrystalPlay
       play_vars : Hash(String, JSON::Any), # CHANGED: Was Hash(String, String)
       host : Host,
       task : Task,
-      registered_vars : Hash(String, JSON::Any)
+      registered_vars : Hash(String, JSON::Any),
     ) : Hash(String, JSON::Any)
       # Grows through role_defaults + play_vars + host.vars + registered_vars
       # + role_vars + task.vars - routinely 100+ entries by the time

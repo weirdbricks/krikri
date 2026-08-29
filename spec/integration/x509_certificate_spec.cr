@@ -66,7 +66,7 @@ describe "x509_certificate plugin" do
     key = make_key("ext.key")
     csr = make_csr("ext.csr", key, "ext.example.com",
       {"subject_alt_name" => %(["DNS:ext.example.com","DNS:alt.example.com"]),
-       "key_usage" => %(["digitalSignature"])})
+       "key_usage"        => %(["digitalSignature"])})
     path = path_for("ext.crt")
 
     PluginSpecHelper.run("x509_certificate",

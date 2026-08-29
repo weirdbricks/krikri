@@ -99,11 +99,11 @@ describe "sysctl plugin" do
     bogus_name = "this.is.not.a.real.sysctl.key.crystal_ansible_spec"
 
     result = PluginSpecHelper.run("sysctl", {
-      "name"         => bogus_name,
-      "value"        => "1",
-      "sysctl_file"  => conf,
-      "sysctl_set"   => "true",
-      "reload"       => "false",
+      "name"        => bogus_name,
+      "value"       => "1",
+      "sysctl_file" => conf,
+      "sysctl_set"  => "true",
+      "reload"      => "false",
     })
 
     result["failed"].as_bool.should be_true

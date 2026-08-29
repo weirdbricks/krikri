@@ -397,30 +397,30 @@ end
 # banner/warnings would be noise in the middle of it.
 quiet_listing_mode = syntax_check_only || list_tasks_only || list_hosts_only || list_tags_only
 unless quiet_listing_mode
-puts ""
-puts CrystalPlay.banner.colorize(:cyan).bold
-puts "=" * 70
-puts "Playbook: #{playbook_file}".colorize(:white)
-if check_mode
-  puts "Mode: CHECK (dry-run)".colorize(:yellow).bold
-end
-if diff_mode
-  puts "Diff: ENABLED".colorize(:green)
-end
-unless batching_enabled
-  puts "Batching: DISABLED".colorize(:yellow)
-end
-if tags.any?
-  puts "Tags: #{tags.join(", ")}".colorize(:cyan)
-end
-if skip_tags.any?
-  puts "Skip tags: #{skip_tags.join(", ")}".colorize(:cyan)
-end
-if start_at = start_at_task
-  puts "Start at task: #{start_at}".colorize(:cyan)
-end
-puts "=" * 70
-puts ""
+  puts ""
+  puts CrystalPlay.banner.colorize(:cyan).bold
+  puts "=" * 70
+  puts "Playbook: #{playbook_file}".colorize(:white)
+  if check_mode
+    puts "Mode: CHECK (dry-run)".colorize(:yellow).bold
+  end
+  if diff_mode
+    puts "Diff: ENABLED".colorize(:green)
+  end
+  unless batching_enabled
+    puts "Batching: DISABLED".colorize(:yellow)
+  end
+  if tags.any?
+    puts "Tags: #{tags.join(", ")}".colorize(:cyan)
+  end
+  if skip_tags.any?
+    puts "Skip tags: #{skip_tags.join(", ")}".colorize(:cyan)
+  end
+  if start_at = start_at_task
+    puts "Start at task: #{start_at}".colorize(:cyan)
+  end
+  puts "=" * 70
+  puts ""
 end
 
 # Parse playbook
@@ -802,76 +802,76 @@ playbook.plays.each_with_index do |play, play_index|
   # With no serial: this is a single batch of every host, exactly as
   # before.
   CrystalPlay::SerialBatches.split(CrystalPlay::SerialBatches.order(hosts, play.order), play.serial).each do |batch_hosts|
-  # Create task executor with handlers and play vars
-  executor = CrystalPlay::TaskExecutor.new(
-    hosts: batch_hosts,
-    tasks: tasks_to_run,
-    handlers: play.handlers,
-    check_mode: check_mode,
-    diff_mode: diff_mode,
-    play_vars: play.vars,
-    all_role_defaults: play.all_role_defaults,
-    all_role_vars: play.all_role_vars,
-    # --gathering explicit gathers only for plays that actually wrote
-    # `gather_facts: true`; an unset gather_facts (which defaults to true
-    # under implicit/smart) means "don't" here.
-    gather_facts: gathering == "explicit" ? (play.gather_facts_set && play.gather_facts) : play.gather_facts,
-    inventory: inventory,
-    inventory_path: inventory_file,
-    batching_enabled: batching_enabled,
-    forks: forks,
-    smart_gathering: gathering == "smart",
-    fact_store: run_fact_store,
-    extra_vars: extra_vars,
-    force_handlers: force_handlers || play.force_handlers,
-    vars_files: play.vars_files,
-    vars_files_dir: File.dirname(File.expand_path(playbook_file)),
-    playbook_dir: File.dirname(File.expand_path(playbook_file)),
-    any_errors_fatal: play.any_errors_fatal,
-    max_fail_percentage: play.max_fail_percentage,
-    unreachable_hosts: unreachable_hosts,
-    strategy: play.strategy,
-    gather_subset: play.gather_subset,
-    remote_user: play.remote_user,
-    debugger: play.debugger
-  )
+    # Create task executor with handlers and play vars
+    executor = CrystalPlay::TaskExecutor.new(
+      hosts: batch_hosts,
+      tasks: tasks_to_run,
+      handlers: play.handlers,
+      check_mode: check_mode,
+      diff_mode: diff_mode,
+      play_vars: play.vars,
+      all_role_defaults: play.all_role_defaults,
+      all_role_vars: play.all_role_vars,
+      # --gathering explicit gathers only for plays that actually wrote
+      # `gather_facts: true`; an unset gather_facts (which defaults to true
+      # under implicit/smart) means "don't" here.
+      gather_facts: gathering == "explicit" ? (play.gather_facts_set && play.gather_facts) : play.gather_facts,
+      inventory: inventory,
+      inventory_path: inventory_file,
+      batching_enabled: batching_enabled,
+      forks: forks,
+      smart_gathering: gathering == "smart",
+      fact_store: run_fact_store,
+      extra_vars: extra_vars,
+      force_handlers: force_handlers || play.force_handlers,
+      vars_files: play.vars_files,
+      vars_files_dir: File.dirname(File.expand_path(playbook_file)),
+      playbook_dir: File.dirname(File.expand_path(playbook_file)),
+      any_errors_fatal: play.any_errors_fatal,
+      max_fail_percentage: play.max_fail_percentage,
+      unreachable_hosts: unreachable_hosts,
+      strategy: play.strategy,
+      gather_subset: play.gather_subset,
+      remote_user: play.remote_user,
+      debugger: play.debugger
+    )
 
-  # Run tasks
-  begin
-    CrystalPlay::TimingProfile.measure("execute", "execute") { executor.run }
-  rescue ex : CrystalPlay::HandlerNotFoundError
-    # Real Ansible aborts the whole run at the notifying task, prints
-    # this one line, and exits 1 with NO play recap (verified against
-    # ansible-core 2.19.4) - see HandlerNotFoundError's own comment.
-    puts "[ERROR]: #{ex.message}".colorize(:red)
-    exit 1
-  end
-  unavailable_modules_found.concat(executor.reachable_unavailable_modules)
-
-  # Carry any host that hard-failed in this play forward - excluded from
-  # every remaining play too, not just the rest of this one. halted_hosts
-  # also includes clean meta: end_host/end_play stops (ended_hosts) and
-  # failures since cleared via meta: clear_host_errors
-  # (cleared_error_hosts) - neither is a real failure, so both are
-  # excluded here: real Ansible's own documented behavior for
-  # clear_host_errors is explicitly "available for targeting in
-  # subsequent plays", and end_host/end_play's own docs are explicit
-  # that they don't fail the host either.
-  permanently_failed_hosts.concat(executor.halted_hosts - executor.ended_hosts - executor.cleared_error_hosts)
-
-  # Merge this play's per-host stats into the running total (a host can
-  # appear in more than one play).
-  executor.results.each do |host_name, host_stats|
-    if existing = combined_results[host_name]?
-      host_stats.each { |key, value| existing[key] = (existing[key]? || 0) + value }
-    else
-      combined_results[host_name] = host_stats.dup
+    # Run tasks
+    begin
+      CrystalPlay::TimingProfile.measure("execute", "execute") { executor.run }
+    rescue ex : CrystalPlay::HandlerNotFoundError
+      # Real Ansible aborts the whole run at the notifying task, prints
+      # this one line, and exits 1 with NO play recap (verified against
+      # ansible-core 2.19.4) - see HandlerNotFoundError's own comment.
+      puts "[ERROR]: #{ex.message}".colorize(:red)
+      exit 1
     end
-  end
+    unavailable_modules_found.concat(executor.reachable_unavailable_modules)
 
-  # any_errors_fatal:/max_fail_percentage: stop the whole play, so the
-  # remaining serial: batches must not start either.
-  break if executor.play_aborted
+    # Carry any host that hard-failed in this play forward - excluded from
+    # every remaining play too, not just the rest of this one. halted_hosts
+    # also includes clean meta: end_host/end_play stops (ended_hosts) and
+    # failures since cleared via meta: clear_host_errors
+    # (cleared_error_hosts) - neither is a real failure, so both are
+    # excluded here: real Ansible's own documented behavior for
+    # clear_host_errors is explicitly "available for targeting in
+    # subsequent plays", and end_host/end_play's own docs are explicit
+    # that they don't fail the host either.
+    permanently_failed_hosts.concat(executor.halted_hosts - executor.ended_hosts - executor.cleared_error_hosts)
+
+    # Merge this play's per-host stats into the running total (a host can
+    # appear in more than one play).
+    executor.results.each do |host_name, host_stats|
+      if existing = combined_results[host_name]?
+        host_stats.each { |key, value| existing[key] = (existing[key]? || 0) + value }
+      else
+        combined_results[host_name] = host_stats.dup
+      end
+    end
+
+    # any_errors_fatal:/max_fail_percentage: stop the whole play, so the
+    # remaining serial: batches must not start either.
+    break if executor.play_aborted
   end
 end
 

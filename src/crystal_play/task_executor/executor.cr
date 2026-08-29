@@ -3654,7 +3654,6 @@ module CrystalPlay
 
       begin
         substituted_params = substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"))
-
       rescue ex
         # Same "finalization of task args failed" handling as
         # execute_task_once's own identical rescue (see there) - this
@@ -3777,7 +3776,6 @@ module CrystalPlay
 
       begin
         substituted_params = substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"))
-
       rescue ex
         # A raised exception during param substitution (e.g. lookup('url',
         # ...) hitting a real HTTP error - see ExpressionEvaluator#

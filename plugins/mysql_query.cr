@@ -54,8 +54,8 @@ module CrystalPlay
   # Not implemented: positional_args:/named_args: (parameterized
   # queries) - no real caller in this codebase uses them yet.
   class MysqlQueryPlugin < BasePlugin
-    READ_PREFIXES  = {"SELECT", "SHOW", "DESC", "DESCRIBE", "EXPLAIN"}
-    DML_KEYWORDS   = {"INSERT", "UPDATE", "DELETE", "REPLACE"}
+    READ_PREFIXES = {"SELECT", "SHOW", "DESC", "DESCRIBE", "EXPLAIN"}
+    DML_KEYWORDS  = {"INSERT", "UPDATE", "DELETE", "REPLACE"}
 
     def execute : PluginResult
       raw_query = @params["query"]?

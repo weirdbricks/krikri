@@ -20,8 +20,8 @@ require "../spec_helper"
 # `~/scratch/round188_10roles/results/REVERIFY_RESULTS.md` and
 # [[round188-delegate-to-localhost-ssh-reupload]] for the live trace.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY        = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
-private INVENTORY     = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_playbook(pb : String) : {Process::Status, String}
   playbook = File.tempname("delegate-to-localhost-188", ".yml")

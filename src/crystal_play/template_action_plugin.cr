@@ -11,7 +11,7 @@ module CrystalPlay
   # Template Action Plugin
   # Runs on CONTROLLER to read and render Jinja2 templates
   # Then sends rendered content to remote host
-  
+
   class TemplateActionPlugin < ActionPlugin
     @render_error : String? = nil
 
@@ -21,40 +21,40 @@ module CrystalPlay
       unless src
         return ActionResult.failure("Missing required parameter: src")
       end
-      
+
       # Check if template file exists on CONTROLLER
       unless File.exists?(src)
         return ActionResult.failure("Template file not found on controller: #{src}")
       end
-      
+
       # Read template content
       begin
         template_content = File.read(src)
       rescue ex
         return ActionResult.failure("Failed to read template file: #{ex.message}")
       end
-      
+
       # Render template on CONTROLLER
       rendered_content = render_template(template_content, src)
       unless rendered_content
         detail = @render_error ? ": #{@render_error}" : ""
         return ActionResult.failure("Failed to render template#{detail}")
       end
-      
+
       # Calculate MD5 of rendered content
       content_md5 = Digest::MD5.hexdigest(rendered_content)
-      
+
       # Modify params to send rendered CONTENT to remote instead of template path
       # The remote plugin will receive the rendered content, not the template
       modified_params = @params.dup
-      modified_params.delete("src")  # Remove src parameter
-      modified_params["content"] = rendered_content  # Add rendered content
-      modified_params["_rendered_from_template"] = src  # Track for debugging
-      modified_params["_content_checksum"] = content_md5  # For idempotency
-      
+      modified_params.delete("src")                      # Remove src parameter
+      modified_params["content"] = rendered_content      # Add rendered content
+      modified_params["_rendered_from_template"] = src   # Track for debugging
+      modified_params["_content_checksum"] = content_md5 # For idempotency
+
       ActionResult.success(modified_params, changed: false)
     end
-    
+
     # Render Jinja2 template with variables
     private def render_template(template_content : String, template_path : String) : String?
       begin
@@ -148,25 +148,25 @@ module CrystalPlay
         # produce worse output than ignoring the request - always render with
         # it off regardless of what was requested.
         env.config.lstrip_blocks = false
-        
+
         # Prepare template variables
         template_vars = prepare_template_vars
-        
+
         # Add Ansible-specific variables
         template_vars["ansible_managed"] = Crinja::Value.new("Ansible managed")
         template_vars["template_host"] = Crinja::Value.new(@host.name)
         template_vars["template_path"] = Crinja::Value.new(template_path)
         template_vars["template_fullpath"] = Crinja::Value.new(File.expand_path(template_path))
         template_vars["template_run_date"] = Crinja::Value.new(Time.utc.to_s("%Y-%m-%d %H:%M:%S UTC"))
-        
+
         # Render template
         template = env.from_string(template_content)
         rendered = template.render(template_vars)
-        
+
         # Ensure rendered content ends with newline (matches Ansible behavior and file conventions)
         # This prevents idempotency issues with heredoc writes that add trailing newlines
         rendered += "\n" unless rendered.ends_with?("\n")
-        
+
         return rendered
       rescue ex
         @render_error = ex.message
@@ -291,7 +291,7 @@ module CrystalPlay
     # here, so both problem pieces are simply stripped rather than
     # implemented from scratch.
     FOR_TUPLE_PARENS = /(\{%-?\s*for\s+)\(([^)]+)\)(\s+in\s+)/
-    FOR_ITEMS_METHOD  = /(\{%-?\s*for\s+.+?\s+in\s+[A-Za-z_][\w.]*)\.items\(\)/
+    FOR_ITEMS_METHOD = /(\{%-?\s*for\s+.+?\s+in\s+[A-Za-z_][\w.]*)\.items\(\)/
 
     # Parses a leading `#jinja2: key:value, key2:value2` directive line
     # (only recognized on the template's literal first line, matching
@@ -457,32 +457,32 @@ module CrystalPlay
       return expr if index_of_token(container, " and ") >= 0 || index_of_token(container, " or ") >= 0
 
       list_literal = if container.starts_with?('[')
-                        container
-                      elsif container.starts_with?('(')
-                        inner = strip_wrapping_parens(container)
-                        return expr if inner == container # not a single clean (...) wrap
-                        "[#{inner}]"
-                      elsif container =~ /\A[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*|\[[^\]]+\])*\z/
-                        # A bare variable/dotted/indexed reference
-                        # (`ansible_facts.processor`, not a `[...]`
-                        # literal or `(...)` tuple) - real Ansible roles
-                        # check membership against a variable-bound list
-                        # far more often than an inline literal one.
-                        # Crinja's own `is in(seq)` test takes `seq:
-                        # Array(Crinja::Value)`, evaluated as a normal
-                        # expression - a bare variable reference needs no
-                        # bracket-wrapping at all, unlike the tuple-
-                        # literal case above. Found via dev-sec.os-
-                        # hardening's own `('amd' in ansible_facts.
-                        # processor) | pytruthy` - previously fell
-                        # through to `return expr` unrewritten (neither
-                        # `[`- nor `(`-prefixed), leaving Crinja's own
-                        # unsupported infix `in` operator untouched and
-                        # failing the whole template render outright.
-                        container
-                      else
-                        return expr
-                      end
+                       container
+                     elsif container.starts_with?('(')
+                       inner = strip_wrapping_parens(container)
+                       return expr if inner == container # not a single clean (...) wrap
+                       "[#{inner}]"
+                     elsif container =~ /\A[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*|\[[^\]]+\])*\z/
+                       # A bare variable/dotted/indexed reference
+                       # (`ansible_facts.processor`, not a `[...]`
+                       # literal or `(...)` tuple) - real Ansible roles
+                       # check membership against a variable-bound list
+                       # far more often than an inline literal one.
+                       # Crinja's own `is in(seq)` test takes `seq:
+                       # Array(Crinja::Value)`, evaluated as a normal
+                       # expression - a bare variable reference needs no
+                       # bracket-wrapping at all, unlike the tuple-
+                       # literal case above. Found via dev-sec.os-
+                       # hardening's own `('amd' in ansible_facts.
+                       # processor) | pytruthy` - previously fell
+                       # through to `return expr` unrewritten (neither
+                       # `[`- nor `(`-prefixed), leaving Crinja's own
+                       # unsupported infix `in` operator untouched and
+                       # failing the whole template render outright.
+                       container
+                     else
+                       return expr
+                     end
       "#{left} is #{negated ? "not " : ""}in(#{list_literal})"
     end
 
@@ -596,7 +596,6 @@ module CrystalPlay
       -1
     end
 
-
     # Prepare variables for template rendering
     #
     # A String value that itself contains "{{" is re-templated first -
@@ -630,7 +629,7 @@ module CrystalPlay
         value = VariableSubstitutor::CrinjaRenderer.rerender_nested_templates(value, substitutor)
         vars[key] = VariableSubstitutor::CrinjaRenderer.json_any_to_crinja_value(value)
       end
-      
+
       # Add host information
       vars["inventory_hostname"] = Crinja::Value.new(@host.name)
       vars["ansible_hostname"] = Crinja::Value.new(@host.name)
@@ -646,8 +645,7 @@ module CrystalPlay
 
       vars
     end
-    
-    
+
     # Helper: Check if parameter is truthy
     private def is_true?(value : String?, default : Bool = false) : Bool
       return default unless value

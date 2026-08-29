@@ -5,8 +5,8 @@ require "../spec_helper"
 # TaskExecutor#resolve_loop_flattened, a private method not reachable
 # from a unit spec without constructing a whole TaskExecutor.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY        = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
-private INVENTORY     = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_playbook(yaml : String) : {Process::Status, String}
   playbook = File.tempname("with-flattened-spec", ".yml")

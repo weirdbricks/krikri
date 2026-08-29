@@ -2,8 +2,8 @@ require "../spec_helper"
 require "../../src/crystal_play/plugin_helpers/stat_fields"
 
 private REGULAR_FILE = LibC::S_IFREG
-private DIRECTORY     = LibC::S_IFDIR
-private SYMLINK       = LibC::S_IFLNK
+private DIRECTORY    = LibC::S_IFDIR
+private SYMLINK      = LibC::S_IFLNK
 
 describe CrystalPlay::PluginHelpers::StatFields do
   describe ".build" do

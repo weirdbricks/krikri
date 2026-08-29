@@ -640,7 +640,7 @@ module CrystalPlay
         # checksum verification failed this way.
         resolved = (resolve_simple(index_expr) || resolve_nested(index_expr)).try { |value| rerender_if_templated(value) }
         case raw = resolved.try(&.raw)
-        when String      then raw
+        when String       then raw
         when Int64, Int32 then raw.to_i
         else                   index_expr
         end
@@ -735,9 +735,9 @@ module CrystalPlay
         if value.includes?('\'') && !value.includes?('"')
           "\"" + escaped + "\""
         elsif value.includes?('\'')
-          "\'" + escaped.gsub("\'", "\\\'") + "\'"
+          "'" + escaped.gsub("'", "\\'") + "'"
         else
-          "\'" + escaped + "\'"
+          "'" + escaped + "'"
         end
       end
 

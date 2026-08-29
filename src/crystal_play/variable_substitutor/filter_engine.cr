@@ -677,14 +677,14 @@ module CrystalPlay
           # outright regardless of the actual (correct) variable type.
           # Found via robertdebock.httpd's own assert.yml (round 19).
           type_name = case value.raw
-                      when Array  then "list"
-                      when Hash   then "dict"
-                      when String then "str"
-                      when Int64  then "int"
+                      when Array   then "list"
+                      when Hash    then "dict"
+                      when String  then "str"
+                      when Int64   then "int"
                       when Float64 then "float"
-                      when Bool   then "bool"
-                      when Nil    then "NoneType"
-                      else "str"
+                      when Bool    then "bool"
+                      when Nil     then "NoneType"
+                      else              "str"
                       end
           JSON::Any.new(type_name)
         when "to_json"
@@ -1093,8 +1093,8 @@ module CrystalPlay
         end
       end
 
-      DATETIME_TAG    = "__crystal_datetime__"
-      TIMEDELTA_TAG   = "__crystal_timedelta__"
+      DATETIME_TAG  = "__crystal_datetime__"
+      TIMEDELTA_TAG = "__crystal_timedelta__"
 
       private def parse_to_datetime(value : JSON::Any, format : String) : JSON::Any
         time = Time.parse(as_string(value), format, Time::Location::UTC) rescue nil
@@ -1911,7 +1911,7 @@ module CrystalPlay
         end
       end
 
-      HUMAN_READABLE_SUFFIXES = {"Bytes", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"}
+      HUMAN_READABLE_SUFFIXES     = {"Bytes", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"}
       HUMAN_READABLE_BIT_SUFFIXES = {"bits", "Kb", "Mb", "Gb", "Tb", "Pb", "Eb", "Zb", "Yb"}
 
       # Mirrors real Ansible's own bytes_to_human/human_to_bytes
@@ -1942,12 +1942,12 @@ module CrystalPlay
         unit = match[2].downcase
         multiplier = case unit
                      when "", "b", "bytes" then 1_i64
-                     when "kb"              then 1024_i64
-                     when "mb"              then 1024_i64 ** 2
-                     when "gb"              then 1024_i64 ** 3
-                     when "tb"              then 1024_i64 ** 4
-                     when "pb"              then 1024_i64 ** 5
-                     else                        1_i64
+                     when "kb"             then 1024_i64
+                     when "mb"             then 1024_i64 ** 2
+                     when "gb"             then 1024_i64 ** 3
+                     when "tb"             then 1024_i64 ** 4
+                     when "pb"             then 1024_i64 ** 5
+                     else                       1_i64
                      end
         (number * multiplier).to_i64
       end

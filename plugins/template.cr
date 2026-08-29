@@ -6,11 +6,11 @@ require "../src/crystal_play/base_plugin"
 
 module CrystalPlay
   # Template plugin - writes pre-rendered template content to files
-  # 
+  #
   # This plugin ONLY works with action plugins.
   # The template_action_plugin reads and renders the template on the controller,
   # then sends the rendered content to this plugin to write to the remote.
-  # 
+  #
   # Parameters:
   #   content (required): Pre-rendered template content from action plugin
   #   dest (required): Destination path on remote host
@@ -25,13 +25,13 @@ module CrystalPlay
   class TemplatePlugin < BasePlugin
     property check_mode : Bool
     property diff_mode : Bool
-    
+
     def initialize(config : JSON::Any)
       super(config)
       @check_mode = is_true?(@params["check_mode"]?)
       @diff_mode = is_true?(@params["diff_mode"]?)
     end
-    
+
     def execute : PluginResult
       # Get destination (required)
       dest = @params["dest"]?
@@ -53,10 +53,10 @@ module CrystalPlay
           msg: "Missing required parameter: content. This plugin requires the template_action_plugin to render the template on the controller first."
         )
       end
-      
+
       # Calculate MD5 of content
       content_md5 = Digest::MD5.hexdigest(content)
-      
+
       # Get existing content for diff
       existing_content = ""
       if File.exists?(dest)
@@ -66,7 +66,7 @@ module CrystalPlay
           # File exists but can't read - continue anyway
         end
       end
-      
+
       # Check if content is identical (idempotency)
       changed = true
       if File.exists?(dest)
@@ -76,7 +76,7 @@ module CrystalPlay
           changed = false
         end
       end
-      
+
       # Generate diff if in diff mode and content changed
       diff_data = nil
       if @diff_mode && changed
@@ -88,7 +88,7 @@ module CrystalPlay
           src_name
         )
       end
-      
+
       # CHECK MODE: Report what would change
       if @check_mode
         if changed
@@ -107,7 +107,7 @@ module CrystalPlay
           )
         end
       end
-      
+
       # If content is identical, just update attributes if requested
       unless changed
         apply_file_attributes(dest)
@@ -119,13 +119,13 @@ module CrystalPlay
           checksum: content_md5
         )
       end
-      
+
       # Content will change - create backup if requested
       backup_file = ""
       if is_true?(@params["backup"]?) && File.exists?(dest)
         backup_file = create_backup(dest)
       end
-      
+
       # Ensure destination directory exists
       dest_dir = File.dirname(dest)
       unless Dir.exists?(dest_dir)
@@ -139,7 +139,7 @@ module CrystalPlay
           )
         end
       end
-      
+
       # Write to temporary file first (for atomic write + validation).
       # Staged in *dest_dir* itself, not a global /tmp path: `File.rename`
       # is only atomic (and only works at all) within a single
@@ -151,7 +151,7 @@ module CrystalPlay
       # konstruktoid-hardening's "Configure sshd using sshd_config.d" task
       # (writing to /usr/lib/tmpfiles.d/ssh.conf).
       temp_file = File.join(dest_dir, ".crystal-play-template-#{Random::Secure.hex(8)}.tmp")
-      
+
       begin
         # Write content using native Crystal File.write
         File.write(temp_file, content)
@@ -162,7 +162,7 @@ module CrystalPlay
           msg: "Failed to write temporary file: #{ex.message}"
         )
       end
-      
+
       # Validate if requested
       if validate_cmd = @params["validate"]?
         validation = validate_file(temp_file, validate_cmd)
@@ -193,7 +193,7 @@ module CrystalPlay
           )
         end
       end
-      
+
       # Move temp file to destination (atomic operation)
       begin
         File.rename(temp_file, dest)
@@ -205,10 +205,10 @@ module CrystalPlay
           msg: "Failed to move file to destination: #{ex.message}"
         )
       end
-      
+
       # Set ownership and permissions
       apply_file_attributes(dest)
-      
+
       PluginResult.new(
         changed: true,
         failed: false,
@@ -219,12 +219,12 @@ module CrystalPlay
         backup_file: backup_file.empty? ? nil : backup_file
       )
     end
-    
+
     # Create backup of existing file
     private def create_backup(path : String) : String
       timestamp = Time.utc.to_s("%Y-%m-%d@%H:%M:%S")
       backup_path = "#{path}.#{Random.rand(10000..99999)}.#{timestamp}~"
-      
+
       begin
         File.copy(path, backup_path)
         backup_path
@@ -233,7 +233,7 @@ module CrystalPlay
         ""
       end
     end
-    
+
     # Reads a few lines of context out of *path* around whatever line
     # number *validator_output* cites (`"...: line 34: ..."`, the shape
     # `sshd -T`/most other line-oriented config validators use). Returns
@@ -278,7 +278,7 @@ module CrystalPlay
 
       {ok: result.exit_code == 0, output: output.to_s.strip}
     end
-    
+
     # Apply file attributes (owner, group, mode)
     private def apply_file_attributes(path : String)
       # Set mode (permissions) using native Crystal
@@ -302,18 +302,18 @@ module CrystalPlay
           # Mode setting failed, continue anyway
         end
       end
-      
+
       # Owner and group would require chown/chgrp system calls
       # For now, use shell commands for these (they need root anyway)
       if owner = @params["owner"]?
         Process.run("chown", [owner, path], output: Process::Redirect::Close, error: Process::Redirect::Close)
       end
-      
+
       if group = @params["group"]?
         Process.run("chgrp", [group, path], output: Process::Redirect::Close, error: Process::Redirect::Close)
       end
     end
-    
+
     # Helper: Check if parameter is truthy
     private def is_true?(value : String?, default : Bool = false) : Bool
       return default unless value

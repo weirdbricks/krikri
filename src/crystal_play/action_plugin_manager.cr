@@ -16,7 +16,7 @@ module CrystalPlay
     # Map of module names to their action plugin classes
     ACTION_PLUGINS = {
       "ansible.builtin.template" => TemplateActionPlugin,
-      "template" => TemplateActionPlugin,
+      "template"                 => TemplateActionPlugin,
       # These 5 return an ActionResult.final (see base_action_plugin.cr)
       # instead of modified_params - the caller never invokes a module
       # (local or remote) afterward at all. Real ansible-core's own
@@ -25,18 +25,18 @@ module CrystalPlay
       # gap while also removing an SSH round trip + upload per task for
       # remote hosts. See each action_plugins/*_action_plugin.cr for the
       # per-module rationale.
-      "ansible.builtin.debug" => DebugActionPlugin,
-      "debug" => DebugActionPlugin,
-      "ansible.builtin.assert" => AssertActionPlugin,
-      "assert" => AssertActionPlugin,
-      "ansible.builtin.fail" => FailActionPlugin,
-      "fail" => FailActionPlugin,
+      "ansible.builtin.debug"    => DebugActionPlugin,
+      "debug"                    => DebugActionPlugin,
+      "ansible.builtin.assert"   => AssertActionPlugin,
+      "assert"                   => AssertActionPlugin,
+      "ansible.builtin.fail"     => FailActionPlugin,
+      "fail"                     => FailActionPlugin,
       "ansible.builtin.set_fact" => SetFactActionPlugin,
-      "set_fact" => SetFactActionPlugin,
-      "ansible.builtin.pause" => PauseActionPlugin,
-      "pause" => PauseActionPlugin,
+      "set_fact"                 => SetFactActionPlugin,
+      "ansible.builtin.pause"    => PauseActionPlugin,
+      "pause"                    => PauseActionPlugin,
     }
-    
+
     # Check if a module has an action plugin
     def self.has_action_plugin?(module_name : String) : Bool
       ACTION_PLUGINS.has_key?(module_name)
@@ -63,31 +63,30 @@ module CrystalPlay
     def self.skips_module_dispatch?(module_name : String) : Bool
       CONTROLLER_ONLY_MODULES.includes?(module_name)
     end
-    
+
     # Execute action plugin on controller
     # Returns ActionResult with modified params or error
     def self.execute_action(
       module_name : String,
       params : Hash(String, String),
       vars : Hash(String, JSON::Any),
-      host : Host
+      host : Host,
     ) : ActionResult
-      
       # Get action plugin class
       plugin_class = ACTION_PLUGINS[module_name]?
       unless plugin_class
         # No action plugin for this module - pass through
         return ActionResult.pass_through
       end
-      
+
       # Create and execute action plugin
       action_plugin = plugin_class.new(params, vars, host)
-      
+
       # Check if should run
       unless action_plugin.should_run?
         return ActionResult.pass_through
       end
-      
+
       # Execute action on controller
       action_plugin.execute
     end

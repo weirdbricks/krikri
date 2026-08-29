@@ -24,10 +24,10 @@ module CrystalPlay
 
           # Look up the variable (handle nested access like result.stdout_lines)
           var_value = if var_name.includes?(".")
-            lookup_nested_variable(var_name)
-          else
-            @vars[var_name]?
-          end
+                        lookup_nested_variable(var_name)
+                      else
+                        @vars[var_name]?
+                      end
 
           if var_value.nil?
             return "undefined"
@@ -43,10 +43,10 @@ module CrystalPlay
 
           # Parse start index (empty means 0)
           start_idx = if start_str.empty?
-            0
-          else
-            start_str.to_i? || 0
-          end
+                        0
+                      else
+                        start_str.to_i? || 0
+                      end
 
           # Handle negative indices
           start_idx = array_size + start_idx if start_idx < 0
@@ -54,10 +54,10 @@ module CrystalPlay
 
           # Parse end index (empty means array.size)
           end_idx = if end_str.empty?
-            array_size
-          else
-            end_str.to_i? || array_size
-          end
+                      array_size
+                    else
+                      end_str.to_i? || array_size
+                    end
 
           # Handle negative indices
           end_idx = array_size + end_idx if end_idx < 0

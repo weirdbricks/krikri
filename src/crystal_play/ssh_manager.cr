@@ -38,16 +38,16 @@ module CrystalPlay
 
     # Control socket directory
     @@control_path_dir = "/tmp/.crystal-play-ssh"
-    
+
     # Connection pool statistics
     @@stats = {
       "connections_created" => 0,
-      "connections_reused" => 0,
-      "commands_executed" => 0,
-      "files_uploaded" => 0,
-      "files_downloaded" => 0
+      "connections_reused"  => 0,
+      "commands_executed"   => 0,
+      "files_uploaded"      => 0,
+      "files_downloaded"    => 0,
     }
-    
+
     # Initialize - ensure control directory exists.
     # Called from exec/exec_script/upload/download/rsync_upload/
     # rsync_upload_batch, i.e. once per SSH operation, for a directory
@@ -60,12 +60,12 @@ module CrystalPlay
       Dir.mkdir_p(@@control_path_dir) unless Dir.exists?(@@control_path_dir)
       @@control_dir_ready = true
     end
-    
+
     # Get connection pool statistics
     def self.stats : Hash(String, Int32)
       @@stats
     end
-    
+
     # Runs *block* (given the just-spawned *process*) on a separate fiber
     # and bounds it to *timeout_seconds* wall-clock time - both `exec`
     # and `exec_script` accepted a `timeout:` parameter that was never
@@ -130,7 +130,7 @@ module CrystalPlay
         @@stats[key] = 0
       end
     end
-    
+
     # Execute command on remote host
     def self.exec(
       host : String,
@@ -138,9 +138,8 @@ module CrystalPlay
       command : String,
       port : Int32 = 22,
       timeout : Int32 = DEFAULT_EXEC_TIMEOUT_SECONDS,
-      identity_file : String? = nil
+      identity_file : String? = nil,
     ) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
-
       init
       @@stats["commands_executed"] += 1
 
@@ -157,7 +156,7 @@ module CrystalPlay
         "ssh",
         "-o", "ControlMaster=auto",
         "-o", "ControlPath=#{control_path}",
-        "-o", "ControlPersist=600",  # Keep connection alive for 10 minutes
+        "-o", "ControlPersist=600", # Keep connection alive for 10 minutes
         "-o", "ConnectTimeout=#{CliOptions.timeout}",
         "-o", "ServerAliveInterval=60",
         "-o", "ServerAliveCountMax=3",
@@ -165,9 +164,9 @@ module CrystalPlay
       ] + identity_args(identity_file) + [
         "-p", port.to_s,
         "#{user}@#{host}",
-        wrapped_command
+        wrapped_command,
       ]
-      
+
       stdout = IO::Memory.new
       stderr = IO::Memory.new
 
@@ -186,15 +185,15 @@ module CrystalPlay
             status = proc.wait
             {
               exit_code: status.exit_code,
-              stdout: stdout.to_s,
-              stderr: stderr.to_s,
+              stdout:    stdout.to_s,
+              stderr:    stderr.to_s,
             }
           end
         rescue ex
           {
             exit_code: 255,
-            stdout: "",
-            stderr: "SSH execution failed: #{ex.message}",
+            stdout:    "",
+            stderr:    "SSH execution failed: #{ex.message}",
           }
         end
       end
@@ -216,7 +215,7 @@ module CrystalPlay
       script : String,
       port : Int32 = 22,
       timeout : Int32 = DEFAULT_EXEC_TIMEOUT_SECONDS,
-      identity_file : String? = nil
+      identity_file : String? = nil,
     ) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       init
       @@stats["commands_executed"] += 1
@@ -260,20 +259,20 @@ module CrystalPlay
             status = proc.wait
             {
               exit_code: status.exit_code,
-              stdout: stdout.to_s,
-              stderr: stderr.to_s,
+              stdout:    stdout.to_s,
+              stderr:    stderr.to_s,
             }
           end
         rescue ex
           {
             exit_code: 255,
-            stdout: "",
-            stderr: "SSH script execution failed: #{ex.message}",
+            stdout:    "",
+            stderr:    "SSH script execution failed: #{ex.message}",
           }
         end
       end
     end
-    
+
     # OPUS_PERFORMANCE_IMPROVEMENTS.md items 1-3 (formerly
     # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15, a doc since
     # deleted) - the persistent
@@ -360,7 +359,7 @@ module CrystalPlay
       config : JSON::Any,
       identity_file : String? = nil,
       timeout : Int32 = DEFAULT_EXEC_TIMEOUT_SECONDS,
-      become_user : String? = nil
+      become_user : String? = nil,
     ) : JSON::Any
       init
       key = {host, user, port, become_user}
@@ -407,7 +406,7 @@ module CrystalPlay
       steps : Array(NamedTuple(module_name: String, config: JSON::Any, ignore_errors: Bool)),
       identity_file : String? = nil,
       timeout : Int32 = DEFAULT_EXEC_TIMEOUT_SECONDS,
-      become_user : String? = nil
+      become_user : String? = nil,
     ) : Hash(Int32, JSON::Any)
       init
       key = {host, user, port, become_user}
@@ -620,7 +619,7 @@ module CrystalPlay
       port : Int32 = 22,
       mode : Int32? = 0o644,
       identity_file : String? = nil,
-      recursive : Bool = false
+      recursive : Bool = false,
     )
       init
       @@stats["files_uploaded"] += 1
@@ -639,10 +638,10 @@ module CrystalPlay
         "-o", "ControlPersist=600",
         "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
       ] + (recursive ? ["-r"] : [] of String) + identity_args(identity_file) +
-              CliOptions.extra_scp_args + [
+                CliOptions.extra_scp_args + [
         "-P", port.to_s,
         local_path,
-        "#{user}@#{host}:#{remote_path}"
+        "#{user}@#{host}:#{remote_path}",
       ]
 
       out_io = IO::Memory.new
@@ -678,7 +677,7 @@ module CrystalPlay
       remote_path : String,
       local_path : String,
       port : Int32 = 22,
-      identity_file : String? = nil
+      identity_file : String? = nil,
     )
       init
       @@stats["files_downloaded"] += 1
@@ -695,7 +694,7 @@ module CrystalPlay
       ] + identity_args(identity_file) + CliOptions.extra_scp_args + [
         "-P", port.to_s,
         "#{user}@#{host}:#{remote_path}",
-        local_path
+        local_path,
       ]
 
       result = TimingProfile.measure("transport.scp_download", "transport") do
@@ -711,7 +710,7 @@ module CrystalPlay
         raise "Failed to download #{host}:#{remote_path} to #{local_path}"
       end
     end
-    
+
     # Whether the `rsync` binary is available locally. Resolved once per
     # process (a `which rsync` spawn per call was pure overhead - rsync
     # availability doesn't change mid-run).
@@ -737,7 +736,7 @@ module CrystalPlay
       remote_path : String,
       port : Int32 = 22,
       mode : Int32 = 0o644,
-      identity_file : String? = nil
+      identity_file : String? = nil,
     ) : Bool
       init
 
@@ -748,13 +747,13 @@ module CrystalPlay
       # Use rsync with SSH control master
       rsync_cmd = [
         "rsync",
-        "-az",  # archive mode, compress
-        "--chmod=#{mode.to_s(8)}",  # set permissions
+        "-az",                     # archive mode, compress
+        "--chmod=#{mode.to_s(8)}", # set permissions
         "-e", "ssh -o ControlMaster=auto -o ControlPath=#{control_path} -o ControlPersist=600 -o StrictHostKeyChecking=#{strict_host_key_checking}#{identity_ssh_opt(identity_file)} -p #{port}",
         local_path,
-        "#{user}@#{host}:#{remote_path}"
+        "#{user}@#{host}:#{remote_path}",
       ]
-      
+
       result = TimingProfile.measure("transport.rsync", "transport") do
         Process.run(
           rsync_cmd[0],
@@ -771,7 +770,7 @@ module CrystalPlay
         false
       end
     end
-    
+
     # Batch upload multiple files using rsync (most efficient)
     # Returns true if successful, false if rsync not available or failed
     def self.rsync_upload_batch(
@@ -781,7 +780,7 @@ module CrystalPlay
       remote_dir : String,
       port : Int32 = 22,
       mode : Int32 = 0o755,
-      identity_file : String? = nil
+      identity_file : String? = nil,
     ) : Bool
       init
 
@@ -816,11 +815,11 @@ module CrystalPlay
         false
       end
     end
-    
+
     # Close specific connection
     def self.close_connection(host : String, user : String, port : Int32 = 22)
       control_path = get_control_path(host, user, port)
-      
+
       # Send exit command to close the master connection
       if File.exists?(control_path)
         Process.run(
@@ -829,22 +828,22 @@ module CrystalPlay
           output: Process::Redirect::Close,
           error: Process::Redirect::Close
         )
-        
+
         # Clean up socket file
         File.delete(control_path) if File.exists?(control_path)
       end
     end
-    
+
     # Close all connections
     def self.close_all
       return unless Dir.exists?(@@control_path_dir)
-      
+
       # Remove all control sockets
       Dir.glob("#{@@control_path_dir}/*").each do |socket_path|
         File.delete(socket_path) if File.exists?(socket_path)
       end
     end
-    
+
     # Memoized per (host, user, port) - the gsub-over-a-regex result never
     # changes for the same triple, and every exec/upload/download/rsync
     # call on a host recomputes it.
@@ -859,7 +858,7 @@ module CrystalPlay
         @@control_path_cache[{host, user, port}] = "#{@@control_path_dir}/#{socket_name}"
       end
     end
-    
+
     # `-i <path>` args for ssh/scp when the inventory specifies
     # ansible_ssh_private_key_file - omitted entirely so ssh falls back to
     # its own default identities/agent, matching real Ansible/OpenSSH

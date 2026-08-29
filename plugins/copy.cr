@@ -11,13 +11,13 @@ module CrystalPlay
   class CopyPlugin < BasePlugin
     property check_mode : Bool
     property diff_mode : Bool
-    
+
     def initialize(config : JSON::Any)
       super(config)
       @check_mode = is_true?(@params["check_mode"]?)
       @diff_mode = is_true?(@params["diff_mode"]?)
     end
-    
+
     def execute : PluginResult
       # Get destination (required)
       dest = @params["dest"]?
@@ -33,7 +33,7 @@ module CrystalPlay
       # Check if using content or src
       content = @params["content"]?
       src = @params["src"]?
-      
+
       # Must have either src or content
       if !src && !content
         return PluginResult.new(
@@ -42,7 +42,7 @@ module CrystalPlay
           msg: "src or content parameter required"
         )
       end
-      
+
       # Can't have both src and content
       if src && content
         return PluginResult.new(
@@ -51,12 +51,12 @@ module CrystalPlay
           msg: "src and content are mutually exclusive"
         )
       end
-      
+
       # Handle content-based copy
       if content
         return handle_content_copy(content, dest)
       end
-      
+
       # Handle src-based copy
       if src
         result = handle_file_copy(src, dest)
@@ -81,7 +81,7 @@ module CrystalPlay
 
         return result
       end
-      
+
       # Should never reach here
       PluginResult.new(
         changed: false,
@@ -89,15 +89,15 @@ module CrystalPlay
         msg: "Unexpected error in copy module"
       )
     end
-    
+
     # Copy inline content to destination
     private def handle_content_copy(content : String, dest : String) : PluginResult
       # Calculate MD5 of content for idempotency check
       content_md5 = Digest::MD5.hexdigest(content)
-      
+
       # Get existing content for diff
       existing_content = ""
-      
+
       # Check if file exists and compare
       if File.exists?(dest)
         # force: false means "only create it if it is not there" - real
@@ -123,7 +123,7 @@ module CrystalPlay
         begin
           existing_content = File.read(dest)
           existing_md5 = Digest::MD5.hexdigest(existing_content)
-          
+
           if existing_md5 == content_md5
             # Content is identical - return early!
             return PluginResult.new(
@@ -138,10 +138,10 @@ module CrystalPlay
           # File read failed, continue with copy
         end
       end
-      
+
       # If we get here, file needs to be written
       changed = true
-      
+
       # Generate diff if in diff mode
       diff_data = nil
       if @diff_mode
@@ -152,7 +152,7 @@ module CrystalPlay
           "content"
         )
       end
-      
+
       # CHECK MODE: Report what would change
       if @check_mode
         return PluginResult.new(
@@ -162,18 +162,18 @@ module CrystalPlay
           diff: diff_data
         )
       end
-      
+
       # Handle backup if requested
       if is_true?(@params["backup"]?) && File.exists?(dest)
         backup_dest = create_backup(dest)
       end
-      
+
       # Ensure destination directory exists
       dest_dir = File.dirname(dest)
       unless Dir.exists?(dest_dir)
         begin
           Dir.mkdir_p(dest_dir)
-          
+
           # Set directory mode if specified
           if dir_mode = @params["directory_mode"]?
             File.chmod(dest_dir, dir_mode.to_i(8))
@@ -186,7 +186,7 @@ module CrystalPlay
           )
         end
       end
-      
+
       # Write the file using native Crystal
       begin
         File.write(dest, content)
@@ -197,10 +197,10 @@ module CrystalPlay
           msg: "Failed to write file: #{ex.message}"
         )
       end
-      
+
       # Set file permissions if requested
       apply_file_attributes(dest)
-      
+
       PluginResult.new(
         changed: changed,
         failed: false,
@@ -210,7 +210,7 @@ module CrystalPlay
         checksum: content_md5
       )
     end
-    
+
     # Copy file from src to dest
     private def handle_file_copy(src : String, dest : String) : PluginResult
       # __precomputed_match - set by TaskExecutor#precomputed_copy_match
@@ -279,7 +279,7 @@ module CrystalPlay
           msg: "Directory copy not yet implemented"
         )
       end
-      
+
       # Calculate source file MD5
       begin
         src_content = File.read(src)
@@ -291,11 +291,11 @@ module CrystalPlay
           msg: "Failed to read source file: #{ex.message}"
         )
       end
-      
+
       # Check if dest exists and compare
       changed = true
       force = is_true?(@params["force"]?, default: true)
-      
+
       if File.exists?(dest)
         unless force
           return PluginResult.new(
@@ -304,12 +304,12 @@ module CrystalPlay
             msg: "File already exists (use force=yes to overwrite)"
           )
         end
-        
+
         # Compare checksums for idempotency
         begin
           dest_content = File.read(dest)
           dest_md5 = Digest::MD5.hexdigest(dest_content)
-          
+
           if dest_md5 == src_md5
             # Files are identical
             changed = false
@@ -318,7 +318,7 @@ module CrystalPlay
           # Ignore, continue with copy
         end
       end
-      
+
       # CHECK MODE: Report what would change
       if @check_mode
         return PluginResult.new(
@@ -327,7 +327,7 @@ module CrystalPlay
           msg: changed ? "Would copy #{src} to #{dest} (check mode)" : "File already identical (check mode)"
         )
       end
-      
+
       # If file is identical, just update attributes if requested
       unless changed
         apply_file_attributes(dest)
@@ -339,12 +339,12 @@ module CrystalPlay
           checksum: src_md5
         )
       end
-      
+
       # Create backup if requested
       if is_true?(@params["backup"]?) && File.exists?(dest)
         backup_dest = create_backup(dest)
       end
-      
+
       # Ensure destination directory exists
       dest_dir = File.dirname(dest)
       unless Dir.exists?(dest_dir)
@@ -358,7 +358,7 @@ module CrystalPlay
           )
         end
       end
-      
+
       # Copy the file
       begin
         File.copy(src, dest)
@@ -369,10 +369,10 @@ module CrystalPlay
           msg: "Failed to copy file: #{ex.message}"
         )
       end
-      
+
       # Set ownership and permissions
       apply_file_attributes(dest)
-      
+
       PluginResult.new(
         changed: true,
         failed: false,
@@ -381,7 +381,7 @@ module CrystalPlay
         checksum: src_md5
       )
     end
-    
+
     # Directory src - real Ansible copy: "if src is a directory, it is
     # copied recursively", with a `src:` trailing "/" meaning "copy the
     # CONTENTS of src", no trailing "/" meaning "copy src itself as a
@@ -452,16 +452,16 @@ module CrystalPlay
     private def create_backup(path : String) : String
       timestamp = Time.utc.to_s("%Y-%m-%d@%H:%M:%S")
       backup_path = "#{path}.#{Random.rand(10000..99999)}.#{timestamp}~"
-      
+
       begin
         File.copy(path, backup_path)
       rescue
         # Backup failed, continue anyway
       end
-      
+
       backup_path
     end
-    
+
     # Apply file attributes (owner, group, mode)
     private def apply_file_attributes(path : String, recursive : Bool = false)
       # Set mode (permissions)
@@ -480,7 +480,7 @@ module CrystalPlay
           # Mode setting failed, continue anyway
         end
       end
-      
+
       # Real bug found benchmarking cloudalchemy.grafana's own
       # "Create/Update dashboards file (provisioning)" task (copy:
       # content: ..., owner: root, group: grafana) - owner:/group: were
@@ -510,7 +510,7 @@ module CrystalPlay
       # A chown/chmod failure (e.g. not running as root/owner) shouldn't
       # fail the whole task - matches file.cr's own identical rescue.
     end
-    
+
     # Helper: Check if parameter is truthy
     private def is_true?(value : String?, default : Bool = false) : Bool
       return default unless value

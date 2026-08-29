@@ -7,16 +7,16 @@ module CrystalPlay
   class Inventory
     property hosts : Hash(String, Host)
     property groups : Hash(String, HostGroup)
-    
+
     def initialize
       @hosts = Hash(String, Host).new
       @groups = Hash(String, HostGroup).new
-      
+
       # Create default groups
       @groups["all"] = HostGroup.new("all")
       @groups["ungrouped"] = HostGroup.new("ungrouped")
     end
-    
+
     # Real Ansible's host-pattern language: terms separated by `:` or
     # `,`, where a plain term is UNIONed, `!term` excludes and `&term`
     # intersects, applied left to right. Previously only a single term
@@ -59,8 +59,8 @@ module CrystalPlay
 
       pattern.each_char do |char|
         case char
-        when '['       then depth += 1; current << char
-        when ']'       then depth -= 1 if depth > 0; current << char
+        when '[' then depth += 1; current << char
+        when ']' then depth -= 1 if depth > 0; current << char
         when ':', ','
           if depth > 0
             current << char
@@ -114,10 +114,10 @@ module CrystalPlay
         # Check if it's a group (children resolved transitively)
         if @groups.has_key?(pattern)
           hosts_in_group(pattern)
-        # Check if it's a host
+          # Check if it's a host
         elsif host = @hosts[pattern]?
           [host]
-        # Pattern matching (simple wildcards)
+          # Pattern matching (simple wildcards)
         elsif pattern.includes?("*")
           # Crystal only caches non-interpolated regex literals - compile
           # once here rather than once per host inside the select block.
@@ -129,7 +129,7 @@ module CrystalPlay
         end
       end
     end
-    
+
     # Every group *host_name* belongs to, following :children upward, in
     # the sorted order real Ansible's `group_names` uses. Only "all" is
     # excluded (verified: a host in [web] under [prod:children] reports
@@ -154,12 +154,12 @@ module CrystalPlay
     def add_host(host : Host)
       @hosts[host.name] = host
     end
-    
+
     # Add a group
     def add_group(group : HostGroup)
       @groups[group.name] = group
     end
-    
+
     # Get or create group
     def get_or_create_group(name : String) : HostGroup
       @groups[name] ||= HostGroup.new(name)
@@ -182,31 +182,31 @@ module CrystalPlay
       @groups = fresh.groups
     end
   end
-  
+
   # Host group
   class HostGroup
     property name : String
     property hosts : Hash(String, Host)
     property children : Array(String)
     property vars : Hash(String, JSON::Any)
-    
+
     def initialize(@name : String)
       @hosts = Hash(String, Host).new
       @children = [] of String
       @vars = Hash(String, JSON::Any).new
     end
-    
+
     # Add host to group
     def add_host(host : Host)
       @hosts[host.name] = host
     end
-    
+
     # Add child group
     def add_child(group_name : String)
       @children << group_name unless @children.includes?(group_name)
     end
   end
-  
+
   # Inventory Parser - supports INI and YAML formats
   class InventoryParser
     # Real Ansible's INVENTORY_IGNORE_EXTS default: files with these
@@ -458,25 +458,25 @@ module CrystalPlay
 
       apply_host_vars_json(host, json)
     end
-    
+
     # Parse INI format inventory
     def self.parse_ini(path : String) : Inventory
       inventory = Inventory.new
       content = File.read(path)
-      
+
       current_group : String? = nil
-      group_type = :hosts  # :hosts or :vars or :children
-      
+      group_type = :hosts # :hosts or :vars or :children
+
       content.lines.each do |line|
         line = line.strip
-        
+
         # Skip empty lines and comments
         next if line.empty? || line.starts_with?("#") || line.starts_with?(";")
-        
+
         # Check for group header
         if line.starts_with?("[") && line.ends_with?("]")
           group_header = line[1..-2]
-          
+
           # Check for :vars or :children
           if group_header.ends_with?(":vars")
             current_group = group_header[0..-6]
@@ -488,12 +488,12 @@ module CrystalPlay
             current_group = group_header
             group_type = :hosts
           end
-          
+
           # Create group if it doesn't exist
           inventory.get_or_create_group(current_group) if current_group
           next
         end
-        
+
         # Parse based on current context
         if current_group
           case group_type
@@ -509,7 +509,7 @@ module CrystalPlay
           parse_host_line(line, "ungrouped", inventory)
         end
       end
-      
+
       # group_vars/host_vars directory files, then the inventory's own
       # inline [group:vars] sections - see load_group_and_host_vars for why
       # that order matters.
@@ -542,7 +542,7 @@ module CrystalPlay
 
       inventory
     end
-    
+
     # Expands one inventory host entry into every hostname it names.
     # Numeric bounds keep the zero-padding of the FIRST bound
     # (`web[01:03]` -> web01..web03), alphabetic bounds step through
@@ -598,7 +598,7 @@ module CrystalPlay
       # reads them as a Python string literal.
       parts = shlex_split(line)
       return if parts.empty?
-      
+
       # A host entry may be a RANGE standing for several hosts -
       # `web[01:03]`, `n[1:3]`, `h[a:c]`, `x[01:10:3]`,
       # `srv[1:2].ex.com`. Previously the whole thing was taken as one
@@ -629,17 +629,17 @@ module CrystalPlay
       hostname = parts[0]
       host = inventory.hosts[hostname]?
       return unless host
-      
+
       # Special handling for ansible_host
       if ansible_host = host.vars["ansible_host"]?
         # Don't modify host.name, but connection will use ansible_host
       end
-      
+
       # Special handling for ansible_user
       if ansible_user = host.vars["ansible_user"]?.try(&.as_s?)
         host.user = ansible_user
       end
-      
+
       # Special handling for ansible_port
       if ansible_port = host.vars["ansible_port"]?
         if port = ansible_port.as_i?
@@ -649,40 +649,40 @@ module CrystalPlay
         end
       end
     end
-    
+
     # Parse variable line from INI
     private def self.parse_var_line(line : String, group_name : String, inventory : Inventory)
       return unless line.includes?("=")
-      
+
       key, value = line.split("=", 2)
       group = inventory.get_or_create_group(group_name)
       group.vars[key.strip] = parse_value(value.strip)
     end
-    
+
     # Parse child group line from INI
     private def self.parse_child_line(line : String, group_name : String, inventory : Inventory)
       child_group_name = line.strip
       group = inventory.get_or_create_group(group_name)
       group.add_child(child_group_name)
-      
+
       # Ensure child group exists
       inventory.get_or_create_group(child_group_name)
     end
-    
+
     # Parse YAML group
     private def self.parse_yaml_group(group_name : String, yaml : YAML::Any, inventory : Inventory)
       group = inventory.get_or_create_group(group_name)
-      
+
       # Parse hosts
       if hosts_yaml = yaml["hosts"]?.try(&.as_h?)
         hosts_yaml.each do |hostname, host_vars|
           host = Host.new(hostname.to_s)
-          
+
           # Parse host vars
           if host_vars.as_h?
             host_vars.as_h.each do |key, value|
               host.vars[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value))
-              
+
               # Handle special ansible vars
               case key.to_s
               when "ansible_user"
@@ -692,19 +692,19 @@ module CrystalPlay
               end
             end
           end
-          
+
           inventory.add_host(host)
           group.add_host(host)
         end
       end
-      
+
       # Parse group vars
       if vars_yaml = yaml["vars"]?.try(&.as_h?)
         vars_yaml.each do |key, value|
           group.vars[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value))
         end
       end
-      
+
       # Parse children
       if children_yaml = yaml["children"]?.try(&.as_h?)
         children_yaml.each do |child_name, child_yaml|
@@ -713,7 +713,7 @@ module CrystalPlay
         end
       end
     end
-    
+
     # Load group_vars/*.yml and host_vars/*.yml from directories adjacent
     # to the inventory file (its own directory, not the playbook's - a
     # simplification versus real Ansible, which checks both) and apply
@@ -811,7 +811,7 @@ module CrystalPlay
             host.vars[key] ||= value
           end
         end
-        
+
         # Recursively apply child group vars
         group.children.each do |child_name|
           if child_group = inventory.groups[child_name]?
@@ -824,7 +824,7 @@ module CrystalPlay
         end
       end
     end
-    
+
     # Parse a value (attempt to infer type). Matches real Ansible's INI parser:
     # - Quoted values are always strings (no type inference).
     # - Unquoted `true`/`false`/`yes`/`no` → boolean.
@@ -923,7 +923,7 @@ module CrystalPlay
 
       if value.size >= 2 &&
          ((value.starts_with?('"') && value.ends_with?('"')) ||
-          (value.starts_with?('\'') && value.ends_with?('\'')))
+         (value.starts_with?('\'') && value.ends_with?('\'')))
         return JSON::Any.new(value[1..-2])
       end
 
@@ -1028,27 +1028,27 @@ module CrystalPlay
     # Validate inventory
     def self.validate(inventory : Inventory) : Array(String)
       warnings = [] of String
-      
+
       if inventory.hosts.empty?
         warnings << "Inventory has no hosts"
       end
-      
+
       # Check for hosts without required vars
       inventory.hosts.each do |name, host|
         unless host.user.presence
           warnings << "Host '#{name}' has no user specified"
         end
       end
-      
+
       warnings
     end
-    
+
     # Get inventory statistics
     def self.stats(inventory : Inventory) : Hash(String, Int32)
       {
-        "hosts" => inventory.hosts.size,
-        "groups" => inventory.groups.size - 2,  # Exclude 'all' and 'ungrouped'
-        "vars" => inventory.groups.sum { |_, g| g.vars.size }
+        "hosts"  => inventory.hosts.size,
+        "groups" => inventory.groups.size - 2, # Exclude 'all' and 'ungrouped'
+        "vars"   => inventory.groups.sum { |_, g| g.vars.size },
       }
     end
   end
