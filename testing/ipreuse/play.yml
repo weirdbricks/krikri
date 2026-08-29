@@ -1,0 +1,15 @@
+- hosts: all
+  gather_facts: true
+  tasks:
+    - name: write a marker
+      ansible.builtin.copy:
+        content: "marker\n"
+        dest: /var/tmp/marker.txt
+        mode: "0644"
+    - name: read it back
+      ansible.builtin.command: cat /var/tmp/marker.txt
+      changed_when: false
+      register: r
+    - name: assert
+      ansible.builtin.assert:
+        that: r.stdout == "marker"

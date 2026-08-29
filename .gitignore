@@ -45,3 +45,8 @@ scripts/crinja_corpus/divergence_report.md
 # round.
 /.ansible/
 /.ansible-lint-cache/
+
+# Per-run SSH keypair for the container-based IP-reuse test
+# (testing/ipreuse/README.md generates it locally; never committed).
+/testing/ipreuse/key
+/testing/ipreuse/key.pub
