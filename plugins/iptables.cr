@@ -28,14 +28,14 @@ module CrystalPlay
   # ...` shape, which IS covered).
   class IptablesPlugin < BasePlugin
     def execute : PluginResult
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
       ip_version = @params["ip_version"]? || "ipv4"
       binaries = ip_version == "both" ? ["iptables", "ip6tables"] : [ip_version == "ipv6" ? "ip6tables" : "iptables"]
 
-      flush = is_true?(@params["flush"]?)
+      flush = true?(@params["flush"]?)
       policy = @params["policy"]?
       chain = @params["chain"]?
-      chain_management = is_true?(@params["chain_management"]?)
+      chain_management = true?(@params["chain_management"]?)
       state = @params["state"]? || "present"
       rule_flags = PluginHelpers::IptablesCommand.construct_rule(@params)
 

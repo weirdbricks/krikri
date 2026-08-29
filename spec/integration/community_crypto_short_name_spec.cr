@@ -35,7 +35,7 @@ describe "community.crypto.* short name resolution" do
   # silently. Post-fix: the task actually runs and the plugin's
   # changed/ok status is what real ansible would produce.
   it "runs `openssl_privatekey:` (bare) without the unimplemented-plugin warning" do
-    status, output = run_playbook(<<-YAML)
+    _status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
         gather_facts: false
@@ -57,7 +57,7 @@ describe "community.crypto.* short name resolution" do
   end
 
   it "runs `openssl_csr:` (bare) without the unimplemented-plugin warning" do
-    status, output = run_playbook(<<-YAML)
+    _status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
         gather_facts: false
@@ -103,7 +103,7 @@ describe "community.crypto.* short name resolution" do
     # plugin's own runtime complaint (rc!=0, failed>=1), NOT the
     # "unimplemented plugin" warning that pre-fix would have
     # produced with the task dropped to skipped.
-    status, output = run_playbook(<<-YAML)
+    _status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
         gather_facts: false

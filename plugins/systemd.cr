@@ -32,7 +32,7 @@ module CrystalPlay
 
     def initialize(config : JSON::Any)
       super(config)
-      @check_mode = is_true?(@params["check_mode"]?)
+      @check_mode = true?(@params["check_mode"]?)
     end
 
     def execute : PluginResult
@@ -50,7 +50,7 @@ module CrystalPlay
       state = @params["state"]?
       enabled = @params["enabled"]?
       masked = @params["masked"]?
-      daemon_reload = is_true?(@params["daemon_reload"]? || @params["daemon-reload"]?)
+      daemon_reload = true?(@params["daemon_reload"]? || @params["daemon-reload"]?)
       # daemon_reexec: yes/no - `systemctl daemon-reexec`, re-executing
       # systemd itself (distinct from daemon-reload). Entirely
       # unimplemented before - fell into the "no action" guard below,
@@ -58,7 +58,7 @@ module CrystalPlay
       # handler (`ansible.builtin.systemd: {daemon_reexec: true}`, no
       # other params at all - round 18), which failed outright instead
       # of running the reexec real ansible-playbook performs.
-      daemon_reexec = is_true?(@params["daemon_reexec"]? || @params["daemon-reexec"]?)
+      daemon_reexec = true?(@params["daemon_reexec"]? || @params["daemon-reexec"]?)
 
       # Must have at least one action. Unlike `service`, name is optional
       # (a task may only want daemon_reload/daemon_reexec), so the "no
@@ -135,7 +135,7 @@ module CrystalPlay
 
       # Masked/unmasked
       if masked
-        should_mask = is_true?(masked)
+        should_mask = true?(masked)
         is_masked = masked?(name.not_nil!)
 
         if should_mask && !is_masked
@@ -180,7 +180,7 @@ module CrystalPlay
       # Enabled/disabled
       if enabled
         is_enabled = enabled?(name_for_active.not_nil!)
-        should_enable = is_true?(enabled)
+        should_enable = true?(enabled)
 
         if should_enable && !is_enabled
           if @check_mode
@@ -417,7 +417,7 @@ module CrystalPlay
     end
 
     # Helper to convert string/bool to boolean
-    private def is_true?(value) : Bool
+    private def true?(value) : Bool
       return false if value.nil?
       value_str = value.to_s.downcase
       value_str == "true" || value_str == "yes" || value_str == "1"

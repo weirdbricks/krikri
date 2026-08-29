@@ -133,7 +133,7 @@ module CrystalPlay
         # (explicit true OR false) always wins over the param default -
         # `directive_overrides.fetch` (not `||`) so an explicit `false`
         # in the directive isn't treated as "unset, fall through".
-        trim_blocks = directive_overrides.fetch("trim_blocks", is_true?(@params["trim_blocks"]?, default: true))
+        trim_blocks = directive_overrides.fetch("trim_blocks", true?(@params["trim_blocks"]?, default: true))
 
         env.config.trim_blocks = trim_blocks
 
@@ -167,10 +167,10 @@ module CrystalPlay
         # This prevents idempotency issues with heredoc writes that add trailing newlines
         rendered += "\n" unless rendered.ends_with?("\n")
 
-        return rendered
+        rendered
       rescue ex
         @render_error = ex.message
-        return nil
+        nil
       end
     end
 
@@ -647,7 +647,7 @@ module CrystalPlay
     end
 
     # Helper: Check if parameter is truthy
-    private def is_true?(value : String?, default : Bool = false) : Bool
+    private def true?(value : String?, default : Bool = false) : Bool
       return default unless value
       ["true", "yes", "1", "on"].includes?(value.downcase)
     end

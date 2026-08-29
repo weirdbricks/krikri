@@ -143,7 +143,7 @@ module CrystalPlay
       current = remote_exec("firewall-offline-cmd --zone=#{zone} --get-target")[:stdout].strip
       return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if current == desired
 
-      if is_true?(@params["check_mode"]?)
+      if true?(@params["check_mode"]?)
         return PluginResult.new(changed: true, failed: false, msg: "", zone: zone)
       end
 
@@ -169,7 +169,7 @@ module CrystalPlay
 
       return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if present == want_present
 
-      if is_true?(@params["check_mode"]?)
+      if true?(@params["check_mode"]?)
         return PluginResult.new(changed: true, failed: false, msg: "", zone: zone)
       end
 
@@ -184,7 +184,7 @@ module CrystalPlay
 
       return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if present == want_present
 
-      if is_true?(@params["check_mode"]?)
+      if true?(@params["check_mode"]?)
         return PluginResult.new(changed: true, failed: false, msg: "", zone: zone)
       end
 
@@ -240,9 +240,9 @@ module CrystalPlay
     # offline-style - covers every case this plugin's own
     # `firewall-offline-cmd`-based implementation actually supports).
     private def validate_permanent_immediate(zone : String) : PluginResult?
-      permanent = is_true?(@params["permanent"]?)
-      immediate = is_true?(@params["immediate"]?)
-      offline_param = is_true?(@params["offline"]?)
+      permanent = true?(@params["permanent"]?)
+      immediate = true?(@params["immediate"]?)
+      offline_param = true?(@params["offline"]?)
       fw_offline = !firewalld_running?
 
       if offline_param

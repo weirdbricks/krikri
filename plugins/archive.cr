@@ -101,8 +101,8 @@ module CrystalPlay
       dest = expand_tilde(dest)
       requested_paths = path_param.split(",").map(&.strip).reject(&.empty?).map { |p| expand_tilde(p) }
       requested_excludes = (@params["exclude_path"]? || "").split(",").map(&.strip).reject(&.empty?).map { |p| expand_tilde(p) }
-      force_archive = is_true?(@params["force_archive"]?, default: false)
-      remove = is_true?(@params["remove"]?, default: false)
+      force_archive = true?(@params["force_archive"]?, default: false)
+      remove = true?(@params["remove"]?, default: false)
       exclusion_patterns = (@params["exclusion_patterns"]? || "").split(",").map(&.strip).reject(&.empty?)
 
       expanded_paths, missing = expand_paths(requested_paths)
@@ -569,7 +569,7 @@ module CrystalPlay
     # not something real Ansible does for chattr).
     private def apply_attributes(dest : String) : PluginResult?
       attributes = @params["attributes"]?
-      return nil unless attributes && !attributes.empty?
+      return nil if attributes.nil? || attributes.empty?
 
       mod = attributes[0].in?('+', '-') ? attributes[0] : '='
       flags = attributes[0].in?('+', '-') ? attributes[1..] : attributes

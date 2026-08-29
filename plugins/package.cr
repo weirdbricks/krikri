@@ -24,7 +24,7 @@ module CrystalPlay
 
     def initialize(config : JSON::Any)
       super(config)
-      @check_mode = is_true?(@params["check_mode"]?)
+      @check_mode = true?(@params["check_mode"]?)
     end
 
     def execute : PluginResult
@@ -41,7 +41,7 @@ module CrystalPlay
       # state: present}` always failed "Missing required parameter:
       # name" here, since only the literal `name:` key was ever read.
       name = @params["name"]? || @params["pkg"]?
-      update_cache = is_true?(@params["update_cache"]?)
+      update_cache = true?(@params["update_cache"]?)
       unless name
         return update_cache ? update_cache_only : PluginResult.new(
           changed: false,
@@ -183,11 +183,11 @@ module CrystalPlay
       result[:stdout].split("\n").any? { |line| line.strip == group_name }
     end
 
-    # Mirrors dnf.cr's own `is_url_or_file?` - a URL/local-path package
+    # Mirrors dnf.cr's own `url_or_file?` - a URL/local-path package
     # spec needs different installed-state handling than a bare name
     # (see handle_dnf's own comment for why `rpm -q` can't be trusted
     # for these).
-    private def is_url_or_file?(name : String) : Bool
+    private def url_or_file?(name : String) : Bool
       name.starts_with?("http://") ||
         name.starts_with?("https://") ||
         name.starts_with?("ftp://") ||
@@ -273,10 +273,10 @@ module CrystalPlay
       # that had never installed epel-release before read as "already
       # installed" (exit 0 from a successful fetch-and-parse of the
       # remote RPM's metadata) and silently skip the real `dnf install`
-      # entirely. Matches `dnf.cr`'s own `is_url_or_file?`-gated "always
+      # entirely. Matches `dnf.cr`'s own `url_or_file?`-gated "always
       # try to install" handling for the identical case.
       is_installed = all_packages_installed?(name, single_name) do |pkg|
-        if is_url_or_file?(pkg)
+        if url_or_file?(pkg)
           false
         elsif pkg.starts_with?('@')
           dnf_group_installed?(pkg)
@@ -308,7 +308,7 @@ module CrystalPlay
       case state
       when "present"
         if is_installed
-          return PluginResult.new(
+          PluginResult.new(
             changed: false,
             failed: false,
             msg: "Package #{name} already installed"
@@ -329,7 +329,7 @@ module CrystalPlay
           # default for local/URL package installs). Applies here too:
           # `package:` with a URL/path `name:` shells straight to
           # dnf/yum with no gpgcheck override at all.
-          gpg_opt = is_true?(@params["disable_gpg_check"]?) ? "--nogpgcheck" : "--setopt=localpkg_gpgcheck=1"
+          gpg_opt = true?(@params["disable_gpg_check"]?) ? "--nogpgcheck" : "--setopt=localpkg_gpgcheck=1"
           install_result = remote_exec("dnf install -y #{gpg_opt} #{shell_pkg} || yum install -y #{gpg_opt} #{shell_pkg}")
           if install_result[:exit_code] == 0
             # A URL/path `name:` skipped the `rpm -q` pre-check above
@@ -341,14 +341,14 @@ module CrystalPlay
             # rerun, never converging. Same real-no-op-vs-exit-0 check
             # dnf.cr's own `handle_install` already does for the
             # identical reason.
-            already_satisfied = is_url_or_file?(name) && install_result[:stdout].includes?("Nothing to do")
-            return PluginResult.new(
+            already_satisfied = url_or_file?(name) && install_result[:stdout].includes?("Nothing to do")
+            PluginResult.new(
               changed: !already_satisfied,
               failed: false,
               msg: already_satisfied ? "Package #{name} already installed" : "Package #{name} installed"
             )
           else
-            return PluginResult.new(
+            PluginResult.new(
               changed: false,
               failed: true,
               msg: "Failed to install #{name}: #{install_result[:stderr]}",
@@ -358,7 +358,7 @@ module CrystalPlay
         end
       when "absent"
         if !is_installed
-          return PluginResult.new(
+          PluginResult.new(
             changed: false,
             failed: false,
             msg: "Package #{name} not installed"
@@ -374,13 +374,13 @@ module CrystalPlay
 
           remove_result = remote_exec("dnf remove -y #{shell_pkg} || yum remove -y #{shell_pkg}")
           if remove_result[:exit_code] == 0
-            return PluginResult.new(
+            PluginResult.new(
               changed: true,
               failed: false,
               msg: "Package #{name} removed"
             )
           else
-            return PluginResult.new(
+            PluginResult.new(
               changed: false,
               failed: true,
               msg: "Failed to remove #{name}: #{remove_result[:stderr]}"
@@ -410,13 +410,13 @@ module CrystalPlay
         # Check if actually updated
         was_updated = !update_result[:stdout].includes?("Nothing to do")
 
-        return PluginResult.new(
+        PluginResult.new(
           changed: was_updated,
           failed: false,
           msg: was_updated ? "Package #{name} updated to latest" : "Package #{name} already at latest version"
         )
       else
-        return PluginResult.new(
+        PluginResult.new(
           changed: false,
           failed: true,
           msg: "Invalid state: #{state}. Must be present, absent, or latest"
@@ -445,7 +445,7 @@ module CrystalPlay
       case state
       when "present"
         if is_installed
-          return PluginResult.new(
+          PluginResult.new(
             changed: false,
             failed: false,
             msg: "Package #{name} already installed"
@@ -481,13 +481,13 @@ module CrystalPlay
             # converged to changed: false on a warm rerun.
             summary = install_result[:stdout].match(/(\d+) upgraded, (\d+) newly installed/)
             had_no_effect = summary && summary[1] == "0" && summary[2] == "0"
-            return PluginResult.new(
+            PluginResult.new(
               changed: !had_no_effect,
               failed: false,
               msg: had_no_effect ? "Package #{name} already satisfied" : "Package #{name} installed"
             )
           else
-            return PluginResult.new(
+            PluginResult.new(
               changed: false,
               failed: true,
               msg: "Failed to install #{name}: #{install_result[:stderr]}",
@@ -497,7 +497,7 @@ module CrystalPlay
         end
       when "absent"
         if !is_installed
-          return PluginResult.new(
+          PluginResult.new(
             changed: false,
             failed: false,
             msg: "Package #{name} not installed"
@@ -513,13 +513,13 @@ module CrystalPlay
 
           remove_result = apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive apt-get remove -y #{shell_pkg}", lock_timeout, ->remote_exec(String))
           if remove_result[:exit_code] == 0
-            return PluginResult.new(
+            PluginResult.new(
               changed: true,
               failed: false,
               msg: "Package #{name} removed"
             )
           else
-            return PluginResult.new(
+            PluginResult.new(
               changed: false,
               failed: true,
               msg: "Failed to remove #{name}: #{remove_result[:stderr]}"
@@ -565,13 +565,13 @@ module CrystalPlay
         summary = upgrade_result[:stdout][/(\d+) upgraded, (\d+) newly installed/]?
         was_upgraded = summary ? summary.scan(/\d+/).map(&.[0].to_i).sum > 0 : upgrade_result[:exit_code] == 0
 
-        return PluginResult.new(
+        PluginResult.new(
           changed: was_upgraded,
           failed: false,
           msg: was_upgraded ? "Package #{name} upgraded to latest" : "Package #{name} already at latest version"
         )
       else
-        return PluginResult.new(
+        PluginResult.new(
           changed: false,
           failed: true,
           msg: "Invalid state: #{state}. Must be present, absent, or latest"
@@ -580,7 +580,7 @@ module CrystalPlay
     end
 
     # Helper to convert string/bool to boolean
-    private def is_true?(value) : Bool
+    private def true?(value) : Bool
       return false if value.nil?
       value_str = value.to_s.downcase
       value_str == "true" || value_str == "yes" || value_str == "1"

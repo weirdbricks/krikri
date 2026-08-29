@@ -297,7 +297,7 @@ module CrystalPlay
           # module for this host happen under a local override" needs
           # a full pass over every play's tasks up front, not just
           # their hosts:.
-          next if is_local_connection?(host, host.vars)
+          next if local_connection?(host, host.vars)
 
           # Deduplicate by connection details
           connection_host = get_connection_host(host, host.vars)
@@ -745,7 +745,7 @@ module CrystalPlay
     # Whether a plugin invocation actually goes over SSH: everything that
     # isn't controller-only and isn't a local connection.
     def self.remote_execution?(plugin_name : String, host : Host, vars : Hash(String, JSON::Any)) : Bool
-      !controller_only?(plugin_name) && !is_local_connection?(host, vars)
+      !controller_only?(plugin_name) && !local_connection?(host, vars)
     end
 
     # String-config entry point - the one the hot paths use.
@@ -870,7 +870,7 @@ module CrystalPlay
         process.input.print(config)
         process.input.close
 
-        status = process.wait
+        process.wait
         output = stdout.to_s
 
         # Try to parse JSON output
@@ -1300,7 +1300,7 @@ module CrystalPlay
     # (item 3) needs the same local/remote decision execute_plugin
     # already makes internally, before deciding whether batching even
     # applies to a given host.
-    def self.is_local_connection?(host : Host, vars : Hash(String, JSON::Any)) : Bool
+    def self.local_connection?(host : Host, vars : Hash(String, JSON::Any)) : Bool
       # The host's OWN connection setting wins first. On a delegate_to:
       # task, `vars` here is the vars_context of the host the task would
       # otherwise have run on (build_vars_context injects

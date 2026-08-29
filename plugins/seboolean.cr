@@ -32,10 +32,10 @@ module CrystalPlay
 
       state_param = @params["state"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: state") unless state_param
-      desired_on = is_true?(state_param)
+      desired_on = true?(state_param)
 
-      persistent = is_true?(@params["persistent"]?)
-      ignore_selinux_state = is_true?(@params["ignore_selinux_state"]?)
+      persistent = true?(@params["persistent"]?)
+      ignore_selinux_state = true?(@params["ignore_selinux_state"]?)
 
       unless ignore_selinux_state
         enforce = remote_exec("getenforce")

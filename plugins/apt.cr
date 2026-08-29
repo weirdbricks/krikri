@@ -36,7 +36,7 @@ module CrystalPlay
 
     def initialize(config : JSON::Any)
       super(config)
-      @check_mode = is_true?(@params["check_mode"]?)
+      @check_mode = true?(@params["check_mode"]?)
     end
 
     def execute : PluginResult
@@ -60,7 +60,7 @@ module CrystalPlay
 
       # Get state (default: present)
       state = @params["state"]? || "present"
-      update_cache = is_true?(@params["update_cache"]?)
+      update_cache = true?(@params["update_cache"]?)
       cache_valid_time = @params["cache_valid_time"]?.try(&.to_i) || 0
       # Real Ansible's apt module exposes `lock_timeout` (default 60s) for
       # install/remove/upgrade operations and `update_cache_retries`
@@ -132,9 +132,9 @@ module CrystalPlay
       # exactly `autoremove: true` and `autoclean: true, clean: true`
       # with no name).
       name_param = name_or_pkg_param?
-      autoremove = is_true?(@params["autoremove"]?)
-      autoclean = is_true?(@params["autoclean"]?)
-      clean = is_true?(@params["clean"]?)
+      autoremove = true?(@params["autoremove"]?)
+      autoclean = true?(@params["autoclean"]?)
+      clean = true?(@params["clean"]?)
 
       if autoremove || autoclean || clean
         {
@@ -281,7 +281,7 @@ module CrystalPlay
       when "latest"
         handle_latest(packages, messages, false, lock_timeout)
       else
-        return PluginResult.new(
+        PluginResult.new(
           changed: false,
           failed: true,
           msg: "Invalid state: #{state}. Must be present, absent, or latest"
@@ -680,7 +680,7 @@ module CrystalPlay
     end
 
     # Helper to convert string/bool to boolean
-    private def is_true?(value) : Bool
+    private def true?(value) : Bool
       return false if value.nil?
       value_str = value.to_s.downcase
       value_str == "true" || value_str == "yes" || value_str == "1"

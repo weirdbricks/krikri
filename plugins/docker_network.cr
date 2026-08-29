@@ -68,13 +68,13 @@ module CrystalPlay
       end
 
       driver = @params["driver"]? || "bridge"
-      internal = is_true?(@params["internal"]?)
-      attachable = is_true?(@params["attachable"]?)
+      internal = true?(@params["internal"]?)
+      attachable = true?(@params["attachable"]?)
       labels = @params["labels"]?.try { |json| Hash(String, String).from_json(json) }
       connected = @params["connected"]?.try(&.split(',').map(&.strip).reject(&.empty?)) || [] of String
-      appends = is_true?(@params["appends"]?)
+      appends = true?(@params["appends"]?)
       state = @params["state"]? || "present"
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       client, docker_host_description = PluginHelpers::DockerClient.build(@params)
       api = Docr::API.new(client)
@@ -107,7 +107,7 @@ module CrystalPlay
       existing : Docr::Types::Network?,
       check_mode : Bool,
     ) : PluginResult
-      force = is_true?(@params["force"]?)
+      force = true?(@params["force"]?)
 
       if existing && existing.driver == driver && !force
         return sync_connected_result(api, existing, connected, appends, check_mode, "Network #{name} already present")

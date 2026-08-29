@@ -55,7 +55,7 @@ module CrystalPlay
 
       path = expand_tilde(path)
       state = @params["state"]? || "present"
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       return remove(path, check_mode) if state == "absent"
 
@@ -73,7 +73,7 @@ module CrystalPlay
           return failure(error)
         end
 
-        changed = is_true?(@params["force"]?) || !File.exists?(path) || !equivalent?(path, candidate)
+        changed = true?(@params["force"]?) || !File.exists?(path) || !equivalent?(path, candidate)
 
         if changed && !check_mode
           backup_file = backup(path)
@@ -154,7 +154,7 @@ module CrystalPlay
 
       # use_common_name_for_san (default true): a CSR with a common name
       # and no SAN of its own gets `DNS:<CN>`.
-      return names unless is_true?(@params["use_common_name_for_san"]?, default: true)
+      return names unless true?(@params["use_common_name_for_san"]?, default: true)
       if (cn = @params["common_name"]?) && !cn.empty?
         names << "DNS:#{cn}"
       end
@@ -162,7 +162,7 @@ module CrystalPlay
     end
 
     private def critical(name : String) : String
-      is_true?(@params[name]?) ? "critical," : ""
+      true?(@params[name]?) ? "critical," : ""
     end
 
     private def generate(dest : String, privatekey_path : String) : String?
@@ -190,7 +190,7 @@ module CrystalPlay
       if (constraints = list_param("basic_constraints")) && !constraints.empty?
         args.concat(["-addext", "basicConstraints=#{critical("basic_constraints_critical")}#{constraints.join(",")}"])
       end
-      if is_true?(@params["ocsp_must_staple"]?)
+      if true?(@params["ocsp_must_staple"]?)
         args.concat(["-addext", "tlsfeature=#{critical("ocsp_must_staple_critical")}status_request"])
       end
 
@@ -249,11 +249,11 @@ module CrystalPlay
       res.extra["keyUsage"] = json_list(list_param("key_usage"))
       res.extra["extendedKeyUsage"] = json_list(list_param("extended_key_usage"))
       res.extra["basicConstraints"] = json_list(list_param("basic_constraints"))
-      res.extra["ocspMustStaple"] = JSON::Any.new(is_true?(@params["ocsp_must_staple"]?))
+      res.extra["ocspMustStaple"] = JSON::Any.new(true?(@params["ocsp_must_staple"]?))
       res.extra["name_constraints_permitted"] = json_list(list_param("name_constraints_permitted"))
       res.extra["name_constraints_excluded"] = json_list(list_param("name_constraints_excluded"))
       res.extra["backup_file"] = JSON::Any.new(backup_file) if backup_file
-      if is_true?(@params["return_content"]?) && File.exists?(path)
+      if true?(@params["return_content"]?) && File.exists?(path)
         res.extra["csr"] = JSON::Any.new(File.read(path))
       end
       res
@@ -296,7 +296,7 @@ module CrystalPlay
     end
 
     private def backup(path : String) : String?
-      return nil unless is_true?(@params["backup"]?)
+      return nil unless true?(@params["backup"]?)
       return nil unless File.exists?(path)
       dest = "#{path}.#{Process.pid}.#{Time.local.to_s("%Y-%m-%d@%H:%M:%S")}~"
       File.copy(path, dest)

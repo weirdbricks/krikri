@@ -80,8 +80,8 @@ module CrystalPlay
       password = @params["password"]?
       priv = @params["priv"]?
       update_password = @params["update_password"]? || "always"
-      check_mode = is_true?(@params["check_mode"]?)
-      host_all = is_true?(@params["host_all"]?)
+      check_mode = true?(@params["check_mode"]?)
+      host_all = true?(@params["host_all"]?)
 
       plugin = @params["plugin"]?
       plugin_hash_string = @params["plugin_hash_string"]?

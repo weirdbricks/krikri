@@ -38,7 +38,7 @@ module CrystalPlay
         return PluginResult.new(changed: false, failed: true, msg: "Source (#{src}) does not exist")
       end
 
-      ignore_hidden = is_true?(@params["ignore_hidden"]?)
+      ignore_hidden = true?(@params["ignore_hidden"]?)
       regexp = @params["regexp"]?.try { |r| Regex.new(r) rescue nil }
       delimiter = @params["delimiter"]?
 
@@ -54,14 +54,14 @@ module CrystalPlay
 
       existing = File.exists?(dest) ? File.read(dest) : nil
       changed = existing != content
-      check_mode = is_true?(@params["check_mode"]?)
-      diff_mode = is_true?(@params["diff_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
+      diff_mode = true?(@params["diff_mode"]?)
 
       diff = diff_mode ? generate_unified_diff(existing || "", content, dest, dest) : nil
       backup_file = ""
 
       if changed && !check_mode
-        if existing && is_true?(@params["backup"]?)
+        if existing && true?(@params["backup"]?)
           backup_file = "#{dest}.#{Time.utc.to_unix}.bak"
           File.write(backup_file, existing)
         end

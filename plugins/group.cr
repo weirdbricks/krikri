@@ -19,7 +19,7 @@ module CrystalPlay
       return missing_param("name") unless name
 
       state = @params["state"]? || "present"
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
       current = lookup(name)
 
       if state == "absent"
@@ -48,7 +48,7 @@ module CrystalPlay
 
     private def ensure_present(name : String, current : PluginHelpers::GroupState::Group?, check_mode : Bool) : PluginResult
       gid = @params["gid"]?
-      system = is_true?(@params["system"]?)
+      system = true?(@params["system"]?)
 
       unless current
         return PluginResult.new(changed: true, failed: false, msg: "Would create group (check mode)") if check_mode

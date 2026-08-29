@@ -89,7 +89,7 @@ module CrystalPlay
       end
 
       state = @params["state"]? || "present"
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       if state == "dump" || state == "restore"
         return run_dump_or_restore(state, name)
@@ -165,7 +165,7 @@ module CrystalPlay
       target = @params["target"]?
       return PluginResult.new(changed: false, failed: true, msg: "target is required when state is dump or restore") unless target
 
-      if is_true?(@params["check_mode"]?)
+      if true?(@params["check_mode"]?)
         return PluginResult.new(changed: true, failed: false, msg: "Would #{state} database #{name} #{state == "dump" ? "to" : "from"} #{target} (check mode)")
       end
 

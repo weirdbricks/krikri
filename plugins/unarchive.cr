@@ -220,8 +220,8 @@ module CrystalPlay
     private def run(src : String, dest : String) : PluginResult
       exclude = parse_list_param(@params["exclude"]?)
       include_files = parse_list_param(@params["include"]?)
-      keep_newer = is_true?(@params["keep_newer"]?, default: false)
-      list_files = is_true?(@params["list_files"]?, default: false)
+      keep_newer = true?(@params["keep_newer"]?, default: false)
+      list_files = true?(@params["list_files"]?, default: false)
       # extra_opts - passed straight through to `tar`, real Ansible's own
       # documented behavior (raw flags like `--strip-components=1`, the
       # standard way to unpack a GitHub-release-style tarball whose

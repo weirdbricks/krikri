@@ -19,11 +19,11 @@ module CrystalPlay
       option = @params["option"]?
       value = @params["value"]?
       state = @params["state"]? || "present"
-      create = @params["create"]? ? is_true?(@params["create"]) : true
-      exclusive = @params["exclusive"]? ? is_true?(@params["exclusive"]) : true
-      no_extra_spaces = is_true?(@params["no_extra_spaces"]?)
-      backup = is_true?(@params["backup"]?)
-      check_mode = is_true?(@params["check_mode"]?)
+      create = @params["create"]? ? true?(@params["create"]) : true
+      exclusive = @params["exclusive"]? ? true?(@params["exclusive"]) : true
+      no_extra_spaces = true?(@params["no_extra_spaces"]?)
+      backup = true?(@params["backup"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       if state == "present" && option && !value
         return PluginResult.new(changed: false, failed: true, msg: "Value must be set when state=present and option is defined")

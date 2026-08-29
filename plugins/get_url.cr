@@ -38,7 +38,7 @@ module CrystalPlay
         end
       end
 
-      force = is_true?(@params["force"]?, default: false)
+      force = true?(@params["force"]?, default: false)
 
       if File.exists?(dest) && !force
         if skip_result = check_existing_dest(dest, checksum)
@@ -49,7 +49,7 @@ module CrystalPlay
         # matching real Ansible's get_url behavior.
       end
 
-      if is_true?(@params["check_mode"]?)
+      if true?(@params["check_mode"]?)
         return PluginResult.new(changed: true, failed: false, msg: "would download #{url} to #{dest} (check mode)", dest: dest)
       end
 
@@ -61,7 +61,7 @@ module CrystalPlay
     # "proceed with download".
     private def check_existing_dest(dest : String, checksum : {String, String}?) : PluginResult?
       mode, owner, group = @params["mode"]?, @params["owner"]?, @params["group"]?
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       if checksum
         algorithm, expected = checksum
@@ -115,7 +115,7 @@ module CrystalPlay
         return PluginResult.new(changed: false, failed: false, msg: "file already exists and content matches", dest: dest)
       end
 
-      if is_true?(@params["backup"]?) && File.exists?(dest)
+      if true?(@params["backup"]?) && File.exists?(dest)
         File.copy(dest, "#{dest}.#{Time.utc.to_s("%Y-%m-%d@%H:%M:%S")}~")
       end
 
@@ -179,7 +179,7 @@ module CrystalPlay
         connect_timeout: timeout_span,
         read_timeout: timeout_span,
         headers: request_headers,
-        verify_tls: is_true?(@params["validate_certs"]?, default: true),
+        verify_tls: true?(@params["validate_certs"]?, default: true),
         username: @params["url_username"]?,
         password: @params["url_password"]?,
       )

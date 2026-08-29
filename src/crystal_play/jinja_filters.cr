@@ -1607,7 +1607,7 @@ module CrystalPlay
         result = arrays.reduce([[] of Crinja::Value]) { |acc, arr| acc.flat_map { |row| arr.map { |item| row + [item] } } }
         Crinja::Value.new(result.map { |row| Crinja::Value.new(row) })
       when "varnames"
-        patterns = variadic_terms.map { |t| Regex.new(t.to_s) rescue nil }.compact
+        patterns = variadic_terms.compact_map { |t| Regex.new(t.to_s) rescue nil }
         names = env.context.keys.select { |name| patterns.any?(&.matches?(name)) }
         Crinja::Value.new(names.map { |n| Crinja::Value.new(n) })
       when "indexed_items"
@@ -1661,8 +1661,8 @@ module CrystalPlay
         found = nil
         files.each do |file_entry|
           rendered_file = env.from_string(file_entry.to_s).render
-          rendered_paths.each do |path|
-            candidate = File.join(path, rendered_file)
+          rendered_paths.each do |root_path|
+            candidate = File.join(root_path, rendered_file)
             if File.exists?(candidate)
               found = candidate
               break

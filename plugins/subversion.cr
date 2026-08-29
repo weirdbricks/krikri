@@ -27,8 +27,8 @@ module CrystalPlay
       dest = expand_tilde(dest)
 
       revision = @params["revision"]? || "HEAD"
-      force = is_true?(@params["force"]?)
-      check_mode = is_true?(@params["check_mode"]?)
+      force = true?(@params["force"]?)
+      check_mode = true?(@params["check_mode"]?)
       svn = @params["executable"]? || "svn"
       auth = build_auth_args
 

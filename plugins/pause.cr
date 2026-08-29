@@ -39,7 +39,7 @@ module CrystalPlay
         start: format_time(start), stop: format_time(stop),
         delta: (stop - start).total_seconds.to_i,
         stdout: stdout, stderr: "", rc: 0,
-        echo: is_true?(@params["echo"]?, default: true),
+        echo: true?(@params["echo"]?, default: true),
         user_input: ""
       )
     end

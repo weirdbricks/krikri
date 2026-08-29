@@ -72,8 +72,8 @@ module CrystalPlay
 
     def initialize(config : JSON::Any)
       super(config)
-      @check_mode = is_true?(@params["check_mode"]?)
-      @diff_mode = is_true?(@params["diff_mode"]?)
+      @check_mode = true?(@params["check_mode"]?)
+      @diff_mode = true?(@params["diff_mode"]?)
     end
 
     def execute : PluginResult
@@ -146,7 +146,7 @@ module CrystalPlay
         end
 
         if changed
-          apply_file_attributes(path, recursive: is_true?(@params["recurse"]?))
+          apply_file_attributes(path, recursive: true?(@params["recurse"]?))
         end
 
         return PluginResult.new(
@@ -216,7 +216,7 @@ module CrystalPlay
       end
 
       # Apply attributes
-      apply_file_attributes(path, recursive: is_true?(@params["recurse"]?))
+      apply_file_attributes(path, recursive: true?(@params["recurse"]?))
 
       PluginResult.new(
         changed: true,
@@ -258,7 +258,7 @@ module CrystalPlay
         end
 
         if changed
-          apply_file_attributes(path, recursive: is_true?(@params["recurse"]?))
+          apply_file_attributes(path, recursive: true?(@params["recurse"]?))
         end
 
         return PluginResult.new(
@@ -359,7 +359,7 @@ module CrystalPlay
       # Check if something exists at path (follows symlinks, matching
       # `test -e`'s own dangling-symlink-is-"missing" behavior)
       if File.exists?(path)
-        force = is_true?(@params["force"]?)
+        force = true?(@params["force"]?)
         unless force
           return PluginResult.new(
             changed: false,
@@ -446,7 +446,7 @@ module CrystalPlay
 
       # Check if dest exists
       if File.exists?(path)
-        force = is_true?(@params["force"]?)
+        force = true?(@params["force"]?)
         unless force
           return PluginResult.new(
             changed: false,
@@ -634,7 +634,7 @@ module CrystalPlay
     # similar but separate issue handled by the state: link branch
     # below via skip_mode, not this one).
     private def update_attributes_if_needed(path : String, is_directory : Bool, skip_mode : Bool = false) : Bool
-      follow = is_true?(@params["follow"]?)
+      follow = true?(@params["follow"]?)
       changed = false
       info = follow ? stat_follow(path) : lstat(path)
       return false unless info
@@ -775,7 +775,7 @@ module CrystalPlay
     end
 
     private def apply_single_file_attributes(path : String)
-      follow = is_true?(@params["follow"]?)
+      follow = true?(@params["follow"]?)
       uid = -1
       gid = -1
 
@@ -1032,7 +1032,7 @@ module CrystalPlay
     end
 
     # Helper: Check if parameter is truthy
-    private def is_true?(value : String?, default : Bool = false) : Bool
+    private def true?(value : String?, default : Bool = false) : Bool
       return default unless value
       ["true", "yes", "1", "on"].includes?(value.downcase)
     end

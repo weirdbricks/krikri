@@ -48,7 +48,7 @@ module CrystalPlay
         return PluginResult.new(changed: false, failed: false, msg: "#{name} already set to #{selection}")
       end
 
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
       return PluginResult.new(changed: true, failed: false, msg: "#{name} would be set to #{selection}") if check_mode
 
       result = remote_exec("echo #{shell_quote("#{name} #{selection}")} | dpkg --set-selections")

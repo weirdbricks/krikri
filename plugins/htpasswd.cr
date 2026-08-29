@@ -50,8 +50,8 @@ module CrystalPlay
       end
 
       state = @params["state"]? || "present"
-      check_mode = is_true?(@params["check_mode"]?)
-      create = @params["create"]?.nil? ? true : is_true?(@params["create"]?)
+      check_mode = true?(@params["check_mode"]?)
+      create = @params["create"]?.nil? ? true : true?(@params["create"]?)
 
       unless File.exists?(path)
         return PluginResult.new(changed: false, failed: false, msg: "path not present", path: path) if state == "absent"

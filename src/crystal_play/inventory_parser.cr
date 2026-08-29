@@ -630,10 +630,8 @@ module CrystalPlay
       host = inventory.hosts[hostname]?
       return unless host
 
-      # Special handling for ansible_host
-      if ansible_host = host.vars["ansible_host"]?
-        # Don't modify host.name, but connection will use ansible_host
-      end
+      # Special handling for ansible_host: don't modify host.name, but
+      # the connection will use ansible_host from host vars directly.
 
       # Special handling for ansible_user
       if ansible_user = host.vars["ansible_user"]?.try(&.as_s?)

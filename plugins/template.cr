@@ -28,8 +28,8 @@ module CrystalPlay
 
     def initialize(config : JSON::Any)
       super(config)
-      @check_mode = is_true?(@params["check_mode"]?)
-      @diff_mode = is_true?(@params["diff_mode"]?)
+      @check_mode = true?(@params["check_mode"]?)
+      @diff_mode = true?(@params["diff_mode"]?)
     end
 
     def execute : PluginResult
@@ -122,7 +122,7 @@ module CrystalPlay
 
       # Content will change - create backup if requested
       backup_file = ""
-      if is_true?(@params["backup"]?) && File.exists?(dest)
+      if true?(@params["backup"]?) && File.exists?(dest)
         backup_file = create_backup(dest)
       end
 
@@ -315,7 +315,7 @@ module CrystalPlay
     end
 
     # Helper: Check if parameter is truthy
-    private def is_true?(value : String?, default : Bool = false) : Bool
+    private def true?(value : String?, default : Bool = false) : Bool
       return default unless value
       ["true", "yes", "1", "on"].includes?(value.downcase)
     end

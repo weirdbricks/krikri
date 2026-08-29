@@ -89,7 +89,7 @@ module CrystalPlay
       state = @params["state"]? || "updated"
       dir = expand_tilde(@params["path"]? || "/etc/pam.d")
       path = File.join(dir, name)
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       unless File.exists?(path)
         return PluginResult.new(changed: false, failed: true, msg: "#{path} does not exist")
@@ -353,7 +353,7 @@ module CrystalPlay
     end
 
     private def backup(path : String)
-      return unless is_true?(@params["backup"]?)
+      return unless true?(@params["backup"]?)
       timestamp = Time.local.to_s("%Y%m%d-%H%M%S")
       File.copy(path, "#{path}.#{timestamp}.bak")
     end

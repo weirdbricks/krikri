@@ -46,7 +46,7 @@ module CrystalPlay
       end
     end
 
-    private def is_bare_keyid?(key : String) : Bool
+    private def bare_keyid?(key : String) : Bool
       stripped = key.strip.gsub(" ", "")
       stripped = stripped[2..] if stripped.starts_with?("0x") || stripped.starts_with?("0X")
       stripped.matches?(/\A[0-9a-fA-F]{8,}\z/)
@@ -95,7 +95,7 @@ module CrystalPlay
     end
 
     private def add_key(key : String) : PluginResult
-      if is_bare_keyid?(key) && !(key.includes?("://") || key.starts_with?('/'))
+      if bare_keyid?(key) && !(key.includes?("://") || key.starts_with?('/'))
         short_id = normalize_keyid(key)[-8..]? || normalize_keyid(key)
         if installed_short_keyids.includes?(short_id)
           return PluginResult.new(changed: false, failed: false, msg: "Key already present")
@@ -106,7 +106,7 @@ module CrystalPlay
       tmp_path = nil
       begin
         if key.includes?("://")
-          insecure_flag = is_true?(@params["validate_certs"]?, default: true) ? "" : "--insecure "
+          insecure_flag = true?(@params["validate_certs"]?, default: true) ? "" : "--insecure "
           tmp_path = "/tmp/.crystal-ansible-rpm-key-#{Random.rand(100000..999999)}"
           result = remote_exec("curl --fail --silent --show-error --location #{insecure_flag}-o #{tmp_path} #{shell_single_quote(key)}")
           unless result[:exit_code] == 0
@@ -148,7 +148,7 @@ module CrystalPlay
 
     private def remove_key(key : String) : PluginResult
       short_id =
-        if is_bare_keyid?(key)
+        if bare_keyid?(key)
           normalize_keyid(key)[-8..]? || normalize_keyid(key)
         else
           pairs = parse_key_material(key)

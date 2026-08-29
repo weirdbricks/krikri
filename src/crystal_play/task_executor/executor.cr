@@ -801,7 +801,8 @@ module CrystalPlay
     end
 
     private def notify_hosts_if_changed(task : Task, hosts : Array(Host), changed_before : Hash(String, Int32))
-      return unless (notify_list = task.notify) && !notify_list.empty?
+      notify_list = task.notify
+      return if notify_list.nil? || notify_list.empty?
 
       hosts.each do |host|
         next unless @results[host.name]["changed"] > changed_before[host.name]
@@ -1290,7 +1291,7 @@ module CrystalPlay
       substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
       target_name = substitutor.substitute(delegate_to)
 
-      if (inventory = @inventory) && (resolved = inventory.get_hosts(target_name)).any?
+      if (inventory = @inventory) && !(resolved = inventory.get_hosts(target_name)).empty?
         return resolved.first
       end
 
@@ -1304,7 +1305,7 @@ module CrystalPlay
     # task on this host referencing it doesn't see an undefined variable.
     private def copy_run_once_register(task : Task, host : Host)
       register_name = task.register
-      return unless register_name && !register_name.empty?
+      return if register_name.nil? || register_name.empty?
 
       if value = @registered_vars[@hosts.first.name][register_name]?
         @registered_vars[host.name][register_name] = value
@@ -1382,7 +1383,7 @@ module CrystalPlay
     # comment for why the batch has to end here.
     private def certainly_aborts_on_notify?(task : Task) : Bool
       notify_list = task.notify
-      return false unless notify_list && !notify_list.empty?
+      return false if notify_list.nil? || notify_list.empty?
 
       handlers = @handler_runner.handlers
       answerable = Set(String).new
@@ -1714,7 +1715,7 @@ module CrystalPlay
       # clobbered; task.connection below still overrides unconditionally
       # since that's this ONE task's own explicit override.
       vars_context["ansible_connection"] ||= JSON::Any.new(
-        PluginManager.is_local_connection?(host, vars_context) ? "local" : "ssh"
+        PluginManager.local_connection?(host, vars_context) ? "local" : "ssh"
       )
 
       render_task_vars(task, vars_context, host.name)
@@ -1722,7 +1723,7 @@ module CrystalPlay
       # connection: local (or any other connection: override) on this
       # ONE task - independent of delegate_to:, which changes which
       # host's vars/facts apply rather than how the module runs. Every
-      # local-vs-remote decision (PluginManager.is_local_connection?/
+      # local-vs-remote decision (PluginManager.local_connection?/
       # .remote_execution?, LocalExecutor vs SSHManager dispatch) reads
       # ansible_connection out of vars_context, so overriding it here
       # takes effect for this task's own dispatch without mutating the
@@ -3354,7 +3355,7 @@ module CrystalPlay
     private def try_batched_result(task : Task, host : Host, vars_context : Hash(String, JSON::Any), exec_host : Host) : {Bool, JSON::Any?}
       return {false, nil} unless @batching_enabled
       return {false, nil} unless exec_host == host
-      return {false, nil} if PluginManager.is_local_connection?(exec_host, vars_context)
+      return {false, nil} if PluginManager.local_connection?(exec_host, vars_context)
 
       group = @task_group[task]?
       return {false, nil} unless group
@@ -4155,7 +4156,7 @@ module CrystalPlay
                                check_mode : Bool = @check_mode) : JSON::Any
       return JSON.parse({"changed" => true, "failed" => false, "msg" => "Would have rebooted"}.to_json) if check_mode
 
-      if PluginManager.is_local_connection?(exec_host, vars_context)
+      if PluginManager.local_connection?(exec_host, vars_context)
         return JSON.parse({
           "changed" => false,
           "failed"  => true,
@@ -4521,7 +4522,7 @@ module CrystalPlay
       return false unless exec_host == host
       return false if task.module_name.ends_with?("set_fact")
       return false if task.delegate_to
-      return false if PluginManager.is_local_connection?(exec_host, vars_context)
+      return false if PluginManager.local_connection?(exec_host, vars_context)
       true
     end
 
@@ -5872,7 +5873,7 @@ module CrystalPlay
     private def inline_copy_source_content(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String)
       return params unless task.module_name == "ansible.builtin.copy"
       return params if ["true", "yes", "1", "on"].includes?(params["remote_src"]?.try(&.downcase))
-      return params if PluginManager.is_local_connection?(host, vars_context)
+      return params if PluginManager.local_connection?(host, vars_context)
 
       src = params["src"]?
       return params unless src && src.starts_with?('/')
@@ -6084,7 +6085,7 @@ module CrystalPlay
     private def stage_unarchive_remote_src(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String)
       return params unless task.module_name == "ansible.builtin.unarchive"
       return params if ["true", "yes", "1", "on"].includes?(params["remote_src"]?.try(&.downcase))
-      return params if PluginManager.is_local_connection?(host, vars_context)
+      return params if PluginManager.local_connection?(host, vars_context)
 
       src = params["src"]?
       return params unless src && src.starts_with?('/') && File.exists?(src)
@@ -6138,7 +6139,7 @@ module CrystalPlay
       resolved_local = resolve_script_path(local_path, task)
       return params unless resolved_local
 
-      if PluginManager.is_local_connection?(host, vars_context)
+      if PluginManager.local_connection?(host, vars_context)
         resolved = params.dup
         resolved["cmd"] = rest ? "#{resolved_local} #{rest}" : resolved_local
         return resolved
@@ -6191,7 +6192,7 @@ module CrystalPlay
     private def stage_assemble_dir(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String)
       return params unless task.module_name == "ansible.builtin.assemble"
       return params if ["true", "yes", "1", "on"].includes?(params["remote_src"]?.try(&.downcase)) || params["remote_src"]?.nil?
-      return params if PluginManager.is_local_connection?(host, vars_context)
+      return params if PluginManager.local_connection?(host, vars_context)
 
       src = params["src"]?
       return params unless src && Dir.exists?(src)
@@ -6431,7 +6432,7 @@ module CrystalPlay
       # comment for the full story (buluma.selinux's block-level `when:
       # ansible_connection not in [...]` guard).
       vars_context["ansible_connection"] ||= JSON::Any.new(
-        PluginManager.is_local_connection?(host, vars_context) ? "local" : "ssh"
+        PluginManager.local_connection?(host, vars_context) ? "local" : "ssh"
       )
 
       # The handler's own when: is now checked inside #execute_handler_

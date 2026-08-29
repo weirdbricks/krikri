@@ -2543,9 +2543,9 @@ module CrystalPlay
         # fallback path.
         begin
           value = render_via_crinja_value(expr)
-          return value ? @lookup.format_value(value) : "undefined"
+          value ? @lookup.format_value(value) : "undefined"
         rescue
-          return evaluate_with_filter_fallback(expr)
+          evaluate_with_filter_fallback(expr)
         end
       end
 

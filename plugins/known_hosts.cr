@@ -36,7 +36,7 @@ module CrystalPlay
       raw_path = @params["path"]?
       raw_path = "~/.ssh/known_hosts" if raw_path.nil? || raw_path.empty?
       path = expand_tilde(raw_path)
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       ensure_parent_dir(path) unless check_mode
 
@@ -73,7 +73,7 @@ module CrystalPlay
       append_result = append_key(path, key_data)
       return PluginResult.new(changed: false, failed: true, msg: "failed to write #{path}: #{append_result[:stderr].strip}") unless append_result[:exit_code] == 0
 
-      if is_true?(@params["hash_host"]?)
+      if true?(@params["hash_host"]?)
         remote_exec("ssh-keygen -H -f #{shell_quote(path)}")
         remote_exec("rm -f #{shell_quote(path)}.old")
       end
@@ -87,7 +87,7 @@ module CrystalPlay
     private def lookup_existing(name : String, path : String) : String?
       return nil unless remote_file_exists?(path)
       result = remote_exec("ssh-keygen -F #{shell_quote(name)} -f #{shell_quote(path)}")
-      return nil unless result[:exit_code] == 0 && !result[:stdout].strip.empty?
+      return nil if result[:exit_code] != 0 || result[:stdout].strip.empty?
       result[:stdout]
     end
 

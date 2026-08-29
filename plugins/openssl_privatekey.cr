@@ -65,7 +65,7 @@ module CrystalPlay
 
       path = expand_tilde(path)
       state = @params["state"]? || "present"
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       return remove(path, check_mode) if state == "absent"
 
@@ -77,7 +77,7 @@ module CrystalPlay
       format = @params["format"]? || "auto_ignore"
       format_mismatch = @params["format_mismatch"]? || "regenerate"
       regenerate = @params["regenerate"]? || "full_idempotence"
-      force = is_true?(@params["force"]?)
+      force = true?(@params["force"]?)
 
       if type == "ECC"
         return failure("curve must be specified for type=ECC") unless curve
@@ -166,7 +166,7 @@ module CrystalPlay
       if fp = fingerprints(path)
         extra["fingerprint"] = JSON::Any.new(fp)
       end
-      if is_true?(@params["return_content"]?) && File.exists?(path)
+      if true?(@params["return_content"]?) && File.exists?(path)
         extra["privatekey"] = JSON::Any.new(File.read(path))
       end
 
@@ -561,7 +561,7 @@ module CrystalPlay
 
     # Real Ansible's backup_local: "<path>.<pid>.<YYYY-MM-DD@HH:MM:SS>~"
     private def backup(path : String) : String?
-      return nil unless is_true?(@params["backup"]?)
+      return nil unless true?(@params["backup"]?)
       return nil unless File.exists?(path)
       dest = "#{path}.#{Process.pid}.#{Time.local.to_s("%Y-%m-%d@%H:%M:%S")}~"
       File.copy(path, dest)

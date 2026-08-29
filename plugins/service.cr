@@ -22,7 +22,7 @@ module CrystalPlay
 
     def initialize(config : JSON::Any)
       super(config)
-      @check_mode = is_true?(@params["check_mode"]?)
+      @check_mode = true?(@params["check_mode"]?)
     end
 
     def execute : PluginResult
@@ -56,7 +56,7 @@ module CrystalPlay
         result = remote_exec("systemctl is-enabled #{name} 2>/dev/null")
         is_enabled = result[:exit_code] == 0
 
-        should_enable = is_true?(enabled)
+        should_enable = true?(enabled)
 
         if should_enable && !is_enabled
           if @check_mode
@@ -195,7 +195,7 @@ module CrystalPlay
     end
 
     # Helper to convert string/bool to boolean
-    private def is_true?(value) : Bool
+    private def true?(value) : Bool
       return false if value.nil?
       value_str = value.to_s.downcase
       value_str == "true" || value_str == "yes" || value_str == "1"

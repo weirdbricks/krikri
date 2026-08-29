@@ -24,9 +24,9 @@ module CrystalPlay
       return precondition_error if precondition_error
 
       patterns = parse_names
-      raw = is_true?(@params["raw"]?)
+      raw = true?(@params["raw"]?)
       state = @params["state"]? || "present"
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       param_error = validate_state_params(state, patterns)
       return param_error if param_error

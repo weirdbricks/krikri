@@ -45,7 +45,7 @@ module CrystalPlay
       ref_name, default_tag = PluginHelpers::DockerRef.split(name)
       tag = @params["tag"]? || default_tag
       rebuild = @params["rebuild"]? || "never"
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       client, docker_host_description = PluginHelpers::DockerClient.build(@params)
       existing_image = image_id(client, PluginHelpers::DockerRef.join(ref_name, tag))
@@ -77,11 +77,11 @@ module CrystalPlay
         args << "--file" << shell_quote(File.join(path, dockerfile))
       end
       each_list_param("cache_from") { |v| args << "--cache-from" << shell_quote(v) }
-      args << "--pull" if is_true?(@params["pull"]?)
+      args << "--pull" if true?(@params["pull"]?)
       if network = @params["network"]?
         args << "--network" << shell_quote(network)
       end
-      args << "--no-cache" if is_true?(@params["nocache"]?)
+      args << "--no-cache" if true?(@params["nocache"]?)
       each_dict_param("args") { |k, v| args << "--build-arg" << shell_quote("#{k}=#{v}") }
       if target = @params["target"]?
         args << "--target" << shell_quote(target)

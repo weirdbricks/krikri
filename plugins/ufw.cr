@@ -98,7 +98,7 @@ module CrystalPlay
                   (state == "enabled" && !currently_enabled) || (state == "disabled" && currently_enabled)
                 end
 
-      if is_true?(@params["check_mode"]?)
+      if true?(@params["check_mode"]?)
         return PluginResult.new(changed: changed, failed: false, msg: "Would run: #{cmd} (check mode)")
       end
 
@@ -116,7 +116,7 @@ module CrystalPlay
     end
 
     private def run_simple(cmd : String, ufw_state_key : String? = nil, ufw_state_value : String? = nil) : PluginResult
-      if is_true?(@params["check_mode"]?)
+      if true?(@params["check_mode"]?)
         return PluginResult.new(changed: true, failed: false, msg: "Would run: #{cmd} (check mode)")
       end
 
@@ -182,7 +182,7 @@ module CrystalPlay
     end
 
     private def run_rule : PluginResult
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
       cmd = PluginHelpers::UfwCommand.rule_command(resolved_insert_params, dry_run: check_mode)
 
       result = remote_exec(cmd)

@@ -25,9 +25,9 @@ module CrystalPlay
       dest = expand_tilde(dest)
 
       version = @params["version"]? || "HEAD"
-      update = @params["update"]?.nil? || is_true?(@params["update"]?)
-      force = is_true?(@params["force"]?)
-      check_mode = is_true?(@params["check_mode"]?)
+      update = @params["update"]?.nil? || true?(@params["update"]?)
+      force = true?(@params["force"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       if Dir.exists?(File.join(dest, ".git"))
         update ? update_repo(dest, version, force, check_mode) : already_present(dest)

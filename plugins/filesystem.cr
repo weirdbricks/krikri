@@ -43,9 +43,9 @@ module CrystalPlay
       return PluginResult.new(changed: false, failed: true, msg: "dev is required") unless dev
 
       state = @params["state"]?.try { |s| s.empty? ? nil : s } || "present"
-      force = is_true?(@params["force"]?)
+      force = true?(@params["force"]?)
       opts = @params["opts"]?.try(&.split) || [] of String
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       exists_result = remote_exec("test -e #{shell_quote(dev)}")
       unless exists_result[:exit_code] == 0

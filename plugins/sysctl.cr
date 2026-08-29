@@ -33,7 +33,7 @@ module CrystalPlay
   #
   # Native vs shell-out: the config-file read (`cat` -> native
   # `File.read_lines`) is now native for local connections (its write
-  # path already branched on `is_local_connection?`, and the read keeps
+  # path already branched on `local_connection?`, and the read keeps
   # an SSH `cat` branch for non-local hosts for the same reason as
   # mount.cr). The two live-kernel calls - `sysctl -w` (sysctl_set:) and
   # `sysctl -p <file>` (reload:) - are genuine system operations with no
@@ -57,7 +57,7 @@ module CrystalPlay
       end
 
       sysctl_file = @params["sysctl_file"]? || DEFAULT_SYSCTL_FILE
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       lines = read_lines(sysctl_file)
       new_lines = rewrite_lines(lines, name, value, state)
@@ -66,7 +66,7 @@ module CrystalPlay
       unless check_mode
         write_lines(sysctl_file, new_lines) if changed
 
-        if state == "present" && is_true?(@params["sysctl_set"]?)
+        if state == "present" && true?(@params["sysctl_set"]?)
           # Real ansible.posix.sysctl fails the task when `sysctl -w`
           # itself fails (an invalid/read-only kernel parameter name,
           # for instance) - unless ignoreerrors: is set, which is
@@ -77,7 +77,7 @@ module CrystalPlay
           # apt_repository.cr's own update_cache bug found this round,
           # just in a different plugin.
           kernel_result = apply_kernel_value(name, value)
-          if kernel_result[:exit_code] != 0 && !is_true?(@params["ignoreerrors"]?)
+          if kernel_result[:exit_code] != 0 && !true?(@params["ignoreerrors"]?)
             return PluginResult.new(
               changed: changed,
               failed: true,
@@ -88,7 +88,7 @@ module CrystalPlay
           end
         end
 
-        reload_sysctl(sysctl_file) if changed && is_true?(@params["reload"]?, default: true)
+        reload_sysctl(sysctl_file) if changed && true?(@params["reload"]?, default: true)
       end
 
       PluginResult.new(changed: changed, failed: false, msg: "", name: name, sysctl_file: sysctl_file)
@@ -133,7 +133,7 @@ module CrystalPlay
     private def read_lines(sysctl_file : String) : Array(String)
       return [] of String unless remote_file_exists?(sysctl_file)
 
-      if is_local_connection?
+      if local_connection?
         # File.read_lines of an empty file yields [] (matching real
         # Ansible's splitlines()), which is slightly more correct than the
         # old shell path's [""] artifact - both are a no-op for the
@@ -151,7 +151,7 @@ module CrystalPlay
       content = lines.join("\n")
       content += "\n" unless content.empty? || content.ends_with?("\n")
 
-      if is_local_connection?
+      if local_connection?
         File.write(sysctl_file, content)
       else
         tmp = File.tempname
@@ -162,12 +162,12 @@ module CrystalPlay
     end
 
     private def apply_kernel_value(name : String, value : String?)
-      ignore_flag = is_true?(@params["ignoreerrors"]?) ? "-e " : ""
+      ignore_flag = true?(@params["ignoreerrors"]?) ? "-e " : ""
       remote_exec("sysctl #{ignore_flag}-w #{name}=#{value}")
     end
 
     private def reload_sysctl(sysctl_file : String)
-      ignore_flag = is_true?(@params["ignoreerrors"]?) ? "-e " : ""
+      ignore_flag = true?(@params["ignoreerrors"]?) ? "-e " : ""
       remote_exec("sysctl #{ignore_flag}-p #{sysctl_file}")
     end
   end

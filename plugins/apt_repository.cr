@@ -113,8 +113,8 @@ module CrystalPlay
       end
 
       state = @params["state"]? || "present"
-      update_cache = is_true?(@params["update_cache"]?, default: true)
-      check_mode = is_true?(@params["check_mode"]?)
+      update_cache = true?(@params["update_cache"]?, default: true)
+      check_mode = true?(@params["check_mode"]?)
 
       if ppa = PluginHelpers::AptPpa.parse(repo)
         return handle_ppa(ppa, state, update_cache, check_mode)

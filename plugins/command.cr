@@ -36,7 +36,7 @@ module CrystalPlay
 
     def initialize(config : JSON::Any)
       super(config)
-      @check_mode = is_true?(@params["check_mode"]?)
+      @check_mode = true?(@params["check_mode"]?)
     end
 
     def execute : PluginResult
@@ -374,7 +374,7 @@ module CrystalPlay
     end
 
     # Helper: Check if parameter is truthy
-    private def is_true?(value : String?, default : Bool = false) : Bool
+    private def true?(value : String?, default : Bool = false) : Bool
       return default unless value
       ["true", "yes", "1", "on"].includes?(value.downcase)
     end

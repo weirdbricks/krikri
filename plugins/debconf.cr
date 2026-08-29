@@ -27,8 +27,8 @@ module CrystalPlay
       question = @params["question"]? || @params["selection"]? || @params["setting"]?
       vtype = @params["vtype"]?
       value = @params["value"]? || @params["answer"]?
-      unseen = is_true?(@params["unseen"]?)
-      check_mode = is_true?(@params["check_mode"]?)
+      unseen = true?(@params["unseen"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       prev = get_selections(pkg)
 

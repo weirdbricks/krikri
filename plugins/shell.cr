@@ -31,8 +31,8 @@ module CrystalPlay
 
     def initialize(config : JSON::Any)
       super(config)
-      @check_mode = is_true?(@params["check_mode"]?)
-      @diff_mode = is_true?(@params["diff_mode"]?)
+      @check_mode = true?(@params["check_mode"]?)
+      @diff_mode = true?(@params["diff_mode"]?)
     end
 
     def execute : PluginResult
@@ -170,7 +170,7 @@ module CrystalPlay
     end
 
     # Helper to convert string/bool to boolean
-    private def is_true?(value) : Bool
+    private def true?(value) : Bool
       return false if value.nil?
       value_str = value.to_s.downcase
       value_str == "true" || value_str == "yes" || value_str == "1"

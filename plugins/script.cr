@@ -79,7 +79,7 @@ module CrystalPlay
     # local-connection run points `cmd` straight at the real controller-
     # side script, never staged, and must not be deleted).
     private def cleanup
-      return unless is_true?(@params["__cleanup_after_script"]?)
+      return unless true?(@params["__cleanup_after_script"]?)
       script_path = (@params["cmd"]? || @params["_raw_params"]? || "").strip.split(/\s+/, 2).first?
       remote_exec("rm -f #{shell_quote(script_path)}") if script_path
     end

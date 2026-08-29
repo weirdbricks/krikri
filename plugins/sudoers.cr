@@ -30,7 +30,7 @@ module CrystalPlay
       state = @params["state"]? || "present"
       sudoers_path = @params["sudoers_path"]? || "/etc/sudoers.d"
       file = File.join(sudoers_path, name)
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       return remove_rule(file, name, check_mode) if state == "absent"
 
@@ -87,9 +87,9 @@ module CrystalPlay
     private def build_content(user : String?, group : String?, commands : Array(String)) : String
       owner = user || "%#{group}"
       host = @params["host"]? || "ALL"
-      noexec_str = is_true?(@params["noexec"]?) ? "NOEXEC:" : ""
-      nopassword_str = is_true?(@params["nopassword"]?, default: true) ? "NOPASSWD:" : ""
-      setenv_str = is_true?(@params["setenv"]?) ? "SETENV:" : ""
+      noexec_str = true?(@params["noexec"]?) ? "NOEXEC:" : ""
+      nopassword_str = true?(@params["nopassword"]?, default: true) ? "NOPASSWD:" : ""
+      setenv_str = true?(@params["setenv"]?) ? "SETENV:" : ""
       runas = @params["runas"]?
       runas_str = runas ? "(#{runas})" : ""
       commands_str = commands.join(", ")

@@ -31,7 +31,7 @@ module CrystalPlay
       path = expand_tilde(path)
       pub_path = "#{path}.pub"
       state = @params["state"]? || "present"
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       return remove(path, pub_path, check_mode) if state == "absent"
 
@@ -52,7 +52,7 @@ module CrystalPlay
     end
 
     private def ensure_present(path : String, pub_path : String, type : String, size : Int32, check_mode : Bool) : PluginResult
-      force = is_true?(@params["force"]?)
+      force = true?(@params["force"]?)
       regenerate = force ? "always" : (@params["regenerate"]? || "partial_idempotence")
       comment = @params["comment"]?
       passphrase = @params["passphrase"]? || ""

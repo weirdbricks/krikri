@@ -31,7 +31,7 @@ module CrystalPlay
       line = @params["line"]?
       regexp = @params["regexp"]?
       state = @params["state"]? || "present"
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       if error = validate(state, line, regexp)
         return error
@@ -44,11 +44,11 @@ module CrystalPlay
       # Found via konstruktoid-hardening's "Clean cron and at" task,
       # `state: absent` on /etc/at.allow/cron.allow, neither of which
       # exist on a stock image - failed outright instead of no-op'ing.
-      if state == "absent" && !File.exists?(path) && !is_true?(@params["create"]?)
+      if state == "absent" && !File.exists?(path) && !true?(@params["create"]?)
         return PluginResult.new(changed: false, failed: false, msg: "file not present")
       end
 
-      being_created, error = ensure_file_exists(path, is_true?(@params["create"]?), check_mode)
+      being_created, error = ensure_file_exists(path, true?(@params["create"]?), check_mode)
       return error if error
 
       apply(path, state, line, regexp, being_created, check_mode)
@@ -139,7 +139,7 @@ module CrystalPlay
       if state == "absent"
         PluginHelpers::LineEditor.remove_matching(lines, line, regexp)
       else
-        PluginHelpers::LineEditor.ensure_present(lines, line.not_nil!, regexp, is_true?(@params["backrefs"]?), @params["insertafter"]?, @params["insertbefore"]?)
+        PluginHelpers::LineEditor.ensure_present(lines, line.not_nil!, regexp, true?(@params["backrefs"]?), @params["insertafter"]?, @params["insertbefore"]?)
       end
     end
 
@@ -151,7 +151,7 @@ module CrystalPlay
 
     private def should_backup?(being_created : Bool, changed : Bool, path : String, check_mode : Bool) : Bool
       return false if being_created || check_mode || !changed
-      is_true?(@params["backup"]?) && File.exists?(path)
+      true?(@params["backup"]?) && File.exists?(path)
     end
 
     # Checks owner:/group:/mode: against the file's current attributes

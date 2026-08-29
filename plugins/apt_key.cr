@@ -111,7 +111,7 @@ module CrystalPlay
           # client, matching how #add_key's `keyserver:` branch already
           # shells out to `apt-key adv` rather than reimplementing a
           # keyserver protocol client.
-          insecure_flag = is_true?(@params["validate_certs"]?, default: true) ? "" : "--insecure "
+          insecure_flag = true?(@params["validate_certs"]?, default: true) ? "" : "--insecure "
           result = remote_exec("curl --fail --silent --show-error --location #{insecure_flag}-o #{tmp_path} #{shell_single_quote(url)}")
           unless result[:exit_code] == 0
             return PluginResult.new(changed: false, failed: true, msg: "Failed to fetch key from #{url}: #{result[:stderr]}")

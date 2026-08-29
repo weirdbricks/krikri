@@ -37,7 +37,7 @@ module CrystalPlay
       return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: setype") unless setype
 
       state = @params["state"]?.try(&.downcase) || "present"
-      ignore_selinux_state = is_true?(@params["ignore_selinux_state"]?)
+      ignore_selinux_state = true?(@params["ignore_selinux_state"]?)
 
       unless ignore_selinux_state
         enforce = remote_exec("getenforce")

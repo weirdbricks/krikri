@@ -36,7 +36,7 @@ module CrystalPlay
   # `mkdir -p` -> native `Dir.mkdir_p`) are converted to native Crystal
   # for local connections, like the other file plugins - but, unlike
   # those, mount genuinely supports remote hosts (its fstab write path
-  # already branches on `is_local_connection?`), so each one keeps an
+  # already branches on `local_connection?`), so each one keeps an
   # SSH branch back to the shell command for non-local hosts, where a
   # native `File.*` call would read/write the control node's filesystem
   # instead of the target's. The actual `mount`/`umount`/`mountpoint`
@@ -121,7 +121,7 @@ module CrystalPlay
 
     private def run(path : String, state : String) : PluginResult
       fstab = @params["fstab"]? || DEFAULT_FSTAB
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       case state
       when "present", "mounted"
@@ -155,7 +155,7 @@ module CrystalPlay
 
     private def desired_opts : String
       opts = @params["opts"]? || "defaults"
-      return opts if is_true?(@params["boot"]?, default: true)
+      return opts if true?(@params["boot"]?, default: true)
 
       parts = opts.split(",")
       parts << "noauto" unless parts.includes?("noauto")
@@ -210,7 +210,7 @@ module CrystalPlay
     private def persist_fstab(fstab : String, lines : Array(String), changed : Bool, check_mode : Bool) : {Bool, String}
       backup_file = ""
       if changed && !check_mode
-        backup_file = backup_fstab(fstab) if is_true?(@params["backup"]?)
+        backup_file = backup_fstab(fstab) if true?(@params["backup"]?)
         write_fstab(fstab, lines)
       end
 
@@ -233,7 +233,7 @@ module CrystalPlay
 
     private def read_fstab(fstab : String) : Array(String)
       return [] of String unless remote_file_exists?(fstab)
-      if is_local_connection?
+      if local_connection?
         # chomp: false so the trailing newline is kept on every line,
         # letting `lines.join` in write_fstab reproduce the file
         # byte-for-byte (same contract the old `cat ... | lines(chomp:
@@ -246,7 +246,7 @@ module CrystalPlay
 
     private def write_fstab(fstab : String, lines : Array(String))
       content = lines.join
-      if is_local_connection?
+      if local_connection?
         File.write(fstab, content)
       else
         tmp = File.tempname
@@ -258,7 +258,7 @@ module CrystalPlay
 
     private def backup_fstab(fstab : String) : String
       backup_path = "#{fstab}.#{Time.utc.to_unix}.bak"
-      if is_local_connection?
+      if local_connection?
         File.copy(fstab, backup_path)
       else
         remote_exec("cp #{fstab} #{backup_path}")
@@ -300,7 +300,7 @@ module CrystalPlay
       return {false, nil} if currently_mounted?(path)
       return {true, nil} if check_mode
 
-      if is_local_connection?
+      if local_connection?
         Dir.mkdir_p(path)
       else
         remote_exec("mkdir -p #{path}")
@@ -416,7 +416,7 @@ module CrystalPlay
 
       return PluginResult.new(changed: true, failed: false, msg: "Would mount (check mode)", name: path) if check_mode
 
-      if is_local_connection?
+      if local_connection?
         Dir.mkdir_p(path)
       else
         remote_exec("mkdir -p #{path}")
@@ -482,7 +482,7 @@ module CrystalPlay
     # for the source device currently mounted at *path*, or nil if
     # nothing is.
     private def current_mount_source(path : String) : String?
-      content = is_local_connection? ? read_proc_mounts : remote_exec("cat /proc/mounts")[:stdout]
+      content = local_connection? ? read_proc_mounts : remote_exec("cat /proc/mounts")[:stdout]
 
       content.each_line do |line|
         fields = line.split

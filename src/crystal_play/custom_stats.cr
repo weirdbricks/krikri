@@ -23,6 +23,10 @@ module CrystalPlay
       !@@global.empty? || !@@per_host.empty?
     end
 
+    def self.empty? : Bool
+      @@global.empty? && @@per_host.empty?
+    end
+
     def self.global : Hash(String, JSON::Any)
       @@global
     end

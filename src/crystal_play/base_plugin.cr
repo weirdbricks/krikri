@@ -84,7 +84,7 @@ module CrystalPlay
       end
 
       # Check for diff mode
-      @diff_mode = is_true?(@params["diff_mode"]?)
+      @diff_mode = true?(@params["diff_mode"]?)
     end
 
     # Abstract method - must be implemented by subclasses
@@ -121,7 +121,7 @@ module CrystalPlay
     # Supports both SSH and local connections
 
     # Check if this host should use local connection
-    protected def is_local_connection? : Bool
+    protected def local_connection? : Bool
       # The CONFIG's host is authoritative for where this plugin process
       # is actually running, so the localhost name check must win over
       # @vars: on a delegate_to: localhost task, the config's vars belong
@@ -167,7 +167,7 @@ module CrystalPlay
 
     protected def remote_exec(command : String) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       command = with_environment(command)
-      if is_local_connection?
+      if local_connection?
         # Execute locally
         LocalExecutor.exec(command)
       else
@@ -209,7 +209,7 @@ module CrystalPlay
     end
 
     protected def remote_upload(local_path : String, remote_path : String)
-      if is_local_connection?
+      if local_connection?
         # Just copy locally
         FileUtils.cp(local_path, remote_path)
       else
@@ -225,7 +225,7 @@ module CrystalPlay
     end
 
     protected def remote_download(remote_path : String, local_path : String)
-      if is_local_connection?
+      if local_connection?
         # Just copy locally
         FileUtils.cp(remote_path, local_path)
       else
@@ -241,7 +241,7 @@ module CrystalPlay
     end
 
     protected def remote_file_exists?(path : String) : Bool
-      if is_local_connection?
+      if local_connection?
         LocalExecutor.file_exists?(path)
       else
         result = remote_exec("test -f #{path}")
@@ -250,7 +250,7 @@ module CrystalPlay
     end
 
     protected def remote_dir_exists?(path : String) : Bool
-      if is_local_connection?
+      if local_connection?
         LocalExecutor.dir_exists?(path)
       else
         result = remote_exec("test -d #{path}")
@@ -360,7 +360,7 @@ module CrystalPlay
     end
 
     # Helper to check if a parameter is truthy
-    protected def is_true?(value : String?, default : Bool = false) : Bool
+    protected def true?(value : String?, default : Bool = false) : Bool
       return default unless value
       ["true", "yes", "1", "on"].includes?(value.downcase)
     end

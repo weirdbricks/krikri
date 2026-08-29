@@ -92,8 +92,8 @@ module CrystalPlay
         current_link = m[1].strip
       end
 
-      output.scan(/^(\/\S*)\s-\s(?:family\s(\S+)\s)?priority\s(\d+)/m) do |m|
-        current_alternatives[m[1]] = {priority: m[3].to_i}
+      output.scan(/^(\/\S*)\s-\s(?:family\s(\S+)\s)?priority\s(\d+)/m) do |am|
+        current_alternatives[am[1]] = {priority: am[3].to_i}
       end
 
       {current_mode, current_path, current_link, current_alternatives}

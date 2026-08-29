@@ -65,7 +65,7 @@ module CrystalPlay
       # until this task's own "Missing required parameter: name"
       # failure surfaced it live on a Rocky 9.6 target.
       if names.empty?
-        if is_true?(@params["update_cache"]?)
+        if true?(@params["update_cache"]?)
           result = remote_exec("yum makecache")
           # changed: false even on success - same fix as dnf.cr's
           # identical branch (see its own comment): real ansible-core's
@@ -108,7 +108,7 @@ module CrystalPlay
       end
 
       # Handle special case: autoremove without package name
-      if is_true?(@params["autoremove"]?) && names == ["*"]
+      if true?(@params["autoremove"]?) && names == ["*"]
         return handle_autoremove
       end
 
@@ -254,38 +254,38 @@ module CrystalPlay
       # configured, RedHat)" task (direct google-chrome-stable RPM URL,
       # no imported key) - real ansible failed with "Failed to validate
       # GPG signature", crystal-ansible installed it anyway.
-      if is_true?(@params["disable_gpg_check"]?)
+      if true?(@params["disable_gpg_check"]?)
         options << "--nogpgcheck"
       else
         options << "--setopt=localpkg_gpgcheck=1"
       end
 
       # Security/bugfix updates
-      if is_true?(@params["security"]?)
+      if true?(@params["security"]?)
         options << "--security"
       end
 
-      if is_true?(@params["bugfix"]?)
+      if true?(@params["bugfix"]?)
         options << "--bugfix"
       end
 
       # Weak dependencies
-      if is_false?(@params["install_weak_deps"]?)
+      if false?(@params["install_weak_deps"]?)
         options << "--setopt=install_weak_deps=False"
       end
 
       # Skip broken packages
-      if is_true?(@params["skip_broken"]?)
+      if true?(@params["skip_broken"]?)
         options << "--skip-broken"
       end
 
       # Allow downgrade
-      if is_true?(@params["allow_downgrade"]?)
+      if true?(@params["allow_downgrade"]?)
         options << "--allowerasing"
       end
 
       # Best (default in dnf, but explicit is good)
-      options << "--best" unless is_true?(@params["skip_broken"]?)
+      options << "--best" unless true?(@params["skip_broken"]?)
 
       options.join(" ")
     end
@@ -293,7 +293,7 @@ module CrystalPlay
     # Install packages
     private def handle_install(names : Array(String), options : String) : PluginResult
       # Check if update_only is set
-      update_only = is_true?(@params["update_only"]?)
+      update_only = true?(@params["update_only"]?)
 
       to_install = [] of String
       to_update = [] of String
@@ -301,10 +301,10 @@ module CrystalPlay
 
       # Check each package's status
       names.each do |pkg|
-        if is_package_group?(pkg)
+        if package_group?(pkg)
           # For groups, always try to install (dnf handles idempotency)
           to_install << pkg
-        elsif is_url_or_file?(pkg)
+        elsif url_or_file?(pkg)
           # For URLs/files, always try to install
           to_install << pkg
         else
@@ -419,7 +419,7 @@ module CrystalPlay
 
       # Check which packages need to be removed
       names.each do |pkg|
-        if is_package_group?(pkg)
+        if package_group?(pkg)
           # For groups, always try to remove (dnf handles if not installed)
           to_remove << pkg
         else
@@ -442,7 +442,7 @@ module CrystalPlay
       end
 
       # Build remove command
-      autoremove_flag = is_true?(@params["autoremove"]?) ? "" : "--setopt=clean_requirements_on_remove=False"
+      autoremove_flag = true?(@params["autoremove"]?) ? "" : "--setopt=clean_requirements_on_remove=False"
       pkg_list = to_remove.map { |p| quote_package(p) }.join(" ")
       cmd = "yum remove #{options} #{autoremove_flag} #{pkg_list}"
 
@@ -599,12 +599,12 @@ module CrystalPlay
     end
 
     # Check if name is a package group (starts with @)
-    private def is_package_group?(name : String) : Bool
+    private def package_group?(name : String) : Bool
       name.starts_with?("@")
     end
 
     # Check if name is a URL or file path
-    private def is_url_or_file?(name : String) : Bool
+    private def url_or_file?(name : String) : Bool
       name.starts_with?("http://") ||
         name.starts_with?("https://") ||
         name.starts_with?("ftp://") ||
@@ -621,13 +621,13 @@ module CrystalPlay
     end
 
     # Helper: Check if parameter is truthy
-    private def is_true?(value : String?) : Bool
+    private def true?(value : String?) : Bool
       return false unless value
       ["true", "yes", "1", "on"].includes?(value.downcase)
     end
 
     # Helper: Check if parameter is falsy
-    private def is_false?(value : String?) : Bool
+    private def false?(value : String?) : Bool
       return false unless value
       ["false", "no", "0", "off"].includes?(value.downcase)
     end

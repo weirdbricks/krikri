@@ -53,7 +53,7 @@ module CrystalPlay
       end
 
       full_command = command.map { |part| shell_quote(part) }.join(' ')
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       query_result = remote_exec("cd #{shell_quote(chdir)} && #{full_command} -q")
       needs_rebuild = query_result[:exit_code] != 0

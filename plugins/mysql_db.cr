@@ -95,7 +95,7 @@ module CrystalPlay
       end
 
       state = @params["state"]? || "present"
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       if state == "dump" || state == "import"
         return run_dump_or_import(state, name)
@@ -159,7 +159,7 @@ module CrystalPlay
       target = @params["target"]?
       return PluginResult.new(changed: false, failed: true, msg: "target is required when state is dump or import") unless target
 
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
       if check_mode
         return PluginResult.new(changed: true, failed: false, msg: "Would #{state} database #{name} #{state == "dump" ? "to" : "from"} #{target} (check mode)")
       end
@@ -173,11 +173,11 @@ module CrystalPlay
       cmd = String.build do |cmd_str|
         cmd_str << "mysqldump " << config_file_flag << login_flags << " "
         cmd_str << (all_databases ? "--all-databases" : quote(name))
-        cmd_str << " --skip-lock-tables" if is_true?(@params["skip_lock_tables"]?)
-        cmd_str << " --single-transaction=true" if is_true?(@params["single_transaction"]?)
+        cmd_str << " --skip-lock-tables" if true?(@params["skip_lock_tables"]?)
+        cmd_str << " --single-transaction=true" if true?(@params["single_transaction"]?)
         cmd_str << " --quick"
         ignore_tables.each { |table| cmd_str << " --ignore-table=" << quote(table) }
-        cmd_str << " --hex-blob" if is_true?(@params["hex_blob"]?)
+        cmd_str << " --hex-blob" if true?(@params["hex_blob"]?)
         if master_data = @params["master_data"]?
           cmd_str << " --master-data=" << master_data unless master_data == "0"
         end
@@ -218,7 +218,7 @@ module CrystalPlay
       config_file = @params["config_file"]?
       return "" unless config_file
 
-      flag = is_true?(@params["restrict_config_file"]?) ? "--defaults-file=" : "--defaults-extra-file="
+      flag = true?(@params["restrict_config_file"]?) ? "--defaults-file=" : "--defaults-extra-file="
       "#{flag}#{quote(config_file)} "
     end
 

@@ -23,7 +23,7 @@ module CrystalPlay
       src = @params["src"]? || @params["path"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: src") unless src
 
-      armor = @params["armor"]?.nil? || is_true?(@params["armor"]?)
+      armor = @params["armor"]?.nil? || true?(@params["armor"]?)
 
       return PluginResult.new(changed: false, failed: true, msg: "Source is a directory and must be a file: #{src}") if Dir.exists?(src)
 

@@ -28,11 +28,11 @@ module CrystalPlay
       return missing_param("path") unless path
       path = expand_tilde(path)
 
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
       block = @params["block"]? || @params["content"]?
       state = block.nil? || block.empty? ? "absent" : (@params["state"]? || "present")
 
-      being_created, error = ensure_file_exists(path, is_true?(@params["create"]?), check_mode)
+      being_created, error = ensure_file_exists(path, true?(@params["create"]?), check_mode)
       return error if error
 
       apply(path, state, block, being_created, check_mode)
@@ -121,7 +121,7 @@ module CrystalPlay
 
     private def should_backup?(being_created : Bool, changed : Bool, path : String, check_mode : Bool) : Bool
       return false if being_created || check_mode || !changed
-      is_true?(@params["backup"]?) && File.exists?(path)
+      true?(@params["backup"]?) && File.exists?(path)
     end
 
     private def write_backup(path : String) : String

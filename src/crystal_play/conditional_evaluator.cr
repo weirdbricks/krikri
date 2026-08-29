@@ -617,7 +617,7 @@ module CrystalPlay
       end
 
       # Handle bare variable (truthiness check)
-      return evaluate_truthiness(condition, vars, strict, raise_undefined)
+      evaluate_truthiness(condition, vars, strict, raise_undefined)
     end
 
     # If *expr* is entirely wrapped in one matching pair of outer parens

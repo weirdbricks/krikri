@@ -186,7 +186,7 @@ module CrystalPlay
       end
 
       state = @params["state"]? || "started"
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       client, docker_host_description = PluginHelpers::DockerClient.build(@params)
       api = Docr::API.new(client)
@@ -196,8 +196,8 @@ module CrystalPlay
 
       image_ref = @params["image"]?
       command = @params["command"]?.try(&.split(/\s+/).reject(&.empty?))
-      pull = is_true?(@params["pull"]?, default: true)
-      recreate_requested = is_true?(@params["recreate"]?)
+      pull = true?(@params["pull"]?, default: true)
+      recreate_requested = true?(@params["recreate"]?)
 
       needs_create = !existing
       needs_recreate = !!existing && (recreate_requested || !matches?(api, existing.not_nil!, image_ref, command))
@@ -443,11 +443,11 @@ module CrystalPlay
       end
 
       if @params["privileged"]? && comparison_mode("privileged", "strict") != "ignore"
-        return false unless !!host_config.privileged == is_true?(@params["privileged"]?)
+        return false unless !!host_config.privileged == true?(@params["privileged"]?)
       end
 
       if @params["auto_remove"]? && comparison_mode("auto_remove", "strict") != "ignore"
-        return false unless !!host_config.auto_remove == is_true?(@params["auto_remove"]?)
+        return false unless !!host_config.auto_remove == true?(@params["auto_remove"]?)
       end
 
       if @params["ports"]?
@@ -493,7 +493,7 @@ module CrystalPlay
       end
 
       if @params["oom_kill_disable"]? && comparison_mode("oom_kill_disable", "strict") != "ignore"
-        return false unless !!host_config.oom_kill_disable == is_true?(@params["oom_kill_disable"]?)
+        return false unless !!host_config.oom_kill_disable == true?(@params["oom_kill_disable"]?)
       end
 
       if (oom_score_adj = @params["oom_score_adj"]?) && comparison_mode("oom_score_adj", "strict") != "ignore"
@@ -741,8 +741,8 @@ module CrystalPlay
         port_bindings: port_bindings.empty? ? nil : port_bindings,
         restart_policy: restart_policy,
         network_mode: @params["network_mode"]?,
-        privileged: is_true?(@params["privileged"]?),
-        auto_remove: is_true?(@params["auto_remove"]?),
+        privileged: true?(@params["privileged"]?),
+        auto_remove: true?(@params["auto_remove"]?),
         memory: @params["memory"]?.try { |v| PluginHelpers::DockerResources.human_to_bytes(v) },
         memory_reservation: @params["memory_reservation"]?.try { |v| PluginHelpers::DockerResources.human_to_bytes(v) },
         memory_swap: @params["memory_swap"]?.try { |v| PluginHelpers::DockerResources.memory_swap_to_bytes(v) },
@@ -751,7 +751,7 @@ module CrystalPlay
         cpu_shares: @params["cpu_shares"]?.try(&.to_i64),
         cpuset_cpus: @params["cpuset_cpus"]?,
         cpuset_mems: @params["cpuset_mems"]?,
-        oom_kill_disable: @params["oom_kill_disable"]? ? is_true?(@params["oom_kill_disable"]?) : nil,
+        oom_kill_disable: @params["oom_kill_disable"]? ? true?(@params["oom_kill_disable"]?) : nil,
         oom_score_adj: @params["oom_score_adj"]?.try(&.to_i64),
         pids_limit: @params["pids_limit"]?.try(&.to_i64),
       )

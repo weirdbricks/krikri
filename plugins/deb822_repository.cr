@@ -71,7 +71,7 @@ module CrystalPlay
 
       state = @params["state"]? || "present"
       target = File.join(SOURCES_LIST_D, "#{name}.sources")
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       if state == "absent"
         return remove(target, check_mode)
@@ -108,16 +108,16 @@ module CrystalPlay
     # meaningful differs. Bool fields (all `type: bool` in the real
     # module's own argument_spec) are written as literal "yes"/"no" -
     # real APT's own deb822 sources parser (and this codebase's own
-    # `is_true?`) both already understand "yes"/"no"/"true"/"false"
+    # `true?`) both already understand "yes"/"no"/"true"/"false"
     # interchangeably, so round-tripping an already-boolean-ish param
-    # value through `is_true?` first (rather than assuming it always
+    # value through `true?` first (rather than assuming it always
     # arrives as literal "true"/"false") stays correct either way.
     private def render_content(check_mode : Bool = false) : String
       n = @params["name"]?.not_nil!
       fields = {} of String => String
 
       BOOL_FIELDS.each do |param, field|
-        fields[param] = "#{field}: #{is_true?(@params[param]?) ? "yes" : "no"}" if @params[param]?
+        fields[param] = "#{field}: #{true?(@params[param]?) ? "yes" : "no"}" if @params[param]?
       end
       LIST_FIELDS.each do |param, field|
         default = param == "types" ? "deb" : nil

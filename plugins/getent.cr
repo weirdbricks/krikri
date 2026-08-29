@@ -58,7 +58,7 @@ module CrystalPlay
       key = @params["key"]?
       facts = Hash(String, JSON::Any).new
 
-      fail_key = @params["fail_key"]? ? is_true?(@params["fail_key"]) : true
+      fail_key = @params["fail_key"]? ? true?(@params["fail_key"]) : true
 
       if key
         value = entries[key]?

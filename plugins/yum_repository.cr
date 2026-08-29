@@ -185,7 +185,7 @@ module CrystalPlay
 
       BOOL_KEYS.each do |key|
         if value = @params[key]?
-          lines[key] = is_true?(value) ? "1" : "0"
+          lines[key] = true?(value) ? "1" : "0"
         end
       end
 
@@ -214,7 +214,7 @@ module CrystalPlay
     end
 
     private def write_file(path : String, content : String)
-      if is_local_connection?
+      if local_connection?
         File.write(path, content)
       else
         tmp = File.tempname

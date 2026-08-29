@@ -90,13 +90,13 @@ module CrystalPlay
         return PluginResult.new(changed: false, failed: false, msg: "Gem already installed") if installed?(executable, name, version)
       end
 
-      user_install = @params["user_install"]?.nil? || is_true?(@params["user_install"]?)
+      user_install = @params["user_install"]?.nil? || true?(@params["user_install"]?)
       bindir = @params["bindir"]?
-      include_dependencies = @params["include_dependencies"]?.nil? || is_true?(@params["include_dependencies"]?)
+      include_dependencies = @params["include_dependencies"]?.nil? || true?(@params["include_dependencies"]?)
 
       cmd = PluginHelpers::GemCommand.install_command(
         executable, name, version, user_install, bindir,
-        @params["repository"]?, include_dependencies, is_true?(@params["norc"]?)
+        @params["repository"]?, include_dependencies, true?(@params["norc"]?)
       )
 
       result = remote_exec(cmd)
@@ -110,7 +110,7 @@ module CrystalPlay
     private def remove(executable : String, name : String, version : String?) : PluginResult
       return PluginResult.new(changed: false, failed: false, msg: "Gem already absent") unless installed?(executable, name, version)
 
-      result = remote_exec(PluginHelpers::GemCommand.uninstall_command(executable, name, version, is_true?(@params["norc"]?)))
+      result = remote_exec(PluginHelpers::GemCommand.uninstall_command(executable, name, version, true?(@params["norc"]?)))
 
       unless result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true, msg: "Failed to uninstall gem: #{result[:stderr]}")

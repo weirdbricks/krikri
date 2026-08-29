@@ -14,8 +14,8 @@ module CrystalPlay
 
     def initialize(config : JSON::Any)
       super(config)
-      @check_mode = is_true?(@params["check_mode"]?)
-      @diff_mode = is_true?(@params["diff_mode"]?)
+      @check_mode = true?(@params["check_mode"]?)
+      @diff_mode = true?(@params["diff_mode"]?)
     end
 
     def execute : PluginResult
@@ -111,7 +111,7 @@ module CrystalPlay
         # /etc/mdadm/mdadm.conf: real ansible-playbook left the 688-byte
         # file untouched and reported ok, this truncated it to 0 bytes
         # and reported changed. Real data loss, not just a wrong verdict.
-        unless is_true?(@params["force"]?, default: true)
+        unless true?(@params["force"]?, default: true)
           return PluginResult.new(
             changed: false,
             failed: false,
@@ -164,8 +164,8 @@ module CrystalPlay
       end
 
       # Handle backup if requested
-      if is_true?(@params["backup"]?) && File.exists?(dest)
-        backup_dest = create_backup(dest)
+      if true?(@params["backup"]?) && File.exists?(dest)
+        create_backup(dest)
       end
 
       # Ensure destination directory exists
@@ -294,7 +294,7 @@ module CrystalPlay
 
       # Check if dest exists and compare
       changed = true
-      force = is_true?(@params["force"]?, default: true)
+      force = true?(@params["force"]?, default: true)
 
       if File.exists?(dest)
         unless force
@@ -341,8 +341,8 @@ module CrystalPlay
       end
 
       # Create backup if requested
-      if is_true?(@params["backup"]?) && File.exists?(dest)
-        backup_dest = create_backup(dest)
+      if true?(@params["backup"]?) && File.exists?(dest)
+        create_backup(dest)
       end
 
       # Ensure destination directory exists
@@ -512,7 +512,7 @@ module CrystalPlay
     end
 
     # Helper: Check if parameter is truthy
-    private def is_true?(value : String?, default : Bool = false) : Bool
+    private def true?(value : String?, default : Bool = false) : Bool
       return default unless value
       ["true", "yes", "1", "on"].includes?(value.downcase)
     end

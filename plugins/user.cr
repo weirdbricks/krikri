@@ -62,7 +62,7 @@ module CrystalPlay
       return missing_param("name") unless name
 
       state = @params["state"]? || "present"
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
       current = lookup(name)
 
       if state == "absent"
@@ -83,7 +83,7 @@ module CrystalPlay
 
       return PluginResult.new(changed: true, failed: false, msg: "Would remove user (check mode)") if check_mode
 
-      args = PluginHelpers::UserState.userdel_args(name, is_true?(@params["remove"]?))
+      args = PluginHelpers::UserState.userdel_args(name, true?(@params["remove"]?))
       result = remote_exec("userdel #{args.join(" ")}")
       return command_failure("remove user", result) unless result[:exit_code] == 0
 
@@ -156,8 +156,8 @@ module CrystalPlay
     private def create(name : String, check_mode : Bool) : PluginResult
       return PluginResult.new(changed: true, failed: false, msg: "Would create user (check mode)") if check_mode
 
-      create_home = @params["create_home"]?.nil? || is_true?(@params["create_home"]?)
-      locked = @params["password_lock"]?.try { |v| is_true?(v) }
+      create_home = @params["create_home"]?.nil? || true?(@params["create_home"]?)
+      locked = @params["password_lock"]?.try { |v| true?(v) }
       args = PluginHelpers::UserState.useradd_args(
         name,
         @params["uid"]?,
@@ -166,7 +166,7 @@ module CrystalPlay
         @params["shell"]?,
         @params["home"]?,
         @params["comment"]?,
-        is_true?(@params["system"]?),
+        true?(@params["system"]?),
         create_home
       ) + quote_password_flag(PluginHelpers::UserState.useradd_password_args(@params["password"]?, locked))
 
@@ -208,7 +208,7 @@ module CrystalPlay
       )
 
       password = @params["password"]?
-      locked = @params["password_lock"]?.try { |v| is_true?(v) }
+      locked = @params["password_lock"]?.try { |v| true?(v) }
       if password || !locked.nil?
         update_password = @params["update_password"]? || "always"
         flags += quote_password_flag(

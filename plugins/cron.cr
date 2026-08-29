@@ -62,7 +62,7 @@ module CrystalPlay
                    build_line(job, include_user: true)
                  end
 
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       original_content = File.exists?(cron_file) ? File.read(cron_file) : ""
       new_content, changed = PluginHelpers::CronTable.upsert(original_content, name, new_line)
@@ -94,7 +94,7 @@ module CrystalPlay
                    build_line(job, include_user: false)
                  end
 
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       # A user with no crontab yet makes `crontab -l` exit non-zero
       # ("no crontab for <user>") - not a real error, just "start from
@@ -142,7 +142,7 @@ module CrystalPlay
         @params["special_time"]?
       )
 
-      PluginHelpers::CronTable.render_line(schedule, job, include_user ? @params["user"]? : nil, is_true?(@params["disabled"]?))
+      PluginHelpers::CronTable.render_line(schedule, job, include_user ? @params["user"]? : nil, true?(@params["disabled"]?))
     end
 
     private def missing_param(name : String) : PluginResult

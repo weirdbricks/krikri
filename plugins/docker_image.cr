@@ -74,7 +74,7 @@ module CrystalPlay
           return PluginResult.new(changed: false, failed: true, msg: "docker_image: only source: pull is implemented, got '#{source}'")
         end
       end
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       ref_name, default_tag = PluginHelpers::DockerRef.split(name)
       ref_tag = @params["tag"]? || default_tag
@@ -85,7 +85,7 @@ module CrystalPlay
 
       pre_pull_id = image_id(client, full_ref)
       exists = !pre_pull_id.nil?
-      force_source = is_true?(@params["force_source"]?)
+      force_source = true?(@params["force_source"]?)
 
       case state
       when "present"

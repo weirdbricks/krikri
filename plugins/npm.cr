@@ -35,7 +35,7 @@ module CrystalPlay
       # package.json in `path`/cwd, matching plain `npm install`.
       return PluginResult.new(changed: false, failed: true, msg: "name is required") if state == "absent" && !name
 
-      global = is_true?(@params["global"]?)
+      global = true?(@params["global"]?)
       path = @params["path"]?
       return PluginResult.new(changed: false, failed: true, msg: "path is required when global is false") if !global && !path
 
@@ -122,9 +122,9 @@ module CrystalPlay
     private def run_npm(subcommand : Array(String), name_version : String?, global : Bool, path : String?, mutating : Bool = true)
       args = subcommand.dup
       args << "--global" if global
-      args << "--production" if mutating && is_true?(@params["production"]?)
-      args << "--ignore-scripts" if mutating && is_true?(@params["ignore_scripts"]?)
-      args << "--unsafe-perm" if mutating && is_true?(@params["unsafe_perm"]?)
+      args << "--production" if mutating && true?(@params["production"]?)
+      args << "--ignore-scripts" if mutating && true?(@params["ignore_scripts"]?)
+      args << "--unsafe-perm" if mutating && true?(@params["unsafe_perm"]?)
       if registry = @params["registry"]?
         args << "--registry" << registry
       end

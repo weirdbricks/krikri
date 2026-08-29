@@ -579,11 +579,11 @@ module CrystalPlay
           options |= Regex::Options::IGNORE_CASE if args[2]?.try { |arg| truthy?(resolve_expression(arg)) }
           regex = self.class.cached_regex(pattern, options)
 
-          matches = as_string(value).scan(regex).map do |match|
-            if match.size > 1
-              JSON::Any.new((1...match.size).map { |i| JSON::Any.new(match[i]? || "") })
+          matches = as_string(value).scan(regex).map do |mat|
+            if mat.size > 1
+              JSON::Any.new((1...mat.size).map { |i| JSON::Any.new(mat[i]? || "") })
             else
-              JSON::Any.new(match[0])
+              JSON::Any.new(mat[0])
             end
           end
           JSON::Any.new(matches)
@@ -606,8 +606,8 @@ module CrystalPlay
           pattern = args[0]?.try { |arg| as_string(resolve_expression(arg)) } || ""
           replacement = args[1]?.try { |arg| as_string(resolve_expression(arg)) } || ""
 
-          result = as_string(value).gsub(self.class.cached_regex(pattern)) do |_, match|
-            replacement.gsub(/\\(\d)/) { match[$1.to_i]? || "" }
+          result = as_string(value).gsub(self.class.cached_regex(pattern)) do |_, mat|
+            replacement.gsub(/\\(\d)/) { mat[$1.to_i]? || "" }
           end
           JSON::Any.new(result)
         when "hash"
@@ -779,7 +779,7 @@ module CrystalPlay
           # components with os.path.join semantics (an absolute
           # component resets the accumulated path rather than appending
           # to it - Crystal's own File.join has no such reset).
-          parts = as_array(value).map(&.as_s?).compact
+          parts = as_array(value).compact_map(&.as_s?)
           joined = parts.reduce("") { |acc, part| part.starts_with?('/') ? part : File.join(acc, part) }
           JSON::Any.new(joined)
         when "splitext"
@@ -891,9 +891,9 @@ module CrystalPlay
           # the CONTROLLER's own environment (unset -> left as-is,
           # matching Python's own behavior).
           str = as_string(value)
-          expanded = str.gsub(/\$\{(\w+)\}|\$(\w+)/) do |match|
+          expanded = str.gsub(/\$\{(\w+)\}|\$(\w+)/) do |mat|
             name = $1? || $2?
-            name ? (ENV[name]? || match) : match
+            name ? (ENV[name]? || mat) : mat
           end
           JSON::Any.new(expanded)
         when "normpath"
@@ -911,7 +911,7 @@ module CrystalPlay
           # commonpath() - real Ansible filter, mirrors Python's
           # os.path.commonpath: the longest common directory prefix of
           # value (a list of paths).
-          paths = as_array(value).map(&.as_s?).compact
+          paths = as_array(value).compact_map(&.as_s?)
           JSON::Any.new(common_path(paths))
         when "log"
           # log(base=math.e) - real Ansible filter: natural log with no

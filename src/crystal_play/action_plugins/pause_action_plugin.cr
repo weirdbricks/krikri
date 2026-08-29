@@ -32,7 +32,7 @@ module CrystalPlay
         "stdout"     => JSON::Any.new(stdout),
         "stderr"     => JSON::Any.new(""),
         "rc"         => JSON::Any.new(0_i64),
-        "echo"       => JSON::Any.new(is_true?(@params["echo"]?, default: true)),
+        "echo"       => JSON::Any.new(true?(@params["echo"]?, default: true)),
         "user_input" => JSON::Any.new(""),
       }
       ActionResult.final(ActionResult.plugin_result_json(false, false, "", extra))
@@ -58,7 +58,7 @@ module CrystalPlay
       time.to_s("%Y-%m-%d %H:%M:%S.%6N")
     end
 
-    private def is_true?(value : String?, default : Bool = false) : Bool
+    private def true?(value : String?, default : Bool = false) : Bool
       return default unless value
       ["true", "yes", "1", "on"].includes?(value.downcase)
     end

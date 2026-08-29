@@ -26,7 +26,7 @@ module CrystalPlay
       name = @params["name"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name") unless name
 
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       current = current_timezone
       if current == name

@@ -30,7 +30,7 @@ module CrystalPlay
       url = @params["url"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: url") unless url
 
-      if is_true?(@params["check_mode"]?)
+      if true?(@params["check_mode"]?)
         return PluginResult.new(changed: false, failed: false, msg: "Skipped: uri module does not support check mode", skipped: true)
       end
 
@@ -102,7 +102,7 @@ module CrystalPlay
         result.extra["location"] = JSON::Any.new(location)
       end
 
-      if is_true?(@params["return_content"]?) || content_type == "application/json"
+      if true?(@params["return_content"]?) || content_type == "application/json"
         result.extra["content"] = JSON::Any.new(body)
       end
 
@@ -155,7 +155,7 @@ module CrystalPlay
       client.connect_timeout = timeout
       client.read_timeout = timeout
 
-      if !is_true?(@params["validate_certs"]?, default: true) && (tls = client.tls?)
+      if !true?(@params["validate_certs"]?, default: true) && (tls = client.tls?)
         tls.verify_mode = OpenSSL::SSL::VerifyMode::NONE
       end
 

@@ -41,8 +41,8 @@ module CrystalPlay
       return PluginResult.new(changed: false, failed: true, msg: "Could not determine authorized_keys path: provide 'path' or a valid 'user'") unless path
 
       state = @params["state"]? || "present"
-      check_mode = is_true?(@params["check_mode"]?)
-      manage_dir = @params["manage_dir"]?.nil? || is_true?(@params["manage_dir"]?)
+      check_mode = true?(@params["check_mode"]?)
+      manage_dir = @params["manage_dir"]?.nil? || true?(@params["manage_dir"]?)
 
       original_content = File.exists?(path) ? File.read(path) : ""
       new_content, changed = PluginHelpers::AuthorizedKeysFile.ensure(original_content, key, state == "present")

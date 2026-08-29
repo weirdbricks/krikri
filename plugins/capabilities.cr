@@ -28,7 +28,7 @@ module CrystalPlay
       path = (@params["path"]? || @params["key"]?).try { |raw| expand_tilde(raw) }
       capability = @params["capability"]? || @params["cap"]?
       state = @params["state"]? || "present"
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: path") unless path
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: capability") unless capability

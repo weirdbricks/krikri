@@ -51,8 +51,8 @@ module CrystalPlay
       end
       path = expand_tilde(path)
 
-      follow = is_true?(@params["follow"]?, default: false)
-      get_checksum = is_true?(@params["get_checksum"]?, default: true)
+      follow = true?(@params["follow"]?, default: false)
+      get_checksum = true?(@params["get_checksum"]?, default: true)
       algorithm = @params["checksum_algorithm"]? || "sha1"
 
       stat_hash = native_stat(path, follow)
@@ -69,8 +69,8 @@ module CrystalPlay
 
       add_symlink_fields(stat_hash, path) if is_link
       add_checksum(stat_hash, path, algorithm) if get_checksum && is_regular
-      add_mime(stat_hash, path) if is_true?(@params["get_mime"]?, default: true)
-      add_attributes(stat_hash, path) if is_true?(@params["get_attributes"]?, default: true)
+      add_mime(stat_hash, path) if true?(@params["get_mime"]?, default: true)
+      add_attributes(stat_hash, path) if true?(@params["get_attributes"]?, default: true)
 
       PluginResult.new(changed: false, failed: false, msg: "", stat: stat_hash)
     end

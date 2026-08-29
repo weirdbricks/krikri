@@ -28,7 +28,7 @@ module CrystalPlay
       value = @params["value"]? || ""
       add_mode = @params["add_mode"]? || "replace-all"
       scope = @params["scope"]?
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       validation_error = validate_params(unset, value, scope)
       return validation_error if validation_error

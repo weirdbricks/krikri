@@ -23,7 +23,7 @@ module CrystalPlay
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: dest") unless dest
       dest = expand_tilde(dest)
 
-      if is_true?(@params["check_mode"]?)
+      if true?(@params["check_mode"]?)
         return PluginResult.new(changed: false, failed: false, msg: "check mode not (yet) supported for this module", skipped: true)
       end
 
@@ -56,13 +56,13 @@ module CrystalPlay
 
     private def missing_src_result(src : String) : PluginResult
       msg = "the remote file does not exist, not transferring, ignored"
-      fail_on_missing = is_true?(@params["fail_on_missing"]?, default: true)
+      fail_on_missing = true?(@params["fail_on_missing"]?, default: true)
       PluginResult.new(changed: false, failed: fail_on_missing, msg: msg, file: src)
     end
 
     private def unchanged?(dest_path : String, remote_checksum : String) : Bool
       return false unless File.exists?(dest_path)
-      return false unless is_true?(@params["validate_checksum"]?, default: true)
+      return false unless true?(@params["validate_checksum"]?, default: true)
       native_checksum(dest_path, "sha1") == remote_checksum
     end
 
@@ -72,7 +72,7 @@ module CrystalPlay
     # src> when dest ends with a path separator, same convention copy:
     # uses for a directory dest).
     private def resolve_dest_path(dest : String, src : String) : String
-      if is_true?(@params["flat"]?)
+      if true?(@params["flat"]?)
         dest.ends_with?(File::SEPARATOR) ? File.join(dest, File.basename(src)) : dest
       else
         File.join(dest, @host.name, src)
@@ -87,7 +87,7 @@ module CrystalPlay
     # remote operation, no native equivalent" case, the same category this
     # codebase's other plugins (apt/dnf/service/...) already carve out.
     private def source_checksum(src : String) : String
-      if is_local_connection?
+      if local_connection?
         native_checksum(src, "sha1")
       else
         result = remote_exec("sha1sum '#{src}'")

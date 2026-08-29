@@ -32,7 +32,7 @@ module CrystalPlay
 
       path = expand_tilde(path)
       state = @params["state"]? || "present"
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
       action = @params["action"]? || "export"
 
       return remove(path, check_mode) if state == "absent"
@@ -52,7 +52,7 @@ module CrystalPlay
       base_dir = File.dirname(path)
       return failure("The directory #{base_dir} does not exist or the file is not a directory") unless Dir.exists?(base_dir)
 
-      changed = is_true?(@params["force"]?) || !File.exists?(path) ||
+      changed = true?(@params["force"]?) || !File.exists?(path) ||
                 !matches?(path, privatekey_path, certificate_path)
 
       if changed && !check_mode
@@ -210,7 +210,7 @@ module CrystalPlay
       res.extra["privatekey_path"] = JSON::Any.new(privatekey_path)
       res.extra["mode"] = JSON::Any.new(@params["mode"]? || "0400")
       res.extra["backup_file"] = JSON::Any.new(backup_file) if backup_file
-      if is_true?(@params["return_content"]?) && File.exists?(path)
+      if true?(@params["return_content"]?) && File.exists?(path)
         res.extra["pkcs12"] = JSON::Any.new(Base64.strict_encode(File.read(path)))
       end
       res
@@ -234,7 +234,7 @@ module CrystalPlay
     end
 
     private def backup(path : String) : String?
-      return nil unless is_true?(@params["backup"]?)
+      return nil unless true?(@params["backup"]?)
       return nil unless File.exists?(path)
       dest = "#{path}.#{Process.pid}.#{Time.local.to_s("%Y-%m-%d@%H:%M:%S")}~"
       File.copy(path, dest)

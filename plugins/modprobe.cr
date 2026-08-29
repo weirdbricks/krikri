@@ -38,7 +38,7 @@ module CrystalPlay
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name") unless name
 
       state = @params["state"]? || "present"
-      check_mode = is_true?(@params["check_mode"]?)
+      check_mode = true?(@params["check_mode"]?)
       loaded = module_loaded?(name)
 
       case state

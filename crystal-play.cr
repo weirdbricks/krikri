@@ -410,10 +410,10 @@ unless quiet_listing_mode
   unless batching_enabled
     puts "Batching: DISABLED".colorize(:yellow)
   end
-  if tags.any?
+  if !tags.empty?
     puts "Tags: #{tags.join(", ")}".colorize(:cyan)
   end
-  if skip_tags.any?
+  if !skip_tags.empty?
     puts "Skip tags: #{skip_tags.join(", ")}".colorize(:cyan)
   end
   if start_at = start_at_task
@@ -474,7 +474,7 @@ begin
 
   # Show warnings
   warnings = CrystalPlay::PlaybookParser.validate(playbook)
-  if warnings.any?
+  if !warnings.empty?
     puts "Warnings:".colorize(:yellow).bold
     warnings.each do |warning|
       puts "  ⚠️  #{warning}".colorize(:yellow)
@@ -555,7 +555,7 @@ begin
   # same reason the banner is - real ansible-playbook emits nothing but
   # the listing there, and this output gets machine-read.
   inv_warnings = quiet_listing_mode ? [] of String : CrystalPlay::InventoryParser.validate(inventory)
-  if inv_warnings.any?
+  if !inv_warnings.empty?
     puts "Inventory Warnings:".colorize(:yellow).bold
     inv_warnings.each do |warning|
       puts "  ⚠️  #{warning}".colorize(:yellow)
@@ -785,7 +785,7 @@ playbook.plays.each_with_index do |play, play_index|
   end
 
   if tasks_to_run.empty? && tasks_before_tag_filter > 0
-    if tags.any? || skip_tags.any?
+    if !tags.empty? || skip_tags.any?
       puts "Skipping play - no tasks match tags: #{(tags + skip_tags).join(", ")}".colorize(:yellow)
     else
       puts "Skipping play - every task is tagged 'never'".colorize(:yellow)
@@ -904,13 +904,13 @@ puts ""
 # codebase has no ansible.cfg INI parsing, so only the env var override is
 # honored; the ansible.cfg file setting itself is not read.
 show_custom_stats = ["true", "yes", "1", "on"].includes?(ENV["ANSIBLE_SHOW_CUSTOM_STATS"]?.try(&.downcase) || "")
-if show_custom_stats && CrystalPlay::CustomStats.any?
+if show_custom_stats && !CrystalPlay::CustomStats.empty?
   puts "CUSTOM STATS: ".colorize(:cyan).bold
   unless CrystalPlay::CustomStats.global.empty?
     puts "\t#{CrystalPlay::CustomStats.global.to_json}"
   end
-  CrystalPlay::CustomStats.per_host_data.each do |host_name, stats|
-    puts "\t#{host_name}: #{stats.to_json}"
+  CrystalPlay::CustomStats.per_host_data.each do |host_name, host_stats|
+    puts "\t#{host_name}: #{host_stats.to_json}"
   end
   puts ""
 end

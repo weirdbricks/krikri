@@ -23,8 +23,8 @@ module CrystalPlay
       path = expand_tilde(path)
       state = @params["state"]? || "present"
       size = (@params["size"]? || "4096").to_i
-      force = is_true?(@params["force"]?)
-      check_mode = is_true?(@params["check_mode"]?)
+      force = true?(@params["force"]?)
+      check_mode = true?(@params["check_mode"]?)
 
       base_dir = File.dirname(path)
       unless Dir.exists?(base_dir)
@@ -101,7 +101,7 @@ module CrystalPlay
     end
 
     private def backup(path : String)
-      return unless is_true?(@params["backup"]?)
+      return unless true?(@params["backup"]?)
       return unless File.exists?(path)
       timestamp = Time.local.to_s("%Y-%m-%d@%H:%M~")
       File.copy(path, "#{path}.#{timestamp}")

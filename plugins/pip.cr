@@ -266,7 +266,7 @@ module CrystalPlay
       end
 
       extra = @params["extra_args"]? || ""
-      if is_true?(@params["editable"]?) && !extra.split(' ').includes?("-e")
+      if true?(@params["editable"]?) && !extra.split(' ').includes?("-e")
         extra = extra.empty? ? "-e" : "#{extra} -e"
       end
 
