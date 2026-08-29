@@ -120,28 +120,51 @@ module CrystalPlay
         return PluginResult.new(changed: true, failed: false, msg: "Would run: #{cmd} (check mode)")
       end
 
-      # Real community.general.ufw computes `changed` for default-policy /
-      # logging commands by diffing `ufw status verbose` BEFORE and AFTER
-      # the command (pre_state vs post_state): if the relevant line is
-      # identical, changed=false even though the command ran. Blindly
-      # marking changed on exit 0 made every warm pass report
-      # changed=true where real ansible reported ok (Oefenweb.ufw,
-      # round 196: warm crystal changed=4 vs real changed=0).
+      # Real community.general.ufw computes `changed` differently per
+      # command type (verified against the module's own source):
+      # - default: pre vs post `ufw status verbose` Default-line diff;
+      # - logging: from the PRE state alone - "Logging: off" -> anything
+      #   non-off is changed, and a requested level != the current level
+      #   is changed, even though `ufw logging <same-level>` no-ops.
+      # The earlier pre-check-skip and post-diff approaches each matched
+      # only one of the two (Oefenweb.ufw round 196: warm changed=4 vs 0,
+      # then cold logging changed=0 vs real 1).
       pre_status = if ufw_state_key
                      remote_exec("ufw status verbose")[:stdout]
                    end
 
       result = remote_exec(cmd)
-      changed = result[:exit_code] == 0
+      ran_ok = result[:exit_code] == 0
 
-      if ufw_state_key
-        post_status = remote_exec("ufw status verbose")[:stdout]
-        changed = result[:exit_code] == 0 &&
-                  extract_status_fragment(pre_status.not_nil!, ufw_state_key) !=
-                  extract_status_fragment(post_status, ufw_state_key)
-      end
+      changed = if ufw_state_key == "logging" && (value = ufw_state_value)
+                  if ran_ok
+                    m = /Logging: (on|off)(?: \(([a-z]+)\))?/.match(pre_status.not_nil!)
+                    if m
+                      current_on_off = m[1]
+                      current_level = m[2]?
+                      if value == "off"
+                        current_on_off != "off"
+                      elsif current_on_off == "off"
+                        true
+                      else
+                        value != "on" && value != current_level
+                      end
+                    else
+                      true
+                    end
+                  else
+                    false
+                  end
+                elsif ufw_state_key
+                  post_status = remote_exec("ufw status verbose")[:stdout]
+                  ran_ok &&
+                    extract_status_fragment(pre_status.not_nil!, ufw_state_key) !=
+                    extract_status_fragment(post_status, ufw_state_key)
+                else
+                  ran_ok
+                end
 
-      PluginResult.new(changed: changed, failed: result[:exit_code] != 0, msg: result[:stdout])
+      PluginResult.new(changed: changed, failed: !ran_ok, msg: result[:stdout])
     end
 
     # Returns the status line relevant to *key* ("Default: ..." for a
