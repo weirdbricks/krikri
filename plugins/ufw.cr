@@ -51,7 +51,7 @@ module CrystalPlay
       end
 
       if logging = @params["logging"]?
-        return run_simple(PluginHelpers::UfwCommand.logging_command(logging), ufw_state_key: "logging", ufw_state_value: normalize_logging_value(logging))
+        return run_simple(PluginHelpers::UfwCommand.logging_command(logging), ufw_state_key: "logging", ufw_state_value: logging)
       end
 
       if default_value = @params["default"]? || @params["policy"]?
@@ -120,51 +120,42 @@ module CrystalPlay
         return PluginResult.new(changed: true, failed: false, msg: "Would run: #{cmd} (check mode)")
       end
 
-      # Idempotency: real community.general.ufw parses `ufw status
-      # verbose` BEFORE applying a default-policy or logging change and
-      # skips the command when the requested value is already in effect
-      # ("already set" path). Blindly re-running made every warm pass
-      # report changed=true where real ansible reported ok (Oefenweb.ufw,
+      # Real community.general.ufw computes `changed` for default-policy /
+      # logging commands by diffing `ufw status verbose` BEFORE and AFTER
+      # the command (pre_state vs post_state): if the relevant line is
+      # identical, changed=false even though the command ran. Blindly
+      # marking changed on exit 0 made every warm pass report
+      # changed=true where real ansible reported ok (Oefenweb.ufw,
       # round 196: warm crystal changed=4 vs real changed=0).
-      if key = ufw_state_key
-        if (value = ufw_state_value) && ufw_status_matches?(key, value)
-          return PluginResult.new(changed: false, failed: false, msg: "Already set to #{value}")
-        end
-      end
+      pre_status = if ufw_state_key
+                     remote_exec("ufw status verbose")[:stdout]
+                   end
 
       result = remote_exec(cmd)
-      PluginResult.new(changed: result[:exit_code] == 0, failed: result[:exit_code] != 0, msg: result[:stdout])
+      changed = result[:exit_code] == 0
+
+      if ufw_state_key
+        post_status = remote_exec("ufw status verbose")[:stdout]
+        changed = result[:exit_code] == 0 &&
+                  extract_status_fragment(pre_status.not_nil!, ufw_state_key) !=
+                  extract_status_fragment(post_status, ufw_state_key)
+      end
+
+      PluginResult.new(changed: changed, failed: result[:exit_code] != 0, msg: result[:stdout])
     end
 
-    # `ufw status verbose` reports e.g.:
-    #   Default: deny (incoming), allow (outgoing), disabled (routed)
-    #   Logging: on (low)
-    # Maps *key* to the line to inspect and *value* to the token the real
-    # module considers equal (logging 'on'/'low' both mean "on (low)").
-    private def ufw_status_matches?(key : String, value : String) : Bool
-      status = remote_exec("ufw status verbose")
-      return false if status[:exit_code] != 0
-
-      status[:stdout].each_line do |line|
-        case key
-        when .starts_with?("default-")
-          direction = key.sub("default-", "")
-          if line.includes?("Default:")
-            return line.includes?("#{value} (#{direction})")
-          end
-        when "logging"
-          if line.includes?("Logging:")
-            return line.includes?(value)
-          end
+    # Returns the status line relevant to *key* ("Default: ..." for a
+    # default-<direction> key, "Logging: ..." for logging), or "" when
+    # absent (e.g. "Status: inactive" has no Default line at all).
+    private def extract_status_fragment(status : String, key : String) : String
+      status.each_line do |line|
+        if key.starts_with?("default-") && line.includes?("Default:")
+          return line.strip
+        elsif key == "logging" && line.includes?("Logging:")
+          return line.strip
         end
       end
-      false
-    end
-
-    # real module's logging value normalization: 'on' is accepted as a
-    # synonym of 'low' - ufw status verbose shows "on (low)" for both.
-    private def normalize_logging_value(value : String) : String
-      value == "on" ? "on (low)" : value
+      ""
     end
 
     private def run_rule : PluginResult
