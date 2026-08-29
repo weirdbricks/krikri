@@ -45,7 +45,7 @@ Implement every NOT-BREAKING item before starting any BREAKING one.
 | 8 | Controller-side caching/memoization | NOT-BREAKING | unmeasured |
 | 9 | Idempotency memoization | **BREAKING** | warm runs stop checking |
 | 10 | Out-of-order / parallel within a host | **BREAKING** | main cold-run lever |
-| 11 | Coalesce package tasks | **BREAKING** | seconds per package task |
+| 11 | Coalesce package tasks | **BREAKING** | **DONE (0.9.640)** - in `crystal-ansible-fast` only; N installs -> 1 transaction |
 | 12 | Gather only referenced facts | **BREAKING** | **DONE (0.9.639)** - in `crystal-ansible-fast` only; 88ms -> 37ms per gather when nothing optional is referenced |
 
 \* Item 6 is NOT-BREAKING **only** if its cache invalidation is airtight;
@@ -525,9 +525,32 @@ interleaving, anything with an undeclared dependency). Failure semantics
 get harder: which tasks "already ran" when one fails mid-flight.
 Flag: `--speculate`.
 
-### 11. Coalesce package tasks
+### 11. Coalesce package tasks — DONE (0.9.640)
 
-**BREAKING** - flag `--coalesce-packages`.
+**BREAKING** - `crystal-ansible-fast` only (the item proposed
+`--coalesce-packages`; see the Tier 2 header for why it is a binary
+name instead).
+
+**Landed.** `PackageCoalescer.plan` finds runs of consecutive
+`apt`/`dnf`/`yum`/`package` installs and merges their name lists into
+one transaction at the run's leader. Followers do no work and return
+`ok`/unchanged, so the task COUNT is preserved - the recap keeps its
+shape and only the `changed` attribution moves, which is the narrowest
+form the documented breakage can take.
+
+Eligibility is as conservative as `TaskBatcher.plan`'s, and each rule
+maps to a way the merge could change what the play DOES rather than
+when: `when:`/loops/`until:`/`async:`/`delegate_to:`/`run_once` (might
+not run, or run elsewhere); `register`/`notify:`/`changed_when:`/
+`failed_when:`/`ignore_errors` (the verdict is observed, and a follower
+reports unchanged); an unrendered `{{ }}` name (not substituted yet);
+any state but `present`; any param outside a known shared set; and a
+run of one, which is left entirely alone.
+
+Handled on BOTH execution paths - the solo one and item 3's batch one,
+since a coalescable task can still be batched. `prepare_batch_step`
+already returns `JSON::Any | BatchScript::Step`, so a follower's
+synthesized result is expressible there without new plumbing.
 
 Scan the play up front and merge unconditional `apt`/`dnf`/`package`
 installs into a single transaction. Each package-manager invocation

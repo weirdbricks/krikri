@@ -144,6 +144,13 @@ Metrics/CyclomaticComplexity:
   # splitting them up would obscure the correspondence the corpus
   # differential in distribution_facts_spec.cr checks against.
   - src/crystal_play/plugin_helpers/distribution_facts.cr
+  # PackageCoalescer's disqualifier predicates are a flat list of "ways
+  # a package task can depend on running separately". The branch count
+  # IS the safety argument (item 11 is parity-BREAKING, so every missing
+  # branch is a way to merge something that should not be merged), and
+  # splitting past the two it already has would scatter one rule across
+  # four methods for no gain. Already reduced 25 -> 12.
+  - src/crystal_play/package_coalescer.cr
   - src/crystal_play/task_debugger.cr
   - plugins/debug.cr
   - src/crystal_play/template_action_plugin.cr
