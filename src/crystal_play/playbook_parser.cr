@@ -1774,7 +1774,7 @@ module CrystalPlay
       # doc), so its params are never read, and `parse_module_params`
       # dispatches its own shaping (list-vs-scalar, etc) on module_name,
       # which isn't meaningful for a module this engine doesn't recognize.
-      task.params = unavailable_module_name ? Hash(String, String).new : parse_module_params(module_params.not_nil!, module_name)
+      task.params = unavailable_module_name ? Hash(String, String).new : parse_module_params((module_params || raise "BUG: module_params missing"), module_name)
 
       # args: - a sibling keyword (not nested inside the module's own
       # key) for extra params on a free-form module, real Ansible's own
@@ -1834,8 +1834,9 @@ module CrystalPlay
       # {{ }} substitution happens at execution time once the vars
       # context exists.
       if env_yaml = task_hash["environment"]?.try(&.as_h?)
-        task.environment = Hash(String, String).new
-        env_yaml.each { |key, value| task.environment.not_nil![key.to_s] = stringify_value(value) }
+        env_hash = Hash(String, String).new
+        env_yaml.each { |key, value| env_hash[key.to_s] = stringify_value(value) }
+        task.environment = env_hash
       end
 
       # Parse notify (can be string or array)
@@ -2792,7 +2793,7 @@ module CrystalPlay
         elsif brace_depth > 0
           if (char == '{' && (next_char == '{' || next_char == '%')) ||
              (char == '}' && next_char == '}') || (char == '%' && next_char == '}')
-            current << char << next_char.not_nil!
+            current << char << (next_char || raise "BUG: next_char missing")
             brace_depth += 1 if char == '{'
             brace_depth -= 1 if char == '}' || char == '%'
             i += 1
@@ -2800,7 +2801,7 @@ module CrystalPlay
             current << char
           end
         elsif char == '{' && (next_char == '{' || next_char == '%')
-          current << char << next_char.not_nil!
+          current << char << (next_char || raise "BUG: next_char missing")
           brace_depth += 1
           i += 1
         elsif char == '\'' || char == '"'

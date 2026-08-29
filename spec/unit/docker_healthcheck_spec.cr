@@ -47,7 +47,7 @@ describe CrystalPlay::PluginHelpers::DockerHealthcheck do
   describe ".parse" do
     it "parses a full healthcheck dict" do
       json = %({"test": ["CMD", "curl", "--fail", "http://localhost"], "interval": "1m30s", "timeout": "10s", "retries": 3, "start_period": "30s"})
-      parsed = CrystalPlay::PluginHelpers::DockerHealthcheck.parse(json).not_nil!
+      parsed = (CrystalPlay::PluginHelpers::DockerHealthcheck.parse(json) || raise "unexpected nil")
       parsed.test.should eq(["CMD", "curl", "--fail", "http://localhost"])
       parsed.interval.should eq(90_000_000_000_i64)
       parsed.timeout.should eq(10_000_000_000_i64)
@@ -56,7 +56,7 @@ describe CrystalPlay::PluginHelpers::DockerHealthcheck do
     end
 
     it "passes through test: [NONE] as the real, documented way to disable an inherited healthcheck" do
-      parsed = CrystalPlay::PluginHelpers::DockerHealthcheck.parse(%({"test": ["NONE"]})).not_nil!
+      parsed = (CrystalPlay::PluginHelpers::DockerHealthcheck.parse(%({"test": ["NONE"]})) || raise "unexpected nil")
       parsed.test.should eq(["NONE"])
     end
 

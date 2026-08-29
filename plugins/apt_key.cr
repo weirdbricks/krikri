@@ -116,8 +116,8 @@ module CrystalPlay
           unless result[:exit_code] == 0
             return PluginResult.new(changed: false, failed: true, msg: "Failed to fetch key from #{url}: #{result[:stderr]}")
           end
-        elsif data
-          File.write(tmp_path, data.not_nil!)
+        elsif d = data
+          File.write(tmp_path, d)
         else
           # file: is a path on the TARGET (real Ansible's own apt_key:file:
           # semantics - mrlesmithjr.ansible_es_apm_server copies the key to
@@ -125,7 +125,7 @@ module CrystalPlay
           # same tmp the data:/url: branches use so the rest of the import
           # path is unchanged. remote_exec's cwd is the target's root, and
           # a plain cp keeps us from re-reading the file through Crystal.
-          result = remote_exec("cp #{shell_single_quote(file_path.not_nil!)} #{tmp_path}")
+          result = remote_exec("cp #{shell_single_quote(file_path || raise "apt_key: file: path is required")} #{tmp_path}")
           unless result[:exit_code] == 0
             return PluginResult.new(changed: false, failed: true, msg: "Failed to read key file #{file_path}: #{result[:stderr]}")
           end

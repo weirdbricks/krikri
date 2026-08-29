@@ -145,8 +145,12 @@ module CrystalPlay
       end
 
       clause = String.build do |s|
-        s << " OWNER " << quote_ident(owner.not_nil!) if owner
-        s << " ENCODING " << quote_str(encoding.not_nil!) if encoding
+        if o = owner
+          s << " OWNER " << quote_ident(o)
+        end
+        if e = encoding
+          s << " ENCODING " << quote_str(e)
+        end
       end
 
       db.exec "CREATE DATABASE #{quote_ident(name)}#{clause}"

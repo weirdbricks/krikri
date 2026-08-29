@@ -116,7 +116,7 @@ module CrystalPlay
 
       case state
       when "absent"
-        remove(pip_bin, name.not_nil!)
+        remove(pip_bin, name || raise "pip: name is required with state=absent")
       when "latest"
         install(pip_bin, target_spec(name, nil), upgrade: true)
       else
@@ -251,7 +251,8 @@ module CrystalPlay
       # short-circuits, matching real Ansible's own per-package pip
       # idempotency.
       unless upgrade || requirements
-        packages = spec.not_nil!.split(',').map(&.strip)
+        sp = spec || raise "pip: spec is required"
+        packages = sp.split(',').map(&.strip)
         all_satisfied = packages.all? do |package|
           if package.includes?("==")
             bare, _, wanted_version = package.partition("==")

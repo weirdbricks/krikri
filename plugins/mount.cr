@@ -128,7 +128,7 @@ module CrystalPlay
         fstab_changed, backup_file = set_fstab_entry(path, fstab, check_mode)
         if state == "mounted"
           mount_changed, error = ensure_mounted(path, check_mode)
-          return PluginResult.new(changed: fstab_changed, failed: true, msg: error.not_nil!, name: path, fstab: fstab, backup_file: backup_file) if error
+          return PluginResult.new(changed: fstab_changed, failed: true, msg: error || "mount failed", name: path, fstab: fstab, backup_file: backup_file) if error
         else
           mount_changed = false
         end
@@ -145,7 +145,7 @@ module CrystalPlay
         fstab_changed, backup_file = remove_fstab_entry(path, fstab, check_mode)
         if state == "absent"
           unmount_changed, error = ensure_unmounted(path, check_mode)
-          return PluginResult.new(changed: fstab_changed, failed: true, msg: error.not_nil!, name: path, fstab: fstab, backup_file: backup_file) if error
+          return PluginResult.new(changed: fstab_changed, failed: true, msg: error || "mount failed", name: path, fstab: fstab, backup_file: backup_file) if error
         else
           unmount_changed = false
         end

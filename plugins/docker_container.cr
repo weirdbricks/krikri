@@ -200,7 +200,11 @@ module CrystalPlay
       recreate_requested = true?(@params["recreate"]?)
 
       needs_create = !existing
-      needs_recreate = !!existing && (recreate_requested || !matches?(api, existing.not_nil!, image_ref, command))
+      needs_recreate = if ex = existing
+                         recreate_requested || !matches?(api, ex, image_ref, command)
+                       else
+                         false
+                       end
 
       if (needs_create || needs_recreate) && !image_ref
         return PluginResult.new(changed: false, failed: true, msg: "image is required to create a new container")
@@ -232,23 +236,23 @@ module CrystalPlay
       if needs_create
         return PluginResult.new(changed: true, failed: false, msg: "Container #{name} would be created#{start ? " and started" : ""}") if check_mode
 
-        config = build_container_config(image_ref.not_nil!)
-        ensure_image_pulled(api, image_ref.not_nil!) if pull
+        config = build_container_config(image_ref || raise "image is required to create a new container")
+        ensure_image_pulled(api, image_ref || raise "image is required to create a new container") if pull
         resp = api.containers.create(name, config)
         api.containers.start(resp.id) if start
         connected, disconnected = sync_networks!(api, resp.id, requested_networks)
         return PluginResult.new(changed: true, failed: false, msg: "Created#{start ? " and started" : ""} container #{name}#{network_suffix(connected, disconnected)}")
       end
 
-      existing = existing.not_nil!
+      existing = existing || raise "BUG: existing container missing"
 
       if needs_recreate
         return PluginResult.new(changed: true, failed: false, msg: "Container #{name} would be recreated") if check_mode
 
-        config = build_container_config(image_ref.not_nil!)
+        config = build_container_config(image_ref || raise "image is required to create a new container")
         api.containers.stop(existing.id) if existing.state == "running"
         api.containers.delete(existing.id, force: true)
-        ensure_image_pulled(api, image_ref.not_nil!) if pull
+        ensure_image_pulled(api, image_ref || raise "image is required to create a new container") if pull
         resp = api.containers.create(name, config)
         api.containers.start(resp.id) if start
         connected, disconnected = sync_networks!(api, resp.id, requested_networks)
@@ -274,22 +278,22 @@ module CrystalPlay
       if needs_create
         return PluginResult.new(changed: true, failed: false, msg: "Container #{name} would be created (stopped)") if check_mode
 
-        config = build_container_config(image_ref.not_nil!)
-        ensure_image_pulled(api, image_ref.not_nil!) if pull
+        config = build_container_config(image_ref || raise "image is required to create a new container")
+        ensure_image_pulled(api, image_ref || raise "image is required to create a new container") if pull
         resp = api.containers.create(name, config)
         connected, disconnected = sync_networks!(api, resp.id, requested_networks)
         return PluginResult.new(changed: true, failed: false, msg: "Created container #{name} (stopped)#{network_suffix(connected, disconnected)}")
       end
 
-      existing = existing.not_nil!
+      existing = existing || raise "BUG: existing container missing"
 
       if needs_recreate
         return PluginResult.new(changed: true, failed: false, msg: "Container #{name} would be recreated (stopped)") if check_mode
 
-        config = build_container_config(image_ref.not_nil!)
+        config = build_container_config(image_ref || raise "image is required to create a new container")
         api.containers.stop(existing.id) if existing.state == "running"
         api.containers.delete(existing.id, force: true)
-        ensure_image_pulled(api, image_ref.not_nil!) if pull
+        ensure_image_pulled(api, image_ref || raise "image is required to create a new container") if pull
         resp = api.containers.create(name, config)
         connected, disconnected = sync_networks!(api, resp.id, requested_networks)
         return PluginResult.new(changed: true, failed: false, msg: "Recreated container #{name} (stopped)#{network_suffix(connected, disconnected)}")

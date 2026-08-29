@@ -547,11 +547,23 @@ module CrystalPlay
                  else # "contains" - Python's `b in a` for whichever container shape *a* (left) actually is
                    case left.try(&.raw)
                    when Array
-                     left.not_nil!.as_a.includes?(right || JSON::Any.new(nil))
+                     if l = left
+                       l.as_a.includes?(right || JSON::Any.new(nil))
+                     else
+                       false
+                     end
                    when Hash
-                     right.try(&.as_s?).try { |key| left.not_nil!.as_h.has_key?(key) } || false
+                     if h = left
+                       right.try(&.as_s?).try { |key| h.as_h.has_key?(key) } || false
+                     else
+                       false
+                     end
                    when String
-                     left.not_nil!.as_s.includes?(right.try(&.as_s?) || right.to_s)
+                     if st = left
+                       st.as_s.includes?(right.try(&.as_s?) || right.to_s)
+                     else
+                       false
+                     end
                    else
                      false
                    end

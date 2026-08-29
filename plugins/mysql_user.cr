@@ -181,7 +181,8 @@ module CrystalPlay
         # desired value, ALTERing only on a real change - matching real
         # Ansible's own plugin idempotency. Bare `plugin: unix_socket`/`auth_socket`
         # (the auth_socket account pattern) compares the plugin column only.
-        return {nil, false} if plugin_matches?(db, name, host, plugin.not_nil!, plugin_hash_string, plugin_auth_string)
+        pl = plugin || return {nil, false}
+        return {nil, false} if plugin_matches?(db, name, host, pl, plugin_hash_string, plugin_auth_string)
 
         return {PluginResult.new(changed: true, failed: false, msg: "User #{name}@#{host}'s authentication would be updated"), false} if check_mode
 
@@ -389,7 +390,8 @@ module CrystalPlay
         if password
           next if password_already_matches?(db, name, host, password)
         else
-          next if plugin_matches?(db, name, host, plugin.not_nil!, plugin_hash_string, plugin_auth_string)
+          pl = plugin || next
+          next if plugin_matches?(db, name, host, pl, plugin_hash_string, plugin_auth_string)
         end
 
         clause = build_auth_clause(password, plugin, plugin_hash_string, plugin_auth_string)

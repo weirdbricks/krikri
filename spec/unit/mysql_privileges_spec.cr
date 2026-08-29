@@ -63,7 +63,7 @@ describe CrystalPlay::PluginHelpers::MysqlPrivileges do
 
     it "strips backticks from the target" do
       line = "GRANT SELECT ON `testdb2`.* TO `demo2`@`%`"
-      CrystalPlay::PluginHelpers::MysqlPrivileges.parse_show_grants_line(line).not_nil!.target.should eq("testdb2.*")
+      (CrystalPlay::PluginHelpers::MysqlPrivileges.parse_show_grants_line(line) || raise "unexpected nil").target.should eq("testdb2.*")
     end
 
     it "returns nil for a non-GRANT line" do

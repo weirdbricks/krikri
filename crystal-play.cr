@@ -638,13 +638,13 @@ end
 start_at_pending = !start_at_task.nil?
 
 # At this point inventory is guaranteed to be set
-inventory = inventory.not_nil!
+inventory = inventory || raise "BUG: inventory not set"
 
 # --list-hosts needs the inventory (unlike --list-tasks/--list-tags),
 # so it runs here rather than straight after the parse.
 if list_hosts_only
-  resolved = inventory.not_nil!
-  CrystalPlay::TaskLister.list_hosts(playbook.not_nil!) do |play|
+  resolved = inventory || raise "BUG: inventory not set"
+  CrystalPlay::TaskLister.list_hosts(playbook || raise "BUG: playbook not parsed") do |play|
     resolved.get_hosts(play.hosts.to_s).map(&.name)
   end
   exit 0

@@ -136,7 +136,7 @@ module CrystalPlay
       # Masked/unmasked
       if masked
         should_mask = true?(masked)
-        is_masked = masked?(name.not_nil!)
+        is_masked = masked?(name || raise "systemd: name is required")
 
         if should_mask && !is_masked
           if @check_mode
@@ -179,7 +179,7 @@ module CrystalPlay
 
       # Enabled/disabled
       if enabled
-        is_enabled = enabled?(name_for_active.not_nil!)
+        is_enabled = enabled?(name_for_active || raise "systemd: name is required")
         should_enable = true?(enabled)
 
         if should_enable && !is_enabled

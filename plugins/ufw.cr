@@ -138,7 +138,7 @@ module CrystalPlay
 
       changed = if ufw_state_key == "logging" && (value = ufw_state_value)
                   if ran_ok
-                    m = /Logging: (on|off)(?: \(([a-z]+)\))?/.match(pre_status.not_nil!)
+                    m = /Logging: (on|off)(?: \(([a-z]+)\))?/.match(pre_status || "")
                     if m
                       current_on_off = m[1]
                       current_level = m[2]?
@@ -158,7 +158,7 @@ module CrystalPlay
                 elsif ufw_state_key
                   post_status = remote_exec("ufw status verbose")[:stdout]
                   ran_ok &&
-                    extract_status_fragment(pre_status.not_nil!, ufw_state_key) !=
+                    extract_status_fragment(pre_status || "", ufw_state_key) !=
                       extract_status_fragment(post_status, ufw_state_key)
                 else
                   ran_ok

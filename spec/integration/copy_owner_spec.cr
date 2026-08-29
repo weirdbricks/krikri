@@ -18,7 +18,7 @@ describe "copy plugin - owner/group" do
     # uid is always permitted, and is enough to exercise the previously-
     # dead code path.
     dest = File.tempname("copy-owner-spec")
-    me = System::User.find_by?(id: LibC.getuid.to_s).not_nil!.username
+    me = (System::User.find_by?(id: LibC.getuid.to_s) || raise "unexpected nil").username
 
     result = PluginSpecHelper.run("copy", {"content" => "hello\n", "dest" => dest, "owner" => me})
 

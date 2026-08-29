@@ -142,7 +142,7 @@ rescue ex
   puts "Use -i flag to specify a different inventory file.".colorize(:yellow)
   exit 1
 end
-inventory = inventory.not_nil!
+inventory = inventory || raise "BUG: inventory not set"
 
 hosts = inventory.get_hosts(pattern)
 

@@ -16,11 +16,11 @@ describe CrystalPlay::AsyncJobs do
 
     begin
       CrystalPlay::AsyncJobs.write_status(jid, JSON.parse({"started" => 1, "finished" => 0}.to_json))
-      status = CrystalPlay::AsyncJobs.read_status(jid).not_nil!
+      status = (CrystalPlay::AsyncJobs.read_status(jid) || raise "unexpected nil")
       CrystalPlay::AsyncJobs.finished?(status).should be_false
 
       CrystalPlay::AsyncJobs.write_status(jid, JSON.parse({"finished" => 1, "changed" => true}.to_json))
-      status = CrystalPlay::AsyncJobs.read_status(jid).not_nil!
+      status = (CrystalPlay::AsyncJobs.read_status(jid) || raise "unexpected nil")
       CrystalPlay::AsyncJobs.finished?(status).should be_true
       status["changed"].as_bool.should be_true
     ensure

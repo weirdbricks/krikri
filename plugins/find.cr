@@ -213,7 +213,7 @@ module CrystalPlay
       return nil unless matches_size?(stat_hash, options.size_filter)
       return nil unless matches_age?(stat_hash, options.age_filter, options.age_stamp, options.now)
       return nil if options.file_type == "file" && !matches_contains?(entry_path, options.contains, options.read_whole_file)
-      return nil if options.mode && !PluginHelpers::FindModeFilter.matches?(stat_hash["mode"].as_s.to_i(8), options.mode.not_nil!, options.exact_mode)
+      return nil if (mode = options.mode) && !PluginHelpers::FindModeFilter.matches?(stat_hash["mode"].as_s.to_i(8), mode, options.exact_mode)
 
       add_symlink_fields(stat_hash, entry_path) if stat_hash["islnk"].as_bool
       add_checksum(stat_hash, entry_path, options.algorithm) if options.get_checksum && stat_hash["isreg"].as_bool

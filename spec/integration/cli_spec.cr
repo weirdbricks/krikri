@@ -1052,7 +1052,7 @@ describe "crystal-ansible CLI (--check mode)" do
     # through sudo - not a no-op that happened to not error.
     match = output.match(/current_user=(\S+) became_sudo_user=(\S+)/)
     match.should_not be_nil
-    match.not_nil![1].should eq(match.not_nil![2])
+    (match || raise "unexpected nil")[1].should eq((match || raise "unexpected nil")[2])
     output.should contain("become smoke test complete!")
 
     # Real bug found benchmarking geerlingguy.solr's own "Ensure core

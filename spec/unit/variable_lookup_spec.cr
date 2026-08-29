@@ -197,7 +197,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
     result = lookup.resolve("pkgs.split()")
     result.should_not be_nil
-    result.not_nil!.as_a.map(&.as_s).should eq(["python3", "sudo", "gnupg", "python3-apt"])
+    (result || raise "unexpected nil").as_a.map(&.as_s).should eq(["python3", "sudo", "gnupg", "python3-apt"])
   end
 
   it "resolves a no-argument .splitlines() method call with real Python semantics, not Crystal's plain split(\"\\n\")" do
@@ -215,17 +215,17 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     v["text"] = JSON::Any.new("line1\nline2\nline3\n")
     v["empty"] = JSON::Any.new("")
     lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
-    lookup.resolve("text.splitlines()").not_nil!.as_a.map(&.as_s).should eq(["line1", "line2", "line3"])
-    lookup.resolve("empty.splitlines()").not_nil!.as_a.should eq([] of JSON::Any)
+    (lookup.resolve("text.splitlines()") || raise "unexpected nil").as_a.map(&.as_s).should eq(["line1", "line2", "line3"])
+    (lookup.resolve("empty.splitlines()") || raise "unexpected nil").as_a.should eq([] of JSON::Any)
   end
 
   it "resolves bare {{ }} .startswith()/.endswith() method calls, not just inside a {% if %} escalation" do
     v = Hash(String, JSON::Any).new
     v["s"] = JSON::Any.new("node_exporter-1.8.2.linux-amd64.tar.gz")
     lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
-    lookup.resolve("s.startswith('node_exporter')").not_nil!.as_bool.should eq(true)
-    lookup.resolve("s.endswith('.tar.gz')").not_nil!.as_bool.should eq(true)
-    lookup.resolve("s.startswith('other')").not_nil!.as_bool.should eq(false)
+    (lookup.resolve("s.startswith('node_exporter')") || raise "unexpected nil").as_bool.should eq(true)
+    (lookup.resolve("s.endswith('.tar.gz')") || raise "unexpected nil").as_bool.should eq(true)
+    (lookup.resolve("s.startswith('other')") || raise "unexpected nil").as_bool.should eq(false)
   end
 
   it "re-renders a bare-identifier INDEX KEY (dict[some_var]) that is itself still-unrendered {{ }} text" do
@@ -250,7 +250,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     v["binary_basename"] = JSON::Any.new(%({{ binary_url | urlsplit('path') | basename }}))
     v["mydict"] = JSON.parse(%({"foo.txt": "checksum1", "bar.txt": "checksum2"}))
     lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
-    lookup.resolve("mydict[binary_basename]").not_nil!.as_s.should eq("checksum1")
+    (lookup.resolve("mydict[binary_basename]") || raise "unexpected nil").as_s.should eq("checksum1")
   end
 
   it "re-renders a dotted-access BASE variable that is itself still-unrendered {{ }} text before walking .method()/.attr off of it" do
@@ -271,7 +271,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
     result = lookup.resolve("outer.split()")
     result.should_not be_nil
-    result.not_nil!.as_a.map(&.as_s).should eq(["hello", "world"])
+    (result || raise "unexpected nil").as_a.map(&.as_s).should eq(["hello", "world"])
   end
 
   it "resolves Python's `SEP.join(iterable)` method-call syntax on a quoted-literal separator" do
@@ -289,7 +289,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
 
     result = lookup.resolve("' '.join(fail2ban_dependencies)")
     result.should_not be_nil
-    result.not_nil!.as_s.should eq("fail2ban iptables")
+    (result || raise "unexpected nil").as_s.should eq("fail2ban iptables")
   end
 
   it "round-trips `SEP.join(iterable).split()` back to a list, the actual real-world idiom" do
@@ -299,7 +299,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
 
     result = lookup.resolve("' '.join(fail2ban_dependencies).split()")
     result.should_not be_nil
-    result.not_nil!.as_a.map(&.as_s).should eq(["fail2ban", "iptables"])
+    (result || raise "unexpected nil").as_a.map(&.as_s).should eq(["fail2ban", "iptables"])
   end
 
   it "re-renders each element of a .join() list argument, another recursive-re-templating copy" do
@@ -316,7 +316,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
 
     result = lookup.resolve("' '.join(fail2ban_dependencies).split()")
     result.should_not be_nil
-    result.not_nil!.as_a.map(&.as_s).should eq(["fail2ban", "python3-systemd"])
+    (result || raise "unexpected nil").as_a.map(&.as_s).should eq(["fail2ban", "python3-systemd"])
   end
 
   it "drops an empty-string element after the join+split round-trip, matching Python's whitespace split" do
@@ -326,7 +326,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
 
     result = lookup.resolve("' '.join(fail2ban_dependencies).split()")
     result.should_not be_nil
-    result.not_nil!.as_a.map(&.as_s).should eq(["fail2ban"])
+    (result || raise "unexpected nil").as_a.map(&.as_s).should eq(["fail2ban"])
   end
 
   it "resolves dict.get() even when its key argument is itself an indexed expression" do
@@ -346,7 +346,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
 
     result = lookup.resolve(%({'x86_64': 'amd64'}.get(ansible_facts['architecture'], ansible_facts['architecture'])))
     result.should_not be_nil
-    result.not_nil!.as_s.should eq("amd64")
+    (result || raise "unexpected nil").as_s.should eq("amd64")
   end
 
   it "still routes a genuine top-level indexed+dotted expression to resolve_indexed (no regression)" do
@@ -361,7 +361,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
 
     result = lookup.resolve("ansible_facts.getent_passwd['root'][4]")
     result.should_not be_nil
-    result.not_nil!.as_s.should eq("/root")
+    (result || raise "unexpected nil").as_s.should eq("/root")
   end
 
   it "resolves Python's dict.get(key, default) method-call syntax on a literal dict base" do
@@ -378,7 +378,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
 
     result = lookup.resolve(%({'i386': '386', 'x86_64': 'amd64', 'aarch64': 'arm64'}.get(my_arch, my_arch)))
     result.should_not be_nil
-    result.not_nil!.as_s.should eq("amd64")
+    (result || raise "unexpected nil").as_s.should eq("amd64")
   end
 
   it "dict.get() falls back to its default argument when the key isn't present" do
@@ -388,6 +388,6 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
 
     result = lookup.resolve(%({'x86_64': 'amd64'}.get(my_arch, my_arch)))
     result.should_not be_nil
-    result.not_nil!.as_s.should eq("riscv64")
+    (result || raise "unexpected nil").as_s.should eq("riscv64")
   end
 end

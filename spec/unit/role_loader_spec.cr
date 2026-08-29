@@ -216,10 +216,10 @@ describe CrystalPlay::RoleLoader do
     relative_dir = Path.new(ROLES_ROOT).relative_to(Dir.current).to_s
     tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- with_files"), fresh_play, relative_dir)
 
-    role_path = tasks[0].role_path.not_nil!
+    role_path = (tasks[0].role_path || raise "unexpected nil")
     role_path.should start_with("/")
     role_path.should eq(File.join(ROLES_ROOT, "roles", "with_files"))
-    tasks[0].role_files_dir.not_nil!.should start_with("/")
+    (tasks[0].role_files_dir || raise "unexpected nil").should start_with("/")
   end
 
   it "runs meta/main.yml dependencies before the role's own tasks" do
@@ -294,7 +294,7 @@ describe CrystalPlay::RoleLoader do
     tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- dep_defaults_user"), fresh_play, ROLES_ROOT)
 
     user_task = tasks.find! { |task| task.name == "user task" }
-    user_task.role_defaults.not_nil!["mysql_root_password"].as_s.should eq("s3Cur31t4.")
+    (user_task.role_defaults || raise "unexpected nil")["mysql_root_password"].as_s.should eq("s3Cur31t4.")
   end
 
   it "lets the declaring role's own defaults win over a dependency's" do
@@ -312,7 +312,7 @@ describe CrystalPlay::RoleLoader do
     tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- dep_defaults_user2"), fresh_play, ROLES_ROOT)
 
     user_task = tasks.find! { |task| task.name == "user2 task" }
-    user_task.role_defaults.not_nil!["shared_name"].as_s.should eq("from_self")
+    (user_task.role_defaults || raise "unexpected nil")["shared_name"].as_s.should eq("from_self")
   end
 
   it "loads each role only once, even if listed directly and pulled in as a dependency" do
@@ -539,7 +539,7 @@ describe CrystalPlay::RoleLoader do
     write(File.join(role_dir, "tasks", "main.yml"), "- name: t\n  ansible.builtin.debug:\n    msg: hi\n")
 
     tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- dir_defaults_role"), fresh_play, ROLES_ROOT)
-    defaults = tasks[0].role_defaults.not_nil!
+    defaults = (tasks[0].role_defaults || raise "unexpected nil")
     defaults["my_network"]?.try(&.as_s).should eq("10.9.0.0")
     defaults["my_other"]?.try(&.as_s).should eq("hello")
   end

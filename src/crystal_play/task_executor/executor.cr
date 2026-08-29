@@ -2401,7 +2401,9 @@ module CrystalPlay
           # `loop_control: { loop_var: _loop_var }` needs `_loop_var`
           # bound for its own `include_vars: "{{ _loop_var }}"` to
           # resolve at all (round165).
-          item_context[task.loop_var.not_nil!] = item if task.loop_var
+          if lv = task.loop_var
+            item_context[lv] = item
+          end
           # task.vars (e.g. `__vars_file: "{{ role_path }}/vars/{{ item
           # }}"`) is stored unrendered in vars_context - it must be
           # re-rendered against THIS item before when: (which reads it
@@ -3962,7 +3964,7 @@ module CrystalPlay
         }.to_json)
       end
 
-      deadline = Time.instant + task.async_seconds.not_nil!.seconds
+      deadline = Time.instant + (task.async_seconds || raise "BUG: async_seconds missing").seconds
       loop do
         sleep poll.seconds
         if status = AsyncJobs.read_status(jid)
@@ -4040,7 +4042,7 @@ module CrystalPlay
         }.to_json)
       end
 
-      deadline = Time.instant + task.async_seconds.not_nil!.seconds
+      deadline = Time.instant + (task.async_seconds || raise "BUG: async_seconds missing").seconds
       loop do
         sleep poll.seconds
         check = SSHManager.exec_script(connection_host, user, "cat #{dir}/#{jid} 2>/dev/null", exec_host.port, identity_file: identity_file)

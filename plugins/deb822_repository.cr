@@ -113,7 +113,7 @@ module CrystalPlay
     # value through `true?` first (rather than assuming it always
     # arrives as literal "true"/"false") stays correct either way.
     private def render_content(check_mode : Bool = false) : String
-      n = @params["name"]?.not_nil!
+      n = @params["name"]? || raise "deb822_repository: name is required"
       fields = {} of String => String
 
       BOOL_FIELDS.each do |param, field|
@@ -147,7 +147,7 @@ module CrystalPlay
       #    (binary) under /etc/apt/keyrings/<name>{.asc,.gpg}, return the
       #    local path for Signed-By:
       if (scheme = URI.parse(raw).scheme) && %w[http https].includes?(scheme.downcase)
-        name = @params["name"]?.not_nil!
+        name = @params["name"]? || raise "deb822_repository: name is required"
         return resolve_url_signed_by(name, raw, check_mode)
       end
 

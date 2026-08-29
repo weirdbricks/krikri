@@ -162,7 +162,7 @@ module CrystalPlay
       return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if entries.empty?
 
       built = PluginHelpers::FirewalldCommand.port_forward_value(entries[0])
-      return PluginResult.new(changed: false, failed: true, msg: built[:error].not_nil!) unless value = built[:value]
+      return PluginResult.new(changed: false, failed: true, msg: built[:error] || "invalid port_forward value") unless value = built[:value]
 
       present = remote_exec(PluginHelpers::FirewalldCommand.forward_port_query_command(zone, value))[:exit_code] == 0
       want_present = state == "enabled"

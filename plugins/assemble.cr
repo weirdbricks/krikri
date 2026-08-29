@@ -46,7 +46,7 @@ module CrystalPlay
         next false if ignore_hidden && name.starts_with?('.')
         full = File.join(src, name)
         next false unless File.file?(full)
-        regexp.nil? || regexp.not_nil!.matches?(name)
+        regexp.nil? || regexp.try(&.matches?(name)) || false
       end
 
       assembled = fragments.map { |name| File.read(File.join(src, name)) }

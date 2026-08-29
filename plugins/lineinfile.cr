@@ -139,7 +139,7 @@ module CrystalPlay
       if state == "absent"
         PluginHelpers::LineEditor.remove_matching(lines, line, regexp)
       else
-        PluginHelpers::LineEditor.ensure_present(lines, line.not_nil!, regexp, true?(@params["backrefs"]?), @params["insertafter"]?, @params["insertbefore"]?)
+        PluginHelpers::LineEditor.ensure_present(lines, (line || raise "lineinfile: line is required"), regexp, true?(@params["backrefs"]?), @params["insertafter"]?, @params["insertbefore"]?)
       end
     end
 

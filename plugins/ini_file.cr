@@ -162,7 +162,7 @@ module CrystalPlay
         matches = (block_start...block_end).select { |i| option_line_index?(new_lines[i], option) }
 
         if state == "present"
-          formatted = format_option(option, value.not_nil!, no_extra_spaces)
+          formatted = format_option(option, (value || raise "ini_file: value is required"), no_extra_spaces)
 
           if matches.empty?
             new_lines.insert(block_end, formatted)

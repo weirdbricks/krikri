@@ -238,7 +238,7 @@ describe "file plugin" do
     it "is a no-op when owner/group already match" do
       path = tmp_path("ownerfile.txt")
       File.write(path, "x")
-      me = System::User.find_by?(id: LibC.getuid.to_s).not_nil!.username
+      me = (System::User.find_by?(id: LibC.getuid.to_s) || raise "unexpected nil").username
 
       result = PluginSpecHelper.run("file", {"path" => path, "state" => "file", "owner" => me})
       result["changed"].as_bool.should be_false
