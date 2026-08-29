@@ -3440,22 +3440,104 @@ module CrystalPlay
       return if steps.empty?
 
       connection_host = PluginManager.get_connection_host(host, step_vars.first)
-      step_results = run_batch_script(host, connection_host, steps)
+      step_results = run_batch_steps(host, connection_host, steps)
 
       steps.each_index do |idx|
-        next unless r = step_results[idx]?
+        next unless interpreted = step_results[idx]?
 
         task = step_tasks[idx]
         vars_context = step_vars[idx]
-        interpreted = PluginManager.interpret_remote_result(r.exit_code, r.stdout, r.stderr)
         cache[task] = {apply_changed_failed_when(task, interpreted, vars_context, host), vars_context}
       end
     end
 
-    # Shared "run this batch script in one SSH round trip and parse the
-    # results back" middle, used by both execute_batch_group (mixed
+    # Shared "run this batch in one remote round trip and give back the
+    # per-step results" middle, used by both execute_batch_group (mixed
     # tasks) and execute_looped_task's batched path (iterations of one
     # task) - the two callers differ only in how they produce *steps*.
+    #
+    # Results are keyed by index into *steps*, and an absent index means
+    # that step NEVER RAN (an earlier one failed and stopped the batch).
+    # Both transports below honour that identically, and both apply the
+    # same fail-fast rule, so which one ran a group is not observable.
+    #
+    # OPUS_PERFORMANCE_IMPROVEMENTS.md item 3: batching and the daemon
+    # used to be mutually exclusive per task - a batched group always
+    # went out as a fresh ssh + bash + base64 script, and the daemon
+    # served only solo tasks, so every task took one optimization and
+    # forfeited the other. The daemon transport is preferred now, and
+    # the script remains the fallback for the cases it cannot serve.
+    private def run_batch_steps(host : Host, connection_host : String, steps : Array(BatchScript::Step)) : Hash(Int32, JSON::Any)
+      if result = try_daemon_batch(host, connection_host, steps)
+        return result
+      end
+
+      script_results = run_batch_script(host, connection_host, steps)
+      interpreted = Hash(Int32, JSON::Any).new
+      script_results.each do |idx, step_result|
+        interpreted[idx] = PluginManager.interpret_remote_result(step_result.exit_code, step_result.stdout, step_result.stderr)
+      end
+      interpreted
+    end
+
+    # Returns nil when this group cannot (or should not) go over a
+    # daemon, so the caller falls back to the script transport.
+    #
+    # The eligibility rule is one line of real substance: a daemon is a
+    # single resident process running as ONE user, so every step in the
+    # request has to agree on become_user. A group mixing `become: true`
+    # and unprivileged tasks is left to the script, which resolves
+    # privilege per step via its own `sudo -n -u ... --` prefix. That is
+    # deliberately not "split the group into runs and send several
+    # requests": each request is a round trip, and a group that needs
+    # three of them is no longer obviously cheaper than the one script
+    # the fallback already sends.
+    #
+    # On ANY daemon failure this returns nil and the whole group is
+    # re-sent as a script. That carries the same re-execution window the
+    # solo daemon path has always carried (see PluginManager#
+    # execute_remote_plugin's own rescue) - a request whose response was
+    # lost may have run - only widened from one task to one group.
+    # Accepted for the same reason: the alternative is leaving those
+    # members with no cache entry at all, which
+    # execute_batch_group's contract reads as "skipped", silently NOT
+    # running tasks the playbook asked for. A wrongly-repeated
+    # idempotent module is a far better failure than a silently dropped
+    # one.
+    private def try_daemon_batch(host : Host, connection_host : String, steps : Array(BatchScript::Step)) : Hash(Int32, JSON::Any)?
+      return nil unless PluginManager.daemon_enabled?
+      return nil if steps.empty?
+
+      become_user = steps.first.become_user
+      return nil unless steps.all? { |step| step.become_user == become_user }
+      return nil if steps.any?(&.module_name.empty?)
+
+      ssh_user = host.user || "root"
+      return nil if SSHManager.daemon_unavailable?(connection_host, ssh_user, host.port, become_user)
+
+      payload = steps.map do |step|
+        {
+          module_name:   step.module_name,
+          config:        JSON.parse(step.config_json),
+          ignore_errors: step.ignore_errors?,
+        }
+      end
+
+      begin
+        SSHManager.daemon_send_batch(
+          connection_host,
+          ssh_user,
+          host.port,
+          "#{PluginManager::REMOTE_PLUGIN_DIR}/#{steps.first.module_name}",
+          payload,
+          identity_file: host.vars["ansible_ssh_private_key_file"]?.try(&.as_s?),
+          become_user: become_user
+        )
+      rescue
+        nil
+      end
+    end
+
     private def run_batch_script(host : Host, connection_host : String, steps : Array(BatchScript::Step)) : Hash(Int32, BatchScript::StepResult)
       batch_id = Random::Secure.hex(8)
       script = BatchScript.build(batch_id, steps)
@@ -3595,7 +3677,16 @@ module CrystalPlay
       PluginManager.ensure_uploaded(host, task.module_name, vars_context)
       plugin_target = PluginManager.remote_plugin_target(task.module_name, become, become_user)
 
-      BatchScript::Step.new(plugin_target, config_json, task.ignore_errors)
+      # The daemon transport (item 3) dispatches by module NAME inside an
+      # already-running process, and takes its privilege from which
+      # daemon the request is sent to - hence both of these alongside the
+      # script transport's own `sudo`-prefixed target string. `nil`
+      # become_user means "no become", which is a DIFFERENT daemon from
+      # `"root"`, so the distinction is carried through rather than
+      # normalized away.
+      BatchScript::Step.new(plugin_target, config_json, task.ignore_errors,
+        PluginManager.simple_plugin_name(task.module_name),
+        become ? become_user : nil)
     end
 
     # Run one attempt of a task (when: check + param substitution + action
@@ -4435,7 +4526,8 @@ module CrystalPlay
           # the script on the first failing item without ignore_errors:,
           # silently changing that continue-after-failure behavior as a
           # side effect of batching it.
-          steps << BatchScript::Step.new(outcome.plugin_target, outcome.config_json, true)
+          steps << BatchScript::Step.new(outcome.plugin_target, outcome.config_json, true,
+            outcome.module_name, outcome.become_user)
           step_indices << idx
         end
       end
@@ -4443,14 +4535,13 @@ module CrystalPlay
       return item_results if steps.empty?
 
       connection_host = PluginManager.get_connection_host(host, item_contexts[step_indices.first])
-      step_results = run_batch_script(host, connection_host, steps)
+      step_results = run_batch_steps(host, connection_host, steps)
 
       steps.each_index do |i|
-        next unless r = step_results[i]?
+        next unless interpreted = step_results[i]?
 
         idx = step_indices[i]
         vars_context = item_contexts[idx]
-        interpreted = PluginManager.interpret_remote_result(r.exit_code, r.stdout, r.stderr)
         item_results[idx] = apply_changed_failed_when(task, interpreted, vars_context, host)
       end
 

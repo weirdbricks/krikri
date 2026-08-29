@@ -384,6 +384,65 @@ module CrystalPlay
       raise ex
     end
 
+    # OPUS_PERFORMANCE_IMPROVEMENTS.md item 3: send a whole batch of
+    # steps as ONE daemon request. Same connection, same framing and the
+    # same rescue-and-let-the-caller-fall-back contract as #daemon_send
+    # above; only the payload shape differs.
+    #
+    # Returns the plugin results keyed by the step's index in *steps*. An
+    # index that is ABSENT never ran - the daemon stopped at an earlier
+    # failing step, exactly as `BatchScript.parse` reports a script that
+    # halted. Callers must honour that the same way they already do for
+    # the script transport.
+    #
+    # Every step here must agree on become_user, because that is what
+    # selects which resident daemon (and therefore which user) serves
+    # them - see TaskExecutor#run_batch_steps, which does the
+    # partitioning.
+    def self.daemon_send_batch(
+      host : String,
+      user : String,
+      port : Int32,
+      remote_binary_path : String,
+      steps : Array(NamedTuple(module_name: String, config: JSON::Any, ignore_errors: Bool)),
+      identity_file : String? = nil,
+      timeout : Int32 = DEFAULT_EXEC_TIMEOUT_SECONDS,
+      become_user : String? = nil
+    ) : Hash(Int32, JSON::Any)
+      init
+      key = {host, user, port, become_user}
+      process = @@daemon_processes[key]? ||
+                spawn_daemon(host, user, port, remote_binary_path, identity_file, become_user)
+
+      payload = steps.map do |step|
+        {
+          "module"        => JSON::Any.new(step[:module_name]),
+          "config"        => step[:config],
+          "ignore_errors" => JSON::Any.new(step[:ignore_errors]),
+        }
+      end
+      request = {"batch" => payload}.to_json
+
+      response = TimingProfile.measure("transport.daemon_batch", "transport") do
+        run_io_with_timeout(timeout) do
+          write_daemon_frame(process.input, request)
+          read_daemon_frame(process.output)
+        end
+      end
+
+      @@daemon_failures.delete(key)
+
+      results = Hash(Int32, JSON::Any).new
+      JSON.parse(response)["results"].as_h.each do |index, value|
+        results[index.to_i] = value
+      end
+      results
+    rescue ex
+      @@daemon_failures[{host, user, port, become_user}] += 1
+      kill_daemon(host, user, port, become_user)
+      raise ex
+    end
+
     # *become_user* non-nil spawns the daemon under `sudo -n -u <user>
     # --`, the exact wrapper `PluginManager.remote_plugin_target`
     # already builds for the one-shot path - deliberately the same

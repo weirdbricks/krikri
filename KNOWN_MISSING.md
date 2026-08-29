@@ -10,12 +10,79 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.634`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.635`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
+
+## Performance item 3 (OPUS_PERFORMANCE_IMPROVEMENTS.md, 0.9.635)
+
+**Batched groups and the daemon now compose.** NOT-BREAKING: only this
+engine's own daemon protocol changed. `TaskBatcher.plan`'s grouping and
+eligibility rules are untouched, and every measured pair produced an
+identical `PLAY RECAP`.
+
+They were never mutually exclusive per RUN - they were mutually
+exclusive per TASK. A batched group went out as a fresh `ssh` + `bash`
++ base64 script; the daemon served only solo tasks. So every task took
+exactly one of the two optimizations and forfeited the other, and the
+published warm benchmark had to disable batching (`--no-batching`) to
+measure the daemon at all.
+
+The daemon protocol now accepts an optional `{"batch": [...]}` request
+carrying a LIST of steps, executes them in-process in order, and replies
+once. The fail-fast rule is deliberately the same one `BatchScript`
+implements script-side - a step whose result is `"failed": true` stops
+the batch unless it set `ignore_errors` - and a step that never ran is
+ABSENT from the reply, exactly as an absent index means "never ran" in
+`BatchScript.parse`. Which transport ran a group is therefore not
+observable in any result.
+
+**Eligibility is one rule:** a daemon is one resident process running as
+ONE user, so every step in a request must agree on `become_user`. A
+group mixing privileged and unprivileged tasks stays on the script,
+which resolves privilege per step via its own `sudo -n -u ... --`
+prefix. Deliberately not "split the group into runs and send several
+requests" - each request is a round trip, and a group needing three of
+them is no longer obviously cheaper than the one script the fallback
+already sends.
+
+Measured on a fresh 2-host Atlantic.net `G3.2GB` Ubuntu 22.04 pair, one
+binary per host, runs issued simultaneously, plus a full swapped-host
+control:
+
+| devsec.hardening.os_hardening | before | after | |
+|---|---|---|---|
+| warm, wall clock (4 runs, both orientations) | 18.02s | 7.00s | **2.57x** |
+| ...orientation A only | 18.24s | 6.96s | 2.62x |
+| ...orientation B only (swapped) | 17.79s | 7.04s | 2.53x |
+| cold, wall clock | 40.93s | 29.52s | 1.39x |
+| the 30 groups that moved to the daemon | 0.321s each | 0.069s each | **4.7x** |
+
+The transport rows show what happened: 44 `ssh exec_script` calls
+totalling 14.1s became 14 calls totalling 2.0s plus 30 daemon batch
+requests totalling 2.1s. The 14 that remain are the mixed-`become_user`
+groups taking the documented script fallback. Both orientations agree
+to within 0.1x, so this is the engine and not the host pair.
+
+This is the largest single win of the performance work so far, and it
+is also why items 1 and 2 read smaller than they should have: on this
+role 44 of 79 round trips were routing around the daemon entirely, so
+every earlier measurement was taken with most of the play on the slow
+path.
+
+**One risk accepted, and it is the same one the solo path already
+carries.** On any daemon failure the whole group is re-sent as a script.
+A request whose response was lost may already have run, so this widens
+the existing re-execution window (see `PluginManager#
+execute_remote_plugin`'s own rescue) from one task to one group. The
+alternative is worse: leaving those members with no cache entry, which
+`execute_batch_group`'s contract reads as "skipped", silently NOT
+running tasks the playbook asked for. A wrongly-repeated idempotent
+module beats a silently dropped one.
+
 
 ## Performance item 2 (OPUS_PERFORMANCE_IMPROVEMENTS.md, 0.9.634)
 

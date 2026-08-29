@@ -68,11 +68,62 @@ module CrystalPlay
       loop do
         frame = read_frame(STDIN)
         request = JSON.parse(String.new(frame))
-        result = yield request["module"].as_s, request["config"]
+
+        result = if batch = request["batch"]?
+                   run_batch(batch) { |name, config| yield name, config }
+                 else
+                   yield request["module"].as_s, request["config"]
+                 end
+
         write_frame(STDOUT, result)
       end
     rescue IO::EOFError
       # STDIN closed - clean shutdown.
+    end
+
+    # OPUS_PERFORMANCE_IMPROVEMENTS.md item 3: a batch request carries a
+    # LIST of steps and runs them all in this one process, in order,
+    # before replying once. Batching and the daemon used to be mutually
+    # exclusive PER TASK - a batched group went out as a fresh `ssh` +
+    # `bash` + base64 script, the daemon served only solo tasks - so
+    # every task took exactly one of the two optimizations and forfeited
+    # the other.
+    #
+    # The fail-fast rule is deliberately the same one `BatchScript`
+    # implements script-side, so which transport ran a group is not
+    # observable in the result: a step whose result is `"failed": true`
+    # stops the batch unless that step set `ignore_errors`. Steps that
+    # never ran are simply ABSENT from the reply, exactly as an absent
+    # index means "never ran" in `BatchScript.parse`.
+    #
+    # Unlike the script transport there is no exit code to arbitrate
+    # against - the dispatch block's return value IS the plugin's own
+    # JSON, same as the solo daemon path, so no `interpret_remote_result`
+    # equivalent is needed or wanted here.
+    private def self.run_batch(batch : JSON::Any, & : String, JSON::Any -> String) : String
+      results = {} of String => JSON::Any
+
+      batch.as_a.each_with_index do |step, index|
+        raw = yield step["module"].as_s, step["config"]
+
+        parsed = begin
+          JSON.parse(raw)
+        rescue
+          JSON.parse({
+            "changed" => false,
+            "failed"  => true,
+            "msg"     => "Failed to parse plugin output in batch",
+            "stdout"  => raw,
+          }.to_json)
+        end
+
+        results[index.to_s] = parsed
+
+        next if step["ignore_errors"]?.try(&.as_bool?)
+        break if parsed["failed"]?.try(&.as_bool?)
+      end
+
+      {"results" => results}.to_json
     end
   end
 end

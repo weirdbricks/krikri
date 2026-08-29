@@ -36,13 +36,26 @@ module CrystalPlay
     struct Step
       # Already resolved via PluginManager.remote_plugin_target - the
       # bare plugin path, or `sudo -n -u <user> -- <path>` if become:.
+      # Used only by the bash-script transport below; the daemon
+      # transport (OPUS_PERFORMANCE_IMPROVEMENTS.md item 3) dispatches
+      # by module NAME inside an already-running process instead, and
+      # gets its privilege from which daemon it is sent to.
       getter plugin_target : String
       # This step's full config, exactly what would be piped via stdin
       # in the non-batched path (PluginManager#execute_remote_plugin).
       getter config_json : String
       getter? ignore_errors : Bool
+      # Simple (non-FQCN) module name, for the daemon transport's own
+      # dispatch table.
+      getter module_name : String
+      # The become_user this step must run as, or nil for none. This is
+      # the daemon KEY: a daemon is one resident process running as one
+      # fixed user, so only steps agreeing on this value can share one
+      # daemon batch request - see TaskExecutor#run_batch_steps.
+      getter become_user : String?
 
-      def initialize(@plugin_target : String, @config_json : String, @ignore_errors : Bool)
+      def initialize(@plugin_target : String, @config_json : String, @ignore_errors : Bool,
+                     @module_name : String = "", @become_user : String? = nil)
       end
     end
 

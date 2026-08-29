@@ -37,7 +37,7 @@ Implement every NOT-BREAKING item before starting any BREAKING one.
 | 0 | `--timing-profile` | NOT-BREAKING | **DONE (0.9.632)** - none (enables the rest) |
 | 1 | `become:` under the daemon | NOT-BREAKING | **DONE (0.9.633)** - 4.0x on an all-solo `become:` workload, 2.5x on the round trips it moves, 1.13x whole-run warm on os_hardening |
 | 2 | `facts` under the daemon | NOT-BREAKING | **DONE (0.9.634)** - 1.5x on a many-PLAY run; no gain from extra hosts (daemons are per host); ~25ms COST on a single-gather run |
-| 3 | Batched groups under the daemon | NOT-BREAKING | compounds 1-2 |
+| 3 | Batched groups under the daemon | NOT-BREAKING | **DONE (0.9.635)** - 2.57x warm on os_hardening, 4.7x on the groups that moved |
 | 4 | Stateful vars context (deltas) | NOT-BREAKING | grows with role length |
 | 5 | Ship the play, not the tasks | NOT-BREAKING | N x RTT -> ~1 RTT |
 | 6 | Agent outliving the run | NOT-BREAKING* | removes bootstrap cost |
@@ -176,9 +176,26 @@ injects `ansible_connection=local` into `wire_vars` for the remote case
 - the controller stops shipping the whole fact dict back to the target
 inside every subsequent task's vars context.
 
-### 3. Batched groups and the daemon do not compose
+### 3. Batched groups and the daemon do not compose — DONE (0.9.635)
 
 *NOT-BREAKING. Our own daemon protocol changes; `TaskBatcher.plan`'s eligibility rules do not.*
+
+**Landed exactly as described, and it was the biggest win so far:**
+2.57x warm on devsec.hardening.os_hardening, confirmed in both host
+orientations, with the 30 groups that moved costing 0.069s each instead
+of 0.321s. `TaskBatcher.plan` needed no change at all, as predicted.
+
+The one thing the item did not anticipate: a daemon runs as ONE user, so
+a group whose steps disagree on `become_user` cannot share one request
+and still takes the script. On os_hardening that left 14 of 44 groups on
+the fallback. Splitting such a group into per-user runs was rejected -
+each run is a round trip, so a group needing three of them is no longer
+obviously cheaper than the single script it replaces.
+
+This also explains why items 1 and 2 measured smaller than they should
+have: 44 of os_hardening's 79 round trips were routing around the daemon
+entirely, so every earlier measurement had most of the play on the slow
+path.
 
 They are not mutually exclusive per run - they are mutually exclusive
 per task. A batched group goes through `BatchScript` /
@@ -409,10 +426,9 @@ All of Tier 1 (items 0-8) is NOT-BREAKING and lands first. Tier 2
 
 1. ~~Item 0 (`--timing-profile`)~~ - done, 0.9.632.
 2. ~~Items 1 and 2~~ - done, 0.9.633 / 0.9.634.
-3. Items 3, 4 - protocol work, compounding. Item 3 is now the one that
-   matters most: os_hardening still sends 44 of its 79 round trips as
-   batched `ssh`+`bash`+base64 groups that route around the daemon
-   entirely.
+3. ~~Item 3~~ - done, 0.9.635. Item 4 next: with batching and the
+   daemon composed, the remaining per-task cost on the wire is the vars
+   context, re-serialized and re-sent for every step.
 4. Item 5 - the architectural step.
 5. Items 6, 7, 8 - fixed-cost removal, sized by item 0.
 6. Tier 2, flag by flag, only then.

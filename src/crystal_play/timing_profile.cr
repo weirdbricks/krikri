@@ -141,6 +141,7 @@ module CrystalPlay
       Row.new("transport.ssh_script", "ssh exec_script (batched / one-shot)"),
       Row.new("transport.ssh_spawn", "local ssh process spawn", 1),
       Row.new("transport.daemon_send", "daemon request (pipe round trip)"),
+      Row.new("transport.daemon_batch", "daemon batch request (pipe round trip)"),
       Row.new("transport.daemon_spawn", "daemon start (ssh + remote exec)", 1),
       Row.new("transport.scp_upload", "scp upload"),
       Row.new("transport.scp_download", "scp download"),

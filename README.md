@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.634-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.635-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -129,8 +129,12 @@ cold (first touch) and warm (idempotent re-run) on both engines,
 `--forks 1` on both sides. crystal-ansible was built `--release` and
 stripped, and ran with `--persistent-daemon --no-batching` (one
 long-lived `ssh ... -- <plugin binary> --daemon` connection per host
-instead of a fresh `ssh`+`bash`+exec per task; batching is disabled
-during measurement because it routes around that path). `PLAY RECAP`
+instead of a fresh `ssh`+`bash`+exec per task; batching was disabled
+during measurement because, at the time, it routed around that path).
+**That caveat is now historical** - as of 0.9.635 batched groups go over
+the daemon too, so the two features compose and a re-run of this table
+would no longer need `--no-batching`. The numbers below predate that and
+are not re-measured here. `PLAY RECAP`
 parity with real Ansible (`ok=`/`changed=`/`failed=`/`skipped=`) was
 checked per role, cold AND warm, and matched exactly on all 10:
 
@@ -387,6 +391,17 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.635`** - task batching and the persistent daemon now compose.
+  They were mutually exclusive per TASK, not per run: a batched group
+  went out as a fresh `ssh`+`bash`+base64 script while the daemon served
+  only solo tasks, so every task took one optimization and forfeited the
+  other. The daemon protocol now accepts a batch request carrying a list
+  of steps and runs them in-process, with the same fail-fast rule the
+  script transport uses; a group whose steps disagree on `become_user`
+  still takes the script, since one daemon runs as one user. Measured
+  **2.57x** warm on `devsec.hardening.os_hardening` (18.02s -> 7.00s,
+  confirmed in both host orientations), 1.39x cold, with the groups that
+  moved 4.7x cheaper each.
 - **`0.9.634`** - fact gathering runs through the persistent daemon too.
   `facts` was the last module excluded from it, and the reason was
   shape, not semantics: it had neither the `BasePlugin` class nor the
