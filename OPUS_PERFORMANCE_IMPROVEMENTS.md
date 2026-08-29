@@ -46,7 +46,7 @@ Implement every NOT-BREAKING item before starting any BREAKING one.
 | 9 | Idempotency memoization | **BREAKING** | warm runs stop checking |
 | 10 | Out-of-order / parallel within a host | **BREAKING** | main cold-run lever |
 | 11 | Coalesce package tasks | **BREAKING** | seconds per package task |
-| 12 | Gather only referenced facts | **BREAKING** | one probe -> a few |
+| 12 | Gather only referenced facts | **BREAKING** | **DONE (0.9.639)** - in `crystal-ansible-fast` only; 88ms -> 37ms per gather when nothing optional is referenced |
 
 \* Item 6 is NOT-BREAKING **only** if its cache invalidation is airtight;
 stale facts are a correctness bug. If it cannot be made airtight it moves
@@ -460,12 +460,34 @@ this before any of it gets built.
 
 ---
 
-## Tier 2: BREAKING (opt-in flags only, defaults off)
+## Tier 2: BREAKING (a separate binary, never the default)
 
-Do not start these until Tier 1 is done. Each one changes observable
-behavior for at least some real playbook, so each needs its own flag,
-defaults off, documented in README.md's "How this differs from real
-Ansible".
+Tier 1 is done (items 0-3 and 6a built; 4, 5, 6b and 7 closed on
+measurement), so Tier 2 is open.
+
+**Delivered through a separate COMMAND NAME, not per-item flags.** One
+build is hardlinked to two names - the same argv[0] trick `build.sh`'s
+`build_fat_plugin` already uses for the fat plugin binary - and
+`FastMode` reads `PROGRAM_NAME`:
+
+    crystal-ansible        parity. Tier 2 off. The default everywhere.
+    crystal-ansible-fast   Tier 2 on, all of it, with a startup banner.
+
+Rationale, recorded because it was a deliberate choice over the
+"own flag per item" this section originally called for:
+
+- The separation people want is "this must never happen on a normal
+  run". A command name cannot be switched on by a stray flag inherited
+  from a wrapper script or a CI variable, and it is visible in `ps` and
+  in shell history.
+- **All-or-nothing, not one toggle per item.** Four independent toggles
+  is sixteen combinations and the benchmark rounds would validate none
+  of them; one extra mode is one extra thing to test.
+- A hardlink, not a second compilation: one code path, one spec suite,
+  no risk of the two drifting while only one gets exercised.
+
+Each item still gets documented in README.md's "How this differs from
+real Ansible".
 
 ### 9. Idempotency memoization with a cheap invalidation token
 
@@ -515,9 +537,30 @@ carries seconds of fixed cost and roles routinely do 5-15 of them.
 depend on an earlier install having happened, handler firing granularity.
 Flag: `--coalesce-packages`.
 
-### 12. Gather only the facts the play references
+### 12. Gather only the facts the play references — DONE (0.9.639)
 
-**BREAKING** - flag `--minimal-facts`.
+**BREAKING** - `crystal-ansible-fast` only (the item originally proposed
+a `--minimal-facts` flag; see the Tier 2 header for why it is a binary
+name instead).
+
+**Landed.** `FactSubsetPlanner` statically scans the play for the fact
+keys each optional family contributes and emits an `all,!family,...`
+subset. Measured against the real plugin: **88ms full, 37ms** when all
+three optional families are skipped.
+
+The planner is deliberately generous in the safe direction - it keeps a
+family on ANY textual sighting, and abandons the optimization entirely
+(gathers everything) the moment it sees `hostvars`, `ansible_facts[`, or
+a computed `'ansible_' ~ x` name, since no textual scan can resolve
+those. A false "used" costs speed; a false "unused" costs correctness.
+
+One trap worth recording: the subset MUST lead with `all`.
+`FactsGatherer#subset_enabled?` starts from
+`subset.empty? || subset.includes?("all")`, so a bare `!network,!mounts`
+reads as an allow-list of nothing and disables even the families the
+play does reference. Caught by a play reading `ansible_processor_vcpus`
+that came back undefined despite the planner correctly keeping
+`hardware`.
 
 Static-scan the play for `ansible_*` references and map them to
 `gather_subset` (the facts plugin already accepts it -

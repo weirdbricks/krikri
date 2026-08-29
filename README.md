@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.638-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.639-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -384,6 +384,22 @@ harness covers and how it works.
 
 ---
 
+### `crystal-ansible-fast` (opt-in, parity-breaking)
+
+Everything above describes `crystal-ansible`, which aims at behaving
+exactly like `ansible-playbook`. The build also produces
+`crystal-ansible-fast` - the same binary under a second name - which
+enables optimizations that trade parity for speed:
+
+| behaviour | effect |
+|---|---|
+| minimal fact gathering | only the fact families the play textually references are gathered. A fact reached through `hostvars`, a computed `'ansible_' ~ x` name, or a `.j2` file the scan never opens will be **undefined** instead of slow. |
+
+The planner is conservative - it keeps a family on any sighting and
+gathers everything the moment it sees a dynamic reference - but static
+analysis cannot see everything. `crystal-ansible-fast` prints a banner
+naming what is enabled every time it runs.
+
 ## 🕐 Recent changes
 
 A short rolling summary of the last few versions - see `git log` for the
@@ -391,6 +407,17 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.639`** - adds a second binary, `crystal-ansible-fast`, for the
+  optimizations that are deliberately NOT parity-preserving. It is one
+  build hardlinked to two names; `crystal-ansible` is unchanged and stays
+  the default. The first such optimization: fact gathering now skips the
+  hardware/network/mount families a play never textually references
+  (88ms -> 37ms per gather when all three are skipped). It is breaking
+  because a fact reached via `hostvars`, a computed name, or a `.j2` file
+  the scan cannot see comes back undefined - the planner bails out to
+  gathering everything whenever it spots those, but it cannot see
+  everything. **Use `crystal-ansible` unless you have read that
+  sentence twice.**
 - **`0.9.638`** - implements the `vars` magic variable for
   `when:`/`assert:` (a dict of every variable in scope). The Crinja path
   already had one; the hand-rolled conditional evaluator did not, so
