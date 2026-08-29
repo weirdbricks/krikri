@@ -10,12 +10,58 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.638`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.641`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
+
+## The parity-breaking tier was built, measured, and removed (0.9.641)
+
+`OPUS_PERFORMANCE_IMPROVEMENTS.md` Tier 2 - a second binary
+(`crystal-ansible-fast`) carrying optimizations that deliberately do not
+preserve parity - shipped in 0.9.639/0.9.640 and was deleted in 0.9.641.
+Recorded here so it is not re-proposed without the numbers.
+
+**Measured on ten real roles, fresh host pair each, parity binary
+against the fast one: 1.00x cold, 1.03x warm.** Inside run-to-run
+variance, and the sign flipped per role.
+
+Per optimization:
+
+- **Package coalescing (item 11) never fired once** in ten roles. Real
+  roles put `when:`, `notify:`, `register:`, loops or templated names on
+  essentially every package task, and the eligibility rules correctly
+  exclude all of those. Sound mechanism, no population.
+- **Fact subsetting (item 12)** engaged on 7 of 10, saving the ~50ms it
+  was measured at - invisible against multi-second runs.
+- **Package memoization (item 9)** was scoped, built, and measured
+  against seven roles chosen for having the MOST package tasks in the
+  corpus. Exactly one memoized anything (4 tasks, ~100ms of an 11s run).
+  The dominant real shape is one `apt:` task with a package list and
+  `update_cache: yes`, which has to be disqualified because a replay
+  would skip the cache refresh.
+
+Against that, the tier produced a **silent wrong answer**:
+`dev-sec.os-hardening` ran `ok=24` where the parity binary ran `ok=25`,
+on two separate fresh host pairs, because the role's only hardware-fact
+reference is inside `templates/etc/initramfs-tools/modules.j2` and the
+planner scanned task params only. It took two rounds and two attempted
+fixes to run down.
+
+The lesson worth keeping is WHY all three under-delivered: each was
+designed against a picture of the engine from before items 1-3. Once
+the daemon removed the per-task process-spawn cost, the work they
+optimize stopped being where the time goes. Measured per-module check
+cost on a converged system, net of that spawn floor: `file` and
+`lineinfile` ~0ms, `copy` ~1ms, `service` ~7ms, `systemd` ~16ms, `apt`
+~23ms, `package` ~32ms, `get_url` ~229ms - and a 30-task warm run
+profiles at 98.9% "task execution" with templating and display at 0.3%
+each. Remaining warm-run cost is wire round trips, not module work or
+controller work. That points at batching coverage, not at anything
+Tier 2 did.
+
 
 ## Round 198 (10-role round validating item 6a, 0.9.637 -> 0.9.638)
 

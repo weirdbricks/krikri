@@ -264,27 +264,6 @@ else
     echo -e "${GREEN}✅ Main executable up to date${NC}"
 fi
 
-# OPUS_PERFORMANCE_IMPROVEMENTS.md Tier 2 lives behind a second COMMAND
-# NAME, not a flag - see src/crystal_play/fast_mode.cr for why. Same
-# hardlink-plus-argv[0] trick build_fat_plugin uses below for the 94
-# module names on the fat plugin binary: one build, two names, and
-# FastMode reads File.basename(PROGRAM_NAME) to decide which it is.
-#
-# Relinked unconditionally (rm first) so it can never be left pointing
-# at a stale inode after the main binary is rebuilt - a hardlink to the
-# OLD file would silently keep running yesterday's engine.
-FAST_BINARY="$OUTPUT_DIR/crystal-ansible-fast"
-rm -f "$FAST_BINARY"
-if ln "$MAIN_BINARY" "$FAST_BINARY" 2>/dev/null; then
-    echo -e "${GREEN}✅ Fast (parity-breaking) name linked: $OUTPUT_DIR/crystal-ansible-fast${NC}"
-else
-    # Different filesystem, or a build dir that cannot hardlink - a copy
-    # behaves identically, it just costs the disk.
-    cp "$MAIN_BINARY" "$FAST_BINARY"
-    echo -e "${YELLOW}⚠${NC}  crystal-ansible-fast copied (hardlink unavailable)"
-fi
-echo ""
-
 # Build ansible (ad-hoc CLI)
 echo -e "${YELLOW}🔨 Building ansible (ad-hoc CLI)...${NC}"
 

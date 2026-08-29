@@ -14,8 +14,6 @@ require "./src/crystal_play/task_executor/output_routing"
 require "option_parser"
 require "colorize"
 require "./src/crystal_play/version"
-require "./src/crystal_play/fast_mode"
-require "./src/crystal_play/fact_subset_planner"
 require "./src/crystal_play/timing_profile"
 require "./src/crystal_play/playbook_parser"
 require "./src/crystal_play/tag_filter"
@@ -65,10 +63,6 @@ if ARGV[0]? == "__async_run"
   File.rename(tmp_path, status_path)
   File.delete(config_path) rescue nil
   exit
-end
-
-if CrystalPlay::FastMode.enabled?
-  STDERR.puts CrystalPlay::FastMode.banner.colorize(:yellow)
 end
 
 # Parse command line arguments
@@ -664,17 +658,6 @@ if verbose
   puts ""
 end
 
-# Item 12 (fast binary only): work out up front which fact families this
-# play actually references, so gather_facts can skip the rest. Computed
-# once per run, not per play, and left empty in the parity binary.
-fast_gather_subset = [] of String
-if CrystalPlay::FastMode.enabled? && (pb = playbook)
-  if planned = CrystalPlay::FactSubsetPlanner.plan(pb)
-    fast_gather_subset = planned
-    puts "  fast: gathering facts with #{planned.join(",")}".colorize(:yellow) if verbose
-  end
-end
-
 # Set verbose mode for plugin manager
 CrystalPlay::PluginManager.verbose = verbose
 CrystalPlay::PluginManager.daemon_enabled = persistent_daemon
@@ -848,13 +831,7 @@ playbook.plays.each_with_index do |play, play_index|
     max_fail_percentage: play.max_fail_percentage,
     unreachable_hosts: unreachable_hosts,
     strategy: play.strategy,
-    # OPUS_PERFORMANCE_IMPROVEMENTS.md item 12, reachable only through
-    # the crystal-ansible-fast hardlink. A play that explicitly asked
-    # for a gather_subset keeps its own - the planner only fills in a
-    # subset where the play expressed no preference - and the planner
-    # returns nil whenever the play is not safely analysable, which
-    # also means "gather everything".
-    gather_subset: play.gather_subset.empty? ? fast_gather_subset : play.gather_subset,
+    gather_subset: play.gather_subset,
     remote_user: play.remote_user,
     debugger: play.debugger
   )

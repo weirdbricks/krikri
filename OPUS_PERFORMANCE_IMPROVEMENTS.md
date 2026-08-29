@@ -23,6 +23,46 @@ what a playbook observes, and each of those needs an opt-in flag.
 
 Do all of Tier 1 before starting Tier 2.
 
+## Tier 2 was built and then removed (0.9.641) - read this first
+
+Items 9, 11 and 12 all shipped behind a second binary
+(`crystal-ansible-fast`), were benchmarked against real roles, and were
+**deleted**. Ten roles, fresh host pair each: **1.00x cold, 1.03x
+warm** - inside run-to-run variance. Item 11 never fired once; item 9
+engaged on 1 of 7 roles picked for having the most package tasks in the
+corpus. And the tier produced a silent wrong answer (`ok=24` vs `ok=25`
+on `dev-sec.os-hardening`, twice, from a fact reference inside a `.j2`
+the planner never opened).
+
+The reason all three under-delivered is the same, and it is the useful
+part: each was written against a picture of the engine from **before**
+items 1-3. Once the daemon removed the per-task process-spawn cost, the
+work they optimize stopped being where the time goes. Measured
+per-module check cost on a converged system, net of that spawn floor:
+
+| module | net check cost |
+|---|---|
+| `file`, `lineinfile` | ~0ms |
+| `copy` | ~1ms |
+| `service` | ~7ms |
+| `systemd` | ~16ms |
+| `apt` | ~23ms |
+| `package` | ~32ms |
+| `get_url` | ~229ms |
+
+And a 30-task warm run profiles at 98.9% "task execution", with
+templating and display at 0.3% each. **The remaining warm-run cost is
+wire round trips, not module work and not controller work.** Any future
+optimization should be aimed there - batching coverage - and should be
+measured against real roles before it is built, not after.
+
+Trading parity for speed is also a worse deal here than it looks:
+parity IS the product. A 3% win that can silently change a recap is not
+a win.
+
+The details of what each item did and why it failed are in
+KNOWN_MISSING.md and in `git log` (0.9.639-0.9.641).
+
 ---
 
 ## At a glance
@@ -43,10 +83,10 @@ Implement every NOT-BREAKING item before starting any BREAKING one.
 | 6 | Agent outliving the run | NOT-BREAKING* | **6a DONE (0.9.637)** - 1.3-1.4x on small roles; **6b (fact cache) REJECTED** - cannot be made airtight |
 | 7 | Stop forking `ssh` per exec | NOT-BREAKING | **CLOSED (0.9.638) - LARGELY SUPERSEDED** by the daemon (items 1-3, 6a); 0-1 forks left per warm run |
 | 8 | Controller-side caching/memoization | NOT-BREAKING | unmeasured |
-| 9 | Idempotency memoization | **BREAKING** | warm runs stop checking |
+| 9 | Idempotency memoization | **BREAKING** | **SCOPED, BUILT, REMOVED (0.9.641)** - 1 of 7 package-heavy roles memoized anything |
 | 10 | Out-of-order / parallel within a host | **BREAKING** | main cold-run lever |
-| 11 | Coalesce package tasks | **BREAKING** | **DONE (0.9.640)** - in `crystal-ansible-fast` only; N installs -> 1 transaction |
-| 12 | Gather only referenced facts | **BREAKING** | **DONE (0.9.639)** - in `crystal-ansible-fast` only; 88ms -> 37ms per gather when nothing optional is referenced |
+| 11 | Coalesce package tasks | **BREAKING** | **BUILT then REMOVED (0.9.641)** - never fired on a single real role in ten |
+| 12 | Gather only referenced facts | **BREAKING** | **BUILT then REMOVED (0.9.641)** - engaged 7 of 10 roles, ~50ms each, and caused a silent ok=24-vs-25 divergence |
 
 \* Item 6 is NOT-BREAKING **only** if its cache invalidation is airtight;
 stale facts are a correctness bug. If it cannot be made airtight it moves

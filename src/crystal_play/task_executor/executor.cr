@@ -13,8 +13,6 @@ require "../action_plugin_manager"
 require "../inventory_parser"
 require "../async_jobs"
 require "../task_batcher"
-require "../package_coalescer"
-require "../fast_mode"
 require "../batch_script"
 require "../ssh_manager"
 require "../custom_stats"
@@ -3353,24 +3351,6 @@ module CrystalPlay
     # result is nil only when this specific task's own when: was false
     # (already fully handled: printed, counted, cached), exactly matching
     # what execute_task_once returns for a skipped task.
-    # Item 11's plan, computed once per task list and only in the fast
-    # binary. Keyed by Task identity, like @task_group.
-    @coalesce_plan : Hash(Task, PackageCoalescer::Group)? = nil
-
-    private def coalesce_group_for(task : Task) : PackageCoalescer::Group?
-      return nil unless FastMode.enabled?
-      plan = (@coalesce_plan ||= PackageCoalescer.plan(@tasks))
-      plan[task]?
-    end
-
-    private def coalesced_follower_result(group : PackageCoalescer::Group) : JSON::Any
-      JSON.parse({
-        "changed" => false,
-        "failed"  => false,
-        "msg"     => "coalesced into \"#{group.leader.name}\" (crystal-ansible-fast)",
-      }.to_json)
-    end
-
     private def try_batched_result(task : Task, host : Host, vars_context : Hash(String, JSON::Any), exec_host : Host) : {Bool, JSON::Any?}
       return {false, nil} unless @batching_enabled
       return {false, nil} unless exec_host == host
@@ -3672,23 +3652,8 @@ module CrystalPlay
     private def prepare_batch_step(task : Task, host : Host, vars_context : Hash(String, JSON::Any), shared : VarSubstitutor? = nil) : JSON::Any | BatchScript::Step
       substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
-      # Item 11 follower on the batched path - the same short-circuit
-      # execute_task_once applies, expressed as this method's
-      # "already have a final result" return.
-      if (cgroup = coalesce_group_for(task)) && !task.same?(cgroup.leader)
-        return coalesced_follower_result(cgroup)
-      end
-
       begin
         substituted_params = substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"))
-
-        # Item 11 leader: install the whole coalesced run's packages in
-        # this one call.
-        if (cgroup = coalesce_group_for(task)) && task.same?(cgroup.leader)
-          substituted_params = substituted_params.dup
-          pkg_key = substituted_params.has_key?("pkg") ? "pkg" : "name"
-          substituted_params[pkg_key] = cgroup.names.join(",")
-        end
 
       rescue ex
         # Same "finalization of task args failed" handling as
@@ -3794,14 +3759,6 @@ module CrystalPlay
     ) : JSON::Any?
       substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
-      # Item 11 follower (crystal-ansible-fast only): the leader already
-      # installed this task's packages as part of one transaction. Task
-      # COUNT is preserved so the recap keeps its shape; only `changed`
-      # attribution moves, which is the documented breakage.
-      if (cgroup = coalesce_group_for(task)) && !task.same?(cgroup.leader)
-        return coalesced_follower_result(cgroup)
-      end
-
       begin
         return nil unless when_passes?(task, vars_context, host, item_label, shared: substitutor, defer_stats: defer_loop_stats)
       rescue ex : WhenEvaluationError
@@ -3820,14 +3777,6 @@ module CrystalPlay
 
       begin
         substituted_params = substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"))
-
-        # Item 11 leader: install the whole coalesced run's packages in
-        # this one call.
-        if (cgroup = coalesce_group_for(task)) && task.same?(cgroup.leader)
-          substituted_params = substituted_params.dup
-          pkg_key = substituted_params.has_key?("pkg") ? "pkg" : "name"
-          substituted_params[pkg_key] = cgroup.names.join(",")
-        end
 
       rescue ex
         # A raised exception during param substitution (e.g. lookup('url',
