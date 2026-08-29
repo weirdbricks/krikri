@@ -10,12 +10,89 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.635`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.636`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
+
+## Round 197 (10-role python-vs-crystal round, fresh pair per role, 0.9.636)
+
+Run to test whether item 3's 2.57x generalises beyond os_hardening.
+10 roles drawn at random from the verified-clean list (excluding the
+0.9.635 round's picks), a FRESH 2-host pair per role, real
+`ansible-playbook` 2.19.4 on one host and crystal on the other, cold and
+warm.
+
+**Accuracy: 18 of 20 comparisons byte-identical.** Both mismatches are
+the same role, `linux-system-roles.timesync`, where crystal exits 4 on
+the role's own `library/` modules (`sr_fingerprint`,
+`timesync_provider`) - the documented custom-module scope cut, and rc=4
+is the correct behaviour for an unavailable module. Its ROLES_TESTED
+entry (✅, round 158, Rocky 9.6) is now stale for Ubuntu, where the
+role takes a branch that reaches those modules.
+
+**Fixed 0.9.636 - `copy:` with `content:` + `force: false` overwrote an
+existing file.** Real data loss, not a verdict difference. See that
+commit; found on `mrlesmithjr.mdadm`, whose "Ensure mdadm conf file
+exists" task is exactly that shape against the distro's own
+`/etc/mdadm/mdadm.conf`. Python left 688 bytes; crystal left 0. The only
+visible symptom in the recap was `changed=1` vs `changed=0`, which is
+the argument for checking real on-host state in these rounds rather than
+trusting recaps. Re-verified live post-fix: recap matches and the file
+is 688 bytes on both hosts.
+
+**One claimed divergence retracted before it was written up.**
+`robertdebock.ara` initially showed python rc=1 (no recap) vs crystal
+rc=2, and the hypothesis was that crystal fails to resolve a
+ROLE-INTERNAL `import_role` at parse time. Tested directly with a
+purpose-built nested role: both engines exit 1 and neither runs the
+preceding task. The real cause was mundane - `robertdebock.service` was
+not installed, a harness gap, not an engine difference. With the
+dependency installed both engines produce identical results.
+
+### Benchmark numbers (python vs crystal, seconds)
+
+| role | py cold | cr cold | py warm | cr warm |
+|---|---|---|---|---|
+| robertdebock.mysql | 8.28 | 7.76 | 5.26 | **1.40** |
+| geerlingguy.exim | 7.36 | 10.04 | 5.09 | **1.47** |
+| mrlesmithjr.mdadm | 8.30 | 9.95 | 6.88 | **1.03** |
+| mrlesmithjr.guacamole | 35.08 | **27.45** | 27.74 | **15.06** |
+| robertdebock.ara | 5.35 | 7.58 | 3.70 | **0.44** |
+| andrewrothstein.devpiserver | 8.59 | 10.80 | 4.99 | **1.45** |
+| robertdebock.cron | 10.72 | **6.56** | 6.59 | **0.51** |
+| linux-system-roles.timesync | 32.22 | **19.63** | 23.13 | **2.67** |
+| andrewrothstein.bash-dcb | 6.07 | 8.15 | 3.23 | **0.44** |
+| robertdebock.node_red | 8.09 | 8.80 | 4.77 | **0.46** |
+
+Mean speedup: **cold 1.04x, warm 6.69x**. Totals 221.4s python vs
+141.7s crystal.
+
+**Cold is at parity, and crystal is SLOWER on 6 of the 10 roles cold**
+(0.71x-0.92x). That is worth stating plainly rather than quoting only
+the warm figure: a cold run is dominated by apt/network work both
+engines pay identically, and crystal's per-run plugin upload is real
+overhead that python does not have.
+
+### What this says about item 3's 2.57x - it does NOT generalise
+
+The `--timing-profile` transport split was captured per role. Warm
+`daemon_batch` counts across all ten: 0,0,0,0,0,1,1,1,1,2. os_hardening
+had **30**.
+
+The reason is size, not batch-hostility: these roles have 1-25 tasks,
+os_hardening has ~95. Item 3 only pays where there are many consecutive
+batchable tasks to collapse, and a small role has none. So the 2.57x is
+a property of LARGE roles, and the warm speedups above come mostly from
+crystal's startup and per-task cost, not from item 3.
+
+**Conclusion: do not publish 2.57x as a general figure.** It is
+accurate for os_hardening and roles of that size. The defensible
+general claim from this round is the python-vs-crystal one: ~6.7x mean
+warm, ~1.0x cold.
+
 
 ## Performance item 3 (OPUS_PERFORMANCE_IMPROVEMENTS.md, 0.9.635)
 
