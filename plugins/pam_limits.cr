@@ -29,7 +29,7 @@ module CrystalPlay
   # Idempotent: no write when the exact entry (domain/type/item/value) is
   # already present.
   class PamLimitsPlugin < BasePlugin
-    property check_mode : Bool
+    property? check_mode : Bool
 
     DEFAULT_DEST = "/etc/security/limits.conf"
 

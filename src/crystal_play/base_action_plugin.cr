@@ -31,10 +31,10 @@ module CrystalPlay
 
   # Result from action plugin execution
   class ActionResult
-    property success : Bool
+    property? success : Bool
     property modified_params : Hash(String, String)?
     property error_message : String?
-    property changed : Bool
+    property? changed : Bool
 
     # Set only by an action plugin that computes the task's ENTIRE result
     # on the controller and needs no module invocation at all (debug:/
@@ -54,7 +54,7 @@ module CrystalPlay
     end
 
     # Create success result
-    def self.success(modified_params : Hash(String, String), changed : Bool = false) : ActionResult
+    def self.success?(modified_params : Hash(String, String), changed : Bool = false) : ActionResult
       new(success: true, modified_params: modified_params, changed: changed)
     end
 

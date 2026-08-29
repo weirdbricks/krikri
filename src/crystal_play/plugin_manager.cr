@@ -248,7 +248,7 @@ module CrystalPlay
 
       playbook.plays.each do |play|
         # Check if this play gathers facts
-        needs_facts = true if play.gather_facts
+        needs_facts = true if play.gather_facts?
 
         collect_required_plugins(play.tasks, required_plugins)
 

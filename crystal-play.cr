@@ -815,7 +815,7 @@ playbook.plays.each_with_index do |play, play_index|
       # --gathering explicit gathers only for plays that actually wrote
       # `gather_facts: true`; an unset gather_facts (which defaults to true
       # under implicit/smart) means "don't" here.
-      gather_facts: gathering == "explicit" ? (play.gather_facts_set && play.gather_facts) : play.gather_facts,
+      gather_facts: gathering == "explicit" ? (play.gather_facts_set? && play.gather_facts?) : play.gather_facts?,
       inventory: inventory,
       inventory_path: inventory_file,
       batching_enabled: batching_enabled,
@@ -823,11 +823,11 @@ playbook.plays.each_with_index do |play, play_index|
       smart_gathering: gathering == "smart",
       fact_store: run_fact_store,
       extra_vars: extra_vars,
-      force_handlers: force_handlers || play.force_handlers,
+      force_handlers: force_handlers || play.force_handlers?,
       vars_files: play.vars_files,
       vars_files_dir: File.dirname(File.expand_path(playbook_file)),
       playbook_dir: File.dirname(File.expand_path(playbook_file)),
-      any_errors_fatal: play.any_errors_fatal,
+      any_errors_fatal: play.any_errors_fatal?,
       max_fail_percentage: play.max_fail_percentage,
       unreachable_hosts: unreachable_hosts,
       strategy: play.strategy,

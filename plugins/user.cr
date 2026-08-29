@@ -92,13 +92,13 @@ module CrystalPlay
 
     private def ensure_present(name : String, current : PluginHelpers::UserState::User?, check_mode : Bool) : PluginResult
       base = current ? modify(name, current, check_mode) : create(name, check_mode)
-      return base if base.failed
+      return base if base.failed?
 
       ageing = apply_password_ageing(name, check_mode)
-      return ageing if ageing && ageing.failed
+      return ageing if ageing && ageing.failed?
 
-      final_msg = ageing && ageing.changed ? ageing.msg : base.msg
-      final_changed = base.changed || (ageing.try(&.changed) || false)
+      final_msg = ageing && ageing.changed? ? ageing.msg : base.msg
+      final_changed = base.changed? || (ageing.try(&.changed?) || false)
 
       # Real Ansible's user module ALWAYS returns the resolved user
       # facts (home/uid/group/shell/name) in its register result -

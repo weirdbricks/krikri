@@ -40,11 +40,11 @@ module CrystalPlay
     # control: it is how a playbook keeps a password, token or key out
     # of the log. Previously unparsed and unused, so every such task
     # printed its secret in full.
-    property no_log : Bool = false
+    property? no_log : Bool = false
     # `ignore_unreachable: true` - an unreachable host does not fail the
     # play at this task; it is reported, counted as ignored, and the host
     # carries on to the next task (which may itself be unreachable).
-    property ignore_unreachable : Bool = false
+    property? ignore_unreachable : Bool = false
     # `throttle:` - cap how many hosts run this task at once, below the
     # run's own --forks. 0/absent means no extra cap.
     property throttle : Int32 = 0
@@ -58,15 +58,15 @@ module CrystalPlay
     property register : String?
     property notify : Array(String)?
     property listen : String?
-    property ignore_errors : Bool
-    property check_mode : Bool?
+    property? ignore_errors : Bool
+    property? check_mode : Bool?
     # Raw `{{ ... }}` text when check_mode: is a templated expression
     # rather than a literal boolean - same deferred-evaluation shape
     # `become_expr` uses, and evaluated in TaskExecutor#
     # resolve_task_check_mode against live vars.
     property check_mode_expr : String?
-    property diff_mode : Bool?
-    property become : Bool
+    property? diff_mode : Bool?
+    property? become : Bool
     # Raw `{{ ... }}` text when become: is a templated expression rather
     # than a literal boolean (ansible-community.ansible-vault's own
     # `become: "{{ vault_privileged_install }}"`, defaulting false).
@@ -90,7 +90,7 @@ module CrystalPlay
     # `skip: true` form, which makes "none of them exist" a skipped task
     # rather than an error.
     property loop_first_found : Array(String)?
-    property loop_first_found_skip : Bool
+    property? loop_first_found_skip : Bool
     # loop:/with_items:/with_dict:/with_nested:/with_indexed_items: given as
     # a Jinja variable reference ("{{ some_var }}") rather than a literal
     # inline list/dict. Unresolvable at parse time since the YAML value is
@@ -110,7 +110,7 @@ module CrystalPlay
     # live-verified against ansible-core 2.19.12. Only the array-wrapped
     # form keeps the old lenient single-item behavior
     # (loop_scalar_flatten_spec.cr).
-    property loop_template_array_wrapped : Bool = false
+    property? loop_template_array_wrapped : Bool = false
     # with_community.general.flattened sources, kept as their raw task
     # strings. Each is ordinarily a `{{ some_list_var }}` reference to a
     # list; like loop_fileglob/loop_first_found they can only be resolved at
@@ -148,7 +148,7 @@ module CrystalPlay
     property loop_label : String?
     # loop_control.extended - exposes the `ansible_loop` dict (index,
     # first/last, allitems, nextitem/previtem, ...) for the iteration.
-    property loop_extended : Bool = false
+    property? loop_extended : Bool = false
     # until: / retries: / delay: - retry a task until a condition passes.
     property until_condition : String?
     property retries : Int32
@@ -182,11 +182,11 @@ module CrystalPlay
     # host's - real Ansible's own documented meaning ("apply facts to a
     # delegated host instead of the inventory_hostname"). register: is
     # unaffected either way (always attaches to the delegating host).
-    property delegate_facts : Bool
+    property? delegate_facts : Bool
     # run_once: - only actually execute this task for the first host in
     # the play; later hosts skip it outright (no output/stats), same as
     # real Ansible.
-    property run_once : Bool
+    property? run_once : Bool
     # async: / poll: - run the module in the background (as a detached OS
     # process, not a Fiber, so it outlives the poll loop) up to async:
     # seconds, checking every poll: seconds (default 10, matching real
@@ -394,7 +394,7 @@ module CrystalPlay
     # revealmd (`import_role: name: robertdebock.service`): real Ansible's
     # recap was `ok=17`, crystal's was `ok=18` - an extra "Create revealmd
     # service" TASK banner + ok that real Ansible never shows at all.
-    property is_static_import : Bool = false
+    property? is_static_import : Bool = false
 
     def meta? : Bool
       @module_name == "_meta"
@@ -426,20 +426,20 @@ module CrystalPlay
     property hosts : String | Array(String)
     property tasks : Array(Task)
     property vars : Hash(String, JSON::Any)
-    property become : Bool
+    property? become : Bool
     property become_user : String?
-    property gather_facts : Bool
+    property? gather_facts : Bool
     # Whether the play actually wrote a `gather_facts:` key, as opposed to
     # defaulting to true. Only --gathering explicit needs the distinction:
     # under it, facts are gathered solely for plays that asked in so many
     # words, so "unset" and "explicitly true" cannot be conflated.
-    property gather_facts_set : Bool = false
+    property? gather_facts_set : Bool = false
     property tags : Array(String)
     property handlers : Array(Task)
     # `force_handlers: true` play keyword - run notified handlers even
     # when a task failed on the host, exactly like the --force-handlers
     # CLI flag (real Ansible honors both).
-    property force_handlers : Bool = false
+    property? force_handlers : Bool = false
     # `serial:` - raw batch tokens, each either a count ("2") or a
     # percentage ("50%"). Empty means the play runs against every host at
     # once, which is what this engine always did.
@@ -497,7 +497,7 @@ module CrystalPlay
     # `vars_prompt:` - name/prompt/private/default per entry, asked
     # before the play runs.
     property vars_prompt : Array(Hash(String, String)) = [] of Hash(String, String)
-    property any_errors_fatal : Bool = false
+    property? any_errors_fatal : Bool = false
     property max_fail_percentage : Float64? = nil
 
     def initialize(@name : String, @hosts : String | Array(String))
@@ -2205,7 +2205,7 @@ module CrystalPlay
       # (correct only from inside that user's own session) always
       # targeted root's session instead, "Unit file docker.service does
       # not exist" regardless of the real per-user unit's presence.
-      saved_become = play.become
+      saved_become = play.become?
       saved_become_user = play.become_user
       play.become = resolve_become(task_hash, play)
       play.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
@@ -3080,7 +3080,7 @@ module CrystalPlay
     # despite its own explicit become: false.
     private def self.resolve_become(task_hash : Hash(YAML::Any, YAML::Any), play : Play) : Bool
       given = parse_become_value(task_hash["become"]?)
-      given.nil? ? play.become : given
+      given.nil? ? play.become? : given
     end
 
     # Companion to #resolve_become: the raw `{{ ... }}` text of a

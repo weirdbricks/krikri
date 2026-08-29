@@ -200,7 +200,7 @@ module CrystalPlay
         # any other task, and this is the non-looped handler's
         # own display path - the looped one goes through
         # execute_handler_loop, which passes it too.
-        ResultDisplay.display_result(host, result, diff_mode, no_log: handler.no_log)
+        ResultDisplay.display_result(host, result, diff_mode, no_log: handler.no_log?)
         ResultDisplay.update_stats(stats, result)
       end
     end

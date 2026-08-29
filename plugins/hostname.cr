@@ -26,7 +26,7 @@ require "../src/crystal_play/base_plugin"
 
 module CrystalPlay
   class HostnamePlugin < BasePlugin
-    property check_mode : Bool
+    property? check_mode : Bool
 
     def initialize(config : JSON::Any)
       super(config)

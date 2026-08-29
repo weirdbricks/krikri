@@ -28,7 +28,7 @@ module CrystalPlay
   #   systemd:
   #     daemon_reload: yes
   class SystemdPlugin < BasePlugin
-    property check_mode : Bool
+    property? check_mode : Bool
 
     def initialize(config : JSON::Any)
       super(config)

@@ -20,7 +20,7 @@ module CrystalPlay
   # cleanly applies to both EL and Debian-family hosts. This mirrors that
   # deliberately.
   class SelinuxPlugin < BasePlugin
-    property check_mode : Bool
+    property? check_mode : Bool
 
     CONFIG_PATH = "/etc/selinux/config"
 

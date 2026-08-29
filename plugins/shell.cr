@@ -26,8 +26,8 @@ module CrystalPlay
   # command.cr's own doc comment for how this was found (a real playbook
   # over real SSH comparing captured stdout against a constant).
   class ShellPlugin < BasePlugin
-    property check_mode : Bool
-    property diff_mode : Bool
+    property? check_mode : Bool
+    property? diff_mode : Bool
 
     def initialize(config : JSON::Any)
       super(config)

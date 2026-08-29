@@ -20,7 +20,7 @@ module CrystalPlay
   # the file was modified, and re-running with no remaining matches reports
   # changed: false. Real Ansible fails if the file doesn't exist.
   class ReplacePlugin < BasePlugin
-    property check_mode : Bool
+    property? check_mode : Bool
 
     def initialize(config : JSON::Any)
       super(config)

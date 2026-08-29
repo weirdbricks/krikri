@@ -67,8 +67,8 @@ module CrystalPlay
   # native. This matches the *existing* (pre-conversion) limitation
   # documented in `normalize_mode` below, not a new one introduced here.
   class FilePlugin < BasePlugin
-    property check_mode : Bool
-    property diff_mode : Bool
+    property? check_mode : Bool
+    property? diff_mode : Bool
 
     def initialize(config : JSON::Any)
       super(config)
@@ -111,7 +111,7 @@ module CrystalPlay
       # `result_test_netrc.state == 'file'`) - added centrally here
       # rather than in every handle_* branch above, since none of them
       # need to know their own state value to do their actual job.
-      result.extra["state"] = JSON::Any.new(state) unless result.failed || result.extra.has_key?("state")
+      result.extra["state"] = JSON::Any.new(state) unless result.failed? || result.extra.has_key?("state")
       result
     end
 

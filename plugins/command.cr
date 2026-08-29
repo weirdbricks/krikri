@@ -32,7 +32,7 @@ module CrystalPlay
   # ansible-playbook strips it, so real playbooks are routinely written
   # assuming stdout has no trailing newline.
   class CommandPlugin < BasePlugin
-    property check_mode : Bool
+    property? check_mode : Bool
 
     def initialize(config : JSON::Any)
       super(config)

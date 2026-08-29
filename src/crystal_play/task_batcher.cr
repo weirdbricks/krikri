@@ -110,7 +110,7 @@ module CrystalPlay
     #   from batches entirely avoids the whole class of bug.
     private def self.breaks_run?(task : Task) : Bool
       structural_or_dynamic?(task) || needs_controller_control_flow?(task) ||
-        !!task.delegate_to || !!task.connection || task.run_once || retroactive_verdict?(task) ||
+        !!task.delegate_to || !!task.connection || task.run_once? || retroactive_verdict?(task) ||
         produces_ansible_facts?(task) || runs_as_action_plugin?(task) ||
         reconfigures_firewall?(task) ||
         # group_by:/set_stats: - same category as reboot: above: no

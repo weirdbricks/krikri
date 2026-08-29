@@ -9,8 +9,8 @@ module CrystalPlay
   # This version ALWAYS uses native Crystal file operations
   # The PluginManager handles uploading to remote hosts if needed
   class CopyPlugin < BasePlugin
-    property check_mode : Bool
-    property diff_mode : Bool
+    property? check_mode : Bool
+    property? diff_mode : Bool
 
     def initialize(config : JSON::Any)
       super(config)

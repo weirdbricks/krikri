@@ -63,7 +63,7 @@ describe CrystalPlay::PlaybookParser do
       play = playbook.plays[0]
       play.name.should eq("Example play")
       play.hosts.should eq("webservers")
-      play.gather_facts.should be_false
+      play.gather_facts?.should be_false
       play.tasks.size.should eq(1)
       play.handlers.size.should eq(1)
 
@@ -162,7 +162,7 @@ describe CrystalPlay::PlaybookParser do
         YAML
 
       task.name.should eq("t")
-      task.become.should be_true
+      task.become?.should be_true
     end
 
     it "still parses a literal become: boolean normally" do
@@ -173,7 +173,7 @@ describe CrystalPlay::PlaybookParser do
             msg: hi
         YAML
 
-      task.become.should be_false
+      task.become?.should be_false
     end
 
     it "lets a task's explicit become: false override a play-level become: true" do
@@ -204,8 +204,8 @@ describe CrystalPlay::PlaybookParser do
       )
 
       tasks = playbook.plays[0].tasks
-      tasks[0].become.should be_false
-      tasks[1].become.should be_true
+      tasks[0].become?.should be_false
+      tasks[1].become?.should be_true
     end
 
     it "orders pre_tasks:, roles:, tasks:, and post_tasks: correctly, matching real Ansible" do
@@ -820,7 +820,7 @@ describe CrystalPlay::PlaybookParser do
           run_once: true
         YAML
 
-      task.run_once.should be_true
+      task.run_once?.should be_true
     end
 
     it "defaults run_once to false and delegate_to to nil when omitted" do
@@ -830,7 +830,7 @@ describe CrystalPlay::PlaybookParser do
             msg: hello
         YAML
 
-      task.run_once.should be_false
+      task.run_once?.should be_false
       task.delegate_to.should be_nil
     end
   end
@@ -1005,7 +1005,7 @@ describe CrystalPlay::PlaybookParser do
         YAML
 
       inner = task.block_tasks.as(Array(CrystalPlay::Task)).first
-      inner.become.should be_true
+      inner.become?.should be_true
       inner.become_user.should eq("dockeruser")
     end
 
@@ -1022,7 +1022,7 @@ describe CrystalPlay::PlaybookParser do
         YAML
 
       inner = task.block_tasks.as(Array(CrystalPlay::Task)).first
-      inner.become.should be_true
+      inner.become?.should be_true
       inner.become_user.should eq("someoneelse")
     end
 
@@ -1052,7 +1052,7 @@ describe CrystalPlay::PlaybookParser do
         YAML
 
       task.when_condition.should eq(%(some_var == "yes"))
-      task.ignore_errors.should be_true
+      task.ignore_errors?.should be_true
       task.tags.should eq(["risky"])
     end
 

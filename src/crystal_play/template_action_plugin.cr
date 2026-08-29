@@ -52,7 +52,7 @@ module CrystalPlay
       modified_params["_rendered_from_template"] = src   # Track for debugging
       modified_params["_content_checksum"] = content_md5 # For idempotency
 
-      ActionResult.success(modified_params, changed: false)
+      ActionResult.success?(modified_params, changed: false)
     end
 
     # Render Jinja2 template with variables

@@ -253,9 +253,9 @@ module CrystalPlay
       changed = if p.type == "default_privs"
                   apply_all_default_privs(database, p, roles)
                 elsif p.type == "group"
-                  apply_all_group_grants(database, objs, roles, p.state, p.grant_option, p.check_mode)
+                  apply_all_group_grants(database, objs, roles, p.state, p.grant_option, p.check_mode?)
                 else
-                  apply_all_grants(database, p.type, objs, p.schema, roles, p.privs, p.state, p.grant_option, p.check_mode)
+                  apply_all_grants(database, p.type, objs, p.schema, roles, p.privs, p.state, p.grant_option, p.check_mode?)
                 end
       PluginResult.new(changed: changed, failed: false, msg: changed ? "Privileges updated" : "Privileges already up to date")
     end
@@ -650,7 +650,7 @@ module CrystalPlay
       end
 
       return false if current.to_set == desired.to_set
-      return true if p.check_mode
+      return true if p.check_mode?
 
       execute_default_priv_statements(db, p, owner, cls, role, desired)
       true

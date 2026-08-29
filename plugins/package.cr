@@ -20,7 +20,7 @@ module CrystalPlay
   #     state: present
   class PackagePlugin < BasePlugin
     include AptLockRetry
-    property check_mode : Bool
+    property? check_mode : Bool
 
     def initialize(config : JSON::Any)
       super(config)

@@ -13,8 +13,8 @@ require "./plugin_helpers/stat_fields"
 module CrystalPlay
   # Plugin result structure with diff support
   class PluginResult
-    property changed : Bool
-    property failed : Bool
+    property? changed : Bool
+    property? failed : Bool
     property msg : String
     property diff : JSON::Any?
     property extra : Hash(String, JSON::Any)
@@ -62,7 +62,7 @@ module CrystalPlay
     property params : Hash(String, String)
     property vars : Hash(String, JSON::Any)
     property config : JSON::Any
-    property diff_mode : Bool
+    property? diff_mode : Bool
 
     def initialize(@config : JSON::Any)
       @host = Host.from_json(@config["host"])

@@ -54,10 +54,10 @@ module CrystalPlay
     property hosts : Array(Host)
     property tasks : Array(Task)
     property handlers : Array(Task)
-    property check_mode : Bool
-    property diff_mode : Bool
+    property? check_mode : Bool
+    property? diff_mode : Bool
     property play_vars : Hash(String, JSON::Any)
-    property gather_facts : Bool
+    property? gather_facts : Bool
 
     # Track results for recap
     getter results : Hash(String, Hash(String, Int32))
@@ -485,7 +485,7 @@ module CrystalPlay
     # one-host-at-a-time bug round 37 (0.9.383) fixed for the non-looped
     # case, just never extended to this narrower, rarer shape.
     private def task_forkable?(task : Task) : Bool
-      return false if task.run_once
+      return false if task.run_once?
       return false if task.block?
       return false if task.include_tasks? && !task_has_loop?(task)
       return false if task.include_role?
@@ -605,7 +605,7 @@ module CrystalPlay
       puts %(fatal: [#{host.name}]: UNREACHABLE! => {"changed": false, "msg": "Failed to connect to the host via ssh: #{connection_host}", "unreachable": true}).colorize(:red)
 
       stats = @results[host.name]
-      if task.ignore_unreachable
+      if task.ignore_unreachable?
         # Counted as ok AND ignored, matching real Ansible's own recap
         # for an ignored unreachable task.
         stats["ok"] += 1
@@ -666,7 +666,7 @@ module CrystalPlay
         # A static import_role: (Task#is_static_import) gets no banner of
         # its own, same as block: above - only the included role's own
         # tasks do (see is_static_import's own comment).
-        unless @adhoc || (task.include_role? && task.is_static_import)
+        unless @adhoc || (task.include_role? && task.is_static_import?)
           display_host = active_hosts.first? || hosts.first
           puts "TASK [#{render_task_name_for_display(task, display_host)}]".colorize(:white).bold
           puts "*" * 70
@@ -866,7 +866,7 @@ module CrystalPlay
           end
 
           inherited = Play.new("", "")
-          inherited.become = task.become
+          inherited.become = task.become?
           inherited.become_user = task.become_user
           included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path))
 
@@ -1167,7 +1167,7 @@ module CrystalPlay
       # later hosts get no output/stats at all, matching real Ansible - but
       # still pick up whatever it registered, so later tasks on those hosts
       # can reference the same variable.
-      if task.run_once && host.name != @hosts.first.name
+      if task.run_once? && host.name != @hosts.first.name
         copy_run_once_register(task, host)
         return
       end
@@ -1275,7 +1275,7 @@ module CrystalPlay
       result = execute_task_once(task, host, vars_context, exec_host: exec_host, shared: shared_sub)
       return unless result
 
-      fact_host = (task.delegate_facts && task.delegate_to) ? exec_host : host
+      fact_host = (task.delegate_facts? && task.delegate_to) ? exec_host : host
       finish_single_task(task, host, result, fact_host)
     end
 
@@ -2392,7 +2392,7 @@ module CrystalPlay
         rendered_items.each_with_index do |item, loop_index|
           item_context = vars_context.dup
           item_context["item"] = item
-          item_context["ansible_loop"] = ansible_loop_vars(rendered_items, loop_index) if task.loop_extended
+          item_context["ansible_loop"] = ansible_loop_vars(rendered_items, loop_index) if task.loop_extended?
           # loop_control: { loop_var: some_name } exposes the item under
           # a CUSTOM name instead of (real Ansible: in addition to) the
           # default "item" - previously ignored entirely here, always
@@ -2454,7 +2454,7 @@ module CrystalPlay
 
         if failed
           @results[host.name]["failed"] += 1
-          @halted_hosts.add(host.name) unless task.ignore_errors
+          @halted_hosts.add(host.name) unless task.ignore_errors?
         elsif executed
           @results[host.name]["ok"] += 1
         else
@@ -2495,7 +2495,7 @@ module CrystalPlay
           # ansible-playbook correctly fails at "load release_packages";
           # this previously always skipped instead, silently continuing
           # past a role whose OS-specific package list was never loaded.
-          if task.loop_first_found_skip
+          if task.loop_first_found_skip?
             puts "skipping: [#{host.name}]".colorize(:cyan)
             @results[host.name]["skipped"] += 1
           else
@@ -2539,7 +2539,7 @@ module CrystalPlay
       puts "failed: [#{host.name}]".colorize(:red)
       puts "  Message: #{message}".colorize(:red)
       @results[host.name]["failed"] += 1
-      @halted_hosts.add(host.name) unless task.ignore_errors
+      @halted_hosts.add(host.name) unless task.ignore_errors?
     end
 
     # RoleLoader's auto-synthesized "Validating arguments against arg
@@ -2574,7 +2574,7 @@ module CrystalPlay
         puts "failed: [#{host.name}]".colorize(:red)
         puts "  Message: Validation of arguments failed:\n    #{errors.join("\n    ")}".colorize(:red)
         @results[host.name]["failed"] += 1
-        @halted_hosts.add(host.name) unless task.ignore_errors
+        @halted_hosts.add(host.name) unless task.ignore_errors?
       end
     end
 
@@ -2739,7 +2739,7 @@ module CrystalPlay
         # undefined") where real ansible flattens the one-element array
         # one level and iterates ONCE with the scalar as `item`. Same
         # array-wrapped fallback the direct-resolution path below applies.
-        return [JSON::Any.new(result)] if task.loop_template_array_wrapped
+        return [JSON::Any.new(result)] if task.loop_template_array_wrapped?
         return nil
       end
 
@@ -2778,7 +2778,7 @@ module CrystalPlay
         # existing raise-and-get-rescued channel.
         if list = value.as_a?
           list
-        elsif task.loop_template_array_wrapped
+        elsif task.loop_template_array_wrapped?
           [value]
         else
           raise UndefinedVariableError.new(
@@ -3272,18 +3272,18 @@ module CrystalPlay
     private def swallow_when_error(task : Task, host : Host, ex : WhenEvaluationError, item_label : String? = nil, defer_stats : Bool = false, defer_display : Bool = false) : Bool
       msg = ex.message || "Error while evaluating conditional"
       unless defer_stats
-        if task.ignore_errors
+        if task.ignore_errors?
           @results[host.name]["ok"] += 1
           @results[host.name]["ignored"] += 1
         else
           @results[host.name]["failed"] += 1
         end
       end
-      @halted_hosts.add(host.name) unless task.ignore_errors
+      @halted_hosts.add(host.name) unless task.ignore_errors?
       unless defer_display
         suffix = item_label ? " => (item=#{item_label})" : ""
         puts "fatal: [#{host.connection_host}]#{suffix}: FAILED! => #{msg}".colorize(:red)
-        puts "...ignoring".colorize(:red) if task.ignore_errors
+        puts "...ignoring".colorize(:red) if task.ignore_errors?
       end
       register_name = task.register
       unless register_name.nil? || register_name.empty?
@@ -3455,7 +3455,7 @@ module CrystalPlay
         when JSON::Any
           cache[task] = {outcome, vars_context}
           failed = outcome["failed"]?.try(&.as_bool) || false
-          halted = true if failed && !task.ignore_errors
+          halted = true if failed && !task.ignore_errors?
         when BatchScript::Step
           steps << outcome
           step_tasks << task
@@ -3637,16 +3637,16 @@ module CrystalPlay
         return ConditionalEvaluator.evaluate(rendered, {} of String => JSON::Any) rescue @check_mode
       end
 
-      value = task.check_mode
+      value = task.check_mode?
       value.nil? ? @check_mode : value
     end
 
     private def resolve_task_become(task : Task, substitutor : VarSubstitutor) : Bool
       expr = task.become_expr
-      return task.become unless expr
+      return task.become? unless expr
 
       rendered = substitutor.substitute(expr)
-      ConditionalEvaluator.evaluate(rendered, {} of String => JSON::Any) rescue task.become
+      ConditionalEvaluator.evaluate(rendered, {} of String => JSON::Any) rescue task.become?
     end
 
     private def prepare_batch_step(task : Task, host : Host, vars_context : Hash(String, JSON::Any), shared : VarSubstitutor? = nil) : JSON::Any | BatchScript::Step
@@ -3679,7 +3679,7 @@ module CrystalPlay
       if ActionPluginManager.has_action_plugin?(task.module_name)
         action_result = ActionPluginManager.execute_action(task.module_name, substituted_params, vars_context, host)
 
-        unless action_result.success
+        unless action_result.success?
           failed = JSON.parse({
             "changed" => false,
             "failed"  => true,
@@ -3739,7 +3739,7 @@ module CrystalPlay
       # become_user means "no become", which is a DIFFERENT daemon from
       # `"root"`, so the distinction is carried through rather than
       # normalized away.
-      BatchScript::Step.new(plugin_target, config_json, task.ignore_errors,
+      BatchScript::Step.new(plugin_target, config_json, task.ignore_errors?,
         PluginManager.simple_plugin_name(task.module_name),
         become ? become_user : nil)
     end
@@ -3833,7 +3833,7 @@ module CrystalPlay
           exec_host
         )
 
-        unless action_result.success
+        unless action_result.success?
           result = JSON.parse({
             "changed" => false,
             "failed"  => true,
@@ -4349,16 +4349,16 @@ module CrystalPlay
       if @adhoc
         ResultDisplay.display_adhoc_result(host, result)
       else
-        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: task.ignore_errors, no_log: task.no_log)
+        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: task.ignore_errors?, no_log: task.no_log?)
       end
-      ResultDisplay.update_stats(@results[host.name], result, task.ignore_errors)
+      ResultDisplay.update_stats(@results[host.name], result, task.ignore_errors?)
       halt_if_failed(task, host, failed)
     end
 
     # Marks `host` as halted (no further tasks in this play run for it)
     # when `failed` and the task didn't opt out via ignore_errors:.
     private def halt_if_failed(task : Task, host : Host, failed : Bool)
-      @halted_hosts.add(host.name) if failed && !task.ignore_errors
+      @halted_hosts.add(host.name) if failed && !task.ignore_errors?
     end
 
     # Execute a task once per loop item, aggregating the per-item results
@@ -4411,7 +4411,7 @@ module CrystalPlay
                          vars_context["item"] = item
                          vars_context[loop_var] = item if loop_var
                          vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
-                         vars_context["ansible_loop"] = ansible_loop_vars(loop_items, idx.to_i) if task.loop_extended
+                         vars_context["ansible_loop"] = ansible_loop_vars(loop_items, idx.to_i) if task.loop_extended?
 
                          # A task-level vars: that references `item`
                          # (linux-system-roles/kernel_settings' own
@@ -4475,7 +4475,7 @@ module CrystalPlay
                          # (crashing the SSH connection outright, not just
                          # producing a wrong result).
                          item_exec_host = task.delegate_to ? resolve_delegate_host(task, host, vars_context) : exec_host
-                         fact_hosts[idx] = item_exec_host if task.delegate_facts && task.delegate_to
+                         fact_hosts[idx] = item_exec_host if task.delegate_facts? && task.delegate_to
 
                          result = execute_task_once(task, host, vars_context, item_label: item_label_for(task, item, vars_context, host), exec_host: item_exec_host, defer_loop_stats: true)
                          if result && (facts = result["ansible_facts"]?) && (facts_hash = facts.as_h?)
@@ -4550,7 +4550,7 @@ module CrystalPlay
         vars_context["item"] = item
         vars_context[loop_var] = item if loop_var
         vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
-        vars_context["ansible_loop"] = ansible_loop_vars(loop_items, idx) if task.loop_extended
+        vars_context["ansible_loop"] = ansible_loop_vars(loop_items, idx) if task.loop_extended?
         item_contexts[idx] = vars_context
 
         # Per item, not per call: each iteration builds its own context
@@ -4632,9 +4632,9 @@ module CrystalPlay
         if loop_var = task.loop_var
           label_context[loop_var] = item
         end
-        label_context["ansible_loop"] = ansible_loop_vars(loop_items, idx) if task.loop_extended
+        label_context["ansible_loop"] = ansible_loop_vars(loop_items, idx) if task.loop_extended?
 
-        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_label_for(task, item, label_context, host), ignore_errors: task.ignore_errors, no_log: task.no_log)
+        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_label_for(task, item, label_context, host), ignore_errors: task.ignore_errors?, no_log: task.no_log?)
 
         result_hash = result.as_h.dup
         result_hash["item"] = item
@@ -4667,7 +4667,7 @@ module CrystalPlay
           "changed" => JSON::Any.new(any_changed),
           "failed"  => JSON::Any.new(any_failed),
         }.to_json)
-        ResultDisplay.update_stats(@results[host.name], aggregate_result, task.ignore_errors)
+        ResultDisplay.update_stats(@results[host.name], aggregate_result, task.ignore_errors?)
       end
 
       if any_changed && (notify_list = task.notify)
@@ -4769,9 +4769,9 @@ module CrystalPlay
       if @adhoc
         ResultDisplay.display_adhoc_result(host, result)
       else
-        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: task.ignore_errors, no_log: task.no_log)
+        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: task.ignore_errors?, no_log: task.no_log?)
       end
-      ResultDisplay.update_stats(@results[host.name], result, task.ignore_errors)
+      ResultDisplay.update_stats(@results[host.name], result, task.ignore_errors?)
       halt_if_failed(task, host, failed)
     end
 
@@ -4827,7 +4827,7 @@ module CrystalPlay
         # "skipping" for (see is_static_import's own comment). The
         # included role's own tasks simply never got spliced in, with no
         # trace of the import_role: statement itself in the recap.
-        if nested_task.include_role? && nested_task.is_static_import
+        if nested_task.include_role? && nested_task.is_static_import?
           next
         end
 
@@ -5032,7 +5032,7 @@ module CrystalPlay
         # A static import_role: (Task#is_static_import) is likewise
         # transparent - no banner of its own, only the included role's
         # own tasks (see is_static_import's own comment).
-        if nested_task.include_role? && nested_task.is_static_import
+        if nested_task.include_role? && nested_task.is_static_import?
           execute_task(nested_task, host)
           next
         end
@@ -5186,7 +5186,7 @@ module CrystalPlay
       end
 
       inherited = Play.new("", "")
-      inherited.become = task.become
+      inherited.become = task.become?
       inherited.become_user = task.become_user
       included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path))
 
@@ -5410,7 +5410,7 @@ module CrystalPlay
           # banner is already suppressed by run_task_batch/run_task_list,
           # so printing "skipping:" here with no banner above it would be
           # an orphaned line (see is_static_import's own comment).
-          unless task.is_static_import
+          unless task.is_static_import?
             connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
             suffix = item_label ? " => (item=#{item_label})" : ""
             puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
@@ -5455,7 +5455,7 @@ module CrystalPlay
       role_name = substitutor.substitute(task.include_role_name.as(String))
 
       inherited = Play.new("", "")
-      inherited.become = task.become
+      inherited.become = task.become?
       inherited.become_user = task.become_user
 
       # ansible_parent_role_names: the ancestor role-name chain leading to
@@ -5493,7 +5493,7 @@ module CrystalPlay
         return
       end
 
-      @results[host.name]["ok"] += 1 unless task.is_static_import
+      @results[host.name]["ok"] += 1 unless task.is_static_import?
 
       # Round 26 originally had an eager re-render of each loaded task's
       # `name:` here (against just the include_role: `vars:` passed in) to
@@ -6281,7 +6281,7 @@ module CrystalPlay
         # top-level config fields (not nested under "params") so this
         # round-trips through async:'s job file (written verbatim from this
         # same config) without __async_run needing any extra plumbing.
-        "become"      => task.become.to_s,
+        "become"      => task.become?.to_s,
         "become_user" => become_user,
       }
 
@@ -6528,7 +6528,7 @@ module CrystalPlay
       # `meta: flush_handlers` that triggered it, diverging from real
       # Ansible's own recap (extra ok:/changed:/failed: entries for
       # tasks real Ansible never even attempted).
-      halt_if_failed(handler, host, result["failed"]?.try(&.as_bool) == true) unless handler.ignore_errors
+      halt_if_failed(handler, host, result["failed"]?.try(&.as_bool) == true) unless handler.ignore_errors?
 
       result
     end
@@ -6562,7 +6562,7 @@ module CrystalPlay
 
         any_changed ||= result["changed"]?.try(&.as_bool) || false
         any_failed ||= result["failed"]?.try(&.as_bool) || false
-        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item), ignore_errors: handler.ignore_errors, no_log: handler.no_log)
+        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item), ignore_errors: handler.ignore_errors?, no_log: handler.no_log?)
       end
 
       JSON.parse({
@@ -6686,7 +6686,7 @@ module CrystalPlay
           host
         )
 
-        unless action_result.success
+        unless action_result.success?
           return JSON.parse({
             "changed" => false,
             "failed"  => true,
