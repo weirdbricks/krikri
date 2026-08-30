@@ -37,14 +37,14 @@ end
 
 describe "block-tag-valued variable resolves through every lookup path" do
   shapes = {
-    "bare reference" => {"{{ v }}", "A"},
-    "dotted base" => {"{{ obj.attr }}", "A"},
-    "indexed element" => {"{{ arr[0] }}", "A"},
-    "filter-chain head" => {"{{ v | upper }}", "A"},
-    "default() argument" => {"{{ missing | default(v) }}", "A"},
-    "ternary branch" => {"{{ v if flag else 'x' }}", "A"},
+    "bare reference"                          => {"{{ v }}", "A"},
+    "dotted base"                             => {"{{ obj.attr }}", "A"},
+    "indexed element"                         => {"{{ arr[0] }}", "A"},
+    "filter-chain head"                       => {"{{ v | upper }}", "A"},
+    "default() argument"                      => {"{{ missing | default(v) }}", "A"},
+    "ternary branch"                          => {"{{ v if flag else 'x' }}", "A"},
     "inside a larger literal+template string" => {"pre-{{ v }}-post", "pre-A-post"},
-    "include_tasks filename shape (strict)" => {"v{{ v }}.yml", "vA.yml"},
+    "include_tasks filename shape (strict)"   => {"v{{ v }}.yml", "vA.yml"},
   }
 
   shapes.each do |label, (tpl, expected)|

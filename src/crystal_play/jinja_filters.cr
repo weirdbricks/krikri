@@ -1391,8 +1391,6 @@ module CrystalPlay
     end
     Crinja.test(:is_abs) { target.to_s.starts_with?("/") }
 
-
-
     # `vault_encrypted`/`vaulted_file` - real Ansible tests:
     # vault_encrypted checks a STRING value's own content; vaulted_file
     # reads a path (on the CONTROLLER) and checks its content.
@@ -1499,7 +1497,6 @@ module CrystalPlay
     # registrations, since jinja_filters.cr runs before any render).
     Crinja.test({name: ""}, :filter) { Crinja::Filter::Library.new.keys.includes?(arguments["name"].to_s) }
     Crinja.test({name: ""}, :test) { Crinja::Test::Library.new.keys.includes?(arguments["name"].to_s) }
-
 
     # `failed`/`changed`/`skipped`/`succeeded`/`success` - real Ansible's
     # own register-result introspection tests (`{{ some_result is failed
