@@ -124,6 +124,27 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     lookup.indexed("ansible_facts.distribution_version.split('.')[1]").should eq("04")
   end
 
+  it "re-renders a vars: value that is a {{ }} span PLUS trailing literal text before a method call" do
+    # Real bug found benchmarking Oefenweb.nginx's own vars/main.yml:
+    # `nginx_conf_file: "{{ nginx_conf_path }}/nginx.conf"` - a template
+    # span followed by literal text, not a `{{ }}` wrapping the WHOLE
+    # string the way `rerender_if_templated`'s old code assumed. The old
+    # `inner.ends_with?("}}")` check was false here (the raw value ends
+    # in "/nginx.conf", not "}}"), so `inner` was left as the full mixed
+    # string "{{ nginx_conf_path }}/nginx.conf" and handed whole to
+    # ExpressionEvaluator#evaluate - which expects a bare Jinja
+    # EXPRESSION, not text with literal `{`/`}` characters in it -
+    # collapsing `nginx_conf_file.lstrip('/')` to an empty string instead
+    # of "etc/nginx/nginx.conf". A bare `{{ nginx_conf_file }}`
+    # reference alone rendered fine even before this fix (a different,
+    # unaffected code path), which is what made this one easy to miss.
+    v = Hash(String, JSON::Any).new
+    v["nginx_conf_path"] = JSON::Any.new("/etc/nginx")
+    v["nginx_conf_file"] = JSON::Any.new("{{ nginx_conf_path }}/nginx.conf")
+    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup.nested("nginx_conf_file.lstrip('/')").should eq("etc/nginx/nginx.conf")
+  end
+
   it "resolves Python-style .lstrip()/.rstrip()/.strip() method calls on a string, char-set not prefix semantics" do
     # Real bug found benchmarking buluma.ssh_keys's own known-hosts.yml:
     # `src: "{{ ssh_keys_known_hosts_path.lstrip('/') }}.j2"` - no

@@ -1572,8 +1572,51 @@ module CrystalPlay
         end
       end
 
+      # A `lookup(...)`/`query(...)` argument that is itself a quoted
+      # string literal CONTAINING a `{{ }}` span (`lookup('file', "{{
+      # tomcat_local_tmp_directory }}/apache-tomcat-{{ tomcat_version
+      # }}.tar.gz.sha512")`) needs that inner span rendered before the
+      # lookup runs - real Ansible supports this "double templating"
+      # (with a deprecation warning telling authors to switch to an
+      # inline expression instead) rather than passing the literal
+      # unrendered text to the lookup plugin. Every `evaluate_lookup_*`
+      # helper below resolves its path/name/etc. argument via
+      # `evaluate(part.strip)`, which for a bare quoted literal
+      # (`sole_quoted_literal?`) returns the quotes stripped verbatim -
+      # correct for an ordinary string, but wrong here, since the `{{ }}`
+      # markers inside are never Jinja-syntax at the *expression* level
+      # (only at the *template* level), so nothing else in this
+      # evaluator would ever notice or render them.
+      #
+      # Found via bodsch.tomcat's own `tomcat_checksums: '{{ lookup(
+      # "file", "{{ tomcat_local_tmp_directory }}/apache-tomcat-{{
+      # tomcat_version }}.tar.gz.sha512").splitlines() | ... }}'` - real
+      # ansible-core 2.19.4 downloads and reads the real checksum file;
+      # this evaluator's `lookup_file` received the literal path text
+      # WITH the unrendered `{{ }}` still in it, failed to find that
+      # file, and its own "undefined" fallback then got templated
+      # straight into a real `get_url:` checksum comparison ("checksum
+      # mismatch: expected undefined, got <real sha512>").
+      #
+      # Applied once, at the `evaluate_lookup` entry point, rather than
+      # in each individual `lookup_file`/`lookup_url`/`lookup_config`/...
+      # helper - every lookup type shares the same "an argument may
+      # itself carry an unrendered `{{ }}` span" possibility, so fixing
+      # it here covers all of them uniformly instead of one at a time.
+      private def rerender_double_templated_literal(part : String) : String
+        stripped = part.strip
+        return part unless literal = sole_quoted_literal?(stripped)
+        return part unless literal.includes?("{{") && literal.includes?("}}")
+
+        quote = stripped[0]
+        rendered = crinja_renderer.render!(literal)
+        "#{quote}#{rendered}#{quote}"
+      rescue
+        part
+      end
+
       private def evaluate_lookup(args : String) : String
-        parts = split_top_level_commas(args)
+        parts = split_top_level_commas(args).map { |part| rerender_double_templated_literal(part) }
         lookup_type = parts[0]?.try { |part| quoted_string_literal(part.strip) }.try(&.as_s?)
 
         evaluate_lookup_scalar(lookup_type, parts) ||

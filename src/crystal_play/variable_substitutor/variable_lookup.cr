@@ -192,13 +192,35 @@ module CrystalPlay
         # its own top-level re-templating pass; this INNER helper (the
         # one plain variable/dotted lookups actually go through) never
         # got the same fix.
-        if raw.includes?("{%") || raw.includes?("{#")
+        inner = raw.strip
+        whole_span = inner.starts_with?("{{") && inner.ends_with?("}}")
+
+        # Block tags/comments, or a `{{ }}` span that does NOT span the
+        # ENTIRE raw value (`"{{ nginx_conf_path }}/nginx.conf"` - a
+        # literal suffix after the closing `}}`, or a literal prefix
+        # before the opening `{{`, or more than one span) need the full
+        # template renderer, which understands arbitrary mixed
+        # literal-text-plus-`{{ }}` content the way a real `.j2` file or
+        # a real Ansible template string does. The single-span,
+        # whole-string case below is a narrower, faster path for the
+        # overwhelmingly common shape (`vars: x: "{{ y }}"` with nothing
+        # else in the string) and is kept as-is for it.
+        #
+        # Found via Oefenweb.nginx's own vars/main.yml: `nginx_conf_file:
+        # "{{ nginx_conf_path }}/nginx.conf"` - the trailing "/nginx.conf"
+        # after the span meant `inner.ends_with?("}}")` was false, so the
+        # OLD code below left `inner` as the full mixed string and handed
+        # it whole to ExpressionEvaluator#evaluate - which expects a bare
+        # Jinja EXPRESSION (the content of a SINGLE `{{ }}`), not text
+        # that still has literal `{`/`}` characters in it - collapsing a
+        # real "/etc/nginx/nginx.conf" (and everything derived from it,
+        # here `.lstrip('/')` chained onto it) to an empty string.
+        if !whole_span && (raw.includes?("{%") || raw.includes?("{#") || raw.includes?("{{"))
           rendered = CrinjaRenderer.new(@vars).render(raw)
           return parse_rendered_or_wrap(rendered)
         end
 
-        inner = raw.strip
-        inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
+        inner = inner[2..-3].strip if whole_span
         rendered = ExpressionEvaluator.new(@vars).evaluate(inner)
         parse_rendered_or_wrap(rendered)
       end

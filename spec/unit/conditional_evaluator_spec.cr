@@ -79,6 +79,29 @@ describe CrystalPlay::ConditionalEvaluator do
       CrystalPlay::ConditionalEvaluator.evaluate("a or b", v).should be_true
     end
 
+    it "fully unwraps a double-wrapped parenthesized 'and'-joined clause" do
+      # condition_to_string wraps each when:-list item in its own
+      # "(#{clause})" before AND-joining the list. When the item is
+      # ITSELF already parenthesized in the source YAML (a common shape
+      # for a multi-line `- ( (a) or (b) )` when:-list item), the joined
+      # AND-operand arrives double-wrapped: "((a) or (b))". A single
+      # unwrap_outer_parens call only strips one layer, leaving a
+      # residual "(a) or (b)" whose `or` sits at paren depth 1, not the
+      # depth-0 the top-level or/and splitter looks for - so the whole
+      # residual fell through to the truthy-string fallback (any
+      # non-empty string reads true) instead of being evaluated as a
+      # boolean expression. Found via bodsch.dnsmasq's own "ensure
+      # dnsmasq.service.d is present" block: a 4-item when: list whose
+      # last item is exactly this shape, with the referenced lists all
+      # empty - real ansible-core 2.19.4 skips the block, crystal ran it.
+      v = Hash(String, JSON::Any).new
+      v["d"] = JSON.parse(%q({"unit": {"after": [], "wants": [], "requires": []}}))
+      cond = "(d.unit | count > 0) and ((d.unit.after is defined and d.unit.after | count > 0) or " \
+             "(d.unit.wants is defined and d.unit.wants | count > 0) or " \
+             "(d.unit.requires is defined and d.unit.requires | count > 0))"
+      CrystalPlay::ConditionalEvaluator.evaluate(cond, v, strict: true, raise_undefined: true).should be_false
+    end
+
     it "evaluates leading 'not'" do
       v = vars({"a" => false} of String => JSON::Any::Type)
       CrystalPlay::ConditionalEvaluator.evaluate("not a", v).should be_true

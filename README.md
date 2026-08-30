@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.641-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.643-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -389,6 +389,26 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.643`** - round 199 (60 untested roles, fresh Atlantic.net host
+  pair per role - a revised CLAUDE.md workflow, replacing the previous
+  "reuse a pair for a handful of roles" guidance). Two real engine
+  divergences found and fixed: `rerender_if_templated` only re-rendered
+  a `vars:` value that was a `{{ }}` span spanning its ENTIRE string - a
+  mixed literal+template value (`"{{ x }}/y.conf"`) fell through
+  unrendered into a chained `.lstrip()`/method call and collapsed to an
+  empty string (`Oefenweb.nginx`); a `when:` list's already-parenthesized
+  multi-line OR-clause item was double-wrapped by the AND-join and only
+  single-unwrapped, so a block ran when it should have skipped
+  (`bodsch.dnsmasq`). A third (`lookup(...).method()` chained with no
+  `|` mis-locating the lookup call's own closing paren, and a `vars:`
+  filter chain resolving to a real Bool losing its type) is documented
+  in `KNOWN_MISSING.md`, not yet fixed. Also confirmed the `bodsch.*`
+  author's own `bodsch.core`/`bodsch.systemd` collections' custom
+  modules/filters hit the existing no-arbitrary-Python scope cut on 8 of
+  15 roles tried from that author - not new bugs, but a pattern worth
+  knowing before picking more of that author's roles expecting a
+  different outcome. Full per-role verdicts and timings in
+  `ROLES_TESTED.md`'s round-199 rows.
 - **`0.9.641`** - **removes `crystal-ansible-fast` and the whole
   parity-breaking tier** (`0.9.639`'s minimal fact gathering and
   `0.9.640`'s package coalescing). Benchmarked across ten real roles it
@@ -427,270 +447,6 @@ for current-state detail.
   197's 10-role python-vs-crystal sweep otherwise matched 18/20
   cold+warm comparisons, the two exceptions being the documented
   custom-module scope cut.
-- **`0.9.635`** - task batching and the persistent daemon now compose.
-  They were mutually exclusive per TASK, not per run: a batched group
-  went out as a fresh `ssh`+`bash`+base64 script while the daemon served
-  only solo tasks, so every task took one optimization and forfeited the
-  other. The daemon protocol now accepts a batch request carrying a list
-  of steps and runs them in-process, with the same fail-fast rule the
-  script transport uses; a group whose steps disagree on `become_user`
-  still takes the script, since one daemon runs as one user. Measured
-  **2.57x** warm on `devsec.hardening.os_hardening` (18.02s -> 7.00s,
-  confirmed in both host orientations), 1.39x cold, with the groups that
-  moved 4.7x cheaper each.
-- **`0.9.634`** - fact gathering runs through the persistent daemon too.
-  `facts` was the last module excluded from it, and the reason was
-  shape, not semantics: it had neither the `BasePlugin` class nor the
-  `STDIN.gets_to_end` trailer the fat-binary generator keys on, so it
-  was not in that binary at all. Its gathering body moved verbatim into
-  `CrystalPlay::FactsGatherer`, which both the fat binary and the
-  standalone driver now call. Worth ~1.5x on a run that gathers the same
-  host many times (i.e. many plays); daemons are keyed per host, so
-  extra HOSTS do not amortize it and a single-play run gains nothing
-  however many it targets. A single-host single-play run pays ~25ms for
-  the daemon it now spawns and shuts down.
-- **`0.9.633`** - `become:` tasks now run through the persistent remote
-  daemon instead of the per-task ssh-fork fallback. Nearly every task in
-  nearly every real Galaxy role sets `become: true`, and every one of
-  them was daemon-ineligible, so the engine's largest optimization was
-  switched off for the overwhelming majority of real work. A privileged
-  daemon is spawned through the same `sudo -n -u <become_user> --`
-  wrapper the one-shot path already used, keyed per become_user, and
-  falls back exactly as before if it cannot start. Also fixes Jinja2's
-  `in` TEST spelling (`x is in y` / `x is not in y`), which the `not in`
-  operator handler was mis-splitting into an undefined `item is` operand
-  (devsec.hardening.os_hardening's `user_accounts.yml`).
-- **`0.9.632`** - new `--timing-profile` flag: a wall-clock attribution
-  block after the PLAY RECAP, splitting a run into parse, plugin upload,
-  fact gathering and task execution, then into each transport path (ssh
-  fork, daemon pipe, scp/rsync, local exec) and controller-side
-  templating/conditionals/display. Off by default.
-- **`0.9.631`** - round 195 (60 untested roles, fresh pair per role,
-  cold+warm both engines) plus a 10-role re-verification pass: four
-  engine divergences closed. `delegate_to: localhost` tasks now execute
-  locally - both the executor's local-connection decision and the plugin
-  binaries' own file helpers previously trusted the ORIGIN host's
-  injected `ansible_connection=ssh` and tried to SSH-upload plugin
-  binaries to the controller ("Connection refused" crash; node_exporter,
-  mysqld_exporter, process_exporter, pushgateway). `uri` now surfaces
-  every response header as a snake_case result key (real ansible's
-  "transmogrify the headers" pass), so `head_query.content_disposition`
-  resolves (gantsign.postman). The distribution-FILE facts
-  (`ansible_distribution_file_{variety,path,parsed}`) are ported from
-  real ansible's OSDIST_LIST walk - including the quirk that
-  `ansible_distribution` on Rocky comes from /etc/redhat-release's first
-  token, not the os-release ID (process_exporter). A list-valued var
-  whose ELEMENTS are templates now re-templates them (Oefenweb.apt), and
-  the removed `warn:` param is rejected on command/shell with real
-  ansible's exact message (node_exporter/bind_exporter warm passes).
-- **`0.9.630`** - round 194 (30 untested roles, fresh server pair per
-  role, cold+warm both engines): the three remaining engine divergences
-  closed. `include_tasks:`/`include_role:` now reject `become:`/
-  `become_user:` like real ansible-core's strict TaskInclude/IncludeRole
-  allowlist (rc=4, whole-playbook abort) - the java-oracle dependency
-  case; `dict[var]["key"]` chained-subscript `is defined` now reports
-  undefined when the inner lookup misses (pkg-upgrade on Rocky 9.6) so
-  the task is correctly skipped; and a strict `{% if undefined_var %}`
-  block-tag render now raises like real ansible's strict Jinja2
-  (openjdk's stat-arg finalization) instead of silently treating
-  `undefined == "jre"` as falsy.
-- **`0.9.630`** - round 193: legacy `action: <module> [k=v]` /
-  `{module:, args:}` directive now rewritten to the target module
-  (stefangweichinger.ansible_rclone handler no longer crashes the whole
-  binary with "Plugin binary not found: action").
-- **`0.9.629`** - round 192: recursive re-templating of task args now
-  scoped to variable-origin leftovers (real ansible's single-pass
-  semantics); literal brace text in command args passes through verbatim.
-  Fixed `gantsign.helm` - both engines rc=0 cold+warm on a fresh pair.
-- **`0.9.628`** - round 192: `ansible.builtin.git_config` FQCN now resolves
-  to the existing git_config plugin (was only registered as
-  community.general.*); `gantsign.git_credential_manager` clean both
-  engines on a fresh pair.
-- **`0.9.627`** - round 191 (60 new roles, fresh server pair per role,
-  each run twice per engine): `apt state: latest` now fails when apt-get
-  can't locate a package instead of reporting "already at latest" with
-  rc=0; verified against `buluma.sensu-install`. Full per-role timings in
-  `ROLES_TESTED.md`.
-- **`0.9.626`** - round 191: new `ansible_userspace_bits` fact;
-  `gantsign.ansible-role-golang`'s include-vars chain now resolves
-  identically to real ansible.
-- **`0.9.625`** - six round-190 fixes from a 60-role marathon (55 same-rc,
-  11 divergences, 6 real engine bugs): `.yaml` main-file roles loaded an
-  EMPTY defaults/vars/tasks set (ara_api/handbrake); `command:` +
-  `environment: PATH:` could not find venv binaries (execvp used the
-  parent PATH); nested task-vars kept bare-mustache values as unevaluated
-  strings; `set_fact` containers rendered as Python-repr text instead of
-  native dicts (Django: `float + str`); `apt_key: file:` and
-  `lookup('config', ..., wantlist=True)` were unimplemented. Plus facts
-  now derive user_id/dir/shell from getpwuid instead of ENV (unset in
-  non-login SSH shells).
-- **`0.9.624`** - three round-189 fixes, all live-verified on fresh hosts:
-  YAML folded-scalar `when:` conditions (more-indented continuation lines
-  embed real newlines) silently evaluated FALSE - every loop item skipped;
-  `regex_search` with no match returned the `"undefined"` sentinel string
-  instead of Python None, so a list-form `failed_when: (... ) is not none`
-  FAILED a succeeding task; and `async:`/`poll: 0` over SSH was refused
-  outright, so fire-and-forget reboot idioms never actually rebooted -
-  remote async now mirrors real Ansible's `~/.ansible_async`.
-- **`0.9.623` (continued)** - after the vsftpd re-verify landed,
-  ran the rest of the original round 188 shortlist (9 new roles:
-  `andrewrothstein.{calicoctl,cfssl,coder,bazel}`,
-  `mrlesmithjr.{nfs-server,ansible_apt_sources}`,
-  `geerlingguy.{sonar-runner,ssh-chroot-jail}`, `buluma.forensics`,
-  fresh Atlantic.net pair per role, cold + warm both engines). 8/9
-  clean, 1/9 environmental both-fail (`geerlingguy.ssh-chroot-jail` -
-  role tries to copy `/usr/bin/vim` into the chroot; `vim` isn't
-  installed on a fresh Rocky 9.6 image, both engines hit the same
-  `"/usr/bin/vim not found"` and fail the task the same way per the
-  rule "if they fail the same way that's fine"), 1/9 a NEW real
-  engine bug: `buluma.forensics` (Rocky 9.6, crystal rc=2 / real
-  ansible rc=0) - the role's `command_collector | Save output` task
-  uses `delegate_to: localhost` for an `ansible.builtin.copy` module,
-  and crystal-ansible tries to scp the plugin binary to `localhost:22`
-  ("Connection refused" on a cloud VPS whose controller has no sshd
-  running); real ansible-core runs the plugin via `connection: local`
-  and never ssh's to itself. Fix is in `task_executor.cr`
-  `delegate_to:` resolution: short-circuit to `connection: local` when
-  the delegate target is the controller (localhost / 127.0.0.1 /
-  controller hostname). The bug is structural and likely affects
-  every role that uses `delegate_to: localhost` for an SSH-uploading
-  module on a controller without sshd. See
-  [[round188-delegate-to-localhost-ssh-reupload]]. Performance
-  observations across the 9 new roles: crystal 1.3x-15x faster than
-  python on every role, both phases - the persistent-daemon + batched
-  task model compounds across role complexity (nfs-server: 77s->28s
-  cold, 32s->2s warm; forensics: 154s->56s cold, 149s->62s warm; cfssl:
-  51s->16s cold, 40s->11s warm).
-
-- **`0.9.623`** - two fixes from a `weareinteractive.vsftpd` re-verify
-  (Ubuntu 22.04, fresh Atlantic.net pair, byte-identical to real
-  ansible-core 2.19.4 once both were in). The 0.9.608 community.crypto
-  additions had marked the role "unblocked" but the engine was still
-  broken on it: `import_tasks: ... when: <gate>` was combining the
-  parent's `when:` as `"#{child} and #{parent}"` (child operand first),
-  so when the parent gate was `false` the child operand was still
-  evaluated, hitting strict-undefined on a `register:` reference from
-  a prior inner task that the gate would have skipped, and aborting
-  the whole play with `'item_stat.stat.exists' is undefined` - real
-  Ansible would have skipped the whole file at the parent's
-  `when: false` decision. One-line fix in `playbook_parser.cr:1469`:
-  parent `when:` prepended, not appended, so `and` can short-circuit
-  left-to-right. And `MODULE_SEARCH_COLLECTIONS` was missing
-  `"community.crypto"`, so bare short names (`openssl_privatekey:`,
-  `openssl_csr:`, `x509_certificate:`, `openssl_pkcs12:`,
-  `openssh_keypair:` - the community-collection idiom) had no
-  FQCN-prefix to try against `AVAILABLE_PLUGINS`, the resolver
-  returned `nil`, and the task was silently dropped with a
-  "uses unimplemented plugin" warning despite the plugin source AND
-  compiled binary both existing - the 0.9.608 unblock arguably got
-  the engine past `rc=4` errors but didn't actually run the work in
-  roles that use the bare short names. One-line fix in
-  `playbook_parser.cr:932-935`: added `"community.crypto"` to the list.
-  After both fixes, the re-verify is byte-identical (real 63.91s/40.89s
-  vs crystal 20.73s/3.84s; same recap both phases) and 5 new unit +
-  integration specs pin the fix.
-
-- **`0.9.616`-`0.9.622`** - seven fixes from a 60-role marathon (40
-  andrewrothstein.\*/mrlesmithjr.\*/etc. on Ubuntu 22.04, 20 more on
-  Rocky 9.6, fresh host pair per distro, every role run twice for
-  idempotency). A multi-package `pip: name:` list containing a shell
-  metacharacter (`urllib3<2`) broke the `bash -c` invocation it reached
-  unescaped, and its own idempotency check surfaced once fixed
-  (`0.9.616`); `lookup('file', ...)` on a missing file silently returned
-  "undefined" instead of raising like real Ansible, and that sentinel
-  then got written straight into `~/.ssh/authorized_keys` as if it were
-  a real key (`0.9.616`); `user:`'s registered result never carried
-  home/uid/group/shell/name at all (`0.9.617`); a nonexistent command's
-  exec failure never populated rc/stdout the way real Ansible's own
-  ENOENT handling does, leaving a `failed_when: false`-guarded probe's
-  later `.stdout` reference genuinely undefined (`0.9.618`); three
-  stacked fixes chasing the SAME motivating role -
-  `systemd_service`'s `scope: user` was completely unhandled
-  (`0.9.619`), fixing that exposed real Ansible's own auto-set
-  `XDG_RUNTIME_DIR` for scope:user having no equivalent here
-  (`0.9.620`), and fixing THAT exposed the actual root cause: block-
-  level `become:`/`become_user:` was never inherited by child tasks at
-  all, so an entire block silently ran as root (`0.9.621`); and a
-  `meta/main.yml` dependency written with `src:` (real Ansible's own
-  `RoleRequirement` key) aborted parsing the WHOLE PLAYBOOK (`0.9.622`).
-
-- **`0.9.613`-`0.9.615`** - three fixes from a 60-role marathon (40
-  andrewrothstein.\*/buluma.\*/etc. on Ubuntu 22.04, 20 more on Rocky
-  9.6, fresh host pair per distro, every role run twice for
-  idempotency). A list-form `when:` made of `x | bool` filter chains
-  hard-failed under 0.9.612's new strict-boolean check: each chain's own
-  render path produces Python-repr text ("True"/"False"), and
-  `JSON.parse("True")` isn't valid JSON, so the fallback wrapped the
-  literal text in a String instead of a real Bool (found via
-  `andrewrothstein.docker_engine`'s reconfigure handler). A plain
-  `{{ expr -}}`/`{{- expr }}` whitespace-trim marker had its CHARACTER
-  stripped but never its WHITESPACE-TRIMMING EFFECT applied, so a
-  multi-line YAML `|-` block built from one such span per line kept
-  every line break in its rendered output (found via
-  `andrewrothstein.temurin`'s own filename/URL construction, breaking
-  the download outright). And a bare FLOAT literal (`5.1`) in a
-  comparison had no case at all in the strict-undefined evaluator - only
-  bare INTs did - so `when: zsh_version.stdout | float < 5.1` raised
-  "'5.1' is undefined"; fixing that also exposed the comparison itself
-  had no float-numeric fallback, only int, which would have compared
-  "10.2" < "5.1" lexicographically wrong.
-
-- **`0.9.605`-`0.9.606`** - two fixes from a 60-role marathon (40
-  buluma.\* on Ubuntu 22.04, 20 andrewrothstein.\* on Rocky 9.6, fresh
-  host pair per distro, every role run twice for idempotency). A dynamic
-  `include_role:` naming a role that fails to load (found via
-  `andrewrothstein.libvirt`'s own dependency on the since-removed
-  `andrewrothstein.qemu`) was double-counted in the recap - both the
-  eager `ok` increment added for a *successful* include and
-  `fail_include`'s own `failed` increment fired for the same task, so a
-  fatal `ok=0 failed=1` on real Ansible showed as `ok=1 failed=1` here;
-  the `ok` increment now only fires once the role actually loads.
-  Separately, `ansible.builtin.user`'s `groups:` argument passed a
-  literal `"[]"` straight to `useradd -G` when `groups: "{{ x |
-  default([]) }}"` rendered from an undefined `x` (found via
-  `andrewrothstein.gitlab_runner`'s own "Add the gitlab-runner user to
-  other groups" task) - real Ansible's `list`-typed argspec recognizes
-  a `[...]`-shaped string and parses it back into a real (here, empty)
-  list before it ever reaches `useradd`; this engine now special-cases
-  the empty-list text the same way.
-
-- **`0.9.612`** - three parity fixes the previous one exposed. A
-  conditional must now end in a real boolean, as ansible-core 2.19
-  requires: `when: some_string` / `some_int` / `some_list` fail with
-  real Ansible's own message instead of silently taking a branch it
-  refuses to take - and `ANSIBLE_ALLOW_BROKEN_CONDITIONALS` relaxes it
-  here exactly as it does there. Containers render in Python's `repr`
-  form (`['a', 'b']`, `{'k': 'v'}`) in final output, where they had
-  rendered as JSON; internal rendering deliberately stays JSON, since
-  this engine renders sub-expressions to text and parses them back.
-  And INI host lines are shlex-split, so an inline var may contain
-  quoted spaces and its quotes are consumed by the splitter.
-
-- **`0.9.611`** - INI inventory values are now typed the way real
-  Ansible types them: by Python's `literal_eval`, where `True`/`False`
-  are booleans, `None` is null, `[1, 2]` and `{'k': 'v'}` are real
-  containers - and `true`, `false`, `yes`, `no`, `null` and `~` are all
-  plain strings. This engine had been booleanizing the lowercase forms
-  and leaving containers as text, so a list-valued inventory var could
-  not be looped over, and `[all:vars] enabled=false` quietly took the
-  false branch where real Ansible sees a (truthy) string. Verified
-  value-by-value against ansible-core 2.19.4 over 27 shapes; five unit
-  specs that had asserted the old behavior were rewritten against the
-  differential.
-
-- **`0.9.610`** - inventory sources. `ansible-playbook play.yml` with no
-  `-i` (or with an unreadable one) stopped here with "Error loading
-  inventory" where real Ansible warns and carries on with the implicit
-  localhost - the common CI shape for a `hosts: localhost` playbook.
-  `-i <directory>` (several inventory files merged, ignoring backup and
-  hidden files) and `-i "host1,host2,"` were both unsupported. Fixing
-  the directory case surfaced a bigger one underneath: an `[all:vars]`
-  block applied to **nobody**, in single-file inventories too, because
-  the INI parser files hosts under their own group and never under
-  `all` - one of the most common things an inventory contains, silently
-  ignored in its entirety. A regression sweep alongside it caught
-  `group_names` omitting `ungrouped`, so a host listed above any
-  `[section]` header reported belonging to no groups at all.
 
 ## 🤝 Contributing
 

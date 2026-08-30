@@ -1,4 +1,5 @@
 require "../spec_helper"
+require "file_utils"
 require "../../src/crystal_play/variable_substitutor/expression_evaluator"
 # Pull in the real Ansible-specific Crinja filter registrations (to_datetime
 # etc.), as template_action_plugin.cr does for every real template-rendering
@@ -223,6 +224,33 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     ENV.delete("CRYSTAL_ANSIBLE_SPEC_ENV_LOOKUP_TEST")
 
     evaluator.evaluate("lookup('env', 'CRYSTAL_ANSIBLE_SPEC_ENV_LOOKUP_TEST')").should eq("")
+  end
+
+  it "renders a nested {{ }} span inside a lookup() string argument before using it" do
+    # Real Ansible supports (with a deprecation warning) a lookup plugin
+    # argument that is itself a quoted string CONTAINING a `{{ }}` span,
+    # e.g. `lookup('file', "{{ dir }}/{{ name }}.txt")` - the inner span
+    # gets rendered first, then the lookup runs against the real path.
+    # Found via bodsch.tomcat's own checksum-file parsing: `lookup(
+    # "file", "{{ tomcat_local_tmp_directory }}/apache-tomcat-{{
+    # tomcat_version }}.tar.gz.sha512")`. Previously the literal path
+    # text (quotes stripped, `{{ }}` markers untouched) was handed
+    # straight to File.read, which never found the file - the lookup's
+    # own "undefined" fallback then flowed into a real get_url: checksum
+    # comparison ("checksum mismatch: expected undefined, got <real
+    # sha512>") instead of the actual downloaded file's checksum.
+    dir = File.tempname("expr_eval_lookup_spec")
+    Dir.mkdir(dir)
+    File.write(File.join(dir, "greeting.txt"), "hello there")
+
+    v = Hash(String, JSON::Any).new
+    v["mydir"] = JSON::Any.new(dir)
+    v["myname"] = JSON::Any.new("greeting")
+    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    evaluator.evaluate(%(lookup("file", "{{ mydir }}/{{ myname }}.txt"))).should eq("hello there")
+  ensure
+    FileUtils.rm_rf(dir) if dir
   end
 
   it "evaluates lookup('vars', name) as an indirect variable lookup" do

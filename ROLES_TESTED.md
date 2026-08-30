@@ -1259,3 +1259,68 @@ role itself, not crystal-ansible).
 | robertdebock.enpass | ✅ Clean (round 198, 0.9.638, Ubuntu 22.04). Both engines `failed=1` identically. |
 | andrewrothstein.dnsmasq | ✅ Clean (round 198, 0.9.638, Ubuntu 22.04). Both engines `failed=1` identically. |
 | andrewrothstein.supervisord | ✅ Clean (round 198, 0.9.638, Ubuntu 22.04). Both engines `failed=1` identically. |
+
+### Round 199: 60-role marathon, fresh host pair per role (40 ubuntu + 20 rocky), idempotency-verified
+
+First round using CLAUDE.md's revised "fresh host pair per round" guidance (previously a pair was reused for a handful of roles). Also the round that found the bodsch.* author's collection (`bodsch.core`/`bodsch.systemd`) custom-module/filter scope cut applies well beyond the two previously-documented roles - confirmed on 8 more. 2 real crystal-ansible bugs found and fixed (0.9.642, 0.9.643); 1 more found and documented not fixed. Full per-role timing and verdicts below.
+
+| bodsch.chrony | ubuntu | ⚠️ both fail rc=4 for DIFFERENT reasons (role's own wrong `bodsch.core.journalctl` FQCN trips real ansible; crystal skips the role-private `library/chrony.py` custom module per the documented no-arbitrary-Python scope cut, then fails downstream on the resulting undefined var) |
+| bodsch.postfix | ubuntu | ✅ clean, identical (ok=8 changed=0 failed=1 skipped=2 both, role-side bug both hit identically) |
+| bodsch.dovecot | ubuntu | ❌ untestable - `ansible-galaxy role install` itself refuses the release tarball (a symlink escapes the archive root, a safety check unrelated to crystal-ansible) |
+| bodsch.grafana | ubuntu | ✅ clean, identical (ok=2 changed=0 failed=1 skipped=0 both) |
+| bodsch.telegraf | ubuntu | ⚠️ both fail rc=2, close but not byte-identical counts (py ok=12 skipped=6; cr ok=14 skipped=7) - not deep-dived this round |
+| bodsch.monitoring_plugins | ubuntu | ⚠️ bodsch.core custom-module scope cut: py rc=0 clean (ok=19 changed=7), cr rc=2 fails (ok=16) on an unimplemented `bodsch.core` module. Times: cold py 152.50s vs cr (n/a, failed); warm py 94.50s |
+| bodsch.redis | ubuntu | ⚠️ bodsch.core.check_mode scope cut: py rc=0 clean (ok=21 changed=6), cr rc=4 fails early (ok=3) on the unimplemented module. Times: cold py 60.73s; warm py 38.23s |
+| bodsch.mariadb | ubuntu | ✅ clean, identical (ok=3 failed=1 skipped=1 both, role-side bug) |
+| bodsch.rspamd | ubuntu | ✅ clean, identical (ok=11 changed=4 failed=1 both, role-side bug) |
+| bodsch.unbound | ubuntu | ✅ clean, identical (ok=7 failed=1 both, role-side bug) |
+| bodsch.dnsmasq | ubuntu | ✅ crystal-ansible clean AND fully idempotent (cold ok=22 changed=9, warm ok=19 changed=1, no failures); real ansible's warm rerun hung on `apt update` for 45min and was killed by the harness timeout (environmental, that specific host's apt mirror) - crystal side fully verified, python side inconclusive. Also surfaced a real crystal-ansible bug, fixed in 0.9.642: a block `when:` list whose last item is an already-parenthesized multi-line OR-clause was double-wrapped by the AND-join and only single-unwrapped, so the block ran when it should have skipped |
+| bodsch.logrotate | ubuntu | ⚠️ bodsch.core.type custom FILTER scope cut: py rc=0 clean (ok=15 changed=4), cr rc=2 fails (ok=7) - "no filter with name 'type' registered". Times: cold py 50.13s; warm py 23.81s |
+| bodsch.tomcat | ubuntu | ⚠️ TWO issues found: (1) a nested `{{ }}` span inside a `lookup('file', ...)` string argument wasn't rendered before the lookup ran - fixed in 0.9.642; (2) `lookup(...).splitlines()` chained directly (no `|` between them) still mis-locates the lookup call's own closing paren and garbles the argument - documented, not fixed (see KNOWN_MISSING.md). py rc=0 clean (ok=28 changed=15); cr rc=2 fails (ok=10). Times: cold py 65.20s; warm py 46.05s |
+| bodsch.forgejo | ubuntu | ⚠️ bodsch.core.upgrade custom FILTER scope cut (silent passthrough of the un-filtered dict operand): py rc=0 clean (ok=37 changed=16), cr rc=2 fails (ok=10) on "Conditional result (True) was derived from value of type 'dict'". Times: cold py 151.06s; warm py 59.27s |
+| bodsch.monit | ubuntu | ⚠️ bodsch.core.facts custom-module scope cut: py rc=0 clean (ok=19 changed=7), cr rc=4 fails (ok=14). Times: cold py 72.67s; warm py 34.84s |
+| Oefenweb.nginx | ubuntu | ⚠️ real crystal-ansible bug, fixed in 0.9.643: `rerender_if_templated` only re-rendered a `vars:` value that was a `{{ }}` span spanning the ENTIRE string; a mixed literal+template value (`nginx_conf_file: "{{ nginx_conf_path }}/nginx.conf"`) fell through unrendered into a `.lstrip('/')` method call, collapsing it to an empty string. py rc=0 clean (ok=10 changed=8); cr rc=2 failed pre-fix (ok=7). Times: cold py 154.58s; warm py 52.09s |
+| Oefenweb.redis | ubuntu | ✅ clean, identical (ok=12 changed=7 both). Times: cold py 143.30s vs cr 73.35s (2.0x); warm py 49.36s vs cr 4.26s (11.6x) |
+| Oefenweb.memcached | ubuntu | ✅ clean, identical (ok=7 changed=4 both). Times: cold py 89.26s vs cr 60.14s (1.5x); warm py 28.64s vs cr 2.41s (11.9x) |
+| Oefenweb.ntp | ubuntu | ✅ clean, identical (ok=5 changed=2 both). Times: cold py 48.85s vs cr 31.99s (1.5x); warm py 23.01s vs cr 1.62s (14.2x) |
+| Oefenweb.rsyslog | ubuntu | ✅ clean, identical (ok=7 changed=4 both). Times: cold py 73.75s vs cr 41.50s (1.8x); warm py 28.04s vs cr 2.04s (13.7x) |
+| Oefenweb.haveged | ubuntu | ✅ clean, identical (ok=6 changed=3 both). Times: cold py 71.46s vs cr 53.90s (1.3x); warm py 23.02s vs cr 3.45s (6.7x) |
+| Oefenweb.jenkins | ubuntu | ✅ identical both-fail (ok=4 changed=2 failed=1 both, role-side bug) |
+| Oefenweb.mailhog | ubuntu | ✅ clean, identical (ok=14 changed=10 both). Times: cold py 54.27s vs cr 5.88s (9.2x); warm py 35.22s vs cr 0.77s (45.7x) |
+| Oefenweb.htop | ubuntu | ✅ clean, identical (ok=4 changed=2 both). Times: cold py 64.04s vs cr 31.49s (2.0x); warm py 26.48s vs cr 1.96s (13.5x) |
+| Oefenweb.snmpd | ubuntu | ✅ clean, identical (ok=9 changed=7 both). Times: cold py 105.02s vs cr 59.32s (1.8x); warm py 27.02s vs cr 3.01s (9.0x) |
+| Oefenweb.ssh_server | ubuntu | ✅ clean, identical (ok=10 changed=4 both). Times: cold py 76.15s vs cr 44.93s (1.7x); warm py 45.79s vs cr 3.42s (13.4x) |
+| Oefenweb.pip | ubuntu | ✅ clean, identical (ok=4 changed=1 both). Times: cold py 67.08s vs cr 75.82s (crystal slightly slower cold); warm py 16.04s vs cr 4.08s (3.9x) |
+| Oefenweb.nodejs | ubuntu | ✅ clean, identical (ok=5 changed=4 both). Times: cold py 127.96s vs cr 123.25s; warm py 20.28s vs cr 4.76s (4.3x) |
+| Oefenweb.go | ubuntu | ✅ clean, identical (ok=9 changed=4 both). Times: cold py 47.54s vs cr 19.11s (2.5x); warm py 6.82s vs cr 0.74s (9.2x) |
+| mrlesmithjr.ntp | ubuntu | ✅ clean, identical (ok=5 changed=2 both). Times: cold py 21.79s vs cr 5.94s (3.7x); warm py 13.07s vs cr 0.58s (22.5x) |
+| mrlesmithjr.sshd | ubuntu | ✅ clean, identical (ok=7 changed=2 both). Times: cold py 21.05s vs cr 5.19s (4.1x); warm py 12.13s vs cr 0.53s (22.9x) |
+| mrlesmithjr.samba | ubuntu | ✅ identical both-fail (ok=2 failed=1 both, role-side bug) |
+| mrlesmithjr.mysql | ubuntu | ✅ clean, essentially identical (cold ok=7 both; warm py ok=6 vs cr ok=7, minor) |
+| mrlesmithjr.snmpd | ubuntu | ✅ identical both-fail: role's own `include:` action (removed from ansible-core after 2023-05-16) |
+| mrlesmithjr.logrotate | ubuntu | ✅ identical both-fail: same removed `include:` action |
+| mrlesmithjr.suricata | ubuntu | ✅ identical both-fail: same removed `include:` action |
+| mrlesmithjr.php | ubuntu | ✅ clean, identical (ok=4 both). Times: cold py 79.85s vs cr 73.55s; warm py 14.77s vs cr 5.16s (2.9x) |
+| darkwizard242.git | ubuntu | ✅ clean, identical (ok=2 both). Times: cold py 33.64s vs cr 30.37s; warm py 10.42s vs cr 3.16s (3.3x) |
+| darkwizard242.nodejs | ubuntu | ✅ identical both-fail (ok=3 failed=1 both, role-side bug) |
+| andrewrothstein.collectd | ubuntu | ✅ identical both-fail: same removed `include:` action |
+| mrlesmithjr.iscsitarget | rocky | ✅ identical both-fail: same removed `include:` action |
+| mrlesmithjr.isc-dhcp | rocky | ✅ identical both-fail: same removed `include:` action |
+| mrlesmithjr.nfs-client | rocky | ✅ clean, identical (ok=3 changed=1 both). Times: cold py 32.01s vs cr 23.51s (1.4x); warm py 11.09s vs cr 0.90s (12.3x) |
+| mrlesmithjr.gitlab-runner | rocky | ✅ identical both-fail: same removed `include:` action |
+| robertdebock.consul | rocky | ✅ identical both-fail (ok=10 failed=1 skipped=7 both, role-side bug) |
+| robertdebock.dsvpn | rocky | ✅ identical both-fail (ok=8 failed=1 both, role-side bug) |
+| robertdebock.glusterfs | rocky | ✅ identical both-fail (ok=5 changed=1 failed=1 skipped=8 both, role-side bug) |
+| bodsch.icinga2 | rocky | ⚠️ both eventually fail (py ok=4, cr ok=5, off-by-one) on the role's OWN `bodsch.core`-provided `primary_master` filter bug (`'_AnsibleLazyTemplateList' object has no attribute 'keys'` in real ansible); crystal doesn't implement the filter either, silently passes the operand through, and runs many more tasks before failing differently downstream - same bodsch.core scope-cut family, not independently investigated further |
+| bodsch.knot | rocky | ✅ identical both-fail (ok=2 failed=1 both, role-side bug) |
+| bodsch.dhcpd | rocky | ✅ identical both-fail (ok=11 changed=2 failed=1 skipped=5 both, role-side bug) |
+| bodsch.mariadb | rocky | ✅ identical both-fail (ok=2 failed=1 both, role-side bug) |
+| bodsch.dovecot | rocky | ❌ untestable - same galaxy tarball rejection as the ubuntu run |
+| bodsch.chrony | rocky | ⚠️ same both-fail-different-reasons shape as the ubuntu run (role's own FQCN bug + role-private library/*.py scope cut), cr ok=8 vs the ubuntu run's cr ok=7 (RHEL branch runs one extra task) |
+| geerlingguy.php-pecl | rocky | ✅ clean, essentially identical (ok=29 both, cold changed 6 py vs 7 cr - one extra idempotency-neutral change, warm both changed=0). Times: cold py 97.07s vs cr 37.19s (2.6x); warm py 46.58s vs cr 1.55s (30.1x) |
+| Oefenweb.percona_server | rocky | ✅ identical both-fail (ok=2 failed=1 skipped=1 both, role-side bug) |
+| Oefenweb.mariadb-server | rocky | ✅ identical both-fail: same removed `include:` action |
+| mrlesmithjr.redis | rocky | ✅ clean, identical (ok=8 changed=3 both). Times: cold py 20.43s vs cr 12.10s (1.7x); warm py 14.84s vs cr 0.85s (17.5x) |
+| robertdebock.epel | rocky | ⚠️ real crystal-ansible bug, documented not fixed: a `vars:`-level filter chain (`dict[key] \| default(dict['fallback'])`) resolving to a real Bool comes back as the Python-repr STRING "True"/"False" instead of a real JSON Bool, so the strict conditional check rejects `when: [epel_next]` as non-boolean. py rc=0 clean (ok=4 changed=2 skipped=1); cr rc=2 fails (ok=3). Times: cold py 36.16s; warm py 13.43s |
+| robertdebock.forensics | rocky | ✅ clean, identical (ok=88 changed=20 rescued=6 both - a large 88-task role, byte-identical recap both phases). Times: cold py 240.90s vs cr 8.70s (27.7x); warm py 253.33s vs cr 3.31s (76.5x) |
+| mrlesmithjr.sensu | rocky | ✅ identical both-fail: same removed `include:` action |

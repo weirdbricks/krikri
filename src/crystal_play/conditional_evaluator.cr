@@ -123,7 +123,23 @@ module CrystalPlay
       # whitespace run OUTSIDE string literals to a single space, before
       # any operator splitting happens.
       condition = normalize_condition_whitespace(condition)
-      condition = unwrap_outer_parens(condition)
+      # A single call only strips ONE layer of enclosing parens. An
+      # already-parenthesized when:-list item (`- (a or b)`) gets wrapped
+      # in another layer by condition_to_string's per-clause `(#{clause})`
+      # join, so the joined AND-operand can arrive double-wrapped
+      # (`((a) or (b))`). One strip leaves a residual single layer whose
+      # `or`/`and` now sit at depth 1, not 0 - both the `or` and `and`
+      # top-level splits below then find nothing to split on and the
+      # whole thing falls through to the truthy-string fallback (any
+      # non-empty string reads as true), so `(a) or (b)` with a and b both
+      # false was read as true instead of false. Found via
+      # bodsch.dnsmasq's own `ensure dnsmasq.service.d is present` block,
+      # whose 4-item `when:` list's last item is exactly this shape.
+      loop do
+        unwrapped = unwrap_outer_parens(condition)
+        break if unwrapped == condition
+        condition = unwrapped
+      end
 
       # Handle the Python/Jinja2 conditional (ternary) expression `X if
       # COND else Y` - grammatically the LOWEST-precedence construct

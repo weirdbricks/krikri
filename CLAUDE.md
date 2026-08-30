@@ -73,10 +73,12 @@ starting a round.
    (`geerlingguy.mongodb`/`.consul`/`.golang` don't exist anymore) or re-verifying already-clean
    roles as if new (unless deliberately re-checking after something made a host suspect).
 2. Provision a fresh 2-node Atlantic.net pair (`G3.2GB`, Ubuntu 22.04) - one host runs real
-   `ansible-playbook`, the other runs the just-built `crystal-ansible`. Never reuse a host pair
-   across more than a handful of role batches - accumulated state (stale apt lists, port
-   contention from earlier roles, occasional AppArmor/apt-key drift) starts producing
-   environmental noise indistinguishable from real bugs past that point.
+   `ansible-playbook`, the other runs the just-built `crystal-ansible`. Use a fresh host pair for
+   every round (one role, or one small role batch run to completion) rather than reusing a pair
+   across rounds - accumulated state (stale apt lists, port contention from earlier roles,
+   occasional AppArmor/apt-key drift) starts producing environmental noise indistinguishable from
+   real bugs the longer a pair stays alive. Destroy and reprovision between rounds even if it
+   means more terraform apply/destroy cycles.
 3. Run the SAME playbook against both. Any divergence needs to be reproduced with a minimal
    repro and confirmed against real `ansible-playbook` (not assumed) before treating it as a
    crystal-ansible bug - plenty of "bugs" turn out to be broken upstream repos, missing Galaxy

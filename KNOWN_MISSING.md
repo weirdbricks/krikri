@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.641`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.643`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -506,6 +506,65 @@ are recorded in `ROLES_TESTED.md`'s round-191 rows.
   it and exits with the "unavailable modules" rc=4 signal. Both engines
   otherwise agree; journald's only recap delta was those two skipped
   tasks (both engines rc=0).
+- **The same no-arbitrary-Python scope cut also covers third-party
+  COLLECTION custom modules and filters, not just role-private
+  `library/*.py`** (round 199, bodsch.* author's own `bodsch.core`/
+  `bodsch.systemd` collections - `bodsch.core.check_mode`,
+  `bodsch.core.facts`, `bodsch.core.type` filter, `bodsch.core.upgrade`
+  filter, `bodsch.systemd.journalctl`): real Ansible executes these as
+  ordinary Python; this engine correctly reports "unavailable modules"
+  for a MODULE reference and skips the task, but for a FILTER reference
+  it currently degrades less clearly (an unrecognized filter silently
+  passes its operand through unchanged instead of raising an
+  "unavailable filter" error the way modules do), so a downstream `when:`
+  or `set_fact:` built on the un-filtered value fails with a confusing
+  type error ("Conditional result (True) was derived from value of type
+  'dict'") rather than a clear unsupported-filter message. Confirmed
+  against bodsch.chrony/monitoring_plugins/redis/monit/logrotate/
+  tomcat/forgejo, all on Ubuntu 22.04 - every one of these roles calls
+  at least one bodsch.core/bodsch.systemd custom module or filter for
+  real logic (not just a declarative wrapper), so this author's roles
+  specifically will keep diverging from real Ansible by design; not
+  worth re-testing more of them expecting a different outcome.
+- **A `vars:`-level filter chain resolving to a real Bool loses its type,
+  coming back as the Python-repr STRING `"True"`/`"False"`** (round 199,
+  robertdebock.epel): `epel_next: "{{ _epel_next[ansible_distribution_
+  release] | default(_epel_next['default']) }}"` where `_epel_next` is a
+  dict whose values are real Jinja booleans (`default: false, Stream:
+  true`) - real ansible-core 2.19.4 resolves `epel_next` to a genuine
+  Bool and a bare `when: [epel_next]` evaluates/skips it normally; this
+  engine's `{{ type_debug }}` on the same variable reports `str` (value
+  text `"False"`), and the strict-conditional check correctly rejects
+  that non-bool result ("Conditional result (True) was derived from
+  value of type 'str'"), turning a should-skip task into a hard failure.
+  Minimal repro: a `vars:`-templated dict-index-with-`default()`-fallback
+  expression whose resolved value is a Bool, referenced bare in a `when:`
+  list. Likely the same "default() doesn't preserve the fallback
+  argument's real JSON type" class as the FilterEngine boolean-passthrough
+  fixed elsewhere for other filters - not yet traced to a specific line.
+- **`lookup(...).method()` chained directly (no `|` filter) mis-locates
+  the lookup call's own closing paren** (round 199, bodsch.tomcat):
+  `filter_chain_special_head`'s `var_expr.starts_with?("lookup(") &&
+  var_expr.ends_with?(')')` check (`expression_evaluator.cr`) assumes
+  the lookup call's matching close paren IS the expression's last
+  character - true when a `|` filter follows (`split_chain` already
+  isolated the call before this runs), but false for a bare trailing
+  method call with no `|` at all (`lookup("file", "{{ tomcat_local_tmp_
+  directory }}/apache-tomcat-{{ tomcat_version }}.tar.gz.sha512").
+  splitlines() | select(...) | list` - the `.splitlines()` suffix's own
+  closing paren is what `ends_with?(')')` actually matches, so
+  `var_expr[7..-2]` slices a garbled, unbalanced argument string).
+  `evaluate_expr`'s own analogous `bare_call?` helper already solves
+  this correctly (confirms the matching close for a given prefix is the
+  string's actual last char, paren/quote-depth aware) but isn't reused
+  here. Needs a paren-depth-aware scan for the lookup call's real end
+  before slicing, then re-dispatching the `.splitlines()`/`.method()`
+  suffix the same way a plain variable's method-chain already is
+  (`variable_lookup.cr`'s `string_method_call`). The related "argument
+  ITSELF contains an unrendered `{{ }}` span" half of this same repro
+  (`lookup("file", "{{ a }}/{{ b }}")` with nothing chained after) is
+  fixed as of 0.9.642 - only the `.method()`-directly-after-`lookup(...)`
+  shape (no separating `|`) is still open.
 - **`changed_when` with a missing dict attribute is lenient**
   (cloudalchemy.pushgateway): the role's own `changed_when` references
   `.diff` on a dict result that has none - real ansible-core 2.19 raises
