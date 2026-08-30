@@ -57,11 +57,16 @@ module CrystalPlay
       begin
         failing = conditions.find do |condition|
           substituted = substitutor.substitute(condition)
-          !ConditionalEvaluator.evaluate(substituted, @vars, raise_undefined: true)
+          !ConditionalEvaluator.evaluate(substituted, @vars, strict: true, raise_undefined: true)
         end
       rescue ex : ConditionalEvaluator::UndefinedVariableError
         return PluginResult.new(changed: false, failed: true,
           msg: "Error while evaluating conditional: #{ex.message}")
+      rescue ex : ConditionalEvaluator::ConditionalBooleanError
+        # See assert_action_plugin.cr's identical rescue for why this
+        # gets "Task failed: " rather than the generic prefix above.
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Task failed: #{ex.message}")
       end
 
       if failing

@@ -3056,11 +3056,27 @@ module CrystalPlay
       # `value.as_a?`/`value.as_h?` checks then always failed against
       # the literal "{{ ... }}" text, so the loop silently resolved to
       # no items at all.
+      #
+      # Structural re-render (evaluate_bare_mustache_preserving_type),
+      # not ExpressionEvaluator#evaluate + JSON.parse: the old string
+      # path returned a container the same way `{{ container_var }}`
+      # renders for DISPLAY - Crinja's own Python-repr Finalizer text
+      # (single-quoted, e.g. `[{'type': 'deb', ...}]`) - which JSON.parse
+      # then always failed to parse (invalid JSON), falling back to
+      # wrapping the whole repr STRING as the "resolved" value. A
+      # loop: source that's a ternary selecting between two role-default
+      # LISTS (`percona_client_repositories: "{{ list_8 if version ==
+      # '8.0' else list_5 }}"`, Oefenweb.percona_client's own vars/
+      # main.yml) therefore always failed downstream with "The `loop`
+      # value must resolve to a 'list', not 'str'" - real Ansible
+      # resolves the ternary to the actual list and iterates it fine.
       if current && (raw = current.raw).is_a?(String) && raw.includes?("{{")
-        inner = raw.strip
-        inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
-        rendered = VariableSubstitutor::ExpressionEvaluator.new(vars_context).evaluate(inner)
-        current = (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+        current = evaluate_bare_mustache_preserving_type(raw, vars_context) || begin
+          inner = raw.strip
+          inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
+          rendered = VariableSubstitutor::ExpressionEvaluator.new(vars_context).evaluate(inner)
+          (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+        end
       end
 
       # current can be `nil` two ways: the top-level var (parts[0]) is

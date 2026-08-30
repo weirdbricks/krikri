@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.643-blue)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.646-blue)](https://github.com/weirdbricks/crystal-ansible)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
@@ -389,6 +389,25 @@ complete history (150+ rounds of real-host benchmarking) and
 [KNOWN_MISSING.md](KNOWN_MISSING.md)/[ROLES_TESTED.md](ROLES_TESTED.md)
 for current-state detail.
 
+- **`0.9.646`** - round 200 (60 more untested roles, fresh host pair per
+  role). Three real engine divergences found and fixed: `assert:` was
+  missing `strict: true` on its own `that:` evaluation (the identical
+  check for `when:` already had it), so a non-bool result (a real int)
+  was silently accepted as truthy instead of failing the task
+  (`mrlesmithjr.postgresql`); the vendored Crinja fork's `Value#compare`
+  had no case for `Crinja::Tuple`, so sorting a dict's `.items()` (a
+  list of 2-tuples) raised "cannot compare Crinja::Tuple with
+  Crinja::Tuple" even though `Crinja::Tuple` already implements
+  element-wise `<=>` (`Oefenweb.bash`, `Oefenweb.nagios_server`); a
+  `vars:`-level ternary selecting between two role-default LISTS as a
+  loop source resolved to Crinja's Python-repr display text instead of
+  a real array (`Oefenweb.percona_client`). A fourth
+  (`andrewrothstein.traefik` - a bare `{% if %}`-block-tag variable
+  reached as a sub-expression inside a larger literal+template string)
+  was found and investigated, but the obvious fix broke three existing
+  strict-undefined specs and was reverted - documented in
+  `KNOWN_MISSING.md` for a more careful pass. Full per-role verdicts
+  and timings in `ROLES_TESTED.md`'s round-200 rows.
 - **`0.9.643`** - round 199 (60 untested roles, fresh Atlantic.net host
   pair per role - a revised CLAUDE.md workflow, replacing the previous
   "reuse a pair for a handful of roles" guidance). Two real engine
@@ -438,15 +457,6 @@ for current-state detail.
   out to be missing - a host rebuilt behind the same address re-uploads
   rather than failing; `testing/ipreuse/` reproduces that case
   deterministically. `--no-plugin-state-cache` opts out.
-- **`0.9.636`** - fixes a data-loss bug in `copy:`: with `content:` plus
-  `force: false`, an existing destination was overwritten instead of
-  left alone (the `src:` path honoured `force`, the `content:` path
-  never consulted it). Found comparing against real `ansible-playbook`
-  on `mrlesmithjr.mdadm`, where python left the distro's 688-byte
-  `/etc/mdadm/mdadm.conf` intact and crystal truncated it to 0. Round
-  197's 10-role python-vs-crystal sweep otherwise matched 18/20
-  cold+warm comparisons, the two exceptions being the documented
-  custom-module scope cut.
 
 ## 🤝 Contributing
 

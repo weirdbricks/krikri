@@ -498,6 +498,36 @@ are recorded in `ROLES_TESTED.md`'s round-191 rows.
 
 ## Real gaps (worth revisiting)
 
+- **A bare variable reference whose own value is itself unrendered Jinja
+  (containing `{% %}` block tags) returns the literal "undefined"
+  sentinel instead of re-resolving, when reached inside a LARGER mixed
+  literal+template string** (round 200, andrewrothstein.traefik):
+  `traefik_install_ver: '{% if traefik_ver.major | int >= 2 %}2{% else
+  %}{{ traefik_ver.major }}{% endif %}'` used as `include_tasks: 'v{{
+  traefik_install_ver }}.yml'` - real Ansible resolves the block-tag
+  value fully and includes `v2.yml`; this engine writes the literal path
+  "vundefined.yml" and fails with "Included tasks file not found".
+  Root cause: `expression_evaluator.cr`'s `evaluate_expr_access` tries
+  Crinja's own value lookup first for a bare (undotted) reference and
+  returns the literal "undefined" string on a nil/Undefined result
+  without ever falling back to `@lookup.simple` (which already has the
+  `rerender_if_templated` re-render this needs) - unlike the
+  DOTTED-access case just below it in the same file, which already does
+  fall back to `@lookup.nested` on nil. The obvious fix (mirror the
+  dotted case: fall back to `@lookup.simple(expr)` instead of the
+  literal "undefined" string) was tried and reverted - it broke three
+  existing strict-undefined specs (`nested_undefined_chain_spec.cr`,
+  `variable_substitutor_blocktag_undefined_spec.cr`,
+  `var_substitutor_caching_spec.cr`), because `resolve_simple`'s own
+  matching `rerender_if_templated` addition (also tried and reverted)
+  swallows a genuinely-missing variable's raise inside a re-render chain
+  that those specs depend on raising. Needs the strict/undefined
+  interaction worked out carefully, not a quick copy of the dotted-case
+  pattern - a top-level bare `{{ traefik_install_ver }}` reference alone
+  (no surrounding literal text) already works today via
+  VarSubstitutor#substitute's own outer re-render retry loop; only the
+  "reached as a sub-expression inside a larger literal+template string"
+  shape is affected.
 - **Role-private `library/*.py` modules stay skipped** (documented
   no-arbitrary-Python scope cut, now seen live twice): the
   linux-system-roles family's `sr_fingerprint` success-fingerprint tasks

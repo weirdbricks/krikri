@@ -34,14 +34,35 @@ module CrystalPlay
       # "assert | Test if item.path in mount_requests is set correctly").
       # A filter/default()/is-defined chain stays lenient, same
       # REGEX_BARE_VAR_REF-shaped boundary as every other strict site.
+      #
+      # strict: true - real ansible-core 2.19 also rejects a non-bool
+      # `that:` RESULT outright ("Conditional result (True) was derived
+      # from value of type 'int'. Conditionals must have a boolean
+      # result."), not just a genuinely undefined reference. This was
+      # missing here even though `evaluate_when` (the identical check for
+      # `when:`) already passes it - found via mrlesmithjr.postgresql's
+      # own preflight.yml: `that: postgresql_version | default(false)`
+      # where `postgresql_version` defaults to a real int (14, not a
+      # bool) - real Ansible fails the whole play at this first task;
+      # this plugin silently treated the nonzero int as truthy and let
+      # the play continue for 5 more tasks before diverging elsewhere.
       begin
         failing = conditions.find do |condition|
           substituted = substitutor.substitute(condition)
-          !ConditionalEvaluator.evaluate(substituted, @vars, raise_undefined: true)
+          !ConditionalEvaluator.evaluate(substituted, @vars, strict: true, raise_undefined: true)
         end
       rescue ex : ConditionalEvaluator::UndefinedVariableError
         return ActionResult.final(ActionResult.plugin_result_json(
           false, true, "Error while evaluating conditional: #{ex.message}"))
+      rescue ex : ConditionalEvaluator::ConditionalBooleanError
+        # Real Ansible's assert: prefixes this specific failure
+        # "Task failed: " rather than when:'s own "Error while
+        # evaluating conditional: " - verified against the exact
+        # message ansible-core 2.19.4 raises for a non-bool `that:`
+        # result (mrlesmithjr.postgresql's own `that: postgresql_
+        # version | default(false)` with a real int default).
+        return ActionResult.final(ActionResult.plugin_result_json(
+          false, true, "Task failed: #{ex.message}"))
       end
 
       if failing

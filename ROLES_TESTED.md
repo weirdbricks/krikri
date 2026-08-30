@@ -1324,3 +1324,68 @@ First round using CLAUDE.md's revised "fresh host pair per round" guidance (prev
 | robertdebock.epel | rocky | ⚠️ real crystal-ansible bug, documented not fixed: a `vars:`-level filter chain (`dict[key] \| default(dict['fallback'])`) resolving to a real Bool comes back as the Python-repr STRING "True"/"False" instead of a real JSON Bool, so the strict conditional check rejects `when: [epel_next]` as non-boolean. py rc=0 clean (ok=4 changed=2 skipped=1); cr rc=2 fails (ok=3). Times: cold py 36.16s; warm py 13.43s |
 | robertdebock.forensics | rocky | ✅ clean, identical (ok=88 changed=20 rescued=6 both - a large 88-task role, byte-identical recap both phases). Times: cold py 240.90s vs cr 8.70s (27.7x); warm py 253.33s vs cr 3.31s (76.5x) |
 | mrlesmithjr.sensu | rocky | ✅ identical both-fail: same removed `include:` action |
+
+### Round 200: 60-role marathon, fresh host pair per role (40 ubuntu + 20 rocky)
+
+3 real crystal-ansible bugs found and fixed (0.9.644 assert: strict:true, 0.9.645 Crinja Tuple-sort comparison, 0.9.646 ternary loop: source resolving to a Python-repr string instead of a real list). 1 more real bug found and documented but not fixed after an attempted fix caused regressions elsewhere (andrewrothstein.traefik, see KNOWN_MISSING.md). Remaining roles were clean/identical or role-side bugs both engines hit the same way - many mrlesmithjr roles use the ansible-core-removed `include:` action. Full per-role verdicts and timings below.
+
+| mrlesmithjr.apt-mirror | ubuntu | ✅ clean, identical (ok=8 changed=2 failed=1 skipped=2 both, role-side bug) |
+| mrlesmithjr.rancid-git | ubuntu | ✅ identical both-fail: role's own removed `include:` action |
+| mrlesmithjr.jenkins | ubuntu | ✅ identical both-fail: same removed `include:` action |
+| mrlesmithjr.saltstack | ubuntu | ✅ clean, identical (ok=3 failed=1 both, role-side bug) |
+| mrlesmithjr.snort | ubuntu | ✅ clean, identical AND idempotent (cold both fail rc=2 ok=12 failed=1 skip=14 - role-side issue; warm both succeed rc=0 ok=12, role self-heals on rerun). Times: warm py 44.17s vs cr 1.32s (33.5x) |
+| mrlesmithjr.stackstorm | ubuntu | ✅ identical both-fail: same removed `include:` action |
+| mrlesmithjr.openldap | ubuntu | ✅ clean, identical (ok=5 changed=2 both). Times: cold py 120.18s vs cr 91.17s; warm py 40.37s vs cr 3.42s (11.8x) |
+| mrlesmithjr.passenger | ubuntu | ✅ identical both-fail: same removed `include:` action |
+| mrlesmithjr.plex | ubuntu | ✅ identical both-fail: same removed `include:` action |
+| mrlesmithjr.postgresql | ubuntu | ⚠️ real crystal-ansible bug, fixed in 0.9.644: `assert:` was missing `strict: true` on its `that:` evaluation, so a non-bool result (a real int from `postgresql_version \| default(false)`) was silently accepted as truthy instead of failing the task. py rc=2 fails immediately (ok=1); cr rc=2 pre-fix (ok=6, ran 5 more tasks before diverging elsewhere) |
+| mrlesmithjr.rundeck | ubuntu | ✅ clean, identical (ok=3 changed=2 failed=1 both, role-side bug) |
+| mrlesmithjr.opennms | ubuntu | ✅ identical both-fail: same removed `include:` action |
+| mrlesmithjr.ansible_sssd | ubuntu | ✅ clean, identical (ok=4 failed=1 skipped=1 both, role-side bug) |
+| mrlesmithjr.zabbix-agent | ubuntu | ✅ identical both-fail: same removed `include:` action |
+| mrlesmithjr.hashicorp-toolbox | ubuntu | ❌ untestable - `ansible-galaxy role install` couldn't find/install this role |
+| mrlesmithjr.tftpserver | ubuntu | ✅ identical both-fail: same removed `include:` action |
+| mrlesmithjr.mariadb-mysql | ubuntu | ✅ clean, essentially identical (py ok=1, cr ok=2 - one extra idempotency-neutral task, both failed=1 role-side bug) |
+| mrlesmithjr.users | ubuntu | ✅ clean, identical (ok=1 skipped=2 both). Times: cold py 5.48s vs cr 3.33s; warm py 4.89s vs cr 0.40s (12.2x) |
+| Oefenweb.adminer | ubuntu | ✅ clean, identical (ok=3 changed=2 both). Times: cold py 10.42s vs cr 6.93s; warm py 13.61s vs cr 2.44s (5.6x) |
+| Oefenweb.apparmor | ubuntu | ✅ clean, identical (ok=4 changed=3 both). Times: cold py 28.10s vs cr 15.14s; warm py 11.46s vs cr 1.24s (9.2x) |
+| Oefenweb.bash | ubuntu | ⚠️ real crystal-ansible bug, fixed in 0.9.645: the vendored Crinja fork's `Value#compare` had no case for `Crinja::Tuple`, so sorting a dict's `.items()` (a list of 2-tuples, `{% for key, value in bash_aliases.items() \| sort %}`) raised "cannot compare Crinja::Tuple with Crinja::Tuple" even though `Crinja::Tuple` already implements element-wise `<=>`. py rc=0 clean (ok=4 changed=3); cr rc=2 pre-fix (ok=3) |
+| Oefenweb.collectd | ubuntu | ✅ clean, identical (ok=7 changed=3 both). Times: cold py 197.29s vs cr 85.17s (2.3x); warm py 78.63s vs cr 4.13s (19.0x) |
+| Oefenweb.composer | ubuntu | ✅ clean, identical (ok=3 changed=2 both). Times: cold py 9.15s vs cr 4.48s; warm py 6.66s vs cr 0.53s (12.6x) |
+| Oefenweb.docker | ubuntu | ✅ clean, identical (ok=13 changed=7 both). Times: cold py 179.39s vs cr 127.22s; warm py 40.15s vs cr 7.30s (5.5x) |
+| Oefenweb.grafana | ubuntu | ✅ clean, identical (ok=12 changed=8 both). Times: cold py 229.24s vs cr 114.41s (2.0x); warm py 77.79s vs cr 6.11s (12.7x) |
+| Oefenweb.hostname | ubuntu | ✅ clean, identical (ok=5 changed=3 both). Times: cold py 57.24s vs cr 44.26s; warm py 25.11s vs cr 2.36s (10.6x) |
+| Oefenweb.influxdb | ubuntu | ✅ clean overall - cold had a 1-item timing blip (crystal's `stat` saw `/var/lib/influxdb/wal` as not-yet-existing when py's stat saw it already created, likely an influxdb package post-install async race, not a crystal-ansible bug); warm rerun fully converged (ok=15 changed=0 both, byte-identical). Times: cold py 164.81s vs cr 67.50s; warm py 48.50s vs cr 4.85s (10.0x) |
+| Oefenweb.mariadb_client | ubuntu | ✅ clean, identical (ok=3 changed=1 both) |
+| Oefenweb.nagios_server | ubuntu | ⚠️ same Crinja Tuple-sort bug as Oefenweb.bash above (fixed in 0.9.645), a different template ("copy timeperiods files"). py rc=0 clean (ok=18 changed=15); cr rc=2 pre-fix (ok=11) |
+| Oefenweb.nano | ubuntu | ✅ clean, identical (ok=9 changed=6 both) |
+| Oefenweb.nfs_server | ubuntu | ✅ clean, identical (ok=7 changed=3 both) |
+| Oefenweb.nvm | ubuntu | ✅ clean, identical (ok=5 changed=2 both) |
+| Oefenweb.percona_client | ubuntu | ⚠️ real crystal-ansible bug, fixed in 0.9.646: `with_items: "{{ percona_client_repositories }}"` where the var is a `vars:`-level ternary selecting between two role-default LISTS - the loop-source re-render only ever saw Crinja's Python-repr display text for a container (not valid JSON), so the whole repr string got wrapped as the "resolved" value instead of a real array ("The `loop` value must resolve to a 'list', not 'str'."). py rc=0 clean (ok=7 changed=5); cr rc=2 pre-fix (ok=3) |
+| Oefenweb.rsync_sync | ubuntu | ✅ clean, identical (ok=4 changed=2 both) |
+| Oefenweb.screen | ubuntu | ✅ clean, identical (ok=3 changed=2 both) |
+| Oefenweb.socat | ubuntu | ✅ clean, identical (ok=11 changed=8 both). Times: cold py 127.99s vs cr 106.75s; warm py 21.00s vs cr 2.78s (7.6x) |
+| Oefenweb.systemd | ubuntu | ✅ clean, identical (ok=10 changed=8 failed=1 both, role-side bug) |
+| darkwizard242.logrotate | ubuntu | ✅ clean, identical (ok=2 skipped=3 both) |
+| mrlesmithjr.shorewall | ubuntu | ✅ identical both-fail: removed `include:` action |
+| mrlesmithjr.tcpwrappers | ubuntu | ✅ identical both-fail: removed `include:` action |
+| mrlesmithjr.logstash | rocky | ✅ identical both-fail: removed `include:` action |
+| mrlesmithjr.pacemaker | rocky | ✅ identical both-fail: removed `include:` action |
+| mrlesmithjr.phpipam | rocky | ✅ identical both-fail: removed `include:` action |
+| mrlesmithjr.nginx-load-balancer | rocky | ✅ identical both-fail: removed `include:` action |
+| mrlesmithjr.open-iscsi | rocky | ✅ identical both-fail: removed `include:` action |
+| mrlesmithjr.ansible_netbox | rocky | ✅ clean, identical (ok=4 changed=2 failed=1 skipped=1 both, role-side bug) |
+| mrlesmithjr.network-tools | rocky | ✅ identical both-fail: removed `include:` action |
+| mrlesmithjr.kibana | rocky | ✅ identical both-fail: removed `include:` action |
+| mrlesmithjr.ansible_prometheus | rocky | ✅ clean, identical (ok=6 changed=3 failed=1 both, role-side bug) |
+| mrlesmithjr.landscape-client | rocky | ✅ identical both-fail: removed `include:` action |
+| mrlesmithjr.awx | rocky | ✅ clean, identical (ok=3 changed=1 failed=1 skipped=1 both, role-side bug) |
+| mrlesmithjr.nexus_repo_oss | rocky | ✅ clean, identical (ok=6 changed=3 failed=1 skipped=2 both, role-side bug) |
+| mrlesmithjr.zabbix | rocky | ✅ identical both-fail: removed `include:` action |
+| mrlesmithjr.zookeeper | rocky | ✅ identical both-fail: removed `include:` action |
+| andrewrothstein.solr | rocky | ✅ clean, identical (ok=15 changed=7 failed=1 skipped=4 both, role-side bug) |
+| Oefenweb.openjdk | rocky | ✅ clean, identical (ok=1 failed=1 both, role-side bug) |
+| andrewrothstein.traefik | rocky | ⚠️ real crystal-ansible bug, investigated, fix attempted and reverted (caused regressions in 3 existing strict-undefined specs), documented not fixed in KNOWN_MISSING.md: a bare `{% if %}`-block-tag variable (`traefik_install_ver`) reached as a sub-expression inside a larger literal+template string (`include_tasks: 'v{{ traefik_install_ver }}.yml'`) resolves to the literal "undefined" instead of re-rendering, unlike the equivalent dotted-access case which already falls back correctly. py rc=0 clean (ok=10 changed=6); cr rc=2 fails (ok=1, "Included tasks file not found: .../vundefined.yml") |
+| andrewrothstein.vault-app | rocky | ✅ clean, identical (ok=2 changed=1 failed=1 skipped=1 both, role-side bug) |
+| mrlesmithjr.gitlab-ce | rocky | ✅ identical both-fail: removed `include:` action |
+| mrlesmithjr.mongodb | rocky | ✅ clean, identical (ok=7 changed=3 failed=1 skipped=2 both, role-side bug) |

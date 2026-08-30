@@ -82,4 +82,41 @@ describe "loop: source must resolve to a list" do
     output.should contain("got hello")
     output.should_not contain("must resolve to a 'list'")
   end
+
+  it "resolves a vars:-level ternary selecting between two real lists, not just a string" do
+    # Real bug found via Oefenweb.percona_client's own vars/main.yml:
+    # `percona_client_repositories: "{{ percona_client_repositories_8 if
+    # percona_client_version is version('8.0', '==') else
+    # percona_client_repositories_5 }}"` (a ternary choosing between two
+    # role-default LISTS), used directly as `with_items:`. Real Ansible
+    # resolves the ternary to the actual list and iterates it fine;
+    # resolve_template_value's own re-render step used to go through
+    # ExpressionEvaluator#evaluate + JSON.parse, which only ever sees
+    # Crinja's Python-repr display text for a container result (single-
+    # quoted, not valid JSON) - JSON.parse always failed, and the whole
+    # repr STRING got wrapped as the "resolved" value instead of a real
+    # array, so this failed with "The `loop` value must resolve to a
+    # 'list', not 'str'." even though the ternary genuinely picks a list.
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          list_a:
+            - {url: "http://a"}
+          list_b:
+            - {url: "http://b"}
+          which: "8.0"
+          picked_list: "{{ list_a if which is version('8.0', '==') else list_b }}"
+        tasks:
+          - name: looped
+            ansible.builtin.debug:
+              msg: "{{ item.url }}"
+            with_items: "{{ picked_list }}"
+      YAML
+
+    status.success?.should be_true
+    output.should contain("http://a")
+    output.should_not contain("must resolve to a 'list'")
+  end
 end
