@@ -13,6 +13,7 @@ NC='\033[0m' # No Color
 OUTPUT_DIR="bin"
 PLUGINS_DIR="$OUTPUT_DIR/plugins"
 BUILD_MODE="debug"
+STATIC=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -23,6 +24,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --debug)
             BUILD_MODE="debug"
+            shift
+            ;;
+        --static)
+            STATIC=true
             shift
             ;;
         --clean)
@@ -45,12 +50,19 @@ while [[ $# -gt 0 ]]; do
             echo "             (line numbers / addresses still print, the runtime is fine)"
             echo "  --debug    Build with debug symbols (default, faster build, full"
             echo "             backtraces in 'crystal spec' / crash output)"
+            echo "  --static   Statically link (passes --static to the compiler). Needs the"
+            echo "             musl/Alpine toolchain (e.g. the crystallang/crystal:*-alpine"
+            echo "             image) plus static dev libs (pcre2-static, openssl-libs-static,"
+            echo "             bzip2-static, zlib-static) - glibc doesn't support fully static"
+            echo "             linking the same way. Produces a binary with no runtime libc"
+            echo "             version dependency, for distributing across arbitrary Linux hosts."
             echo "  --clean    Remove build artifacts"
             echo "  --help     Show this help message"
             echo ""
             echo "Examples:"
             echo "  $0              # Build in debug mode (default)"
             echo "  $0 --release    # Build in release mode (optimized + stripped)"
+            echo "  $0 --release --static  # Static release build (needs Alpine toolchain)"
             echo "  $0 --clean      # Clean build artifacts"
             exit 0
             ;;
@@ -151,6 +163,10 @@ if [ "$BUILD_MODE" = "release" ]; then
 else
     BUILD_FLAGS=""
     echo -e "${BLUE}🐛 Building in DEBUG mode${NC}"
+fi
+if [ "$STATIC" = true ]; then
+    BUILD_FLAGS="$BUILD_FLAGS --static"
+    echo -e "${BLUE}🔗 Static linking enabled (--static)${NC}"
 fi
 echo ""
 
@@ -598,7 +614,19 @@ build_fat_plugin() {
         # still used for the STANDALONE_PLUGINS loop) - applying it to
         # the whole fat binary is harmless for the other 78 modules and
         # keeps the same missing-libbz2.so.1.0-on-RHEL fix intact.
-        if OUTPUT=$(crystal build "$generated" -o "$fat_binary" $BUILD_FLAGS --link-flags="-Wl,-Bstatic -lbz2 -Wl,-Bdynamic" 2>&1); then
+        # Skipped under --static: a fully static build already links
+        # bz2 (and everything else) statically with no runtime .so
+        # dependency at all, so the manual partial-static trick is both
+        # redundant and actively conflicts with the compiler's own
+        # global --static flag (confirmed live: "attempted static link
+        # of dynamic object" on libbz2.so/libssl.so/etc - the combined
+        # -Wl,-Bstatic ... -Wl,-Bdynamic ... --static sequence leaves
+        # ld in a contradictory mode for every library after bz2).
+        fat_link_flags=()
+        if [ "$STATIC" != true ]; then
+            fat_link_flags=("--link-flags=-Wl,-Bstatic -lbz2 -Wl,-Bdynamic")
+        fi
+        if OUTPUT=$(crystal build "$generated" -o "$fat_binary" $BUILD_FLAGS "${fat_link_flags[@]}" 2>&1); then
             chmod +x "$fat_binary"
             strip_release_binary "$fat_binary"
             echo -e "   ${GREEN}✓${NC} fat plugin binary"
@@ -706,7 +734,9 @@ if [ "$REBUILT_COUNT" -gt 0 ]; then
         local binary="$PLUGINS_DIR/$plugin"
 
         local link_flags=()
-        if [[ " $BZ2_STATIC_PLUGINS " == *" $plugin "* ]]; then
+        # Skipped under --static - see the fat-plugin build's own comment
+        # above for why combining this with a global --static breaks ld.
+        if [ "$STATIC" != true ] && [[ " $BZ2_STATIC_PLUGINS " == *" $plugin "* ]]; then
             # Must stay one argument (crystal splits --link-flags' OWN
             # value on whitespace internally) - an unquoted expansion
             # here would let bash split it into three separate argv
@@ -740,7 +770,7 @@ if [ "$REBUILT_COUNT" -gt 0 ]; then
         fi
     }
     export -f build_one_plugin
-    export PLUGINS_DIR BUILD_FLAGS STATUS_DIR RED GREEN YELLOW NC BZ2_STATIC_PLUGINS BUILD_MODE STRIP_AVAILABLE
+    export PLUGINS_DIR BUILD_FLAGS STATUS_DIR RED GREEN YELLOW NC BZ2_STATIC_PLUGINS BUILD_MODE STRIP_AVAILABLE STATIC
 
     printf '%s\n' "${TO_BUILD[@]}" | xargs -P "$JOBS" -I{} bash -c 'build_one_plugin "$@"' _ {}
 
