@@ -400,7 +400,20 @@ module CrystalPlay
       # environment - see that method's own comment) that needs this
       # identical recursive-re-render fix, not just this class's.
       private def self.rerender_string_value(raw : String, value : JSON::Any, substitutor : VarSubstitutor) : JSON::Any
-        unless raw.includes?("{{")
+        # `{%`/`{#` need the same re-render as `{{`: a variable whose own
+        # value is a pure block-tag template (`traefik_install_ver: '{% if
+        # traefik_ver.major | int >= 2 %}2{% else %}{{ traefik_ver.major
+        # }}{% endif %}'`, round 200 andrewrothstein.traefik) used to reach
+        # Crinja's context still raw whenever the OUTER re-pass loop could
+        # not save it - most notably as a FILTER-CHAIN head (`{{
+        # traefik_install_ver | upper }}` applied `upper` to the literal
+        # `{% IF FLAG %}...{% ENDIF %}` text, mangling the tag keywords so
+        # no later pass could ever parse them) and as a `default()`
+        # argument. The outer loop only sees the ALREADY-filtered result,
+        # so the re-render has to happen here, at conversion time, for
+        # every construct that reads the variable through Crinja's own
+        # context.
+        unless raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#")
           return value
         end
         rendered = substitutor.substitute(raw)

@@ -683,8 +683,33 @@ module CrystalPlay
         ident = mat[0]
         next if SCAN_STRICT_BLOCK_TAG_KEYWORDS.includes?(ident)
         next if SCAN_STRICT_BLOCK_TAG_BUILTIN_FILTERS.includes?(ident)
-        next if @vars.has_key?(ident)
-        next if loop_var == ident
+        # A dotted/bracketed chain (`traefik_ver.major`,
+        # `pkg_list[0].name`) is rooted at a real variable: real Ansible
+        # resolves the attribute access against that variable's VALUE, so
+        # the chain is only undefined when its ROOT is. Checking the whole
+        # chain as a flat @vars key (`@vars.has_key?("traefik_ver.major")`)
+        # never matches anything, so every `{% if %}` condition using
+        # ordinary attribute access on a defined dict/list was reported
+        # undefined under strict - which `CrinjaRenderer.convert_var`'s
+        # `unresolvable_template?` probe then turned into a real
+        # `Crinja::Undefined` for the WHOLE variable, so a bare
+        # `{{ var_with_block_tag_value }}` rendered the literal sentinel
+        # text instead of its value (round 200,
+        # andrewrothstein.traefik: `traefik_install_ver: '{% if
+        # traefik_ver.major | int >= 2 %}2{% else %}{{ traefik_ver.major
+        # }}{% endif %}'` used as `include_tasks: 'v{{ traefik_install_
+        # ver }}.yml'` produced the literal path "vundefined.yml").
+        # Verified against ansible-core 2.19.4: `{% if d.attr == 'x' %}`
+        # with `d` defined does NOT raise there (a MISSING attribute is a
+        # different error class - "has no attribute" - and Crinja's own
+        # lenient Undefined already covers the non-strict shape, so this
+        # scan deliberately does not try to resolve intermediate segments).
+        root = ident
+        if cut = ident.index('.') || ident.index('[')
+          root = ident[0...cut]
+        end
+        next if @vars.has_key?(root)
+        next if loop_var == ident || loop_var == root
         # A bare identifier immediately preceded by `|` is a
         # filter invocation - the filter's own strictness
         # handling decides whether undefined-source is fatal.
@@ -692,7 +717,7 @@ module CrystalPlay
         if idx && idx > 0 && cond_no_strings[idx - 1] == '|'
           next
         end
-        raise UndefinedVariableError.new("'#{ident}' is undefined")
+        raise UndefinedVariableError.new("'#{root}' is undefined")
       end
     end
 
