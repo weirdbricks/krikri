@@ -33,7 +33,7 @@ private def run_strategy(strategy : String?) : {Int32, Array(String)}
   lines = stdout_io.to_s.lines.compact_map do |lv2|
     if lv2.starts_with?("TASK [")
       lv2.strip
-    elsif line =~ /^(changed|ok): \[(h\d)\]/
+    elsif lv2 =~ /^(changed|ok): \[(h\d)\]/
       "#{$1}:#{$2}"
     end
   end

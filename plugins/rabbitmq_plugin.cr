@@ -24,16 +24,30 @@ module CrystalPlay
         return PluginResult.new(changed: false, failed: true, msg: "state must be enabled or disabled")
       end
 
-      prefix = @params["prefix"]?
-      new_basedir = @params["new_basedir"]?
-      bin = prefix ? "#{prefix}/usr/lib/rabbitmq/bin/rabbitmq-plugins" : "rabbitmq-plugins"
-      bin = "#{new_basedir}/rabbitmq-plugins" if new_basedir
-
+      bin = plugin_bin
       enabled_out = remote_exec("#{bin} list -e")
       if enabled_out[:exit_code] != 0
         return PluginResult.new(changed: false, failed: true,
           msg: "Failed to list RabbitMQ plugins: #{enabled_out[:stderr]}")
       end
+      enabled_text = enabled_plugin_text(enabled_out)
+
+      result = apply_plugin_states(bin, plugins, state, enabled_text)
+      return result if result
+
+      PluginResult.new(changed: true, failed: false,
+        msg: state == "enabled" ? "Plugins enabled: #{plugins.join(", ")}" : "Plugins disabled: #{plugins.join(", ")}")
+    end
+
+    private def plugin_bin : String
+      prefix = @params["prefix"]?
+      new_basedir = @params["new_basedir"]?
+      bin = prefix ? "#{prefix}/usr/lib/rabbitmq/bin/rabbitmq-plugins" : "rabbitmq-plugins"
+      bin = "#{new_basedir}/rabbitmq-plugins" if new_basedir
+      bin
+    end
+
+    private def enabled_plugin_text(enabled_out : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : String
       # rabbitmq-plugins list -e output lines look like
       # "E* rabbitmq_management 4.x" / "e* rabbitmq_foo ..." - the enabled
       # marker prefix and indentation vary by version, so match the
@@ -45,27 +59,23 @@ module CrystalPlay
       # versions) would break name matching - strip them. list -e only
       # lists ENABLED plugins, so any word-boundary occurrence of the
       # plugin name means enabled.
-      enabled_text = (enabled_out[:stdout] + "\n" + enabled_out[:stderr])
-        .gsub(/\e\[[0-9;]*m/, "")
+      (enabled_out[:stdout] + "\n" + enabled_out[:stderr]).gsub(/\e\[[0-9;]*m/, "")
+    end
 
-      changed = false
+    private def apply_plugin_states(bin : String, plugins : Array(String), state : String, enabled_text : String) : PluginResult?
       plugins.each do |plugin|
         is_enabled = enabled_text.match(/\b#{Regex.escape(plugin)}\b/) != nil
         if state == "enabled" && !is_enabled
           r = remote_exec("#{bin} enable #{plugin}")
           return PluginResult.new(changed: false, failed: true,
             msg: "Failed to enable plugin #{plugin}: #{r[:stderr]}") if r[:exit_code] != 0
-          changed = true
         elsif state == "disabled" && is_enabled
           r = remote_exec("#{bin} disable #{plugin}")
           return PluginResult.new(changed: false, failed: true,
             msg: "Failed to disable plugin #{plugin}: #{r[:stderr]}") if r[:exit_code] != 0
-          changed = true
         end
       end
-
-      PluginResult.new(changed: changed, failed: false,
-        msg: state == "enabled" ? "Plugins enabled: #{plugins.join(", ")}" : "Plugins disabled: #{plugins.join(", ")}")
+      nil
     end
   end
 end

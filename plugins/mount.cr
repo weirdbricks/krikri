@@ -124,33 +124,40 @@ module CrystalPlay
       check_mode = true?(@params["check_mode"]?)
 
       case state
-      when "present", "mounted"
-        fstab_changed, backup_file = set_fstab_entry(path, fstab, check_mode)
-        if state == "mounted"
-          mount_changed, error = ensure_mounted(path, check_mode)
-          return PluginResult.new(changed: fstab_changed, failed: true, msg: error || "mount failed", name: path, fstab: fstab, backup_file: backup_file) if error
-        else
-          mount_changed = false
-        end
-        PluginResult.new(changed: fstab_changed || mount_changed, failed: false, msg: "", name: path, fstab: fstab, backup_file: backup_file)
-      when "unmounted"
-        changed, error = ensure_unmounted(path, check_mode)
-        return PluginResult.new(changed: false, failed: true, msg: error, name: path) if error
-        PluginResult.new(changed: changed, failed: false, msg: "", name: path)
-      when "remounted"
-        ensure_remounted(path, check_mode)
-      when "ephemeral"
-        ensure_ephemeral(path, check_mode)
-      else
-        fstab_changed, backup_file = remove_fstab_entry(path, fstab, check_mode)
-        if state == "absent"
-          unmount_changed, error = ensure_unmounted(path, check_mode)
-          return PluginResult.new(changed: fstab_changed, failed: true, msg: error || "mount failed", name: path, fstab: fstab, backup_file: backup_file) if error
-        else
-          unmount_changed = false
-        end
-        PluginResult.new(changed: fstab_changed || unmount_changed, failed: false, msg: "", name: path, fstab: fstab, backup_file: backup_file)
+      when "present", "mounted" then run_present(path, state, fstab, check_mode)
+      when "unmounted"          then run_unmounted(path, check_mode)
+      when "remounted"          then ensure_remounted(path, check_mode)
+      when "ephemeral"          then ensure_ephemeral(path, check_mode)
+      else                           run_absent(path, state, fstab, check_mode)
       end
+    end
+
+    private def run_present(path : String, state : String, fstab : String, check_mode : Bool) : PluginResult
+      fstab_changed, backup_file = set_fstab_entry(path, fstab, check_mode)
+      if state == "mounted"
+        mount_changed, error = ensure_mounted(path, check_mode)
+        return PluginResult.new(changed: fstab_changed, failed: true, msg: error || "mount failed", name: path, fstab: fstab, backup_file: backup_file) if error
+      else
+        mount_changed = false
+      end
+      PluginResult.new(changed: fstab_changed || mount_changed, failed: false, msg: "", name: path, fstab: fstab, backup_file: backup_file)
+    end
+
+    private def run_unmounted(path : String, check_mode : Bool) : PluginResult
+      changed, error = ensure_unmounted(path, check_mode)
+      return PluginResult.new(changed: false, failed: true, msg: error, name: path) if error
+      PluginResult.new(changed: changed, failed: false, msg: "", name: path)
+    end
+
+    private def run_absent(path : String, state : String, fstab : String, check_mode : Bool) : PluginResult
+      fstab_changed, backup_file = remove_fstab_entry(path, fstab, check_mode)
+      if state == "absent"
+        unmount_changed, error = ensure_unmounted(path, check_mode)
+        return PluginResult.new(changed: fstab_changed, failed: true, msg: error || "mount failed", name: path, fstab: fstab, backup_file: backup_file) if error
+      else
+        unmount_changed = false
+      end
+      PluginResult.new(changed: fstab_changed || unmount_changed, failed: false, msg: "", name: path, fstab: fstab, backup_file: backup_file)
     end
 
     private def desired_opts : String

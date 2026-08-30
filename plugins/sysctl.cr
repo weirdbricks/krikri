@@ -64,34 +64,43 @@ module CrystalPlay
       changed = new_lines != lines
 
       unless check_mode
-        write_lines(sysctl_file, new_lines) if changed
-
-        if state == "present" && true?(@params["sysctl_set"]?)
-          # Real ansible.posix.sysctl fails the task when `sysctl -w`
-          # itself fails (an invalid/read-only kernel parameter name,
-          # for instance) - unless ignoreerrors: is set, which is
-          # forwarded to sysctl's own `-e` flag for exactly this. This
-          # used to discard apply_kernel_value's result entirely and
-          # unconditionally return failed: false regardless - the same
-          # "real command failure silently swallowed" shape as
-          # apt_repository.cr's own update_cache bug found this round,
-          # just in a different plugin.
-          kernel_result = apply_kernel_value(name, value)
-          if kernel_result[:exit_code] != 0 && !true?(@params["ignoreerrors"]?)
-            return PluginResult.new(
-              changed: changed,
-              failed: true,
-              msg: "Failed to set sysctl #{name}: #{kernel_result[:stderr]}",
-              name: name,
-              sysctl_file: sysctl_file
-            )
-          end
+        if failure = apply_changes(name, value, state, sysctl_file, new_lines, changed)
+          return failure
         end
-
-        reload_sysctl(sysctl_file) if changed && true?(@params["reload"]?, default: true)
       end
 
       PluginResult.new(changed: changed, failed: false, msg: "", name: name, sysctl_file: sysctl_file)
+    end
+
+    # Real ansible.posix.sysctl fails the task when `sysctl -w` itself
+    # fails (an invalid/read-only kernel parameter name, for instance) -
+    # unless ignoreerrors: is set, which is forwarded to sysctl's own `-e`
+    # flag for exactly this. This used to discard apply_kernel_value's
+    # result entirely and unconditionally return failed: false regardless
+    # - the same "real command failure silently swallowed" shape as
+    # apt_repository.cr's own update_cache bug found this round, just in a
+    # different plugin.
+    private def apply_changes(
+      name : String, value : String?, state : String,
+      sysctl_file : String, new_lines : Array(String), changed : Bool,
+    ) : PluginResult?
+      write_lines(sysctl_file, new_lines) if changed
+
+      if state == "present" && true?(@params["sysctl_set"]?)
+        kernel_result = apply_kernel_value(name, value)
+        if kernel_result[:exit_code] != 0 && !true?(@params["ignoreerrors"]?)
+          return PluginResult.new(
+            changed: changed,
+            failed: true,
+            msg: "Failed to set sysctl #{name}: #{kernel_result[:stderr]}",
+            name: name,
+            sysctl_file: sysctl_file
+          )
+        end
+      end
+
+      reload_sysctl(sysctl_file) if changed && true?(@params["reload"]?, default: true)
+      nil
     end
 
     # Rewrites `lines` with `name`'s entry set/removed, matching real

@@ -95,22 +95,16 @@ module CrystalPlay
     end
 
     private def add_key(key : String) : PluginResult
-      if bare_keyid?(key) && !(key.includes?("://") || key.starts_with?('/'))
-        short_id = normalize_keyid(key)[-8..]? || normalize_keyid(key)
-        if installed_short_keyids.includes?(short_id)
-          return PluginResult.new(changed: false, failed: false, msg: "Key already present")
-        end
-        return PluginResult.new(changed: false, failed: true, msg: "When importing a key, a valid file must be given")
+      if result = bare_keyid_result(key)
+        return result
       end
 
       tmp_path = nil
       begin
         if key.includes?("://")
-          insecure_flag = true?(@params["validate_certs"]?, default: true) ? "" : "--insecure "
           tmp_path = "/tmp/.crystal-ansible-rpm-key-#{Random.rand(100000..999999)}"
-          result = remote_exec("curl --fail --silent --show-error --location #{insecure_flag}-o #{tmp_path} #{shell_single_quote(key)}")
-          unless result[:exit_code] == 0
-            return PluginResult.new(changed: false, failed: true, msg: "failed to fetch key at #{key} , error was: #{result[:stderr]}")
+          if error = download_key(key, tmp_path)
+            return PluginResult.new(changed: false, failed: true, msg: error)
           end
           keyfile = tmp_path
         else
@@ -120,14 +114,8 @@ module CrystalPlay
         pairs = parse_key_material(keyfile)
         return PluginResult.new(changed: false, failed: true, msg: "Failed to get keyid") if pairs.empty?
 
-        if fingerprint_param = @params["fingerprint"]?
-          wanted = fingerprint_param.split(',').map(&.strip.gsub(" ", "").upcase).reject(&.empty?)
-          unless wanted.empty?
-            have = pairs.map { |(_, fp)| fp }
-            unless wanted.any? { |wval| have.includes?(wval) }
-              return PluginResult.new(changed: false, failed: true, msg: "The specified fingerprint, '#{wanted.join(", ")}', does not match any key fingerprints in '#{have.join(", ")}'")
-            end
-          end
+        if error = fingerprint_error(pairs)
+          return PluginResult.new(changed: false, failed: true, msg: error)
         end
 
         primary_short_id = pairs.first[0][-8..]? || pairs.first[0]
@@ -144,6 +132,28 @@ module CrystalPlay
       ensure
         remote_exec("rm -f #{tmp_path}") if tmp_path
       end
+    end
+
+    private def bare_keyid_result(key : String) : PluginResult?
+      return nil if !bare_keyid?(key) || key.includes?("://") || key.starts_with?('/')
+      short_id = normalize_keyid(key)[-8..]? || normalize_keyid(key)
+      return PluginResult.new(changed: false, failed: false, msg: "Key already present") if installed_short_keyids.includes?(short_id)
+      PluginResult.new(changed: false, failed: true, msg: "When importing a key, a valid file must be given")
+    end
+
+    private def download_key(key : String, tmp_path : String) : String?
+      insecure_flag = true?(@params["validate_certs"]?, default: true) ? "" : "--insecure "
+      result = remote_exec("curl --fail --silent --show-error --location #{insecure_flag}-o #{tmp_path} #{shell_single_quote(key)}")
+      result[:exit_code] == 0 ? nil : "failed to fetch key at #{key} , error was: #{result[:stderr]}"
+    end
+
+    private def fingerprint_error(pairs : Array({String, String})) : String?
+      fingerprint_param = @params["fingerprint"]? || return nil
+      wanted = fingerprint_param.split(',').map(&.strip.gsub(" ", "").upcase).reject(&.empty?)
+      return nil if wanted.empty?
+      have = pairs.map { |(_, fp)| fp }
+      return nil if wanted.any? { |wval| have.includes?(wval) }
+      "The specified fingerprint, '#{wanted.join(", ")}', does not match any key fingerprints in '#{have.join(", ")}'"
     end
 
     private def remove_key(key : String) : PluginResult

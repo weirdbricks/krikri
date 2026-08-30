@@ -67,16 +67,24 @@ module CrystalPlay
       end
 
       if keyserver = @params["keyserver"]?
-        return PluginResult.new(changed: false, failed: true, msg: "Missing key_id, required with keyserver.") unless key_id
-
-        result = remote_exec("apt-key #{keyring_flag}adv --no-tty --keyserver #{keyserver} --recv #{key_id}")
-        unless result[:exit_code] == 0
-          return PluginResult.new(changed: false, failed: true, msg: "Error fetching key #{key_id} from keyserver: #{result[:stderr]}")
-        end
-
-        return PluginResult.new(changed: true, failed: false, msg: "Key added")
+        return add_from_keyserver(key_id, keyserver)
       end
 
+      add_from_url_data_or_file
+    end
+
+    private def add_from_keyserver(key_id : String?, keyserver : String) : PluginResult
+      return PluginResult.new(changed: false, failed: true, msg: "Missing key_id, required with keyserver.") unless key_id
+
+      result = remote_exec("apt-key #{keyring_flag}adv --no-tty --keyserver #{keyserver} --recv #{key_id}")
+      unless result[:exit_code] == 0
+        return PluginResult.new(changed: false, failed: true, msg: "Error fetching key #{key_id} from keyserver: #{result[:stderr]}")
+      end
+
+      PluginResult.new(changed: true, failed: false, msg: "Key added")
+    end
+
+    private def add_from_url_data_or_file : PluginResult
       url = @params["url"]?
       data = @params["data"]?
       # file: - path to a key file ON THE TARGET, matching real Ansible's
@@ -92,44 +100,8 @@ module CrystalPlay
 
       tmp_path = "/tmp/.crystal-ansible-apt-key-#{Random.rand(100000..999999)}"
       begin
-        if url
-          # Fetched via curl on the TARGET rather than Crystal's own
-          # HTTP::Client - a real, reproducible Crystal 1.20.3 stdlib
-          # bug truncates chunked-transfer-encoded HTTPS response
-          # bodies for at least this real key server (pkgs.tailscale.
-          # com), silently returning a partial/corrupt body with no
-          # error (fetch "succeeds", 200 OK, but 1399 of the real 2288
-          # bytes) - `gpg`/`apt-key add` then correctly rejects the
-          # truncated key material as invalid. Confirmed the truncation
-          # is deterministic and independent of how the response is
-          # consumed (direct `.body`, streaming `.body_io.gets_to_end`,
-          # and the top-level `HTTP::Client.get` convenience method all
-          # reproduce it identically), and confirmed real `curl` fetches
-          # the same URL correctly (byte-for-byte) both from this
-          # sandbox and from the live target host - so this shells out
-          # to curl instead of trying to work around Crystal's own HTTP
-          # client, matching how #add_key's `keyserver:` branch already
-          # shells out to `apt-key adv` rather than reimplementing a
-          # keyserver protocol client.
-          insecure_flag = true?(@params["validate_certs"]?, default: true) ? "" : "--insecure "
-          result = remote_exec("curl --fail --silent --show-error --location #{insecure_flag}-o #{tmp_path} #{shell_single_quote(url)}")
-          unless result[:exit_code] == 0
-            return PluginResult.new(changed: false, failed: true, msg: "Failed to fetch key from #{url}: #{result[:stderr]}")
-          end
-        elsif d = data
-          File.write(tmp_path, d)
-        else
-          # file: is a path on the TARGET (real Ansible's own apt_key:file:
-          # semantics - mrlesmithjr.ansible_es_apm_server copies the key to
-          # /tmp first, then points file: at that path). Stage it into the
-          # same tmp the data:/url: branches use so the rest of the import
-          # path is unchanged. remote_exec's cwd is the target's root, and
-          # a plain cp keeps us from re-reading the file through Crystal.
-          result = remote_exec("cp #{shell_single_quote(file_path || raise "apt_key: file: path is required")} #{tmp_path}")
-          unless result[:exit_code] == 0
-            return PluginResult.new(changed: false, failed: true, msg: "Failed to read key file #{file_path}: #{result[:stderr]}")
-          end
-        end
+        staged = stage_key_material(url, data, file_path, tmp_path)
+        return staged if staged
 
         # Real Ansible's apt_key: is idempotent even when only url:/data:
         # is given (no id:) - it derives the key's own fingerprint from
@@ -154,6 +126,52 @@ module CrystalPlay
       end
 
       PluginResult.new(changed: true, failed: false, msg: "Key added")
+    end
+
+    # Stage the key material (from url:/data:/file:) into tmp_path.
+    # Returns the failure result when fetching/reading fails, nil on
+    # success.
+    private def stage_key_material(url : String?, data : String?, file_path : String?, tmp_path : String) : PluginResult?
+      if url
+        # Fetched via curl on the TARGET rather than Crystal's own
+        # HTTP::Client - a real, reproducible Crystal 1.20.3 stdlib
+        # bug truncates chunked-transfer-encoded HTTPS response
+        # bodies for at least this real key server (pkgs.tailscale.
+        # com), silently returning a partial/corrupt body with no
+        # error (fetch "succeeds", 200 OK, but 1399 of the real 2288
+        # bytes) - `gpg`/`apt-key add` then correctly rejects the
+        # truncated key material as invalid. Confirmed the truncation
+        # is deterministic and independent of how the response is
+        # consumed (direct `.body`, streaming `.body_io.gets_to_end`,
+        # and the top-level `HTTP::Client.get` convenience method all
+        # reproduce it identically), and confirmed real `curl` fetches
+        # the same URL correctly (byte-for-byte) both from this
+        # sandbox and from the live target host - so this shells out
+        # to curl instead of trying to work around Crystal's own HTTP
+        # client, matching how #add_key's `keyserver:` branch already
+        # shells out to `apt-key adv` rather than reimplementing a
+        # keyserver protocol client.
+        insecure_flag = true?(@params["validate_certs"]?, default: true) ? "" : "--insecure "
+        result = remote_exec("curl --fail --silent --show-error --location #{insecure_flag}-o #{tmp_path} #{shell_single_quote(url)}")
+        unless result[:exit_code] == 0
+          return PluginResult.new(changed: false, failed: true, msg: "Failed to fetch key from #{url}: #{result[:stderr]}")
+        end
+      elsif d = data
+        File.write(tmp_path, d)
+      else
+        # file: is a path on the TARGET (real Ansible's own apt_key:file:
+        # semantics - mrlesmithjr.ansible_es_apm_server copies the key to
+        # /tmp first, then points file: at that path). Stage it into the
+        # same tmp the data:/url: branches use so the rest of the import
+        # path is unchanged. remote_exec's cwd is the target's root, and
+        # a plain cp keeps us from re-reading the file through Crystal.
+        result = remote_exec("cp #{shell_single_quote(file_path || raise "apt_key: file: path is required")} #{tmp_path}")
+        unless result[:exit_code] == 0
+          return PluginResult.new(changed: false, failed: true, msg: "Failed to read key file #{file_path}: #{result[:stderr]}")
+        end
+      end
+
+      nil
     end
 
     # Parses every key fingerprint out of the ASCII-armored/binary key

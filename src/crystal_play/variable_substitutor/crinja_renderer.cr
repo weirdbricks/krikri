@@ -399,80 +399,83 @@ module CrystalPlay
       # separate prepare_*_vars (a genuinely separate Crinja
       # environment - see that method's own comment) that needs this
       # identical recursive-re-render fix, not just this class's.
+      private def self.rerender_string_value(raw : String, value : JSON::Any, substitutor : VarSubstitutor) : JSON::Any
+        unless raw.includes?("{{")
+          return value
+        end
+        rendered = substitutor.substitute(raw)
+        stripped = raw.strip
+        if stripped.starts_with?("{{") && stripped.ends_with?("}}")
+          # A nested-template variable whose ENTIRE value (no other
+          # literal characters around it) is a `{{ }}` expression
+          # can itself render to a real array/dict
+          # (`docker_pip_packages: "{{
+          # _docker_pip_packages[ansible_facts['os_family']] |
+          # default(...) }}"`, robertdebock.docker's own vars/main.
+          # yml) - substitutor.substitute always returns a formatted
+          # STRING, so without re-parsing back to JSON here every
+          # such variable silently became a String-typed Crinja
+          # value forever after (`docker_pip_packages | length`
+          # measured the STRING's character count instead of the
+          # list's element count, and the `| length > 0` when: guard
+          # on the role's own conditional "Install docker pip
+          # packages" task always passed even for the empty-list
+          # Debian case, then `ansible.builtin.pip: name: "[]"`
+          # tried to install a literal package named "[]"). Every
+          # other rerender call site in this codebase
+          # (VariableLookup#rerender_if_templated, ExpressionEvaluator's
+          # own bare-lookup/filter-chain-head fallback) already does
+          # this JSON.parse-back step; this one (feeding Crinja's
+          # own vars context) was the one gap.
+          #
+          # Restricted to a PURE `{{ }}` value (nothing else around
+          # it) rather than any string containing "{{" anywhere -
+          # geerlingguy.nginx's own `nginx_worker_processes: '"{{
+          # ansible_processor_vcpus | default(...) }}"'` has literal
+          # double-quote characters OUTSIDE the `{{ }}` span,
+          # deliberately, so its rendered value stays the literal
+          # 3-character string `"1"` in the .conf file - reparsing
+          # THAT as JSON would strip the quotes real Ansible keeps,
+          # a regression this same restriction (`raw.strip` must be
+          # entirely one `{{ }}` span) is what
+          # VariableLookup#rerender_if_templated already uses to
+          # draw the same line.
+          #
+          # Only attempt the parse-back when the rendered text is
+          # container-SHAPED (`[...]`/`{...}`) - real Ansible's
+          # default (non-jinja2_native) templating renders a `{{ }}`
+          # expression to plain text and does NOT re-infer a scalar
+          # type from it: a role default like `bind_python_version:
+          # "{{ bind_default_python_version }}"` where the referenced
+          # var is the quoted YAML STRING "3" stays the string "3"
+          # through any number of indirections in real Ansible - it
+          # never becomes the integer 3. Blindly JSON-parsing EVERY
+          # rendered scalar here silently reinterpreted any purely
+          # numeric-looking string ("3", "0700", a version string
+          # missing its middle segment...) as a real number, breaking
+          # `==`/`!=` string comparisons against a quoted literal
+          # elsewhere (`bind_python_version == '3'` went from True to
+          # False - the comparison operands ended up Int64(3) vs
+          # String("3"), which real Jinja/Python correctly refuses to
+          # treat as equal). Found via buluma.bind's own vars/Debian.
+          # yml: `(bind_python_version == '3') | ternary(...)` always
+          # picked the FALSE branch, installing the removed python2-
+          # era `python-netaddr`/`python-dnspython` package names
+          # instead of `python3-*` on every real Debian/Ubuntu target.
+          if rendered.strip.starts_with?('[') || rendered.strip.starts_with?('{')
+            (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+          else
+            JSON::Any.new(rendered)
+          end
+        else
+          JSON::Any.new(rendered)
+        end
+      end
+
       def self.rerender_nested_templates(value : JSON::Any, substitutor : VarSubstitutor) : JSON::Any
         case raw = value.raw
         when String
-          if raw.includes?("{{")
-            rendered = substitutor.substitute(raw)
-            stripped = raw.strip
-            if stripped.starts_with?("{{") && stripped.ends_with?("}}")
-              # A nested-template variable whose ENTIRE value (no other
-              # literal characters around it) is a `{{ }}` expression
-              # can itself render to a real array/dict
-              # (`docker_pip_packages: "{{
-              # _docker_pip_packages[ansible_facts['os_family']] |
-              # default(...) }}"`, robertdebock.docker's own vars/main.
-              # yml) - substitutor.substitute always returns a formatted
-              # STRING, so without re-parsing back to JSON here every
-              # such variable silently became a String-typed Crinja
-              # value forever after (`docker_pip_packages | length`
-              # measured the STRING's character count instead of the
-              # list's element count, and the `| length > 0` when: guard
-              # on the role's own conditional "Install docker pip
-              # packages" task always passed even for the empty-list
-              # Debian case, then `ansible.builtin.pip: name: "[]"`
-              # tried to install a literal package named "[]"). Every
-              # other rerender call site in this codebase
-              # (VariableLookup#rerender_if_templated, ExpressionEvaluator's
-              # own bare-lookup/filter-chain-head fallback) already does
-              # this JSON.parse-back step; this one (feeding Crinja's
-              # own vars context) was the one gap.
-              #
-              # Restricted to a PURE `{{ }}` value (nothing else around
-              # it) rather than any string containing "{{" anywhere -
-              # geerlingguy.nginx's own `nginx_worker_processes: '"{{
-              # ansible_processor_vcpus | default(...) }}"'` has literal
-              # double-quote characters OUTSIDE the `{{ }}` span,
-              # deliberately, so its rendered value stays the literal
-              # 3-character string `"1"` in the .conf file - reparsing
-              # THAT as JSON would strip the quotes real Ansible keeps,
-              # a regression this same restriction (`raw.strip` must be
-              # entirely one `{{ }}` span) is what
-              # VariableLookup#rerender_if_templated already uses to
-              # draw the same line.
-              #
-              # Only attempt the parse-back when the rendered text is
-              # container-SHAPED (`[...]`/`{...}`) - real Ansible's
-              # default (non-jinja2_native) templating renders a `{{ }}`
-              # expression to plain text and does NOT re-infer a scalar
-              # type from it: a role default like `bind_python_version:
-              # "{{ bind_default_python_version }}"` where the referenced
-              # var is the quoted YAML STRING "3" stays the string "3"
-              # through any number of indirections in real Ansible - it
-              # never becomes the integer 3. Blindly JSON-parsing EVERY
-              # rendered scalar here silently reinterpreted any purely
-              # numeric-looking string ("3", "0700", a version string
-              # missing its middle segment...) as a real number, breaking
-              # `==`/`!=` string comparisons against a quoted literal
-              # elsewhere (`bind_python_version == '3'` went from True to
-              # False - the comparison operands ended up Int64(3) vs
-              # String("3"), which real Jinja/Python correctly refuses to
-              # treat as equal). Found via buluma.bind's own vars/Debian.
-              # yml: `(bind_python_version == '3') | ternary(...)` always
-              # picked the FALSE branch, installing the removed python2-
-              # era `python-netaddr`/`python-dnspython` package names
-              # instead of `python3-*` on every real Debian/Ubuntu target.
-              if rendered.strip.starts_with?('[') || rendered.strip.starts_with?('{')
-                (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
-              else
-                JSON::Any.new(rendered)
-              end
-            else
-              JSON::Any.new(rendered)
-            end
-          else
-            value
-          end
+          rerender_string_value(raw, value, substitutor)
         when Array
           JSON::Any.new(raw.map { |item| rerender_nested_templates(item, substitutor) })
         when Hash

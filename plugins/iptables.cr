@@ -39,47 +39,15 @@ module CrystalPlay
       state = @params["state"]? || "present"
       rule_flags = PluginHelpers::IptablesCommand.construct_rule(@params)
 
-      any_changed = false
       msgs = [] of String
 
-      binaries.each do |bin|
-        if flush
-          any_changed = true
-          remote_exec("#{bin} -t #{table} -F #{chain}") unless check_mode
-          msgs << "flushed #{chain}"
-        elsif policy
-          current = current_policy(bin, chain)
-          if current != policy
-            any_changed = true
-            remote_exec("#{bin} -t #{table} -P #{chain} #{policy}") unless check_mode
-          end
-          msgs << "policy #{policy}"
-        elsif chain && rule_flags.empty?
-          present = chain_present?(bin, chain)
-          if state == "absent"
-            if present
-              any_changed = true
-              remote_exec("#{bin} -t #{table} -X #{chain}") if chain_management && !check_mode
-            end
-          else
-            unless present
-              any_changed = true
-              remote_exec("#{bin} -t #{table} -N #{chain}") if chain_management && !check_mode
-            end
-          end
-        else
-          return missing_param("chain") unless chain
-          present = rule_present?(bin, chain, rule_flags)
-          should_be_present = state == "present"
-          if present != should_be_present
-            any_changed = true
-            unless check_mode
-              action = @params["action"]? == "insert" ? "-I" : "-A"
-              action = "-D" unless should_be_present
-              remote_exec("#{bin} -t #{table} #{action} #{chain} #{rule_flags.join(" ")}")
-            end
-          end
-        end
+      # Match the original control flow: a nil `chain` only fails when
+      # neither flush: nor policy: short-circuits the per-binary branch
+      # (the rule/else branch is where the old code returned missing_param).
+      return missing_param("chain") if !flush && !policy && !chain
+
+      any_changed = binaries.reduce(false) do |changed, bin|
+        changed | apply_for_bin(bin, flush, policy, chain, rule_flags, state, chain_management, check_mode, msgs)
       end
 
       PluginResult.new(
@@ -87,6 +55,57 @@ module CrystalPlay
         failed: false,
         msg: any_changed ? "Rule applied" : "Rule already in desired state"
       )
+    end
+
+    private def apply_for_bin(bin : String, flush : Bool, policy : String?, chain : String?,
+                              rule_flags : Array(String), state : String, chain_management : Bool,
+                              check_mode : Bool, msgs : Array(String)) : Bool
+      if flush
+        apply_flush(bin, chain, check_mode, msgs)
+        true
+      elsif pol = policy
+        apply_policy(bin, chain, pol, check_mode, msgs)
+      elsif chain && rule_flags.empty?
+        apply_chain_state(bin, chain, state, chain_management, check_mode)
+      else
+        return false unless c = chain
+        apply_rule(bin, c, rule_flags, state, check_mode)
+      end
+    end
+
+    private def apply_flush(bin : String, chain : String?, check_mode : Bool, msgs : Array(String))
+      remote_exec("#{bin} -t #{table} -F #{chain}") unless check_mode
+      msgs << "flushed #{chain}"
+    end
+
+    private def apply_policy(bin : String, chain : String?, policy : String, check_mode : Bool, msgs : Array(String)) : Bool
+      changed = current_policy(bin, chain) != policy
+      if changed
+        remote_exec("#{bin} -t #{table} -P #{chain} #{policy}") unless check_mode
+      end
+      msgs << "policy #{policy}"
+      changed
+    end
+
+    private def apply_chain_state(bin : String, chain : String?, state : String, chain_management : Bool, check_mode : Bool) : Bool
+      present = chain_present?(bin, chain)
+      changed = state == "absent" ? present : !present
+      if changed
+        cmd = state == "absent" ? "-X" : "-N"
+        remote_exec("#{bin} -t #{table} #{cmd} #{chain}") if chain_management && !check_mode
+      end
+      changed
+    end
+
+    private def apply_rule(bin : String, chain : String, rule_flags : Array(String), state : String, check_mode : Bool) : Bool
+      present = rule_present?(bin, chain, rule_flags)
+      should_be_present = state == "present"
+      return false if present == should_be_present
+
+      return true if check_mode
+      action = should_be_present ? (@params["action"]? == "insert" ? "-I" : "-A") : "-D"
+      remote_exec("#{bin} -t #{table} #{action} #{chain} #{rule_flags.join(" ")}")
+      true
     end
 
     private def missing_param(name : String) : PluginResult

@@ -79,11 +79,15 @@ module CrystalPlay
       regenerate = @params["regenerate"]? || "full_idempotence"
       force = true?(@params["force"]?)
 
-      if type == "ECC"
-        return failure("curve must be specified for type=ECC") unless curve
-        unless KNOWN_CURVES.includes?(curve)
-          return failure("value of curve must be one of: #{KNOWN_CURVES.join(", ")}, got: #{curve}")
-        end
+      handle_present(path, type, size, curve, passphrase, cipher, format,
+        format_mismatch, regenerate, force)
+    end
+
+    private def handle_present(path : String, type : String, size : Int32, curve : String?,
+                               passphrase : String?, cipher : String, format : String,
+                               format_mismatch : String, regenerate : String, force : Bool) : PluginResult
+      if error = curve_failure(type, curve)
+        return error
       end
 
       base_dir = File.dirname(path)
@@ -100,55 +104,77 @@ module CrystalPlay
       if force || regenerate == "always" || !existing
         regen = true
       else
-        unless passphrase_ok?(path, passphrase)
-          return failure("Unable to read the key. The key is protected with a another passphrase / no passphrase or broken." \
-                         " Will not proceed. To force regeneration, call the module with `generate`" \
-                         " set to `full_idempotence` or `always`, or with `force=true`.") unless regenerate == "full_idempotence"
-          regen = true
-        end
+        outcome = passphrase_and_size_outcome(path, passphrase, type, size, curve, regenerate)
+        return outcome if outcome.is_a?(PluginResult)
+        regen = outcome == true
 
-        if !regen && regenerate != "never" && !size_and_type_match?(path, passphrase, type, size, curve)
-          unless ["partial_idempotence", "full_idempotence"].includes?(regenerate)
-            return failure("Key has wrong type and/or size." \
-                           " Will not proceed. To force regeneration, call the module with `generate`" \
-                           " set to `partial_idempotence`, `full_idempotence` or `always`, or with `force=true`.")
-          end
-          regen = true
-        end
-
-        if !regen && format_mismatch == "regenerate" && regenerate != "never" && !format_matches?(path, type, format)
-          unless ["partial_idempotence", "full_idempotence"].includes?(regenerate)
-            return failure("Key has wrong format." \
-                           " Will not proceed. To force regeneration, call the module with `generate`" \
-                           " set to `partial_idempotence`, `full_idempotence` or `always`, or with `force=true`." \
-                           " To convert the key, set `format_mismatch` to `convert`.")
-          end
-          regen = true
-        end
+        outcome = format_outcome(regen, format_mismatch, path, type, format, regenerate)
+        return outcome if outcome.is_a?(PluginResult)
+        regen = true if outcome == true
       end
 
-      convert = !regen && existing && format_mismatch == "convert" && !format_matches?(path, type, format)
-
-      if regen || convert
-        return result(true, path, type, size, curve, nil) if check_mode
-
-        backup_file = backup(path)
-        if regen
-          error = generate(path, type, size, curve, passphrase, cipher, format)
-        else
-          error = convert_format(path, type, passphrase, cipher, format)
-        end
-        return failure(error) if error
-
-        apply_attrs(path, default_mode: true)
-        return result(true, path, type, size, curve, backup_file)
-      end
+      convert = convert_needed?(regen, existing, format_mismatch, path, type, format)
+      return write_key(regen, convert, path, type, size, curve, passphrase, cipher, format) if regen || convert
 
       # No regeneration needed - owner/group/mode drift is still a real
       # change, exactly as the real module reports it (it runs the file
       # attribute step unconditionally).
       changed = apply_attrs(path, default_mode: true)
       result(changed, path, type, size, curve, nil)
+    end
+
+    private def curve_failure(type : String, curve : String?) : PluginResult?
+      return nil unless type == "ECC"
+      return failure("curve must be specified for type=ECC") unless curve
+      unless KNOWN_CURVES.includes?(curve)
+        return failure("value of curve must be one of: #{KNOWN_CURVES.join(", ")}, got: #{curve}")
+      end
+      nil
+    end
+
+    private def passphrase_and_size_outcome(path : String, passphrase : String?, type : String,
+                                            size : Int32, curve : String?,
+                                            regenerate : String) : PluginResult | Bool
+      unless passphrase_ok?(path, passphrase)
+        return failure("Unable to read the key. The key is protected with a another passphrase / no passphrase or broken." \
+                       " Will not proceed. To force regeneration, call the module with `generate`" \
+                       " set to `full_idempotence` or `always`, or with `force=true`.") unless regenerate == "full_idempotence"
+        return true
+      end
+
+      return false if regenerate == "never" || size_and_type_match?(path, passphrase, type, size, curve)
+      return failure("Key has wrong type and/or size." \
+                     " Will not proceed. To force regeneration, call the module with `generate`" \
+                     " set to `partial_idempotence`, `full_idempotence` or `always`, or with `force=true`.") unless ["partial_idempotence", "full_idempotence"].includes?(regenerate)
+      true
+    end
+
+    private def format_outcome(regen : Bool, format_mismatch : String, path : String,
+                               type : String, format : String, regenerate : String) : PluginResult | Bool
+      return false if regen || format_mismatch != "regenerate" || regenerate == "never"
+      return false if format_matches?(path, type, format)
+      return failure("Key has wrong format." \
+                     " Will not proceed. To force regeneration, call the module with `generate`" \
+                     " set to `partial_idempotence`, `full_idempotence` or `always`, or with `force=true`." \
+                     " To convert the key, set `format_mismatch` to `convert`.") unless ["partial_idempotence", "full_idempotence"].includes?(regenerate)
+      true
+    end
+
+    private def convert_needed?(regen : Bool, existing : Bool, format_mismatch : String,
+                                path : String, type : String, format : String) : Bool
+      !regen && existing && format_mismatch == "convert" && !format_matches?(path, type, format)
+    end
+
+    private def write_key(regen : Bool, convert : Bool, path : String, type : String, size : Int32,
+                          curve : String?, passphrase : String?, cipher : String, format : String) : PluginResult
+      return result(true, path, type, size, curve, nil) if true?(@params["check_mode"]?)
+
+      backup_file = backup(path)
+      error = regen ? generate(path, type, size, curve, passphrase, cipher, format) : convert_format(path, type, passphrase, cipher, format)
+      return failure(error) if error
+
+      apply_attrs(path, default_mode: true)
+      result(true, path, type, size, curve, backup_file)
     end
 
     private def failure(msg : String) : PluginResult
@@ -241,24 +267,30 @@ module CrystalPlay
       return false unless text
 
       case type
-      when "RSA", "DSA"
-        return false unless text.includes?("#{type} Private-Key") || text.matches?(/^Private-Key: \(\d+ bit/m)
-        return false if type == "RSA" && text.includes?("DSA")
-        return false if type == "DSA" && !text.includes?("DSA")
-        if match = text.match(/Private-Key: \((\d+) bit/)
-          match[1].to_i == size
-        else
-          false
-        end
-      when "ECC"
-        return false unless text.includes?("ASN1 OID") || text.includes?("EC Private-Key")
-        openssl_curve = CURVE_ALIASES[curve]? || curve
-        text.includes?("ASN1 OID: #{openssl_curve}")
+      when "RSA", "DSA" then rsa_dsa_match?(text, type, size)
+      when "ECC"        then ecc_match?(text, curve)
       when "Ed25519", "Ed448", "X25519", "X448"
         text.upcase.includes?("#{type.upcase} PRIVATE-KEY")
       else
         false
       end
+    end
+
+    private def rsa_dsa_match?(text : String, type : String, size : Int32) : Bool
+      return false unless text.includes?("#{type} Private-Key") || text.matches?(/^Private-Key: \(\d+ bit/m)
+      return false if type == "RSA" && text.includes?("DSA")
+      return false if type == "DSA" && !text.includes?("DSA")
+      if match = text.match(/Private-Key: \((\d+) bit/)
+        match[1].to_i == size
+      else
+        false
+      end
+    end
+
+    private def ecc_match?(text : String, curve : String?) : Bool
+      return false unless text.includes?("ASN1 OID") || text.includes?("EC Private-Key")
+      openssl_curve = CURVE_ALIASES[curve]? || curve
+      text.includes?("ASN1 OID: #{openssl_curve}")
     end
 
     # The format a NEW key of this type would be written in when the
@@ -307,6 +339,12 @@ module CrystalPlay
       return raw_file?(path) if wanted == "raw"
 
       head = (File.read(path)[0, 100]? || "").lines.first? || ""
+      pem_head_matches?(head, wanted)
+    rescue
+      false
+    end
+
+    private def pem_head_matches?(head : String, wanted : String) : Bool
       case wanted
       when "pkcs8"
         head.includes?("BEGIN PRIVATE KEY") || head.includes?("BEGIN ENCRYPTED PRIVATE KEY")
@@ -316,8 +354,6 @@ module CrystalPlay
       else
         true
       end
-    rescue
-      false
     end
 
     # --- generation ---------------------------------------------------

@@ -136,35 +136,39 @@ module CrystalPlay
       result = remote_exec(cmd)
       ran_ok = result[:exit_code] == 0
 
-      changed = if ufw_state_key == "logging" && (value = ufw_state_value)
-                  if ran_ok
-                    m = /Logging: (on|off)(?: \(([a-z]+)\))?/.match(pre_status || "")
-                    if m
-                      current_on_off = m[1]
-                      current_level = m[2]?
-                      if value == "off"
-                        current_on_off != "off"
-                      elsif current_on_off == "off"
-                        true
-                      else
-                        value != "on" && value != current_level
-                      end
-                    else
-                      true
-                    end
-                  else
-                    false
-                  end
-                elsif ufw_state_key
-                  post_status = remote_exec("ufw status verbose")[:stdout]
-                  ran_ok &&
-                    extract_status_fragment(pre_status || "", ufw_state_key) !=
-                      extract_status_fragment(post_status, ufw_state_key)
-                else
-                  ran_ok
-                end
+      changed = compute_changed(ran_ok, ufw_state_key, ufw_state_value, pre_status)
 
       PluginResult.new(changed: changed, failed: !ran_ok, msg: result[:stdout])
+    end
+
+    private def compute_changed(ran_ok : Bool, ufw_state_key : String?, ufw_state_value : String?, pre_status : String?) : Bool
+      if ufw_state_key == "logging" && (value = ufw_state_value)
+        logging_changed?(ran_ok, value, pre_status || "")
+      elsif ufw_state_key
+        post_status = remote_exec("ufw status verbose")[:stdout]
+        ran_ok &&
+          extract_status_fragment(pre_status || "", ufw_state_key) !=
+            extract_status_fragment(post_status, ufw_state_key)
+      else
+        ran_ok
+      end
+    end
+
+    private def logging_changed?(ran_ok : Bool, value : String, pre_status : String) : Bool
+      return false unless ran_ok
+
+      m = /Logging: (on|off)(?: \(([a-z]+)\))?/.match(pre_status)
+      return true unless m
+
+      current_on_off = m[1]
+      current_level = m[2]?
+      if value == "off"
+        current_on_off != "off"
+      elsif current_on_off == "off"
+        true
+      else
+        value != "on" && value != current_level
+      end
     end
 
     # Returns the status line relevant to *key* ("Default: ..." for a

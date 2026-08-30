@@ -45,29 +45,42 @@ module CrystalPlay
       certificate_path = @params["certificate_path"]?.try { |value| expand_tilde(value) }
       return failure("state is present but all of the following are missing: privatekey_path") unless privatekey_path
       return failure("The private key #{privatekey_path} does not exist") unless File.exists?(privatekey_path)
+      if error = validate_rest(path, certificate_path)
+        return error
+      end
+
+      export_or_attrs(path, privatekey_path, certificate_path, check_mode)
+    end
+
+    private def validate_rest(path : String, certificate_path : String?) : PluginResult?
       if certificate_path && !File.exists?(certificate_path)
         return failure("The certificate #{certificate_path} does not exist")
       end
 
       base_dir = File.dirname(path)
       return failure("The directory #{base_dir} does not exist or the file is not a directory") unless Dir.exists?(base_dir)
+      nil
+    end
 
+    private def export_or_attrs(path : String, privatekey_path : String, certificate_path : String?, check_mode : Bool) : PluginResult
       changed = true?(@params["force"]?) || !File.exists?(path) ||
                 !matches?(path, privatekey_path, certificate_path)
 
-      if changed && !check_mode
-        backup_file = backup(path)
-        if error = export(path, privatekey_path, certificate_path)
-          return failure(error)
-        end
-        apply_owner_group_mode(path, @params["owner"]?, @params["group"]?, @params["mode"]? || "0400")
-        return result(true, path, privatekey_path, backup_file)
-      end
+      return write_export(path, privatekey_path, certificate_path) if changed && !check_mode
 
       return result(true, path, privatekey_path, nil) if changed
 
       attrs_changed = apply_attrs(path)
       result(attrs_changed, path, privatekey_path, nil)
+    end
+
+    private def write_export(path : String, privatekey_path : String, certificate_path : String?) : PluginResult
+      backup_file = backup(path)
+      if error = export(path, privatekey_path, certificate_path)
+        return failure(error)
+      end
+      apply_owner_group_mode(path, @params["owner"]?, @params["group"]?, @params["mode"]? || "0400")
+      result(true, path, privatekey_path, backup_file)
     end
 
     private def failure(msg : String) : PluginResult

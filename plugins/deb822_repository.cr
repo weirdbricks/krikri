@@ -116,14 +116,37 @@ module CrystalPlay
       n = @params["name"]? || raise "deb822_repository: name is required"
       fields = {} of String => String
 
+      add_bool_fields(fields)
+      add_list_fields(fields)
+      add_scalar_fields(fields, n, check_mode)
+
+      PluginHelpers::Deb822RepositoryContent.render(fields)
+    end
+
+    # Bool fields (all `type: bool` in the real module's own
+    # argument_spec) are written as literal "yes"/"no" - real APT's own
+    # deb822 sources parser (and this codebase's own `true?`) both
+    # already understand "yes"/"no"/"true"/"false" interchangeably, so
+    # round-tripping an already-boolean-ish param value through `true?`
+    # first (rather than assuming it always arrives as literal
+    # "true"/"false") stays correct either way.
+    private def add_bool_fields(fields : Hash(String, String)) : Nil
       BOOL_FIELDS.each do |param, field|
         fields[param] = "#{field}: #{true?(@params[param]?) ? "yes" : "no"}" if @params[param]?
       end
+    end
+
+    private def add_list_fields(fields : Hash(String, String)) : Nil
       LIST_FIELDS.each do |param, field|
         default = param == "types" ? "deb" : nil
         value = @params[param]? || default
         fields[param] = "#{field}: #{value.gsub(',', ' ')}" if value
       end
+    end
+
+    # The remaining single-value fields: date_max_future, the X-Repolib-
+    # Name header and the resolved Signed-By value
+    private def add_scalar_fields(fields : Hash(String, String), n : String, check_mode : Bool) : Nil
       if date_max_future = @params["date_max_future"]?
         fields["date_max_future"] = "Date-Max-Future: #{date_max_future}"
       end
@@ -131,8 +154,6 @@ module CrystalPlay
       if (sb = resolve_signed_by(check_mode)) && !sb.empty?
         fields["signed_by"] = sb.starts_with?('\n') ? "Signed-By:#{sb}" : "Signed-By: #{sb}"
       end
-
-      PluginHelpers::Deb822RepositoryContent.render(fields)
     end
 
     private def resolve_signed_by(check_mode : Bool = false) : String?

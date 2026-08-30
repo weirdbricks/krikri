@@ -49,24 +49,40 @@ module CrystalPlay
 
       exists_result = remote_exec("test -e #{shell_quote(dev)}")
       unless exists_result[:exit_code] == 0
-        return state == "present" ? PluginResult.new(changed: false, failed: true, msg: "Device #{dev} not found.") : PluginResult.new(changed: false, failed: false, msg: "Device #{dev} not found.")
+        return missing_device_result(dev, state)
       end
 
       blkid_result = remote_exec("blkid -c /dev/null -o value -s TYPE #{shell_quote(dev)}")
       current_fs = blkid_result[:stdout].strip
 
-      if state == "absent"
-        if current_fs.empty?
-          return PluginResult.new(changed: false, failed: false, msg: "")
-        end
-        return PluginResult.new(changed: true, failed: false, msg: "") if check_mode
-        wipe_result = remote_exec("wipefs --all #{shell_quote(dev)}")
-        unless wipe_result[:exit_code] == 0
-          return PluginResult.new(changed: false, failed: true, msg: "wipefs failed: #{wipe_result[:stderr]}")
-        end
-        return PluginResult.new(changed: true, failed: false, msg: "")
-      end
+      return absent_result(dev, current_fs, check_mode) if state == "absent"
 
+      present_result(dev, current_fs, state, force, opts, check_mode)
+    end
+
+    private def missing_device_result(dev : String, state : String) : PluginResult
+      if state == "present"
+        PluginResult.new(changed: false, failed: true, msg: "Device #{dev} not found.")
+      else
+        PluginResult.new(changed: false, failed: false, msg: "Device #{dev} not found.")
+      end
+    end
+
+    private def absent_result(dev : String, current_fs : String, check_mode : Bool) : PluginResult
+      return PluginResult.new(changed: false, failed: false, msg: "") if current_fs.empty?
+      return PluginResult.new(changed: true, failed: false, msg: "") if check_mode
+
+      wipe_result = remote_exec("wipefs --all #{shell_quote(dev)}")
+      unless wipe_result[:exit_code] == 0
+        return PluginResult.new(changed: false, failed: true, msg: "wipefs failed: #{wipe_result[:stderr]}")
+      end
+      PluginResult.new(changed: true, failed: false, msg: "")
+    end
+
+    private def present_result(
+      dev : String, current_fs : String, state : String,
+      force : Bool, opts : Array(String), check_mode : Bool,
+    ) : PluginResult
       fstype = @params["fstype"]? || @params["type"]?
       unless fstype
         return PluginResult.new(changed: false, failed: true, msg: "fstype is required when state=present")
@@ -76,8 +92,16 @@ module CrystalPlay
       unless command_info
         return PluginResult.new(changed: false, failed: true, msg: "module does not support this filesystem (#{fstype}) yet.")
       end
-      mkfs_argv, force_flags, blkid_name = command_info
 
+      mkfs_argv, force_flags, blkid_name = command_info
+      create_filesystem(dev, current_fs, blkid_name, mkfs_argv, force_flags, opts, force, check_mode)
+    end
+
+    private def create_filesystem(
+      dev : String, current_fs : String, blkid_name : String,
+      mkfs_argv : Array(String), force_flags : Array(String),
+      opts : Array(String), force : Bool, check_mode : Bool,
+    ) : PluginResult
       same_fs = !current_fs.empty? && current_fs == blkid_name
       if same_fs && !force
         return PluginResult.new(changed: false, failed: false, msg: "")

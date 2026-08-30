@@ -27,48 +27,65 @@ module CrystalPlay
       current_mode, current_path, current_link, current_alternatives = parse_display(name)
 
       mode_present = ["present", "selected", "auto"].includes?(state)
-      changed = false
       messages = [] of String
 
       if mode_present
         effective_link = link || current_link
-        if path && (!current_alternatives.has_key?(path) || (priority_param && current_alternatives[path][:priority] != priority_param))
-          unless effective_link
-            return PluginResult.new(changed: false, failed: true, msg: "Needed to install the alternative, but unable to do so as we are missing the link")
-          end
-          priority = priority_param || current_alternatives[path]?.try(&.[:priority]) || 50
-          cmd = ["update-alternatives", "--install", effective_link, name, path, priority.to_s]
-          if subcommands
-            subcommands.each do |str|
-              cmd += ["--slave", str["link"].as_s, str["name"].as_s, str["path"].as_s]
-            end
-          end
-          remote_exec(cmd.map { |itm| shell_quote(itm) }.join(' '))
-          changed = true
-          messages << "Install alternative '#{path}' for '#{name}'."
-        end
+        early = install_alternative_if_needed(name, path, effective_link, priority_param, subcommands, current_alternatives, messages)
+        return early if early
 
-        is_same_path = path && current_path == path
-        if state == "selected" && path && !is_same_path
-          remote_exec("update-alternatives --set #{shell_quote(name)} #{shell_quote(path)}")
-          changed = true
-          messages << "Set alternative '#{path}' for '#{name}'."
-        end
-
-        if state == "auto" && current_mode == "manual"
-          remote_exec("update-alternatives --auto #{shell_quote(name)}")
-          changed = true
-          messages << "Set alternative to auto for '#{name}'."
-        end
+        select_or_auto(state, name, path, current_path, current_mode, messages)
       else
-        if path && current_alternatives.has_key?(path)
-          remote_exec("update-alternatives --remove #{shell_quote(name)} #{shell_quote(path)}")
-          changed = true
-          messages << "Remove alternative '#{path}' from '#{name}'."
-        end
+        remove_alternative(name, path, current_alternatives, messages)
       end
 
-      PluginResult.new(changed: changed, failed: false, msg: messages.join(' '))
+      PluginResult.new(changed: !messages.empty?, failed: false, msg: messages.join(' '))
+    end
+
+    # Install the alternative for path when it's missing or its priority
+    # changed. Returns the failure result when the link needed to install
+    # is missing, nil otherwise.
+    private def install_alternative_if_needed(name : String, path : String?, effective_link : String?, priority_param : Int32?, subcommands : Array(JSON::Any)?, current_alternatives : Hash(String, NamedTuple(priority: Int32)), messages : Array(String)) : PluginResult?
+      return nil unless path
+      needs_install = !current_alternatives.has_key?(path) || (priority_param && current_alternatives[path][:priority] != priority_param)
+      return nil unless needs_install
+
+      unless effective_link
+        return PluginResult.new(changed: false, failed: true, msg: "Needed to install the alternative, but unable to do so as we are missing the link")
+      end
+      priority = priority_param || current_alternatives[path]?.try(&.[:priority]) || 50
+      cmd = ["update-alternatives", "--install", effective_link, name, path, priority.to_s]
+      if subcommands
+        subcommands.each do |str|
+          cmd += ["--slave", str["link"].as_s, str["name"].as_s, str["path"].as_s]
+        end
+      end
+      remote_exec(cmd.map { |itm| shell_quote(itm) }.join(' '))
+      messages << "Install alternative '#{path}' for '#{name}'."
+      nil
+    end
+
+    # state: selected - point the alternative at path; state: auto -
+    # switch it back to auto mode
+    private def select_or_auto(state : String, name : String, path : String?, current_path : String?, current_mode : String?, messages : Array(String)) : Nil
+      is_same_path = path && current_path == path
+      if state == "selected" && path && !is_same_path
+        remote_exec("update-alternatives --set #{shell_quote(name)} #{shell_quote(path)}")
+        messages << "Set alternative '#{path}' for '#{name}'."
+      end
+
+      if state == "auto" && current_mode == "manual"
+        remote_exec("update-alternatives --auto #{shell_quote(name)}")
+        messages << "Set alternative to auto for '#{name}'."
+      end
+    end
+
+    # state: absent - remove the alternative for path when it exists
+    private def remove_alternative(name : String, path : String?, current_alternatives : Hash(String, NamedTuple(priority: Int32)), messages : Array(String)) : Nil
+      return unless path && current_alternatives.has_key?(path)
+
+      remote_exec("update-alternatives --remove #{shell_quote(name)} #{shell_quote(path)}")
+      messages << "Remove alternative '#{path}' from '#{name}'."
     end
 
     private def parse_display(name : String)

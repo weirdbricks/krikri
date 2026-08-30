@@ -29,6 +29,21 @@ module CrystalPlay
       #   keeps host=localhhost:3306 unless config_overrides_defaults:) -
       #   only user/password, plus socket as a fallback when no login_host
       #   was given, reach the URI.
+      # login_host/login_port never come from the config file. A
+      # config-file [client] socket is only used when neither
+      # login_unix_socket nor login_host was given.
+      private def self.resolve_socket(unix_socket : String?, host : String?, defs : NamedTuple(user: String?, password: String?, socket: String?)) : String?
+        unix_socket || (host ? nil : defs[:socket])
+      end
+
+      private def self.build_base_uri(socket : String?, host : String?, port : String?) : URI
+        if socket
+          URI.new(scheme: "mysql", path: socket)
+        else
+          URI.new(scheme: "mysql", host: host || "localhost", port: (port || "3306").to_i)
+        end
+      end
+
       def self.build_uri(
         host : String? = nil,
         port : String? = nil,
@@ -39,16 +54,8 @@ module CrystalPlay
       ) : String
         defs = option_file_defaults(config_file)
 
-        # login_host/login_port never come from the config file. A
-        # config-file [client] socket is only used when neither
-        # login_unix_socket nor login_host was given.
-        socket = unix_socket || (host ? nil : defs[:socket])
-
-        uri = if socket
-                URI.new(scheme: "mysql", path: socket)
-              else
-                URI.new(scheme: "mysql", host: host || "localhost", port: (port || "3306").to_i)
-              end
+        socket = resolve_socket(unix_socket, host, defs)
+        uri = build_base_uri(socket, host, port)
 
         # Real MySQL client libraries (what real Ansible's own mysql_*
         # modules run on, via PyMySQL/mysqlclient), when no login_user:
@@ -94,31 +101,41 @@ module CrystalPlay
       # comment_prefixes ('#', ';', '!') so `!includedir` lines don't crash
       # parsing): '#', ';', and '!' start comments; '=' separates an
       # unquoted/quoted value; surrounding single/double quotes are stripped.
+      private def self.comment_line?(line : String) : Bool
+        line.empty? || line.starts_with?('#') || line.starts_with?(';') || line.starts_with?('!')
+      end
+
+      private def self.read_client_section(path : String) : Hash(String, String)
+        client = {} of String => String
+        in_client = false
+        File.each_line(path) do |raw|
+          line = raw.strip
+          next if comment_line?(line)
+          if line.starts_with?('[')
+            section = line[1...-1].strip.downcase
+            in_client = section == "client"
+            next
+          end
+          next unless in_client
+          equals = line.index('=')
+          next unless equals
+          key = line[0...equals].strip.downcase
+          value = line[(equals + 1)..].strip
+          client[key] = MysqlConnection.strip_quotes(value) unless key.empty?
+        end
+        client
+      end
+
       def self.option_file_defaults(config_file : String?) : NamedTuple(user: String?, password: String?, socket: String?)
         empty = {user: nil, password: nil, socket: nil}
         return empty if config_file.nil? || config_file.empty?
 
         client = {} of String => String
-        in_client = false
         begin
           path = resolve_option_file_path(config_file)
           return empty if path.nil? || !File.exists?(path)
 
-          File.each_line(path) do |raw|
-            line = raw.strip
-            next if line.empty? || line.starts_with?('#') || line.starts_with?(';') || line.starts_with?('!')
-            if line.starts_with?('[')
-              section = line[1...-1].strip.downcase
-              in_client = section == "client"
-              next
-            end
-            next unless in_client
-            equals = line.index('=')
-            next unless equals
-            key = line[0...equals].strip.downcase
-            value = line[(equals + 1)..].strip
-            client[key] = MysqlConnection.strip_quotes(value) unless key.empty?
-          end
+          client = read_client_section(path)
         rescue
           # An unreadable/malformed option file is treated as absent - never
           # fail a connection attempt over a config-file parse error.

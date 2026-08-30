@@ -250,18 +250,7 @@ module CrystalPlay
       # (prometheus.prometheus's own roles write it both ways across
       # different calls - `tasks_from: install.yml` as well as bare
       # names elsewhere) - append .yml only when it's not already there.
-      tasks_path = if tasks_from
-                     if tasks_from.ends_with?(".yml") || tasks_from.ends_with?(".yaml") || tasks_from.ends_with?(".json")
-                       File.join(role_dir, "tasks", tasks_from)
-                     else
-                       # Real Ansible resolves a bare tasks_from: name
-                       # against ANY of its accepted extensions.
-                       ext = %w[yml yaml json].find { |e| File.exists?(File.join(role_dir, "tasks", "#{tasks_from}.#{e}")) }
-                       File.join(role_dir, "tasks", "#{tasks_from}.#{ext || "yml"}")
-                     end
-                   else
-                     find_main_file(File.join(role_dir, "tasks")) || File.join(role_dir, "tasks", "main.yml")
-                   end
+      tasks_path = resolve_role_tasks_path(role_dir, tasks_from)
       role_tasks = load_tasks_file(tasks_path, play, known_vars)
       role_handlers = load_tasks_file(find_main_file(File.join(role_dir, "handlers")) || File.join(role_dir, "handlers", "main.yml"), play, known_vars)
 
@@ -308,6 +297,24 @@ module CrystalPlay
       # Returned so a DECLARING role can pick these up as its own
       # dependency defaults (see the `dependency_defaults` merge above).
       defaults
+    end
+
+    # tasks_from: loads tasks/<name>.yml instead of tasks/main.yml -
+    # handlers/defaults/vars still always come from their normal main.yml
+    # locations regardless (matching real Ansible: only the entry-point
+    # TASKS file changes). Real Ansible accepts tasks_from: with OR
+    # without the extension (prometheus.prometheus's own roles write it
+    # both ways across different calls - `tasks_from: install.yml` as
+    # well as bare names elsewhere) - append .yml only when it's not
+    # already there.
+    private def self.resolve_role_tasks_path(role_dir : String, tasks_from : String?) : String
+      return find_main_file(File.join(role_dir, "tasks")) || File.join(role_dir, "tasks", "main.yml") unless tasks_from
+      return File.join(role_dir, "tasks", tasks_from) if tasks_from.ends_with?(".yml") || tasks_from.ends_with?(".yaml") || tasks_from.ends_with?(".json")
+
+      # Real Ansible resolves a bare tasks_from: name against ANY of its
+      # accepted extensions.
+      ext = %w[yml yaml json].find { |e| File.exists?(File.join(role_dir, "tasks", "#{tasks_from}.#{e}")) }
+      File.join(role_dir, "tasks", "#{tasks_from}.#{ext || "yml"}")
     end
 
     # Returns the accumulated defaults of every dependency loaded (later

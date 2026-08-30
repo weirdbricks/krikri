@@ -81,28 +81,16 @@ module CrystalPlay
     MAX_REDIRECTS = 10
 
     def execute : PluginResult
-      src = @params["src"]?
-      dest = @params["dest"]?
-      unless src && dest
+      src_param = @params["src"]?
+      dest_param = @params["dest"]?
+      unless src_param && dest_param
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: src and dest are both required")
       end
-      dest = expand_tilde(dest)
+      dest = expand_tilde(dest_param)
 
-      if creates = @params["creates"]?
-        expanded_creates = expand_tilde(creates)
-        if remote_file_exists?(expanded_creates) || remote_dir_exists?(expanded_creates)
-          # skipped: true - finish_single_task turns this into real
-          # ansible's "skipping: [host]" display + skipped= accounting.
-          # Without it the skip displayed as `ok:` with the message as
-          # body and counted ok=1, off-by-one vs real ansible's recap on
-          # every creates:-guarded unarchive (cloudalchemy.node_exporter /
-          # mysqld_exporter, round 195 re-verification: crystal ok=14/17
-          # skipped=2/15 where real ansible ok=13/16 skipped=3/16 - same
-          # skip, different counter).
-          return PluginResult.new(changed: false, failed: false, msg: "Skipped: #{creates} already exists", skipped: true)
-        end
+      if result = creates_skip_result
+        return result
       end
-
       # Real bug found benchmarking geerlingguy.node_exporter's own
       # "Download and unarchive node_exporter into temporary location."
       # task: `src: "{{ node_exporter_download_url }}"` (a real HTTPS
@@ -116,37 +104,66 @@ module CrystalPlay
       # a local FILE PATH on the target, always false for a URL,
       # failing every such task outright with "Source ... failed to
       # transfer" even though the URL itself was perfectly reachable.
-      tmp_download_path = nil
-      if src.starts_with?("http://") || src.starts_with?("https://")
-        tmp_download_path = "/tmp/.crystal-ansible-unarchive-#{Random.rand(100000..999999)}"
-        begin
-          download(src, tmp_download_path)
-        rescue ex
-          return PluginResult.new(changed: false, failed: true, msg: "Source '#{src}' failed to transfer: #{ex.message}")
-        end
-        src = tmp_download_path
-      end
+      resolved = resolve_src(src_param)
+      return resolved if resolved.is_a?(PluginResult)
+      src, tmp_download_path = resolved
 
-      unless remote_file_exists?(src)
-        return PluginResult.new(changed: false, failed: true, msg: "Source '#{src}' failed to transfer")
-      end
-
-      unless remote_dir_exists?(dest)
-        return PluginResult.new(changed: false, failed: true, msg: "dest '#{dest}' must be an existing dir")
+      if error = validate_src_and_dest(src, dest)
+        return PluginResult.new(changed: false, failed: true, msg: error)
       end
 
       begin
         run(src, dest)
       ensure
-        File.delete(tmp_download_path) if tmp_download_path && File.exists?(tmp_download_path)
-        # __cleanup_after_unarchive - set by TaskExecutor#stage_unarchive_
-        # remote_src when src: named a controller-side path (unarchive's
-        # own real Ansible default, remote_src: false) that had to be
-        # SCP'd to a remote scratch path first, same reasoning as copy:'s
-        # own __cleanup_after_copy. Best-effort.
-        if @params["__cleanup_after_unarchive"]? == "true"
-          File.delete(src) rescue nil
-        end
+        cleanup_after_unarchive(tmp_download_path, src)
+      end
+    end
+
+    private def creates_skip_result : PluginResult?
+      creates = @params["creates"]? || return nil
+      expanded_creates = expand_tilde(creates)
+      return nil unless remote_file_exists?(expanded_creates) || remote_dir_exists?(expanded_creates)
+
+      # skipped: true - finish_single_task turns this into real
+      # ansible's "skipping: [host]" display + skipped= accounting.
+      # Without it the skip displayed as `ok:` with the message as
+      # body and counted ok=1, off-by-one vs real ansible's recap on
+      # every creates:-guarded unarchive (cloudalchemy.node_exporter /
+      # mysqld_exporter, round 195 re-verification: crystal ok=14/17
+      # skipped=2/15 where real ansible ok=13/16 skipped=3/16 - same
+      # skip, different counter).
+      PluginResult.new(changed: false, failed: false, msg: "Skipped: #{creates} already exists", skipped: true)
+    end
+
+    # Returns {src, tmp_download_path} on success, or a failed
+    # PluginResult when a URL src: failed to download.
+    private def resolve_src(src : String) : PluginResult | {String, String?}
+      return {src, nil} unless src.starts_with?("http://") || src.starts_with?("https://")
+
+      tmp_download_path = "/tmp/.crystal-ansible-unarchive-#{Random.rand(100000..999999)}"
+      begin
+        download(src, tmp_download_path)
+      rescue ex
+        return PluginResult.new(changed: false, failed: true, msg: "Source '#{src}' failed to transfer: #{ex.message}")
+      end
+      {tmp_download_path, tmp_download_path}
+    end
+
+    private def validate_src_and_dest(src : String, dest : String) : String?
+      return "Source '#{src}' failed to transfer" unless remote_file_exists?(src)
+      return "dest '#{dest}' must be an existing dir" unless remote_dir_exists?(dest)
+      nil
+    end
+
+    private def cleanup_after_unarchive(tmp_download_path : String?, src : String)
+      File.delete(tmp_download_path) if tmp_download_path && File.exists?(tmp_download_path)
+      # __cleanup_after_unarchive - set by TaskExecutor#stage_unarchive_
+      # remote_src when src: named a controller-side path (unarchive's
+      # own real Ansible default, remote_src: false) that had to be
+      # SCP'd to a remote scratch path first, same reasoning as copy:'s
+      # own __cleanup_after_copy. Best-effort.
+      if @params["__cleanup_after_unarchive"]? == "true"
+        File.delete(src) rescue nil
       end
     end
 

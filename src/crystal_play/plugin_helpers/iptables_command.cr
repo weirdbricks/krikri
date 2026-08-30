@@ -29,20 +29,9 @@ module CrystalPlay
         append_param(rule, params["source_port"]?, "--source-port")
         append_param(rule, params["destination_port"]?, "--destination-port")
         append_param(rule, params["to_ports"]?, "--to-ports")
-        if params["syn"]? == "match"
-          rule << "--syn"
-        elsif params["syn"]? == "negate"
-          rule.concat(["!", "--syn"])
-        end
+        append_syn(rule, params["syn"]?)
         if ctstate = params["ctstate"]?
-          matches = params["match"]? || ""
-          if matches.includes?("conntrack")
-            rule.concat(["--ctstate", ctstate])
-          elsif matches.includes?("state")
-            rule.concat(["--state", ctstate])
-          else
-            rule.concat(["-m", "conntrack", "--ctstate", ctstate])
-          end
+          append_ctstate(rule, ctstate, params["match"]? || "")
         end
         append_param(rule, params["limit"]?, "--limit")
         append_param(rule, params["limit_burst"]?, "--limit-burst")
@@ -56,6 +45,24 @@ module CrystalPlay
           rule.concat(["-m", "comment", "--comment", shell_single_quote(comment)])
         end
         rule
+      end
+
+      private def self.append_syn(rule : Array(String), syn : String?)
+        if syn == "match"
+          rule << "--syn"
+        elsif syn == "negate"
+          rule.concat(["!", "--syn"])
+        end
+      end
+
+      private def self.append_ctstate(rule : Array(String), ctstate : String, matches : String)
+        if matches.includes?("conntrack")
+          rule.concat(["--ctstate", ctstate])
+        elsif matches.includes?("state")
+          rule.concat(["--state", ctstate])
+        else
+          rule.concat(["-m", "conntrack", "--ctstate", ctstate])
+        end
       end
 
       private def self.append_jump(rule : Array(String), value : String?, jump : String)

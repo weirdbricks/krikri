@@ -18,6 +18,14 @@ module CrystalPlay
       # `unix_socket_directories` default there.
       DEFAULT_UNIX_SOCKET_DIR = "/var/run/postgresql"
 
+      private def self.new_uri(unix_socket : String?, host : String?, port : String?, path : String) : URI
+        if unix_socket
+          URI.new(scheme: "postgres", path: path)
+        else
+          URI.new(scheme: "postgres", host: host || "localhost", port: (port || "5432").to_i, path: path)
+        end
+      end
+
       def self.build_uri(
         host : String? = nil,
         port : String? = nil,
@@ -44,11 +52,7 @@ module CrystalPlay
         # the PostgreSQL server") while real Ansible connected fine.
         unix_socket ||= DEFAULT_UNIX_SOCKET_DIR unless host
 
-        uri = if unix_socket
-                URI.new(scheme: "postgres", path: path)
-              else
-                URI.new(scheme: "postgres", host: host || "localhost", port: (port || "5432").to_i, path: path)
-              end
+        uri = new_uri(unix_socket, host, port, path)
 
         uri.user = user if user
         uri.password = password if password

@@ -126,18 +126,8 @@ module CrystalPlay
         args = ["x509", "-req", "-in", csr_path, "-out", tmp, "-#{digest}",
                 "-days", days.to_s, "-set_serial", serial.to_s, "-copy_extensions", "copyall"]
 
-        if provider == "selfsigned"
-          return "privatekey_path is required for the selfsigned provider" unless privatekey_path
-          args.concat(["-signkey", privatekey_path])
-          if (passphrase = @params["privatekey_passphrase"]?) && !passphrase.empty?
-            args.concat(["-passin", "pass:#{passphrase}"])
-          end
-        else
-          return "ownca_path and ownca_privatekey_path are required for the ownca provider" unless ownca_path && ownca_privatekey_path
-          args.concat(["-CA", ownca_path, "-CAkey", ownca_privatekey_path])
-          if (passphrase = @params["ownca_privatekey_passphrase"]?) && !passphrase.empty?
-            args.concat(["-passin", "pass:#{passphrase}"])
-          end
+        if error = add_signing_args(args, provider, privatekey_path, ownca_path, ownca_privatekey_path)
+          return error
         end
 
         if error = run_openssl(args)
@@ -148,6 +138,24 @@ module CrystalPlay
       ensure
         File.delete(tmp) if File.exists?(tmp)
       end
+    end
+
+    private def add_signing_args(args : Array(String), provider : String, privatekey_path : String?,
+                                 ownca_path : String?, ownca_privatekey_path : String?) : String?
+      if provider == "selfsigned"
+        return "privatekey_path is required for the selfsigned provider" unless privatekey_path
+        args.concat(["-signkey", privatekey_path])
+        if (passphrase = @params["privatekey_passphrase"]?) && !passphrase.empty?
+          args.concat(["-passin", "pass:#{passphrase}"])
+        end
+      else
+        return "ownca_path and ownca_privatekey_path are required for the ownca provider" unless ownca_path && ownca_privatekey_path
+        args.concat(["-CA", ownca_path, "-CAkey", ownca_privatekey_path])
+        if (passphrase = @params["ownca_privatekey_passphrase"]?) && !passphrase.empty?
+          args.concat(["-passin", "pass:#{passphrase}"])
+        end
+      end
+      nil
     end
 
     # The real module's serial is a 20-byte random integer. This one is
@@ -167,27 +175,37 @@ module CrystalPlay
     private def validity_days(provider : String) : Int32
       raw = @params[provider == "ownca" ? "ownca_not_after" : "selfsigned_not_after"]? || "+3650d"
 
-      if match = raw.match(/\A\+(\d+)([smhdw])\z/)
-        amount = match[1].to_i64
-        seconds = case match[2]
-                  when "s" then amount
-                  when "m" then amount * 60
-                  when "h" then amount * 3600
-                  when "w" then amount * 604800
-                  else          amount * 86400
-                  end
-        days = (seconds / 86400.0).ceil.to_i
-        return days < 1 ? 1 : days
+      if days = relative_days(raw)
+        return days
       end
 
-      if match = raw.match(/\A(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})Z\z/)
-        target = Time.utc(match[1].to_i, match[2].to_i, match[3].to_i,
-          match[4].to_i, match[5].to_i, match[6].to_i)
-        days = ((target - Time.utc).total_days).ceil.to_i
-        return days < 1 ? 1 : days
+      if days = absolute_days(raw)
+        return days
       end
 
       3650
+    end
+
+    private def relative_days(raw : String) : Int32?
+      match = raw.match(/\A\+(\d+)([smhdw])\z/) || return nil
+      amount = match[1].to_i64
+      seconds = case match[2]
+                when "s" then amount
+                when "m" then amount * 60
+                when "h" then amount * 3600
+                when "w" then amount * 604800
+                else          amount * 86400
+                end
+      days = (seconds / 86400.0).ceil.to_i
+      days < 1 ? 1 : days
+    end
+
+    private def absolute_days(raw : String) : Int32?
+      match = raw.match(/\A(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})Z\z/) || return nil
+      target = Time.utc(match[1].to_i, match[2].to_i, match[3].to_i,
+        match[4].to_i, match[5].to_i, match[6].to_i)
+      days = ((target - Time.utc).total_days).ceil.to_i
+      days < 1 ? 1 : days
     end
 
     # --- idempotency -----------------------------------------------------
@@ -197,49 +215,62 @@ module CrystalPlay
       cert_pubkey = pubkey_of(["x509", "-in", path, "-noout", "-pubkey"])
       return true unless cert_pubkey
 
-      if privatekey_path
-        args = ["pkey", "-in", privatekey_path, "-pubout"]
-        if (passphrase = @params["privatekey_passphrase"]?) && !passphrase.empty?
-          args.concat(["-passin", "pass:#{passphrase}"])
-        end
-        key_pubkey = pubkey_of(args)
-        return true unless key_pubkey && key_pubkey == cert_pubkey
-      end
+      return true if privatekey_mismatch?(cert_pubkey, privatekey_path)
 
       csr_pubkey = pubkey_of(["req", "-in", csr_path, "-noout", "-pubkey"])
       return true unless csr_pubkey && csr_pubkey == cert_pubkey
 
+      return true unless subject_matches?(path, csr_path)
+      return true unless extensions_match?(path, csr_path)
+      if provider == "ownca" && (ca_path = ownca_path)
+        return true unless ownca_matches?(path, ca_path)
+      end
+
+      false
+    end
+
+    private def privatekey_mismatch?(cert_pubkey : String, privatekey_path : String?) : Bool
+      return false unless privatekey_path
+      args = ["pkey", "-in", privatekey_path, "-pubout"]
+      if (passphrase = @params["privatekey_passphrase"]?) && !passphrase.empty?
+        args.concat(["-passin", "pass:#{passphrase}"])
+      end
+      key_pubkey = pubkey_of(args)
+      !(key_pubkey && key_pubkey == cert_pubkey)
+    end
+
+    private def subject_matches?(path : String, csr_path : String) : Bool
       cert_subject = field(["x509", "-in", path, "-noout", "-subject", "-nameopt", "RFC2253"])
       csr_subject = field(["req", "-in", csr_path, "-noout", "-subject", "-nameopt", "RFC2253"])
-      return true unless cert_subject && csr_subject
-      return true unless cert_subject.sub(/\Asubject=\s*/, "") == csr_subject.sub(/\Asubject=\s*/, "")
+      return false unless cert_subject && csr_subject
+      cert_subject.sub(/\Asubject=\s*/, "") == csr_subject.sub(/\Asubject=\s*/, "")
+    end
 
+    private def extensions_match?(path : String, csr_path : String) : Bool
       cert_extensions = extension_lines(path, csr: false)
       csr_extensions = extension_lines(csr_path, csr: true)
-      return true unless cert_extensions && csr_extensions
+      return false unless cert_extensions && csr_extensions
       # The certificate legitimately carries extensions the CSR does not
       # (SubjectKeyIdentifier, and AuthorityKeyIdentifier for ownca), so
       # this is containment, not equality - exactly what the real
       # module's own _check_csr does.
-      return true unless csr_extensions.all? { |line| cert_extensions.includes?(line) }
+      return false unless csr_extensions.all? { |line| cert_extensions.includes?(line) }
 
       # create_subject_key_identifier defaults to create_if_not_provided.
-      return true unless cert_extensions.any?(&.starts_with?("X509v3 Subject Key Identifier"))
+      cert_extensions.any?(&.starts_with?("X509v3 Subject Key Identifier"))
+    end
 
-      if provider == "ownca" && ownca_path
-        cert_issuer = field(["x509", "-in", path, "-noout", "-issuer", "-nameopt", "RFC2253"])
-        ca_subject = field(["x509", "-in", ownca_path, "-noout", "-subject", "-nameopt", "RFC2253"])
-        return true unless cert_issuer && ca_subject
-        return true unless cert_issuer.sub(/\Aissuer=\s*/, "") == ca_subject.sub(/\Asubject=\s*/, "")
+    private def ownca_matches?(path : String, ownca_path : String) : Bool
+      cert_issuer = field(["x509", "-in", path, "-noout", "-issuer", "-nameopt", "RFC2253"])
+      ca_subject = field(["x509", "-in", ownca_path, "-noout", "-subject", "-nameopt", "RFC2253"])
+      return false unless cert_issuer && ca_subject
+      return false unless cert_issuer.sub(/\Aissuer=\s*/, "") == ca_subject.sub(/\Asubject=\s*/, "")
 
-        # A CA regenerated under the same name is the case a subject
-        # comparison alone cannot see; its key identifier changes.
-        ca_ski = key_identifier(ownca_path, "X509v3 Subject Key Identifier")
-        cert_aki = key_identifier(path, "X509v3 Authority Key Identifier")
-        return true if ca_ski && cert_aki && ca_ski != cert_aki
-      end
-
-      false
+      # A CA regenerated under the same name is the case a subject
+      # comparison alone cannot see; its key identifier changes.
+      ca_ski = key_identifier(ownca_path, "X509v3 Subject Key Identifier")
+      cert_aki = key_identifier(path, "X509v3 Authority Key Identifier")
+      !(ca_ski && cert_aki && ca_ski != cert_aki)
     end
 
     private def pubkey_of(args : Array(String)) : String?
@@ -299,27 +330,34 @@ module CrystalPlay
       res.extra["csr"] = JSON::Any.new(csr_path)
       res.extra["backup_file"] = JSON::Any.new(backup_file) if backup_file
 
-      if File.exists?(path)
-        if dates = field(["x509", "-in", path, "-noout", "-dates"])
-          dates.each_line do |line|
-            key, _, value = line.partition('=')
-            asn1 = asn1_time(value.strip)
-            res.extra["notBefore"] = JSON::Any.new(asn1) if key == "notBefore" && asn1
-            res.extra["notAfter"] = JSON::Any.new(asn1) if key == "notAfter" && asn1
-          end
-        end
-        if serial_hex = field(["x509", "-in", path, "-noout", "-serial"])
-          if value = serial_hex.split('=').last?
-            numeric = value.to_i64?(16)
-            # Falls back to the hex text for a certificate issued
-            # elsewhere with a serial too wide for an Int64 (the real
-            # module's own 20-byte serials, for instance).
-            res.extra["serial_number"] = numeric ? JSON::Any.new(numeric) : JSON::Any.new(value)
-          end
-        end
-        res.extra["certificate"] = JSON::Any.new(File.read(path)) if true?(@params["return_content"]?)
-      end
+      add_certificate_details(res, path) if File.exists?(path)
       res
+    end
+
+    private def add_certificate_details(res : PluginResult, path : String) : Nil
+      add_dates(res, path)
+      add_serial(res, path)
+      res.extra["certificate"] = JSON::Any.new(File.read(path)) if true?(@params["return_content"]?)
+    end
+
+    private def add_dates(res : PluginResult, path : String) : Nil
+      return unless dates = field(["x509", "-in", path, "-noout", "-dates"])
+      dates.each_line do |line|
+        key, _, value = line.partition('=')
+        asn1 = asn1_time(value.strip)
+        res.extra["notBefore"] = JSON::Any.new(asn1) if key == "notBefore" && asn1
+        res.extra["notAfter"] = JSON::Any.new(asn1) if key == "notAfter" && asn1
+      end
+    end
+
+    private def add_serial(res : PluginResult, path : String) : Nil
+      return unless serial_hex = field(["x509", "-in", path, "-noout", "-serial"])
+      return unless value = serial_hex.split('=').last?
+      numeric = value.to_i64?(16)
+      # Falls back to the hex text for a certificate issued
+      # elsewhere with a serial too wide for an Int64 (the real
+      # module's own 20-byte serials, for instance).
+      res.extra["serial_number"] = numeric ? JSON::Any.new(numeric) : JSON::Any.new(value)
     end
 
     # openssl prints "Aug 26 14:03:39 2026 GMT"; the module reports the

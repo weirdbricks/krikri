@@ -53,7 +53,7 @@ describe CrystalPlay::TaskBatcher do
   it "splits a run right before a task that references an earlier register: (bare when:)" do
     a = task("a", register: "result_a")
     b = task("b")
-    b.when_condition = "result_a.changed?"
+    b.when_condition = "result_a.changed"
     tasks = [a, b]
 
     groups = CrystalPlay::TaskBatcher.plan(tasks)
@@ -79,7 +79,7 @@ describe CrystalPlay::TaskBatcher do
     a = task("a", register: "result_a")
     a.loop_items = [JSON::Any.new("x")]
     b = task("b")
-    b.when_condition = "result_a.changed?"
+    b.when_condition = "result_a.changed"
     c = task("c")
     tasks = [a, b, c]
 
@@ -91,7 +91,7 @@ describe CrystalPlay::TaskBatcher do
   it "does not split on a register: reference that isn't a real match (substring, not whole word)" do
     a = task("a", register: "result")
     b = task("b")
-    b.when_condition = "result_extended.changed?" # "result" is a substring but not a whole-word match
+    b.when_condition = "result_extended.changed" # "result" is a substring but not a whole-word match
     tasks = [a, b]
 
     groups = CrystalPlay::TaskBatcher.plan(tasks)
@@ -263,7 +263,7 @@ describe CrystalPlay::TaskBatcher do
 
   it "every task appears in exactly one group, in original order" do
     c = task("c")
-    c.when_condition = "r.changed?"
+    c.when_condition = "r.changed"
     tasks = [task("a"), task("b", register: "r"), c]
 
     groups = CrystalPlay::TaskBatcher.plan(tasks)

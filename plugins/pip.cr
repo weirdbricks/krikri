@@ -83,16 +83,8 @@ module CrystalPlay
       # binary already creates the venv (and fails there if that
       # itself doesn't work), so its own pip is guaranteed to exist by
       # the time this runs.
-      unless @params["virtualenv"]?
-        candidate = @params["executable"]? || "pip3"
-        # `which`, not the shell builtin `command -v` - LocalExecutor's
-        # own no-shell-metacharacters fast path execs argv[0] directly
-        # as a real binary (skipping a `bash -c` hop), and "command" is
-        # a shell builtin with no standalone executable on this system
-        # (or most others) to exec at all.
-        unless remote_exec("which #{candidate}")[:exit_code] == 0
-          return PluginResult.new(changed: false, failed: true, msg: "Unable to find any of #{candidate} to use.  pip needs to be installed.")
-        end
+      if missing_binary = ensure_pip_binary
+        return missing_binary
       end
 
       # Real Ansible's pip.py: `name` is a list; `if name:` is Python
@@ -103,15 +95,15 @@ module CrystalPlay
       # with changed: false rather than trying to pip-install anything.
       # A name: key that's genuinely absent (not just empty) together
       # with no requirements: is the real required_one_of failure.
-      if name.nil? && requirements.nil?
-        return raw_name ? PluginResult.new(changed: false, failed: false, msg: "No valid name or requirements file found.") : PluginResult.new(changed: false, failed: true, msg: "name or requirements is required")
+      if missing_name = missing_name_result(raw_name, name, requirements)
+        return missing_name
       end
 
       pip_bin = resolve_pip_binary
       return pip_bin if pip_bin.is_a?(PluginResult)
 
-      if umask = @params["umask"]?
-        return PluginResult.new(changed: false, failed: true, msg: "umask must be an octal integer") unless umask =~ /\A0?[0-7]{1,4}\z/
+      if bad_umask = umask_error
+        return bad_umask
       end
 
       case state
@@ -122,6 +114,42 @@ module CrystalPlay
       else
         install(pip_bin, target_spec(name, @params["version"]?), upgrade: false, requirements: requirements)
       end
+    end
+
+    # Verify a pip binary exists on the target (skipped for a
+    # virtualenv: target - see the caller's comment). Returns the
+    # failure result, or nil when a usable pip binary was found.
+    private def ensure_pip_binary : PluginResult?
+      return nil if @params["virtualenv"]?
+
+      candidate = @params["executable"]? || "pip3"
+      # `which`, not the shell builtin `command -v` - LocalExecutor's
+      # own no-shell-metacharacters fast path execs argv[0] directly
+      # as a real binary (skipping a `bash -c` hop), and "command" is
+      # a shell builtin with no standalone executable on this system
+      # (or most others) to exec at all.
+      unless remote_exec("which #{candidate}")[:exit_code] == 0
+        return PluginResult.new(changed: false, failed: true, msg: "Unable to find any of #{candidate} to use.  pip needs to be installed.")
+      end
+
+      nil
+    end
+
+    # The required name/requirements combination check. Returns the
+    # early result to use, or nil when the arguments are acceptable.
+    private def missing_name_result(raw_name : String?, name : String?, requirements : String?) : PluginResult?
+      return nil unless name.nil? && requirements.nil?
+
+      raw_name ? PluginResult.new(changed: false, failed: false, msg: "No valid name or requirements file found.") : PluginResult.new(changed: false, failed: true, msg: "name or requirements is required")
+    end
+
+    # Validate the umask: parameter, if given. Returns the failure
+    # result for an invalid (non-octal) value, or nil.
+    private def umask_error : PluginResult?
+      if umask = @params["umask"]?
+        return PluginResult.new(changed: false, failed: true, msg: "umask must be an octal integer") unless umask =~ /\A0?[0-7]{1,4}\z/
+      end
+      nil
     end
 
     # Handles the "Python-repr-list JSON" case: a `{{ }}`-templated
@@ -233,13 +261,8 @@ module CrystalPlay
     end
 
     private def install(pip_bin : String, spec : String?, upgrade : Bool, requirements : String? = nil) : PluginResult
-      target = if requirements
-                 "-r #{requirements}"
-               elsif spec
-                 spec
-               else
-                 return PluginResult.new(changed: false, failed: true, msg: "name or requirements is required")
-               end
+      target = install_target(spec, requirements)
+      return target if target.is_a?(PluginResult)
 
       # A comma-joined multi-package `name:` list checked as ONE bogus
       # "package" (`pip3 show docker,urllib3`) always failed - not just
@@ -251,25 +274,10 @@ module CrystalPlay
       # short-circuits, matching real Ansible's own per-package pip
       # idempotency.
       unless upgrade || requirements
-        sp = spec || raise "pip: spec is required"
-        packages = sp.split(',').map(&.strip)
-        all_satisfied = packages.all? do |package|
-          if package.includes?("==")
-            bare, _, wanted_version = package.partition("==")
-            installed_version(pip_bin, bare) == wanted_version
-          else
-            already_installed?(pip_bin, package)
-          end
-        end
-        if all_satisfied
-          return PluginResult.new(changed: false, failed: false, msg: "Package already installed")
-        end
+        return PluginResult.new(changed: false, failed: false, msg: "Package already installed") if all_packages_satisfied?(pip_bin, spec)
       end
 
-      extra = @params["extra_args"]? || ""
-      if true?(@params["editable"]?) && !extra.split(' ').includes?("-e")
-        extra = extra.empty? ? "-e" : "#{extra} -e"
-      end
+      extra = editable_extra(@params["extra_args"]? || "")
 
       # `target` reaches here already comma-joined by the parser for a
       # literal YAML `name:` list (real Ansible's pip module takes a
@@ -306,6 +314,44 @@ module CrystalPlay
                   (upgrade && !result[:stdout].includes?("Successfully installed")))
 
       PluginResult.new(changed: changed, failed: false, msg: "Package installed", stdout: result[:stdout])
+    end
+
+    # Resolve what to pass to `pip install`: a requirements file, a
+    # spec, or the missing-argument failure.
+    private def install_target(spec : String?, requirements : String?) : String | PluginResult
+      if requirements
+        "-r #{requirements}"
+      elsif spec
+        spec
+      else
+        PluginResult.new(changed: false, failed: true, msg: "name or requirements is required")
+      end
+    end
+
+    # Per-package idempotency check for a non-upgrade, non-requirements
+    # install: every package already installed (or - for a `==` pin -
+    # already at the requested version)?
+    private def all_packages_satisfied?(pip_bin : String, spec : String?) : Bool
+      sp = spec || raise "pip: spec is required"
+      packages = sp.split(',').map(&.strip)
+      packages.all? do |package|
+        if package.includes?("==")
+          bare, _, wanted_version = package.partition("==")
+          installed_version(pip_bin, bare) == wanted_version
+        else
+          already_installed?(pip_bin, package)
+        end
+      end
+    end
+
+    # Merge the `-e` flag into extra_args when editable: is set
+    # (deduplicated if extra_args already includes it)
+    private def editable_extra(extra : String) : String
+      if true?(@params["editable"]?) && !extra.split(' ').includes?("-e")
+        extra.empty? ? "-e" : "#{extra} -e"
+      else
+        extra
+      end
     end
 
     private def remove(pip_bin : String, name : String) : PluginResult

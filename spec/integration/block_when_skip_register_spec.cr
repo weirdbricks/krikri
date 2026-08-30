@@ -40,8 +40,8 @@ describe "register: on a task skipped via its enclosing block's when:" do
 
           - name: only if shared_result still changed
             ansible.builtin.debug:
-              msg: "shared_result.changed? is {{ shared_result.changed? }}"
-            when: shared_result.changed?
+              msg: "shared_result.changed is {{ shared_result.changed }}"
+            when: shared_result.changed
       YAML
 
     output = IO::Memory.new
@@ -49,7 +49,7 @@ describe "register: on a task skipped via its enclosing block's when:" do
 
     status.success?.should be_true
     output.to_s.should contain("skipping:")
-    output.to_s.should_not contain("shared_result.changed? is")
+    output.to_s.should_not contain("shared_result.changed is")
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end

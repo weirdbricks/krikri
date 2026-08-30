@@ -42,15 +42,7 @@ module CrystalPlay
       regexp = @params["regexp"]?.try { |rval| Regex.new(rval) rescue nil }
       delimiter = @params["delimiter"]?
 
-      fragments = Dir.children(src).sort.select do |name|
-        next false if ignore_hidden && name.starts_with?('.')
-        full = File.join(src, name)
-        next false unless File.file?(full)
-        regexp.nil? || regexp.try(&.matches?(name)) || false
-      end
-
-      assembled = fragments.map { |name| File.read(File.join(src, name)) }
-      content = delimiter ? assembled.join(delimiter.includes?("\n") ? delimiter : "#{delimiter}\n") : assembled.join
+      content = assembled_content(src, ignore_hidden, regexp, delimiter)
 
       existing = File.exists?(dest) ? File.read(dest) : nil
       changed = existing != content
@@ -61,15 +53,7 @@ module CrystalPlay
       backup_file = ""
 
       if changed && !check_mode
-        if existing && true?(@params["backup"]?)
-          backup_file = "#{dest}.#{Time.utc.to_unix}.bak"
-          File.write(backup_file, existing)
-        end
-
-        dest_dir = File.dirname(dest)
-        Dir.mkdir_p(dest_dir) unless Dir.exists?(dest_dir)
-        File.write(dest, content)
-        apply_owner_group_mode(dest, @params["owner"]?, @params["group"]?, @params["mode"]?)
+        backup_file = write_assembled(dest, content, existing)
       end
 
       # __cleanup_after_assemble - set by TaskExecutor#stage_assemble_dir
@@ -89,6 +73,35 @@ module CrystalPlay
         checksum: Digest::MD5.hexdigest(content),
         backup_file: backup_file
       )
+    end
+
+    # Collect the sorted fragment files from src and join their contents
+    private def assembled_content(src : String, ignore_hidden : Bool, regexp : Regex?, delimiter : String?) : String
+      fragments = Dir.children(src).sort.select do |name|
+        next false if ignore_hidden && name.starts_with?('.')
+        full = File.join(src, name)
+        next false unless File.file?(full)
+        regexp.nil? || regexp.try(&.matches?(name)) || false
+      end
+
+      assembled = fragments.map { |name| File.read(File.join(src, name)) }
+      delimiter ? assembled.join(delimiter.includes?("\n") ? delimiter : "#{delimiter}\n") : assembled.join
+    end
+
+    # Write the assembled content to dest, backing up the previous file
+    # when requested; returns the backup file path ("" when none)
+    private def write_assembled(dest : String, content : String, existing : String?) : String
+      backup_file = ""
+      if existing && true?(@params["backup"]?)
+        backup_file = "#{dest}.#{Time.utc.to_unix}.bak"
+        File.write(backup_file, existing)
+      end
+
+      dest_dir = File.dirname(dest)
+      Dir.mkdir_p(dest_dir) unless Dir.exists?(dest_dir)
+      File.write(dest, content)
+      apply_owner_group_mode(dest, @params["owner"]?, @params["group"]?, @params["mode"]?)
+      backup_file
     end
   end
 end

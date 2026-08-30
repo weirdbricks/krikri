@@ -253,9 +253,9 @@ module CrystalPlay
       changed = if p.type == "default_privs"
                   apply_all_default_privs(database, p, roles)
                 elsif p.type == "group"
-                  apply_all_group_grants(database, objs, roles, p.state, p.grant_option, p.check_mode?)
+                  apply_all_group_grants(database, objs, roles, p.state, p.grant_option, p.check_mode)
                 else
-                  apply_all_grants(database, p.type, objs, p.schema, roles, p.privs, p.state, p.grant_option, p.check_mode?)
+                  apply_all_grants(database, p.type, objs, p.schema, roles, p.privs, p.state, p.grant_option, p.check_mode)
                 end
       PluginResult.new(changed: changed, failed: false, msg: changed ? "Privileges updated" : "Privileges already up to date")
     end
@@ -331,9 +331,7 @@ module CrystalPlay
     private def resolve_params! : ResolvedParams
       type = @params["type"]? || "table"
       state = @params["state"]? || "present"
-      valid_types = PluginHelpers::PostgresqlAcl::PRIV_LETTERS.keys + ["group", "default_privs"]
-      raise "type must be one of #{valid_types.join(", ")}, got '#{type}'" unless valid_types.includes?(type)
-      raise "state must be 'present' or 'absent', got '#{state}'" unless state == "present" || state == "absent"
+      validate_type_and_state!(type, state)
 
       # Real Ansible aliases: privs: -> priv:, roles: -> role:,
       # login_db: -> db:/database:, objs: -> obj: (below). Same bug
@@ -353,9 +351,28 @@ module CrystalPlay
       target_roles = resolve_target_roles!(type)
 
       objs, all_in_schema = resolve_objs!(type, login_db)
-      skip_obj_check = ROUTINE_TYPES.includes?(type) || type == "default_privs"
+      skip_obj_check = skip_obj_check?(type)
       validate_identifiers!(schema, skip_obj_check ? [] of String : objs, roles_raw)
 
+      build_resolved_params(type, state, privs, roles_raw, objs, all_in_schema,
+        target_roles, schema, login_db)
+    end
+
+    private def validate_type_and_state!(type : String, state : String) : Nil
+      valid_types = PluginHelpers::PostgresqlAcl::PRIV_LETTERS.keys + ["group", "default_privs"]
+      raise "type must be one of #{valid_types.join(", ")}, got '#{type}'" unless valid_types.includes?(type)
+      raise "state must be 'present' or 'absent', got '#{state}'" unless state == "present" || state == "absent"
+    end
+
+    private def skip_obj_check?(type : String) : Bool
+      ROUTINE_TYPES.includes?(type) || type == "default_privs"
+    end
+
+    private def build_resolved_params(
+      type : String, state : String, privs : Array(String), roles_raw : Array(String),
+      objs : Array(String), all_in_schema : Bool, target_roles : Array(String),
+      schema : String, login_db : String,
+    ) : ResolvedParams
       ResolvedParams.new(
         type: type, state: state, privs: privs, roles_raw: roles_raw, objs: objs, all_in_schema: all_in_schema,
         target_roles: target_roles,
@@ -650,7 +667,7 @@ module CrystalPlay
       end
 
       return false if current.to_set == desired.to_set
-      return true if p.check_mode?
+      return true if p.check_mode
 
       execute_default_priv_statements(db, p, owner, cls, role, desired)
       true

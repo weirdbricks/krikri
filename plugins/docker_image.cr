@@ -89,32 +89,9 @@ module CrystalPlay
 
       case state
       when "present"
-        if exists && !force_source
-          PluginResult.new(changed: false, failed: false, msg: "Image #{full_ref} already present")
-        elsif check_mode
-          PluginResult.new(changed: true, failed: false, msg: "Image #{full_ref} would be pulled")
-        else
-          api.images.create(ref_name, ref_tag)
-          # force_source: re-pulling an image that resolves to the
-          # exact same digest it already had is a real no-op - see
-          # #image_id's own doc comment for why this matters and what
-          # real Ansible's source does.
-          unchanged = exists && image_id(client, full_ref) == pre_pull_id
-          PluginResult.new(
-            changed: !unchanged,
-            failed: false,
-            msg: unchanged ? "Image #{full_ref} already present (force_source, unchanged)" : (exists ? "Re-pulled image #{full_ref} (force_source)" : "Pulled image #{full_ref}")
-          )
-        end
+        present_result(client, api, ref_name, ref_tag, full_ref, pre_pull_id, exists, force_source, check_mode)
       when "absent"
-        if !exists
-          PluginResult.new(changed: false, failed: false, msg: "Image #{full_ref} already absent")
-        elsif check_mode
-          PluginResult.new(changed: true, failed: false, msg: "Image #{full_ref} would be removed")
-        else
-          api.images.delete(full_ref, force: true)
-          PluginResult.new(changed: true, failed: false, msg: "Removed image #{full_ref}")
-        end
+        absent_result(api, full_ref, exists, check_mode)
       else
         PluginResult.new(changed: false, failed: true, msg: "state must be 'present' or 'absent', got '#{state}'")
       end
@@ -122,6 +99,51 @@ module CrystalPlay
       PluginResult.new(changed: false, failed: true, msg: "Docker API error: #{ex.message}")
     rescue ex : Socket::ConnectError
       PluginResult.new(changed: false, failed: true, msg: "Could not connect to the Docker daemon (#{docker_host_description}): #{ex.message}")
+    end
+
+    private def present_result(
+      client : Docr::Client, api : Docr::API, ref_name : String, ref_tag : String,
+      full_ref : String, pre_pull_id : String?, exists : Bool,
+      force_source : Bool, check_mode : Bool,
+    ) : PluginResult
+      if exists && !force_source
+        PluginResult.new(changed: false, failed: false, msg: "Image #{full_ref} already present")
+      elsif check_mode
+        PluginResult.new(changed: true, failed: false, msg: "Image #{full_ref} would be pulled")
+      else
+        api.images.create(ref_name, ref_tag)
+        # force_source: re-pulling an image that resolves to the
+        # exact same digest it already had is a real no-op - see
+        # #image_id's own doc comment for why this matters and what
+        # real Ansible's source does.
+        unchanged = exists && image_id(client, full_ref) == pre_pull_id
+        PluginResult.new(
+          changed: !unchanged,
+          failed: false,
+          msg: pull_result_msg(full_ref, unchanged, exists)
+        )
+      end
+    end
+
+    private def pull_result_msg(full_ref : String, unchanged : Bool, exists : Bool) : String
+      if unchanged
+        "Image #{full_ref} already present (force_source, unchanged)"
+      elsif exists
+        "Re-pulled image #{full_ref} (force_source)"
+      else
+        "Pulled image #{full_ref}"
+      end
+    end
+
+    private def absent_result(api : Docr::API, full_ref : String, exists : Bool, check_mode : Bool) : PluginResult
+      if !exists
+        PluginResult.new(changed: false, failed: false, msg: "Image #{full_ref} already absent")
+      elsif check_mode
+        PluginResult.new(changed: true, failed: false, msg: "Image #{full_ref} would be removed")
+      else
+        api.images.delete(full_ref, force: true)
+        PluginResult.new(changed: true, failed: false, msg: "Removed image #{full_ref}")
+      end
     end
 
     # Existence check via a raw GET rather than Images#inspect: we only

@@ -41,23 +41,25 @@ module CrystalPlay
       cap_names = current_caps.map { |itm| itm[0] }
 
       if state == "present" && !current_caps.includes?({cap_name, cap_op, cap_flags})
-        return PluginResult.new(changed: true, failed: false, msg: "capabilities changed") if check_mode
-
         new_caps = current_caps.reject { |itm| itm[0] == cap_name }
         new_caps << {cap_name, cap_op, cap_flags}
-        stdout = setcap(path, new_caps)
-        PluginResult.new(changed: true, failed: false, msg: "capabilities changed", state: state, stdout: stdout)
+        apply_caps(path, new_caps, state, check_mode)
       elsif state == "absent" && cap_names.includes?(cap_name)
-        return PluginResult.new(changed: true, failed: false, msg: "capabilities changed") if check_mode
-
         new_caps = current_caps.reject { |itm| itm[0] == cap_name }
-        stdout = setcap(path, new_caps)
-        PluginResult.new(changed: true, failed: false, msg: "capabilities changed", state: state, stdout: stdout)
+        apply_caps(path, new_caps, state, check_mode)
       else
         PluginResult.new(changed: false, failed: false, msg: "capabilities unchanged", state: state)
       end
     rescue ex : CapError
       PluginResult.new(changed: false, failed: true, msg: ex.message || "capabilities module error")
+    end
+
+    # Commit the new capability set (or just report it, in check mode)
+    private def apply_caps(path : String, new_caps : Array(Cap), state : String, check_mode : Bool) : PluginResult
+      return PluginResult.new(changed: true, failed: false, msg: "capabilities changed") if check_mode
+
+      stdout = setcap(path, new_caps)
+      PluginResult.new(changed: true, failed: false, msg: "capabilities changed", state: state, stdout: stdout)
     end
 
     private def getcap(path : String) : Array(Cap)

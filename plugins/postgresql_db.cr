@@ -89,14 +89,22 @@ module CrystalPlay
       end
 
       state = @params["state"]? || "present"
-      check_mode = true?(@params["check_mode"]?)
+      return run_dump_or_restore(state, name) if state == "dump" || state == "restore"
 
-      if state == "dump" || state == "restore"
-        return run_dump_or_restore(state, name)
+      uri = build_maintenance_uri
+      DB.open(uri) do |dbcon|
+        exists = dbcon.query_all("SELECT datname FROM pg_database", as: String).includes?(name)
+        apply_state(state, dbcon, name, exists, true?(@params["check_mode"]?))
       end
+    rescue ex : DB::ConnectionRefused
+      PluginResult.new(changed: false, failed: true, msg: "Could not connect to the PostgreSQL server: #{ex.message}")
+    rescue ex : PQ::PQError
+      PluginResult.new(changed: false, failed: true, msg: "PostgreSQL error: #{ex.message}")
+    end
 
+    private def build_maintenance_uri : String
       login = PluginHelpers::PostgresqlConnection.resolve_login_params(@params)
-      uri = PluginHelpers::PostgresqlConnection.build_uri(
+      PluginHelpers::PostgresqlConnection.build_uri(
         host: login[:host],
         port: login[:port],
         user: login[:user] || "postgres",
@@ -104,23 +112,17 @@ module CrystalPlay
         unix_socket: login[:unix_socket],
         dbname: @params["maintenance_db"]? || "postgres",
       )
+    end
 
-      DB.open(uri) do |dbcon|
-        exists = dbcon.query_all("SELECT datname FROM pg_database", as: String).includes?(name)
-
-        case state
-        when "present"
-          ensure_present(dbcon, name, exists, check_mode)
-        when "absent"
-          ensure_absent(dbcon, name, exists, check_mode)
-        else
-          PluginResult.new(changed: false, failed: true, msg: "state must be 'present' or 'absent', got '#{state}'")
-        end
+    private def apply_state(state : String, dbcon : DB::Database, name : String, exists : Bool, check_mode : Bool) : PluginResult
+      case state
+      when "present"
+        ensure_present(dbcon, name, exists, check_mode)
+      when "absent"
+        ensure_absent(dbcon, name, exists, check_mode)
+      else
+        PluginResult.new(changed: false, failed: true, msg: "state must be 'present' or 'absent', got '#{state}'")
       end
-    rescue ex : DB::ConnectionRefused
-      PluginResult.new(changed: false, failed: true, msg: "Could not connect to the PostgreSQL server: #{ex.message}")
-    rescue ex : PQ::PQError
-      PluginResult.new(changed: false, failed: true, msg: "PostgreSQL error: #{ex.message}")
     end
 
     private def ensure_present(db : DB::Database, name : String, exists : Bool, check_mode : Bool) : PluginResult

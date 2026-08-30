@@ -20,16 +20,9 @@ module CrystalPlay
     def execute : PluginResult
       state = @params["state"]? || "present"
 
-      username = @params["username"]?
-      activationkey = @params["activationkey"]?
-      token = @params["token"]?
-
-      if state == "present"
-        has_cred = !username.to_s.empty? || !activationkey.to_s.empty? || !token.to_s.empty?
-        unless has_cred
-          return PluginResult.new(changed: false, failed: true,
-            msg: "state is present but any of the following are missing: username, activationkey, token")
-        end
+      if state == "present" && !credential_present?
+        return PluginResult.new(changed: false, failed: true,
+          msg: "state is present but any of the following are missing: username, activationkey, token")
       end
 
       bin = "subscription-manager"
@@ -43,37 +36,54 @@ module CrystalPlay
       identity = remote_exec("#{bin} identity")
       registered = identity[:exit_code] == 0
 
-      if state == "absent"
-        return PluginResult.new(changed: false, failed: false, msg: "System is not registered") unless registered
-        r = remote_exec("#{bin} unregister")
-        return PluginResult.new(changed: false, failed: true,
-          msg: "Failed to unregister: #{r[:stderr]}") if r[:exit_code] != 0
-        return PluginResult.new(changed: true, failed: false, msg: "System unregistered")
-      end
+      return handle_absent(bin) if state == "absent"
+      return PluginResult.new(changed: false, failed: false, msg: "System already registered") if registered
 
-      if registered
-        return PluginResult.new(changed: false, failed: false, msg: "System already registered")
-      end
-
-      cmd = "#{bin} register --auto-attach"
-      if activationkey && !activationkey.to_s.empty?
-        cmd += " --activationkey=#{activationkey}"
-        if org_id = @params["org_id"]?
-          cmd += " --org=#{org_id}"
-        end
-      elsif token && !token.to_s.empty?
-        cmd += " --token=#{token}"
-      else
-        cmd += " --username=#{username} --password='#{@params["password"]?}'"
-      end
-      if @params["force"]?
-        cmd += " --force"
-      end
-
-      r = remote_exec(cmd)
+      r = remote_exec(build_register_command(bin))
       return PluginResult.new(changed: false, failed: true,
         msg: "Failed to register: #{r[:stderr] || r[:stdout]}") if r[:exit_code] != 0
       PluginResult.new(changed: true, failed: false, msg: "System registered")
+    end
+
+    private def credential_present? : Bool
+      username = @params["username"]?
+      activationkey = @params["activationkey"]?
+      token = @params["token"]?
+      !username.to_s.empty? || !activationkey.to_s.empty? || !token.to_s.empty?
+    end
+
+    private def handle_absent(bin : String) : PluginResult
+      identity = remote_exec("#{bin} identity")
+      registered = identity[:exit_code] == 0
+      return PluginResult.new(changed: false, failed: false, msg: "System is not registered") unless registered
+      r = remote_exec("#{bin} unregister")
+      return PluginResult.new(changed: false, failed: true,
+        msg: "Failed to unregister: #{r[:stderr]}") if r[:exit_code] != 0
+      PluginResult.new(changed: true, failed: false, msg: "System unregistered")
+    end
+
+    private def build_register_command(bin : String) : String
+      username = @params["username"]?
+      activationkey = @params["activationkey"]?
+      token = @params["token"]?
+
+      cmd = "#{bin} register --auto-attach"
+      cmd += activation_args(activationkey, token, username) if activationkey || token || username
+      cmd += " --force" if @params["force"]?
+      cmd
+    end
+
+    private def activation_args(activationkey : String?, token : String?, username : String?) : String
+      args = ""
+      if activationkey && !activationkey.to_s.empty?
+        args += " --activationkey=#{activationkey}"
+        args += " --org=#{@params["org_id"]}" if @params["org_id"]?
+      elsif token && !token.to_s.empty?
+        args += " --token=#{token}"
+      else
+        args += " --username=#{username} --password='#{@params["password"]?}'"
+      end
+      args
     end
   end
 end

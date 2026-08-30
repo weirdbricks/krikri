@@ -51,6 +51,15 @@ module CrystalPlay
       ActionResult.final(result_json(changed: false, failed: false, msg: debug_output))
     end
 
+    private def format_array(value : JSON::Any) : String
+      array = value.as_a
+      if array.all? { |item| item.as_s? || item.as_i? || item.as_bool? }
+        "[" + array.map { |item| format_value(item) }.join(", ") + "]"
+      else
+        value.to_pretty_json
+      end
+    end
+
     private def format_value(value : JSON::Any) : String
       case value.raw
       when String
@@ -64,12 +73,7 @@ module CrystalPlay
       when Nil
         "null"
       when Array
-        array = value.as_a
-        if array.all? { |item| item.as_s? || item.as_i? || item.as_bool? }
-          "[" + array.map { |item| format_value(item) }.join(", ") + "]"
-        else
-          value.to_pretty_json
-        end
+        format_array(value)
       when Hash
         value.to_pretty_json
       else

@@ -64,39 +64,12 @@ module CrystalPlay
       # exception for the generic package: module - never ported here
       # until this task's own "Missing required parameter: name"
       # failure surfaced it live on a Rocky 9.6 target.
-      if names.empty?
-        if true?(@params["update_cache"]?)
-          result = remote_exec("yum makecache")
-          # changed: false even on success - same fix as dnf.cr's
-          # identical branch (see its own comment): real ansible-core's
-          # dnf/yum module never reports changed for a cache-only
-          # refresh. Found via round172's buluma.rpmfusion.
-          return PluginResult.new(
-            changed: false,
-            failed: result[:exit_code] != 0,
-            msg: result[:exit_code] == 0 ? "Package cache updated" : "Failed to update package cache: #{result[:stderr]}"
-          )
-        end
-
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Missing required parameter: name"
-        )
+      if early = early_result_for_empty_names(names)
+        return early
       end
 
-      # Get state (default: present)
-      state = @params["state"]? || "present"
-
-      # Normalize state aliases
-      state = case state
-              when "installed"
-                "present"
-              when "removed"
-                "absent"
-              else
-                state
-              end
+      # Get state (default: present) and normalize state aliases
+      state = normalized_state
 
       # Validate state
       unless ["present", "absent", "latest"].includes?(state)
@@ -107,14 +80,9 @@ module CrystalPlay
         )
       end
 
-      # Handle special case: autoremove without package name
-      if true?(@params["autoremove"]?) && names == ["*"]
-        return handle_autoremove
-      end
-
-      # Handle special case: upgrade all packages
-      if names == ["*"] && state == "latest"
-        return handle_upgrade_all
+      # Handle special cases: autoremove or upgrade-all without package name
+      if special = special_case_result(names, state)
+        return special
       end
 
       # Build DNF command options
@@ -137,53 +105,55 @@ module CrystalPlay
       end
     end
 
+    # Result to return early when no package names were given: either a
+    # cache-only refresh (with `update_cache: true`), or the missing-name
+    # failure. Returns nil when names is non-empty.
+    private def early_result_for_empty_names(names : Array(String)) : PluginResult?
+      return nil unless names.empty?
+
+      if true?(@params["update_cache"]?)
+        result = remote_exec("yum makecache")
+        # changed: false even on success - same fix as dnf.cr's
+        # identical branch (see its own comment): real ansible-core's
+        # dnf/yum module never reports changed for a cache-only
+        # refresh. Found via round172's buluma.rpmfusion.
+        return PluginResult.new(
+          changed: false,
+          failed: result[:exit_code] != 0,
+          msg: result[:exit_code] == 0 ? "Package cache updated" : "Failed to update package cache: #{result[:stderr]}"
+        )
+      end
+
+      PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: "Missing required parameter: name"
+      )
+    end
+
+    # Get state (default: present) with aliases normalized
+    private def normalized_state : String
+      state = @params["state"]? || "present"
+      case state
+      when "installed"
+        "present"
+      when "removed"
+        "absent"
+      else
+        state
+      end
+    end
+
+    # Handle special case: autoremove or upgrade-all with no package names
+    private def special_case_result(names : Array(String), state : String) : PluginResult?
+      return handle_autoremove if true?(@params["autoremove"]?) && names == ["*"]
+      return handle_upgrade_all if names == ["*"] && state == "latest"
+      nil
+    end
+
     # Parse package names from various parameter formats
     private def parse_package_names : Array(String)
-      names = [] of String
-
-      # Try 'name' parameter (can be string or list) - `pkg:` is a
-      # documented alias of `name:` for real Ansible's yum module, same
-      # as dnf.cr's own identical fix.
-      if name_param = @params["name"]? || @params["pkg"]?
-        trimmed = name_param.strip
-        # `name: "{{ some_list_var }}"` templates a *list* var through a
-        # plain `{{ }}` substitution - since @params values are always
-        # String, that renders as the var's JSON form
-        # (`["foo","bar"]`), not a bare comma-joined string. Parsed as
-        # real JSON here rather than falling into the comma-split below,
-        # which would otherwise leave the brackets/quotes stuck to the
-        # first/last entries (see apt.cr's own parse_package_names for
-        # the same bug, found via konstruktoid-hardening's package
-        # installation task).
-        parsed_json = if trimmed.starts_with?('[') && trimmed.ends_with?(']')
-                        begin
-                          Array(String).from_json(trimmed)
-                        rescue
-                          # A Python-repr list (single-quoted strings) isn't
-                          # valid JSON - same fallback as apt.cr's/package.cr's
-                          # own copies of this logic (see there for the full
-                          # rationale: a Jinja `{% if %}...{{ [list] }}...
-                          # {% endif %}` template idiom renders as Python's
-                          # `str(list)` form, not JSON). Proactive fix - not
-                          # yet caught live for dnf specifically, but the
-                          # exact same bug class already found independently
-                          # in two other plugins this way.
-                          begin
-                            Array(String).from_json(trimmed.gsub('\'', '"'))
-                          rescue
-                            nil
-                          end
-                        end
-                      end
-
-        names = if parsed_json
-                  parsed_json
-                elsif name_param.includes?(",")
-                  name_param.split(",").map(&.strip)
-                else
-                  [name_param]
-                end
-      end
+      names = names_from_name_param || [] of String
 
       # Try 'list' parameter (array of packages)
       if list_param = @params["list"]?
@@ -202,6 +172,57 @@ module CrystalPlay
       end
 
       names.uniq
+    end
+
+    # Parse the 'name' parameter (can be string or list) - `pkg:` is a
+    # documented alias of `name:` for real Ansible's yum module, same
+    # as dnf.cr's own identical fix. Returns nil when neither parameter
+    # is present.
+    private def names_from_name_param : Array(String)?
+      name_param = @params["name"]? || @params["pkg"]?
+      return unless name_param
+
+      parsed_json = parse_name_param_as_json(name_param.strip)
+
+      if parsed_json
+        parsed_json
+      elsif name_param.includes?(",")
+        name_param.split(",").map(&.strip)
+      else
+        [name_param]
+      end
+    end
+
+    # `name: "{{ some_list_var }}"` templates a *list* var through a
+    # plain `{{ }}` substitution - since @params values are always
+    # String, that renders as the var's JSON form (`["foo","bar"]`),
+    # not a bare comma-joined string. Parsed as real JSON here rather
+    # than falling into the comma-split below, which would otherwise
+    # leave the brackets/quotes stuck to the first/last entries (see
+    # apt.cr's own parse_package_names for the same bug, found via
+    # konstruktoid-hardening's package installation task). Returns nil
+    # when the trimmed value isn't a bracketed list or fails to parse.
+    private def parse_name_param_as_json(trimmed : String) : Array(String)?
+      return unless trimmed.starts_with?('[') && trimmed.ends_with?(']')
+
+      begin
+        Array(String).from_json(trimmed)
+      rescue
+        # A Python-repr list (single-quoted strings) isn't
+        # valid JSON - same fallback as apt.cr's/package.cr's
+        # own copies of this logic (see there for the full
+        # rationale: a Jinja `{% if %}...{{ [list] }}...
+        # {% endif %}` template idiom renders as Python's
+        # `str(list)` form, not JSON). Proactive fix - not
+        # yet caught live for dnf specifically, but the
+        # exact same bug class already found independently
+        # in two other plugins this way.
+        begin
+          Array(String).from_json(trimmed.gsub('\'', '"'))
+        rescue
+          nil
+        end
+      end
     end
 
     # See dnf.cr's identical helper for the full rationale - this plugin
@@ -295,11 +316,66 @@ module CrystalPlay
       # Check if update_only is set
       update_only = true?(@params["update_only"]?)
 
+      classified = classify_install_packages(names, update_only)
+      to_install = classified[:to_install]
+      to_update = classified[:to_update]
+      already_installed = classified[:already_installed]
+
+      changed = false
+      messages = [] of String
+      all_output = [] of String
+
+      # Install new packages
+      unless to_install.empty?
+        outcome = run_install_batch(to_install, options)
+        all_output << outcome[:output]
+
+        failure = outcome[:failure]
+        return failure if failure
+
+        changed ||= outcome[:changed]
+        if message = outcome[:message]
+          messages << message
+        end
+      end
+
+      # Update packages (if update_only mode)
+      unless to_update.empty?
+        outcome = run_update_batch(to_update, options)
+        all_output << outcome[:output]
+
+        failure = outcome[:failure]
+        return failure if failure
+
+        changed ||= outcome[:changed]
+        if message = outcome[:message]
+          messages << message
+        end
+      end
+
+      # Report already installed
+      unless already_installed.empty?
+        messages << "Already installed: #{already_installed.join(", ")}"
+      end
+
+      msg = messages.empty? ? "No changes needed" : messages.join("; ")
+
+      PluginResult.new(
+        changed: changed,
+        failed: false,
+        msg: msg,
+        stdout: all_output.join("\n"),
+        exit_code: 0
+      )
+    end
+
+    # Classify each requested package into install/update/already-installed
+    # buckets based on its current state and the update_only mode.
+    private def classify_install_packages(names : Array(String), update_only : Bool) : NamedTuple(to_install: Array(String), to_update: Array(String), already_installed: Array(String))
       to_install = [] of String
       to_update = [] of String
       already_installed = [] of String
 
-      # Check each package's status
       names.each do |pkg|
         if package_group?(pkg)
           # For groups, always try to install (dnf handles idempotency)
@@ -326,90 +402,76 @@ module CrystalPlay
         end
       end
 
-      changed = false
-      messages = [] of String
-      all_output = [] of String
+      {to_install: to_install, to_update: to_update, already_installed: already_installed}
+    end
 
-      # Install new packages
-      unless to_install.empty?
-        pkg_list = to_install.map { |pth| quote_package(pth) }.join(" ")
-        cmd = "yum install #{options} #{pkg_list}"
+    # Outcome of a batch install/update command: whether it changed
+    # anything, an optional message, captured stdout, and a non-nil
+    # failure result when the command itself failed.
+    private alias BatchOutcome = NamedTuple(changed: Bool, message: String?, output: String, failure: PluginResult?)
 
-        result = remote_exec_tolerating_unknown_repo(cmd)
-        all_output << result[:stdout]
+    # Run `yum install` for the given packages and interpret its result
+    private def run_install_batch(to_install : Array(String), options : String) : BatchOutcome
+      pkg_list = to_install.map { |pth| quote_package(pth) }.join(" ")
+      cmd = "yum install #{options} #{pkg_list}"
 
-        if result[:exit_code] == 0
-          # A requested name can be a virtual package already satisfied
-          # by something else installed - `package_installed?`'s own
-          # `dnf list installed <name>` pre-check only ever looks up the
-          # literal requested name, which a purely virtual/Provides:-
-          # satisfied name never has its own `dnf list installed` entry
-          # for, so it always fell through to "needs install" here. dnf
-          # itself prints a literal "Nothing to do." and still exits 0
-          # for that case (a genuine no-op), so trusting exit_code alone
-          # always reported changed: true even when nothing happened -
-          # same bug class already fixed in apt.cr/package.cr's own
-          # apt-get install handling (apt_summary_had_no_effect?), which
-          # this handler never got ported to since it's a separate
-          # RPM-based code path.
-          if result[:stdout].includes?("Nothing to do")
-            messages << "Package#{to_install.size > 1 ? "s" : ""} #{to_install.join(", ")} already satisfied"
-          else
-            changed = true
-            messages << "Installed: #{to_install.join(", ")}"
-          end
-        else
-          return PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "Failed to install packages",
-            stdout: result[:stdout],
-            stderr: result[:stderr],
-            exit_code: result[:exit_code]
-          )
-        end
+      result = remote_exec_tolerating_unknown_repo(cmd)
+
+      if result[:exit_code] != 0
+        return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Failed to install packages",
+          stdout: result[:stdout],
+          stderr: result[:stderr],
+          exit_code: result[:exit_code]
+        )}
       end
 
-      # Update packages (if update_only mode)
-      unless to_update.empty?
-        pkg_list = to_update.map { |pth| quote_package(pth) }.join(" ")
-        cmd = "yum update #{options} #{pkg_list}"
+      # A requested name can be a virtual package already satisfied
+      # by something else installed - `package_installed?`'s own
+      # `dnf list installed <name>` pre-check only ever looks up the
+      # literal requested name, which a purely virtual/Provides:-
+      # satisfied name never has its own `dnf list installed` entry
+      # for, so it always fell through to "needs install" here. dnf
+      # itself prints a literal "Nothing to do." and still exits 0
+      # for that case (a genuine no-op), so trusting exit_code alone
+      # always reported changed: true even when nothing happened -
+      # same bug class already fixed in apt.cr/package.cr's own
+      # apt-get install handling (apt_summary_had_no_effect?), which
+      # this handler never got ported to since it's a separate
+      # RPM-based code path.
+      if result[:stdout].includes?("Nothing to do")
+        {changed: false, message: "Package#{to_install.size > 1 ? "s" : ""} #{to_install.join(", ")} already satisfied", output: result[:stdout], failure: nil}
+      else
+        {changed: true, message: "Installed: #{to_install.join(", ")}", output: result[:stdout], failure: nil}
+      end
+    end
 
-        result = remote_exec_tolerating_unknown_repo(cmd)
-        all_output << result[:stdout]
+    # Run `yum update` for the given packages and interpret its result
+    private def run_update_batch(to_update : Array(String), options : String) : BatchOutcome
+      pkg_list = to_update.map { |pth| quote_package(pth) }.join(" ")
+      cmd = "yum update #{options} #{pkg_list}"
 
-        if result[:exit_code] == 0
-          # Check if anything was actually updated
-          if result[:stdout].includes?("Upgraded:") || result[:stdout].includes?("Installed:")
-            changed = true
-            messages << "Updated: #{to_update.join(", ")}"
-          end
-        else
-          return PluginResult.new(
-            changed: changed,
-            failed: true,
-            msg: "Failed to update packages",
-            stdout: result[:stdout],
-            stderr: result[:stderr],
-            exit_code: result[:exit_code]
-          )
-        end
+      result = remote_exec_tolerating_unknown_repo(cmd)
+
+      if result[:exit_code] != 0
+        return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Failed to update packages",
+          stdout: result[:stdout],
+          stderr: result[:stderr],
+          exit_code: result[:exit_code]
+        )}
       end
 
-      # Report already installed
-      unless already_installed.empty?
-        messages << "Already installed: #{already_installed.join(", ")}"
+      # Check if anything was actually updated
+      if result[:stdout].includes?("Upgraded:") || result[:stdout].includes?("Installed:")
+        {changed: true, message: "Updated: #{to_update.join(", ")}", output: result[:stdout], failure: nil}
+      else
+        {changed: false, message: nil, output: result[:stdout], failure: nil}
       end
-
-      msg = messages.empty? ? "No changes needed" : messages.join("; ")
-
-      PluginResult.new(
-        changed: changed,
-        failed: false,
-        msg: msg,
-        stdout: all_output.join("\n"),
-        exit_code: 0
-      )
     end
 
     # Remove packages

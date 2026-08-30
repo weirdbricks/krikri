@@ -35,16 +35,8 @@ module CrystalPlay
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: cmd") if script_path.nil? || script_path.empty?
       args = parts[1]?
 
-      if creates = @params["creates"]?
-        if remote_file_exists?(expand_tilde(creates))
-          return PluginResult.new(changed: false, failed: false, msg: "skipped, since #{creates} exists", skipped: true)
-        end
-      end
-
-      if removes = @params["removes"]?
-        unless remote_file_exists?(expand_tilde(removes))
-          return PluginResult.new(changed: false, failed: false, msg: "skipped, since #{removes} does not exist", skipped: true)
-        end
+      if skip = skip_reason
+        return skip
       end
 
       unless remote_file_exists?(script_path)
@@ -82,6 +74,22 @@ module CrystalPlay
       return unless true?(@params["__cleanup_after_script"]?)
       script_path = (@params["cmd"]? || @params["_raw_params"]? || "").strip.split(/\s+/, 2).first?
       remote_exec("rm -f #{shell_quote(script_path)}") if script_path
+    end
+
+    private def skip_reason : PluginResult?
+      if creates = @params["creates"]?
+        if remote_file_exists?(expand_tilde(creates))
+          return PluginResult.new(changed: false, failed: false, msg: "skipped, since #{creates} exists", skipped: true)
+        end
+      end
+
+      if removes = @params["removes"]?
+        unless remote_file_exists?(expand_tilde(removes))
+          return PluginResult.new(changed: false, failed: false, msg: "skipped, since #{removes} does not exist", skipped: true)
+        end
+      end
+
+      nil
     end
 
     private def shell_quote(str : String) : String

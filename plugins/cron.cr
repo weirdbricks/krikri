@@ -105,22 +105,8 @@ module CrystalPlay
       new_content, changed = PluginHelpers::CronTable.upsert(original_content, name, new_line)
 
       if changed && !check_mode
-        tmp_path = "/tmp/.crystal-ansible-crontab-#{Random.rand(100000..999999)}"
-        begin
-          # CronTable.upsert already appends its own single trailing "\n"
-          # to a non-empty new_content - adding another here produced a
-          # blank line at the end of the installed crontab, which
-          # `crontab -l` then read back verbatim, making the very next
-          # run's own upsert see a "changed" diff against itself
-          # forever (never converging to idempotent).
-          File.write(tmp_path, new_content.empty? ? "\n" : new_content)
-          install_result = remote_exec("crontab #{crontab_target} #{tmp_path}")
-          unless install_result[:exit_code] == 0
-            return PluginResult.new(changed: false, failed: true, msg: "crontab install failed: #{install_result[:stderr]}")
-          end
-        ensure
-          File.delete(tmp_path) rescue nil
-        end
+        failure = install_user_crontab(crontab_target, new_content)
+        return failure if failure
       end
 
       PluginResult.new(
@@ -130,6 +116,29 @@ module CrystalPlay
         name: name,
         state: state
       )
+    end
+
+    # Install the updated crontab via a tmp file. Returns the failure
+    # result when `crontab` rejects it, nil on success.
+    private def install_user_crontab(crontab_target : String, new_content : String) : PluginResult?
+      tmp_path = "/tmp/.crystal-ansible-crontab-#{Random.rand(100000..999999)}"
+      begin
+        # CronTable.upsert already appends its own single trailing "\n"
+        # to a non-empty new_content - adding another here produced a
+        # blank line at the end of the installed crontab, which
+        # `crontab -l` then read back verbatim, making the very next
+        # run's own upsert see a "changed" diff against itself
+        # forever (never converging to idempotent).
+        File.write(tmp_path, new_content.empty? ? "\n" : new_content)
+        install_result = remote_exec("crontab #{crontab_target} #{tmp_path}")
+        unless install_result[:exit_code] == 0
+          return PluginResult.new(changed: false, failed: true, msg: "crontab install failed: #{install_result[:stderr]}")
+        end
+      ensure
+        File.delete(tmp_path) rescue nil
+      end
+
+      nil
     end
 
     private def build_line(job : String, include_user : Bool) : String

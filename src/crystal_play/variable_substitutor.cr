@@ -460,6 +460,96 @@ module CrystalPlay
       end
     end
 
+    private def evaluate_stripped_span(stripped : String, strict : Bool, output : Bool, native : Bool, evaluator) : String
+      raise_if_strict_undefined(stripped) if strict
+      if native && (nv = native_scalar(stripped, evaluator))
+        nv
+      else
+        output ? evaluator.evaluate_output(stripped) : evaluator.evaluate(stripped)
+      end
+    end
+
+    private def render_block_tag_text(text : String, strict : Bool, renderer) : String
+      return text if @@block_tag_escalation_depth >= MAX_BLOCK_TAG_ESCALATION_DEPTH
+      # strict: pre-render scan for undefined bare references inside
+      # `{% %}` block conditions. Crinja's lenient default
+      # `Undefined` makes `undefined == "jre"` quietly return
+      # false in `{% if openjdk_app == "jre" %}`, so the block
+      # renders to the false branch instead of raising - which is
+      # the round-194 andrewrothstein.openjdk divergence (the
+      # stat task's `path: "{{ openjdk_install_subdir }}"` arg
+      # finalization succeeds on crystal where real ansible
+      # raises "Finalization of task args for 'ansible.builtin.
+      # stat' failed: 'openjdk_app' is undefined"). The scan
+      # itself is narrow (bare-identifier-class references only,
+      # with Jinja keywords/filter names/loop-vars/string-literal
+      # contents all carved out) and runs BEFORE Crinja is
+      # invoked, so the renderer never sees the bad input. See
+      # scan_strict_block_tags_for_undefined's own comment for
+      # why this isn't solved by passing a strict undefined class
+      # to Crinja instead.
+      scan_strict_block_tags_for_undefined(text) if strict
+      @@block_tag_escalation_depth += 1
+      begin
+        renderer.render(text)
+      ensure
+        @@block_tag_escalation_depth -= 1
+      end
+    end
+
+    # One pass of the bounded re-templating loop below. Returns nil to
+    # signal "break" (escalation-depth limit reached), mirroring the
+    # original `break if` in the loop body.
+    private def rerender_pass(result : String, strict : Bool, output : Bool, native : Bool, evaluator, renderer) : String?
+      if result.includes?("{%") || result.includes?("{#")
+        # strict: same scan as the top-level
+        # substitute_impl branch - this re-templating
+        # loop also has a {% %} path that bypasses
+        # raise_if_strict_undefined, and the
+        # round-194 andrewrothstein.openjdk case
+        # hits it specifically: openjdk_install_
+        # subdir is itself a {% if openjdk_app %}
+        # -templated string, the first pass looks it
+        # up and returns the still-`{{ }}`-bearing
+        # raw value, the re-templating pass then
+        # routes through this {% %} branch to
+        # Crinja. Without the strict scan here,
+        # Crinja's lenient default would silently
+        # treat the undefined-in-`{% if %}` as
+        # false and render the path anyway.
+        scan_strict_block_tags_for_undefined(result) if strict
+        return nil if @@block_tag_escalation_depth >= MAX_BLOCK_TAG_ESCALATION_DEPTH
+        @@block_tag_escalation_depth += 1
+        begin
+          renderer.render(result)
+        ensure
+          @@block_tag_escalation_depth -= 1
+        end
+      else
+        expand_mustache_spans(result) do |inner|
+          stripped = inner.strip
+          evaluate_stripped_span(stripped, strict, output, native, evaluator)
+        end
+      end
+    end
+
+    private def strip_span_if_needed(inner : String) : String
+      inner.empty? || (!inner[0].whitespace? && !inner[-1].whitespace?) ? inner : inner.strip
+    end
+
+    # Bounded re-templating loop over the first-pass render result.
+    private def rerender_until_stable(result : String, pending_re_template : Bool, strict : Bool, output : Bool, native : Bool, evaluator, renderer) : String
+      depth = 0
+      while pending_re_template && (result.includes?("{{") || result.includes?("{%") || result.includes?("{#")) && depth < 5
+        next_result = rerender_pass(result, strict, output, native, evaluator, renderer)
+        break unless next_result
+        break if next_result == result
+        result = next_result
+        depth += 1
+      end
+      result
+    end
+
     private def substitute_impl(text : String, strict : Bool = false, output : Bool = false, native : Bool = false) : String
       # A task param whose ENTIRE value is block-tag Jinja with no `{{
       # }}` interpolation anywhere at all (`{% if x %}a{% else %}b{%
@@ -474,31 +564,7 @@ module CrystalPlay
       return text unless text.includes?("{{") || text.includes?("{%") || text.includes?("{#")
 
       if text.includes?("{%") || text.includes?("{#")
-        return text if @@block_tag_escalation_depth >= MAX_BLOCK_TAG_ESCALATION_DEPTH
-        # strict: pre-render scan for undefined bare references inside
-        # `{% %}` block conditions. Crinja's lenient default
-        # `Undefined` makes `undefined == "jre"` quietly return
-        # false in `{% if openjdk_app == "jre" %}`, so the block
-        # renders to the false branch instead of raising - which is
-        # the round-194 andrewrothstein.openjdk divergence (the
-        # stat task's `path: "{{ openjdk_install_subdir }}"` arg
-        # finalization succeeds on crystal where real ansible
-        # raises "Finalization of task args for 'ansible.builtin.
-        # stat' failed: 'openjdk_app' is undefined"). The scan
-        # itself is narrow (bare-identifier-class references only,
-        # with Jinja keywords/filter names/loop-vars/string-literal
-        # contents all carved out) and runs BEFORE Crinja is
-        # invoked, so the renderer never sees the bad input. See
-        # scan_strict_block_tags_for_undefined's own comment for
-        # why this isn't solved by passing a strict undefined class
-        # to Crinja instead.
-        scan_strict_block_tags_for_undefined(text) if strict
-        @@block_tag_escalation_depth += 1
-        begin
-          return renderer.render(text)
-        ensure
-          @@block_tag_escalation_depth -= 1
-        end
+        return render_block_tag_text(text, strict, renderer)
       end
 
       # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #20 (narrow sub-scope):
@@ -513,13 +579,8 @@ module CrystalPlay
       # `{{var}}` identically, so this is behavior-preserving by
       # construction.
       result = expand_mustache_spans(text) do |inner|
-        stripped = inner.empty? || (!inner[0].whitespace? && !inner[-1].whitespace?) ? inner : inner.strip
-        raise_if_strict_undefined(stripped) if strict
-        if native && (nv = native_scalar(stripped, evaluator))
-          nv
-        else
-          output ? evaluator.evaluate_output(stripped) : evaluator.evaluate(stripped)
-        end
+        stripped = strip_span_if_needed(inner)
+        evaluate_stripped_span(stripped, strict, output, native, evaluator)
       end
 
       # Ansible re-templates a rendered result that still contains "{{" -
@@ -565,49 +626,7 @@ module CrystalPlay
       # (the os_hardening include_tasks case this loop was built for).
       # Literal-origin leftovers stay verbatim, exactly like Jinja2.
       pending_re_template = re_template_from_variable?(text)
-      depth = 0
-      while pending_re_template && (result.includes?("{{") || result.includes?("{%") || result.includes?("{#")) && depth < 5
-        next_result = if result.includes?("{%") || result.includes?("{#")
-                        # strict: same scan as the top-level
-                        # substitute_impl branch - this re-templating
-                        # loop also has a {% %} path that bypasses
-                        # raise_if_strict_undefined, and the
-                        # round-194 andrewrothstein.openjdk case
-                        # hits it specifically: openjdk_install_
-                        # subdir is itself a {% if openjdk_app %}
-                        # -templated string, the first pass looks it
-                        # up and returns the still-`{{ }}`-bearing
-                        # raw value, the re-templating pass then
-                        # routes through this {% %} branch to
-                        # Crinja. Without the strict scan here,
-                        # Crinja's lenient default would silently
-                        # treat the undefined-in-`{% if %}` as
-                        # false and render the path anyway.
-                        scan_strict_block_tags_for_undefined(result) if strict
-                        break if @@block_tag_escalation_depth >= MAX_BLOCK_TAG_ESCALATION_DEPTH
-                        @@block_tag_escalation_depth += 1
-                        begin
-                          renderer.render(result)
-                        ensure
-                          @@block_tag_escalation_depth -= 1
-                        end
-                      else
-                        expand_mustache_spans(result) do |inner|
-                          stripped = inner.strip
-                          raise_if_strict_undefined(stripped) if strict
-                          if native && (nv = native_scalar(stripped, evaluator))
-                            nv
-                          else
-                            output ? evaluator.evaluate_output(stripped) : evaluator.evaluate(stripped)
-                          end
-                        end
-                      end
-        break if next_result == result
-        result = next_result
-        depth += 1
-      end
-
-      result
+      rerender_until_stable(result, pending_re_template, strict, output, native, evaluator, renderer)
     end
 
     # strict: helper for the `{% %}` block-tag path - the round-194
@@ -633,6 +652,50 @@ module CrystalPlay
     # itself flagged; a `for X in Y` loop variable is skipped via
     # the `loop_var` carve-out; the bare-ref scan uses the same
     # identifier shape as REGEX_BARE_VAR_REF.
+    # Parses the condition expression out of a `{% %}` block-tag body.
+    # if/elif is a condition, for has a loop var before `in`, set has a
+    # set-target before `=`. else/endif/etc. have nothing to scan - nil.
+    private def parse_block_tag_condition(stripped : String) : {String?, String}?
+      if stripped.starts_with?("for ")
+        tail = stripped.sub(/^for\s+/, "")
+        in_idx = tail.index(" in ")
+        if in_idx
+          {tail[0...in_idx].strip, tail[(in_idx + 4)..].strip}
+        else
+          {nil, tail}
+        end
+      elsif stripped.starts_with?("set ")
+        eq_idx = stripped.index('=')
+        if eq_idx
+          {stripped[4...eq_idx].strip, stripped[(eq_idx + 1)..].strip}
+        else
+          {nil, stripped}
+        end
+      elsif stripped.starts_with?("if ") || stripped.starts_with?("elif ")
+        {nil, stripped.sub(/^(if|elif)\s+/, "")}
+      else
+        nil
+      end
+    end
+
+    private def scan_block_tag_refs(cond_no_strings : String, loop_var : String?) : Nil
+      cond_no_strings.scan(SCAN_STRICT_BLOCK_TAG_REF) do |mat|
+        ident = mat[0]
+        next if SCAN_STRICT_BLOCK_TAG_KEYWORDS.includes?(ident)
+        next if SCAN_STRICT_BLOCK_TAG_BUILTIN_FILTERS.includes?(ident)
+        next if @vars.has_key?(ident)
+        next if loop_var == ident
+        # A bare identifier immediately preceded by `|` is a
+        # filter invocation - the filter's own strictness
+        # handling decides whether undefined-source is fatal.
+        idx = cond_no_strings.index(ident)
+        if idx && idx > 0 && cond_no_strings[idx - 1] == '|'
+          next
+        end
+        raise UndefinedVariableError.new("'#{ident}' is undefined")
+      end
+    end
+
     private def scan_strict_block_tags_for_undefined(text : String) : Nil
       i = 0
       while i < text.size
@@ -651,52 +714,16 @@ module CrystalPlay
         inner = text[i...close]
         stripped = inner.strip
 
-        # if/elif is a condition, for has a loop var before `in`,
-        # set has a set-target before `=`. else/endif/etc. have
-        # nothing to scan, skip.
-        loop_var : String? = nil
-        cond : String
-        if stripped.starts_with?("for ")
-          tail = stripped.sub(/^for\s+/, "")
-          in_idx = tail.index(" in ")
-          if in_idx
-            loop_var = tail[0...in_idx].strip
-            cond = tail[(in_idx + 4)..].strip
-          else
-            cond = tail
-          end
-        elsif stripped.starts_with?("set ")
-          eq_idx = stripped.index('=')
-          if eq_idx
-            loop_var = stripped[4...eq_idx].strip
-            cond = stripped[(eq_idx + 1)..].strip
-          else
-            cond = stripped
-          end
-        elsif stripped.starts_with?("if ") || stripped.starts_with?("elif ")
-          cond = stripped.sub(/^(if|elif)\s+/, "")
+        parsed = parse_block_tag_condition(stripped)
+        if parsed
+          loop_var, cond = parsed
         else
           i = close + 2
           next
         end
 
         cond_no_strings = strip_string_literals(cond)
-
-        cond_no_strings.scan(SCAN_STRICT_BLOCK_TAG_REF) do |mat|
-          ident = mat[0]
-          next if SCAN_STRICT_BLOCK_TAG_KEYWORDS.includes?(ident)
-          next if SCAN_STRICT_BLOCK_TAG_BUILTIN_FILTERS.includes?(ident)
-          next if @vars.has_key?(ident)
-          next if loop_var == ident
-          # A bare identifier immediately preceded by `|` is a
-          # filter invocation - the filter's own strictness
-          # handling decides whether undefined-source is fatal.
-          idx = cond_no_strings.index(ident)
-          if idx && idx > 0 && cond_no_strings[idx - 1] == '|'
-            next
-          end
-          raise UndefinedVariableError.new("'#{ident}' is undefined")
-        end
+        scan_block_tag_refs(cond_no_strings, loop_var)
         i = close + 2
       end
     end
@@ -916,6 +943,31 @@ module CrystalPlay
       end
     end
 
+    private def apply_trim_markers(inner : String) : {String, Bool, Bool}
+      lstrip_marker = inner.lstrip.starts_with?('-')
+      rstrip_marker = inner.rstrip.ends_with?('-')
+      inner = inner.lstrip.lchop('-') if lstrip_marker
+      inner = inner.rstrip.rchop('-') if rstrip_marker
+      {inner, lstrip_marker, rstrip_marker}
+    end
+
+    private def trim_builder_tail(result : String::Builder) : String::Builder
+      buffered = result.to_s
+      trimmed = buffered.rstrip
+      trimmed_builder = String::Builder.new
+      trimmed_builder << trimmed
+      trimmed_builder
+    end
+
+    private def skip_leading_whitespace(text : String, from : Int32) : Int32
+      j = from
+      n = text.size
+      while j < n && text[j].ascii_whitespace?
+        j += 1
+      end
+      j
+    end
+
     private def expand_mustache_spans(text : String, & : String -> String) : String
       result = String::Builder.new
       i = 0
@@ -936,10 +988,7 @@ module CrystalPlay
             # the surrounding-whitespace TRIM EFFECT the marker also
             # implies is applied below, once the marker's presence is
             # known.
-            lstrip_marker = inner.lstrip.starts_with?('-')
-            rstrip_marker = inner.rstrip.ends_with?('-')
-            inner = inner.lstrip.lchop('-') if lstrip_marker
-            inner = inner.rstrip.rchop('-') if rstrip_marker
+            inner, lstrip_marker, rstrip_marker = apply_trim_markers(inner)
 
             # `{{- expr }}`: strip trailing whitespace already written to
             # the builder (real Jinja2 strips back to, and including, the
@@ -950,12 +999,7 @@ module CrystalPlay
             # block's own line breaks into a single-line string - without
             # this, every line break survived into the literal filename/
             # URL, breaking the download outright.
-            if lstrip_marker
-              buffered = result.to_s
-              trimmed = buffered.rstrip
-              result = String::Builder.new
-              result << trimmed
-            end
+            result = trim_builder_tail(result) if lstrip_marker
 
             rendered = yield inner
             result << rendered
@@ -964,11 +1008,7 @@ module CrystalPlay
             # newline) in the literal text immediately following the
             # closing `}}`, matching Jinja2's own `-%}`/`-}}` behavior.
             if rstrip_marker
-              j = close_at + 2
-              while j < n && text[j].ascii_whitespace?
-                j += 1
-              end
-              i = j
+              i = skip_leading_whitespace(text, close_at + 2)
               next
             end
 

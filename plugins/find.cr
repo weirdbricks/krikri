@@ -129,31 +129,7 @@ module CrystalPlay
         limit: @params["limit"]?.try(&.to_i?),
       )
 
-      files = [] of JSON::Any
-      examined = 0
-      skipped_paths = {} of String => JSON::Any
-
-      paths.each do |search_path|
-        unless Dir.exists?(search_path)
-          skipped_paths[search_path] = JSON::Any.new("'#{search_path}' is not a directory")
-          next
-        end
-
-        entries = list_entries(search_path, options.recurse, options.depth)
-
-        entries.each do |entry_path|
-          examined += 1
-          next if !options.hidden && hidden_path?(entry_path, search_path)
-
-          if stat_hash = match(entry_path, options)
-            files << JSON::Any.new(stat_hash)
-          end
-
-          break if (limit = options.limit) && files.size >= limit
-        end
-
-        break if (limit = options.limit) && files.size >= limit
-      end
+      files, examined, skipped_paths = collect_matches(paths, options)
 
       PluginResult.new(
         changed: false,
@@ -164,6 +140,42 @@ module CrystalPlay
         files: files,
         skipped_paths: skipped_paths
       )
+    end
+
+    private def collect_matches(paths : Array(String), options : Options) : {Array(JSON::Any), Int32, Hash(String, JSON::Any)}
+      files = [] of JSON::Any
+      examined = 0
+      skipped_paths = {} of String => JSON::Any
+
+      paths.each do |search_path|
+        unless Dir.exists?(search_path)
+          skipped_paths[search_path] = JSON::Any.new("'#{search_path}' is not a directory")
+          next
+        end
+
+        examined += walk_path(search_path, options, files)
+        break if (limit = options.limit) && files.size >= limit
+      end
+
+      {files, examined, skipped_paths}
+    end
+
+    private def walk_path(search_path : String, options : Options, files : Array(JSON::Any)) : Int32
+      examined = 0
+
+      entries = list_entries(search_path, options.recurse, options.depth)
+      entries.each do |entry_path|
+        examined += 1
+        next if !options.hidden && hidden_path?(entry_path, search_path)
+
+        if stat_hash = match(entry_path, options)
+          files << JSON::Any.new(stat_hash)
+        end
+
+        break if (limit = options.limit) && files.size >= limit
+      end
+
+      examined
     end
 
     # `paths:`/`patterns:`/`excludes:` accept real Ansible's comma-

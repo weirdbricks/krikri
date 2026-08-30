@@ -165,8 +165,16 @@ module CrystalPlay
       # "{{ _bootstrap_packages[...] }}" instead of its real rendered
       # value (round 18) - only the bare-lookup and filter-chain-head call
       # sites had this guard before, not the dotted-access base fetch.
+      private def templated_value?(raw : String) : Bool
+        raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#")
+      end
+
+      private def parse_rendered_or_wrap(rendered : String) : JSON::Any
+        (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+      end
+
       private def rerender_if_templated(value : JSON::Any) : JSON::Any
-        return value unless (raw = value.raw).is_a?(String) && (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#"))
+        return value unless (raw = value.raw).is_a?(String) && templated_value?(raw)
 
         # A raw value containing `{%`/`{#` (block tags/comments, not just
         # a plain `{{ }}` expression) needs the FULL Crinja renderer -
@@ -186,13 +194,37 @@ module CrystalPlay
         # got the same fix.
         if raw.includes?("{%") || raw.includes?("{#")
           rendered = CrinjaRenderer.new(@vars).render(raw)
-          return (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+          return parse_rendered_or_wrap(rendered)
         end
 
         inner = raw.strip
         inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
         rendered = ExpressionEvaluator.new(@vars).evaluate(inner)
-        (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+        parse_rendered_or_wrap(rendered)
+      end
+
+      private def resolve_nested_base(part : String) : JSON::Any?
+        if literal = quoted_literal(part)
+          JSON::Any.new(literal)
+        elsif hash_literal_expr?(part)
+          # A literal Jinja dict as the dotted-path base
+          # (`{'x86_64': 'amd64', ...}.get(key, default)`) -
+          # same reasoning as the quoted-literal case just
+          # above: the base is a LITERAL, not a variable name,
+          # so the plain @vars lookup below always missed.
+          # ExpressionEvaluator already has a full dict-literal
+          # parser (used for a bare `{{ {...} }}` span); reused
+          # here rather than duplicating it. Found via
+          # prometheus.prometheus.node_exporter's own
+          # `_node_exporter_go_ansible_arch` (an architecture-
+          # name lookup table for its GitHub release download
+          # URL) - resolved to nil/"undefined" before, silently
+          # corrupting the download URL into a 404.
+          rendered = ExpressionEvaluator.new(@vars).evaluate(part)
+          parse_rendered_or_wrap(rendered)
+        else
+          @vars[part]?
+        end
       end
 
       private def resolve_nested(expr : String) : JSON::Any?
@@ -209,27 +241,7 @@ module CrystalPlay
         # (building the apt package list) - the whole expression
         # collapsed to the literal text "undefined", used directly as
         # apt's own `name:` param.
-        current = if literal = quoted_literal(parts[0])
-                    JSON::Any.new(literal)
-                  elsif hash_literal_expr?(parts[0])
-                    # A literal Jinja dict as the dotted-path base
-                    # (`{'x86_64': 'amd64', ...}.get(key, default)`) -
-                    # same reasoning as the quoted-literal case just
-                    # above: the base is a LITERAL, not a variable name,
-                    # so the plain @vars lookup below always missed.
-                    # ExpressionEvaluator already has a full dict-literal
-                    # parser (used for a bare `{{ {...} }}` span); reused
-                    # here rather than duplicating it. Found via
-                    # prometheus.prometheus.node_exporter's own
-                    # `_node_exporter_go_ansible_arch` (an architecture-
-                    # name lookup table for its GitHub release download
-                    # URL) - resolved to nil/"undefined" before, silently
-                    # corrupting the download URL into a 404.
-                    rendered = ExpressionEvaluator.new(@vars).evaluate(parts[0])
-                    (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
-                  else
-                    @vars[parts[0]]?
-                  end
+        current = resolve_nested_base(parts[0])
         return nil unless current
         current = rerender_if_templated(current)
 
@@ -331,9 +343,7 @@ module CrystalPlay
       # these roles use); returns an array of strings, matching Python's
       # own str.split so a trailing `[0]` (handled by resolve_indexed,
       # the caller one level up) picks the first component.
-      private def string_method_call(current : JSON::Any, part : String) : JSON::Any?
-        return nil unless current.raw.is_a?(String)
-
+      private def string_method_core_call(current : JSON::Any, part : String) : JSON::Any?
         if part == "split()"
           # No-argument `.split()` - real Python's own `str.split()` (no
           # separator) splits on any whitespace RUN, not individual
@@ -387,6 +397,23 @@ module CrystalPlay
         if match = part.match(REGEX_METHOD_STRIP)
           chars = match[2]?
           return JSON::Any.new(strip_chars(current.as_s, chars, left: true, right: true))
+        end
+
+        nil
+      end
+
+      # Jinja2/Python string method-call syntax (`.split(sep)`) - geerling
+      # guy.postgresql/mysql/php's own `ansible_facts.distribution_version
+      # .split('.')[0]` idiom for picking an OS-major-version vars file.
+      # Only the single-quoted-separator form is needed (the only one
+      # these roles use); returns an array of strings, matching Python's
+      # own str.split so a trailing `[0]` (handled by resolve_indexed,
+      # the caller one level up) picks the first component.
+      private def string_method_call(current : JSON::Any, part : String) : JSON::Any?
+        return nil unless current.raw.is_a?(String)
+
+        if result = string_method_core_call(current, part)
+          return result
         end
 
         if part == "splitlines()"

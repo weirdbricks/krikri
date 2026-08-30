@@ -96,8 +96,7 @@ module CrystalPlay
       new_lines, changed = edit_lines(original_content, state, line, regexp)
       new_content = render_content(new_lines, original_content, being_created)
 
-      backup_file = should_backup?(being_created, changed, path, check_mode) ? write_backup(path) : ""
-      File.write(path, new_content) if changed && !check_mode
+      backup_file = persist(path, new_content, being_created, changed, check_mode)
 
       diff = generate_unified_diff(original_content, new_content, path, path) if changed && @diff_mode
 
@@ -149,6 +148,12 @@ module CrystalPlay
       content
     end
 
+    private def persist(path : String, new_content : String, being_created : Bool, changed : Bool, check_mode : Bool) : String
+      backup_file = should_backup?(being_created, changed, path, check_mode) ? write_backup(path) : ""
+      File.write(path, new_content) if changed && !check_mode
+      backup_file
+    end
+
     private def should_backup?(being_created : Bool, changed : Bool, path : String, check_mode : Bool) : Bool
       return false if being_created || check_mode || !changed
       true?(@params["backup"]?) && File.exists?(path)
@@ -166,36 +171,41 @@ module CrystalPlay
         return false
       end
 
-      if mode = @params["mode"]?
-        if mode =~ /^0?\d+$/
-          current = (info.permissions.value & 0o7777).to_s(8)
-          target = mode.to_i(8).to_s(8)
-          if current.lstrip('0').presence != target.lstrip('0').presence
-            changed = true
-            (File.chmod(path, mode.to_i(8)) rescue nil) unless check_mode
-          end
-        end
-      end
-
-      if owner = @params["owner"]?
-        if user = System::User.find_by?(name: owner)
-          if info.owner_id.to_s != user.id.to_s
-            changed = true
-            (File.chown(path, uid: user.id.to_i, gid: -1) rescue nil) unless check_mode
-          end
-        end
-      end
-
-      if group = @params["group"]?
-        if grp = System::Group.find_by?(name: group)
-          if info.group_id.to_s != grp.id.to_s
-            changed = true
-            (File.chown(path, uid: -1, gid: grp.id.to_i) rescue nil) unless check_mode
-          end
-        end
-      end
+      changed = apply_mode_attr(path, info, check_mode) || changed
+      changed = apply_owner_attr(path, info, check_mode) || changed
+      changed = apply_group_attr(path, info, check_mode) || changed
 
       changed
+    end
+
+    private def apply_mode_attr(path : String, info : File::Info, check_mode : Bool) : Bool
+      return false unless mode = @params["mode"]?
+      return false unless mode =~ /^0?\d+$/
+
+      current = (info.permissions.value & 0o7777).to_s(8)
+      target = mode.to_i(8).to_s(8)
+      return false if current.lstrip('0').presence == target.lstrip('0').presence
+
+      (File.chmod(path, mode.to_i(8)) rescue nil) unless check_mode
+      true
+    end
+
+    private def apply_owner_attr(path : String, info : File::Info, check_mode : Bool) : Bool
+      return false unless owner = @params["owner"]?
+      return false unless user = System::User.find_by?(name: owner)
+      return false if info.owner_id.to_s == user.id.to_s
+
+      (File.chown(path, uid: user.id.to_i, gid: -1) rescue nil) unless check_mode
+      true
+    end
+
+    private def apply_group_attr(path : String, info : File::Info, check_mode : Bool) : Bool
+      return false unless group = @params["group"]?
+      return false unless grp = System::Group.find_by?(name: group)
+      return false if info.group_id.to_s == grp.id.to_s
+
+      (File.chown(path, uid: -1, gid: grp.id.to_i) rescue nil) unless check_mode
+      true
     end
 
     private def write_backup(path : String) : String

@@ -59,11 +59,15 @@ module CrystalPlay
         # "port "/"proto "/"app ''" for those produced malformed commands
         # ("ERROR: Wrong number of arguments") where real ansible skipped
         # the clause entirely.
+        append_trailing_clauses(parts, params)
+
+        parts.join(" ")
+      end
+
+      private def self.append_trailing_clauses(parts : Array(String), params : Hash(String, String))
         parts << "proto #{params["proto"]}" if (v = params["proto"]?) && !v.empty?
         parts << "app '#{params["name"]}'" if (v = params["name"]?) && !v.empty?
         parts << "comment '#{params["comment"]}'" if (v = params["comment"]?) && !v.empty?
-
-        parts.join(" ")
       end
 
       # from_ip/from_port/to_ip/to_port are four independent appends in

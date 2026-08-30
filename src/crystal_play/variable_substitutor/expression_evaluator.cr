@@ -361,24 +361,32 @@ module CrystalPlay
       # coercion via ConditionalEvaluator.
       private def evaluate_value_or_and(expr : String) : String?
         if idx = top_level_keyword_index(expr, " or ")
-          return nil if top_level_keyword_index(expr, " and ") || top_level_keyword_index(expr, " is ")
-          left = expr[0...idx].strip
-          right = expr[(idx + 4)..].strip
-          return nil if looks_like_condition?(left) || looks_like_condition?(right)
-
-          left_val = evaluate_operand(left)
-          return left_val if truthy_string?(left_val)
-          evaluate_operand(right)
+          evaluate_value_or(expr, idx)
         elsif idx = top_level_keyword_index(expr, " and ")
-          return nil if top_level_keyword_index(expr, " is ")
-          left = expr[0...idx].strip
-          right = expr[(idx + 5)..].strip
-          return nil if looks_like_condition?(left) || looks_like_condition?(right)
-
-          left_val = evaluate_operand(left)
-          return left_val unless truthy_string?(left_val)
-          evaluate_operand(right)
+          evaluate_value_and(expr, idx)
         end
+      end
+
+      private def evaluate_value_or(expr : String, idx : Int32) : String?
+        return nil if top_level_keyword_index(expr, " and ") || top_level_keyword_index(expr, " is ")
+        left = expr[0...idx].strip
+        right = expr[(idx + 4)..].strip
+        return nil if looks_like_condition?(left) || looks_like_condition?(right)
+
+        left_val = evaluate_operand(left)
+        return left_val if truthy_string?(left_val)
+        evaluate_operand(right)
+      end
+
+      private def evaluate_value_and(expr : String, idx : Int32) : String?
+        return nil if top_level_keyword_index(expr, " is ")
+        left = expr[0...idx].strip
+        right = expr[(idx + 5)..].strip
+        return nil if looks_like_condition?(left) || looks_like_condition?(right)
+
+        left_val = evaluate_operand(left)
+        return left_val unless truthy_string?(left_val)
+        evaluate_operand(right)
       end
 
       # `omit` isn't a real variable - it's a magic bareword sentinel
@@ -391,6 +399,19 @@ module CrystalPlay
       end
 
       private def evaluate_expr(expr : String) : String
+        if result = evaluate_expr_bare_literal(expr)
+          return result
+        end
+        if result = evaluate_expr_bare_call(expr)
+          return result
+        end
+        if result = evaluate_expr_operator(expr)
+          return result
+        end
+        evaluate_expr_access(expr)
+      end
+
+      private def evaluate_expr_bare_literal(expr : String) : String?
         # A bare boolean literal (`true`/`false`/`True`/`False`), as
         # opposed to a quoted string one - real Ansible/Jinja2 accepts
         # both spellings as literals. Checked before anything else falls
@@ -492,6 +513,10 @@ module CrystalPlay
           end
         end
 
+        nil
+      end
+
+      private def evaluate_expr_bare_call(expr : String) : String?
         # `lookup('first_found', ffparams)` - real Ansible's lookup()
         # function call syntax (distinct from a `|` filter chain), used
         # pervasively across linux-system-roles to pick an OS-version-
@@ -586,6 +611,10 @@ module CrystalPlay
           end
         end
 
+        nil
+      end
+
+      private def evaluate_expr_operator(expr : String) : String?
         # Check for comparison operators FIRST (before filters)
         if has_comparison?(expr)
           # CRINJA.md step 5, third construct: same try-Crinja-first,
@@ -693,6 +722,10 @@ module CrystalPlay
           end
         end
 
+        nil
+      end
+
+      private def evaluate_expr_access(expr : String) : String
         # A leading parenthesized sub-expression, optionally followed by
         # dotted/indexed access on its result (`( a | to_datetime(...) -
         # b | to_datetime(...) ).days` - dev-sec os_hardening's own
@@ -787,32 +820,7 @@ module CrystalPlay
 
         # Check for nested access (.)
         if expr.includes?(".")
-          # CRINJA.md step 5, seventh construct (continued): dotted
-          # variable/attribute access - try Crinja first via the
-          # raw-value path, same pattern and rationale as the literal
-          # array/dict and range() cases above. Probed extensively
-          # (nested dict/array traversal, `.get(key, default)`, Python
-          # string methods, `hostvars[...]`, a missing key/attribute) -
-          # all matched `@lookup.nested`'s own output exactly.
-          return begin
-            value = render_via_crinja_value(expr)
-            # A `nil` result here isn't necessarily a genuinely undefined
-            # value - Crinja's own vars are prepared once and never
-            # re-templated, so a dotted base whose STORED value is
-            # itself unrendered `{{ }}` text (a role default like
-            # `spamassassin_service: "{{ _spamassassin_service[...] |
-            # default(...) }}"`, robertdebock.spamassassin's own vars/
-            # main.yml) fails attribute access on the raw string outright
-            # (Crinja's Undefined, not an exception) instead of first
-            # re-resolving it - `@lookup.nested` already has the
-            # `rerender_if_templated` handling for exactly this, but
-            # previously only ran on an actual Crinja *exception*, never
-            # on a quiet `nil`. Real Ansible resolves the var fully (via
-            # its own vars_context) before evaluating `.name`.
-            value ? @lookup.format_value(value) : @lookup.nested(expr)
-          rescue
-            @lookup.nested(expr)
-          end
+          return evaluate_expr_dotted(expr)
         end
 
         # Simple variable lookup
@@ -822,6 +830,36 @@ module CrystalPlay
         rescue
           @lookup.simple(expr)
         end
+      end
+
+      # Dotted variable/attribute access - split out of
+      # #evaluate_expr_access purely to keep that method's own branch
+      # count under ameba's cyclomatic-complexity threshold.
+      private def evaluate_expr_dotted(expr : String) : String
+        # CRINJA.md step 5, seventh construct (continued): dotted
+        # variable/attribute access - try Crinja first via the
+        # raw-value path, same pattern and rationale as the literal
+        # array/dict and range() cases above. Probed extensively
+        # (nested dict/array traversal, `.get(key, default)`, Python
+        # string methods, `hostvars[...]`, a missing key/attribute) -
+        # all matched `@lookup.nested`'s own output exactly.
+        value = render_via_crinja_value(expr)
+        # A `nil` result here isn't necessarily a genuinely undefined
+        # value - Crinja's own vars are prepared once and never
+        # re-templated, so a dotted base whose STORED value is
+        # itself unrendered `{{ }}` text (a role default like
+        # `spamassassin_service: "{{ _spamassassin_service[...] |
+        # default(...) }}"`, robertdebock.spamassassin's own vars/
+        # main.yml) fails attribute access on the raw string outright
+        # (Crinja's Undefined, not an exception) instead of first
+        # re-resolving it - `@lookup.nested` already has the
+        # `rerender_if_templated` handling for exactly this, but
+        # previously only ran on an actual Crinja *exception*, never
+        # on a quiet `nil`. Real Ansible resolves the var fully (via
+        # its own vars_context) before evaluating `.name`.
+        value ? @lookup.format_value(value) : @lookup.nested(expr)
+      rescue
+        @lookup.nested(expr)
       end
 
       # Dispatches every `[`-bearing expr that isn't already a top-level
@@ -1137,62 +1175,75 @@ module CrystalPlay
       # identifier). Returns {operands, operators} (one fewer operator
       # than operand), or nil when there's no top-level `*`/`/` at all.
       private def split_top_level_mult_div(expr : String) : {Array(String), Array(String)}?
-        parts = [] of String
-        ops = [] of String
-        current = String::Builder.new
-        depth = 0
-        quote : Char? = nil
+        state = MultDivSplitState.new
         chars = expr.chars
         i = 0
-
         while i < chars.size
-          char = chars[i]
-          if q = quote
-            current << char
-            quote = nil if char == q
-            i += 1
-            next
-          end
-
-          case char
-          when '\'', '"'
-            quote = char
-            current << char
-          when '[', '(', '{'
-            depth += 1
-            current << char
-          when ']', ')', '}'
-            depth -= 1
-            current << char
-          when '*'
-            if depth == 0
-              parts << current.to_s.strip
-              current = String::Builder.new
-              ops << "*"
-            else
-              current << char
-            end
-          when '/'
-            if depth == 0
-              parts << current.to_s.strip
-              current = String::Builder.new
-              if i + 1 < chars.size && chars[i + 1] == '/'
-                ops << "//"
-                i += 1
-              else
-                ops << "/"
-              end
-            else
-              current << char
-            end
-          else
-            current << char
-          end
-          i += 1
+          i = split_top_level_mult_div_step(state, chars, i)
         end
-        parts << current.to_s.strip
+        state.parts << state.current.to_s.strip
 
-        ops.empty? ? nil : {parts, ops}
+        state.ops.empty? ? nil : {state.parts, state.ops}
+      end
+
+      private class MultDivSplitState
+        property parts = [] of String
+        property ops = [] of String
+        property current = String::Builder.new
+        property depth = 0
+        property quote : Char? = nil
+      end
+
+      private def split_top_level_mult_div_step(state : MultDivSplitState, chars : Array(Char), i : Int32) : Int32
+        char = chars[i]
+        if q = state.quote
+          state.current << char
+          state.quote = nil if char == q
+          return i + 1
+        end
+
+        case char
+        when '\'', '"', '[', '(', '{', ']', ')', '}'
+          split_mult_div_delimiter(state, char)
+        when '*', '/'
+          split_mult_div_operator(state, chars, i, char)
+        else
+          state.current << char
+        end
+        i + 1
+      end
+
+      private def split_mult_div_delimiter(state : MultDivSplitState, char : Char)
+        case char
+        when '\'', '"'
+          state.quote = char
+        when '[', '(', '{'
+          state.depth += 1
+        when ']', ')', '}'
+          state.depth -= 1
+        end
+        state.current << char
+      end
+
+      private def split_mult_div_operator(state : MultDivSplitState, chars : Array(Char), i : Int32, char : Char) : Int32
+        return split_mult_div_outside(state, chars, i, char) if state.depth == 0
+        state.current << char
+        i + 1
+      end
+
+      private def split_mult_div_outside(state : MultDivSplitState, chars : Array(Char), i : Int32, char : Char) : Int32
+        state.parts << state.current.to_s.strip
+        state.current = String::Builder.new
+        if char == '/'
+          if i + 1 < chars.size && chars[i + 1] == '/'
+            state.ops << "//"
+            return i + 2
+          end
+          state.ops << "/"
+        else
+          state.ops << "*"
+        end
+        i + 1
       end
 
       # Resolves each operand (the same resolver `+`/`-` operands use -
@@ -1279,11 +1330,48 @@ module CrystalPlay
 
       private def resolve_plus_operand(expr : String) : JSON::Any
         expr = expr.strip
-        literal = quoted_string_literal(expr) || numeric_literal(expr)
-        return literal if literal
+        expr = expr.strip
+        value = resolve_plus_operand_literal(expr)
+        return value if value
+        value = resolve_plus_operand_mult_div(expr)
+        return value if value
+        value = resolve_plus_operand_recursive(expr)
+        return value if value
+
+        resolved = @lookup.resolve(expr)
+
+        # Real Ansible's recursive re-templating - the fifth (and, so
+        # far, last) independent plain-lookup fallback in this engine
+        # found needing this exact fix, alongside ConditionalEvaluator's
+        # bare when:, ExpressionEvaluator's filter-chain head,
+        # FilterEngine's default() argument, and ComparisonEvaluator's
+        # bare comparison operand. Found via cloudalchemy.prometheus's
+        # own `go_arch: "{{ go_arch_map[ansible_architecture] | default(
+        # ansible_architecture) }}"` (role vars/main.yml, not defaults/)
+        # used as a bare `+`-operand inside `('linux-' + go_arch +
+        # '.tar.gz') in item` - `{{ go_arch }}` alone rendered correctly
+        # elsewhere (a different, already-fixed code path), but this
+        # plain-lookup fallback for a bare `+`/`~` operand returned the
+        # raw, unrendered template text, so the "in" check against every
+        # real checksum-file line always came back false.
+        if value = retemplated_lookup_value(resolved)
+          return value
+        end
+
+        resolved || JSON::Any.new(nil)
+      end
+
+      private def resolve_plus_operand_literal(expr : String) : JSON::Any?
+        if literal = quoted_string_literal(expr) || numeric_literal(expr)
+          return literal
+        end
 
         return parse_literal_array(expr) if expr.starts_with?('[') && expr.ends_with?(']')
 
+        nil
+      end
+
+      private def resolve_plus_operand_mult_div(expr : String) : JSON::Any?
         # A `*`/`/`/`//` sub-expression nested inside a `+`/`-` operand
         # (`2 + 3 * 4`'s own right-hand `+`-segment) - checked here so
         # `*`/`/` bind tighter than the `+`/`-` that already split this
@@ -1293,7 +1381,10 @@ module CrystalPlay
           rendered = evaluate_mult_div(expr, parts, ops)
           return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
         end
+        nil
+      end
 
+      private def resolve_plus_operand_recursive(expr : String) : JSON::Any?
         # A filter chain or parenthesized sub-expression operand (`acc |
         # default([])` in `acc | default([]) + [item]`) needs the full
         # recursive evaluator, not the plain variable lookup below, which
@@ -1317,23 +1408,16 @@ module CrystalPlay
           return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
         end
 
-        resolved = @lookup.resolve(expr)
+        nil
+      end
 
-        # Real Ansible's recursive re-templating - the fifth (and, so
-        # far, last) independent plain-lookup fallback in this engine
-        # found needing this exact fix, alongside ConditionalEvaluator's
-        # bare when:, ExpressionEvaluator's filter-chain head,
-        # FilterEngine's default() argument, and ComparisonEvaluator's
-        # bare comparison operand. Found via cloudalchemy.prometheus's
-        # own `go_arch: "{{ go_arch_map[ansible_architecture] | default(
-        # ansible_architecture) }}"` (role vars/main.yml, not defaults/)
-        # used as a bare `+`-operand inside `('linux-' + go_arch +
-        # '.tar.gz') in item` - `{{ go_arch }}` alone rendered correctly
-        # elsewhere (a different, already-fixed code path), but this
-        # plain-lookup fallback for a bare `+`/`~` operand returned the
-        # raw, unrendered template text, so the "in" check against every
-        # real checksum-file line always came back false.
-        if resolved && (raw = resolved.raw).is_a?(String) && (raw.includes?("{%") || raw.includes?("{#"))
+      # Re-renders a plain-lookup result whose own raw value is still
+      # unrendered Jinja template text (`{%`/`{#` block tags need the
+      # full Crinja renderer; a `{{ }}`-span re-enters this evaluator) -
+      # nil when the value isn't template text at all.
+      private def retemplated_lookup_value(resolved : JSON::Any?) : JSON::Any?
+        return nil unless resolved && (raw = resolved.raw).is_a?(String)
+        if raw.includes?("{%") || raw.includes?("{#")
           # Block tags need the full Crinja renderer, not this plain
           # `{{ }}`-only evaluator - see variable_lookup.cr's identical
           # fix for the full rationale (found via prometheus.prometheus's
@@ -1342,14 +1426,11 @@ module CrystalPlay
           return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
         end
 
-        if resolved && (raw = resolved.raw).is_a?(String) && raw.includes?("{{")
-          inner = raw.strip
-          inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
-          rendered = evaluate(inner)
-          return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
-        end
-
-        resolved || JSON::Any.new(nil)
+        return nil unless raw.includes?("{{")
+        inner = raw.strip
+        inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
+        rendered = evaluate(inner)
+        (JSON.parse(rendered) rescue JSON::Any.new(rendered))
       end
 
       # Splits *expr* on every top-level `~` (outside quotes/brackets),
@@ -1459,7 +1540,15 @@ module CrystalPlay
       # actually look up (buluma.multi's COLOR_* / DEFAULT_* / RETRY_*)
       # are covered; anything else returns "" rather than inventing a value.
       private def ansible_config_value(name : String) : String
-        case name.upcase
+        name_up = name.upcase
+        ansible_color_config_value(name_up) || ansible_default_config_value(name_up) ||
+          # Honour a matching ANSIBLE_<NAME> env var when present (real
+          # Ansible's own resolution order: env > cfg > default).
+          ENV["ANSIBLE_#{name_up}"]? || ""
+      end
+
+      private def ansible_color_config_value(name_up : String) : String?
+        case name_up
         when "COLOR_OK"                    then "green"
         when "COLOR_CHANGED"               then "yellow"
         when "COLOR_SKIP"                  then "cyan"
@@ -1468,16 +1557,18 @@ module CrystalPlay
         when "COLOR_DEBUG"                 then "dark gray"
         when "COLOR_VERBOSE"               then "blue"
         when "COLOR_WARN"                  then "bright purple"
-        when "DEFAULT_BECOME_USER"         then "root"
-        when "DEFAULT_ROLES_PATH"          then "~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles"
-        when "DEFAULT_HOST_LIST"           then "/etc/ansible/hosts"
-        when "RETRY_FILES_SAVE_PATH"       then ""
-        when "DEFAULT_TIMEOUT"             then "10"
-        when "DEFAULT_FORKS"               then "5"
-        else
-          # Honour a matching ANSIBLE_<NAME> env var when present (real
-          # Ansible's own resolution order: env > cfg > default).
-          ENV["ANSIBLE_#{name.upcase}"]? || ""
+        end
+      end
+
+      private def ansible_default_config_value(name_up : String) : String?
+        case name_up
+        when "DEFAULT_BECOME_USER" then "root"
+        when "DEFAULT_ROLES_PATH"  then "~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles"
+        when "DEFAULT_HOST_LIST"   then "/etc/ansible/hosts"
+        when "RETRY_FILES_SAVE_PATH"
+          ""
+        when "DEFAULT_TIMEOUT" then "10"
+        when "DEFAULT_FORKS"   then "5"
         end
       end
 
@@ -1485,6 +1576,15 @@ module CrystalPlay
         parts = split_top_level_commas(args)
         lookup_type = parts[0]?.try { |part| quoted_string_literal(part.strip) }.try(&.as_s?)
 
+        evaluate_lookup_scalar(lookup_type, parts) ||
+          evaluate_lookup_file(lookup_type, parts) ||
+          evaluate_lookup_list(lookup_type, parts) ||
+          evaluate_lookup_misc(lookup_type, parts) ||
+          evaluate_lookup_file_parsers(lookup_type, parts) ||
+          "undefined"
+      end
+
+      private def evaluate_lookup_scalar(lookup_type : String?, parts : Array(String)) : String?
         case lookup_type
         when "first_found"
           params = parts[1]?.try { |part| resolve_plus_operand(part.strip) }
@@ -1508,63 +1608,9 @@ module CrystalPlay
           var_name = parts[1]?.try { |part| resolve_plus_operand(part.strip) }.try(&.as_s?)
           var_name ? (ENV[var_name]? || "") : "undefined"
         when "config"
-          # lookup('config', 'OPTION'[, 'OPTION2', ...], wantlist=True) -
-          # real Ansible's own config lookup plugin, returns the current
-          # value of one or more ansible.cfg / ANSIBLE_* settings from the
-          # CONTROLLER. Multi-arg form with wantlist=True returns a real
-          # list (buluma.multi's own `loop: "{{ lookup('config', 'COLOR_OK',
-          # 'COLOR_CHANGED', 'COLOR_SKIP', wantlist=True) }}"`, round 190 -
-          # previously unimplemented, fell through to "undefined", so the
-          # loop bound `item` to nothing and the debug failed with
-          # `'item' is undefined`). Defaults match ansible-core 2.19's own
-          # DEFAULT_*/COLOR_* constants when no ansible.cfg override is set.
-          wantlist = parts[1..].any? { |part| part.strip.downcase.starts_with?("wantlist=true") }
-          names = parts[1..].reject(&.strip.downcase.starts_with?("wantlist=")).compact_map { |part|
-            quoted_string_literal(part.strip).try(&.as_s?) || evaluate(part.strip).presence
-          }
-          return "undefined" if names.empty?
-          values = names.map { |nval| ansible_config_value(nval) }
-          if wantlist || names.size > 1
-            values.to_json
-          else
-            values[0]
-          end
+          lookup_config(parts)
         when "url"
-          # lookup('url', url_expr, wantlist=True) - real Ansible's own
-          # url lookup plugin, fetching a URL from the CONTROLLER (same
-          # controller-side rule as env/first_found above). Entirely
-          # unimplemented before - fell through to "undefined", so
-          # cloudalchemy.prometheus's own checksum-pinning idiom
-          # (`lookup('url', '.../sha256sums.txt', wantlist=True) |
-          # list`, then looping over each line to find the right
-          # architecture's checksum) never populated a real checksum -
-          # `checksum:` on the subsequent get_url: task compared against
-          # the literal string "undefined", always failing. The url_expr
-          # itself is commonly a `+`-concatenation of literals and
-          # variables (`'https://...v' + prometheus_version + '/...'`),
-          # so it's rendered via the full #evaluate (not
-          # #resolve_plus_operand, which only understands a single
-          # operand) rather than a bare variable/literal lookup.
-          url = parts[1]?.try { |part| evaluate(part.strip) }
-          return "undefined" unless url
-
-          # Real Ansible's `lookup()` Jinja function only returns a real
-          # LIST when the call site explicitly passes `wantlist=True` -
-          # otherwise it comma-joins the plugin's own (always-list)
-          # result into a single plain STRING. `fetch_url_lines` always
-          # returned the JSON-array form unconditionally (right for
-          # cloudalchemy.prometheus's own `wantlist=True) | list` idiom,
-          # which this was originally added for), so a call with no
-          # `wantlist=True` at all - robertdebock.kubectl's own
-          # `kubectl_url: ".../release/{{ lookup('url',
-          # kubectl_version_url) }}/bin/..."`, fetching a single-line
-          # version file - got the literal text `["v1.31.0"]` spliced
-          # into the URL instead of the plain string `v1.31.0`, a 404.
-          wantlist = parts[2..].any? { |part| part.strip.downcase.starts_with?("wantlist=true") }
-          lines_json = fetch_url_lines(url)
-          return lines_json if wantlist
-
-          (JSON.parse(lines_json).as_a?.try(&.map(&.as_s).join(",")) rescue nil) || "undefined"
+          lookup_url(parts)
         when "vars"
           # lookup('vars', 'variable_name') - real Ansible's own vars
           # lookup plugin: an INDIRECT variable lookup, the name itself
@@ -1576,70 +1622,92 @@ module CrystalPlay
           return "undefined" unless var_name
           resolved = @lookup.resolve(var_name)
           resolved ? @lookup.format_value(resolved) : "undefined"
+        end
+      end
+
+      private def lookup_config(parts : Array(String)) : String
+        # lookup('config', 'OPTION'[, 'OPTION2', ...], wantlist=True) -
+        # real Ansible's own config lookup plugin, returns the current
+        # value of one or more ansible.cfg / ANSIBLE_* settings from the
+        # CONTROLLER. Multi-arg form with wantlist=True returns a real
+        # list (buluma.multi's own `loop: "{{ lookup('config', 'COLOR_OK',
+        # 'COLOR_CHANGED', 'COLOR_SKIP', wantlist=True) }}"`, round 190 -
+        # previously unimplemented, fell through to "undefined", so the
+        # loop bound `item` to nothing and the debug failed with
+        # `'item' is undefined`). Defaults match ansible-core 2.19's own
+        # DEFAULT_*/COLOR_* constants when no ansible.cfg override is set.
+        wantlist = parts[1..].any? { |part| part.strip.downcase.starts_with?("wantlist=true") }
+        names = parts[1..].reject(&.strip.downcase.starts_with?("wantlist=")).compact_map { |part|
+          quoted_string_literal(part.strip).try(&.as_s?) || evaluate(part.strip).presence
+        }
+        return "undefined" if names.empty?
+        values = names.map { |nval| ansible_config_value(nval) }
+        if wantlist || names.size > 1
+          values.to_json
+        else
+          values[0]
+        end
+      end
+
+      private def lookup_url(parts : Array(String)) : String
+        # lookup('url', url_expr, wantlist=True) - real Ansible's own
+        # url lookup plugin, fetching a URL from the CONTROLLER (same
+        # controller-side rule as env/first_found above). Entirely
+        # unimplemented before - fell through to "undefined", so
+        # cloudalchemy.prometheus's own checksum-pinning idiom
+        # (`lookup('url', '.../sha256sums.txt', wantlist=True) |
+        # list`, then looping over each line to find the right
+        # architecture's checksum) never populated a real checksum -
+        # `checksum:` on the subsequent get_url: task compared against
+        # the literal string "undefined", always failing. The url_expr
+        # itself is commonly a `+`-concatenation of literals and
+        # variables (`'https://...v' + prometheus_version + '/...'`),
+        # so it's rendered via the full #evaluate (not
+        # #resolve_plus_operand, which only understands a single
+        # operand) rather than a bare variable/literal lookup.
+        url = parts[1]?.try { |part| evaluate(part.strip) }
+        return "undefined" unless url
+
+        # Real Ansible's `lookup()` Jinja function only returns a real
+        # LIST when the call site explicitly passes `wantlist=True` -
+        # otherwise it comma-joins the plugin's own (always-list)
+        # result into a single plain STRING. `fetch_url_lines` always
+        # returned the JSON-array form unconditionally (right for
+        # cloudalchemy.prometheus's own `wantlist=True) | list` idiom,
+        # which this was originally added for), so a call with no
+        # `wantlist=True` at all - robertdebock.kubectl's own
+        # `kubectl_url: ".../release/{{ lookup('url',
+        # kubectl_version_url) }}/bin/..."`, fetching a single-line
+        # version file - got the literal text `["v1.31.0"]` spliced
+        # into the URL instead of the plain string `v1.31.0`, a 404.
+        wantlist = parts[2..].any? { |part| part.strip.downcase.starts_with?("wantlist=true") }
+        lines_json = fetch_url_lines(url)
+        return lines_json if wantlist
+
+        (JSON.parse(lines_json).as_a?.try(&.map(&.as_s).join(",")) rescue nil) || "undefined"
+      end
+
+      private def lookup_vars(parts : Array(String)) : String
+        # lookup('vars', 'variable_name') - real Ansible's own vars
+        # lookup plugin: an INDIRECT variable lookup, the name itself
+        # coming from an expression (commonly a computed string, e.g.
+        # `lookup('vars', 'nginx_' + ansible_distribution)`) rather
+        # than being written as a literal `{{ }}` reference. Entirely
+        # unimplemented before, fell through to "undefined".
+        var_name = parts[1]?.try { |part| evaluate(part.strip) }
+        return "undefined" unless var_name
+        resolved = @lookup.resolve(var_name)
+        resolved ? @lookup.format_value(resolved) : "undefined"
+      end
+
+      private def evaluate_lookup_file(lookup_type : String?, parts : Array(String)) : String?
+        case lookup_type
         when "file"
-          # lookup('file', path) - reads a file's content from the
-          # CONTROLLER (same controller-side rule as env/url/first_found
-          # above), stripped of a single trailing newline (real
-          # Ansible's own file lookup plugin behavior - it splits on
-          # newlines and rejoins with the requested separator, default
-          # "\n", which drops exactly one trailing blank line same as a
-          # plain `.rstrip()` would for the common no-embedded-blank-
-          # lines case this covers).
-          path = parts[1]?.try { |part| evaluate(part.strip) }
-          return "undefined" unless path
-          resolved_path = resolve_lookup_path(path)
-          begin
-            File.read(resolved_path).chomp
-          rescue
-            # Real Ansible's `file` lookup plugin RAISES when the file
-            # can't be read ("Unable to access the file '<path>': File
-            # not found"), failing the whole task's arg finalization
-            # rather than continuing with a placeholder - unlike a
-            # genuinely-undefined VARIABLE reference, which is lenient by
-            # design elsewhere in this evaluator. Falling back to the
-            # "undefined" sentinel here instead let a missing file's
-            # literal text "undefined" get written straight into real
-            # task output - found via andrewrothstein.ssh-user-keygen's
-            # own `lookup('file', ssh_user_pubkey)` on a host with no
-            # `~/.ssh/id_rsa.pub`: real Ansible fails the task, this
-            # engine wrote the string "undefined" into `~/.ssh/
-            # authorized_keys` as if it were a real public key. Mirrors
-            # the url lookup's own HTTP-failure raise just above (same
-            # `rescue ex` in the executor turns this into "Finalization
-            # of task args ... failed", matching real Ansible's message
-            # shape).
-            raise "The lookup plugin 'file' failed: Unable to access the file '#{path}': File not found"
-          end
+          lookup_file(parts)
         when "pipe"
-          # lookup('pipe', command) - runs *command* via the shell ON
-          # THE CONTROLLER (not the target - matches real Ansible's own
-          # pipe lookup plugin, which always executes locally) and
-          # returns its stdout, stripped of a trailing newline.
-          command = parts[1]?.try { |part| evaluate(part.strip) }
-          return "undefined" unless command
-          begin
-            output = IO::Memory.new
-            status = Process.run("/bin/sh", ["-c", command], output: output, error: Process::Redirect::Close)
-            status.success? ? output.to_s.chomp : "undefined"
-          rescue
-            "undefined"
-          end
+          lookup_pipe(parts)
         when "template"
-          # lookup('template', path) - renders a local (controller-side)
-          # `.j2` file through the same Crinja pipeline `template:`
-          # tasks use, against this expression's own vars, and returns
-          # the rendered text with one trailing newline stripped
-          # (matches real Ansible's own template lookup plugin, which
-          # is explicitly documented to strip a single trailing newline
-          # the way Jinja2's own template rendering leaves one).
-          path = parts[1]?.try { |part| evaluate(part.strip) }
-          return "undefined" unless path
-          resolved_path = resolve_lookup_path(path)
-          begin
-            crinja_renderer.render(File.read(resolved_path)).chomp
-          rescue
-            "undefined"
-          end
+          lookup_template(parts)
         when "password"
           # lookup('password', '/path/to/file [length=N chars=abc...]')
           # - real Ansible's own password lookup plugin: generates a
@@ -1655,19 +1723,115 @@ module CrystalPlay
           return "undefined" unless raw_arg
           evaluate_password_lookup(raw_arg)
         when "dict"
-          # lookup('dict', {'a': 1, 'b': 2}) - real Ansible's own dict
-          # lookup plugin: one dict term in, a list of {key:, value:}
-          # dicts out (one per top-level key) - identical shape to the
-          # dict2items filter. Always returns real JSON array text
-          # (not real Ansible's own default comma-joined-scalar
-          # behavior) - these list-producing lookups are almost always
-          # consumed as a loop: source or piped through | list/|
-          # flatten, both of which need a real array, not joined text.
-          source = parts[1]?.try { |part| evaluate(part.strip) }
-          return "undefined" unless source
-          dict = (JSON.parse(source) rescue nil).try(&.as_h?)
-          return "undefined" unless dict
-          dict.map { |k, v| {"key" => JSON::Any.new(k), "value" => v} }.to_json
+          lookup_dict(parts)
+        end
+      end
+
+      private def lookup_file(parts : Array(String)) : String
+        # lookup('file', path) - reads a file's content from the
+        # CONTROLLER (same controller-side rule as env/url/first_found
+        # above), stripped of a single trailing newline (real
+        # Ansible's own file lookup plugin behavior - it splits on
+        # newlines and rejoins with the requested separator, default
+        # "\n", which drops exactly one trailing blank line same as a
+        # plain `.rstrip()` would for the common no-embedded-blank-
+        # lines case this covers).
+        path = parts[1]?.try { |part| evaluate(part.strip) }
+        return "undefined" unless path
+        resolved_path = resolve_lookup_path(path)
+        begin
+          File.read(resolved_path).chomp
+        rescue
+          # Real Ansible's `file` lookup plugin RAISES when the file
+          # can't be read ("Unable to access the file '<path>': File
+          # not found"), failing the whole task's arg finalization
+          # rather than continuing with a placeholder - unlike a
+          # genuinely-undefined VARIABLE reference, which is lenient by
+          # design elsewhere in this evaluator. Falling back to the
+          # "undefined" sentinel here instead let a missing file's
+          # literal text "undefined" get written straight into real
+          # task output - found via andrewrothstein.ssh-user-keygen's
+          # own `lookup('file', ssh_user_pubkey)` on a host with no
+          # `~/.ssh/id_rsa.pub`: real Ansible fails the task, this
+          # engine wrote the string "undefined" into `~/.ssh/
+          # authorized_keys` as if it were a real public key. Mirrors
+          # the url lookup's own HTTP-failure raise just above (same
+          # `rescue ex` in the executor turns this into "Finalization
+          # of task args ... failed", matching real Ansible's message
+          # shape).
+          raise "The lookup plugin 'file' failed: Unable to access the file '#{path}': File not found"
+        end
+      end
+
+      private def lookup_pipe(parts : Array(String)) : String
+        # lookup('pipe', command) - runs *command* via the shell ON
+        # THE CONTROLLER (not the target - matches real Ansible's own
+        # pipe lookup plugin, which always executes locally) and
+        # returns its stdout, stripped of a trailing newline.
+        command = parts[1]?.try { |part| evaluate(part.strip) }
+        return "undefined" unless command
+        begin
+          output = IO::Memory.new
+          status = Process.run("/bin/sh", ["-c", command], output: output, error: Process::Redirect::Close)
+          status.success? ? output.to_s.chomp : "undefined"
+        rescue
+          "undefined"
+        end
+      end
+
+      private def lookup_template(parts : Array(String)) : String
+        # lookup('template', path) - renders a local (controller-side)
+        # `.j2` file through the same Crinja pipeline `template:`
+        # tasks use, against this expression's own vars, and returns
+        # the rendered text with one trailing newline stripped
+        # (matches real Ansible's own template lookup plugin, which
+        # is explicitly documented to strip a single trailing newline
+        # the way Jinja2's own template rendering leaves one).
+        path = parts[1]?.try { |part| evaluate(part.strip) }
+        return "undefined" unless path
+        resolved_path = resolve_lookup_path(path)
+        begin
+          crinja_renderer.render(File.read(resolved_path)).chomp
+        rescue
+          "undefined"
+        end
+      end
+
+      private def lookup_dict(parts : Array(String)) : String
+        # lookup('dict', {'a': 1, 'b': 2}) - real Ansible's own dict
+        # lookup plugin: one dict term in, a list of {key:, value:}
+        # dicts out (one per top-level key) - identical shape to the
+        # dict2items filter. Always returns real JSON array text
+        # (not real Ansible's own default comma-joined-scalar
+        # behavior) - these list-producing lookups are almost always
+        # consumed as a loop: source or piped through | list/|
+        # flatten, both of which need a real array, not joined text.
+        source = parts[1]?.try { |part| evaluate(part.strip) }
+        return "undefined" unless source
+        dict = (JSON.parse(source) rescue nil).try(&.as_h?)
+        return "undefined" unless dict
+        dict.map { |k, v| {"key" => JSON::Any.new(k), "value" => v} }.to_json
+      end
+
+      private def lookup_lines(parts : Array(String)) : String
+        # lookup('lines', command) - real Ansible's own lines lookup:
+        # runs *command* on the CONTROLLER (same as pipe above) but
+        # returns its output SPLIT into a list of lines, not one
+        # joined string.
+        command = parts[1]?.try { |part| evaluate(part.strip) }
+        return "undefined" unless command
+        begin
+          output = IO::Memory.new
+          status = Process.run("/bin/sh", ["-c", command], output: output, error: Process::Redirect::Close)
+          return "undefined" unless status.success?
+          output.to_s.split('\n').reject(&.empty?).to_json
+        rescue
+          "undefined"
+        end
+      end
+
+      private def evaluate_lookup_list(lookup_type : String?, parts : Array(String)) : String?
+        case lookup_type
         when "list"
           # lookup('list', a, b, c) - real Ansible's own list lookup:
           # returns every term given, as a real list (mainly exists so
@@ -1698,26 +1862,18 @@ module CrystalPlay
           result = lists.reduce([[] of JSON::Any]) { |acc, list| acc.flat_map { |row| list.map { |item| row + [item] } } }
           result.to_json
         when "lines"
-          # lookup('lines', command) - real Ansible's own lines lookup:
-          # runs *command* on the CONTROLLER (same as pipe above) but
-          # returns its output SPLIT into a list of lines, not one
-          # joined string.
-          command = parts[1]?.try { |part| evaluate(part.strip) }
-          return "undefined" unless command
-          begin
-            output = IO::Memory.new
-            status = Process.run("/bin/sh", ["-c", command], output: output, error: Process::Redirect::Close)
-            return "undefined" unless status.success?
-            output.to_s.split('\n').reject(&.empty?).to_json
-          rescue
-            "undefined"
-          end
+          lookup_lines(parts)
         when "varnames"
           # lookup('varnames', 'regex1', 'regex2', ...) - real Ansible's
           # own varnames lookup: returns every variable NAME (not
           # value) whose name matches ANY of the given regex patterns.
           patterns = parts[1..].compact_map { |part| quoted_string_literal(part.strip).try(&.as_s?) }.compact_map { |pth| Regex.new(pth) rescue nil }
           @vars.keys.select { |name| patterns.any?(&.matches?(name)) }.to_json
+        end
+      end
+
+      private def evaluate_lookup_misc(lookup_type : String?, parts : Array(String)) : String?
+        case lookup_type
         when "sequence"
           # lookup('sequence', 'start=1 end=5 stride=1 format=web%02d')
           # - real Ansible's own sequence lookup: generates a numeric
@@ -1747,27 +1903,36 @@ module CrystalPlay
           return "undefined" if items.empty?
           @lookup.format_value(items.sample)
         when "subelements"
-          # lookup('subelements', list_of_dicts, 'subkey', {
-          # skip_missing: true}) - real Ansible's own subelements
-          # lookup: for each dict, yields [parent_dict, child_item] for
-          # every item in parent_dict[subkey] - the classic with_
-          # subelements: source (e.g. iterating {user, group} for every
-          # group in each user's own `groups:` list).
-          source = parts[1]?.try { |part| evaluate_lookup_term(part.strip) }
-          subkey = parts[2]?.try { |part| quoted_string_literal(part.strip) }.try(&.as_s?)
-          return "undefined" unless source && subkey
+          lookup_subelements(parts)
+        end
+      end
 
-          skip_missing = parts[3]?.try { |part| evaluate_lookup_term(part.strip) }.try(&.as_h?).try(&.["skip_missing"]?).try(&.as_bool?) || false
-          result = [] of JSON::Any
-          lookup_array(source).each do |parent|
-            children = parent.as_h?.try(&.[subkey]?)
-            if children.nil?
-              raise "subelements: '#{subkey}' not found" unless skip_missing
-              next
-            end
-            lookup_array(children).each { |child| result << JSON::Any.new([parent, child]) }
+      private def lookup_subelements(parts : Array(String)) : String
+        # lookup('subelements', list_of_dicts, 'subkey', {
+        # skip_missing: true}) - real Ansible's own subelements
+        # lookup: for each dict, yields [parent_dict, child_item] for
+        # every item in parent_dict[subkey] - the classic with_
+        # subelements: source (e.g. iterating {user, group} for every
+        # group in each user's own `groups:` list).
+        source = parts[1]?.try { |part| evaluate_lookup_term(part.strip) }
+        subkey = parts[2]?.try { |part| quoted_string_literal(part.strip) }.try(&.as_s?)
+        return "undefined" unless source && subkey
+
+        skip_missing = parts[3]?.try { |part| evaluate_lookup_term(part.strip) }.try(&.as_h?).try(&.["skip_missing"]?).try(&.as_bool?) || false
+        result = [] of JSON::Any
+        lookup_array(source).each do |parent|
+          children = parent.as_h?.try(&.[subkey]?)
+          if children.nil?
+            raise "subelements: '#{subkey}' not found" unless skip_missing
+            next
           end
-          result.to_json
+          lookup_array(children).each { |child| result << JSON::Any.new([parent, child]) }
+        end
+        result.to_json
+      end
+
+      private def evaluate_lookup_file_parsers(lookup_type : String?, parts : Array(String)) : String?
+        case lookup_type
         when "csvfile"
           # lookup('csvfile', 'key file=data.csv delimiter=, col=1') -
           # real Ansible's own csvfile lookup: finds the row whose first
@@ -1815,7 +1980,7 @@ module CrystalPlay
           # @inventory. Revisit inventory_hostnames if a real role turns
           # out to need it - would need @inventory plumbed through the
           # VarSubstitutor/ExpressionEvaluator construction chain.
-          "undefined"
+          nil
         end
       end
 
@@ -1915,18 +2080,7 @@ module CrystalPlay
       end
 
       private def evaluate_sequence_lookup(raw_arg : String) : String
-        tokens = raw_arg.strip.split(/\s+/)
-        opts = Hash(String, String).new
-        # Shorthand positional "start-end" form (`lookup('sequence',
-        # '1-5')`), real Ansible's own alternate spelling - only when
-        # the whole first token has no "=" at all, so it doesn't
-        # collide with the key=value form's own values (a format=
-        # string could itself contain a literal "-").
-        if tokens[0]? && !tokens[0].includes?('=') && (range_match = tokens[0].match(/^(\d+)-(\d+)$/))
-          opts["start"] = range_match[1]
-          opts["end"] = range_match[2]
-          tokens = tokens[1..]
-        end
+        tokens, opts = parse_sequence_opts(raw_arg)
         tokens.each do |token|
           key, sep, val = token.partition('=')
           opts[key] = val unless sep.empty?
@@ -1942,6 +2096,27 @@ module CrystalPlay
         return "undefined" if total < 0
 
         values = (0...total).map { |i| start + i * stride }
+        sequence_formatted_values(values, format)
+      end
+
+      # Splits the sequence lookup's raw argument into its remaining
+      # tokens and an opts hash, handling the shorthand positional
+      # "start-end" form (`lookup('sequence', '1-5')`), real Ansible's
+      # own alternate spelling - only when the whole first token has no
+      # "=" at all, so it doesn't collide with the key=value form's own
+      # values (a format= string could itself contain a literal "-").
+      private def parse_sequence_opts(raw_arg : String) : {Array(String), Hash(String, String)}
+        tokens = raw_arg.strip.split(/\s+/)
+        opts = Hash(String, String).new
+        if tokens[0]? && !tokens[0].includes?('=') && (range_match = tokens[0].match(/^(\d+)-(\d+)$/))
+          opts["start"] = range_match[1]
+          opts["end"] = range_match[2]
+          tokens = tokens[1..]
+        end
+        {tokens, opts}
+      end
+
+      private def sequence_formatted_values(values : Array(Int32), format : String?) : String
         formatted = format ? values.map { |v| (format % v) rescue v.to_s } : values.map(&.to_s)
         formatted.to_json
       end
@@ -2550,111 +2725,144 @@ module CrystalPlay
         segments = FilterEngine.split_chain(expr)
         var_expr = segments[0]
 
-        value = if var_expr.starts_with?('(') && var_expr.ends_with?(')')
-                  # A parenthesized sub-expression as the chain's head -
-                  # dev-sec os_hardening's sysctl merge nests filter chains
-                  # this way: `((sysctl_config | combine(...)) |
-                  # combine(...)) | combine(...)`. Recursing (stripping the
-                  # outer pair) resolves each layer instead of treating the
-                  # whole parenthesized text as a literal variable name -
-                  # which always failed the lookup and silently collapsed
-                  # the entire with_dict: source to nothing.
-                  rendered = evaluate(var_expr[1..-2].strip)
-                  JSON.parse(rendered) rescue JSON::Any.new(rendered)
-                elsif var_expr.starts_with?("range(") && var_expr.ends_with?(')')
-                  # `range(1, 11) | list` / `range(1, 11) | ...` - same
-                  # function-call syntax as the no-filter case in
-                  # evaluate_expr, just reached via a different path since
-                  # top_level_pipe? routes anything with a `|` here first.
-                  evaluate_range(var_expr[6..-2])
-                elsif var_expr.starts_with?("lookup(") && var_expr.ends_with?(')')
-                  # `lookup('env', 'VAULT_VERSION') | default('2.0.3',
-                  # true)` - same function-call syntax as evaluate_expr's
-                  # own bare (no-filter) `lookup(` case, just reached via
-                  # a different path since top_level_pipe? routes
-                  # anything with a `|` here first. split_chain already
-                  # isolated var_expr to exactly this call (depth-aware,
-                  # so the filter chain's own trailing `)` from
-                  # default(...) was never part of it) - the actual bug
-                  # this sits alongside was evaluate_expr's own top-level
-                  # `starts_with("lookup(") && ends_with(')')` check
-                  # wrongly matching the *whole* "lookup(...) |
-                  # default(...)" text (any trailing filter call ending
-                  # in its own `)` satisfies ends_with(')') too),
-                  # swallowing the entire expression into evaluate_lookup
-                  # with a garbled, unbalanced argument string before
-                  # top_level_pipe? ever got a chance to run - fixed via
-                  # #bare_call?, which confirms the matching close paren
-                  # for `lookup(`'s own open paren is the expression's
-                  # actual last character, not just checking whether the
-                  # tail of the string happens to be some `)`.
-                  lookup_rendered = evaluate_lookup(var_expr[7..-2])
-                  (JSON.parse(lookup_rendered) rescue JSON::Any.new(lookup_rendered))
-                elsif literal = quoted_string_literal(var_expr)
-                  # A quoted string literal as the chain's head
-                  # (`{{ 'foo' | upper }}`, `{{ mysql_log_error | dirname
-                  # }}`'s own sibling pattern with a literal instead of a
-                  # variable) - previously fell to the plain-lookup else
-                  # branch below, treating the literal text (quotes
-                  # included) as a variable NAME to resolve, always
-                  # undefined.
-                  literal
-                elsif literal = numeric_literal(var_expr)
-                  # A bare numeric literal as the chain's head (`{{ 5.7 |
-                  # int }}`, `{{ 256.0 | int }}`) - same gap as the
-                  # quoted-string-literal case just above, one level
-                  # deeper: found via geerlingguy.swap's own check-
-                  # size.yml (`(stat.size / 1024 / 1024) | int` - the
-                  # parenthesized form recurses through #evaluate_expr's
-                  # own now-fixed bare-numeric-literal check, but a
-                  # *literal* head with no parens at all, as in this
-                  # simplified repro, never reached any numeric check
-                  # here and fell to the plain-lookup else branch,
-                  # always undefined).
-                  literal
-                elsif var_expr.includes?("[")
-                  # Array slicing (`list[0:2]`) and plain indexing
-                  # (`list[0]`) aren't resolved to JSON::Any directly here
-                  # (ArraySlicer/VariableLookup#indexed both still only
-                  # return pre-formatted Strings) - fall back to the
-                  # existing String-returning path and re-parse it, rather
-                  # than duplicating that logic. "undefined" isn't valid
-                  # JSON, so it maps to a real JSON null.
-                  rendered = evaluate(var_expr)
-                  JSON.parse(rendered) rescue JSON::Any.new(rendered)
-                else
-                  resolved = @lookup.resolve(var_expr)
-
-                  # Real Ansible's recursive re-templating: a variable
-                  # whose own raw value is itself unrendered Jinja (a
-                  # role default defined in terms of another default,
-                  # e.g. ansible-community.ansible-vault's own
-                  # `vault_tls_gossip: "{{ lookup('env',
-                  # 'VAULT_TLS_GOSSIP') | default(false, true) }}"`) must
-                  # be rendered before a filter chain sees it - otherwise
-                  # `vault_tls_gossip | bool` saw the raw, non-empty
-                  # template text itself (truthy) rather than the real
-                  # (false) rendered value. Same class of bug as
-                  # ConditionalEvaluator's identical fix for a bare `when:
-                  # vault_tls_gossip` condition - this is the filter-chain
-                  # counterpart, since `{{ vault_tls_gossip }}` alone (no
-                  # filter) already got a re-render pass elsewhere but a
-                  # filter chain's own head resolution here didn't.
-                  if resolved && (raw = resolved.raw).is_a?(String) && (raw.includes?("{%") || raw.includes?("{#"))
-                    rendered = CrinjaRenderer.new(@vars).render(raw)
-                    JSON.parse(rendered) rescue JSON::Any.new(rendered)
-                  elsif resolved && (raw = resolved.raw).is_a?(String) && raw.includes?("{{")
-                    inner = raw.strip
-                    inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
-                    rendered = evaluate(inner)
-                    JSON.parse(rendered) rescue JSON::Any.new(rendered)
-                  else
-                    resolved || JSON::Any.new(nil)
-                  end
-                end
+        value = filter_chain_head_value(var_expr)
 
         result = segments[1..].reduce(value) { |acc, filter_expr| @filter.apply(acc, filter_expr) }
         @lookup.format_value(result)
+      end
+
+      # Resolves a filter chain's head expression to a real JSON::Any
+      # (an array/hash, not a pre-stringified String) so FilterEngine can
+      # carry actual structure from one filter to the next - `sort`'s
+      # real array output feeding into `join`, not a JSON-encoded string
+      # `sort` had no choice but to return before. Split out of
+      # #evaluate_with_filter_fallback purely to keep that method's own
+      # branch count under ameba's cyclomatic-complexity threshold.
+      private def filter_chain_head_value(var_expr : String) : JSON::Any
+        filter_chain_special_head(var_expr) || filter_chain_literal_head(var_expr) ||
+          filter_chain_var_head(var_expr)
+      end
+
+      # The non-plain-variable head shapes: a parenthesized
+      # sub-expression, a `range(...)`/`lookup(...)` call, a quoted
+      # string or numeric literal, or any `[`-bearing expression
+      # (slicing/indexing). nil when none match - the caller falls back
+      # to a plain variable lookup.
+      private def filter_chain_special_head(var_expr : String) : JSON::Any?
+        if var_expr.starts_with?('(') && var_expr.ends_with?(')')
+          # A parenthesized sub-expression as the chain's head -
+          # dev-sec os_hardening's sysctl merge nests filter chains
+          # this way: `((sysctl_config | combine(...)) |
+          # combine(...)) | combine(...)`. Recursing (stripping the
+          # outer pair) resolves each layer instead of treating the
+          # whole parenthesized text as a literal variable name -
+          # which always failed the lookup and silently collapsed
+          # the entire with_dict: source to nothing.
+          rendered = evaluate(var_expr[1..-2].strip)
+          return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
+        end
+        if var_expr.starts_with?("range(") && var_expr.ends_with?(')')
+          # `range(1, 11) | list` / `range(1, 11) | ...` - same
+          # function-call syntax as the no-filter case in
+          # evaluate_expr, just reached via a different path since
+          # top_level_pipe? routes anything with a `|` here first.
+          return evaluate_range(var_expr[6..-2])
+        end
+        if var_expr.starts_with?("lookup(") && var_expr.ends_with?(')')
+          # `lookup('env', 'VAULT_VERSION') | default('2.0.3',
+          # true)` - same function-call syntax as evaluate_expr's
+          # own bare (no-filter) `lookup(` case, just reached via
+          # a different path since top_level_pipe? routes
+          # anything with a `|` here first. split_chain already
+          # isolated var_expr to exactly this call (depth-aware,
+          # so the filter chain's own trailing `)` from
+          # default(...) was never part of it) - the actual bug
+          # this sits alongside was evaluate_expr's own top-level
+          # `starts_with("lookup(") && ends_with(')')` check
+          # wrongly matching the *whole* "lookup(...) |
+          # default(...)" text (any trailing filter call ending
+          # in its own `)` satisfies ends_with(')') too),
+          # swallowing the entire expression into evaluate_lookup
+          # with a garbled, unbalanced argument string before
+          # top_level_pipe? ever got a chance to run - fixed via
+          # #bare_call?, which confirms the matching close paren
+          # for `lookup(`'s own open paren is the expression's
+          # actual last character, not just checking whether the
+          # tail of the string happens to be some `)`.
+          lookup_rendered = evaluate_lookup(var_expr[7..-2])
+          return (JSON.parse(lookup_rendered) rescue JSON::Any.new(lookup_rendered))
+        end
+
+        nil
+      end
+
+      # Literal / bracket-bearing heads (`'foo' | upper`, `5.7 | int`,
+      # `list[0:2] | ...`) - split out of #filter_chain_special_head
+      # purely to keep that method's own branch count under ameba's
+      # cyclomatic-complexity threshold.
+      private def filter_chain_literal_head(var_expr : String) : JSON::Any?
+        if literal = quoted_string_literal(var_expr)
+          # A quoted string literal as the chain's head
+          # (`{{ 'foo' | upper }}`, `{{ mysql_log_error | dirname
+          # }}`'s own sibling pattern with a literal instead of a
+          # variable) - previously fell to the plain-lookup else
+          # branch below, treating the literal text (quotes
+          # included) as a variable NAME to resolve, always
+          # undefined.
+          return literal
+        end
+        if literal = numeric_literal(var_expr)
+          # A bare numeric literal as the chain's head (`{{ 5.7 |
+          # int }}`, `{{ 256.0 | int }}`) - same gap as the
+          # quoted-string-literal case just above, one level
+          # deeper: found via geerlingguy.swap's own check-
+          # size.yml (`(stat.size / 1024 / 1024) | int` - the
+          # parenthesized form recurses through #evaluate_expr's
+          # own now-fixed bare-numeric-literal check, but a
+          # *literal* head with no parens at all, as in this
+          # simplified repro, never reached any numeric check
+          # here and fell to the plain-lookup else branch,
+          # always undefined).
+          return literal
+        end
+        if var_expr.includes?("[")
+          # Array slicing (`list[0:2]`) and plain indexing
+          # (`list[0]`) aren't resolved to JSON::Any directly here
+          # (ArraySlicer/VariableLookup#indexed both still only
+          # return pre-formatted Strings) - fall back to the
+          # existing String-returning path and re-parse it, rather
+          # than duplicating that logic. "undefined" isn't valid
+          # JSON, so it maps to a real JSON null.
+          rendered = evaluate(var_expr)
+          return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
+        end
+
+        nil
+      end
+
+      private def filter_chain_var_head(var_expr : String) : JSON::Any
+        resolved = @lookup.resolve(var_expr)
+
+        # Real Ansible's recursive re-templating: a variable
+        # whose own raw value is itself unrendered Jinja (a
+        # role default defined in terms of another default,
+        # e.g. ansible-community.ansible-vault's own
+        # `vault_tls_gossip: "{{ lookup('env',
+        # 'VAULT_TLS_GOSSIP') | default(false, true) }}"`) must
+        # be rendered before a filter chain sees it - otherwise
+        # `vault_tls_gossip | bool` saw the raw, non-empty
+        # template text itself (truthy) rather than the real
+        # (false) rendered value. Same class of bug as
+        # ConditionalEvaluator's identical fix for a bare `when:
+        # vault_tls_gossip` condition - this is the filter-chain
+        # counterpart, since `{{ vault_tls_gossip }}` alone (no
+        # filter) already got a re-render pass elsewhere but a
+        # filter chain's own head resolution here didn't.
+        if value = retemplated_lookup_value(resolved)
+          return value
+        end
+
+        resolved || JSON::Any.new(nil)
       end
     end
   end

@@ -87,6 +87,29 @@ module CrystalPlay
       plugin_hash_string = @params["plugin_hash_string"]?
       plugin_auth_string = @params["plugin_auth_string"]?
 
+      if err = validate_inputs(update_password, password, plugin, plugin_hash_string, plugin_auth_string)
+        return err
+      end
+
+      uri = PluginHelpers::MysqlConnection.build_uri(
+        host: @params["login_host"]?,
+        port: @params["login_port"]?,
+        user: @params["login_user"]?,
+        password: @params["login_password"]?,
+        unix_socket: @params["login_unix_socket"]?,
+        config_file: @params["config_file"]? || "~/.my.cnf",
+      )
+
+      run_with_db(uri, name, host, state, password, update_password, priv, plugin,
+        plugin_hash_string, plugin_auth_string, check_mode, host_all)
+    rescue ex : DB::ConnectionRefused
+      PluginResult.new(changed: false, failed: true, msg: "Could not connect to the MySQL server: #{ex.message}")
+    rescue ex : MySql::Connection::PacketError
+      PluginResult.new(changed: false, failed: true, msg: "MySQL error: #{ex.message}")
+    end
+
+    private def validate_inputs(update_password : String, password : String?, plugin : String?,
+                                plugin_hash_string : String?, plugin_auth_string : String?) : PluginResult?
       unless ["always", "on_create"].includes?(update_password)
         return PluginResult.new(changed: false, failed: true, msg: "update_password must be 'always' or 'on_create', got '#{update_password}'")
       end
@@ -103,39 +126,49 @@ module CrystalPlay
         return PluginResult.new(changed: false, failed: true, msg: "plugin is required when plugin_hash_string or plugin_auth_string is given")
       end
 
-      uri = PluginHelpers::MysqlConnection.build_uri(
-        host: @params["login_host"]?,
-        port: @params["login_port"]?,
-        user: @params["login_user"]?,
-        password: @params["login_password"]?,
-        unix_socket: @params["login_unix_socket"]?,
-        config_file: @params["config_file"]? || "~/.my.cnf",
-      )
+      nil
+    end
 
+    private def run_with_db(uri : String, name : String, host : String, state : String, password : String?,
+                            update_password : String, priv : String?, plugin : String?,
+                            plugin_hash_string : String?, plugin_auth_string : String?,
+                            check_mode : Bool, host_all : Bool) : PluginResult
       DB.open(uri) do |connection|
         if host_all
-          existing_hosts = user_hosts(connection, name)
-          if state == "absent"
-            ensure_absent_all_hosts(connection, name, existing_hosts, check_mode)
-          else
-            ensure_present_all_hosts(connection, name, existing_hosts, host, password, update_password,
-              plugin, plugin_hash_string, plugin_auth_string, check_mode)
-          end
+          run_host_all(connection, name, state, password, update_password, host,
+            plugin, plugin_hash_string, plugin_auth_string, check_mode)
         else
-          exists = user_exists?(connection, name, host)
-
-          if state == "absent"
-            ensure_absent(connection, name, host, exists, check_mode)
-          else
-            ensure_present(connection, name, host, exists, password, update_password, priv,
-              plugin, plugin_hash_string, plugin_auth_string, check_mode)
-          end
+          run_single_host(connection, name, host, state, password, update_password, priv,
+            plugin, plugin_hash_string, plugin_auth_string, check_mode)
         end
       end
-    rescue ex : DB::ConnectionRefused
-      PluginResult.new(changed: false, failed: true, msg: "Could not connect to the MySQL server: #{ex.message}")
-    rescue ex : MySql::Connection::PacketError
-      PluginResult.new(changed: false, failed: true, msg: "MySQL error: #{ex.message}")
+    end
+
+    private def run_host_all(connection : DB::Database, name : String, state : String,
+                             password : String?, update_password : String, host : String,
+                             plugin : String?, plugin_hash_string : String?, plugin_auth_string : String?,
+                             check_mode : Bool) : PluginResult
+      existing_hosts = user_hosts(connection, name)
+      if state == "absent"
+        ensure_absent_all_hosts(connection, name, existing_hosts, check_mode)
+      else
+        ensure_present_all_hosts(connection, name, existing_hosts, host, password, update_password,
+          plugin, plugin_hash_string, plugin_auth_string, check_mode)
+      end
+    end
+
+    private def run_single_host(connection : DB::Database, name : String, host : String,
+                                state : String, password : String?, update_password : String,
+                                priv : String?, plugin : String?, plugin_hash_string : String?,
+                                plugin_auth_string : String?, check_mode : Bool) : PluginResult
+      exists = user_exists?(connection, name, host)
+
+      if state == "absent"
+        ensure_absent(connection, name, host, exists, check_mode)
+      else
+        ensure_present(connection, name, host, exists, password, update_password, priv,
+          plugin, plugin_hash_string, plugin_auth_string, check_mode)
+      end
     end
 
     private def ensure_present(
@@ -361,38 +394,8 @@ module CrystalPlay
 
       changed = false
       existing_hosts.each do |host|
-        next unless update_password == "always" && (password || plugin)
+        next unless needs_auth_update?(db, name, host, password, update_password, plugin, plugin_hash_string, plugin_auth_string)
         return PluginResult.new(changed: true, failed: false, msg: "User #{name}'s #{password ? "password" : "authentication"} would be updated on all hosts") if check_mode
-
-        # Real bug found benchmarking devsec.hardening.mysql_hardening
-        # in round 24 role 2 (0.9.348): the host_all: true expansion
-        # iterated over every existing host row for name: and ran
-        # ALTER USER unconditionally per host, with no
-        # password-already-matches check. The per-host (non-host_all)
-        # path through ensure_present/create_or_update_account DOES
-        # call password_already_matches? before the ALTER, so a
-        # single-host task is idempotent on warm rerun. The host_all:
-        # path was not. Result: devsec.mysql_hardening's "Ensure that
-        # the root password is present" task (host_all: true, password
-        # already set by the cold pass) ran ALTER USER on every
-        # existing root@* host on every warm rerun, always reporting
-        # "Updated user root on all hosts" even though the password
-        # matched. Diff the existing hash (or plugin column, for
-        # non-password auth) per host before deciding to ALTER,
-        # matching the per-host path's idempotency. Note this still
-        # uses one ALTER per host that actually needs a change -
-        # doesn't batch the comparison up into a single statement,
-        # because the per-host hash values can differ (e.g. one
-        # host's account might be using mysql_native_password and
-        # another's caching_sha2_password), and a real Ansible
-        # collection like community.mysql's user.py iterates the
-        # same way.
-        if password
-          next if password_already_matches?(db, name, host, password)
-        else
-          pl = plugin || next
-          next if plugin_matches?(db, name, host, pl, plugin_hash_string, plugin_auth_string)
-        end
 
         clause = build_auth_clause(password, plugin, plugin_hash_string, plugin_auth_string)
         db.exec "ALTER USER #{quote_str(name)}@#{quote_str(host)}#{clause}"
@@ -400,6 +403,23 @@ module CrystalPlay
       end
 
       PluginResult.new(changed: changed, failed: false, msg: changed ? "Updated user #{name} on all hosts" : "User #{name} already up to date on all hosts")
+    end
+
+    private def needs_auth_update?(db : DB::Database, name : String, host : String,
+                                   password : String?, update_password : String, plugin : String?,
+                                   plugin_hash_string : String?, plugin_auth_string : String?) : Bool
+      return false unless update_password == "always" && (password || plugin)
+
+      # Diff the existing hash (or plugin column, for non-password auth)
+      # per host before deciding to ALTER, matching the per-host path's
+      # idempotency (see the long comment in ensure_present_all_hosts's
+      # original loop for the round-24 devsec.mysql_hardening bug).
+      if password
+        !password_already_matches?(db, name, host, password)
+      else
+        pl = plugin || return false
+        !plugin_matches?(db, name, host, pl, plugin_hash_string, plugin_auth_string)
+      end
     end
 
     private def ensure_absent_all_hosts(db : DB::Database, name : String, existing_hosts : Array(String), check_mode : Bool) : PluginResult

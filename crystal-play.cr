@@ -174,7 +174,7 @@ begin
       persistent_daemon = false
     end
 
-    parser.on("-fval FORKS", "--forks=FORKS", "Run each task against up to FORKS hosts concurrently (default: 25 - higher than ansible-playbook's own default of 5, since a \"fork\" here is a cheap fiber, not a forked Python interpreter; --forks 5 matches real ansible-playbook's default exactly, --forks 1 restores one-host-at-a-time)") do |fval|
+    parser.on("-f FORKS", "--forks=FORKS", "Run each task against up to FORKS hosts concurrently (default: 25 - higher than ansible-playbook's own default of 5, since a \"fork\" here is a cheap fiber, not a forked Python interpreter; --forks 5 matches real ansible-playbook's default exactly, --forks 1 restores one-host-at-a-time)") do |fval|
       forks = fval.to_i? || 25
     end
 
@@ -198,13 +198,13 @@ begin
     parser.on("--syntax-check", "Parse the playbook and report any syntax errors, without running it") do
       syntax_check_only = true
     end
-    parser.on("-uval USER", "--user=USER", "Connect as this user (sets ansible_user for every host)") do |uval|
+    parser.on("-u USER", "--user=USER", "Connect as this user (sets ansible_user for every host)") do |uval|
       remote_user = uval
     end
     parser.on("--private-key=FILE", "--key-file=FILE", "SSH private key to connect with (sets ansible_ssh_private_key_file)") do |fval|
       private_key_file = fval
     end
-    parser.on("-itm TYPE", "--connection=TYPE", "Connection type to use (sets ansible_connection)") do |itm|
+    parser.on("-c TYPE", "--connection=TYPE", "Connection type to use (sets ansible_connection)") do |itm|
       connection_override = itm
     end
     parser.on("-b", "--become", "Run operations with become") do
@@ -285,7 +285,7 @@ begin
     parser.on("--skip-tags=TAGS", "Only run tasks whose tags do NOT match these") do |tval|
       skip_tags = tval.split(",").map(&.strip).reject(&.empty?)
     end
-    parser.on("-tval TAGS", "--tags=TAGS", "Only run tasks with these tags") do |tval|
+    parser.on("-t TAGS", "--tags=TAGS", "Only run tasks with these tags") do |tval|
       tags = tval.split(",").map(&.strip).reject(&.empty?)
     end
 
@@ -652,7 +652,7 @@ end
 
 if verbose
   puts "Available Hosts:".colorize(:cyan).bold
-  inventory.hosts.each do |name, host|
+  inventory.hosts.each do |_name, host|
     puts "  - #{host.user}@#{host.connection_host}:#{host.port}".colorize(:white)
   end
   puts ""
@@ -700,7 +700,7 @@ run_fact_store = gathering == "smart" ? Hash(String, Hash(String, JSON::Any)).ne
 # carries that forward across the per-play loop below.
 permanently_failed_hosts = Set(String).new
 
-playbook.plays.each_with_index do |play, play_index|
+playbook.plays.each_with_index do |play, _play_index|
   puts ""
   puts "PLAY [#{play.name}]".colorize(:magenta).bold
   puts "=" * 70
@@ -894,7 +894,7 @@ unreachable_hosts.each do |name|
   end
 end
 
-CrystalPlay::ResultDisplay.show_recap(all_hosts.uniq { |hval| hval.name }, combined_results)
+CrystalPlay::ResultDisplay.show_recap(all_hosts.uniq(&.name), combined_results)
 
 puts ""
 

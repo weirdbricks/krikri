@@ -157,7 +157,6 @@ module CrystalPlay
         )
       end
 
-      # Directory doesn't exist, create it
       if @check_mode
         return PluginResult.new(
           changed: true,
@@ -166,6 +165,10 @@ module CrystalPlay
         )
       end
 
+      create_directory(path)
+    end
+
+    private def create_directory(path : String) : PluginResult
       # Create directory (like mkdir -p), applying owner/group/mode to
       # each newly-created path COMPONENT along the way, not just the
       # leaf. Real Ansible's own file module (ensure_directory) walks
@@ -648,12 +651,12 @@ module CrystalPlay
       # `owner_name(...)`'s own resolved NAME ("root" != "0"), reporting
       # changed: true forever on an already-idempotent directory.
       if owner = @params["owner"]?
-        changed = true if owner.matches?(/\A\d+\z/) ? info.st_uid != owner.to_u32 : owner_name(info.st_uid) != owner
+        changed = true if owner_changed?(info.st_uid, owner)
       end
 
       # Check group - same numeric-vs-name comparison as owner: above.
       if group = @params["group"]?
-        changed = true if group.matches?(/\A\d+\z/) ? info.st_gid != group.to_u32 : group_name(info.st_gid) != group
+        changed = true if group_changed?(info.st_gid, group)
       end
 
       # Check mode - skipped for a symlink (handle_link's skip_mode: true).
@@ -669,29 +672,33 @@ module CrystalPlay
       # way and never converged.
       if mode = @params["mode"]?
         return changed if skip_mode
-        if mode =~ /^0?\d+$/
-          current_mode = PluginHelpers::StatFields.perm_octal(info.st_mode.to_i32)
-          # Normalize mode for comparison - perm_octal returns a 3-digit octal
-          # for a 0 special digit ("750") but 4 digits otherwise; the task's
-          # mode may be written "0750", "750", "0644", etc. Strip a leading
-          # zero from BOTH sides so target "0750" vs current "750" compare
-          # equal, while setuid/sticky perms (a 4th digit) still match.
-          target_mode = normalize_mode(mode)
-          changed = true if current_mode.lstrip('0') != target_mode.lstrip('0')
-        else
-          # Symbolic mode (`a-s`, `go-w`, ...) - resolve what it would
-          # produce against the file's current bits and compare that,
-          # instead of always reporting changed the way comparing a raw
-          # symbolic string against an octal current_mode always would
-          # (dev-sec os_hardening's suid/sgid-blacklist task uses `mode:
-          # a-s` on files that are frequently already clean, and a
-          # permanently-false "changed" defeats changed_when: logic
-          # downstream that keys off it).
-          changed = true if resolve_symbolic_mode(info.st_mode.to_i32, mode) != info.st_mode.to_i32
-        end
+        changed = true if mode_changed?(info.st_mode.to_i32, mode)
       end
 
       changed
+    end
+
+    private def owner_changed?(uid : LibC::UidT, owner : String) : Bool
+      owner.matches?(/\A\d+\z/) ? uid != owner.to_u32 : owner_name(uid) != owner
+    end
+
+    private def group_changed?(gid : LibC::GidT, group : String) : Bool
+      group.matches?(/\A\d+\z/) ? gid != group.to_u32 : group_name(gid) != group
+    end
+
+    private def mode_changed?(current_mode_bits : Int32, mode : String) : Bool
+      if mode =~ /^0?\d+$/
+        # Normalize mode for comparison - perm_octal returns a 3-digit octal
+        # for a 0 special digit ("750") but 4 digits otherwise; the task's
+        # mode may be written "0750", "750", "0644", etc. Strip a leading
+        # zero from BOTH sides so target "0750" vs current "750" compare
+        # equal, while setuid/sticky perms (a 4th digit) still match.
+        target_mode = normalize_mode(mode)
+        current_mode = PluginHelpers::StatFields.perm_octal(current_mode_bits)
+        current_mode.lstrip('0') != target_mode.lstrip('0')
+      else
+        resolve_symbolic_mode(current_mode_bits, mode) != current_mode_bits
+      end
     end
 
     # See update_attributes_if_needed above for why this exists. Supports
@@ -778,7 +785,12 @@ module CrystalPlay
       follow = true?(@params["follow"]?)
       uid = -1
       gid = -1
-
+      if owner = @params["owner"]?
+        uid = resolve_uid(owner)
+      end
+      if group = @params["group"]?
+        gid = resolve_gid(group)
+      end
       # A requested owner:/group: that doesn't resolve to a real system
       # user/group must FAIL the task - real Ansible's own file module
       # raises "chown failed: failed to look up user/group <name>"
@@ -804,23 +816,11 @@ module CrystalPlay
       # numeric-ID idiom) always raised "failed to look up group 0"
       # even though the id itself is perfectly valid.
       if owner = @params["owner"]?
-        if user = System::User.find_by?(name: owner)
-          uid = user.id.to_i
-        elsif owner.matches?(/\A\d+\z/)
-          uid = owner.to_i
-        else
-          raise "chown failed: failed to look up user #{owner}"
-        end
+        uid = resolve_uid(owner)
       end
 
       if group = @params["group"]?
-        if grp = System::Group.find_by?(name: group)
-          gid = grp.id.to_i
-        elsif group.matches?(/\A\d+\z/)
-          gid = group.to_i
-        else
-          raise "chown failed: failed to look up group #{group}"
-        end
+        gid = resolve_gid(group)
       end
 
       # Crystal's File.chown defaults `follow_symlinks: false`, which is
@@ -854,6 +854,26 @@ module CrystalPlay
         # shouldn't fail the whole task - matches the previous shell
         # implementation's behavior of not checking these commands' exit
         # codes either.
+      end
+    end
+
+    private def resolve_uid(owner : String) : Int32
+      if user = System::User.find_by?(name: owner)
+        user.id.to_i
+      elsif owner.matches?(/\A\d+\z/)
+        owner.to_i
+      else
+        raise "chown failed: failed to look up user #{owner}"
+      end
+    end
+
+    private def resolve_gid(group : String) : Int32
+      if grp = System::Group.find_by?(name: group)
+        grp.id.to_i
+      elsif group.matches?(/\A\d+\z/)
+        group.to_i
+      else
+        raise "chown failed: failed to look up group #{group}"
       end
     end
 

@@ -108,41 +108,57 @@ module CrystalPlay
       changed = false
 
       if existing_flags
-        if password
-          return PluginResult.new(changed: true, failed: false, msg: "Role #{name}'s password would be updated") if check_mode
-
-          db.exec "ALTER ROLE #{quote_ident(name)} PASSWORD #{quote_str(password)}"
-          changed = true
-        end
-
-        if desired_flags && flags_differ?(existing_flags, desired_flags)
-          return PluginResult.new(changed: true, failed: false, msg: "Role #{name}'s attributes would be updated") if check_mode
-
-          db.exec "ALTER ROLE #{quote_ident(name)} #{PluginHelpers::PostgresqlRoleFlags.to_sql(desired_flags)}"
-          changed = true
-        end
+        changed = update_existing_role(db, name, existing_flags, password, desired_flags, check_mode)
       else
         return PluginResult.new(changed: true, failed: false, msg: "Role #{name} would be created") if check_mode
-
-        clause = String.build do |str|
-          str << " " << PluginHelpers::PostgresqlRoleFlags.to_sql(desired_flags) if desired_flags
-          str << " PASSWORD " << quote_str(password) if password
-        end
-        # Real Ansible's own user_add() uses `CREATE USER`, not `CREATE
-        # ROLE` - they're otherwise identical in Postgres, but `CREATE
-        # USER` implies LOGIN by default while plain `CREATE ROLE`
-        # defaults to NOLOGIN. Real bug found benchmarking
-        # robertdebock.postgres (round 43): with no `role_attr_flags:`
-        # given at all (the common case - most playbooks just want a
-        # normal login-capable user), this plugin created a role that
-        # couldn't log in at all, while real Ansible's created one that
-        # could - confirmed via `\du` showing "Cannot login" here vs.
-        # empty attributes on real Ansible's identically-configured run.
-        db.exec "CREATE USER #{quote_ident(name)}#{clause}"
+        create_role(db, name, password, desired_flags)
         changed = true
       end
 
       PluginResult.new(changed: changed, failed: false, msg: changed ? "Updated role #{name}" : "Role #{name} already up to date")
+    end
+
+    private def update_existing_role(
+      db : DB::Database, name : String, existing_flags : Hash(String, Bool),
+      password : String?, desired_flags : Hash(String, Bool)?, check_mode : Bool,
+    ) : Bool
+      changed = false
+
+      if password
+        return true if check_mode
+
+        db.exec "ALTER ROLE #{quote_ident(name)} PASSWORD #{quote_str(password)}"
+        changed = true
+      end
+
+      if desired_flags && flags_differ?(existing_flags, desired_flags)
+        return true if check_mode
+
+        db.exec "ALTER ROLE #{quote_ident(name)} #{PluginHelpers::PostgresqlRoleFlags.to_sql(desired_flags)}"
+        changed = true
+      end
+
+      changed
+    end
+
+    private def create_role(
+      db : DB::Database, name : String, password : String?, desired_flags : Hash(String, Bool)?,
+    ) : Nil
+      clause = String.build do |str|
+        str << " " << PluginHelpers::PostgresqlRoleFlags.to_sql(desired_flags) if desired_flags
+        str << " PASSWORD " << quote_str(password) if password
+      end
+      # Real Ansible's own user_add() uses `CREATE USER`, not `CREATE
+      # ROLE` - they're otherwise identical in Postgres, but `CREATE
+      # USER` implies LOGIN by default while plain `CREATE ROLE`
+      # defaults to NOLOGIN. Real bug found benchmarking
+      # robertdebock.postgres (round 43): with no `role_attr_flags:`
+      # given at all (the common case - most playbooks just want a
+      # normal login-capable user), this plugin created a role that
+      # couldn't log in at all, while real Ansible's created one that
+      # could - confirmed via `\du` showing "Cannot login" here vs.
+      # empty attributes on real Ansible's identically-configured run.
+      db.exec "CREATE USER #{quote_ident(name)}#{clause}"
     end
 
     private def ensure_absent(db : DB::Database, name : String, exists : Bool, check_mode : Bool) : PluginResult

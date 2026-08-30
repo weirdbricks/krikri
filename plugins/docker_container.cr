@@ -200,14 +200,10 @@ module CrystalPlay
       recreate_requested = true?(@params["recreate"]?)
 
       needs_create = !existing
-      needs_recreate = if ex = existing
-                         recreate_requested || !matches?(api, ex, image_ref, command)
-                       else
-                         false
-                       end
+      needs_recreate = recreate_needed?(api, existing, recreate_requested, image_ref, command)
 
-      if (needs_create || needs_recreate) && !image_ref
-        return PluginResult.new(changed: false, failed: true, msg: "image is required to create a new container")
+      if failure = missing_image_result(needs_create, needs_recreate, image_ref)
+        return failure
       end
 
       requested_networks = parsed_networks
@@ -228,20 +224,30 @@ module CrystalPlay
       PluginResult.new(changed: false, failed: true, msg: "Could not connect to the Docker daemon (#{docker_host_description}): #{ex.message}")
     end
 
+    private def recreate_needed?(
+      api : Docr::API, existing : Docr::Types::ContainerSummary?,
+      recreate_requested : Bool, image_ref : String?, command : Array(String)?,
+    ) : Bool
+      existing ? recreate_requested || !matches?(api, existing, image_ref, command) : false
+    end
+
+    private def missing_image_result(needs_create : Bool, needs_recreate : Bool, image_ref : String?) : PluginResult?
+      if (needs_create || needs_recreate) && !image_ref
+        return PluginResult.new(changed: false, failed: true, msg: "image is required to create a new container")
+      end
+      nil
+    end
+
     private def ensure_present(
       api : Docr::API, name : String, existing : Docr::Types::ContainerSummary?,
       image_ref : String?, pull : Bool, needs_create : Bool, needs_recreate : Bool,
       requested_networks : Array(RequestedNetwork), start : Bool, check_mode : Bool,
     ) : PluginResult
       if needs_create
-        return PluginResult.new(changed: true, failed: false, msg: "Container #{name} would be created#{start ? " and started" : ""}") if check_mode
+        return PluginResult.new(changed: true, failed: false, msg: "Container #{name} would be created#{started_suffix(start)}") if check_mode
 
-        config = build_container_config(image_ref || raise "image is required to create a new container")
-        ensure_image_pulled(api, image_ref || raise "image is required to create a new container") if pull
-        resp = api.containers.create(name, config)
-        api.containers.start(resp.id) if start
-        connected, disconnected = sync_networks!(api, resp.id, requested_networks)
-        return PluginResult.new(changed: true, failed: false, msg: "Created#{start ? " and started" : ""} container #{name}#{network_suffix(connected, disconnected)}")
+        _container_id, connected, disconnected = create_new_container(api, name, image_ref, pull, requested_networks, start)
+        return PluginResult.new(changed: true, failed: false, msg: "Created#{started_suffix(start)} container #{name}#{network_suffix(connected, disconnected)}")
       end
 
       existing = existing || raise "BUG: existing container missing"
@@ -249,22 +255,12 @@ module CrystalPlay
       if needs_recreate
         return PluginResult.new(changed: true, failed: false, msg: "Container #{name} would be recreated") if check_mode
 
-        config = build_container_config(image_ref || raise "image is required to create a new container")
-        api.containers.stop(existing.id) if existing.state == "running"
-        api.containers.delete(existing.id, force: true)
-        ensure_image_pulled(api, image_ref || raise "image is required to create a new container") if pull
-        resp = api.containers.create(name, config)
-        api.containers.start(resp.id) if start
-        connected, disconnected = sync_networks!(api, resp.id, requested_networks)
+        _id, connected, disconnected = recreate_container(api, name, existing, image_ref, pull, requested_networks, start)
         return PluginResult.new(changed: true, failed: false, msg: "Recreated container #{name}#{network_suffix(connected, disconnected)}")
       end
 
       if start && existing.state != "running"
-        return PluginResult.new(changed: true, failed: false, msg: "Container #{name} would be started") if check_mode
-
-        api.containers.start(existing.id)
-        connected, disconnected = sync_networks!(api, existing.id, requested_networks)
-        return PluginResult.new(changed: true, failed: false, msg: "Started container #{name}#{network_suffix(connected, disconnected)}")
+        return start_existing(api, name, existing, requested_networks, check_mode)
       end
 
       no_op_networks_result(api, existing.id, requested_networks, check_mode, "Container #{name} already #{start ? "started" : "present"}")
@@ -278,10 +274,7 @@ module CrystalPlay
       if needs_create
         return PluginResult.new(changed: true, failed: false, msg: "Container #{name} would be created (stopped)") if check_mode
 
-        config = build_container_config(image_ref || raise "image is required to create a new container")
-        ensure_image_pulled(api, image_ref || raise "image is required to create a new container") if pull
-        resp = api.containers.create(name, config)
-        connected, disconnected = sync_networks!(api, resp.id, requested_networks)
+        _container_id, connected, disconnected = create_new_container(api, name, image_ref, pull, requested_networks, start: false)
         return PluginResult.new(changed: true, failed: false, msg: "Created container #{name} (stopped)#{network_suffix(connected, disconnected)}")
       end
 
@@ -290,12 +283,7 @@ module CrystalPlay
       if needs_recreate
         return PluginResult.new(changed: true, failed: false, msg: "Container #{name} would be recreated (stopped)") if check_mode
 
-        config = build_container_config(image_ref || raise "image is required to create a new container")
-        api.containers.stop(existing.id) if existing.state == "running"
-        api.containers.delete(existing.id, force: true)
-        ensure_image_pulled(api, image_ref || raise "image is required to create a new container") if pull
-        resp = api.containers.create(name, config)
-        connected, disconnected = sync_networks!(api, resp.id, requested_networks)
+        _id, connected, disconnected = recreate_container(api, name, existing, image_ref, pull, requested_networks, start: false)
         return PluginResult.new(changed: true, failed: false, msg: "Recreated container #{name} (stopped)#{network_suffix(connected, disconnected)}")
       end
 
@@ -308,6 +296,54 @@ module CrystalPlay
       end
 
       no_op_networks_result(api, existing.id, requested_networks, check_mode, "Container #{name} already stopped")
+    end
+
+    private def started_suffix(start : Bool) : String
+      start ? " and started" : ""
+    end
+
+    # Shared by both ensure_present and ensure_stopped: create the
+    # container (pulling the image first when pull: is set), optionally
+    # start it, and connect any requested networks.
+    private def create_new_container(
+      api : Docr::API, name : String, image_ref : String?, pull : Bool,
+      requested_networks : Array(RequestedNetwork), start : Bool,
+    )
+      config = build_container_config(image_ref || raise "image is required to create a new container")
+      ensure_image_pulled(api, image_ref || raise "image is required to create a new container") if pull
+      resp = api.containers.create(name, config)
+      api.containers.start(resp.id) if start
+      connected, disconnected = sync_networks!(api, resp.id, requested_networks)
+      {resp.id, connected, disconnected}
+    end
+
+    # Shared by both ensure_present and ensure_stopped: replace an
+    # existing container with a fresh one from the same config (stop it
+    # first when running, delete, re-pull when pull: is set, create,
+    # optionally start, connect requested networks).
+    private def recreate_container(
+      api : Docr::API, name : String, existing : Docr::Types::ContainerSummary,
+      image_ref : String?, pull : Bool, requested_networks : Array(RequestedNetwork), start : Bool,
+    )
+      config = build_container_config(image_ref || raise "image is required to create a new container")
+      api.containers.stop(existing.id) if existing.state == "running"
+      api.containers.delete(existing.id, force: true)
+      ensure_image_pulled(api, image_ref || raise "image is required to create a new container") if pull
+      resp = api.containers.create(name, config)
+      api.containers.start(resp.id) if start
+      connected, disconnected = sync_networks!(api, resp.id, requested_networks)
+      {resp.id, connected, disconnected}
+    end
+
+    private def start_existing(
+      api : Docr::API, name : String, existing : Docr::Types::ContainerSummary,
+      requested_networks : Array(RequestedNetwork), check_mode : Bool,
+    ) : PluginResult
+      return PluginResult.new(changed: true, failed: false, msg: "Container #{name} would be started") if check_mode
+
+      api.containers.start(existing.id)
+      connected, disconnected = sync_networks!(api, existing.id, requested_networks)
+      PluginResult.new(changed: true, failed: false, msg: "Started container #{name}#{network_suffix(connected, disconnected)}")
     end
 
     # Shared tail for the "nothing about image/command/run-state needs to
@@ -402,68 +438,118 @@ module CrystalPlay
       config = inspected.config
       host_config = inspected.host_config
 
-      if entrypoint = @params["entrypoint"]?
-        mode = comparison_mode("entrypoint", "strict")
-        unless mode == "ignore"
-          requested = entrypoint.split(/\s+/).reject(&.empty?)
-          actual = config.entrypoint || [] of String
-          return false unless mode == "strict" ? actual == requested : requested.all? { |e| actual.includes?(e) }
-        end
-      end
+      return false unless config_fields_match?(api, config, image_ref)
+      return false unless volumes_match?(host_config)
+      return false unless simple_host_fields_match?(host_config)
+      return false unless comparison_fields_match?(api, config, host_config, image_ref)
+      return false unless resource_fields_match?(host_config)
+      true
+    end
 
-      if env_json = @params["env"]?
-        mode = comparison_mode("env", "allow_more_present")
-        unless mode == "ignore"
-          expected = expected_env(api, image_ref, env_json)
-          actual = (config.env || [] of String).to_set
-          return false unless mode == "strict" ? actual == expected : expected.subset_of?(actual)
-        end
-      end
+    private def config_fields_match?(api : Docr::API, config : Docr::Types::ContainerConfig, image_ref : String?) : Bool
+      return false unless entrypoint_matches?(config)
+      return false unless env_matches?(api, config, image_ref)
+      return false unless labels_matches?(config)
+      true
+    end
 
-      if labels_json = @params["labels"]?
-        mode = comparison_mode("labels", "allow_more_present")
-        unless mode == "ignore"
-          requested = Hash(String, String).from_json(labels_json)
-          actual = config.labels || Hash(String, String).new
-          return false unless mode == "strict" ? actual == requested : dict_subset?(requested, actual)
-        end
-      end
+    private def entrypoint_matches?(config : Docr::Types::ContainerConfig) : Bool
+      entrypoint = @params["entrypoint"]?
+      return true unless entrypoint
+      mode = comparison_mode("entrypoint", "strict")
+      return true if mode == "ignore"
 
-      if volumes = @params["volumes"]?
-        mode = comparison_mode("volumes", "allow_more_present")
-        unless mode == "ignore"
-          requested = volumes.split(',').map(&.strip).reject(&.empty?).to_set
-          actual = (host_config.binds || [] of String).to_set
-          return false unless mode == "strict" ? actual == requested : requested.subset_of?(actual)
-        end
-      end
+      requested = entrypoint.split(/\s+/).reject(&.empty?)
+      actual = config.entrypoint || [] of String
+      mode == "strict" ? actual == requested : requested.all? { |e| actual.includes?(e) }
+    end
 
-      if (restart_policy_name = @params["restart_policy"]?) && comparison_mode("restart_policy", "strict") != "ignore"
-        return false unless host_config.restart_policy.try(&.name) == restart_policy_name
-      end
+    private def env_matches?(api : Docr::API, config : Docr::Types::ContainerConfig, image_ref : String?) : Bool
+      env_json = @params["env"]?
+      return true unless env_json
+      mode = comparison_mode("env", "allow_more_present")
+      return true if mode == "ignore"
 
-      if (network_mode = @params["network_mode"]?) && comparison_mode("network_mode", "strict") != "ignore"
-        return false unless host_config.network_mode == network_mode
-      end
+      expected = expected_env(api, image_ref, env_json)
+      actual = (config.env || [] of String).to_set
+      mode == "strict" ? actual == expected : expected.subset_of?(actual)
+    end
 
-      if @params["privileged"]? && comparison_mode("privileged", "strict") != "ignore"
-        return false unless !!host_config.privileged == true?(@params["privileged"]?)
-      end
+    private def labels_matches?(config : Docr::Types::ContainerConfig) : Bool
+      labels_json = @params["labels"]?
+      return true unless labels_json
+      mode = comparison_mode("labels", "allow_more_present")
+      return true if mode == "ignore"
 
-      if @params["auto_remove"]? && comparison_mode("auto_remove", "strict") != "ignore"
-        return false unless !!host_config.auto_remove == true?(@params["auto_remove"]?)
-      end
+      requested = Hash(String, String).from_json(labels_json)
+      actual = config.labels || Hash(String, String).new
+      mode == "strict" ? actual == requested : dict_subset?(requested, actual)
+    end
 
-      if @params["ports"]?
-        mode = comparison_mode("ports", "allow_more_present")
-        return false unless mode == "ignore" || ports_match?(api, config, host_config, image_ref, strict: mode == "strict")
-      end
+    private def volumes_match?(host_config : Docr::Types::HostConfig) : Bool
+      volumes = @params["volumes"]?
+      return true unless volumes
+      mode = comparison_mode("volumes", "allow_more_present")
+      return true if mode == "ignore"
 
-      if healthcheck_json = @params["healthcheck"]?
-        mode = comparison_mode("healthcheck", "allow_more_present")
-        return false unless mode == "ignore" || healthcheck_matches?(config.healthcheck, healthcheck_json, strict: mode == "strict")
-      end
+      requested = volumes.split(',').map(&.strip).reject(&.empty?).to_set
+      actual = (host_config.binds || [] of String).to_set
+      mode == "strict" ? actual == requested : requested.subset_of?(actual)
+    end
 
+    private def simple_host_fields_match?(host_config : Docr::Types::HostConfig) : Bool
+      return false unless restart_policy_matches?(host_config)
+      return false unless network_mode_matches?(host_config)
+      return false unless bool_field_matches?("privileged", host_config.privileged)
+      return false unless bool_field_matches?("auto_remove", host_config.auto_remove)
+      true
+    end
+
+    private def restart_policy_matches?(host_config : Docr::Types::HostConfig) : Bool
+      policy_name = @params["restart_policy"]?
+      return true unless policy_name && comparison_mode("restart_policy", "strict") != "ignore"
+      host_config.restart_policy.try(&.name) == policy_name
+    end
+
+    private def network_mode_matches?(host_config : Docr::Types::HostConfig) : Bool
+      network_mode = @params["network_mode"]?
+      return true unless network_mode && comparison_mode("network_mode", "strict") != "ignore"
+      host_config.network_mode == network_mode
+    end
+
+    private def bool_field_matches?(field : String, actual : Bool?) : Bool
+      return true unless @params[field]? && comparison_mode(field, "strict") != "ignore"
+      !!actual == true?(@params[field]?)
+    end
+
+    private def comparison_fields_match?(api : Docr::API, config : Docr::Types::ContainerConfig, host_config : Docr::Types::HostConfig, image_ref : String?) : Bool
+      return false unless ports_field_matches?(api, config, host_config, image_ref)
+      return false unless healthcheck_field_matches?(config)
+      true
+    end
+
+    private def ports_field_matches?(api : Docr::API, config : Docr::Types::ContainerConfig, host_config : Docr::Types::HostConfig, image_ref : String?) : Bool
+      return true unless @params["ports"]?
+      mode = comparison_mode("ports", "allow_more_present")
+      mode == "ignore" || ports_match?(api, config, host_config, image_ref, strict: mode == "strict")
+    end
+
+    private def healthcheck_field_matches?(config : Docr::Types::ContainerConfig) : Bool
+      healthcheck_json = @params["healthcheck"]?
+      return true unless healthcheck_json
+      mode = comparison_mode("healthcheck", "allow_more_present")
+      mode == "ignore" || healthcheck_matches?(config.healthcheck, healthcheck_json, strict: mode == "strict")
+    end
+
+    private def resource_fields_match?(host_config : Docr::Types::HostConfig) : Bool
+      return false unless resource_memory_match?(host_config)
+      return false unless resource_cpu_match?(host_config)
+      return false unless resource_cpuset_match?(host_config)
+      return false unless resource_pids_match?(host_config)
+      true
+    end
+
+    private def resource_memory_match?(host_config : Docr::Types::HostConfig) : Bool
       if (memory = @params["memory"]?) && comparison_mode("memory", "strict") != "ignore"
         return false unless host_config.memory == PluginHelpers::DockerResources.human_to_bytes(memory)
       end
@@ -476,6 +562,10 @@ module CrystalPlay
         return false unless host_config.memory_swap == PluginHelpers::DockerResources.memory_swap_to_bytes(memory_swap)
       end
 
+      true
+    end
+
+    private def resource_cpu_match?(host_config : Docr::Types::HostConfig) : Bool
       if (memory_swappiness = @params["memory_swappiness"]?) && comparison_mode("memory_swappiness", "strict") != "ignore"
         return false unless host_config.memory_swappiness == memory_swappiness.to_i64
       end
@@ -488,6 +578,10 @@ module CrystalPlay
         return false unless host_config.cpu_shares == cpu_shares.to_i64
       end
 
+      true
+    end
+
+    private def resource_cpuset_match?(host_config : Docr::Types::HostConfig) : Bool
       if (cpuset_cpus = @params["cpuset_cpus"]?) && comparison_mode("cpuset_cpus", "strict") != "ignore"
         return false unless host_config.cpuset_cpus == cpuset_cpus
       end
@@ -500,6 +594,10 @@ module CrystalPlay
         return false unless !!host_config.oom_kill_disable == true?(@params["oom_kill_disable"]?)
       end
 
+      true
+    end
+
+    private def resource_pids_match?(host_config : Docr::Types::HostConfig) : Bool
       if (oom_score_adj = @params["oom_score_adj"]?) && comparison_mode("oom_score_adj", "strict") != "ignore"
         return false unless host_config.oom_score_adj == oom_score_adj.to_i64
       end
@@ -529,13 +627,22 @@ module CrystalPlay
     private def healthcheck_matches?(actual : Docr::Types::HealthConfig?, healthcheck_json : String, strict : Bool) : Bool
       expected = PluginHelpers::DockerHealthcheck.parse(healthcheck_json)
       return true unless expected
+
+      strict ? strict_healthcheck_match?(actual, expected) : lenient_healthcheck_match?(actual, expected)
+    end
+
+    private def strict_healthcheck_match?(actual : Docr::Types::HealthConfig?, expected : PluginHelpers::DockerHealthcheck::Parsed) : Bool
       return false unless actual
 
-      return actual.test == expected.test &&
+      actual.test == expected.test &&
         actual.interval == expected.interval &&
         actual.timeout == expected.timeout &&
         actual.retries == expected.retries &&
-        actual.start_period == expected.start_period if strict
+        actual.start_period == expected.start_period
+    end
+
+    private def lenient_healthcheck_match?(actual : Docr::Types::HealthConfig?, expected : PluginHelpers::DockerHealthcheck::Parsed) : Bool
+      return false unless actual
 
       (expected.test.nil? || actual.test == expected.test) &&
         (expected.interval.nil? || actual.interval == expected.interval) &&

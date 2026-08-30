@@ -757,8 +757,13 @@ module CrystalPlay
     def self.normalize_path(path : String) : String
       return "." if path.empty?
       absolute = path.starts_with?('/')
-      parts = path.split('/').reject { |pth| pth.empty? || pth == "." }
+      result = normalize_path_parts(path.split('/').reject { |pth| pth.empty? || pth == "." }, absolute)
 
+      joined = result.join("/")
+      absolute ? "/#{joined}" : (joined.empty? ? "." : joined)
+    end
+
+    private def self.normalize_path_parts(parts : Array(String), absolute : Bool) : Array(String)
       result = [] of String
       parts.each do |part|
         if part == ".." && !result.empty? && result.last != ".."
@@ -769,9 +774,7 @@ module CrystalPlay
           result << part
         end
       end
-
-      joined = result.join("/")
-      absolute ? "/#{joined}" : (joined.empty? ? "." : joined)
+      result
     end
 
     def self.common_path(paths : Array(String)) : String
@@ -1690,25 +1693,34 @@ module CrystalPlay
     # duplicated rather than shared - see this file's own top-of-file
     # comment on why the two evaluators don't share implementation.
 
+    private def self.default_colors : Hash(String, String)
+      {
+        "COLOR_OK"          => "green",
+        "COLOR_CHANGED"     => "yellow",
+        "COLOR_SKIP"        => "cyan",
+        "COLOR_UNREACHABLE" => "bright red",
+        "COLOR_ERROR"       => "red",
+        "COLOR_FAILED"      => "red",
+        "COLOR_DEBUG"       => "dark gray",
+        "COLOR_VERBOSE"     => "blue",
+        "COLOR_WARN"        => "bright purple",
+      }
+    end
+
+    private def self.default_general : Hash(String, String)
+      {
+        "DEFAULT_BECOME_USER"   => "root",
+        "DEFAULT_ROLES_PATH"    => "~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles",
+        "DEFAULT_HOST_LIST"     => "/etc/ansible/hosts",
+        "RETRY_FILES_SAVE_PATH" => "",
+        "DEFAULT_TIMEOUT"       => "10",
+        "DEFAULT_FORKS"         => "5",
+      }
+    end
+
     def self.ansible_config_value(name : String) : String
-      case name.upcase
-      when "COLOR_OK"                    then "green"
-      when "COLOR_CHANGED"               then "yellow"
-      when "COLOR_SKIP"                  then "cyan"
-      when "COLOR_UNREACHABLE"           then "bright red"
-      when "COLOR_ERROR", "COLOR_FAILED" then "red"
-      when "COLOR_DEBUG"                 then "dark gray"
-      when "COLOR_VERBOSE"               then "blue"
-      when "COLOR_WARN"                  then "bright purple"
-      when "DEFAULT_BECOME_USER"         then "root"
-      when "DEFAULT_ROLES_PATH"          then "~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles"
-      when "DEFAULT_HOST_LIST"           then "/etc/ansible/hosts"
-      when "RETRY_FILES_SAVE_PATH"       then ""
-      when "DEFAULT_TIMEOUT"             then "10"
-      when "DEFAULT_FORKS"               then "5"
-      else
-        ENV["ANSIBLE_#{name.upcase}"]? || ""
-      end
+      key = name.upcase
+      (default_colors[key]? || default_general[key]?) || ENV["ANSIBLE_#{key}"]? || ""
     end
 
     def self.resolve_lookup_path(path : String, role_path : String?) : String
@@ -1758,8 +1770,7 @@ module CrystalPlay
     # lookup('sequence', 'start=1 end=5 stride=1 format=web%02d') - same
     # logic as ExpressionEvaluator's own #evaluate_sequence_lookup,
     # returning a real Array(String) here instead of JSON array text.
-    def self.sequence_lookup(raw_arg : String) : Array(String)
-      tokens = raw_arg.strip.split(/\s+/)
+    private def self.sequence_options(tokens : Array(String)) : Hash(String, String)
       opts = Hash(String, String).new
       if tokens[0]? && !tokens[0].includes?('=') && (range_match = tokens[0].match(/^(\d+)-(\d+)$/))
         opts["start"] = range_match[1]
@@ -1770,6 +1781,11 @@ module CrystalPlay
         key, sep, val = token.partition('=')
         opts[key] = val unless sep.empty?
       end
+      opts
+    end
+
+    def self.sequence_lookup(raw_arg : String) : Array(String)
+      opts = sequence_options(raw_arg.strip.split(/\s+/))
 
       start = opts["start"]?.try(&.to_i) || 1
       stride = opts["stride"]?.try(&.to_i) || 1

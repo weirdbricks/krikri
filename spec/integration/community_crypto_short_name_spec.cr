@@ -35,7 +35,7 @@ describe "community.crypto.* short name resolution" do
   # silently. Post-fix: the task actually runs and the plugin's
   # changed/ok status is what real ansible would produce.
   it "runs `openssl_privatekey:` (bare) without the unimplemented-plugin warning" do
-    _status, output = run_playbook(<<-YAML)
+    status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
         gather_facts: false

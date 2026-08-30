@@ -38,11 +38,11 @@ begin
   OptionParser.parse do |parser|
     parser.banner = "Usage: ansible <pattern> [options]"
 
-    parser.on("-mat MODULE", "--module-name=MODULE", "Module name to execute (default: command)") do |mat|
+    parser.on("-m MODULE", "--module-name=MODULE", "Module name to execute (default: command)") do |mat|
       module_name = mat
     end
 
-    parser.on("-aval ARGS", "--args=ARGS", "Module arguments") do |aval|
+    parser.on("-a ARGS", "--args=ARGS", "Module arguments") do |aval|
       module_args = aval
     end
 
@@ -50,7 +50,7 @@ begin
       inventory_file = inv
     end
 
-    parser.on("-uval USER", "--user=USER", "Connect as this remote user") do |uval|
+    parser.on("-u USER", "--user=USER", "Connect as this remote user") do |uval|
       remote_user = uval
     end
 
@@ -66,7 +66,7 @@ begin
       check_mode = true
     end
 
-    parser.on("-fval FORKS", "--forks=FORKS", "Run against up to FORKS hosts concurrently (default: 5)") do |fval|
+    parser.on("-f FORKS", "--forks=FORKS", "Run against up to FORKS hosts concurrently (default: 5)") do |fval|
       forks = fval.to_i? || 5
     end
 

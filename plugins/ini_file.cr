@@ -22,9 +22,65 @@ module CrystalPlay
       create = @params["create"]? ? true?(@params["create"]) : true
       exclusive = @params["exclusive"]? ? true?(@params["exclusive"]) : true
       no_extra_spaces = true?(@params["no_extra_spaces"]?)
-      backup = true?(@params["backup"]?)
       check_mode = true?(@params["check_mode"]?)
 
+      if err = validate_inputs(path, section, option, value, state, create)
+        return err
+      end
+
+      original = File.exists?(path) ? File.read(path) : ""
+      lines = initial_lines(original)
+
+      new_lines, changed = apply(lines, section, option, value, state, create, exclusive, no_extra_spaces)
+
+      finish_execute(path, original, new_lines, changed, check_mode)
+    end
+
+    private def finish_execute(path : String, original : String, new_lines : Array(String),
+                               changed : Bool, check_mode : Bool) : PluginResult
+      backup_file = maybe_backup(path, changed, true?(@params["backup"]?), check_mode)
+
+      new_content = new_content_of(new_lines)
+
+      diff = generate_unified_diff(original, new_content, path, path) if changed && @diff_mode
+
+      write_new_content(path, new_content) if changed && !check_mode
+
+      PluginResult.new(
+        changed: changed,
+        failed: false,
+        msg: changed ? "option changed" : "OK",
+        diff: diff,
+        path: path,
+        backup_file: backup_file
+      )
+    end
+
+    private def initial_lines(original : String) : Array(String)
+      # Real Ansible's own ini_file module force-seeds a single blank line
+      # (`if not ini_lines: ini_lines.append("\n")`) whenever the starting
+      # line list is empty - a brand-new file, or an existing-but-0-byte
+      # one - before any section/option insertion logic runs, so a freshly
+      # created config always gets exactly one leading blank line before
+      # its first `[section]` header. This plugin previously started from
+      # a genuinely empty array in that case, producing no leading blank
+      # line at all - a real, silent byte-for-byte divergence from real
+      # Ansible's output (not a crash) found benchmarking robertdebock.
+      # python_pip's own `Configure pip proxy`/`Trust hosts` tasks writing
+      # a brand-new `/etc/pip.conf`.
+      lines = split_lines(original)
+      lines = [""] of String if lines.empty?
+      lines
+    end
+
+    private def new_content_of(new_lines : Array(String)) : String
+      new_content = new_lines.join("\n")
+      new_content += "\n" if new_lines.size > 0
+      new_content
+    end
+
+    private def validate_inputs(path : String, section : String?, option : String?, value : String?,
+                                state : String, create : Bool) : PluginResult?
       if state == "present" && option && !value
         return PluginResult.new(changed: false, failed: true, msg: "Value must be set when state=present and option is defined")
       end
@@ -37,48 +93,22 @@ module CrystalPlay
         return PluginResult.new(changed: false, failed: true, msg: "Section [#{section}] does not exist in #{path}")
       end
 
-      original = File.exists?(path) ? File.read(path) : ""
-      lines = split_lines(original)
-      # Real Ansible's own ini_file module force-seeds a single blank line
-      # (`if not ini_lines: ini_lines.append("\n")`) whenever the starting
-      # line list is empty - a brand-new file, or an existing-but-0-byte
-      # one - before any section/option insertion logic runs, so a freshly
-      # created config always gets exactly one leading blank line before
-      # its first `[section]` header. This plugin previously started from
-      # a genuinely empty array in that case, producing no leading blank
-      # line at all - a real, silent byte-for-byte divergence from real
-      # Ansible's output (not a crash) found benchmarking robertdebock.
-      # python_pip's own `Configure pip proxy`/`Trust hosts` tasks writing
-      # a brand-new `/etc/pip.conf`.
-      lines = [""] of String if lines.empty?
+      nil
+    end
 
-      new_lines, changed = apply(lines, section, option, value, state, create, exclusive, no_extra_spaces)
-
-      backup_file = ""
+    private def maybe_backup(path : String, changed : Bool, backup : Bool, check_mode : Bool) : String
       if changed && backup && File.exists?(path) && !check_mode
-        backup_file = write_backup(path)
+        write_backup(path)
+      else
+        ""
       end
+    end
 
-      new_content = new_lines.join("\n")
-      new_content += "\n" if new_lines.size > 0
-
-      diff = generate_unified_diff(original, new_content, path, path) if changed && @diff_mode
-
-      if changed && !check_mode
-        dir = File.dirname(path)
-        Dir.mkdir_p(dir) unless Dir.exists?(dir)
-        File.write(path, new_content)
-        apply_mode(path)
-      end
-
-      PluginResult.new(
-        changed: changed,
-        failed: false,
-        msg: changed ? "option changed" : "OK",
-        diff: diff,
-        path: path,
-        backup_file: backup_file
-      )
+    private def write_new_content(path : String, new_content : String)
+      dir = File.dirname(path)
+      Dir.mkdir_p(dir) unless Dir.exists?(dir)
+      File.write(path, new_content)
+      apply_mode(path)
     end
 
     private def missing_param(name : String) : PluginResult
@@ -148,10 +178,7 @@ module CrystalPlay
 
       if section && !header_idx
         return {new_lines, false} if state == "absent"
-
-        new_lines << "" unless new_lines.empty? || new_lines.last.strip.empty?
-        new_lines << "[#{section}]"
-        header_idx = new_lines.size - 1
+        header_idx = append_section(new_lines, section)
         changed = true
       end
 
@@ -159,40 +186,55 @@ module CrystalPlay
       block_end = find_block_end(new_lines, block_start)
 
       if option
-        matches = (block_start...block_end).select { |i| option_line_index?(new_lines[i], option) }
-
-        if state == "present"
-          formatted = format_option(option, (value || raise "ini_file: value is required"), no_extra_spaces)
-
-          if matches.empty?
-            new_lines.insert(block_end, formatted)
-            changed = true
-          else
-            first = matches.first
-            if new_lines[first] != formatted
-              new_lines[first] = formatted
-              changed = true
-            end
-
-            if exclusive && matches.size > 1
-              matches[1..].reverse_each do |i|
-                new_lines.delete_at(i)
-                changed = true
-              end
-            end
-          end
-        else
-          unless matches.empty?
-            matches.reverse_each { |i| new_lines.delete_at(i) }
-            changed = true
-          end
-        end
+        changed = apply_option(new_lines, option, value, state, block_start, block_end, exclusive, no_extra_spaces) || changed
       elsif state == "absent" && header_idx
         (header_idx...block_end).to_a.reverse_each { |i| new_lines.delete_at(i) }
         changed = true
       end
 
       {new_lines, changed}
+    end
+
+    private def append_section(new_lines : Array(String), section : String) : Int32
+      new_lines << "" unless new_lines.empty? || new_lines.last.strip.empty?
+      new_lines << "[#{section}]"
+      new_lines.size - 1
+    end
+
+    private def apply_option(new_lines : Array(String), option : String, value : String?,
+                             state : String, block_start : Int32, block_end : Int32,
+                             exclusive : Bool, no_extra_spaces : Bool) : Bool
+      matches = (block_start...block_end).select { |i| option_line_index?(new_lines[i], option) }
+      changed = false
+
+      if state == "present"
+        formatted = format_option(option, (value || raise "ini_file: value is required"), no_extra_spaces)
+
+        if matches.empty?
+          new_lines.insert(block_end, formatted)
+          changed = true
+        else
+          first = matches.first
+          if new_lines[first] != formatted
+            new_lines[first] = formatted
+            changed = true
+          end
+
+          if exclusive && matches.size > 1
+            matches[1..].reverse_each do |i|
+              new_lines.delete_at(i)
+              changed = true
+            end
+          end
+        end
+      else
+        unless matches.empty?
+          matches.reverse_each { |i| new_lines.delete_at(i) }
+          changed = true
+        end
+      end
+
+      changed
     end
 
     private def write_backup(path : String) : String

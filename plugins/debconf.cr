@@ -24,13 +24,11 @@ module CrystalPlay
       pkg = @params["name"]? || @params["pkg"]?
       return missing_param("name") unless pkg
 
-      question = @params["question"]? || @params["selection"]? || @params["setting"]?
+      question = debconf_question
       vtype = @params["vtype"]?
-      value = @params["value"]? || @params["answer"]?
+      value = debconf_value
       unseen = true?(@params["unseen"]?)
       check_mode = true?(@params["check_mode"]?)
-
-      prev = get_selections(pkg)
 
       if question.nil?
         return PluginResult.new(changed: false, failed: false, msg: "No question given, nothing to set")
@@ -40,11 +38,8 @@ module CrystalPlay
         return PluginResult.new(changed: false, failed: true, msg: "when supplying a question you must supply a valid vtype and value")
       end
 
-      compare_value = vtype == "boolean" ? value.downcase : value
-      existing = prev[question]?
-      existing = existing.try { |e| vtype == "boolean" ? e.downcase : e }
-
-      changed = existing != compare_value
+      prev = get_selections(pkg)
+      changed = value_differs?(prev, question, vtype, value)
 
       if changed && !check_mode
         result = set_selection(pkg, question, vtype, value, unseen)
@@ -54,6 +49,27 @@ module CrystalPlay
       end
 
       PluginResult.new(changed: changed, failed: false, msg: changed ? "Value set" : "Value already set")
+    end
+
+    # question:/selection:/setting: are documented aliases of each other
+    private def debconf_question : String?
+      @params["question"]? || @params["selection"]? || @params["setting"]?
+    end
+
+    # value:/answer: are documented aliases of each other
+    private def debconf_value : String?
+      @params["value"]? || @params["answer"]?
+    end
+
+    # Does the stored selection differ from the requested value?
+    # Boolean questions are compared case-insensitively (debconf stores
+    # booleans lowercased; real Ansible's module normalizes the same way)
+    private def value_differs?(prev : Hash(String, String), question : String, vtype : String, value : String) : Bool
+      compare_value = vtype == "boolean" ? value.downcase : value
+      existing = prev[question]?
+      existing = existing.try { |e| vtype == "boolean" ? e.downcase : e }
+
+      existing != compare_value
     end
 
     private def missing_param(name : String) : PluginResult

@@ -104,39 +104,13 @@ module CrystalPlay
       ret = LibPty.openpty(pointerof(amaster), pointerof(aslave), Pointer(LibC::Char).null, Pointer(Void).null, Pointer(Void).null)
       return PluginResult.new(changed: false, failed: true, msg: "failed to allocate a pty (openpty errno #{Errno.value})") if ret != 0
 
-      slave_io = IO::FileDescriptor.new(aslave, blocking: true)
-      # Real Ansible's own default (echo: no) means a sent response's text
-      # is NOT echoed back into the captured output - turn off the pty's
-      # canonical-mode local echo unless the task explicitly asked for it
-      # (echo: true), matching pexpect's own `setecho()` behavior.
-      echo ? slave_io.echo! : slave_io.noecho!
-
-      full_command = chdir ? "cd #{shell_quote(chdir)} && #{command}" : command
+      setup_slave_echo(aslave, echo)
+      full_command = build_full_command(command, chdir)
 
       pid = LibC.fork
       case pid
       when 0
-        # Child: become a session leader and make the pty slave this
-        # session's controlling terminal (a plain inherited fd to a tty,
-        # with no setsid()/TIOCSCTTY, is never automatically one) -
-        # matches what a real interactive shell session looks like to a
-        # program checking tcgetpgrp()/expecting job-control signals to
-        # work, which `Process.new`'s own spawn (used before this fix)
-        # has no hook to arrange between fork and exec.
-        LibC.setsid
-        LibC.ioctl(aslave, TIOCSCTTY, 0)
-        LibC.dup2(aslave, 0)
-        LibC.dup2(aslave, 1)
-        LibC.dup2(aslave, 2)
-        LibC.close(amaster)
-        LibC.close(aslave) if aslave > 2
-
-        argv_strs = ["/bin/sh", "-c", full_command]
-        argv = Pointer(LibC::Char*).malloc(argv_strs.size + 1)
-        argv_strs.each_with_index { |str, i| argv[i] = str.to_unsafe }
-        argv[argv_strs.size] = Pointer(LibC::Char).null
-        LibC.execvp("/bin/sh", argv)
-        LibC._exit(127) # only reached if execvp itself failed
+        child_exec(aslave, amaster, full_command)
       when -1
         return PluginResult.new(changed: false, failed: true, msg: "failed to fork (errno #{Errno.value})")
       end
@@ -149,7 +123,62 @@ module CrystalPlay
       LibC.close(aslave)
 
       master_io = IO::FileDescriptor.new(amaster, blocking: true)
+      timed_out, output = read_until_deadline(amaster, responses, Time.monotonic + timeout.seconds)
 
+      LibC.kill(child_pid, Signal::TERM.value) rescue nil
+      raw_status = uninitialized LibC::Int
+      LibC.waitpid(child_pid, pointerof(raw_status), 0)
+      status = Process::Status.new(raw_status)
+      master_io.close rescue nil
+
+      PluginResult.new(
+        changed: true,
+        failed: !status.success?,
+        msg: timed_out ? "timed out waiting for a matching prompt" : "",
+        stdout: output,
+        rc: status.exit_code? || -1
+      )
+    end
+
+    # Real Ansible's own default (echo: no) means a sent response's text
+    # is NOT echoed back into the captured output - turn off the pty's
+    # canonical-mode local echo unless the task explicitly asked for it
+    # (echo: true), matching pexpect's own `setecho()` behavior.
+    private def setup_slave_echo(aslave : LibC::Int, echo : Bool)
+      slave_io = IO::FileDescriptor.new(aslave, blocking: true)
+      echo ? slave_io.echo! : slave_io.noecho!
+    end
+
+    private def build_full_command(command : String, chdir : String?) : String
+      chdir ? "cd #{shell_quote(chdir)} && #{command}" : command
+    end
+
+    # Child after fork(): become a session leader and make the pty slave
+    # this session's controlling terminal (a plain inherited fd to a tty,
+    # with no setsid()/TIOCSCTTY, is never automatically one) - matches
+    # what a real interactive shell session looks like to a program
+    # checking tcgetpgrp()/expecting job-control signals to work, which
+    # `Process.new`'s own spawn (used before this fix) has no hook to
+    # arrange between fork and exec. Never returns (always execs or
+    # _exits), so the parent's code below never runs in the child.
+    private def child_exec(aslave : LibC::Int, amaster : LibC::Int, full_command : String)
+      LibC.setsid
+      LibC.ioctl(aslave, TIOCSCTTY, 0)
+      LibC.dup2(aslave, 0)
+      LibC.dup2(aslave, 1)
+      LibC.dup2(aslave, 2)
+      LibC.close(amaster)
+      LibC.close(aslave) if aslave > 2
+
+      argv_strs = ["/bin/sh", "-c", full_command]
+      argv = Pointer(LibC::Char*).malloc(argv_strs.size + 1)
+      argv_strs.each_with_index { |str, i| argv[i] = str.to_unsafe }
+      argv[argv_strs.size] = Pointer(LibC::Char).null
+      LibC.execvp("/bin/sh", argv)
+      LibC._exit(127) # only reached if execvp itself failed
+    end
+
+    private def read_until_deadline(amaster : LibC::Int, responses : Array({Regex, Array(String)}), deadline : Time::Span) : {Bool, String}
       buffer = IO::Memory.new
       # Per-pattern (next unsent answer index, search offset) - the
       # search offset advances past each match so a still-visible earlier
@@ -160,7 +189,6 @@ module CrystalPlay
       # next entry in its list, cycling through it in order.
       search_from = Array.new(responses.size, 0)
       next_answer = Array.new(responses.size, 0)
-      deadline = Time.monotonic + timeout.seconds
       chunk = Bytes.new(4096)
       timed_out = false
 
@@ -171,11 +199,7 @@ module CrystalPlay
           break
         end
 
-        pfd = LibC::Pollfd.new
-        pfd.fd = amaster
-        pfd.events = 1_i16 # POLLIN
-        pfd.revents = 0_i16
-        poll_ret = LibC.poll(pointerof(pfd), 1_u64, remaining_ms)
+        poll_ret = poll_master(amaster, remaining_ms)
 
         if poll_ret == 0
           timed_out = true
@@ -188,34 +212,41 @@ module CrystalPlay
         break if bytes_read <= 0
 
         buffer.write(chunk[0, bytes_read])
-        text = buffer.to_s
-
-        responses.each_with_index do |(pattern, answers), idx|
-          next if next_answer[idx] >= answers.size
-          next unless md = pattern.match(text, search_from[idx])
-
-          payload = (answers[next_answer[idx]] + "\n").to_slice
-          LibC.write(amaster, payload.to_unsafe, payload.size)
-          next_answer[idx] += 1
-          search_from[idx] = md.end(0)
-        end
+        answer_prompts(amaster, buffer.to_s, responses, search_from, next_answer)
       end
 
-      LibC.kill(child_pid, Signal::TERM.value) rescue nil
-      raw_status = uninitialized LibC::Int
-      LibC.waitpid(child_pid, pointerof(raw_status), 0)
-      status = Process::Status.new(raw_status)
-      master_io.close rescue nil
+      {timed_out, buffer.to_s}
+    end
 
-      output = buffer.to_s
+    private def poll_master(amaster : LibC::Int, remaining_ms : Int32) : Int32
+      pfd = LibC::Pollfd.new
+      pfd.fd = amaster
+      pfd.events = 1_i16 # POLLIN
+      pfd.revents = 0_i16
+      LibC.poll(pointerof(pfd), 1_u64, remaining_ms)
+    end
 
-      PluginResult.new(
-        changed: true,
-        failed: !status.success?,
-        msg: timed_out ? "timed out waiting for a matching prompt" : "",
-        stdout: output,
-        rc: status.exit_code? || -1
-      )
+    # Per-pattern (next unsent answer index, search offset) - the
+    # search offset advances past each match so a still-visible earlier
+    # occurrence in the ever-growing buffer never re-triggers, while a
+    # GENUINELY new occurrence of the same prompt (the real-world case
+    # a list of responses exists for - the same confirmation prompt
+    # appearing once per item) is still found and answered with the
+    # next entry in its list, cycling through it in order.
+    private def answer_prompts(
+      amaster : LibC::Int, text : String,
+      responses : Array({Regex, Array(String)}),
+      search_from : Array(Int32), next_answer : Array(Int32),
+    )
+      responses.each_with_index do |(pattern, answers), idx|
+        next if next_answer[idx] >= answers.size
+        next unless md = pattern.match(text, search_from[idx])
+
+        payload = (answers[next_answer[idx]] + "\n").to_slice
+        LibC.write(amaster, payload.to_unsafe, payload.size)
+        next_answer[idx] += 1
+        search_from[idx] = md.end(0)
+      end
     end
 
     private def shell_quote(str : String) : String

@@ -174,6 +174,13 @@ module CrystalPlay
       end
 
       args.concat(["-subj", subject_argument])
+      args.concat(extension_args)
+
+      run_openssl(args)
+    end
+
+    private def extension_args : Array(String)
+      args = [] of String
 
       # Extension order matches the real module's own output (SAN, key
       # usage, extended key usage, basic constraints, then TLS feature),
@@ -194,7 +201,7 @@ module CrystalPlay
         args.concat(["-addext", "tlsfeature=#{critical("ocsp_must_staple_critical")}status_request"])
       end
 
-      run_openssl(args)
+      args
     end
 
     # OpenSSL's `-subj` uses `/` as the field separator, so any `/` in a
