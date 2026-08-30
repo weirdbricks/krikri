@@ -1,0 +1,74 @@
+name: Release
+
+# Triggered by pushing a tag like v0.9.646. Builds a release (optimized +
+# stripped) binary set per architecture and attaches them to the matching
+# GitHub Release. x86_64 only for now - arm64 gets added to the matrix
+# below once ubuntu-24.04-arm capacity is confirmed for this repo.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: crystallang/crystal:1.20.3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            libbz2-dev liblzma-dev zlib1g-dev libssl-dev libpcre2-dev
+
+      - name: Install shards
+        run: shards install
+
+      - name: Build release binaries
+        run: ./build.sh --release
+
+      - name: Package
+        run: |
+          PKG="krikri-${GITHUB_REF_NAME}-linux-${{ matrix.arch }}"
+          mkdir -p "dist/${PKG}"
+          cp -r bin/* "dist/${PKG}/"
+          tar -C dist -czf "dist/${PKG}.tar.gz" "${PKG}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: krikri-linux-${{ matrix.arch }}
+          path: dist/*.tar.gz
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
