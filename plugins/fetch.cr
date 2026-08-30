@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # fetch plugin (ansible.builtin.fetch) - pulls a file from the target to
   # the controller, the inverse of copy. Always dispatched to run on the
   # controller (see PluginManager::CONTROLLER_ONLY_PLUGINS) so
@@ -99,5 +99,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::FetchPlugin.new(config)
+plugin = Krikri::FetchPlugin.new(config)
 plugin.run

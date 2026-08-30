@@ -19,9 +19,9 @@
 
 require "json"
 require "base64"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   class KnownHostsPlugin < BasePlugin
     def execute : PluginResult
       name = @params["name"]? || @params["host"]?
@@ -137,5 +137,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::KnownHostsPlugin.new(config)
+plugin = Krikri::KnownHostsPlugin.new(config)
 plugin.run

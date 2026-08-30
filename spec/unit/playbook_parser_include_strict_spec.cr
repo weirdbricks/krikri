@@ -1,5 +1,5 @@
 require "../spec_helper"
-require "../../src/crystal_play/playbook_parser"
+require "../../src/krikri/playbook_parser"
 
 # Round 194 regression cover (andrewrothstein.java-oracle / -jre):
 # a sub-include with `become:` / `become_user:` on the include
@@ -17,11 +17,11 @@ require "../../src/crystal_play/playbook_parser"
 # import_tasks:/import_role: are intentionally NOT validated this way
 # (real ansible's ImportRole inherits the full Task fattributes and
 # accepts them).
-describe CrystalPlay::PlaybookParser do
+describe Krikri::PlaybookParser do
   describe "include: directive strict attribute allowlist (round 194)" do
     it "rejects become_user: on include_tasks: like real ansible" do
-      expect_raises(CrystalPlay::PlaybookParser::InvalidIncludeAttributeError, /'become_user' is not a valid attribute for a TaskInclude/) do
-        CrystalPlay::PlaybookParser.parse_string(<<-YAML)
+      expect_raises(Krikri::PlaybookParser::InvalidIncludeAttributeError, /'become_user' is not a valid attribute for a TaskInclude/) do
+        Krikri::PlaybookParser.parse_string(<<-YAML)
           - name: t
             hosts: all
             gather_facts: false
@@ -34,8 +34,8 @@ describe CrystalPlay::PlaybookParser do
     end
 
     it "rejects become: on include_tasks: like real ansible" do
-      expect_raises(CrystalPlay::PlaybookParser::InvalidIncludeAttributeError, /'become' is not a valid attribute for a TaskInclude/) do
-        CrystalPlay::PlaybookParser.parse_string(<<-YAML)
+      expect_raises(Krikri::PlaybookParser::InvalidIncludeAttributeError, /'become' is not a valid attribute for a TaskInclude/) do
+        Krikri::PlaybookParser.parse_string(<<-YAML)
           - name: t
             hosts: all
             gather_facts: false
@@ -48,8 +48,8 @@ describe CrystalPlay::PlaybookParser do
     end
 
     it "rejects become_user: on include_role: like real ansible" do
-      expect_raises(CrystalPlay::PlaybookParser::InvalidIncludeAttributeError, /'become_user' is not a valid attribute for a IncludeRole/) do
-        CrystalPlay::PlaybookParser.parse_string(<<-YAML)
+      expect_raises(Krikri::PlaybookParser::InvalidIncludeAttributeError, /'become_user' is not a valid attribute for a IncludeRole/) do
+        Krikri::PlaybookParser.parse_string(<<-YAML)
           - name: t
             hosts: all
             gather_facts: false
@@ -63,8 +63,8 @@ describe CrystalPlay::PlaybookParser do
     end
 
     it "rejects become: on include_role: like real ansible" do
-      expect_raises(CrystalPlay::PlaybookParser::InvalidIncludeAttributeError, /'become' is not a valid attribute for a IncludeRole/) do
-        CrystalPlay::PlaybookParser.parse_string(<<-YAML)
+      expect_raises(Krikri::PlaybookParser::InvalidIncludeAttributeError, /'become' is not a valid attribute for a IncludeRole/) do
+        Krikri::PlaybookParser.parse_string(<<-YAML)
           - name: t
             hosts: all
             gather_facts: false
@@ -81,7 +81,7 @@ describe CrystalPlay::PlaybookParser do
       # These are all on real ansible's VALID_INCLUDE_KEYWORDS, and
       # crystal's existing parser was already happy with them - this
       # test pins that the new allowlist didn't break the common shape.
-      pb = CrystalPlay::PlaybookParser.parse_string(<<-YAML)
+      pb = Krikri::PlaybookParser.parse_string(<<-YAML)
         - name: t
           hosts: all
           gather_facts: false
@@ -103,7 +103,7 @@ describe CrystalPlay::PlaybookParser do
       # - real ansible's ImportPlaybook/ImportRole inherit the full
       # Task fattributes and accept these keys. The patch deliberately
       # scopes the new validation to include_tasks:/include_role: only.
-      pb = CrystalPlay::PlaybookParser.parse_string(<<-YAML)
+      pb = Krikri::PlaybookParser.parse_string(<<-YAML)
         - name: t
           hosts: all
           gather_facts: false

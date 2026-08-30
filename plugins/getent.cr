@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # Getent Plugin - populate a host's fact dict from a system database
   # (passwd, shadow, group, hosts, services, ...), matching
   # ansible.builtin.getent. Registers the result as facts under
@@ -155,5 +155,5 @@ end
 # Entry point
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::GetentPlugin.new(config)
+plugin = Krikri::GetentPlugin.new(config)
 plugin.run

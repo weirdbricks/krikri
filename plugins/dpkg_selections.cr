@@ -11,9 +11,9 @@
 #   selection (required): one of install, hold, deinstall, purge
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   class DpkgSelectionsPlugin < BasePlugin
     VALID_SELECTIONS = {"install", "hold", "deinstall", "purge"}
 
@@ -65,5 +65,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::DpkgSelectionsPlugin.new(config)
+plugin = Krikri::DpkgSelectionsPlugin.new(config)
 plugin.run

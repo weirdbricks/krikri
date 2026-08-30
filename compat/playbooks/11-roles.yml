@@ -3,7 +3,7 @@
   gather_facts: false
   roles:
     - role: greeter
-      greeting_target: crystal-ansible
+      greeting_target: krikri-playbook
   tasks:
     - name: play's own task runs after roles
       ansible.builtin.copy:

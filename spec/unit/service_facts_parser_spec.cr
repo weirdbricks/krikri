@@ -1,7 +1,7 @@
 require "../spec_helper"
-require "../../src/crystal_play/plugin_helpers/service_facts_parser"
+require "../../src/krikri/plugin_helpers/service_facts_parser"
 
-private alias ServiceFactsParser = CrystalPlay::PluginHelpers::ServiceFactsParser
+private alias ServiceFactsParser = Krikri::PluginHelpers::ServiceFactsParser
 
 describe ServiceFactsParser do
   describe ".parse_active_states" do

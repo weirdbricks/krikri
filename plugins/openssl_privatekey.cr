@@ -2,9 +2,9 @@
 
 require "json"
 require "openssl"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # openssl_privatekey plugin (community.crypto.openssl_privatekey) -
   # generates TLS/SSL private keys.
   #
@@ -610,5 +610,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::OpensslPrivatekeyPlugin.new(config)
+plugin = Krikri::OpensslPrivatekeyPlugin.new(config)
 plugin.run

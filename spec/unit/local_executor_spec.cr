@@ -1,23 +1,23 @@
 require "../spec_helper"
-require "../../src/crystal_play/local_executor"
+require "../../src/krikri/local_executor"
 
-describe CrystalPlay::LocalExecutor do
+describe Krikri::LocalExecutor do
   describe ".exec" do
     it "captures stdout and the exit code for a normal command" do
-      result = CrystalPlay::LocalExecutor.exec("echo hello world")
+      result = Krikri::LocalExecutor.exec("echo hello world")
       result[:exit_code].should eq(0)
       result[:stdout].should eq("hello world\n")
       result[:stderr].should eq("")
     end
 
     it "captures stderr and a nonzero exit code" do
-      result = CrystalPlay::LocalExecutor.exec("echo oops >&2; exit 3")
+      result = Krikri::LocalExecutor.exec("echo oops >&2; exit 3")
       result[:exit_code].should eq(3)
       result[:stderr].should eq("oops\n")
     end
 
     it "captures large output in full, without truncation" do
-      result = CrystalPlay::LocalExecutor.exec("yes x | head -c 500000")
+      result = Krikri::LocalExecutor.exec("yes x | head -c 500000")
       result[:exit_code].should eq(0)
       result[:stdout].bytesize.should eq(500000)
     end
@@ -28,7 +28,7 @@ describe CrystalPlay::LocalExecutor do
     # argv element, so it must survive embedded single quotes,
     # backslashes, and "$" untouched, with no shell re-parsing it.
     it "handles embedded single quotes, backslashes, and $ correctly" do
-      result = CrystalPlay::LocalExecutor.exec(%(echo 'it'"'"'s a $HOME\\test'))
+      result = Krikri::LocalExecutor.exec(%(echo 'it'"'"'s a $HOME\\test'))
       result[:exit_code].should eq(0)
       result[:stdout].should eq("it's a $HOME\\test\n")
     end
@@ -42,7 +42,7 @@ describe CrystalPlay::LocalExecutor do
     # ENOENT, since that's shell env-assignment syntax, not a real
     # executable name.
     it "still routes a leading NAME=value env-assignment prefix through the shell" do
-      result = CrystalPlay::LocalExecutor.exec("SOME_VAR=hello sh -c 'echo $SOME_VAR'")
+      result = Krikri::LocalExecutor.exec("SOME_VAR=hello sh -c 'echo $SOME_VAR'")
       result[:exit_code].should eq(0)
       result[:stdout].should eq("hello\n")
     end
@@ -50,7 +50,7 @@ describe CrystalPlay::LocalExecutor do
     # A later argument containing "=" (a normal --opt=value flag) is not
     # env-assignment syntax and must not force the shell path.
     it "does not mistake a later --opt=value argument for a leading env assignment" do
-      result = CrystalPlay::LocalExecutor.exec("echo --opt=value")
+      result = Krikri::LocalExecutor.exec("echo --opt=value")
       result[:exit_code].should eq(0)
       result[:stdout].should eq("--opt=value\n")
     end
@@ -67,7 +67,7 @@ describe CrystalPlay::LocalExecutor do
       marker = File.tempname("local-executor-spec-daemon-marker")
 
       started = Time.monotonic
-      result = CrystalPlay::LocalExecutor.exec("sleep 0.1 && (touch #{marker}; tail -f /dev/null) &")
+      result = Krikri::LocalExecutor.exec("sleep 0.1 && (touch #{marker}; tail -f /dev/null) &")
       elapsed = Time.monotonic - started
 
       result[:exit_code].should eq(0)

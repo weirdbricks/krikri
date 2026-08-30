@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # PamLimits Plugin - Manage user PAM limits entries (limits.conf /
   # limits.d files), matching community.general.pam_limits.
   #
@@ -173,5 +173,5 @@ end
 # Entry point
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::PamLimitsPlugin.new(config)
+plugin = Krikri::PamLimitsPlugin.new(config)
 plugin.run

@@ -3,11 +3,11 @@
 require "json"
 require "http/client"
 require "uri"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/http_download"
-require "../src/crystal_play/plugin_helpers/deb822_repository_content"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/http_download"
+require "../src/krikri/plugin_helpers/deb822_repository_content"
 
-module CrystalPlay
+module Krikri
   # Deb822_repository plugin - adds/removes a DEB822-format (`.sources`)
   # APT repository file. Compatible with (a subset of) Ansible's
   # ansible.builtin.deb822_repository module (ansible-core 2.15+, the
@@ -287,5 +287,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::Deb822RepositoryPlugin.new(config)
+plugin = Krikri::Deb822RepositoryPlugin.new(config)
 plugin.run

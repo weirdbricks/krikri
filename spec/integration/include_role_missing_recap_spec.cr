@@ -5,7 +5,7 @@ require "file_utils"
 # executor's recap-counting for a dynamic include_role: whose target role
 # doesn't exist, so it needs an end-to-end run rather than a unit test.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "include_role: naming a role that doesn't exist" do

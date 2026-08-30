@@ -22,9 +22,9 @@
 # - check_mode reports would-change without executing hostnamectl.
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   class HostnamePlugin < BasePlugin
     property? check_mode : Bool
 
@@ -159,5 +159,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::HostnamePlugin.new(config)
+plugin = Krikri::HostnamePlugin.new(config)
 plugin.run

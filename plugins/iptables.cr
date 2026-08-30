@@ -1,10 +1,10 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/iptables_command"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/iptables_command"
 
-module CrystalPlay
+module Krikri
   # Iptables plugin - manages a single netfilter rule/chain/policy.
   # Compatible with Ansible's ansible.builtin.iptables module.
   #
@@ -139,5 +139,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::IptablesPlugin.new(config)
+plugin = Krikri::IptablesPlugin.new(config)
 plugin.run

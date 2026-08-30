@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # dnf_versionlock plugin - locks/excludes/unlocks package versions via
   # the `dnf versionlock` plugin. Compatible with (a subset of) Ansible's
   # community.general.dnf_versionlock module. dnf5 is not supported (same
@@ -231,5 +231,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::DnfVersionlockPlugin.new(config)
+plugin = Krikri::DnfVersionlockPlugin.new(config)
 plugin.run

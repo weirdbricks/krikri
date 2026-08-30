@@ -1,10 +1,10 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/firewalld_command"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/firewalld_command"
 
-module CrystalPlay
+module Krikri
   # Firewalld plugin - manages firewalld zone configuration. Compatible
   # with Ansible's ansible.posix.firewalld module.
   #
@@ -70,7 +70,7 @@ module CrystalPlay
   # empirically against a real firewalld 2.1.1 install, since much of
   # this isn't documented by `ansible-doc` at all - it belongs to the
   # underlying CLI tool, not the Ansible module) live in
-  # `src/crystal_play/plugin_helpers/firewalld_command.cr`.
+  # `src/krikri/plugin_helpers/firewalld_command.cr`.
   #
   # - port_forward: a list of at most one dict
   #   ({port, proto, toport, toaddr?}), structurally different from
@@ -277,5 +277,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::FirewalldPlugin.new(config)
+plugin = Krikri::FirewalldPlugin.new(config)
 plugin.run

@@ -1,10 +1,10 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/apt_lock_retry"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/apt_lock_retry"
 
-module CrystalPlay
+module Krikri
   # Package Plugin - OS-agnostic package management
   #
   # Auto-detects package manager (dnf, yum, apt) and delegates
@@ -591,5 +591,5 @@ end
 # Entry point
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::PackagePlugin.new(config)
+plugin = Krikri::PackagePlugin.new(config)
 plugin.run

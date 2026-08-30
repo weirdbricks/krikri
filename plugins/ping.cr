@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # Ping plugin - trivial connectivity check, matches
   # ansible.builtin.ping exactly.
   #
@@ -29,5 +29,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::PingPlugin.new(config)
+plugin = Krikri::PingPlugin.new(config)
 plugin.run

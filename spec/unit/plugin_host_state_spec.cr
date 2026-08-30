@@ -1,6 +1,6 @@
 require "../spec_helper"
 require "file_utils"
-require "../../src/crystal_play/plugin_manager"
+require "../../src/krikri/plugin_manager"
 
 # OPUS_PERFORMANCE_IMPROVEMENTS.md item 6a - the controller-side record
 # of "which plugin binaries were verified present on which host".
@@ -23,8 +23,8 @@ require "../../src/crystal_play/plugin_manager"
 #      optimization.
 describe "plugin host-state cache (item 6a)" do
   after_each do
-    CrystalPlay::PluginManager.clear_cache
-    CrystalPlay::PluginManager.host_state_cache_enabled = true
+    Krikri::PluginManager.clear_cache
+    Krikri::PluginManager.host_state_cache_enabled = true
   end
 
   it "puts its cache under XDG_CACHE_HOME when that is set" do
@@ -32,8 +32,8 @@ describe "plugin host-state cache (item 6a)" do
     previous = ENV["XDG_CACHE_HOME"]?
     begin
       ENV["XDG_CACHE_HOME"] = "/some/cache/root"
-      CrystalPlay::PluginManager.host_state_path
-        .should eq("/some/cache/root/crystal-ansible/plugin-state.json")
+      Krikri::PluginManager.host_state_path
+        .should eq("/some/cache/root/krikri-playbook/plugin-state.json")
     ensure
       previous ? (ENV["XDG_CACHE_HOME"] = previous) : ENV.delete("XDG_CACHE_HOME")
     end
@@ -45,14 +45,14 @@ describe "plugin host-state cache (item 6a)" do
     previous = ENV["XDG_CACHE_HOME"]?
     dir = File.tempname("host-state-spec")
     begin
-      Dir.mkdir_p(File.join(dir, "crystal-ansible"))
-      File.write(File.join(dir, "crystal-ansible", "plugin-state.json"), "{not json at all")
+      Dir.mkdir_p(File.join(dir, "krikri-playbook"))
+      File.write(File.join(dir, "krikri-playbook", "plugin-state.json"), "{not json at all")
       ENV["XDG_CACHE_HOME"] = dir
-      CrystalPlay::PluginManager.clear_cache
+      Krikri::PluginManager.clear_cache
 
       # Reading it must not raise; the flush path must also survive.
-      CrystalPlay::PluginManager.invalidate_host_state("root@example:22")
-      CrystalPlay::PluginManager.flush_host_state
+      Krikri::PluginManager.invalidate_host_state("root@example:22")
+      Krikri::PluginManager.flush_host_state
     ensure
       previous ? (ENV["XDG_CACHE_HOME"] = previous) : ENV.delete("XDG_CACHE_HOME")
       FileUtils.rm_rf(dir)
@@ -66,9 +66,9 @@ describe "plugin host-state cache (item 6a)" do
     missing = JSON.parse({
       "failed" => true,
       "stdout" => "",
-      "stderr" => "bash: line 1: #{CrystalPlay::PluginManager::REMOTE_PLUGIN_DIR}/command: No such file or directory",
+      "stderr" => "bash: line 1: #{Krikri::PluginManager::REMOTE_PLUGIN_DIR}/command: No such file or directory",
     }.to_json)
-    CrystalPlay::PluginManager.missing_remote_binary_for_spec?(missing).should be_true
+    Krikri::PluginManager.missing_remote_binary_for_spec?(missing).should be_true
   end
 
   it "does not mistake an ordinary module failure for a missing binary" do
@@ -81,20 +81,20 @@ describe "plugin host-state cache (item 6a)" do
       "stdout" => "",
       "stderr" => "",
     }.to_json)
-    CrystalPlay::PluginManager.missing_remote_binary_for_spec?(ordinary).should be_false
+    Krikri::PluginManager.missing_remote_binary_for_spec?(ordinary).should be_false
   end
 
   it "does not treat a successful result as a missing binary" do
     ok = JSON.parse({"failed" => false, "stdout" => "", "stderr" => ""}.to_json)
-    CrystalPlay::PluginManager.missing_remote_binary_for_spec?(ok).should be_false
+    Krikri::PluginManager.missing_remote_binary_for_spec?(ok).should be_false
   end
 
   it "can be switched off entirely" do
     # --no-plugin-state-cache must genuinely restore the old behaviour,
     # which is the escape hatch for debugging a suspected staleness
     # problem.
-    CrystalPlay::PluginManager.host_state_cache_enabled = false
-    CrystalPlay::PluginManager.host_state_satisfies_for_spec?("root@example:22", ["command"])
+    Krikri::PluginManager.host_state_cache_enabled = false
+    Krikri::PluginManager.host_state_satisfies_for_spec?("root@example:22", ["command"])
       .should be_false
   end
 end

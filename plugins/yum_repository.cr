@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # Yum_repository plugin - manages .repo files under /etc/yum.repos.d/.
   # Compatible with Ansible's ansible.builtin.yum_repository module.
   #
@@ -230,5 +230,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::YumRepositoryPlugin.new(config)
+plugin = Krikri::YumRepositoryPlugin.new(config)
 plugin.run

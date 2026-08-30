@@ -13,7 +13,7 @@
       # wait() for cmd (nohup or not, nohup only ignores SIGHUP - it doesn't
       # exempt a child from its parent's wait()) - since cmd here is a
       # permanent server that never exits, that shell never exits either,
-      # so it never releases the stdout/stderr pipe crystal-ansible's shell
+      # so it never releases the stdout/stderr pipe krikri-playbook's shell
       # plugin reads until EOF, hanging the task forever (a real, if narrow,
       # LocalExecutor gap found via this very playbook - see git log, 0.9.33).
       ansible.builtin.shell: nohup sh -c 'sleep 1; python3 -m http.server 18082 --directory /work/serve' >/tmp/http-waitfor.log 2>&1 &

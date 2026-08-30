@@ -1,6 +1,6 @@
 require "../spec_helper"
-require "../../src/crystal_play/variable_substitutor"
-require "../../src/crystal_play/conditional_evaluator"
+require "../../src/krikri/variable_substitutor"
+require "../../src/krikri/conditional_evaluator"
 
 # Real bug found round 180 benchmarking buluma.phpmyadmin on Ubuntu:
 # a role default computed from ANOTHER, genuinely-never-set variable
@@ -25,8 +25,8 @@ describe "nested undefined chains" do
   describe "strict substitution follows the chain" do
     it "raises naming the INNERMOST missing variable, not the one referenced" do
       vars = {"pw" => JSON::Any.new("{{ mysql_root_password }}")}
-      sub = CrystalPlay::VarSubstitutor.new(vars: vars, host_name: "h1")
-      expect_raises(CrystalPlay::UndefinedVariableError, /'mysql_root_password' is undefined/) do
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      expect_raises(Krikri::UndefinedVariableError, /'mysql_root_password' is undefined/) do
         sub.substitute("pw is [{{ pw }}]", strict: true)
       end
     end
@@ -36,24 +36,24 @@ describe "nested undefined chains" do
         "outer"  => JSON::Any.new("{{ middle }}"),
         "middle" => JSON::Any.new("{{ innermost }}"),
       }
-      sub = CrystalPlay::VarSubstitutor.new(vars: vars, host_name: "h1")
-      expect_raises(CrystalPlay::UndefinedVariableError, /'innermost' is undefined/) do
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      expect_raises(Krikri::UndefinedVariableError, /'innermost' is undefined/) do
         sub.substitute("[{{ outer }}]", strict: true)
       end
     end
 
     it "raises for a PARTIAL string value, not just a whole-value reference" do
       vars = {"partial" => JSON::Any.new("prefix-{{ missing_name }}-suffix")}
-      sub = CrystalPlay::VarSubstitutor.new(vars: vars, host_name: "h1")
-      expect_raises(CrystalPlay::UndefinedVariableError, /'missing_name' is undefined/) do
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      expect_raises(Krikri::UndefinedVariableError, /'missing_name' is undefined/) do
         sub.substitute("[{{ partial }}]", strict: true)
       end
     end
 
     it "raises for an undefined leaf reached through a list-of-dicts" do
       vars = {"entries" => JSON.parse(%([{"name": "a", "pw": "{{ missing_name }}"}]))}
-      sub = CrystalPlay::VarSubstitutor.new(vars: vars, host_name: "h1")
-      expect_raises(CrystalPlay::UndefinedVariableError, /'missing_name' is undefined/) do
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      expect_raises(Krikri::UndefinedVariableError, /'missing_name' is undefined/) do
         sub.substitute("[{{ entries[0].pw }}]", strict: true)
       end
     end
@@ -63,7 +63,7 @@ describe "nested undefined chains" do
         "outer" => JSON::Any.new("{{ inner }}"),
         "inner" => JSON::Any.new("realvalue"),
       }
-      sub = CrystalPlay::VarSubstitutor.new(vars: vars, host_name: "h1")
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
       sub.substitute("[{{ outer }}]", strict: true).should eq("[realvalue]")
     end
 
@@ -72,13 +72,13 @@ describe "nested undefined chains" do
         "outer" => JSON::Any.new("{{ inner }}"),
         "inner" => JSON::Any.new(""),
       }
-      sub = CrystalPlay::VarSubstitutor.new(vars: vars, host_name: "h1")
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
       sub.substitute("[{{ outer }}]", strict: true).should eq("[]")
     end
 
     it "does NOT raise when the value guards its own missing name with default()" do
       vars = {"guarded" => JSON::Any.new("{{ missing_name | default('GUARDED') }}")}
-      sub = CrystalPlay::VarSubstitutor.new(vars: vars, host_name: "h1")
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
       sub.substitute("[{{ guarded }}]", strict: true).should eq("[GUARDED]")
     end
 
@@ -87,7 +87,7 @@ describe "nested undefined chains" do
       # (when:, vars files, default() support); only the strict
       # module-arg caller changed.
       vars = {"pw" => JSON::Any.new("{{ mysql_root_password }}")}
-      sub = CrystalPlay::VarSubstitutor.new(vars: vars, host_name: "h1")
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
       sub.substitute("pw is [{{ pw }}]").should eq("pw is [undefined]")
     end
   end
@@ -95,13 +95,13 @@ describe "nested undefined chains" do
   describe "the Crinja side treats such a chain as really Undefined" do
     it "lets default() fire, instead of returning the sentinel text" do
       vars = {"pw" => JSON::Any.new("{{ mysql_root_password }}")}
-      sub = CrystalPlay::VarSubstitutor.new(vars: vars, host_name: "h1")
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
       sub.substitute("[{{ pw | default('FALLBACK') }}]").should eq("[FALLBACK]")
     end
 
     it "answers `is defined` False, matching real Ansible" do
       vars = {"pw" => JSON::Any.new("{{ mysql_root_password }}")}
-      sub = CrystalPlay::VarSubstitutor.new(vars: vars, host_name: "h1")
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
       sub.substitute("{{ pw is defined }}").should eq("False")
     end
 
@@ -110,7 +110,7 @@ describe "nested undefined chains" do
         "outer" => JSON::Any.new("{{ inner }}"),
         "inner" => JSON::Any.new("realvalue"),
       }
-      sub = CrystalPlay::VarSubstitutor.new(vars: vars, host_name: "h1")
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
       sub.substitute("{{ outer is defined }}").should eq("True")
     end
   end
@@ -121,8 +121,8 @@ describe "nested undefined chains" do
     # regression-tested - independently in each.
     it "treats an unresolvable chain as undefined for when: is defined" do
       vars = {"pw" => JSON::Any.new("{{ mysql_root_password }}")}
-      CrystalPlay::ConditionalEvaluator.evaluate("pw is defined", vars).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("pw is undefined", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("pw is defined", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("pw is undefined", vars).should be_true
     end
 
     it "still treats a resolvable chain as defined" do
@@ -130,13 +130,13 @@ describe "nested undefined chains" do
         "outer" => JSON::Any.new("{{ inner }}"),
         "inner" => JSON::Any.new("realvalue"),
       }
-      CrystalPlay::ConditionalEvaluator.evaluate("outer is defined", vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("outer is undefined", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("outer is defined", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("outer is undefined", vars).should be_false
     end
 
     it "still treats an ordinary set variable as defined" do
       vars = {"plain" => JSON::Any.new("x")}
-      CrystalPlay::ConditionalEvaluator.evaluate("plain is defined", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("plain is defined", vars).should be_true
     end
   end
 end

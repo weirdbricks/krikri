@@ -2,11 +2,11 @@
 
 require "json"
 require "docr"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/docker_ref"
-require "../src/crystal_play/plugin_helpers/docker_client"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/docker_ref"
+require "../src/krikri/plugin_helpers/docker_client"
 
-module CrystalPlay
+module Krikri
   # docker_image_build plugin - builds a Docker image via the `docker
   # buildx build` CLI. Compatible with (a subset of) Ansible's
   # community.docker.docker_image_build module.
@@ -149,5 +149,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::DockerImageBuildPlugin.new(config)
+plugin = Krikri::DockerImageBuildPlugin.new(config)
 plugin.run

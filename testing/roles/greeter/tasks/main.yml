@@ -9,5 +9,5 @@
 - name: copy a role file (resolved relative to the role's files/ dir)
   ansible.builtin.copy:
     src: greeting.txt
-    dest: /tmp/crystal-play-role-greeting.txt
+    dest: /tmp/krikri-playbook-role-greeting.txt
   notify: announce greeting

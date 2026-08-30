@@ -2,10 +2,10 @@
 
 require "json"
 require "mysql"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/mysql_connection"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/mysql_connection"
 
-module CrystalPlay
+module Krikri
   # MySQL query plugin - runs arbitrary SQL statement(s). Compatible
   # (for the subset of parameters implemented here) with Ansible's
   # community.mysql.mysql_query module.
@@ -151,5 +151,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::MysqlQueryPlugin.new(config)
+plugin = Krikri::MysqlQueryPlugin.new(config)
 plugin.run

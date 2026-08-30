@@ -5,14 +5,14 @@
     - name: add a repository (custom filename, no cache update - no real network access in this container)
       ansible.builtin.apt_repository:
         repo: "deb http://archive.ubuntu.com/ubuntu focal main"
-        filename: crystal-ansible-test
+        filename: krikri-playbook-test
         update_cache: false
       register: add_result
 
     - name: idempotent rerun of the same repository
       ansible.builtin.apt_repository:
         repo: "deb http://archive.ubuntu.com/ubuntu focal main"
-        filename: crystal-ansible-test
+        filename: krikri-playbook-test
         update_cache: false
       register: rerun_result
 
@@ -25,7 +25,7 @@
     - name: remove the first repository
       ansible.builtin.apt_repository:
         repo: "deb http://archive.ubuntu.com/ubuntu focal main"
-        filename: crystal-ansible-test
+        filename: krikri-playbook-test
         state: absent
         update_cache: false
       register: remove_result
@@ -33,7 +33,7 @@
     - name: idempotent rerun of the removal
       ansible.builtin.apt_repository:
         repo: "deb http://archive.ubuntu.com/ubuntu focal main"
-        filename: crystal-ansible-test
+        filename: krikri-playbook-test
         state: absent
         update_cache: false
       register: remove_rerun_result
@@ -45,7 +45,7 @@
 
     - name: check whether the custom-filename file was removed
       ansible.builtin.stat:
-        path: /etc/apt/sources.list.d/crystal-ansible-test.list
+        path: /etc/apt/sources.list.d/krikri-playbook-test.list
       register: removed_check
 
     - name: write the stable results to a file for comparison

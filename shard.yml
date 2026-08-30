@@ -1,11 +1,11 @@
-name: crystal-play
+name: krikri
 version: 0.9.90
 
 description: |
   Fast, Ansible-compatible automation tool written in Crystal
 
 authors:
-  - Crystal Play Contributors
+  - Krikri Contributors
 
 dependencies:
   crinja:

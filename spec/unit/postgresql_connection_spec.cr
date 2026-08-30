@@ -1,7 +1,7 @@
 require "../spec_helper"
-require "../../src/crystal_play/plugin_helpers/postgresql_connection"
+require "../../src/krikri/plugin_helpers/postgresql_connection"
 
-describe CrystalPlay::PluginHelpers::PostgresqlConnection do
+describe Krikri::PluginHelpers::PostgresqlConnection do
   describe ".build_uri" do
     it "defaults to a Unix socket connection, not TCP localhost, when no host: is given" do
       # Real libpq (and psycopg2, which every postgresql_db/
@@ -15,7 +15,7 @@ describe CrystalPlay::PluginHelpers::PostgresqlConnection do
       # instead hit real pg_hba.conf's `ident` gate for TCP connections
       # (no ident daemon running) and failed outright, while real
       # Ansible connected fine via the socket's `peer` auth.
-      CrystalPlay::PluginHelpers::PostgresqlConnection.build_uri.should eq(
+      Krikri::PluginHelpers::PostgresqlConnection.build_uri.should eq(
         "postgres:/postgres?host=%2Fvar%2Frun%2Fpostgresql"
       )
     end
@@ -25,25 +25,25 @@ describe CrystalPlay::PluginHelpers::PostgresqlConnection do
       # filename as `.s.PGSQL.<port>` - a non-default port (e.g.
       # robertdebock.postgres's own `postgres_port: 6543`) must reach it
       # via the "port" query param, not just discarded.
-      CrystalPlay::PluginHelpers::PostgresqlConnection.build_uri(port: "6543").should eq(
+      Krikri::PluginHelpers::PostgresqlConnection.build_uri(port: "6543").should eq(
         "postgres:/postgres?host=%2Fvar%2Frun%2Fpostgresql&port=6543"
       )
     end
 
     it "builds a TCP URI with host/port/user/password/dbname" do
-      uri = CrystalPlay::PluginHelpers::PostgresqlConnection.build_uri(
+      uri = Krikri::PluginHelpers::PostgresqlConnection.build_uri(
         host: "db.example.com", port: "5433", user: "postgres", password: "secret", dbname: "mydb"
       )
       uri.should eq("postgres://postgres:secret@db.example.com:5433/mydb")
     end
 
     it "includes sslmode as a query param when given, still against the default Unix socket" do
-      uri = CrystalPlay::PluginHelpers::PostgresqlConnection.build_uri(sslmode: "disable")
+      uri = Krikri::PluginHelpers::PostgresqlConnection.build_uri(sslmode: "disable")
       uri.should eq("postgres:/postgres?host=%2Fvar%2Frun%2Fpostgresql&sslmode=disable")
     end
 
     it "builds a unix socket URI via the host query param, ignoring host/port" do
-      uri = CrystalPlay::PluginHelpers::PostgresqlConnection.build_uri(
+      uri = Krikri::PluginHelpers::PostgresqlConnection.build_uri(
         host: "ignored", port: "9999", user: "postgres", unix_socket: "/var/run/postgresql"
       )
       uri.should eq("postgres://postgres@/postgres?host=%2Fvar%2Frun%2Fpostgresql&port=9999")
@@ -60,7 +60,7 @@ describe CrystalPlay::PluginHelpers::PostgresqlConnection do
       # login_port: directly, so the connection silently fell back to
       # port 5432's Unix socket, which doesn't exist on the target host
       # at all.
-      resolved = CrystalPlay::PluginHelpers::PostgresqlConnection.resolve_login_params({
+      resolved = Krikri::PluginHelpers::PostgresqlConnection.resolve_login_params({
         "host"        => "aliased-host",
         "port"        => "6543",
         "login"       => "aliased-user",
@@ -74,7 +74,7 @@ describe CrystalPlay::PluginHelpers::PostgresqlConnection do
     end
 
     it "prefers the canonical login_* form over the alias when both are set" do
-      resolved = CrystalPlay::PluginHelpers::PostgresqlConnection.resolve_login_params({
+      resolved = Krikri::PluginHelpers::PostgresqlConnection.resolve_login_params({
         "login_host"        => "canonical-host",
         "host"              => "aliased-host",
         "login_port"        => "5432",

@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # Apt_key plugin - imports/removes a GPG key into apt's legacy trusted
   # keyring. Compatible with Ansible's ansible.builtin.apt_key module
   # (deprecated in real ansible-core in favor of signed-by:/deb822_
@@ -98,7 +98,7 @@ module CrystalPlay
         return PluginResult.new(changed: false, failed: true, msg: "Missing required parameter: url or data")
       end
 
-      tmp_path = "/tmp/.crystal-ansible-apt-key-#{Random.rand(100000..999999)}"
+      tmp_path = "/tmp/.krikri-playbook-apt-key-#{Random.rand(100000..999999)}"
       begin
         staged = stage_key_material(url, data, file_path, tmp_path)
         return staged if staged
@@ -201,7 +201,7 @@ module CrystalPlay
       # can't poison `~/.gnupg` state that #add_key's later `apt-key add`
       # depends on staying untouched. Found benchmarking round167's
       # buluma.gitlab_ce on Ubuntu 22.04.
-      tmp_home = "/tmp/.crystal-ansible-apt-key-gnupghome-#{Random.rand(100000..999999)}"
+      tmp_home = "/tmp/.krikri-playbook-apt-key-gnupghome-#{Random.rand(100000..999999)}"
       result = remote_exec("mkdir -p #{tmp_home} && chmod 700 #{tmp_home} && gpg --homedir #{tmp_home} --with-colons --import-options show-only --import #{path} 2>/dev/null; rm -rf #{tmp_home}")
       result[:stdout].each_line.compact_map do |line|
         fields = line.split(':')
@@ -262,5 +262,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::AptKeyPlugin.new(config)
+plugin = Krikri::AptKeyPlugin.new(config)
 plugin.run

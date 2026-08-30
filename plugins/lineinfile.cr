@@ -4,10 +4,10 @@ require "json"
 require "file_utils"
 require "system/user"
 require "system/group"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/line_editor"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/line_editor"
 
-module CrystalPlay
+module Krikri
   # Lineinfile plugin - manages a single line in a text file
   # Compatible with Ansible's ansible.builtin.lineinfile module
   #
@@ -219,5 +219,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::LineInFilePlugin.new(config)
+plugin = Krikri::LineInFilePlugin.new(config)
 plugin.run

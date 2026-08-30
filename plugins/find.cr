@@ -1,11 +1,11 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/stat_fields"
-require "../src/crystal_play/plugin_helpers/find_mode_filter"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/stat_fields"
+require "../src/krikri/plugin_helpers/find_mode_filter"
 
-module CrystalPlay
+module Krikri
   # Find plugin - recursively searches for files/directories matching
   # criteria. Compatible with Ansible's ansible.builtin.find module.
   #
@@ -413,5 +413,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::FindPlugin.new(config)
+plugin = Krikri::FindPlugin.new(config)
 plugin.run

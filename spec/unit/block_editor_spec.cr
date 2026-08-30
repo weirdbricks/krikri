@@ -1,7 +1,7 @@
 require "../spec_helper"
-require "../../src/crystal_play/plugin_helpers/block_editor"
+require "../../src/krikri/plugin_helpers/block_editor"
 
-private alias BlockEditor = CrystalPlay::PluginHelpers::BlockEditor
+private alias BlockEditor = Krikri::PluginHelpers::BlockEditor
 private BEGIN_LINE = "# BEGIN ANSIBLE MANAGED BLOCK"
 private END_LINE   = "# END ANSIBLE MANAGED BLOCK"
 

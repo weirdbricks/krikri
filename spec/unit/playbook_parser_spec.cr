@@ -1,6 +1,6 @@
 require "../spec_helper"
 require "file_utils"
-require "../../src/crystal_play/playbook_parser"
+require "../../src/krikri/playbook_parser"
 
 private VALID_PLAYBOOK = <<-YAML
   - name: Example play
@@ -47,17 +47,17 @@ private def import_tasks_root(name : String) : String
   root
 end
 
-private def single_task(task_yaml : String) : CrystalPlay::Task
+private def single_task(task_yaml : String) : Krikri::Task
   task_block = task_yaml.strip.lines.map { |line| "    #{line}" }.join("\n")
   playbook_yaml = "- name: Loop test play\n  hosts: all\n  tasks:\n#{task_block}\n"
-  playbook = CrystalPlay::PlaybookParser.parse_string(playbook_yaml)
+  playbook = Krikri::PlaybookParser.parse_string(playbook_yaml)
   playbook.plays[0].tasks[0]
 end
 
-describe CrystalPlay::PlaybookParser do
+describe Krikri::PlaybookParser do
   describe ".parse_string" do
     it "parses plays, tasks and handlers" do
-      playbook = CrystalPlay::PlaybookParser.parse_string(VALID_PLAYBOOK)
+      playbook = Krikri::PlaybookParser.parse_string(VALID_PLAYBOOK)
 
       playbook.plays.size.should eq(1)
       play = playbook.plays[0]
@@ -94,7 +94,7 @@ describe CrystalPlay::PlaybookParser do
                 state: present
         YAML
 
-      result = CrystalPlay::PlaybookParser.parse_string(playbook)
+      result = Krikri::PlaybookParser.parse_string(playbook)
 
       result.plays[0].tasks.size.should eq(1)
       result.plays[0].tasks[0].params["uid"].should eq("2147483659")
@@ -109,7 +109,7 @@ describe CrystalPlay::PlaybookParser do
       # got "listen" itself picked as the module name - "Plugin not
       # available: listen" - instead of the real ansible.builtin.systemd
       # module underneath it.
-      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML)
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
         - hosts: all
           handlers:
             - name: Restart thing
@@ -188,7 +188,7 @@ describe CrystalPlay::PlaybookParser do
       # for a controller-side stat check) silently kept becoming root
       # anyway - "sudo: a password is required" with no evident tie
       # back to the task's own explicit become: false.
-      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML
         - name: play
           hosts: all
           become: true
@@ -216,7 +216,7 @@ describe CrystalPlay::PlaybookParser do
       # its usual "update apt cache" idiom (the exact shape every one of
       # those roles' own molecule converge.yml uses) silently never ran
       # it at all, with no warning.
-      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML
         - name: play
           hosts: all
           pre_tasks:
@@ -260,7 +260,7 @@ describe CrystalPlay::PlaybookParser do
                 state: present
         YAML
 
-      result = CrystalPlay::PlaybookParser.parse_string(playbook)
+      result = Krikri::PlaybookParser.parse_string(playbook)
 
       result.plays[0].tasks.size.should eq(1)
       result.plays[0].tasks[0].module_name.should eq("community.general.gem")
@@ -271,7 +271,7 @@ describe CrystalPlay::PlaybookParser do
       # so a playbook where every play fails to parse surfaces as this
       # top-level error rather than the underlying "missing 'hosts'" message.
       expect_raises(Exception, /No valid plays found/) do
-        CrystalPlay::PlaybookParser.parse_string(<<-YAML
+        Krikri::PlaybookParser.parse_string(<<-YAML
           - name: No hosts
             tasks: []
           YAML
@@ -281,7 +281,7 @@ describe CrystalPlay::PlaybookParser do
 
     it "raises when the top-level document is not a list" do
       expect_raises(Exception, /must be a YAML list/) do
-        CrystalPlay::PlaybookParser.parse_string(<<-YAML
+        Krikri::PlaybookParser.parse_string(<<-YAML
           name: Not a list
           YAML
         )
@@ -297,8 +297,8 @@ describe CrystalPlay::PlaybookParser do
       # per-task skip as any not-yet-implemented module) and kept
       # executing every task after it. Verified live against real
       # ansible-playbook 2.19.4: byte-identical error message.
-      expect_raises(CrystalPlay::RemovedActionError, /has been removed/) do
-        CrystalPlay::PlaybookParser.parse_string(<<-YAML
+      expect_raises(Krikri::RemovedActionError, /has been removed/) do
+        Krikri::PlaybookParser.parse_string(<<-YAML
           - hosts: all
             tasks:
               - name: legacy include
@@ -310,8 +310,8 @@ describe CrystalPlay::PlaybookParser do
     end
 
     it "also aborts for the bare (non-FQCN) include: spelling" do
-      expect_raises(CrystalPlay::RemovedActionError, /has been removed/) do
-        CrystalPlay::PlaybookParser.parse_string(<<-YAML
+      expect_raises(Krikri::RemovedActionError, /has been removed/) do
+        Krikri::PlaybookParser.parse_string(<<-YAML
           - hosts: all
             tasks:
               - name: legacy include
@@ -322,7 +322,7 @@ describe CrystalPlay::PlaybookParser do
     end
 
     it "does NOT treat include_vars: (a real, still-valid directive) as the removed include: action" do
-      result = CrystalPlay::PlaybookParser.parse_string(<<-YAML
+      result = Krikri::PlaybookParser.parse_string(<<-YAML
         - hosts: all
           tasks:
             - name: real task
@@ -334,7 +334,7 @@ describe CrystalPlay::PlaybookParser do
     end
 
     it "keeps a task that uses an unimplemented plugin (marked unavailable_module) instead of dropping it or failing the play" do
-      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML
         - name: Uses unavailable plugin
           hosts: all
           tasks:
@@ -350,7 +350,7 @@ describe CrystalPlay::PlaybookParser do
 
     it "raises when no plays parse successfully" do
       expect_raises(Exception, /No valid plays found/) do
-        CrystalPlay::PlaybookParser.parse_string(<<-YAML
+        Krikri::PlaybookParser.parse_string(<<-YAML
           - tasks: []
           YAML
         )
@@ -372,7 +372,7 @@ describe CrystalPlay::PlaybookParser do
     # cli_spec.cr's "notify: naming a nonexistent handler" specs for the
     # run-time behavior, and HandlerNotFoundError's own comment.
     it "parses a bare literal notify: target with no matching handler without raising" do
-      result = CrystalPlay::PlaybookParser.parse_string(<<-YAML
+      result = Krikri::PlaybookParser.parse_string(<<-YAML
         - hosts: all
           tasks:
             - name: touch a file
@@ -390,7 +390,7 @@ describe CrystalPlay::PlaybookParser do
     end
 
     it "does not raise when the notify: target matches a real handler name" do
-      result = CrystalPlay::PlaybookParser.parse_string(<<-YAML
+      result = Krikri::PlaybookParser.parse_string(<<-YAML
         - hosts: all
           tasks:
             - name: touch a file
@@ -408,7 +408,7 @@ describe CrystalPlay::PlaybookParser do
     end
 
     it "does not raise when the notify: target matches a handler's listen: topic" do
-      result = CrystalPlay::PlaybookParser.parse_string(<<-YAML
+      result = Krikri::PlaybookParser.parse_string(<<-YAML
         - hosts: all
           tasks:
             - name: touch a file
@@ -427,7 +427,7 @@ describe CrystalPlay::PlaybookParser do
     end
 
     it "does not raise for a templated notify: target (unresolvable statically)" do
-      result = CrystalPlay::PlaybookParser.parse_string(<<-YAML
+      result = Krikri::PlaybookParser.parse_string(<<-YAML
         - hosts: all
           tasks:
             - name: touch a file
@@ -445,7 +445,7 @@ describe CrystalPlay::PlaybookParser do
     end
 
     it "does not raise for a role-qualified (' : '-shaped) notify: target" do
-      result = CrystalPlay::PlaybookParser.parse_string(<<-YAML
+      result = Krikri::PlaybookParser.parse_string(<<-YAML
         - hosts: all
           tasks:
             - name: touch a file
@@ -463,7 +463,7 @@ describe CrystalPlay::PlaybookParser do
     end
 
     it "does not raise when a play has no handlers: and no tasks notify: anything" do
-      result = CrystalPlay::PlaybookParser.parse_string(<<-YAML
+      result = Krikri::PlaybookParser.parse_string(<<-YAML
         - hosts: all
           tasks:
             - name: plain task
@@ -475,7 +475,7 @@ describe CrystalPlay::PlaybookParser do
     end
 
     it "finds a matching handler nested inside a block:" do
-      result = CrystalPlay::PlaybookParser.parse_string(<<-YAML
+      result = Krikri::PlaybookParser.parse_string(<<-YAML
         - hosts: all
           tasks:
             - block:
@@ -497,21 +497,21 @@ describe CrystalPlay::PlaybookParser do
 
   describe ".validate" do
     it "warns about plays with no tasks" do
-      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML
         - name: Empty play
           hosts: all
         YAML
       )
 
-      warnings = CrystalPlay::PlaybookParser.validate(playbook)
+      warnings = Krikri::PlaybookParser.validate(playbook)
       warnings.any?(&.includes?("has no tasks")).should be_true
     end
   end
 
   describe ".stats" do
     it "counts plays, tasks, handlers and distinct modules" do
-      playbook = CrystalPlay::PlaybookParser.parse_string(VALID_PLAYBOOK)
-      stats = CrystalPlay::PlaybookParser.stats(playbook)
+      playbook = Krikri::PlaybookParser.parse_string(VALID_PLAYBOOK)
+      stats = Krikri::PlaybookParser.stats(playbook)
 
       stats["plays"].should eq(1)
       stats["tasks"].should eq(1)
@@ -876,7 +876,7 @@ describe CrystalPlay::PlaybookParser do
     end
 
     it "keeps task-level vars: scoped to that task only, not shared across tasks" do
-      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML)
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
         - name: p
           hosts: all
           tasks:
@@ -955,7 +955,7 @@ describe CrystalPlay::PlaybookParser do
 
       task.block?.should be_true
       task.module_name.should eq("_block")
-      block_tasks = task.block_tasks.as(Array(CrystalPlay::Task))
+      block_tasks = task.block_tasks.as(Array(Krikri::Task))
       block_tasks.map(&.name).should eq(["inner one", "inner two"])
       block_tasks.map(&.module_name).should eq(["ansible.builtin.debug", "ansible.builtin.debug"])
     end
@@ -976,9 +976,9 @@ describe CrystalPlay::PlaybookParser do
                 msg: cleaning up
         YAML
 
-      task.block_tasks.as(Array(CrystalPlay::Task)).map(&.name).should eq(["risky"])
-      task.rescue_tasks.as(Array(CrystalPlay::Task)).map(&.name).should eq(["recover"])
-      task.always_tasks.as(Array(CrystalPlay::Task)).map(&.name).should eq(["cleanup"])
+      task.block_tasks.as(Array(Krikri::Task)).map(&.name).should eq(["risky"])
+      task.rescue_tasks.as(Array(Krikri::Task)).map(&.name).should eq(["recover"])
+      task.always_tasks.as(Array(Krikri::Task)).map(&.name).should eq(["cleanup"])
     end
 
     # Real bug found benchmarking konstruktoid.docker_rootless (0.9.621):
@@ -1004,7 +1004,7 @@ describe CrystalPlay::PlaybookParser do
                 msg: hi
         YAML
 
-      inner = task.block_tasks.as(Array(CrystalPlay::Task)).first
+      inner = task.block_tasks.as(Array(Krikri::Task)).first
       inner.become?.should be_true
       inner.become_user.should eq("dockeruser")
     end
@@ -1021,7 +1021,7 @@ describe CrystalPlay::PlaybookParser do
                 msg: hi
         YAML
 
-      inner = task.block_tasks.as(Array(CrystalPlay::Task)).first
+      inner = task.block_tasks.as(Array(Krikri::Task)).first
       inner.become?.should be_true
       inner.become_user.should eq("someoneelse")
     end
@@ -1067,11 +1067,11 @@ describe CrystalPlay::PlaybookParser do
                     msg: hi
         YAML
 
-      outer_children = task.block_tasks.as(Array(CrystalPlay::Task))
+      outer_children = task.block_tasks.as(Array(Krikri::Task))
       outer_children.size.should eq(1)
       inner_block = outer_children[0]
       inner_block.block?.should be_true
-      inner_block.block_tasks.as(Array(CrystalPlay::Task)).map(&.name).should eq(["innermost"])
+      inner_block.block_tasks.as(Array(Krikri::Task)).map(&.name).should eq(["innermost"])
     end
 
     it "keeps an individual bad task inside a block (marked unavailable_module) without failing the whole block" do
@@ -1085,7 +1085,7 @@ describe CrystalPlay::PlaybookParser do
               ansible.builtin.nope: {}
         YAML
 
-      children = task.block_tasks.as(Array(CrystalPlay::Task))
+      children = task.block_tasks.as(Array(Krikri::Task))
       children.map(&.name).should eq(["good", "bad"])
       children[1].unavailable_module.should eq("ansible.builtin.nope")
     end
@@ -1093,7 +1093,7 @@ describe CrystalPlay::PlaybookParser do
 
   describe "block/rescue/always in .validate and .stats" do
     it "counts nested block/rescue/always tasks in .stats, not the block pseudo-task itself" do
-      stats = CrystalPlay::PlaybookParser.stats(CrystalPlay::PlaybookParser.parse_string(PLAYBOOK_WITH_BLOCK))
+      stats = Krikri::PlaybookParser.stats(Krikri::PlaybookParser.parse_string(PLAYBOOK_WITH_BLOCK))
       # inner one + inner two + inner three = 3 real tasks; "inner three"
       # uses an unimplemented plugin (ansible.builtin.nope) but is kept
       # (marked unavailable_module) rather than dropped, so it's still
@@ -1106,7 +1106,7 @@ describe CrystalPlay::PlaybookParser do
       # Without recursing into block_tasks, .validate would see module_name
       # "_block" directly (it's deliberately not in AVAILABLE_PLUGINS) and
       # spuriously warn "uses unimplemented plugin: _block" on every block.
-      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML)
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
         - name: play
           hosts: all
           tasks:
@@ -1117,7 +1117,7 @@ describe CrystalPlay::PlaybookParser do
                     msg: hi
         YAML
 
-      warnings = CrystalPlay::PlaybookParser.validate(playbook)
+      warnings = Krikri::PlaybookParser.validate(playbook)
       warnings.any?(&.includes?("_block")).should be_false
     end
   end
@@ -1144,7 +1144,7 @@ describe CrystalPlay::PlaybookParser do
                 msg: from play
         YAML
 
-      playbook = CrystalPlay::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
+      playbook = Krikri::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
 
       playbook.plays[0].tasks.map(&.name).should eq(["role task", "own task"])
     end
@@ -1181,7 +1181,7 @@ describe CrystalPlay::PlaybookParser do
             - myrole
         YAML
 
-      playbook = CrystalPlay::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
+      playbook = Krikri::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
 
       playbook.plays[0].tasks.map(&.name).should eq(["stig task"])
     end
@@ -1221,8 +1221,8 @@ describe CrystalPlay::PlaybookParser do
             - myrole
         YAML
 
-      expect_raises(CrystalPlay::StaticImportUndefinedError, /'ansible_os_family' is undefined/) do
-        CrystalPlay::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
+      expect_raises(Krikri::StaticImportUndefinedError, /'ansible_os_family' is undefined/) do
+        Krikri::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
       end
     end
 
@@ -1248,7 +1248,7 @@ describe CrystalPlay::PlaybookParser do
             - myrole
         YAML
 
-      playbook = CrystalPlay::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
+      playbook = Krikri::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
 
       playbook.plays[0].tasks.map(&.name).should eq(["debian branch"])
     end
@@ -1265,8 +1265,8 @@ describe CrystalPlay::PlaybookParser do
             - does_not_exist
         YAML
 
-      expect_raises(CrystalPlay::RoleNotFoundError, /Role not found/) do
-        CrystalPlay::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
+      expect_raises(Krikri::RoleNotFoundError, /Role not found/) do
+        Krikri::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
       end
     end
   end
@@ -1296,7 +1296,7 @@ describe CrystalPlay::PlaybookParser do
                 msg: hi
         YAML
 
-      playbook = CrystalPlay::PlaybookParser.parse(File.join(root, "site.yml"))
+      playbook = Krikri::PlaybookParser.parse(File.join(root, "site.yml"))
 
       playbook.plays.map(&.name).should eq(["webservers play", "main play"])
     end
@@ -1316,7 +1316,7 @@ describe CrystalPlay::PlaybookParser do
         - import_playbook: plays/sub.yml
         YAML
 
-      playbook = CrystalPlay::PlaybookParser.parse(File.join(root, "site.yml"))
+      playbook = Krikri::PlaybookParser.parse(File.join(root, "site.yml"))
 
       playbook.plays.map(&.name).should eq(["sub play"])
     end
@@ -1333,7 +1333,7 @@ describe CrystalPlay::PlaybookParser do
           tasks: []
         YAML
 
-      playbook = CrystalPlay::PlaybookParser.parse(File.join(root, "site.yml"))
+      playbook = Krikri::PlaybookParser.parse(File.join(root, "site.yml"))
 
       playbook.plays.map(&.name).should eq(["main play"])
     end
@@ -1351,7 +1351,7 @@ describe CrystalPlay::PlaybookParser do
             msg: hi
         YAML
 
-      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
         - name: play
           hosts: all
           tasks:
@@ -1376,7 +1376,7 @@ describe CrystalPlay::PlaybookParser do
           when: other_var == "x"
         YAML
 
-      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
         - name: play
           hosts: all
           tasks:
@@ -1405,7 +1405,7 @@ describe CrystalPlay::PlaybookParser do
             msg: hi
         YAML
 
-      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
         - name: play
           hosts: all
           tasks:
@@ -1428,7 +1428,7 @@ describe CrystalPlay::PlaybookParser do
         - import_tasks: inner.yml
         YAML
 
-      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
         - name: play
           hosts: all
           tasks:
@@ -1441,7 +1441,7 @@ describe CrystalPlay::PlaybookParser do
     it "warns and continues (not a hard failure) when the imported file doesn't exist" do
       root = import_tasks_root("import_tasks_missing_spec")
 
-      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
         - name: play
           hosts: all
           tasks:
@@ -1477,7 +1477,7 @@ describe CrystalPlay::PlaybookParser do
           when: not item_stat.stat.exists
         YAML
 
-      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
         - name: play
           hosts: all
           gather_facts: false
@@ -1679,7 +1679,7 @@ describe CrystalPlay::PlaybookParser do
     end
 
     it "skips (with a warning) an include_role: with no name: rather than failing the whole play" do
-      playbook = CrystalPlay::PlaybookParser.parse_string(<<-YAML)
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
         - name: play
           hosts: all
           tasks:
@@ -1695,11 +1695,11 @@ describe CrystalPlay::PlaybookParser do
         - include_role:
             name: greeter
           vars:
-            target: crystal-ansible
+            target: krikri-playbook
         YAML
 
       task.include_role_vars.should_not be_nil
-      task.include_role_vars.as(Hash(String, JSON::Any))["target"].as_s.should eq("crystal-ansible")
+      task.include_role_vars.as(Hash(String, JSON::Any))["target"].as_s.should eq("krikri-playbook")
     end
 
     it "parses when:, tags:, and loop: on the include_role statement itself" do

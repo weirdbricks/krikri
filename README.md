@@ -1,20 +1,20 @@
-# Crystal Ansible - Ansible-Compatible Automation Tool
+# krikri - Ansible-Compatible Automation Tool
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.646-blue)](https://github.com/weirdbricks/crystal-ansible)
-[![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/crystal-ansible)
+[![Version](https://img.shields.io/badge/version-0.9.646-blue)](https://github.com/weirdbricks/krikri)
+[![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/krikri)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 
 ---
 
 ## 📋 What this is
 
-Crystal Ansible parses and runs **standard Ansible playbook YAML directly** -
+krikri parses and runs **standard Ansible playbook YAML directly** -
 the same syntax you already write, unmodified. There's no Python, no
 `ansible-core`, no `pip`, and no collections directory anywhere in the
 picture, on either the controller or the target - it's one compiled binary
-(`crystal-ansible`) plus a directory of small compiled module binaries.
+(`krikri-playbook`) plus a directory of small compiled module binaries.
 
 It is not a new automation DSL you have to learn, and not a "mostly
 compatible" reimplementation verified by eyeballing docs - every plugin's
@@ -28,13 +28,13 @@ engines side by side and diffs the resulting state.
 ## 🔀 How this differs from real (Python) Ansible
 
 If you already know Ansible, here's what actually changes when you swap
-`ansible-playbook` for `./bin/crystal-ansible`:
+`ansible-playbook` for `./bin/krikri-playbook`:
 
 ### Architecture: compiled binaries, not a Python interpreter per task
 
 Real Ansible ships a Python module's source, templates it, and starts a
 fresh Python interpreter for it on the target host **for every single
-task**, every run - even when nothing changes. Crystal Ansible compiles
+task**, every run - even when nothing changes. krikri compiles
 each module (`apt`, `copy`, `service`, ...) into its own small native
 binary once; running a task means uploading that binary (cached after the
 first run) and executing it directly - no interpreter startup, no module
@@ -126,7 +126,7 @@ real Galaxy roles drawn at random from the project's verified-clean
 list, each on its own **fresh** Atlantic.net `G3.2GB` Ubuntu-22.04 host
 pair (one host per engine, never reused, destroyed immediately after),
 cold (first touch) and warm (idempotent re-run) on both engines,
-`--forks 1` on both sides. crystal-ansible was built `--release` and
+`--forks 1` on both sides. krikri-playbook was built `--release` and
 stripped, and ran with `--persistent-daemon --no-batching` (one
 long-lived `ssh ... -- <plugin binary> --daemon` connection per host
 instead of a fresh `ssh`+`bash`+exec per task; batching was disabled
@@ -156,7 +156,7 @@ the same mirrors), so the trustworthy signal is the warm column:
 crystal warm runs are **3.5x-11.9x faster (mean ~6.3x)**, cold runs
 1.2x-6.7x faster (mean ~2.2x). Real Ansible pays a fresh Python-
 interpreter-and-module cost per task on every run regardless of whether
-anything changes; crystal-ansible's compiled-binary-plus-persistent-
+anything changes; krikri-playbook's compiled-binary-plus-persistent-
 connection model is why its warm numbers drop so far below its own
 cold.
 
@@ -247,10 +247,10 @@ shards install
 ./build.sh
 
 # Run a playbook
-./bin/crystal-ansible playbook.yml
+./bin/krikri-playbook playbook.yml
 
 # With options
-./bin/crystal-ansible --check --diff -i inventory.ini playbook.yml
+./bin/krikri-playbook --check --diff -i inventory.ini playbook.yml
 ```
 
 ---
@@ -258,9 +258,9 @@ shards install
 ## 📁 Project Structure
 
 ```
-crystal-ansible/
-├── crystal-play.cr              # CLI entry point
-├── src/crystal_play/            # Engine: parser, task executor, SSH,
+krikri-playbook/
+├── krikri-playbook.cr              # CLI entry point
+├── src/krikri/            # Engine: parser, task executor, SSH,
 │                                 # inventory, roles, loops, vault, facts
 ├── plugins/                     # One binary per Ansible module (87 total)
 ├── spec/                        # crystal spec unit + integration tests
@@ -306,33 +306,33 @@ Supports standard Ansible playbook syntax. See the
 
 ```bash
 # Basic usage
-./bin/crystal-ansible playbook.yml
+./bin/krikri-playbook playbook.yml
 
 # With inventory
-./bin/crystal-ansible -i inventory.ini playbook.yml
+./bin/krikri-playbook -i inventory.ini playbook.yml
 
 # Dry-run (check mode)
-./bin/crystal-ansible --check playbook.yml
+./bin/krikri-playbook --check playbook.yml
 
 # Show changes
-./bin/crystal-ansible --diff playbook.yml
+./bin/krikri-playbook --diff playbook.yml
 
 # Verbose output
-./bin/crystal-ansible -v playbook.yml
+./bin/krikri-playbook -v playbook.yml
 
 # Limit to a host group/pattern, run only tagged tasks
-./bin/crystal-ansible -l webservers -t deploy playbook.yml
+./bin/krikri-playbook -l webservers -t deploy playbook.yml
 
 # Vault-encrypted playbook/vars
-./bin/crystal-ansible --ask-vault-pass playbook.yml
-./bin/crystal-ansible --vault-password-file pass.txt playbook.yml
+./bin/krikri-playbook --ask-vault-pass playbook.yml
+./bin/krikri-playbook --vault-password-file pass.txt playbook.yml
 
 # Disable task batching (on by default - see Performance above)
-./bin/crystal-ansible --no-batching -i inventory.ini playbook.yml
+./bin/krikri-playbook --no-batching -i inventory.ini playbook.yml
 
 # Run each task against up to 10 hosts concurrently (default: 5, matching
 # ansible-playbook; --forks 1 restores one-host-at-a-time)
-./bin/crystal-ansible --forks 10 -i inventory.ini playbook.yml
+./bin/krikri-playbook --forks 10 -i inventory.ini playbook.yml
 
 # Fact gathering policy (default: implicit, matching ansible-playbook):
 #   implicit - every play re-gathers
@@ -340,13 +340,13 @@ Supports standard Ansible playbook syntax. See the
 #   smart    - each host gathered at most once per run
 # Under smart, add `meta: clear_facts` to a play (e.g. after a reboot or a
 # package install) to force the next play to gather again.
-./bin/crystal-ansible --gathering smart -i inventory.ini playbook.yml
+./bin/krikri-playbook --gathering smart -i inventory.ini playbook.yml
 
 # Multiple options
-./bin/crystal-ansible --check --diff -i production.ini playbook.yml
+./bin/krikri-playbook --check --diff -i production.ini playbook.yml
 ```
 
-### Ad-hoc commands (`ansible`)
+### Ad-hoc commands (`krikri`)
 
 A separate binary, matching real Ansible's own `ansible`/`ansible-playbook`
 split - runs exactly one module against a pattern of inventory hosts,
@@ -354,11 +354,11 @@ reusing the same connection/become/check-mode/forks engine as the
 playbook runner:
 
 ```bash
-./bin/ansible all -m ping
-./bin/ansible webservers -a 'uptime'
-./bin/ansible all -m command -a 'systemctl status nginx'
-./bin/ansible all -m copy -a 'src=foo.conf dest=/etc/foo.conf' -b
-./bin/ansible db -i inventory.ini -m service -a 'name=postgresql state=restarted' -b
+./bin/krikri all -m ping
+./bin/krikri webservers -a 'uptime'
+./bin/krikri all -m command -a 'systemctl status nginx'
+./bin/krikri all -m copy -a 'src=foo.conf dest=/etc/foo.conf' -b
+./bin/krikri db -i inventory.ini -m service -a 'name=postgresql state=restarted' -b
 ```
 
 Supports `-i`, `-m`, `-a`, `-u`, `-b`/`--become`, `--become-user`, `-C`/`--check`,
@@ -375,7 +375,7 @@ not ansible-playbook's `ok: [host]` TASK-recap style.
 crystal spec
 
 # Ansible compatibility harness - runs the same playbooks through real
-# ansible-playbook and crystal-ansible side by side and diffs the result
+# ansible-playbook and krikri-playbook side by side and diffs the result
 crystal run compat/run.cr
 ```
 
@@ -428,7 +428,7 @@ for current-state detail.
   knowing before picking more of that author's roles expecting a
   different outcome. Full per-role verdicts and timings in
   `ROLES_TESTED.md`'s round-199 rows.
-- **`0.9.641`** - **removes `crystal-ansible-fast` and the whole
+- **`0.9.641`** - **removes `krikri-playbook-fast` and the whole
   parity-breaking tier** (`0.9.639`'s minimal fact gathering and
   `0.9.640`'s package coalescing). Benchmarked across ten real roles it
   measured **1.00x cold, 1.03x warm** - inside run-to-run variance, with
@@ -479,11 +479,35 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## 🙏 Acknowledgments
 
-- Inspired by [Ansible](https://www.ansible.com/)
-- Built with [Crystal](https://crystal-lang.org/)
-- Uses [crinja](https://github.com/straight-shoota/crinja) for Jinja2
+We love Ansible, and this project wouldn't have been possible without it.
+
+krikri-playbook exists because `ansible-core` is genuinely great software.
+The playbook/role/inventory model, the module ecosystem, and the
+Jinja2-based templating that this project spends so much effort matching
+are Ansible's design - the product of more than a decade of real-world use
+and the work of the Ansible community and Red Hat behind it. This project
+is a tribute to that design as much as it is a reimplementation of it: we
+admire it enough to have rebuilt it, line by line, in another language.
+
+Where krikri-playbook is faster, that's simply a different execution model
+(compiled binaries vs. a Python interpreter per task) - not a knock on
+Ansible, which made the choices it made for good reasons of its own.
+`ansible-core` is, and remains, the reference implementation this project
+is measured against and tries to be worthy of.
+
+This project was built with the help of AI coding assistants (Claude Code)
+and other AI models: MiniMax, DeepSeek Flash, GLM 5.3 Express.
+
+Thanks also to:
+
+- [Crystal](https://crystal-lang.org/), the language this is built with
+- [crinja](https://github.com/straight-shoota/crinja) for Jinja2
   templating, among other Crystal shards - see `shard.yml`
+
+**Ansible** and the Ansible logo are trademarks of Red Hat, Inc., registered
+in the United States and other countries. This project is not affiliated
+with, sponsored by, or endorsed by Red Hat, Inc. or the Ansible project.
 
 ---
 
-**Crystal Ansible - Ansible-compatible automation in Crystal** 🚀
+**krikri - Ansible-compatible automation in Crystal** 🚀

@@ -1,5 +1,5 @@
 require "../spec_helper"
-require "../../src/crystal_play/plugin_helpers/distribution_facts"
+require "../../src/krikri/plugin_helpers/distribution_facts"
 
 # Real Ansible reports a per-distro DISPLAY NAME for
 # `ansible_distribution` - "Linux Mint Debian Edition" on LMDE, "Debian"
@@ -37,12 +37,12 @@ private CASES = [
   {"ubuntu2204.txt", {"ansible_distribution" => "Ubuntu"} of String => String},
 ]
 
-describe CrystalPlay::PluginHelpers::DistributionFacts do
+describe Krikri::PluginHelpers::DistributionFacts do
   describe ".refine_debian" do
     CASES.each do |(fixture, expected)|
       it "matches real Ansible's own parser for #{fixture}" do
         data = File.read(File.join(__DIR__, "..", "fixtures", "os_release", fixture))
-        CrystalPlay::PluginHelpers::DistributionFacts.refine_debian(data).should eq(expected)
+        Krikri::PluginHelpers::DistributionFacts.refine_debian(data).should eq(expected)
       end
     end
   end
@@ -55,18 +55,18 @@ describe CrystalPlay::PluginHelpers::DistributionFacts do
       CASES.each do |(_fixture, expected)|
         next unless expected
         name = expected["ansible_distribution"]
-        CrystalPlay::PluginHelpers::DistributionFacts.family_for(name).should eq("Debian")
+        Krikri::PluginHelpers::DistributionFacts.family_for(name).should eq("Debian")
       end
     end
 
     it "still maps the mainstream RedHat-family names" do
-      CrystalPlay::PluginHelpers::DistributionFacts.family_for("Rocky").should eq("RedHat")
-      CrystalPlay::PluginHelpers::DistributionFacts.family_for("AlmaLinux").should eq("RedHat")
-      CrystalPlay::PluginHelpers::DistributionFacts.family_for("CentOS").should eq("RedHat")
+      Krikri::PluginHelpers::DistributionFacts.family_for("Rocky").should eq("RedHat")
+      Krikri::PluginHelpers::DistributionFacts.family_for("AlmaLinux").should eq("RedHat")
+      Krikri::PluginHelpers::DistributionFacts.family_for("CentOS").should eq("RedHat")
     end
 
     it "returns nil for a name it does not know, so the caller can fall back to ID_LIKE" do
-      CrystalPlay::PluginHelpers::DistributionFacts.family_for("Nonesuch").should be_nil
+      Krikri::PluginHelpers::DistributionFacts.family_for("Nonesuch").should be_nil
     end
   end
 end

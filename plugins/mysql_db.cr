@@ -5,10 +5,10 @@ require "mysql"
 require "compress/gzip"
 require "xz"
 require "bz2"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/mysql_connection"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/mysql_connection"
 
-module CrystalPlay
+module Krikri
   # MySQL database plugin - creates/removes a database.
   # Compatible with Ansible's community.mysql.mysql_db module.
   #
@@ -331,5 +331,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::MysqlDbPlugin.new(config)
+plugin = Krikri::MysqlDbPlugin.new(config)
 plugin.run

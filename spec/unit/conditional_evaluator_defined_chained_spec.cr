@@ -1,5 +1,5 @@
 require "../spec_helper"
-require "../../src/crystal_play/conditional_evaluator"
+require "../../src/krikri/conditional_evaluator"
 
 # Round 194 regression cover (andrewrothstein.pkg-upgrade, rocky 9.6):
 # the role's vars/RedHat.yml only has pkg_upgrade_update_cmds keys for
@@ -22,7 +22,7 @@ require "../../src/crystal_play/conditional_evaluator"
 # the actual resolution. The fix: between those two fall-throughs,
 # attempt the real VariableLookup.resolve for any expression that
 # contains `.` or `[` and is otherwise not a function call or filter.
-describe CrystalPlay::ConditionalEvaluator do
+describe Krikri::ConditionalEvaluator do
   describe "is defined / is undefined on chained-subscript expressions (round 194)" do
     it "pkg_upgrade_update_cmd is defined: false when dict lookup misses on Rocky 9" do
       # Exactly the andrewrothstein.pkg-upgrade vars layout on a
@@ -41,8 +41,8 @@ describe CrystalPlay::ConditionalEvaluator do
         "pkg_upgrade_upgrade_cmd" => JSON::Any.new("{{ pkg_upgrade_update_cmds[ansible_distribution_major_version][\"upgrade\"] }}"),
       } of String => JSON::Any
 
-      CrystalPlay::ConditionalEvaluator.evaluate("pkg_upgrade_update_cmd is defined", vars).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("pkg_upgrade_update_cmd is undefined", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("pkg_upgrade_update_cmd is defined", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("pkg_upgrade_update_cmd is undefined", vars).should be_true
     end
 
     it "is defined: true when the chained lookup actually resolves" do
@@ -61,8 +61,8 @@ describe CrystalPlay::ConditionalEvaluator do
         "pkg_upgrade_update_cmd" => JSON::Any.new("{{ pkg_upgrade_update_cmds[ansible_distribution_major_version][\"update\"] }}"),
       } of String => JSON::Any
 
-      CrystalPlay::ConditionalEvaluator.evaluate("pkg_upgrade_update_cmd is defined", vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("pkg_upgrade_update_cmd is undefined", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("pkg_upgrade_update_cmd is defined", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("pkg_upgrade_update_cmd is undefined", vars).should be_false
     end
 
     it "simple dotted chain - missing key at end is undefined" do
@@ -73,8 +73,8 @@ describe CrystalPlay::ConditionalEvaluator do
       vars = {
         "a" => JSON::Any.new({"b" => JSON::Any.new({"d" => JSON::Any.new(1)})} of String => JSON::Any),
       } of String => JSON::Any
-      CrystalPlay::ConditionalEvaluator.evaluate("a.b.c is defined", vars).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("a.b.d is defined", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("a.b.c is defined", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("a.b.d is defined", vars).should be_true
     end
 
     it "dict[var_name] where dict has the key - defined" do
@@ -86,8 +86,8 @@ describe CrystalPlay::ConditionalEvaluator do
         "which"        => JSON::Any.new("x"),
         "by_which_key" => JSON::Any.new({"x" => JSON::Any.new("found"), "y" => JSON::Any.new("not this")}),
       } of String => JSON::Any
-      CrystalPlay::ConditionalEvaluator.evaluate("by_which_key[which] is defined", vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("by_which_key[which] is undefined", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("by_which_key[which] is defined", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("by_which_key[which] is undefined", vars).should be_false
     end
 
     it "function-call shape (a.b) doesn't get treated as chained lookup" do
@@ -98,7 +98,7 @@ describe CrystalPlay::ConditionalEvaluator do
       # nothing in vars should be reported as undefined via the
       # original bare-ref path, not via the new chained path.
       vars = {} of String => JSON::Any
-      CrystalPlay::ConditionalEvaluator.evaluate("a.b is defined", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("a.b is defined", vars).should be_false
     end
   end
 end

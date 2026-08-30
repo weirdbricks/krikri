@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end verification of crystal-ansible's crystal-mysql driver fix for
+# End-to-end verification of krikri-playbook's crystal-mysql driver fix for
 # auth_socket/unix_socket authentication (0.9.340-0.9.343).
 #
 # Sets up a throwaway MariaDB container where the plugins connect over the

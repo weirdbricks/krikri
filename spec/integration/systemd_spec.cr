@@ -48,7 +48,7 @@ describe "systemd plugin" do
 
   it "predicts a start for a stopped unit in check mode" do
     result = PluginSpecHelper.run("systemd", {
-      "name"       => "nonexistent-crystal-play-unit.service",
+      "name"       => "nonexistent-krikri-playbook-unit.service",
       "state"      => "started",
       "check_mode" => "true",
     })
@@ -74,7 +74,7 @@ describe "systemd plugin" do
   # convention.
   it "accepts scope: user without rejecting the parameter" do
     result = PluginSpecHelper.run("systemd", {
-      "name"       => "nonexistent-crystal-play-user-unit.service",
+      "name"       => "nonexistent-krikri-playbook-user-unit.service",
       "state"      => "started",
       "scope"      => "user",
       "check_mode" => "true",

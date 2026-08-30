@@ -9,15 +9,15 @@
   tasks:
     - name: add a cron entry to a scratch cron_file
       ansible.builtin.cron:
-        name: "crystal-play smoke test"
+        name: "krikri-playbook smoke test"
         job: "/bin/true"
         hour: "3"
-        cron_file: /tmp/crystal-play-cron-test
+        cron_file: /tmp/krikri-playbook-cron-test
 
     - name: add an authorized key to a scratch file
       ansible.posix.authorized_key:
-        path: /tmp/crystal-play-authorized-keys-test
-        key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLE crystal-play@test"
+        path: /tmp/krikri-playbook-authorized-keys-test
+        key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLE krikri-playbook@test"
 
     - name: SUCCESS
       ansible.builtin.debug:

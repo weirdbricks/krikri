@@ -1,10 +1,10 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/apt_lock_retry"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/apt_lock_retry"
 
-module CrystalPlay
+module Krikri
   # APT Plugin - Debian/Ubuntu package management
   #
   # Parameters:
@@ -68,7 +68,7 @@ module CrystalPlay
       # `apt-get update`. Found missing in round 153 (2026-08-20) when a
       # fresh Atlantic.net Ubuntu host's unattended-upgr held the dpkg
       # lock during `apt:`; real Ansible's apt module waited up to 60s
-      # for the lock and succeeded, crystal-ansible failed fast. See
+      # for the lock and succeeded, krikri-playbook failed fast. See
       # `KNOWN_MISSING.md` / round 153 results for the full trace.
       # Wire the same parameter names here so user playbooks that
       # override them on either engine work identically.
@@ -688,7 +688,7 @@ module CrystalPlay
 
     # The lock-contention retry helpers (apt_with_lock_retry,
     # apt_get_update_with_retry, apt_lock_held?) live in
-    # `src/crystal_play/plugin_helpers/apt_lock_retry.cr` and are
+    # `src/krikri/plugin_helpers/apt_lock_retry.cr` and are
     # mixed in via `include AptLockRetry` at the top of this class -
     # one canonical implementation, exercised by the regression spec
     # without needing the plugin's entry point.
@@ -698,5 +698,5 @@ end
 # Entry point
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::AptPlugin.new(config)
+plugin = Krikri::AptPlugin.new(config)
 plugin.run

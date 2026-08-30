@@ -1,11 +1,11 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/stat_fields"
-require "../src/crystal_play/plugin_helpers/file_attributes"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/stat_fields"
+require "../src/krikri/plugin_helpers/file_attributes"
 
-module CrystalPlay
+module Krikri
   # Stat plugin - retrieves file/filesystem status.
   # Compatible with Ansible's ansible.builtin.stat module.
   #
@@ -119,5 +119,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::StatPlugin.new(config)
+plugin = Krikri::StatPlugin.new(config)
 plugin.run

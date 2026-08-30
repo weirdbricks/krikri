@@ -6,7 +6,7 @@ require "../spec_helper"
 # deliberately lists its hosts OUT of sorted order (h3, h1, h2), so
 # "inventory" and "sorted" are distinguishable.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 
 private def hosts_in_order(keywords : String) : Array(String)
   dir = File.tempname("order")

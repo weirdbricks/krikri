@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # Pip plugin - manages Python packages via pip. Compatible with (a
   # subset of) Ansible's ansible.builtin.pip module.
   #
@@ -376,5 +376,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::PipPlugin.new(config)
+plugin = Krikri::PipPlugin.new(config)
 plugin.run

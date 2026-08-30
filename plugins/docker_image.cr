@@ -2,11 +2,11 @@
 
 require "json"
 require "docr"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/docker_ref"
-require "../src/crystal_play/plugin_helpers/docker_client"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/docker_ref"
+require "../src/krikri/plugin_helpers/docker_client"
 
-module CrystalPlay
+module Krikri
   # Docker image plugin - pulls or removes a local Docker image.
   # Compatible with Ansible's community.docker.docker_image module.
   #
@@ -183,5 +183,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::DockerImagePlugin.new(config)
+plugin = Krikri::DockerImagePlugin.new(config)
 plugin.run

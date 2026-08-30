@@ -40,13 +40,13 @@
         content: |
           CREATE TABLE IF NOT EXISTS t (id INT PRIMARY KEY, name TEXT);
           INSERT INTO t VALUES (1, 'alice'), (2, 'bob');
-        dest: /tmp/crystal-ansible-pg-seed.sql
+        dest: /tmp/krikri-playbook-pg-seed.sql
 
     - name: restore the seed data
       community.postgresql.postgresql_db:
         name: "{{ test_db }}"
         state: restore
-        target: /tmp/crystal-ansible-pg-seed.sql
+        target: /tmp/krikri-playbook-pg-seed.sql
         login_host: "{{ login_host }}"
         login_port: "{{ login_port }}"
         login_user: "{{ login_user }}"
@@ -57,7 +57,7 @@
       community.postgresql.postgresql_db:
         name: "{{ test_db }}"
         state: dump
-        target: /tmp/crystal-ansible-pg-dump.sql.gz
+        target: /tmp/krikri-playbook-pg-dump.sql.gz
         login_host: "{{ login_host }}"
         login_port: "{{ login_port }}"
         login_user: "{{ login_user }}"
@@ -76,7 +76,7 @@
       community.postgresql.postgresql_db:
         name: "{{ test_db }}_restored"
         state: restore
-        target: /tmp/crystal-ansible-pg-dump.sql.gz
+        target: /tmp/krikri-playbook-pg-dump.sql.gz
         login_host: "{{ login_host }}"
         login_port: "{{ login_port }}"
         login_user: "{{ login_user }}"
@@ -103,7 +103,7 @@
       community.postgresql.postgresql_db:
         name: "{{ test_db }}"
         state: dump
-        target: /tmp/crystal-ansible-pg-dump.pgc
+        target: /tmp/krikri-playbook-pg-dump.pgc
         login_host: "{{ login_host }}"
         login_port: "{{ login_port }}"
         login_user: "{{ login_user }}"
@@ -122,7 +122,7 @@
       community.postgresql.postgresql_db:
         name: "{{ test_db }}_pgc"
         state: restore
-        target: /tmp/crystal-ansible-pg-dump.pgc
+        target: /tmp/krikri-playbook-pg-dump.pgc
         login_host: "{{ login_host }}"
         login_port: "{{ login_port }}"
         login_user: "{{ login_user }}"

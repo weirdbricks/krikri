@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # Rpm_key plugin - imports/removes a GPG key into the target's RPM
   # database via `rpm --import`/`rpm --erase`. Compatible with Ansible's
   # ansible.builtin.rpm_key module (RHEL-family only - `dnf`/`yum` hosts,
@@ -102,7 +102,7 @@ module CrystalPlay
       tmp_path = nil
       begin
         if key.includes?("://")
-          tmp_path = "/tmp/.crystal-ansible-rpm-key-#{Random.rand(100000..999999)}"
+          tmp_path = "/tmp/.krikri-playbook-rpm-key-#{Random.rand(100000..999999)}"
           if error = download_key(key, tmp_path)
             return PluginResult.new(changed: false, failed: true, msg: error)
           end
@@ -182,5 +182,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::RpmKeyPlugin.new(config)
+plugin = Krikri::RpmKeyPlugin.new(config)
 plugin.run

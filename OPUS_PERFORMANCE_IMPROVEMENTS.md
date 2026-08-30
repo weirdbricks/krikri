@@ -1,6 +1,6 @@
 # OPUS_PERFORMANCE_IMPROVEMENTS.md
 
-Ranked performance work for crystal-ansible, written 2026-08-28 against
+Ranked performance work for krikri-playbook, written 2026-08-28 against
 0.9.631. Successor to the three deleted perf docs
 (`SUGGESTED_PERFORMANCE_IMPROVEMENTS.md`,
 `POSSIBLE_PERFORMANCE_IMPROVEMENTS.md`, `OPUS_PERFORMANCE_IMPROVEMENTS.md`,
@@ -26,7 +26,7 @@ Do all of Tier 1 before starting Tier 2.
 ## Tier 2 was built and then removed (0.9.641) - read this first
 
 Items 9, 11 and 12 all shipped behind a second binary
-(`crystal-ansible-fast`), were benchmarked against real roles, and were
+(`krikri-playbook-fast`), were benchmarked against real roles, and were
 **deleted**. Ten roles, fresh host pair each: **1.00x cold, 1.03x
 warm** - inside run-to-run variance. Item 11 never fired once; item 9
 engaged on 1 of 7 roles picked for having the most package tasks in the
@@ -96,7 +96,7 @@ to the BREAKING tier behind a flag - see the item.
 
 ## Tier 0: measure first (NOT-BREAKING) — DONE (0.9.632)
 
-**0. `--timing-profile`.** Landed in `src/crystal_play/timing_profile.cr`;
+**0. `--timing-profile`.** Landed in `src/krikri/timing_profile.cr`;
 see its own header comment for the grouping rule that keeps nested
 buckets from double-counting.
 Bucket wall-clock time for a run into: local ssh process spawn, wire
@@ -126,7 +126,7 @@ wasted spawns rather than one per task. `close_all_daemons`'s flat
 daemons, a third of the warm saving once every run holds one. Measured
 result is in KNOWN_MISSING.md's item 0-1 entry.
 
-`src/crystal_play/plugin_manager.cr:96-99`:
+`src/krikri/plugin_manager.cr:96-99`:
 
 ```crystal
 def self.daemon_eligible?(plugin_name : String, become : Bool) : Bool
@@ -176,7 +176,7 @@ roles from ssh-fork+bash+base64+exec to a pipe write.
 the ineligible-set entry is one line, but the real work was that
 `facts` was not in the fat binary at all (no `BasePlugin` class, no
 `STDIN.gets_to_end` trailer for the generator to splice), so the body
-had to be lifted into `CrystalPlay::FactsGatherer` and given a
+had to be lifted into `Krikri::FactsGatherer` and given a
 hand-written dispatch case via `build.sh`'s new `FAT_EXTRA_MODULES`.
 
 **The "frequently the slowest single step of a warm run" framing was
@@ -468,7 +468,7 @@ a bespoke framed protocol) - a bad trade.
 **What survives is the throwaway line at the end of the original item**,
 which is a config question rather than a rewrite: whether the `--forks`
 default (25 here, deliberately unlike real ansible's 5 - see
-crystal-play.cr's own comment) and `ControlPersist=600` are right for
+krikri-playbook.cr's own comment) and `ControlPersist=600` are right for
 multi-play runs. Worth a measurement if anyone wants it; it is not
 blocked on anything.
 
@@ -510,8 +510,8 @@ build is hardlinked to two names - the same argv[0] trick `build.sh`'s
 `build_fat_plugin` already uses for the fat plugin binary - and
 `FastMode` reads `PROGRAM_NAME`:
 
-    crystal-ansible        parity. Tier 2 off. The default everywhere.
-    crystal-ansible-fast   Tier 2 on, all of it, with a startup banner.
+    krikri-playbook        parity. Tier 2 off. The default everywhere.
+    krikri-playbook-fast   Tier 2 on, all of it, with a startup banner.
 
 Rationale, recorded because it was a deliberate choice over the
 "own flag per item" this section originally called for:
@@ -567,7 +567,7 @@ Flag: `--speculate`.
 
 ### 11. Coalesce package tasks — DONE (0.9.640)
 
-**BREAKING** - `crystal-ansible-fast` only (the item proposed
+**BREAKING** - `krikri-playbook-fast` only (the item proposed
 `--coalesce-packages`; see the Tier 2 header for why it is a binary
 name instead).
 
@@ -602,7 +602,7 @@ Flag: `--coalesce-packages`.
 
 ### 12. Gather only the facts the play references — DONE (0.9.639)
 
-**BREAKING** - `crystal-ansible-fast` only (the item originally proposed
+**BREAKING** - `krikri-playbook-fast` only (the item originally proposed
 a `--minimal-facts` flag; see the Tier 2 header for why it is a binary
 name instead).
 

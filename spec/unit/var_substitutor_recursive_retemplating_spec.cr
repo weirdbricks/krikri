@@ -1,5 +1,5 @@
 require "../spec_helper"
-require "../../src/crystal_play/variable_substitutor"
+require "../../src/krikri/variable_substitutor"
 
 # Round 191 regression cover (gantsign.helm): recursive re-templating of a
 # task argument must apply ONLY to leftover templates that originated in a
@@ -15,10 +15,10 @@ private def jvars(pairs : Hash(String, String)) : Hash(String, JSON::Any)
   result
 end
 
-describe CrystalPlay::VarSubstitutor do
+describe Krikri::VarSubstitutor do
   describe "recursive re-templating scope (round 191)" do
     it "leaves Go-template brace text from a quoted task-arg literal verbatim" do
-      sub = CrystalPlay::VarSubstitutor.new(vars: jvars({"helm_install_dir" => "/usr/local/bin"}))
+      sub = Krikri::VarSubstitutor.new(vars: jvars({"helm_install_dir" => "/usr/local/bin"}))
       arg = "{{ helm_install_dir }}/helm version --client --template " \
             "{{ \"'{{ if .Version }}{{ .Version }}{{ else }}{{ .Client.SemVer }}{{ end }}'\" }}"
       sub.substitute(arg, strict: true, output: true).should eq \
@@ -26,7 +26,7 @@ describe CrystalPlay::VarSubstitutor do
     end
 
     it "still re-templates a variable whose own value is a template" do
-      sub = CrystalPlay::VarSubstitutor.new(vars: jvars({
+      sub = Krikri::VarSubstitutor.new(vars: jvars({
         "mount"      => "{\"mode\": \"{{ os_mode }}\"}",
         "os_mode"    => "0755",
         "inner_task" => "{{ inner_path }}/run.sh",
@@ -39,7 +39,7 @@ describe CrystalPlay::VarSubstitutor do
     end
 
     it "does not re-template filter-chain output that merely contains brace text" do
-      sub = CrystalPlay::VarSubstitutor.new(vars: jvars({"v" => "x"}))
+      sub = Krikri::VarSubstitutor.new(vars: jvars({"v" => "x"}))
       arg = "{{ 'pre {{literal}} post' }}-{{ v }}"
       sub.substitute(arg, strict: true, output: true).should eq "pre {{literal}} post-x"
     end

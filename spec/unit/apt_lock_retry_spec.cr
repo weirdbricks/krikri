@@ -1,12 +1,12 @@
 require "../spec_helper"
-require "../../src/crystal_play/plugin_helpers/apt_lock_retry"
+require "../../src/krikri/plugin_helpers/apt_lock_retry"
 
 # Regression spec for the dpkg-lock-contention retry behavior added in
-# 0.9.502. Round 153 (2026-08-20) found that crystal-ansible's `apt:`
+# 0.9.502. Round 153 (2026-08-20) found that krikri-playbook's `apt:`
 # failed fast when the host's dpkg lock was held by another process
 # (Ubuntu's unattended-upgr, an in-progress apt on another shell, etc.)
 # while real Ansible's apt module waited it out via `lock_timeout: 60`
-# (default), crystal-ansible failed fast.
+# (default), krikri-playbook failed fast.
 #
 # Tests the retry helpers via the `AptLockRetry` module directly with a
 # stubbed `exec_remote` proc. Doesn't need the real plugin file (whose
@@ -43,7 +43,7 @@ end
 # methods naturally. AptPlugin does the same `include AptLockRetry`
 # dance (plugins/apt.cr:33).
 class HostClass
-  include CrystalPlay::AptLockRetry
+  include Krikri::AptLockRetry
 end
 
 describe "apt lock-contention retry helpers (round 153 follow-up, 0.9.502)" do
@@ -150,15 +150,15 @@ describe "apt lock-contention retry helpers (round 153 follow-up, 0.9.502)" do
 
   describe "default constants match real Ansible's apt module" do
     it "DEFAULT_LOCK_TIMEOUT = 60" do
-      CrystalPlay::AptLockRetry::DEFAULT_LOCK_TIMEOUT.should eq(60)
+      Krikri::AptLockRetry::DEFAULT_LOCK_TIMEOUT.should eq(60)
     end
 
     it "DEFAULT_UPDATE_CACHE_RETRIES = 5" do
-      CrystalPlay::AptLockRetry::DEFAULT_UPDATE_CACHE_RETRIES.should eq(5)
+      Krikri::AptLockRetry::DEFAULT_UPDATE_CACHE_RETRIES.should eq(5)
     end
 
     it "DEFAULT_UPDATE_CACHE_RETRY_MAX_DELAY = 12" do
-      CrystalPlay::AptLockRetry::DEFAULT_UPDATE_CACHE_RETRY_MAX_DELAY.should eq(12)
+      Krikri::AptLockRetry::DEFAULT_UPDATE_CACHE_RETRY_MAX_DELAY.should eq(12)
     end
   end
 end

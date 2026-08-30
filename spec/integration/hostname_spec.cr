@@ -29,7 +29,7 @@ describe "hostname plugin" do
   end
 
   it "reports it would change the hostname in check_mode, without touching the live hostname" do
-    target = "crystal-ansible-hostname-spec-target"
+    target = "krikri-playbook-hostname-spec-target"
     before = `hostname`.strip
 
     result = PluginSpecHelper.run("hostname", {"name" => target, "check_mode" => "true"})

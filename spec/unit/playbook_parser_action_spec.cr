@@ -1,5 +1,5 @@
 require "../spec_helper"
-require "../../src/crystal_play/playbook_parser"
+require "../../src/krikri/playbook_parser"
 
 # Round 192 regression cover (stefangweichinger.ansible_rclone): a handler
 # using the LEGACY free-form `action: <module> [args]` syntax previously
@@ -7,10 +7,10 @@ require "../../src/crystal_play/playbook_parser"
 # ("Plugin binary not found: action") and the exception escaped as an
 # unhandled crash of the whole binary. Real Ansible treats `action:` as
 # "run this module" - value is `<module> [k=v ...]` or `{module:, args:}`.
-describe CrystalPlay::PlaybookParser do
+describe Krikri::PlaybookParser do
   describe "legacy action: directive (round 192)" do
     it "rewrites `action: <module>` to the module with no args" do
-      pb = CrystalPlay::PlaybookParser.parse_string(<<-YAML)
+      pb = Krikri::PlaybookParser.parse_string(<<-YAML)
         - name: legacy action
           hosts: all
           gather_facts: false
@@ -24,7 +24,7 @@ describe CrystalPlay::PlaybookParser do
     end
 
     it "parses free-form k=v args after the module name" do
-      pb = CrystalPlay::PlaybookParser.parse_string(<<-YAML)
+      pb = Krikri::PlaybookParser.parse_string(<<-YAML)
         - name: legacy action with args
           hosts: all
           gather_facts: false
@@ -40,7 +40,7 @@ describe CrystalPlay::PlaybookParser do
     end
 
     it "parses the dict form action: {module:, args:}" do
-      pb = CrystalPlay::PlaybookParser.parse_string(<<-YAML)
+      pb = Krikri::PlaybookParser.parse_string(<<-YAML)
         - name: dict form
           hosts: all
           gather_facts: false

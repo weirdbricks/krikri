@@ -2,11 +2,11 @@
 
 require "json"
 require "pg"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/postgresql_connection"
-require "../src/crystal_play/plugin_helpers/postgresql_role_flags"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/postgresql_connection"
+require "../src/krikri/plugin_helpers/postgresql_role_flags"
 
-module CrystalPlay
+module Krikri
   # PostgreSQL user (role) plugin - creates/removes a role and manages
   # its attribute flags. Compatible with Ansible's
   # community.postgresql.postgresql_user module.
@@ -34,7 +34,7 @@ module CrystalPlay
   # - state: present (default) / absent
   # - role_attr_flags: "LOGIN,CREATEDB,NOSUPERUSER" (comma-separated,
   #   real Ansible's own format) - via a new pure
-  #   src/crystal_play/plugin_helpers/postgresql_role_flags.cr, diffed
+  #   src/krikri/plugin_helpers/postgresql_role_flags.cr, diffed
   #   against the role's actual pg_roles attribute columns; only the
   #   flags actually given are compared, so omitting role_attr_flags:
   #   entirely never triggers a change on its account.
@@ -206,5 +206,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::PostgresqlUserPlugin.new(config)
+plugin = Krikri::PostgresqlUserPlugin.new(config)
 plugin.run

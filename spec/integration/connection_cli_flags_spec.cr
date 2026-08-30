@@ -3,7 +3,7 @@ require "../spec_helper"
 # The connection/become/misc CLI flags added in 0.9.565. Behavior checked
 # against a real ansible-core 2.19.4 where observable.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_with(args : Array(String), yaml : String, input : String? = nil)

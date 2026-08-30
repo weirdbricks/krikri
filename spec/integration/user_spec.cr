@@ -5,7 +5,7 @@ require "../spec_helper"
 # userdel for real, even against a scratch username - this must stay safe
 # to run repeatedly on a developer's real machine.
 
-private NONEXISTENT_USER = "crystal-ansible-test-nonexistent-user"
+private NONEXISTENT_USER = "krikri-playbook-test-nonexistent-user"
 
 describe "user plugin" do
   it "reports no change for an existing user whose attributes already match (read-only getent check)" do

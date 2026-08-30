@@ -2,9 +2,9 @@ require "../spec_helper"
 
 # Runs the compiled binary against a real playbook (real template
 # rendering through Crinja's own lexer whitespace handling, vendored
-# from the crystal-play fork of the crinja shard).
+# from the krikri-playbook fork of the crinja shard).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "a {{ }} expression whose leading whitespace is a non-ASCII Unicode space" do

@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # Npm plugin - manages Node.js packages via npm. Compatible with (a
   # subset of) community.general.npm.
   #
@@ -175,5 +175,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::NpmPlugin.new(config)
+plugin = Krikri::NpmPlugin.new(config)
 plugin.run

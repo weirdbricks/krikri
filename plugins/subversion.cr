@@ -14,9 +14,9 @@
 #   executable (optional): svn binary path (default "svn")
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   class SubversionPlugin < BasePlugin
     def execute : PluginResult
       repo = @params["repo"]?
@@ -115,5 +115,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::SubversionPlugin.new(config)
+plugin = Krikri::SubversionPlugin.new(config)
 plugin.run

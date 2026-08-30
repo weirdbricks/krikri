@@ -1,12 +1,12 @@
 require "../spec_helper"
-require "../../src/crystal_play/plugin_helpers/mysql_connection"
+require "../../src/krikri/plugin_helpers/mysql_connection"
 
-describe CrystalPlay::PluginHelpers::MysqlConnection do
+describe Krikri::PluginHelpers::MysqlConnection do
   describe ".build_uri" do
     it "defaults to localhost:3306, with the current OS user as the connection username" do
       original_user = ENV["USER"]?
       ENV["USER"] = "specuser"
-      CrystalPlay::PluginHelpers::MysqlConnection.build_uri.should eq("mysql://specuser@localhost:3306?ssl-mode=disabled")
+      Krikri::PluginHelpers::MysqlConnection.build_uri.should eq("mysql://specuser@localhost:3306?ssl-mode=disabled")
     ensure
       if original_user
         ENV["USER"] = original_user
@@ -16,25 +16,25 @@ describe CrystalPlay::PluginHelpers::MysqlConnection do
     end
 
     it "builds a TCP URI with host/port/user/password" do
-      uri = CrystalPlay::PluginHelpers::MysqlConnection.build_uri(host: "db.example.com", port: "3307", user: "root", password: "secret")
+      uri = Krikri::PluginHelpers::MysqlConnection.build_uri(host: "db.example.com", port: "3307", user: "root", password: "secret")
       uri.should eq("mysql://root:secret@db.example.com:3307?ssl-mode=disabled")
     end
 
     it "builds a unix socket URI, ignoring host/port" do
-      uri = CrystalPlay::PluginHelpers::MysqlConnection.build_uri(host: "ignored", port: "9999", user: "root", unix_socket: "/var/run/mysqld/mysqld.sock")
+      uri = Krikri::PluginHelpers::MysqlConnection.build_uri(host: "ignored", port: "9999", user: "root", unix_socket: "/var/run/mysqld/mysqld.sock")
       uri.should eq("mysql://root@/var/run/mysqld/mysqld.sock?ssl-mode=disabled")
     end
 
     it "falls back to 'root' as the connection username when neither user: nor $USER is available" do
       original_user = ENV["USER"]?
       ENV.delete("USER")
-      CrystalPlay::PluginHelpers::MysqlConnection.build_uri(host: "localhost").should eq("mysql://root@localhost:3306?ssl-mode=disabled")
+      Krikri::PluginHelpers::MysqlConnection.build_uri(host: "localhost").should eq("mysql://root@localhost:3306?ssl-mode=disabled")
     ensure
       ENV["USER"] = original_user if original_user
     end
 
     it "always disables TLS, since the mysql shard's own default (preferred) doesn't fall back to plaintext on a failed handshake" do
-      CrystalPlay::PluginHelpers::MysqlConnection.build_uri.should contain("ssl-mode=disabled")
+      Krikri::PluginHelpers::MysqlConnection.build_uri.should contain("ssl-mode=disabled")
     end
   end
 
@@ -51,7 +51,7 @@ describe CrystalPlay::PluginHelpers::MysqlConnection do
     it "reads [client] user/password from the option file when no login params are given" do
       p = setup.call("[client]\nuser=\"root\"\npassword=\"supersecret\"\n")
       begin
-        uri = CrystalPlay::PluginHelpers::MysqlConnection.build_uri(config_file: p)
+        uri = Krikri::PluginHelpers::MysqlConnection.build_uri(config_file: p)
         uri.should eq("mysql://root:supersecret@localhost:3306?ssl-mode=disabled")
       ensure
         teardown.call(p)
@@ -61,7 +61,7 @@ describe CrystalPlay::PluginHelpers::MysqlConnection do
     it "lets an explicit login_user/login_password override the option file" do
       p = setup.call("[client]\nuser=\"root\"\npassword=\"fromfile\"\n")
       begin
-        uri = CrystalPlay::PluginHelpers::MysqlConnection.build_uri(user: "bob", password: "explicit", config_file: p)
+        uri = Krikri::PluginHelpers::MysqlConnection.build_uri(user: "bob", password: "explicit", config_file: p)
         uri.should eq("mysql://bob:explicit@localhost:3306?ssl-mode=disabled")
       ensure
         teardown.call(p)
@@ -73,7 +73,7 @@ describe CrystalPlay::PluginHelpers::MysqlConnection do
       begin
         # login_host given => socket from the file is ignored, host honored,
         # but user/password still come from the file.
-        uri = CrystalPlay::PluginHelpers::MysqlConnection.build_uri(host: "db.example.com", config_file: p)
+        uri = Krikri::PluginHelpers::MysqlConnection.build_uri(host: "db.example.com", config_file: p)
         uri.should eq("mysql://root:pw@db.example.com:3306?ssl-mode=disabled")
       ensure
         teardown.call(p)
@@ -87,7 +87,7 @@ describe CrystalPlay::PluginHelpers::MysqlConnection do
       begin
         # login_host given => socket ignored, host honored; no user in the
         # file, so the connection username falls back to the OS user.
-        uri = CrystalPlay::PluginHelpers::MysqlConnection.build_uri(host: "db", config_file: p)
+        uri = Krikri::PluginHelpers::MysqlConnection.build_uri(host: "db", config_file: p)
         uri.should eq("mysql://specuser@db:3306?ssl-mode=disabled")
       ensure
         teardown.call(p)
@@ -99,7 +99,7 @@ describe CrystalPlay::PluginHelpers::MysqlConnection do
       original_user = ENV["USER"]?
       ENV["USER"] = "specuser"
       begin
-        uri = CrystalPlay::PluginHelpers::MysqlConnection.build_uri(config_file: "/no/such/my.cnf")
+        uri = Krikri::PluginHelpers::MysqlConnection.build_uri(config_file: "/no/such/my.cnf")
         uri.should eq("mysql://specuser@localhost:3306?ssl-mode=disabled")
       ensure
         ENV["USER"] = original_user if original_user
@@ -109,7 +109,7 @@ describe CrystalPlay::PluginHelpers::MysqlConnection do
     it "ignores comments and !includedir-style lines, and strips quotes" do
       p = setup.call("#comment\n[client]\n!includedir /etc/mysql/conf.d/\nuser=root\npassword='letmein'\nsocket=/tmp/mysql.sock\n")
       begin
-        uri = CrystalPlay::PluginHelpers::MysqlConnection.build_uri(config_file: p)
+        uri = Krikri::PluginHelpers::MysqlConnection.build_uri(config_file: p)
         uri.should eq("mysql://root:letmein@/tmp/mysql.sock?ssl-mode=disabled")
       ensure
         teardown.call(p)
@@ -121,7 +121,7 @@ describe CrystalPlay::PluginHelpers::MysqlConnection do
       ENV["USER"] = "specuser"
       p = setup.call("[mysqld]\nuser=someuser\npassword=whatever\n")
       begin
-        uri = CrystalPlay::PluginHelpers::MysqlConnection.build_uri(config_file: p)
+        uri = Krikri::PluginHelpers::MysqlConnection.build_uri(config_file: p)
         uri.should eq("mysql://specuser@localhost:3306?ssl-mode=disabled")
       ensure
         teardown.call(p)
@@ -140,7 +140,7 @@ describe CrystalPlay::PluginHelpers::MysqlConnection do
       begin
         # DEFAULT_OPTION_FILE is "~/.my.cnf" - must resolve via $HOME, not
         # against the CWD (Crystal's File.expand_path does not expand ~).
-        uri = CrystalPlay::PluginHelpers::MysqlConnection.build_uri(config_file: "~/.my.cnf")
+        uri = Krikri::PluginHelpers::MysqlConnection.build_uri(config_file: "~/.my.cnf")
         uri.should eq("mysql://root:tildehome@localhost:3306?ssl-mode=disabled")
       ensure
         File.delete?(File.join(home, ".my.cnf"))

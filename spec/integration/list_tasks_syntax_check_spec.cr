@@ -6,7 +6,7 @@ require "../spec_helper"
 # (tabs included), not a reconstruction - these two modes are routinely
 # machine-read in CI, so the exact shape matters.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 private PLAYBOOK = <<-YAML
@@ -64,7 +64,7 @@ describe "--syntax-check" do
   it "does not run any task" do
     _, output = run_with(["--syntax-check"])
     output.should_not contain("PLAY RECAP")
-    output.should_not contain("CRYSTAL PLAY")
+    output.should_not contain("KRIKRI")
   end
 end
 
@@ -133,6 +133,6 @@ describe "--list-tasks" do
   it "does not run any task" do
     _, output = run_with(["--list-tasks"])
     output.should_not contain("PLAY RECAP")
-    output.should_not contain("CRYSTAL PLAY")
+    output.should_not contain("KRIKRI")
   end
 end

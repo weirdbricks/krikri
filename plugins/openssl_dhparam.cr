@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # openssl_dhparam plugin (community.crypto.openssl_dhparam) - generates
   # OpenSSL Diffie-Hellman parameters. Ported from the real module's
   # `openssl` backend (shells to the `openssl dhparam` binary) - the
@@ -113,5 +113,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::OpensslDhparamPlugin.new(config)
+plugin = Krikri::OpensslDhparamPlugin.new(config)
 plugin.run

@@ -2,11 +2,11 @@
 
 require "json"
 require "pg"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/postgresql_connection"
-require "../src/crystal_play/plugin_helpers/postgresql_acl"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/postgresql_connection"
+require "../src/krikri/plugin_helpers/postgresql_acl"
 
-module CrystalPlay
+module Krikri
   # PostgreSQL privileges plugin - grants/revokes GRANT/REVOKE-style
   # privileges on database objects. Compatible (for the object types
   # implemented - see below) with Ansible's
@@ -943,5 +943,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::PostgresqlPrivsPlugin.new(config)
+plugin = Krikri::PostgresqlPrivsPlugin.new(config)
 plugin.run

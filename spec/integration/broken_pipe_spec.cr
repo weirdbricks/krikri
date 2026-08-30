@@ -2,14 +2,14 @@ require "../spec_helper"
 
 # Crystal sets SIGPIPE to ignore, so writing to a pipe whose reader has
 # already exited surfaces as an IO::Error rather than killing the
-# process. With nothing rescuing it, `crystal-ansible ... | head -N`
+# process. With nothing rescuing it, `krikri-playbook ... | head -N`
 # dumped a full Crystal stack trace to stderr and exited 1.
 #
 # Real ansible-playbook is silent and exits 0 in the same situation
 # (verified directly against ansible-playbook/ansible: `--help | head -1`
 # and `--version | head -1` each produce no stderr and PIPESTATUS[0]=0).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 # Runs *shell_command* and returns {exit status of the FIRST pipeline

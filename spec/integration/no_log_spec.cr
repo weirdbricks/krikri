@@ -10,7 +10,7 @@ require "../spec_helper"
 # -v. These specs assert on the secret never appearing, which is the
 # property that actually matters.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 
 private def run_play(playbook : String, args : Array(String) = Array(String).new)
   dir = File.tempname("no-log")

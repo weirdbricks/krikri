@@ -3,9 +3,9 @@
 # Ansible compatibility harness.
 #
 # For each playbook under compat/playbooks/*.yml, runs it once via real
-# `ansible-playbook` and once via `bin/crystal-ansible`, each in its own
+# `ansible-playbook` and once via `bin/krikri-playbook`, each in its own
 # fresh, throwaway container (built from compat/Dockerfile - ansible-core
-# and a from-source crystal-ansible build side by side), then compares:
+# and a from-source krikri-playbook build side by side), then compares:
 #   - success/failure (exit code 0 vs nonzero)
 #   - the final state of /work (a checksum+type snapshot of every file and
 #     directory the playbook touched)
@@ -22,7 +22,7 @@ require "set"
 
 module Compat
   PROJECT_ROOT   = File.expand_path("..", __DIR__)
-  IMAGE          = "crystal-ansible-compat"
+  IMAGE          = "krikri-playbook-compat"
   PLAYBOOKS_DIR  = File.join(PROJECT_ROOT, "compat", "playbooks")
   INVENTORY_PATH = "/repo/compat/inventory.ini"
 
@@ -57,7 +57,7 @@ module Compat
   end
 
   def self.build_image : Bool
-    puts "Building compat image (rebuilds crystal-ansible from source - may take a few minutes)..."
+    puts "Building compat image (rebuilds krikri-playbook from source - may take a few minutes)..."
     code, output = run(["docker", "build", "-q", "-t", IMAGE, "-f", File.join(PROJECT_ROOT, "compat", "Dockerfile"), PROJECT_ROOT])
     puts output unless code == 0
     code == 0
@@ -95,7 +95,7 @@ module Compat
   # using it are `--rm`; the network itself is negligible and fine to
   # reuse across runs) - `docker network create` on an existing name
   # errors, so this checks first.
-  BATCHING_NETWORK = "crystal-ansible-compat-batching"
+  BATCHING_NETWORK = "krikri-playbook-compat-batching"
 
   def self.ensure_batching_network
     code, _ = run(["docker", "network", "inspect", BATCHING_NETWORK])
@@ -163,7 +163,7 @@ module Compat
     extra_args = VAULT_PLAYBOOKS.includes?(name) ? VAULT_EXTRA_ARGS : [] of String
 
     ansible = run_playbook(["ansible-playbook"] + extra_args, container_path)
-    crystal = run_playbook(["/repo/bin/crystal-ansible"] + extra_args, container_path)
+    crystal = run_playbook(["/repo/bin/krikri-playbook"] + extra_args, container_path)
 
     diff_snapshots(name, ansible, crystal)
   end
@@ -177,7 +177,7 @@ module Compat
     container_path = "/repo/compat/playbooks/#{name}"
 
     ansible = run_playbook_via_ssh(["ansible-playbook"], container_path)
-    crystal = run_playbook_via_ssh(["/repo/bin/crystal-ansible"], container_path)
+    crystal = run_playbook_via_ssh(["/repo/bin/krikri-playbook"], container_path)
 
     diff_snapshots(name, ansible, crystal)
   end
@@ -190,10 +190,10 @@ module Compat
       detail = String.build do |str|
         str << "exit status differs: ansible-playbook "
         str << (ansible_ok ? "succeeded" : "failed (exit #{ansible.exit_code})")
-        str << ", crystal-ansible "
+        str << ", krikri-playbook "
         str << (crystal_ok ? "succeeded" : "failed (exit #{crystal.exit_code})")
         str << "\n--- ansible-playbook output ---\n" << ansible.output
-        str << "\n--- crystal-ansible output ---\n" << crystal.output
+        str << "\n--- krikri-playbook output ---\n" << crystal.output
       end
       return Result.new(name, false, detail)
     end
@@ -218,7 +218,7 @@ module Compat
         only_ansible.to_a.sort.each { |line| str << "    #{line}\n" }
       end
       unless only_crystal.empty?
-        str << "  only in crystal-ansible's final state:\n"
+        str << "  only in krikri-playbook's final state:\n"
         only_crystal.to_a.sort.each { |line| str << "    #{line}\n" }
       end
     end

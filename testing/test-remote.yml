@@ -1,5 +1,5 @@
 ---
-# Remote Host Test - Crystal Play
+# Remote Host Test - krikri
 # Tests SSH connection, plugin execution, and various modules
 
 - name: Test Remote Host Operations
@@ -17,22 +17,22 @@
     
     - name: Test 2 - Create test directory
       ansible.builtin.file:
-        path: /tmp/crystal-play-remote-test
+        path: /tmp/krikri-playbook-remote-test
         state: directory
         mode: '0755'
     
     - name: Test 3 - Copy file with content
       ansible.builtin.copy:
         content: |
-          Crystal Play Remote Test
+          krikri Remote Test
           =========================
           Timestamp: {{ ansible_date_time.iso8601 }}
           Host: {{ inventory_hostname }}
-        dest: /tmp/crystal-play-remote-test/test.txt
+        dest: /tmp/krikri-playbook-remote-test/test.txt
         mode: '0644'
     
     - name: Test 4 - Verify file exists
-      ansible.builtin.command: cat /tmp/crystal-play-remote-test/test.txt
+      ansible.builtin.command: cat /tmp/krikri-playbook-remote-test/test.txt
       register: file_content
     
     - name: Show file content
@@ -40,10 +40,10 @@
         msg: "File contains: {{ file_content.stdout }}"
     
     - name: Test 5 - Create another file via shell
-      ansible.builtin.shell: echo "Created via shell" > /tmp/crystal-play-remote-test/shell-test.txt
+      ansible.builtin.shell: echo "Created via shell" > /tmp/krikri-playbook-remote-test/shell-test.txt
     
     - name: Test 6 - List test directory
-      ansible.builtin.shell: ls -la /tmp/crystal-play-remote-test/
+      ansible.builtin.shell: ls -la /tmp/krikri-playbook-remote-test/
       register: dir_listing
     
     - name: Show directory listing
@@ -52,11 +52,11 @@
     
     - name: Test 7 - Modify file ownership (demonstrates file module)
       ansible.builtin.file:
-        path: /tmp/crystal-play-remote-test/test.txt
+        path: /tmp/krikri-playbook-remote-test/test.txt
         mode: '0600'
     
     - name: Test 8 - Verify permission change
-      ansible.builtin.shell: stat -c '%a' /tmp/crystal-play-remote-test/test.txt
+      ansible.builtin.shell: stat -c '%a' /tmp/krikri-playbook-remote-test/test.txt
       register: perms
     
     - name: Show permissions
@@ -65,11 +65,11 @@
     
     - name: Test 9 - Cleanup test directory
       ansible.builtin.file:
-        path: /tmp/crystal-play-remote-test
+        path: /tmp/krikri-playbook-remote-test
         state: absent
     
     - name: Test 10 - Verify cleanup
-      ansible.builtin.shell: "[ ! -d /tmp/crystal-play-remote-test ] && echo 'CLEANED' || echo 'STILL EXISTS'"
+      ansible.builtin.shell: "[ ! -d /tmp/krikri-playbook-remote-test ] && echo 'CLEANED' || echo 'STILL EXISTS'"
       register: cleanup_check
     
     - name: Show cleanup result

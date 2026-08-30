@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # Mount plugin - manages /etc/fstab entries and (optionally) actually
   # mounts/unmounts a filesystem. Compatible with Ansible's
   # ansible.posix.mount module.
@@ -510,5 +510,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::MountPlugin.new(config)
+plugin = Krikri::MountPlugin.new(config)
 plugin.run

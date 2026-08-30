@@ -11,7 +11,7 @@
   tasks:
     - name: Test 1 - Create directory (1st=changed, 2nd=ok)
       ansible.builtin.file:
-        path: /tmp/crystal-play-idempotent-test
+        path: /tmp/krikri-playbook-idempotent-test
         state: directory
         mode: '0755'
     
@@ -21,17 +21,17 @@
           Static test content - never changes
           Host: {{ inventory_hostname }}
           Version: 1.0
-        dest: /tmp/crystal-play-idempotent-test/test.txt
+        dest: /tmp/krikri-playbook-idempotent-test/test.txt
         mode: '0644'
     
     - name: Test 3 - Set file permissions (1st=changed, 2nd=ok)
       ansible.builtin.file:
-        path: /tmp/crystal-play-idempotent-test/test.txt
+        path: /tmp/krikri-playbook-idempotent-test/test.txt
         mode: '0600'
     
     - name: Test 4 - Create subdirectory (1st=changed, 2nd=ok)
       ansible.builtin.file:
-        path: /tmp/crystal-play-idempotent-test/subdir
+        path: /tmp/krikri-playbook-idempotent-test/subdir
         state: directory
         mode: '0755'
     
@@ -41,7 +41,7 @@
           Static test content - never changes
           Host: {{ inventory_hostname }}
           Version: 1.0
-        dest: /tmp/crystal-play-idempotent-test/test.txt
+        dest: /tmp/krikri-playbook-idempotent-test/test.txt
         mode: '0600'
     
     - name: SUCCESS
@@ -49,4 +49,4 @@
         msg: "✓ Idempotency test complete. Run again to verify 'ok' status."
 
 # To cleanup after testing, run:
-# rm -rf /tmp/crystal-play-idempotent-test
+# rm -rf /tmp/krikri-playbook-idempotent-test

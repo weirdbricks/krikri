@@ -3,7 +3,7 @@ require "../spec_helper"
 # Round 188 (`buluma.forensics`, Rocky 9.6): a `delegate_to: localhost`
 # task in a SSH-routed play runs the delegated plugin via `connection:
 # local` on the controller rather than SSH-ing to `localhost:22`. Real
-# ansible-core does this; crystal-ansible 0.9.623 went through the
+# ansible-core does this; krikri-playbook 0.9.623 went through the
 # SSH path and scp'd the plugin binary to `localhost:22`, which failed
 # with "Connection refused" on a cloud VPS whose controller has no
 # sshd running (the standard Atlantic.net Ubuntu 22.04 / Rocky 9.6
@@ -20,7 +20,7 @@ require "../spec_helper"
 # `~/scratch/round188_10roles/results/REVERIFY_RESULTS.md` and
 # [[round188-delegate-to-localhost-ssh-reupload]] for the live trace.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_playbook(pb : String) : {Process::Status, String}
@@ -74,11 +74,11 @@ describe "delegate_to: localhost" do
   # The hard case (the actual round 188 finding): play is
   # `connection: ssh` (or implicit-ssh) and a task
   # `delegate_to: localhost` for an SSH-uploading module. Pre-fix
-  # (0.9.622 and earlier - confirmed against 0.9.623), crystal-ansible
+  # (0.9.622 and earlier - confirmed against 0.9.623), krikri-playbook
   # tried to scp the plugin binary to `localhost:22`, which fails
   # with "Connection refused" on a cloud VPS whose controller has no
   # sshd running. The fix (pending) is in
-  # `src/crystal_play/task_executor/executor.cr` `delegate_to:`
+  # `src/krikri/task_executor/executor.cr` `delegate_to:`
   # resolution: short-circuit to `connection: local` when the
   # delegate target is the controller, so the SSH plugin-upload step
   # is bypassed entirely.

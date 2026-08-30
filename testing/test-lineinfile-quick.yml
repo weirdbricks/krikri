@@ -9,12 +9,12 @@
   tasks:
     - name: ensure the scratch file exists
       ansible.builtin.file:
-        path: /tmp/crystal-play-lineinfile-test.txt
+        path: /tmp/krikri-playbook-lineinfile-test.txt
         state: touch
 
     - name: ensure a line is present
       ansible.builtin.lineinfile:
-        path: /tmp/crystal-play-lineinfile-test.txt
+        path: /tmp/krikri-playbook-lineinfile-test.txt
         line: "hello from lineinfile"
         state: present
         create: yes

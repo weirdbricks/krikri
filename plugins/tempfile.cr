@@ -14,9 +14,9 @@
 #   suffix (optional): filename suffix (default "")
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   class TempfilePlugin < BasePlugin
     def execute : PluginResult
       state = normalized_state
@@ -67,5 +67,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::TempfilePlugin.new(config)
+plugin = Krikri::TempfilePlugin.new(config)
 plugin.run

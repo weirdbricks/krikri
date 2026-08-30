@@ -3,11 +3,11 @@
 # batching itself; fixed alongside this coverage): real Ansible removes
 # a host that fails without ignore_errors: from *every remaining play in
 # the whole run*, not just the rest of the play it failed in.
-# TaskExecutor's own halted_hosts was scoped per-play (crystal-play.cr
+# TaskExecutor's own halted_hosts was scoped per-play (krikri-playbook.cr
 # constructs a fresh TaskExecutor per play), so a host that hard-failed
 # in an earlier play ran completely normally again in a later one here -
 # fixed by carrying a cross-play "already failed" host set through
-# crystal-play.cr's own per-play loop instead.
+# krikri-playbook.cr's own per-play loop instead.
 #
 # This harness only has one host per container (compat/inventory.ini
 # defines a single `localhost`), so the multi-host case (one host fails,

@@ -1,7 +1,7 @@
 require "../spec_helper"
 require "file_utils"
 
-# These specs drive the compiled `bin/crystal-ansible` binary against the
+# These specs drive the compiled `bin/krikri-playbook` binary against the
 # example playbooks in testing/*.yml, in --check mode, using an inventory
 # that defines no hosts. Fixtures targeting the "testservers" group therefore
 # have their play skipped (no hosts match) rather than actually connecting
@@ -11,7 +11,7 @@ require "file_utils"
 # requiring SSH access or a target host.
 
 private PROJECT_ROOT                 = File.expand_path("../..", __DIR__)
-private BINARY                       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY                       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY                    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory.ini")
 private EXPLICIT_LOCALHOST_INVENTORY = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 private TWO_LOCAL_HOSTS_INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-two-local-hosts.ini")
@@ -49,7 +49,7 @@ private def run_playbook(
   {status, output.to_s}
 end
 
-describe "crystal-ansible CLI (--check mode)" do
+describe "krikri-playbook CLI (--check mode)" do
   fixtures = Dir.glob(File.join(FIXTURES_DIR, "*.yml")).map { |path| File.basename(path) }
   fixtures.sort!
 
@@ -118,7 +118,7 @@ describe "crystal-ansible CLI (--check mode)" do
     # Real ansible-playbook aggregates a looped task into a single recap
     # line: a 3-item create loop reports ok=1 changed=1, never ok=3.
     # This guards the loop-aggregation parity fix in finish_looped_task.
-    FileUtils.rm_rf("/tmp/crystal-play-loop-count")
+    FileUtils.rm_rf("/tmp/krikri-playbook-loop-count")
     status, output = run_playbook("test-loop-counting.yml", [] of String)
 
     status.success?.should be_true
@@ -150,7 +150,7 @@ describe "crystal-ansible CLI (--check mode)" do
     default_index.should_not be_nil
     base_index.as(Int32).should be < default_index.as(Int32)
 
-    output.should contain("greeting target: crystal-ansible") # role invocation var overrides defaults/main.yml
+    output.should contain("greeting target: krikri-playbook") # role invocation var overrides defaults/main.yml
     output.should contain("greeting style: friendly")         # from vars/main.yml
     output.should contain("Would copy")
     output.should contain("testing/roles/greeter/files/greeting.txt")
@@ -290,8 +290,8 @@ describe "crystal-ansible CLI (--check mode)" do
     status, output = run_playbook("test-include-role-quick.yml")
 
     status.success?.should be_true
-    output.should contain("hello crystal-ansible, item=x")
-    output.should contain("hello crystal-ansible, item=y")
+    output.should contain("hello krikri-playbook, item=x")
+    output.should contain("hello krikri-playbook, item=y")
     output.scan("HANDLER [dynamically included handler]").size.should eq(1)
     output.should contain("include_role smoke test complete!")
   end
@@ -1057,9 +1057,9 @@ describe "crystal-ansible CLI (--check mode)" do
 
     # Real bug found benchmarking geerlingguy.solr's own "Ensure core
     # configuration directories exist." task (become_user: solr,
-    # crystal-ansible installed under /root/...): execute_local_plugin
+    # krikri-playbook installed under /root/...): execute_local_plugin
     # always ran the compiled plugin binary straight from wherever
-    # crystal-ansible itself lives, which broke the moment that install
+    # krikri-playbook itself lives, which broke the moment that install
     # directory wasn't traversable by become_user (a root-owned
     # /root/... install is a common real-world case) - `sudo: Sorry,
     # user root is not allowed to execute '/root/.../plugins/command'
@@ -1068,7 +1068,7 @@ describe "crystal-ansible CLI (--check mode)" do
     # world-traversable copy of the plugin binary at REMOTE_PLUGIN_DIR
     # before sudo-ing to it, exactly as this "become to the current
     # user" task (command:, become: true) already exercises above.
-    staged_command_plugin = "/var/tmp/.crystal-play/plugins/command"
+    staged_command_plugin = "/var/tmp/.krikri-playbook/plugins/command"
     File.exists?(staged_command_plugin).should be_true
     (File.info(staged_command_plugin).permissions.value & 0o777).should eq(0o755)
   end
@@ -1202,7 +1202,7 @@ describe "crystal-ansible CLI (--check mode)" do
   it "finds its plugins when invoked from a directory other than its own checkout" do
     # Regression test: PluginManager used to resolve plugins via the
     # cwd-relative path "./bin/plugins/<name>", which only worked if you
-    # first `cd`'d into the crystal-ansible checkout - unlike real
+    # first `cd`'d into the krikri-playbook checkout - unlike real
     # ansible-playbook, which can be run from anywhere. Running with an
     # unrelated chdir (using absolute paths for everything else) is exactly
     # the scenario that broke.
@@ -1238,7 +1238,7 @@ describe "crystal-ansible CLI (--check mode)" do
 
   it "--limit restricts a hosts: all play to just the named host, not every matching host" do
     # Regression: --limit's value was parsed into a variable that was
-    # never actually read anywhere else - crystal-ansible ran hosts: all
+    # never actually read anywhere else - krikri-playbook ran hosts: all
     # against the WHOLE inventory regardless of --limit, silently
     # ignoring the flag entirely.
     status, output = run_playbook(

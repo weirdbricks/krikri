@@ -16,7 +16,7 @@
 #
 # The two "verify the ... round trip" tasks below pipe psql's `-t` output
 # through `tr -d ' \n'`: psql pads a `-t` count with leading whitespace,
-# and crystal-ansible's `{{ }}` string interpolation strips it
+# and krikri-playbook's `{{ }}` string interpolation strips it
 # (variable_lookup.cr's format_value - a pre-existing, unrelated gap, not
 # introduced by mysql_db/postgresql_db dump/restore) while real Ansible's
 # Jinja2 preserves it verbatim. Stripping it ourselves here keeps the
@@ -41,7 +41,7 @@
         port: 5432
         timeout: 60
 
-    # crystal-ansible parses become:/become_user: but doesn't actually
+    # krikri-playbook parses become:/become_user: but doesn't actually
     # apply privilege escalation to command execution (see git log, 0.9.41) -
     # using it here would silently run as root on one engine and as
     # postgres on the other. su directly instead, which is plain shell and

@@ -5,10 +5,10 @@ require "pg"
 require "compress/gzip"
 require "xz"
 require "bz2"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/postgresql_connection"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/postgresql_connection"
 
-module CrystalPlay
+module Krikri
   # PostgreSQL database plugin - creates/removes a database.
   # Compatible with Ansible's community.postgresql.postgresql_db module.
   #
@@ -329,5 +329,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::PostgresqlDbPlugin.new(config)
+plugin = Krikri::PostgresqlDbPlugin.new(config)
 plugin.run

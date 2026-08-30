@@ -5,7 +5,7 @@ require "../spec_helper"
 # Value#compare (lib/crinja/src/runtime/value.cr), reached only through
 # a real {% for %} + sort filter template render.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "sorting a dict's .items() (a list of 2-tuples) in a template" do

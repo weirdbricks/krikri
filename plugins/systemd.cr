@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # Systemd Plugin - Manage systemd units
   #
   # Parameters:
@@ -428,5 +428,5 @@ end
 # Entry point
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::SystemdPlugin.new(config)
+plugin = Krikri::SystemdPlugin.new(config)
 plugin.run

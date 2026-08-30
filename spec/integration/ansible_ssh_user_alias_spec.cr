@@ -2,7 +2,7 @@ require "../spec_helper"
 
 # Runs the compiled binary against a real playbook.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 
 describe "ansible_ssh_user/ansible_ssh_host/ansible_ssh_port legacy aliases" do
   it "resolves the deprecated ansible_ssh_* spelling to whatever the canonical ansible_* var holds" do

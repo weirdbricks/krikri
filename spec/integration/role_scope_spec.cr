@@ -18,7 +18,7 @@ require "../spec_helper"
 #   all roles' defaults < this role's own defaults < play vars
 #     < all roles' vars < this role's own vars
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 
 private def role_dir(root : String, name : String) : String
   dir = File.join(root, "roles", name)

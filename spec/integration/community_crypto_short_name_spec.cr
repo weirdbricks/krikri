@@ -16,7 +16,7 @@ require "../spec_helper"
 # `community.crypto modules implemented` 0.9.608 work arguably
 # unblocked the engine from rc=4 errors but NOT actually run the work.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_playbook(pb : String) : {Process::Status, String}

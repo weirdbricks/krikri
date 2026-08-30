@@ -22,7 +22,7 @@
         state: absent
 
     # Home-directory resolution (no explicit path): exercises the
-    # user-number -> home lookup, which crystal-ansible now does natively
+    # user-number -> home lookup, which krikri-playbook now does natively
     # via System::User instead of shelling to `getent passwd`. Both
     # engines must resolve root to /root/.ssh/authorized_keys and write
     # the identical file.

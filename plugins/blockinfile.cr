@@ -1,10 +1,10 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/block_editor"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/block_editor"
 
-module CrystalPlay
+module Krikri
   # Blockinfile plugin - inserts/updates/removes a marker-delimited block of
   # text in a file. Compatible with Ansible's ansible.builtin.blockinfile.
   #
@@ -135,5 +135,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::BlockInFilePlugin.new(config)
+plugin = Krikri::BlockInFilePlugin.new(config)
 plugin.run

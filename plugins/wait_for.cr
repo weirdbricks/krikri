@@ -2,10 +2,10 @@
 
 require "json"
 require "socket"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/proc_net_tcp"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/proc_net_tcp"
 
-module CrystalPlay
+module Krikri
   # wait_for plugin (ansible.builtin.wait_for) - polls until a port becomes
   # connectable/closed, a file appears/disappears, or a regex is found in a
   # file, gating a later task on readiness.
@@ -277,5 +277,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::WaitForPlugin.new(config)
+plugin = Krikri::WaitForPlugin.new(config)
 plugin.run

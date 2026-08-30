@@ -1,7 +1,7 @@
 require "../spec_helper"
-require "../../src/crystal_play/variable_substitutor/variable_lookup"
+require "../../src/krikri/variable_substitutor/variable_lookup"
 
-describe CrystalPlay::VariableSubstitutor::VariableLookup do
+describe Krikri::VariableSubstitutor::VariableLookup do
   it "resolves a simple string variable, preserving its own whitespace" do
     # Real bug found benchmarking robertdebock.functions (round 116):
     # format_value used to unconditionally strip every string value -
@@ -13,33 +13,33 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     # silently lost it on every `{{ }}` reference.
     v = Hash(String, JSON::Any).new
     v["name"] = JSON::Any.new("  hello  ")
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
     lookup.simple("name").should eq("  hello  ")
   end
 
   it "returns 'undefined' for a missing simple variable" do
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(Hash(String, JSON::Any).new)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(Hash(String, JSON::Any).new)
     lookup.simple("missing").should eq("undefined")
   end
 
   it "resolves nested hash access" do
     v = Hash(String, JSON::Any).new
     v["user"] = JSON.parse(%({"name": "ada"}))
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
     lookup.nested("user.name").should eq("ada")
   end
 
   it "returns 'undefined' for a missing nested key" do
     v = Hash(String, JSON::Any).new
     v["user"] = JSON.parse(%({"name": "ada"}))
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
     lookup.nested("user.email").should eq("undefined")
   end
 
   it "resolves numeric array indexing" do
     v = Hash(String, JSON::Any).new
     v["items"] = JSON.parse(%(["a", "b", "c"]))
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
     lookup.indexed("items[1]").should eq("b")
   end
 
@@ -55,7 +55,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     # against the mismatched config.
     v = Hash(String, JSON::Any).new
     v["version"] = JSON::Any.new("7.x")
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
     lookup.indexed("version[0]").should eq("7")
     lookup.indexed("version[1]").should eq(".")
   end
@@ -63,14 +63,14 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
   it "resolves negative character indexing on a plain string" do
     v = Hash(String, JSON::Any).new
     v["version"] = JSON::Any.new("7.x")
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
     lookup.indexed("version[-1]").should eq("x")
   end
 
   it "resolves quoted hash key indexing" do
     v = Hash(String, JSON::Any).new
     v["config"] = JSON.parse(%({"host": "example.com"}))
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
     lookup.indexed(%(config['host'])).should eq("example.com")
   end
 
@@ -85,7 +85,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     v = Hash(String, JSON::Any).new
     v["yes_flag"] = JSON::Any.new(true)
     v["no_flag"] = JSON::Any.new(false)
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
     lookup.simple("yes_flag").should eq("True")
     lookup.simple("no_flag").should eq("False")
   end
@@ -93,7 +93,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
   it "renders a boolean as True/False via nested lookup" do
     v = Hash(String, JSON::Any).new
     v["stat"] = JSON.parse(%({"exists": true, "isdir": false}))
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
     lookup.nested("stat.exists").should eq("True")
     lookup.nested("stat.isdir").should eq("False")
   end
@@ -101,7 +101,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
   it "renders a boolean as True/False via indexed access" do
     v = Hash(String, JSON::Any).new
     v["flags"] = JSON.parse(%([true, false]))
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
     lookup.indexed("flags[0]").should eq("True")
     lookup.indexed("flags[1]").should eq("False")
   end
@@ -119,7 +119,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     # yml" instead of "Ubuntu-22.yml").
     v = Hash(String, JSON::Any).new
     v["ansible_facts"] = JSON.parse(%({"distribution_version": "22.04"}))
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
     lookup.indexed("ansible_facts.distribution_version.split('.')[0]").should eq("22")
     lookup.indexed("ansible_facts.distribution_version.split('.')[1]").should eq("04")
   end
@@ -141,7 +141,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     v = Hash(String, JSON::Any).new
     v["nginx_conf_path"] = JSON::Any.new("/etc/nginx")
     v["nginx_conf_file"] = JSON::Any.new("{{ nginx_conf_path }}/nginx.conf")
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
     lookup.nested("nginx_conf_file.lstrip('/')").should eq("etc/nginx/nginx.conf")
   end
 
@@ -158,7 +158,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     v = Hash(String, JSON::Any).new
     v["path"] = JSON::Any.new("/etc/ssh/ssh_known_hosts")
     v["padded"] = JSON::Any.new("xxyx-hello-yxxy")
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
     lookup.nested("path.lstrip('/')").should eq("etc/ssh/ssh_known_hosts")
     lookup.nested("padded.lstrip('xy')").should eq("-hello-yxxy")
     lookup.nested("padded.rstrip('xy')").should eq("xxyx-hello-")
@@ -181,7 +181,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     # reports this task as "changed", not failed.
     v = Hash(String, JSON::Any).new
     v["r"] = JSON.parse(%({"stdout": "hello world"}))
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
     lookup.nested("r.stdout.find('world')").should eq("6")
     lookup.nested("r.stdout.find('nope')").should eq("-1")
   end
@@ -197,7 +197,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     # hash is truthy, so a should-have-been-skipped task ran for real.
     v = Hash(String, JSON::Any).new
     v["aide_conf"] = JSON.parse(%({"results": [{"item": "/etc/aide.conf", "stat": {"exists": false}}]}))
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
     lookup.indexed("aide_conf.results[0].stat.exists").should eq("False")
 
     # Indexing alone (no trailing suffix) still resolves the item itself.
@@ -215,7 +215,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     # failed to install as a real package name.
     v = Hash(String, JSON::Any).new
     v["pkgs"] = JSON::Any.new("python3 sudo gnupg python3-apt")
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
     result = lookup.resolve("pkgs.split()")
     result.should_not be_nil
     (result || raise "unexpected nil").as_a.map(&.as_s).should eq(["python3", "sudo", "gnupg", "python3-apt"])
@@ -235,7 +235,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     v = Hash(String, JSON::Any).new
     v["text"] = JSON::Any.new("line1\nline2\nline3\n")
     v["empty"] = JSON::Any.new("")
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
     (lookup.resolve("text.splitlines()") || raise "unexpected nil").as_a.map(&.as_s).should eq(["line1", "line2", "line3"])
     (lookup.resolve("empty.splitlines()") || raise "unexpected nil").as_a.should eq([] of JSON::Any)
   end
@@ -243,7 +243,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
   it "resolves bare {{ }} .startswith()/.endswith() method calls, not just inside a {% if %} escalation" do
     v = Hash(String, JSON::Any).new
     v["s"] = JSON::Any.new("node_exporter-1.8.2.linux-amd64.tar.gz")
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
     (lookup.resolve("s.startswith('node_exporter')") || raise "unexpected nil").as_bool.should eq(true)
     (lookup.resolve("s.endswith('.tar.gz')") || raise "unexpected nil").as_bool.should eq(true)
     (lookup.resolve("s.startswith('other')") || raise "unexpected nil").as_bool.should eq(false)
@@ -270,7 +270,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     v["binary_url"] = JSON::Any.new("https://example.com/path/to/foo.txt")
     v["binary_basename"] = JSON::Any.new(%({{ binary_url | urlsplit('path') | basename }}))
     v["mydict"] = JSON.parse(%({"foo.txt": "checksum1", "bar.txt": "checksum2"}))
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
     (lookup.resolve("mydict[binary_basename]") || raise "unexpected nil").as_s.should eq("checksum1")
   end
 
@@ -289,7 +289,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     v = Hash(String, JSON::Any).new
     v["inner"] = JSON::Any.new("hello world")
     v["outer"] = JSON::Any.new("{{ inner }}")
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
     result = lookup.resolve("outer.split()")
     result.should_not be_nil
     (result || raise "unexpected nil").as_a.map(&.as_s).should eq(["hello", "world"])
@@ -306,7 +306,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     # param.
     v = Hash(String, JSON::Any).new
     v["fail2ban_dependencies"] = JSON.parse(%(["fail2ban", "iptables"]))
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
 
     result = lookup.resolve("' '.join(fail2ban_dependencies)")
     result.should_not be_nil
@@ -316,7 +316,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
   it "round-trips `SEP.join(iterable).split()` back to a list, the actual real-world idiom" do
     v = Hash(String, JSON::Any).new
     v["fail2ban_dependencies"] = JSON.parse(%(["fail2ban", "iptables"]))
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
 
     result = lookup.resolve("' '.join(fail2ban_dependencies).split()")
     result.should_not be_nil
@@ -333,7 +333,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     v = Hash(String, JSON::Any).new
     v["fail2ban_backend"] = JSON::Any.new("systemd")
     v["fail2ban_dependencies"] = JSON.parse(%(["fail2ban", "{{ (fail2ban_backend == 'systemd') | ternary('python3-systemd', '') }}"]))
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
 
     result = lookup.resolve("' '.join(fail2ban_dependencies).split()")
     result.should_not be_nil
@@ -343,7 +343,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
   it "drops an empty-string element after the join+split round-trip, matching Python's whitespace split" do
     v = Hash(String, JSON::Any).new
     v["fail2ban_dependencies"] = JSON.parse(%(["fail2ban", ""]))
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
 
     result = lookup.resolve("' '.join(fail2ban_dependencies).split()")
     result.should_not be_nil
@@ -363,7 +363,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     # method call) actually requires.
     v = Hash(String, JSON::Any).new
     v["ansible_facts"] = JSON.parse(%({"architecture": "x86_64"}))
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
 
     result = lookup.resolve(%({'x86_64': 'amd64'}.get(ansible_facts['architecture'], ansible_facts['architecture'])))
     result.should_not be_nil
@@ -378,7 +378,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     # must keep routing through resolve_indexed, not resolve_nested.
     v = Hash(String, JSON::Any).new
     v["ansible_facts"] = JSON.parse(%({"getent_passwd": {"root": ["x", "0", "0", "root", "/root", "/bin/bash"]}}))
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
 
     result = lookup.resolve("ansible_facts.getent_passwd['root'][4]")
     result.should_not be_nil
@@ -395,7 +395,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
     # silently corrupting the download URL into a 404.
     v = Hash(String, JSON::Any).new
     v["my_arch"] = JSON::Any.new("x86_64")
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
 
     result = lookup.resolve(%({'i386': '386', 'x86_64': 'amd64', 'aarch64': 'arm64'}.get(my_arch, my_arch)))
     result.should_not be_nil
@@ -405,7 +405,7 @@ describe CrystalPlay::VariableSubstitutor::VariableLookup do
   it "dict.get() falls back to its default argument when the key isn't present" do
     v = Hash(String, JSON::Any).new
     v["my_arch"] = JSON::Any.new("riscv64")
-    lookup = CrystalPlay::VariableSubstitutor::VariableLookup.new(v)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
 
     result = lookup.resolve(%({'x86_64': 'amd64'}.get(my_arch, my_arch)))
     result.should_not be_nil

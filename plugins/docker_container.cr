@@ -2,14 +2,14 @@
 
 require "json"
 require "docr"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/docker_ref"
-require "../src/crystal_play/plugin_helpers/docker_ports"
-require "../src/crystal_play/plugin_helpers/docker_client"
-require "../src/crystal_play/plugin_helpers/docker_healthcheck"
-require "../src/crystal_play/plugin_helpers/docker_resources"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/docker_ref"
+require "../src/krikri/plugin_helpers/docker_ports"
+require "../src/krikri/plugin_helpers/docker_client"
+require "../src/krikri/plugin_helpers/docker_healthcheck"
+require "../src/krikri/plugin_helpers/docker_resources"
 
-module CrystalPlay
+module Krikri
   # Docker container plugin - creates/starts/stops/removes a container.
   # Compatible with Ansible's community.docker.docker_container module.
   #
@@ -921,5 +921,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::DockerContainerPlugin.new(config)
+plugin = Krikri::DockerContainerPlugin.new(config)
 plugin.run

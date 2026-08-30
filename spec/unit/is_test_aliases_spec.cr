@@ -1,12 +1,12 @@
 require "../spec_helper"
-require "../../src/crystal_play/conditional_evaluator"
-require "../../src/crystal_play/jinja_filters"
-require "../../src/crystal_play/variable_substitutor/crinja_renderer"
+require "../../src/krikri/conditional_evaluator"
+require "../../src/krikri/jinja_filters"
+require "../../src/krikri/variable_substitutor/crinja_renderer"
 
 # P2.1-P2.3 (FINDINGS_CHECKLIST.md / PATTERN2_AUDIT.md): the `is*` test
 # spelling alias pass - `issubset`/`issuperset`, `is_dir`/`is_file`/
 # `is_link`/`is_mount`, `is_same_file`, `is_abs`. ansible.builtin
-# registers both spellings of every one of these; crystal-ansible only
+# registers both spellings of every one of these; krikri-playbook only
 # had the base names, so `x is issubset(y)`-style spellings (the
 # FQCN-adjacent alias class from PATTERN2_AUDIT.md) failed the whole
 # render with "no test with name ... registered".
@@ -46,46 +46,46 @@ describe "is* test aliases (P2.1-P2.3)" do
 
   describe "issubset / issuperset" do
     it "evaluates issubset as the subset test (hand-rolled evaluator)" do
-      CrystalPlay::ConditionalEvaluator.evaluate("small is issubset(big)", vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("big is issubset(small)", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("small is issubset(big)", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("big is issubset(small)", vars).should be_false
     end
 
     it "evaluates issuperset as the superset test (hand-rolled evaluator)" do
-      CrystalPlay::ConditionalEvaluator.evaluate("big is issuperset(small)", vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("small is issuperset(big)", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("big is issuperset(small)", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("small is issuperset(big)", vars).should be_false
     end
 
     it "supports the is not negation (hand-rolled evaluator)" do
-      CrystalPlay::ConditionalEvaluator.evaluate("big is not issubset(small)", vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("small is not issuperset(big)", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("big is not issubset(small)", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("small is not issuperset(big)", vars).should be_true
     end
 
     it "empty list is a subset of anything (edge case, hand-rolled evaluator)" do
-      CrystalPlay::ConditionalEvaluator.evaluate("empty is issubset(big)", vars.merge({"empty" => JSON.parse(%([]))})).should be_true
+      Krikri::ConditionalEvaluator.evaluate("empty is issubset(big)", vars.merge({"empty" => JSON.parse(%([]))})).should be_true
     end
   end
 
   describe "is_dir / is_file / is_link" do
     it "dispatches the is_* spellings to the same os.path checks (hand-rolled evaluator)" do
-      CrystalPlay::ConditionalEvaluator.evaluate("conf_path is is_file", vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("dir_path is is_file", vars).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("dir_path is is_dir", vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("conf_path is is_dir", vars).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("link_path is is_link", vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("conf_path is is_link", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("conf_path is is_file", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("dir_path is is_file", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("dir_path is is_dir", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("conf_path is is_dir", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("link_path is is_link", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("conf_path is is_link", vars).should be_false
     end
 
     it "supports the is not negation (hand-rolled evaluator)" do
-      CrystalPlay::ConditionalEvaluator.evaluate("conf_path is not is_dir", vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("dir_path is not is_file", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("conf_path is not is_dir", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("dir_path is not is_file", vars).should be_true
     end
 
     it "does not misfire on the base spellings after adding the aliases" do
       # Regression guard: aliasing must not shadow/rewrite the original
       # base test names (e.g. " is file" inside " is is_file" mangling).
-      CrystalPlay::ConditionalEvaluator.evaluate("conf_path is file", vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("dir_path is directory", vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("link_path is link", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("conf_path is file", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("dir_path is directory", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("link_path is link", vars).should be_true
     end
   end
 
@@ -96,29 +96,29 @@ describe "is* test aliases (P2.1-P2.3)" do
     hard_vars = vars.merge({"hard_path" => JSON::Any.new(hard_file)})
 
     it "accepts the is_same_file spelling (hand-rolled evaluator)" do
-      CrystalPlay::ConditionalEvaluator.evaluate("conf_path is is_same_file(hard_path)", hard_vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("conf_path is is_same_file(dir_path)", hard_vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("conf_path is is_same_file(hard_path)", hard_vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("conf_path is is_same_file(dir_path)", hard_vars).should be_false
     end
 
     it "matches on device+inode, not path equality (regression: hardlink)" do
       # os.path.samefile semantics: two DIFFERENT paths to the SAME file.
-      CrystalPlay::ConditionalEvaluator.evaluate("conf_path != hard_path", hard_vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("conf_path is is_same_file(hard_path)", hard_vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("conf_path != hard_path", hard_vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("conf_path is is_same_file(hard_path)", hard_vars).should be_true
     end
 
     it "supports the is not negation (hand-rolled evaluator)" do
-      CrystalPlay::ConditionalEvaluator.evaluate("conf_path is not is_same_file(dir_path)", hard_vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("conf_path is not is_same_file(dir_path)", hard_vars).should be_true
     end
   end
 
   describe "is_abs" do
     it "evaluates os.path.isabs semantics (hand-rolled evaluator)" do
-      CrystalPlay::ConditionalEvaluator.evaluate("abs_path is is_abs", vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("rel_path is is_abs", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("abs_path is is_abs", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("rel_path is is_abs", vars).should be_false
     end
 
     it "supports the is not negation (hand-rolled evaluator)" do
-      CrystalPlay::ConditionalEvaluator.evaluate("rel_path is not is_abs", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("rel_path is not is_abs", vars).should be_true
     end
   end
 
@@ -155,7 +155,7 @@ describe "is* test aliases (P2.1-P2.3)" do
     v["pkg_list"] = JSON.parse(%(["vim", "htop"]))
     v["wanted"] = JSON.parse(%(["htop"]))
     v["config"] = JSON::Any.new(real_file)
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render(%({% if wanted is issubset(pkg_list) %}present{% else %}absent{% endif %})).should eq("present")
     renderer.render(%({% if pkg_list is issuperset(wanted) %}present{% else %}absent{% endif %})).should eq("present")
     renderer.render(%({% if config is is_file %}yes{% else %}no{% endif %})).should eq("yes")

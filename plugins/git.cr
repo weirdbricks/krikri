@@ -2,9 +2,9 @@
 
 require "json"
 require "file_utils"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # Git plugin - clones/updates a git repository
   # Compatible with (a subset of) Ansible's ansible.builtin.git module
   #
@@ -149,5 +149,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::GitPlugin.new(config)
+plugin = Krikri::GitPlugin.new(config)
 plugin.run

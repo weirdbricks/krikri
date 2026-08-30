@@ -11,7 +11,7 @@ require "../spec_helper"
 # there is no byte-order to match. This engine sorts them, which is
 # deterministic and diffable.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 
 private def run_listing(flag : String, inventory : String, yaml : String)
   dir = File.tempname("list-hosts-tags")
@@ -82,7 +82,7 @@ describe "--list-hosts" do
   it "runs no task and prints no banner" do
     _, output = run_listing("--list-hosts", INVENTORY, PLAYBOOK)
     output.should_not contain("PLAY RECAP")
-    output.should_not contain("CRYSTAL PLAY")
+    output.should_not contain("KRIKRI")
     output.should_not contain("Inventory Warnings")
   end
 end

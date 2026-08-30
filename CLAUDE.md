@@ -6,14 +6,14 @@ repo is a standalone shard, not part of that platform).
 
 ## What this is
 
-`crystal-play` (binary name `crystal-ansible`) is a from-scratch
+`krikri-playbook` (binary name `krikri-playbook`) is a from-scratch
 reimplementation of `ansible-playbook` in Crystal: parses real Ansible
 playbooks/roles/inventories and executes them, aiming for full
 behavioral parity with real `ansible-core` - not just "the common
 cases work." Two independent Jinja2/expression evaluators exist side
 by side: a hand-rolled `{{ }}` evaluator (`ExpressionEvaluator`/
 `ConditionalEvaluator`/`ComparisonEvaluator`/`FilterEngine`, under
-`src/crystal_play/variable_substitutor/`) for plain task-param
+`src/krikri/variable_substitutor/`) for plain task-param
 substitution, and the vendored `Crinja` shard (`CrinjaRenderer`,
 `TemplateActionPlugin`) for real `.j2` template files and `{%`/`{#`
 block-tag rendering. They do **not** share implementation - the same
@@ -23,14 +23,14 @@ each, repeatedly. When fixing a templating bug, check both.
 
 Each Ansible module is its own tiny compiled binary under `plugins/`,
 uploaded to and executed on the target host (or run locally for
-`ansible_connection=local`). `src/crystal_play/plugin_manager.cr`
-handles upload/dispatch; `src/crystal_play/task_batcher.cr` groups
+`ansible_connection=local`). `src/krikri/plugin_manager.cr`
+handles upload/dispatch; `src/krikri/task_batcher.cr` groups
 sequential tasks into one SSH round trip where safe.
 
 ## Build & test
 
 ```bash
-./build.sh                          # builds bin/crystal-ansible + all bin/plugins/* (mtime-skip, safe to always run)
+./build.sh                          # builds bin/krikri-playbook + all bin/plugins/* (mtime-skip, safe to always run)
 ./build.sh --release                # only near the end of a work session - slow, not needed for correctness iteration
 crystal spec                        # full suite
 crystal spec spec/unit/foo_spec.cr  # one file - NOTE: some files fail in isolation (a pre-existing
@@ -40,21 +40,21 @@ crystal spec spec/foo_spec.cr:42    # one example
 ameba                               # lint
 ```
 
-**Always run `./build.sh`**, never a bare `crystal build crystal-play.cr` alone, before trusting a
+**Always run `./build.sh`**, never a bare `crystal build krikri-playbook.cr` alone, before trusting a
 "still broken" result against a real host - plugin binaries compile separately from the main
 executable and a manual build of just one leaves the other stale.
 
 **Adding a new plugin** (e.g. a new module) needs registering in *three* places, easy to
 miss one:
 1. `plugins/<name>.cr` - the plugin itself (see any existing one for the `BasePlugin` pattern).
-2. `src/crystal_play/playbook_parser.cr`'s `AVAILABLE_PLUGINS` array - module-name dispatch.
+2. `src/krikri/playbook_parser.cr`'s `AVAILABLE_PLUGINS` array - module-name dispatch.
 3. `build.sh`'s `PLUGINS` array - or `./build.sh` silently never rebuilds it. (This list was
    already found out of sync once - `apt_key` had no entry despite a real compiled binary - so
    don't assume it's currently complete without checking.)
 
 ## Version bumping
 
-`src/crystal_play/version.cr`'s `VERSION` gets bumped with every commit that changes engine/plugin
+`src/krikri/version.cr`'s `VERSION` gets bumped with every commit that changes engine/plugin
 behavior (not doc-only commits). One bump per logical fix or tightly-related group of fixes found in
 the same investigation - not one per file touched.
 
@@ -73,7 +73,7 @@ starting a round.
    (`geerlingguy.mongodb`/`.consul`/`.golang` don't exist anymore) or re-verifying already-clean
    roles as if new (unless deliberately re-checking after something made a host suspect).
 2. Provision a fresh 2-node Atlantic.net pair (`G3.2GB`, Ubuntu 22.04) - one host runs real
-   `ansible-playbook`, the other runs the just-built `crystal-ansible`. Use a fresh host pair for
+   `ansible-playbook`, the other runs the just-built `krikri-playbook`. Use a fresh host pair for
    every round (one role, or one small role batch run to completion) rather than reusing a pair
    across rounds - accumulated state (stale apt lists, port contention from earlier roles,
    occasional AppArmor/apt-key drift) starts producing environmental noise indistinguishable from
@@ -81,7 +81,7 @@ starting a round.
    means more terraform apply/destroy cycles.
 3. Run the SAME playbook against both. Any divergence needs to be reproduced with a minimal
    repro and confirmed against real `ansible-playbook` (not assumed) before treating it as a
-   crystal-ansible bug - plenty of "bugs" turn out to be broken upstream repos, missing Galaxy
+   krikri-playbook bug - plenty of "bugs" turn out to be broken upstream repos, missing Galaxy
    roles, or role-side gaps (e.g. `php-mysql`'s own repo ships no `vars/Debian.yml` at all) that
    affect real Ansible identically.
 4. **Test idempotency explicitly** (run the role twice) - a single successful run can hide a

@@ -3,11 +3,11 @@
 require "json"
 require "http/client"
 require "uri"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/apt_repository_line"
-require "../src/crystal_play/plugin_helpers/apt_ppa"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/apt_repository_line"
+require "../src/krikri/plugin_helpers/apt_ppa"
 
-module CrystalPlay
+module Krikri
   # Apt_repository plugin - adds/removes a Debian/Ubuntu APT source line.
   # Compatible with Ansible's ansible.builtin.apt_repository module.
   #
@@ -414,5 +414,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::AptRepositoryPlugin.new(config)
+plugin = Krikri::AptRepositoryPlugin.new(config)
 plugin.run

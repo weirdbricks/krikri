@@ -18,9 +18,9 @@
   gather_facts: false
 
   vars:
-    test_image: "localhost/crystal-ansible-compat:latest"
-    test_network: "crystal-ansible-test-net"
-    test_container: "crystal-ansible-test-container"
+    test_image: "localhost/krikri-playbook-compat:latest"
+    test_network: "krikri-playbook-test-net"
+    test_container: "krikri-playbook-test-container"
 
   tasks:
     - name: ensure the test image is present

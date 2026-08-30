@@ -5,7 +5,7 @@ require "../spec_helper"
 # specifically about the vendored Crinja fork's evaluator, not the
 # hand-rolled plain {{ }} evaluator.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "a {% for %} loop over an undefined variable" do

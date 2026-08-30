@@ -1,10 +1,10 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/user_state"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/user_state"
 
-module CrystalPlay
+module Krikri
   # User plugin - manages a system account via getent/useradd/usermod/userdel
   # Compatible with (a subset of) Ansible's ansible.builtin.user module
   #
@@ -308,5 +308,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::UserPlugin.new(config)
+plugin = Krikri::UserPlugin.new(config)
 plugin.run

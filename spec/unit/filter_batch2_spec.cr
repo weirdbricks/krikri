@@ -1,8 +1,8 @@
 require "../spec_helper"
 require "crinja"
 require "crinja/json"
-require "../../src/crystal_play/jinja_filters"
-require "../../src/crystal_play/variable_substitutor/crinja_renderer"
+require "../../src/krikri/jinja_filters"
+require "../../src/krikri/variable_substitutor/crinja_renderer"
 
 # P2.8-P2.14 + P2.15 (FINDINGS_CHECKLIST.md / PATTERN2_AUDIT.md): the
 # remaining filter batch, plus the verify-then-fix check.
@@ -19,7 +19,7 @@ require "../../src/crystal_play/variable_substitutor/crinja_renderer"
 # comment at the registration site for the checklist's "dict" wording).
 #
 # Parity contract: every filter is exercised through BOTH a pure-Crinja
-# render AND crystal-ansible's own CrinjaRenderer (the path the
+# render AND krikri-playbook's own CrinjaRenderer (the path the
 # template: action plugin uses); a divergence between the two is a
 # failing test.
 private def crinja_render(tpl : String, vars = nil) : String
@@ -30,7 +30,7 @@ rescue e
 end
 
 private def renderer_render(tpl : String, vars : Hash(String, JSON::Any) = Hash(String, JSON::Any).new) : String
-  CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(vars).render(tpl)
+  Krikri::VariableSubstitutor::CrinjaRenderer.new(vars).render(tpl)
 rescue e
   "ERR: #{e.message}"
 end
@@ -153,7 +153,7 @@ describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
     end
   end
 
-  # ---- Cross-engine parity: pure Crinja vs crystal-ansible's CrinjaRenderer ----
+  # ---- Cross-engine parity: pure Crinja vs krikri-playbook's CrinjaRenderer ----
   describe "parity: pure Crinja render vs CrinjaRenderer" do
     it "strftime agrees between engines" do
       v = Hash(String, JSON::Any).new
@@ -188,7 +188,7 @@ describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
       {"name": "root", "keys": ["ssh-ed25519 AAAA1", "ssh-ed25519 AAAA2"]},
       {"name": "bob", "keys": ["ssh-ed25519 BBBB3"]}
     ]))
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     # The classic subelements loop shape from real roles.
     renderer.render(
       %({% for user, key in users | subelements('keys') %}{{ user.name }}:{{ key }};{% endfor %})

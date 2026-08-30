@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # Replace Plugin - Replace each regex match in a file with a replacement
   # string, matching ansible.builtin.replace semantics.
   #
@@ -150,5 +150,5 @@ end
 # Entry point
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::ReplacePlugin.new(config)
+plugin = Krikri::ReplacePlugin.new(config)
 plugin.run

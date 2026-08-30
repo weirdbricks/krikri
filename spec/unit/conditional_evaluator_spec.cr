@@ -1,6 +1,6 @@
 require "../spec_helper"
-require "../../src/crystal_play/conditional_evaluator"
-require "../../src/crystal_play/jinja_filters"
+require "../../src/krikri/conditional_evaluator"
+require "../../src/krikri/jinja_filters"
 
 private def vars(hash : Hash(String, JSON::Any::Type)) : Hash(String, JSON::Any)
   result = Hash(String, JSON::Any).new
@@ -10,43 +10,43 @@ end
 
 private EMPTY_VARS = Hash(String, JSON::Any).new
 
-describe CrystalPlay::ConditionalEvaluator do
+describe Krikri::ConditionalEvaluator do
   describe "equality" do
     it "evaluates == true when values match" do
       v = vars({"foo" => "bar"} of String => JSON::Any::Type)
-      CrystalPlay::ConditionalEvaluator.evaluate(%(foo == "bar"), v).should be_true
+      Krikri::ConditionalEvaluator.evaluate(%(foo == "bar"), v).should be_true
     end
 
     it "evaluates == false when values differ" do
       v = vars({"foo" => "baz"} of String => JSON::Any::Type)
-      CrystalPlay::ConditionalEvaluator.evaluate(%(foo == "bar"), v).should be_false
+      Krikri::ConditionalEvaluator.evaluate(%(foo == "bar"), v).should be_false
     end
 
     it "evaluates !=" do
       v = vars({"foo" => "baz"} of String => JSON::Any::Type)
-      CrystalPlay::ConditionalEvaluator.evaluate(%(foo != "bar"), v).should be_true
+      Krikri::ConditionalEvaluator.evaluate(%(foo != "bar"), v).should be_true
     end
   end
 
   describe "numeric comparisons" do
     it "evaluates <" do
       v = vars({"count" => 3_i64} of String => JSON::Any::Type)
-      CrystalPlay::ConditionalEvaluator.evaluate("count < 5", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("count < 5", v).should be_true
     end
 
     it "evaluates >" do
       v = vars({"count" => 3_i64} of String => JSON::Any::Type)
-      CrystalPlay::ConditionalEvaluator.evaluate("count > 5", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("count > 5", v).should be_false
     end
 
     it "evaluates <=" do
       v = vars({"count" => 5_i64} of String => JSON::Any::Type)
-      CrystalPlay::ConditionalEvaluator.evaluate("count <= 5", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("count <= 5", v).should be_true
     end
 
     it "evaluates >=" do
       v = vars({"count" => 5_i64} of String => JSON::Any::Type)
-      CrystalPlay::ConditionalEvaluator.evaluate("count >= 6", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("count >= 6", v).should be_false
     end
   end
 
@@ -62,21 +62,21 @@ describe CrystalPlay::ConditionalEvaluator do
       # this module's own much simpler dispatch, which has no arithmetic
       # concept at all, and always evaluated false.
       v = vars({"n" => 10_i64} of String => JSON::Any::Type)
-      CrystalPlay::ConditionalEvaluator.evaluate("n / 2 == 5", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("n / 2 == 6", v).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("n * 2 == 20", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("n / 2 == 5", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("n / 2 == 6", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("n * 2 == 20", v).should be_true
     end
   end
 
   describe "boolean operators" do
     it "evaluates 'and' requiring all parts true" do
       v = vars({"a" => true, "b" => false} of String => JSON::Any::Type)
-      CrystalPlay::ConditionalEvaluator.evaluate("a and b", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("a and b", v).should be_false
     end
 
     it "evaluates 'or' requiring any part true" do
       v = vars({"a" => true, "b" => false} of String => JSON::Any::Type)
-      CrystalPlay::ConditionalEvaluator.evaluate("a or b", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("a or b", v).should be_true
     end
 
     it "fully unwraps a double-wrapped parenthesized 'and'-joined clause" do
@@ -99,12 +99,12 @@ describe CrystalPlay::ConditionalEvaluator do
       cond = "(d.unit | count > 0) and ((d.unit.after is defined and d.unit.after | count > 0) or " \
              "(d.unit.wants is defined and d.unit.wants | count > 0) or " \
              "(d.unit.requires is defined and d.unit.requires | count > 0))"
-      CrystalPlay::ConditionalEvaluator.evaluate(cond, v, strict: true, raise_undefined: true).should be_false
+      Krikri::ConditionalEvaluator.evaluate(cond, v, strict: true, raise_undefined: true).should be_false
     end
 
     it "evaluates leading 'not'" do
       v = vars({"a" => false} of String => JSON::Any::Type)
-      CrystalPlay::ConditionalEvaluator.evaluate("not a", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("not a", v).should be_true
     end
 
     it "short-circuits 'not a or b' as (not a) or b, not not(a or b)" do
@@ -122,7 +122,7 @@ describe CrystalPlay::ConditionalEvaluator do
       # discarding short-circuiting and returning the wrong (and, for
       # the real playbook, erroring-clause-dependent) result.
       v = vars({"a" => false} of String => JSON::Any::Type)
-      CrystalPlay::ConditionalEvaluator.evaluate(%(not a or "x" in undefined_var.stdout), v).should be_true
+      Krikri::ConditionalEvaluator.evaluate(%(not a or "x" in undefined_var.stdout), v).should be_true
     end
   end
 
@@ -142,40 +142,40 @@ describe CrystalPlay::ConditionalEvaluator do
       v = Hash(String, JSON::Any).new
       v["my_list"] = JSON.parse("[]")
       v["my_dict"] = JSON.parse("{}")
-      CrystalPlay::ConditionalEvaluator.evaluate("my_list", v).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("my_dict", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("my_list", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("my_dict", v).should be_false
     end
 
     it "treats a non-empty list/dict as truthy" do
       v = Hash(String, JSON::Any).new
       v["my_list"] = JSON.parse(%(["a"]))
       v["my_dict"] = JSON.parse(%({"k": "v"}))
-      CrystalPlay::ConditionalEvaluator.evaluate("my_list", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("my_dict", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("my_list", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("my_dict", v).should be_true
     end
 
     it "treats an empty list reached via a dotted path as falsy too" do
       v = Hash(String, JSON::Any).new
       v["nested"] = JSON.parse(%({"empty_list": []}))
-      CrystalPlay::ConditionalEvaluator.evaluate("nested.empty_list", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("nested.empty_list", v).should be_false
     end
   end
 
   describe "membership ('in')" do
     it "checks substring membership" do
-      CrystalPlay::ConditionalEvaluator.evaluate(%("ba" in "bar"), EMPTY_VARS).should be_true
+      Krikri::ConditionalEvaluator.evaluate(%("ba" in "bar"), EMPTY_VARS).should be_true
     end
 
     it "checks 'not in' membership (os_hardening's su-binary gate)" do
       v = Hash(String, JSON::Any).new
       v["os_security_users_allow"] = JSON::Any.new(Array(JSON::Any).new)
-      CrystalPlay::ConditionalEvaluator.evaluate(%('change_user' not in os_security_users_allow), v).should be_true
+      Krikri::ConditionalEvaluator.evaluate(%('change_user' not in os_security_users_allow), v).should be_true
     end
 
     it "'not in' is false when the list does contain the item" do
       v = Hash(String, JSON::Any).new
       v["os_security_users_allow"] = JSON::Any.new([JSON::Any.new("change_user")])
-      CrystalPlay::ConditionalEvaluator.evaluate(%('change_user' not in os_security_users_allow), v).should be_false
+      Krikri::ConditionalEvaluator.evaluate(%('change_user' not in os_security_users_allow), v).should be_false
     end
 
     it "handles a quoted literal that itself contains the word 'in' as its own word" do
@@ -193,7 +193,7 @@ describe CrystalPlay::ConditionalEvaluator do
       # playbook.
       v = Hash(String, JSON::Any).new
       v["probe2"] = JSON.parse(%({"stdout": "already in peer list"}))
-      CrystalPlay::ConditionalEvaluator.evaluate(%('already in peer list' not in probe2.stdout), v).should be_false
+      Krikri::ConditionalEvaluator.evaluate(%('already in peer list' not in probe2.stdout), v).should be_false
     end
 
     it "checks membership in a literal numeric list against a real int item" do
@@ -207,17 +207,17 @@ describe CrystalPlay::ConditionalEvaluator do
       # the real rc, hard-failing a task real Ansible treats as success.
       v = Hash(String, JSON::Any).new
       v["result"] = JSON.parse(%({"rc": 4}))
-      CrystalPlay::ConditionalEvaluator.evaluate("result.rc in [0, 3, 4]", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("result.rc not in [0, 3, 4]", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("result.rc in [0, 3, 4]", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("result.rc not in [0, 3, 4]", v).should be_false
 
       v["result"] = JSON.parse(%({"rc": 7}))
-      CrystalPlay::ConditionalEvaluator.evaluate("result.rc in [0, 3, 4]", v).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("result.rc not in [0, 3, 4]", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("result.rc in [0, 3, 4]", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("result.rc not in [0, 3, 4]", v).should be_true
     end
 
     it "checks membership against a METHOD CALL (not just a bare variable or filter)" do
       # Real bug found benchmarking robertdebock.squid (round 48,
-      # crystal-ansible 0.9.389): its own assert.yml has
+      # krikri-playbook 0.9.389): its own assert.yml has
       # `squid_cache_dir.split(" ")[0] in [ "ufs", "aufs", ... ]` - a
       # Python-style `.split(...)` METHOD call (not a `| split` Jinja
       # filter) followed by indexing. #evaluate_value's
@@ -233,12 +233,12 @@ describe CrystalPlay::ConditionalEvaluator do
       v = Hash(String, JSON::Any).new
       v["squid_cache_dir"] = JSON::Any.new("aufs /var/spool/squid 16000 16 256 max-size=8589934592")
 
-      CrystalPlay::ConditionalEvaluator.evaluate(
+      Krikri::ConditionalEvaluator.evaluate(
         %(squid_cache_dir.split(" ")[0] in [ "ufs", "aufs", "diskd", "rock", "null" ]), v
       ).should be_true
 
       v["squid_cache_dir"] = JSON::Any.new("bogus /var/spool/squid")
-      CrystalPlay::ConditionalEvaluator.evaluate(
+      Krikri::ConditionalEvaluator.evaluate(
         %(squid_cache_dir.split(" ")[0] in [ "ufs", "aufs", "diskd", "rock", "null" ]), v
       ).should be_false
     end
@@ -249,23 +249,23 @@ describe CrystalPlay::ConditionalEvaluator do
       v = Hash(String, JSON::Any).new
       v["ansible_facts"] = JSON::Any.new({"os_family" => JSON::Any.new("Debian")})
       combined = %((ansible_facts.os_family != 'Suse') and (ansible_facts.os_family != 'Archlinux'))
-      CrystalPlay::ConditionalEvaluator.evaluate(combined, v).should be_true
+      Krikri::ConditionalEvaluator.evaluate(combined, v).should be_true
     end
 
     it "does not unwrap a paren that is not a full wrap (trailing content)" do
       v = vars({"a" => "x"} of String => JSON::Any::Type)
-      CrystalPlay::ConditionalEvaluator.evaluate(%((a == "x") and true), v).should be_true
+      Krikri::ConditionalEvaluator.evaluate(%((a == "x") and true), v).should be_true
     end
   end
 
   describe "definedness" do
     it "evaluates 'is defined' true for present variables" do
       v = vars({"foo" => "bar"} of String => JSON::Any::Type)
-      CrystalPlay::ConditionalEvaluator.evaluate("foo is defined", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("foo is defined", v).should be_true
     end
 
     it "evaluates 'is not defined' true for missing variables" do
-      CrystalPlay::ConditionalEvaluator.evaluate("foo is not defined", EMPTY_VARS).should be_true
+      Krikri::ConditionalEvaluator.evaluate("foo is not defined", EMPTY_VARS).should be_true
     end
   end
 
@@ -282,52 +282,52 @@ describe CrystalPlay::ConditionalEvaluator do
     it "reads 'failed' off a registered result" do
       v = Hash(String, JSON::Any).new
       v["check"] = JSON.parse(%({"failed": true, "changed": false}))
-      CrystalPlay::ConditionalEvaluator.evaluate("check is failed", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("not check is failed", v).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("check is not failed", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("check is failed", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("not check is failed", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("check is not failed", v).should be_false
     end
 
     it "'succeeded'/'success' are the inverse of 'failed', not a separate stored field" do
       v = Hash(String, JSON::Any).new
       v["check"] = JSON.parse(%({"failed": false, "changed": true}))
-      CrystalPlay::ConditionalEvaluator.evaluate("check is succeeded", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("check is success", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("check is succeeded", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("check is success", v).should be_true
 
       v["check"] = JSON.parse(%({"failed": true}))
-      CrystalPlay::ConditionalEvaluator.evaluate("check is succeeded", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("check is succeeded", v).should be_false
     end
 
     it "reads 'changed'/'skipped' off a registered result" do
       v = Hash(String, JSON::Any).new
       v["check"] = JSON.parse(%({"failed": false, "changed": true}))
-      CrystalPlay::ConditionalEvaluator.evaluate("check is changed", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("check is not skipped", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("check is changed", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("check is not skipped", v).should be_true
     end
   end
 
   describe "truthiness" do
     it "treats a bare true variable as truthy" do
       v = vars({"flag" => true} of String => JSON::Any::Type)
-      CrystalPlay::ConditionalEvaluator.evaluate("flag", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("flag", v).should be_true
     end
 
     it "treats a bare false variable as falsy" do
       v = vars({"flag" => false} of String => JSON::Any::Type)
-      CrystalPlay::ConditionalEvaluator.evaluate("flag", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("flag", v).should be_false
     end
 
     it "treats an undefined bare variable as falsy" do
-      CrystalPlay::ConditionalEvaluator.evaluate("missing", EMPTY_VARS).should be_false
+      Krikri::ConditionalEvaluator.evaluate("missing", EMPTY_VARS).should be_false
     end
 
     it "treats a non-empty string as truthy" do
       v = vars({"name" => "x"} of String => JSON::Any::Type)
-      CrystalPlay::ConditionalEvaluator.evaluate("name", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("name", v).should be_true
     end
 
     it "treats an empty string as falsy" do
       v = vars({"name" => ""} of String => JSON::Any::Type)
-      CrystalPlay::ConditionalEvaluator.evaluate("name", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("name", v).should be_false
     end
   end
 
@@ -341,26 +341,26 @@ describe CrystalPlay::ConditionalEvaluator do
     it "resolves a single-level dotted field for equality" do
       v = Hash(String, JSON::Any).new
       v["result"] = JSON.parse(%({"rc": 0}))
-      CrystalPlay::ConditionalEvaluator.evaluate("result.rc == 0", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("result.rc != 0", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("result.rc == 0", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("result.rc != 0", v).should be_false
     end
 
     it "resolves a two-level (nested) dotted field for truthiness" do
       v = Hash(String, JSON::Any).new
       v["stat_result"] = JSON.parse(%({"stat": {"exists": true}}))
-      CrystalPlay::ConditionalEvaluator.evaluate("stat_result.stat.exists", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("stat_result.stat.exists", v).should be_true
     end
 
     it "treats a dotted field resolving to false as falsy" do
       v = Hash(String, JSON::Any).new
       v["stat_result"] = JSON.parse(%({"stat": {"exists": false}}))
-      CrystalPlay::ConditionalEvaluator.evaluate("stat_result.stat.exists", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("stat_result.stat.exists", v).should be_false
     end
 
     it "treats a missing dotted field as undefined (falsy), not an error" do
       v = Hash(String, JSON::Any).new
       v["result"] = JSON.parse(%({"rc": 0}))
-      CrystalPlay::ConditionalEvaluator.evaluate("result.nonexistent", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("result.nonexistent", v).should be_false
     end
 
     it "does not treat a float literal's decimal point as a dotted variable path" do
@@ -371,12 +371,12 @@ describe CrystalPlay::ConditionalEvaluator do
       # instead of treating "1.5" as the numeric literal it is.
       v = Hash(String, JSON::Any).new
       v["1"] = JSON.parse(%({"5": "unexpected"}))
-      CrystalPlay::ConditionalEvaluator.evaluate(%(1.5 == "unexpected"), v).should be_false
+      Krikri::ConditionalEvaluator.evaluate(%(1.5 == "unexpected"), v).should be_false
     end
 
     it "still evaluates a plain (non-dotted) variable normally" do
       v = vars({"foo" => "bar"} of String => JSON::Any::Type)
-      CrystalPlay::ConditionalEvaluator.evaluate(%(foo == "bar"), v).should be_true
+      Krikri::ConditionalEvaluator.evaluate(%(foo == "bar"), v).should be_true
     end
   end
 
@@ -390,40 +390,40 @@ describe CrystalPlay::ConditionalEvaluator do
     it "evaluates a filter chain combined with a comparison (the originally-reported case)" do
       v = Hash(String, JSON::Any).new
       v["mylist"] = JSON::Any.new([JSON::Any.new("a"), JSON::Any.new("b"), JSON::Any.new("c")])
-      CrystalPlay::ConditionalEvaluator.evaluate("mylist | length > 0", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("mylist | length > 0", v).should be_true
     end
 
     it "evaluates false when the filtered value doesn't satisfy the comparison" do
       v = Hash(String, JSON::Any).new
       v["mylist"] = JSON::Any.new([] of JSON::Any)
-      CrystalPlay::ConditionalEvaluator.evaluate("mylist | length > 0", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("mylist | length > 0", v).should be_false
     end
 
     it "evaluates a bare filter chain for truthiness (no comparison at all)" do
       v = Hash(String, JSON::Any).new
       v["mylist"] = JSON::Any.new([JSON::Any.new("a"), JSON::Any.new("b")])
-      CrystalPlay::ConditionalEvaluator.evaluate("mylist | length", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("mylist | length", v).should be_true
 
       v["mylist"] = JSON::Any.new([] of JSON::Any)
-      CrystalPlay::ConditionalEvaluator.evaluate("mylist | length", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("mylist | length", v).should be_false
     end
 
     it "evaluates a filter chain on a dotted (nested) operand" do
       v = Hash(String, JSON::Any).new
       v["result"] = JSON.parse(%({"stdout": "  hello  "}))
-      CrystalPlay::ConditionalEvaluator.evaluate(%(result.stdout | trim == "hello"), v).should be_true
+      Krikri::ConditionalEvaluator.evaluate(%(result.stdout | trim == "hello"), v).should be_true
     end
 
     it "evaluates a chained (multi-filter) pipeline as a comparison operand" do
       v = Hash(String, JSON::Any).new
       v["mylist"] = JSON::Any.new([JSON::Any.new("b"), JSON::Any.new("a")])
-      CrystalPlay::ConditionalEvaluator.evaluate(%(mylist | sort | join(',') == "a,b"), v).should be_true
+      Krikri::ConditionalEvaluator.evaluate(%(mylist | sort | join(',') == "a,b"), v).should be_true
     end
 
     it "combines a filter-chain comparison with and/or without regressing existing operators" do
       v = Hash(String, JSON::Any).new
       v["mylist"] = JSON::Any.new([JSON::Any.new("a"), JSON::Any.new("b"), JSON::Any.new("c")])
-      CrystalPlay::ConditionalEvaluator.evaluate("mylist | length > 0 and mylist | length == 3", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("mylist | length > 0 and mylist | length == 3", v).should be_true
     end
 
     it "re-templates a bare variable whose own raw value is still unrendered Jinja before checking truthiness" do
@@ -436,10 +436,10 @@ describe CrystalPlay::ConditionalEvaluator do
       # actually rendered to.
       v = Hash(String, JSON::Any).new
       v["vault_enterprise"] = JSON::Any.new(%({{ lookup('env', 'CRYSTAL_ANSIBLE_SPEC_COND_ENV_TEST') | default(false, true) }}))
-      CrystalPlay::ConditionalEvaluator.evaluate("vault_enterprise", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("vault_enterprise", v).should be_false
 
       ENV["CRYSTAL_ANSIBLE_SPEC_COND_ENV_TEST"] = "true"
-      CrystalPlay::ConditionalEvaluator.evaluate("vault_enterprise", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("vault_enterprise", v).should be_true
       ENV.delete("CRYSTAL_ANSIBLE_SPEC_COND_ENV_TEST")
     end
 
@@ -457,7 +457,7 @@ describe CrystalPlay::ConditionalEvaluator do
       v = Hash(String, JSON::Any).new
       v["go_arch"] = JSON::Any.new(%({{ lookup('env', 'CRYSTAL_ANSIBLE_SPEC_COND_ENV_TEST_2') | default('amd64', true) }}))
       v["item"] = JSON::Any.new("prometheus-2.27.0.linux-amd64.tar.gz")
-      CrystalPlay::ConditionalEvaluator.evaluate(%(('linux-' + go_arch + '.tar.gz') in item), v).should be_true
+      Krikri::ConditionalEvaluator.evaluate(%(('linux-' + go_arch + '.tar.gz') in item), v).should be_true
     end
 
     it "evaluates 'is mapping' / 'is sequence' (plus negations), real Jinja2 type tests" do
@@ -473,16 +473,16 @@ describe CrystalPlay::ConditionalEvaluator do
       v["a_list"] = JSON.parse(%([1, 2, 3]))
       v["a_string"] = JSON::Any.new("hello")
 
-      CrystalPlay::ConditionalEvaluator.evaluate("a_dict is mapping", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("a_list is mapping", v).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("a_list is sequence", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("a_dict is not sequence", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("a_dict is mapping", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("a_list is mapping", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("a_list is sequence", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("a_dict is not sequence", v).should be_true
       # A bare String deliberately does NOT match `is sequence` - every
       # real playbook using this pattern means "is this a list", and
       # matching String too (technically valid Python/Jinja2 semantics,
       # since strings are iterable) would make `is not sequence` wrongly
       # reject ordinary string variables.
-      CrystalPlay::ConditionalEvaluator.evaluate("a_string is not sequence", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("a_string is not sequence", v).should be_true
     end
 
     it "evaluates 'is boolean' / 'is number' / 'is string' / 'is integer' / 'is float' / 'is iterable', the rest of Jinja2's own type tests" do
@@ -499,23 +499,23 @@ describe CrystalPlay::ConditionalEvaluator do
       v["a_string"] = JSON::Any.new("hello")
       v["a_list"] = JSON.parse(%([1, 2, 3]))
 
-      CrystalPlay::ConditionalEvaluator.evaluate("a_bool is boolean", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("an_int is boolean", v).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("an_int is number", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("a_float is number", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("an_int is integer", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("a_float is integer", v).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("a_float is float", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("a_string is string", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("an_int is string", v).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("a_list is iterable", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("a_string is iterable", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("an_int is not iterable", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("a_bool is boolean", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("an_int is boolean", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("an_int is number", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("a_float is number", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("an_int is integer", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("a_float is integer", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("a_float is float", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("a_string is string", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("an_int is string", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("a_list is iterable", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("a_string is iterable", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("an_int is not iterable", v).should be_true
     end
 
     it "evaluates a type test against a FILTER CHAIN, not just a bare variable" do
       # Real bug found benchmarking robertdebock.java (round 45,
-      # crystal-ansible 0.9.388): its own assert.yml has `java_version |
+      # krikri-playbook 0.9.388): its own assert.yml has `java_version |
       # int is number` and `java_version | int in [6, 7, ...]` -
       # #matches_type_test?'s var_name-lookup treated the WHOLE
       # "java_version | int" string (filter pipe included) as a literal
@@ -531,9 +531,9 @@ describe CrystalPlay::ConditionalEvaluator do
       v = Hash(String, JSON::Any).new
       v["java_version"] = JSON::Any.new("19")
 
-      CrystalPlay::ConditionalEvaluator.evaluate("java_version | int is number", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("java_version | int in [6, 7, 8, 9, 10, 11, 12, 13, 17, 19, 20, 21]", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("java_version | int in [6, 7, 8]", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("java_version | int is number", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("java_version | int in [6, 7, 8, 9, 10, 11, 12, 13, 17, 19, 20, 21]", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("java_version | int in [6, 7, 8]", v).should be_false
     end
 
     it "evaluates 'is none', real Jinja2's None/null test" do
@@ -547,9 +547,9 @@ describe CrystalPlay::ConditionalEvaluator do
       v["a_string"] = JSON::Any.new("127.0.0.1")
       v["a_null"] = JSON::Any.new(nil)
 
-      CrystalPlay::ConditionalEvaluator.evaluate("a_string is none", v).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("a_string is not none", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("a_null is none", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("a_string is none", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("a_string is not none", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("a_null is none", v).should be_true
     end
 
     it "evaluates 'is match(...)' / 'is search(...)' (plus negations), real Jinja2 regex tests" do
@@ -568,14 +568,14 @@ describe CrystalPlay::ConditionalEvaluator do
       # match() anchors at the START only (Python's re.match, not a
       # full-string anchor) - "latest" itself, and any string merely
       # *starting* with "latest", both match.
-      CrystalPlay::ConditionalEvaluator.evaluate(%(version is match("latest")), v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate(%(version is not match("late")), v).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate(%(version is match("^lat")), v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate(%(version is match("stable")), v).should be_false
+      Krikri::ConditionalEvaluator.evaluate(%(version is match("latest")), v).should be_true
+      Krikri::ConditionalEvaluator.evaluate(%(version is not match("late")), v).should be_false
+      Krikri::ConditionalEvaluator.evaluate(%(version is match("^lat")), v).should be_true
+      Krikri::ConditionalEvaluator.evaluate(%(version is match("stable")), v).should be_false
 
       # search() matches anywhere in the string (Python's re.search).
-      CrystalPlay::ConditionalEvaluator.evaluate(%(path is search("\\d+\\.\\d+\\.\\d+")), v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate(%(path is not search("nomatch")), v).should be_true
+      Krikri::ConditionalEvaluator.evaluate(%(path is search("\\d+\\.\\d+\\.\\d+")), v).should be_true
+      Krikri::ConditionalEvaluator.evaluate(%(path is not search("nomatch")), v).should be_true
     end
 
     it "evaluates 'is subset(...)' / 'is superset(...)' / 'is contains(...)' (plus negations)" do
@@ -584,12 +584,12 @@ describe CrystalPlay::ConditionalEvaluator do
       v["big"] = JSON.parse(%(["a", "b", "c"]))
       v["items"] = JSON.parse(%(["x", "y", "z"]))
 
-      CrystalPlay::ConditionalEvaluator.evaluate("small is subset(big)", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("big is subset(small)", v).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("big is superset(small)", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("small is not superset(big)", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate(%(items is contains("y")), v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate(%(items is not contains("q")), v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("small is subset(big)", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("big is subset(small)", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("big is superset(small)", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("small is not superset(big)", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate(%(items is contains("y")), v).should be_true
+      Krikri::ConditionalEvaluator.evaluate(%(items is not contains("q")), v).should be_true
     end
 
     it "evaluates 'is exists' / 'is file' / 'is directory' / 'is link' / 'is link_exists' against the CONTROLLER's filesystem" do
@@ -607,13 +607,13 @@ describe CrystalPlay::ConditionalEvaluator do
       v["l"] = JSON::Any.new(link_path)
       v["missing"] = JSON::Any.new("/no/such/path/at/all")
 
-      CrystalPlay::ConditionalEvaluator.evaluate("f is exists", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("f is file", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("f is not directory", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("d is directory", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("l is link", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("missing is not exists", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("l is link_exists", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("f is exists", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("f is file", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("f is not directory", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("d is directory", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("l is link", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("missing is not exists", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("l is link_exists", v).should be_true
 
       File.delete(link_path)
       File.delete(file_path)
@@ -631,8 +631,8 @@ describe CrystalPlay::ConditionalEvaluator do
       v["b"] = JSON::Any.new(path1)
       v["c"] = JSON::Any.new(path2)
 
-      CrystalPlay::ConditionalEvaluator.evaluate("a is same_file(b)", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("a is not same_file(c)", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("a is same_file(b)", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("a is not same_file(c)", v).should be_true
 
       File.delete(path1)
       File.delete(path2)
@@ -643,13 +643,13 @@ describe CrystalPlay::ConditionalEvaluator do
       v["root"] = JSON::Any.new("/")
       v["notmount"] = JSON::Any.new("/no/such/mountpoint/at/all")
 
-      CrystalPlay::ConditionalEvaluator.evaluate("root is mount", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("notmount is not mount", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("root is mount", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("notmount is not mount", v).should be_true
     end
 
     it "evaluates 'is vault_encrypted' / 'is vaulted_file'" do
       path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "conditional_vault_test.txt")
-      encrypted = CrystalPlay::Vault.encrypt("secret", "password123")
+      encrypted = Krikri::Vault.encrypt("secret", "password123")
       File.write(path, encrypted)
 
       v = Hash(String, JSON::Any).new
@@ -657,9 +657,9 @@ describe CrystalPlay::ConditionalEvaluator do
       v["plain"] = JSON::Any.new("not encrypted")
       v["path"] = JSON::Any.new(path)
 
-      CrystalPlay::ConditionalEvaluator.evaluate("ciphertext is vault_encrypted", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("plain is not vault_encrypted", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("path is vaulted_file", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("ciphertext is vault_encrypted", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("plain is not vault_encrypted", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("path is vaulted_file", v).should be_true
 
       File.delete(path)
     end
@@ -669,8 +669,8 @@ describe CrystalPlay::ConditionalEvaluator do
       v["good"] = JSON::Any.new("urn:isbn:0451450523")
       v["bad"] = JSON::Any.new("not-a-urn")
 
-      CrystalPlay::ConditionalEvaluator.evaluate("good is urn", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("bad is not urn", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("good is urn", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("bad is not urn", v).should be_true
     end
 
     it "evaluates 'is started' / 'is finished' / 'is timedout' / 'is reachable' / 'is unreachable' on a registered result dict (int 0/1, not bool)" do
@@ -679,11 +679,11 @@ describe CrystalPlay::ConditionalEvaluator do
       v["conn"] = JSON.parse(%({"unreachable": true}))
       v["conn_ok"] = JSON.parse(%({"unreachable": false}))
 
-      CrystalPlay::ConditionalEvaluator.evaluate("job is started", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("job is not finished", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("conn is unreachable", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("conn is not reachable", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("conn_ok is reachable", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("job is started", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("job is not finished", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("conn is unreachable", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("conn is not reachable", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("conn_ok is reachable", v).should be_true
     end
 
     it "falls back to Crinja for any real Jinja2 'is [not] <test>' this module hasn't hand-implemented (divisibleby, etc)" do
@@ -702,10 +702,10 @@ describe CrystalPlay::ConditionalEvaluator do
       v["odd_n"] = JSON::Any.new(1_i64)
       v["even_n"] = JSON::Any.new(2_i64)
 
-      CrystalPlay::ConditionalEvaluator.evaluate("odd_n is not divisibleby 2", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("even_n is not divisibleby 2", v).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("even_n is divisibleby 2", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("odd_n is divisibleby 2", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("odd_n is not divisibleby 2", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("even_n is not divisibleby 2", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("even_n is divisibleby 2", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("odd_n is divisibleby 2", v).should be_false
     end
 
     it "falls back to Crinja for a bare function-call condition (lookup(...), query(...), etc)" do
@@ -728,10 +728,10 @@ describe CrystalPlay::ConditionalEvaluator do
       v = Hash(String, JSON::Any).new
       v["my_defined_var"] = JSON::Any.new("hello")
 
-      CrystalPlay::ConditionalEvaluator.evaluate("not lookup('varnames', '^totally_undefined_var$')", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("not lookup('varnames', '^my_defined_var$')", v).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("lookup('varnames', '^totally_undefined_var$')", v).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("lookup('varnames', '^my_defined_var$')", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("not lookup('varnames', '^totally_undefined_var$')", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("not lookup('varnames', '^my_defined_var$')", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("lookup('varnames', '^totally_undefined_var$')", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("lookup('varnames', '^my_defined_var$')", v).should be_true
     end
 
     it "resolves 'is (not) defined' against a dotted variable path" do
@@ -746,9 +746,9 @@ describe CrystalPlay::ConditionalEvaluator do
       v = Hash(String, JSON::Any).new
       v["grafana_security"] = JSON.parse(%({"admin_user": "admin"}))
 
-      CrystalPlay::ConditionalEvaluator.evaluate("grafana_security.admin_user is defined", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("grafana_security.admin_user is not defined", v).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("grafana_security.admin_password is not defined", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("grafana_security.admin_user is defined", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("grafana_security.admin_user is not defined", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("grafana_security.admin_password is not defined", v).should be_true
     end
 
     it "audit pass: re-templates before checking 'is mapping'/'is sequence'" do
@@ -764,7 +764,7 @@ describe CrystalPlay::ConditionalEvaluator do
       v = Hash(String, JSON::Any).new
       v["templated_dict"] = JSON::Any.new("{{ real_dict }}")
       v["real_dict"] = JSON.parse(%({"a": 1}))
-      CrystalPlay::ConditionalEvaluator.evaluate("templated_dict is mapping", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("templated_dict is mapping", v).should be_true
     end
 
     it "audit pass: re-templates a dotted lookup's own unrendered value" do
@@ -776,7 +776,7 @@ describe CrystalPlay::ConditionalEvaluator do
       v = Hash(String, JSON::Any).new
       v["outer"] = JSON.parse(%({"inner": "{{ real_val }}"}))
       v["real_val"] = JSON::Any.new("resolved")
-      CrystalPlay::ConditionalEvaluator.evaluate("outer.inner == 'resolved'", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("outer.inner == 'resolved'", v).should be_true
     end
 
     it "treats the \"undefined\" sentinel string as falsy in a bare filter-chain condition" do
@@ -792,10 +792,10 @@ describe CrystalPlay::ConditionalEvaluator do
       # regardless of whether the searched value actually matched.
       v = Hash(String, JSON::Any).new
       v["mount_requests"] = JSON.parse(%([{"path": "/mnt/tmp", "src": "/tmp", "opts": "bind", "fstype": "none"}]))
-      CrystalPlay::ConditionalEvaluator.evaluate(%(mount_requests | regex_search("swap")), v).should be_false
+      Krikri::ConditionalEvaluator.evaluate(%(mount_requests | regex_search("swap")), v).should be_false
 
       v["mount_requests"] = JSON.parse(%([{"path": "swap", "fstype": "swap"}]))
-      CrystalPlay::ConditionalEvaluator.evaluate(%(mount_requests | regex_search("swap")), v).should be_true
+      Krikri::ConditionalEvaluator.evaluate(%(mount_requests | regex_search("swap")), v).should be_true
     end
 
     it "compares a dotted-access value piped through | int at Int64 (byte-count) scale correctly" do
@@ -821,7 +821,7 @@ describe CrystalPlay::ConditionalEvaluator do
       v = Hash(String, JSON::Any).new
       v["item"] = JSON.parse(%({"size_available": "46429401088"}))
       v["kilobytes_available"] = JSON::Any.new("65536")
-      CrystalPlay::ConditionalEvaluator.evaluate(
+      Krikri::ConditionalEvaluator.evaluate(
         "item.size_available | int >= kilobytes_available | int", v
       ).should be_true
     end
@@ -842,8 +842,8 @@ describe CrystalPlay::ConditionalEvaluator do
     it "raises on a bare filter expression that resolves to None" do
       v = Hash(String, JSON::Any).new
       v["xz_version"] = JSON.parse(%({"stdout": "xz (XZ Utils) 5.2.5"}))
-      expect_raises(CrystalPlay::ConditionalEvaluator::ConditionalBooleanError) do
-        CrystalPlay::ConditionalEvaluator.evaluate(
+      expect_raises(Krikri::ConditionalEvaluator::ConditionalBooleanError) do
+        Krikri::ConditionalEvaluator.evaluate(
           %(xz_version.stdout | regex_search("5\\.6\\.(0|1)")), v, strict: true
         )
       end
@@ -852,7 +852,7 @@ describe CrystalPlay::ConditionalEvaluator do
     it "does not raise for the same expression under when: semantics (strict: false)" do
       v = Hash(String, JSON::Any).new
       v["xz_version"] = JSON.parse(%({"stdout": "xz (XZ Utils) 5.2.5"}))
-      CrystalPlay::ConditionalEvaluator.evaluate(
+      Krikri::ConditionalEvaluator.evaluate(
         %(xz_version.stdout | regex_search("5\\.6\\.(0|1)")), v
       ).should be_false
     end
@@ -871,7 +871,7 @@ describe CrystalPlay::ConditionalEvaluator do
     it "does not raise for a bare `x | bool` filter chain that resolves to a real boolean" do
       v = Hash(String, JSON::Any).new
       v["docker_engine_manage_service"] = JSON::Any.new("yes")
-      CrystalPlay::ConditionalEvaluator.evaluate(
+      Krikri::ConditionalEvaluator.evaluate(
         "docker_engine_manage_service | bool", v, strict: true
       ).should be_true
     end
@@ -880,7 +880,7 @@ describe CrystalPlay::ConditionalEvaluator do
       v = Hash(String, JSON::Any).new
       v["a"] = JSON::Any.new("yes")
       v["b"] = JSON::Any.new("1")
-      CrystalPlay::ConditionalEvaluator.evaluate(
+      Krikri::ConditionalEvaluator.evaluate(
         "(a | bool) and (b | bool)", v, strict: true
       ).should be_true
     end
@@ -894,8 +894,8 @@ describe CrystalPlay::ConditionalEvaluator do
     it "raises for a matching filter too - the result is a string, not a bool" do
       v = Hash(String, JSON::Any).new
       v["xz_version"] = JSON.parse(%({"stdout": "xz (XZ Utils) 5.6.1"}))
-      expect_raises(CrystalPlay::ConditionalEvaluator::ConditionalBooleanError, /type 'str'/) do
-        CrystalPlay::ConditionalEvaluator.evaluate(
+      expect_raises(Krikri::ConditionalEvaluator::ConditionalBooleanError, /type 'str'/) do
+        Krikri::ConditionalEvaluator.evaluate(
           %(xz_version.stdout | regex_search("5\\.6\\.(0|1)")), v, strict: true
         )
       end
@@ -904,7 +904,7 @@ describe CrystalPlay::ConditionalEvaluator do
     it "does not raise for `not` over a None-yielding filter (Python `not` always yields a real bool)" do
       v = Hash(String, JSON::Any).new
       v["xz_version"] = JSON.parse(%({"stdout": "xz (XZ Utils) 5.2.5"}))
-      CrystalPlay::ConditionalEvaluator.evaluate(
+      Krikri::ConditionalEvaluator.evaluate(
         %(not xz_version.stdout | regex_search("5\\.6\\.(0|1)")), v, strict: true
       ).should be_true
     end
@@ -920,34 +920,34 @@ describe CrystalPlay::ConditionalEvaluator do
   describe "ternary (conditional) expressions" do
     it "evaluates the trivial true/false literal case" do
       v = Hash(String, JSON::Any).new
-      CrystalPlay::ConditionalEvaluator.evaluate("true if true else false", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("false if true else true", v).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("true if false else false", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("true if true else false", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("false if true else true", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("true if false else false", v).should be_false
     end
 
     it "does not misparse a comparison inside the true-branch as a top-level comparison" do
       v = Hash(String, JSON::Any).new
-      CrystalPlay::ConditionalEvaluator.evaluate("1 < 2 if true else true", v).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("1 > 2 if true else true", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("1 < 2 if true else true", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("1 > 2 if true else true", v).should be_false
     end
 
     it "matches buluma.auditd's real assert.yml expression" do
       v = Hash(String, JSON::Any).new
       v["auditd_admin_space_left"] = JSON::Any.new(50_i64)
       v["auditd_space_left"] = JSON::Any.new("75")
-      CrystalPlay::ConditionalEvaluator.evaluate(
+      Krikri::ConditionalEvaluator.evaluate(
         %((auditd_admin_space_left | int < auditd_space_left | int) if (auditd_space_left | string is not match(".*%")) else true), v
       ).should be_true
     end
 
     it "respects real Jinja precedence when the branches contain and/or" do
       v = Hash(String, JSON::Any).new
-      CrystalPlay::ConditionalEvaluator.evaluate("true and false if true else true and true", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("true and false if true else true and true", v).should be_false
     end
 
     it "leaves a ternary nested inside parens for the recursive outer-paren unwrap" do
       v = Hash(String, JSON::Any).new
-      CrystalPlay::ConditionalEvaluator.evaluate("true and (false if true else true)", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("true and (false if true else true)", v).should be_false
     end
   end
 
@@ -961,8 +961,8 @@ describe CrystalPlay::ConditionalEvaluator do
     # skipping instead of failing.
     it "raises for a genuinely undefined bare variable reached through a comparison" do
       v = Hash(String, JSON::Any).new
-      expect_raises(CrystalPlay::ConditionalEvaluator::UndefinedVariableError) do
-        CrystalPlay::ConditionalEvaluator.evaluate(
+      expect_raises(Krikri::ConditionalEvaluator::UndefinedVariableError) do
+        Krikri::ConditionalEvaluator.evaluate(
           "git_remote != '' and git_remote != None", v, raise_undefined: true
         )
       end
@@ -970,7 +970,7 @@ describe CrystalPlay::ConditionalEvaluator do
 
     it "does not raise for the same condition under when:'s normal lenient default (raise_undefined: false)" do
       v = Hash(String, JSON::Any).new
-      CrystalPlay::ConditionalEvaluator.evaluate(
+      Krikri::ConditionalEvaluator.evaluate(
         "git_remote != '' and git_remote != None", v
       ).should be_false
     end
@@ -978,7 +978,7 @@ describe CrystalPlay::ConditionalEvaluator do
     it "does not raise once the variable is actually defined" do
       v = Hash(String, JSON::Any).new
       v["git_remote"] = JSON::Any.new("origin")
-      CrystalPlay::ConditionalEvaluator.evaluate(
+      Krikri::ConditionalEvaluator.evaluate(
         "git_remote != '' and git_remote != None", v, raise_undefined: true
       ).should be_true
     end
@@ -986,27 +986,27 @@ describe CrystalPlay::ConditionalEvaluator do
     it "does not raise for the Python/Jinja None literal itself, only for a real undefined variable" do
       v = Hash(String, JSON::Any).new
       v["myvar"] = JSON::Any.new(nil)
-      CrystalPlay::ConditionalEvaluator.evaluate("myvar == None", v, raise_undefined: true).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("myvar == none", v, raise_undefined: true).should be_true
+      Krikri::ConditionalEvaluator.evaluate("myvar == None", v, raise_undefined: true).should be_true
+      Krikri::ConditionalEvaluator.evaluate("myvar == none", v, raise_undefined: true).should be_true
     end
 
     it "raises for a genuinely undefined variable reached through bare truthiness" do
       v = Hash(String, JSON::Any).new
-      expect_raises(CrystalPlay::ConditionalEvaluator::UndefinedVariableError) do
-        CrystalPlay::ConditionalEvaluator.evaluate("totally_undefined_var", v, raise_undefined: true)
+      expect_raises(Krikri::ConditionalEvaluator::UndefinedVariableError) do
+        Krikri::ConditionalEvaluator.evaluate("totally_undefined_var", v, raise_undefined: true)
       end
     end
 
     it "raises for a genuinely undefined dotted path whose root is also undefined" do
       v = Hash(String, JSON::Any).new
-      expect_raises(CrystalPlay::ConditionalEvaluator::UndefinedVariableError) do
-        CrystalPlay::ConditionalEvaluator.evaluate("some_result.stdout == 'x'", v, raise_undefined: true)
+      expect_raises(Krikri::ConditionalEvaluator::UndefinedVariableError) do
+        Krikri::ConditionalEvaluator.evaluate("some_result.stdout == 'x'", v, raise_undefined: true)
       end
     end
 
     it "does NOT raise when the undefined operand goes through a filter/default() - still lenient by design" do
       v = Hash(String, JSON::Any).new
-      CrystalPlay::ConditionalEvaluator.evaluate(
+      Krikri::ConditionalEvaluator.evaluate(
         "git_remote | default('') != ''", v, raise_undefined: true
       ).should be_false
     end
@@ -1014,7 +1014,7 @@ describe CrystalPlay::ConditionalEvaluator do
     it "short-circuits 'or' so an undefined second operand never raises when the first is already true" do
       v = Hash(String, JSON::Any).new
       v["already_true"] = JSON::Any.new(true)
-      CrystalPlay::ConditionalEvaluator.evaluate(
+      Krikri::ConditionalEvaluator.evaluate(
         "already_true or totally_undefined_var", v, raise_undefined: true
       ).should be_true
     end
@@ -1022,14 +1022,14 @@ describe CrystalPlay::ConditionalEvaluator do
     it "short-circuits 'and' so an undefined second operand never raises when the first is already false" do
       v = Hash(String, JSON::Any).new
       v["already_false"] = JSON::Any.new(false)
-      CrystalPlay::ConditionalEvaluator.evaluate(
+      Krikri::ConditionalEvaluator.evaluate(
         "already_false and totally_undefined_var", v, raise_undefined: true
       ).should be_false
     end
 
     it "still evaluates 'is defined' on the undefined variable itself without raising" do
       v = Hash(String, JSON::Any).new
-      CrystalPlay::ConditionalEvaluator.evaluate(
+      Krikri::ConditionalEvaluator.evaluate(
         "totally_undefined_var is not defined", v, raise_undefined: true
       ).should be_true
     end
@@ -1046,7 +1046,7 @@ describe CrystalPlay::ConditionalEvaluator do
     it "does not raise 'is undefined' for a bare float literal operand" do
       v = Hash(String, JSON::Any).new
       v["zsh_version"] = JSON.parse(%({"stdout": "4.9"}))
-      CrystalPlay::ConditionalEvaluator.evaluate(
+      Krikri::ConditionalEvaluator.evaluate(
         "zsh_version.stdout | float < 5.1", v, raise_undefined: true
       ).should be_true
     end
@@ -1058,7 +1058,7 @@ describe CrystalPlay::ConditionalEvaluator do
       # '1' < '5' first-character comparison) - #compare_values needs a
       # real numeric float fallback once the int64 attempt fails for both
       # sides, not just for the literal-recognition fix above.
-      CrystalPlay::ConditionalEvaluator.evaluate(
+      Krikri::ConditionalEvaluator.evaluate(
         "zsh_version.stdout | float < 5.1", v, raise_undefined: true
       ).should be_false
     end
@@ -1072,11 +1072,11 @@ describe CrystalPlay::ConditionalEvaluator do
       v = vars({"a" => true} of String => JSON::Any::Type)
       condition = "(a is defined and\n              a) and\n              (b is defined and\n                b)"
       v2 = vars({"a" => true, "b" => true} of String => JSON::Any::Type)
-      CrystalPlay::ConditionalEvaluator.evaluate(condition, v2).should be_true
+      Krikri::ConditionalEvaluator.evaluate(condition, v2).should be_true
       v3 = vars({"a" => true, "b" => false} of String => JSON::Any::Type)
-      CrystalPlay::ConditionalEvaluator.evaluate(condition, v3).should be_false
+      Krikri::ConditionalEvaluator.evaluate(condition, v3).should be_false
       # untouched single-space conditions still work
-      CrystalPlay::ConditionalEvaluator.evaluate("a is defined and a", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("a is defined and a", v).should be_true
     end
 
     it "treats a regex_search no-match as None for `is not none` (filter chain over a registered result)" do
@@ -1085,13 +1085,13 @@ describe CrystalPlay::ConditionalEvaluator do
       # sentinel string made it TRUE and failed a succeeding task.
       v = vars({"a" => true} of String => JSON::Any::Type)
       v["xz_version"] = JSON::Any.new({"stdout" => JSON::Any.new("xz (XZ Utils) 5.2.5\nliblzma 5.2.5")})
-      CrystalPlay::ConditionalEvaluator.evaluate(
+      Krikri::ConditionalEvaluator.evaluate(
         %(xz_version.stdout | ansible.builtin.regex_search("5\\.6\\.(0|1)") is not none), v
       ).should be_false
       # and TRUE when it does match
       v_hit = vars({"a" => true} of String => JSON::Any::Type)
       v_hit["xz_version"] = JSON::Any.new({"stdout" => JSON::Any.new("xz (XZ Utils) 5.6.0")})
-      CrystalPlay::ConditionalEvaluator.evaluate(
+      Krikri::ConditionalEvaluator.evaluate(
         %(xz_version.stdout | ansible.builtin.regex_search("5\\.6\\.(0|1)") is not none), v_hit
       ).should be_true
     end

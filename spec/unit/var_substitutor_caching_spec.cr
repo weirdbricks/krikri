@@ -1,5 +1,5 @@
 require "../spec_helper"
-require "../../src/crystal_play/variable_substitutor"
+require "../../src/krikri/variable_substitutor"
 
 # Regression cover for the 0.9.79 performance work: the Crinja environment
 # is now shared process-wide, the JSON::Any -> Crinja::Value conversion is
@@ -12,11 +12,11 @@ private def vars_of(pairs : Hash(String, String)) : Hash(String, JSON::Any)
   result
 end
 
-describe CrystalPlay::VarSubstitutor do
+describe Krikri::VarSubstitutor do
   describe "shared Crinja environment" do
     it "keeps two substitutors with different variable sets independent" do
-      first = CrystalPlay::VarSubstitutor.new(vars: vars_of({"name" => "alpha"}), host_name: "h1")
-      second = CrystalPlay::VarSubstitutor.new(vars: vars_of({"name" => "beta"}), host_name: "h2")
+      first = Krikri::VarSubstitutor.new(vars: vars_of({"name" => "alpha"}), host_name: "h1")
+      second = Krikri::VarSubstitutor.new(vars: vars_of({"name" => "beta"}), host_name: "h2")
 
       template = "{% if name %}{{ name }}{% endif %}"
 
@@ -28,7 +28,7 @@ describe CrystalPlay::VarSubstitutor do
     end
 
     it "does not leak a top-level {% set %} from one render into the next" do
-      subject = CrystalPlay::VarSubstitutor.new(vars: vars_of({"base" => "x"}), host_name: "h")
+      subject = Krikri::VarSubstitutor.new(vars: vars_of({"base" => "x"}), host_name: "h")
 
       subject.substitute("{% set leaked = 'yes' %}{{ base }}").should eq("x")
       # `leaked` was only ever bound in the previous render's scope.
@@ -38,7 +38,7 @@ describe CrystalPlay::VarSubstitutor do
     end
 
     it "renders a {% for %} loop identically on repeated calls" do
-      subject = CrystalPlay::VarSubstitutor.new(vars: vars_of({"sep" => "-"}), host_name: "h")
+      subject = Krikri::VarSubstitutor.new(vars: vars_of({"sep" => "-"}), host_name: "h")
       template = "{% for i in [1, 2, 3] %}{{ i }}{{ sep }}{% endfor %}"
 
       first = subject.substitute(template)
@@ -49,7 +49,7 @@ describe CrystalPlay::VarSubstitutor do
 
   describe "#set_variable" do
     it "is visible to the plain {{ }} path after lazy construction" do
-      subject = CrystalPlay::VarSubstitutor.new(vars: vars_of({"a" => "1"}), host_name: "h")
+      subject = Krikri::VarSubstitutor.new(vars: vars_of({"a" => "1"}), host_name: "h")
 
       subject.substitute("{{ a }}").should eq("1")
       subject.set_variable("a", "2")
@@ -57,7 +57,7 @@ describe CrystalPlay::VarSubstitutor do
     end
 
     it "invalidates the renderer's memoized variable conversion" do
-      subject = CrystalPlay::VarSubstitutor.new(vars: vars_of({"a" => "1"}), host_name: "h")
+      subject = Krikri::VarSubstitutor.new(vars: vars_of({"a" => "1"}), host_name: "h")
       template = "{% if a %}{{ a }}{% endif %}"
 
       # Force the renderer to build and memoize its converted vars first,
@@ -68,7 +68,7 @@ describe CrystalPlay::VarSubstitutor do
     end
 
     it "is visible when set before anything has been substituted at all" do
-      subject = CrystalPlay::VarSubstitutor.new(vars: vars_of({"a" => "1"}), host_name: "h")
+      subject = Krikri::VarSubstitutor.new(vars: vars_of({"a" => "1"}), host_name: "h")
 
       subject.set_variable("b", "new")
       subject.substitute("{{ b }}").should eq("new")
@@ -78,12 +78,12 @@ describe CrystalPlay::VarSubstitutor do
 
   describe "lazy component construction" do
     it "still returns literal text untouched without building anything" do
-      subject = CrystalPlay::VarSubstitutor.new(vars: vars_of({"a" => "1"}), host_name: "h")
+      subject = Krikri::VarSubstitutor.new(vars: vars_of({"a" => "1"}), host_name: "h")
       subject.substitute("no placeholders here").should eq("no placeholders here")
     end
 
     it "still exposes magic variables" do
-      subject = CrystalPlay::VarSubstitutor.new(vars: vars_of({} of String => String), host_name: "web1")
+      subject = Krikri::VarSubstitutor.new(vars: vars_of({} of String => String), host_name: "web1")
       subject.substitute("{{ inventory_hostname }}").should eq("web1")
     end
   end
@@ -110,7 +110,7 @@ describe CrystalPlay::VarSubstitutor do
         {%- endif -%}
         JINJA
       v["conf_filename"] = JSON::Any.new("wg0.conf")
-      subject = CrystalPlay::VarSubstitutor.new(vars: v, host_name: "h")
+      subject = Krikri::VarSubstitutor.new(vars: v, host_name: "h")
 
       result = subject.substitute("{{ remote_dir }}/{{ conf_filename }}")
       result.should_not contain("{%")
@@ -150,7 +150,7 @@ describe CrystalPlay::VarSubstitutor do
       v["grafana_package"] = JSON::Any.new(
         %(grafana{% if ansible_architecture == 'armv6l' %}-rpi{% endif %}{{ (grafana_version != 'latest') | ternary('=' ~ grafana_version, '') }})
       )
-      subject = CrystalPlay::VarSubstitutor.new(vars: v, host_name: "h")
+      subject = Krikri::VarSubstitutor.new(vars: v, host_name: "h")
 
       result = subject.substitute("{{ grafana_package }}")
       result.should_not be_nil
@@ -168,7 +168,7 @@ describe CrystalPlay::VarSubstitutor do
       # inside (only reachable via a variable lookup returning this raw
       # text, not visible at the outer text's own top level) short-
       # circuited immediately, never reaching Crinja at all.
-      subject = CrystalPlay::VarSubstitutor.new(vars: vars_of({"pkg_mgr" => "apt"}), host_name: "h")
+      subject = Krikri::VarSubstitutor.new(vars: vars_of({"pkg_mgr" => "apt"}), host_name: "h")
 
       subject.substitute("x={% if pkg_mgr == 'apt' %}YES{% else %}NO{% endif %}").should eq("x=YES")
     end
@@ -191,7 +191,7 @@ describe CrystalPlay::VarSubstitutor do
       caller_vars = Hash(String, JSON::Any).new
       caller_vars["greeting"] = JSON::Any.new("hi")
 
-      CrystalPlay::VarSubstitutor.new(vars: caller_vars, host_name: "real-host")
+      Krikri::VarSubstitutor.new(vars: caller_vars, host_name: "real-host")
 
       caller_vars.has_key?("inventory_hostname").should be_false
       caller_vars.has_key?("ansible_hostname").should be_false
@@ -203,7 +203,7 @@ describe CrystalPlay::VarSubstitutor do
       caller_vars = Hash(String, JSON::Any).new
       caller_vars["greeting"] = JSON::Any.new("hi")
 
-      subject = CrystalPlay::VarSubstitutor.new(vars: caller_vars, host_name: "real-host")
+      subject = Krikri::VarSubstitutor.new(vars: caller_vars, host_name: "real-host")
 
       subject.substitute("{{ greeting }} from {{ inventory_hostname }}").should eq("hi from real-host")
     end
@@ -216,7 +216,7 @@ describe CrystalPlay::VarSubstitutor do
       # the trim marker straight into the expression body as literal
       # text ("'x'-"), which then evaluated as a dangling arithmetic
       # minus operator, rendering "undefined" instead of "x".
-      subject = CrystalPlay::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h")
+      subject = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h")
 
       subject.substitute("a{{ 'x' -}}b").should eq("axb")
       subject.substitute("a{{- 'x' }}b").should eq("axb")
@@ -231,7 +231,7 @@ describe CrystalPlay::VarSubstitutor do
     # in the source survived into the rendered string, corrupting a
     # download URL/filename into one with literal newlines in the middle.
     it "actually trims the adjacent whitespace/newline a trim marker implies, not just the marker character" do
-      subject = CrystalPlay::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h")
+      subject = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h")
 
       subject.substitute("a{{ 'x' -}}\n  b").should eq("axb")
       subject.substitute("a  \n{{- 'x' }}b").should eq("axb")

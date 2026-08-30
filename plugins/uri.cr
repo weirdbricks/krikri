@@ -3,9 +3,9 @@
 require "json"
 require "http/client"
 require "uri"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # uri plugin (ansible.builtin.uri) - makes an HTTP request (API calls,
   # health checks, webhooks). Native HTTP::Client, same rationale as
   # get_url.cr's own doc comment: this plugin binary already runs on
@@ -207,5 +207,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::UriPlugin.new(config)
+plugin = Krikri::UriPlugin.new(config)
 plugin.run

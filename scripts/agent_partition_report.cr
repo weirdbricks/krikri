@@ -27,7 +27,7 @@
 # how fragmented a role would be - i.e. an UPPER bound on item 5's win.
 
 require "colorize"
-require "../src/crystal_play/playbook_parser"
+require "../src/krikri/playbook_parser"
 
 module AgentPartition
   # Modules whose implementation reads the controller's filesystem
@@ -81,7 +81,7 @@ module AgentPartition
     def initialize(@mode : Mode = Mode::Strict)
     end
 
-    def visit(tasks : Array(CrystalPlay::Task))
+    def visit(tasks : Array(Krikri::Task))
       tasks.each do |task|
         # block:/rescue:/always: - recurse so nested tasks are counted,
         # and treat the structure itself as a boundary rather than
@@ -116,7 +116,7 @@ module AgentPartition
     end
 
     # Does this controller-bound task still make a remote call?
-    private def costs_round_trip?(task : CrystalPlay::Task) : Bool
+    private def costs_round_trip?(task : Krikri::Task) : Bool
       simple = task.module_name.split('.').last
       return false if PURE_ACTION_MODULES.includes?(simple)
       return false if CONTROLLER_ONLY_MODULES.includes?(simple)
@@ -128,11 +128,11 @@ module AgentPartition
 
     # nil = agent-eligible. A String = the reason it must stay on the
     # controller. Split in two purely to keep each half readable.
-    private def controller_reason(task : CrystalPlay::Task) : String?
+    private def controller_reason(task : Krikri::Task) : String?
       module_reason(task) || task_feature_reason(task) || expression_reason(task)
     end
 
-    private def module_reason(task : CrystalPlay::Task) : String?
+    private def module_reason(task : Krikri::Task) : String?
       simple = task.module_name.split('.').last
 
       return "controller file access (#{simple})" if CONTROLLER_FILE_MODULES.includes?(simple)
@@ -144,7 +144,7 @@ module AgentPartition
       nil
     end
 
-    private def task_feature_reason(task : CrystalPlay::Task) : String?
+    private def task_feature_reason(task : Krikri::Task) : String?
       return "delegate_to" if task.delegate_to
       return "connection: override" if task.connection
       return "run_once" if task.run_once
@@ -153,7 +153,7 @@ module AgentPartition
       nil
     end
 
-    private def expression_reason(task : CrystalPlay::Task) : String?
+    private def expression_reason(task : Krikri::Task) : String?
       # lookup()/query() reach the controller's env/FS/subprocess from
       # inside expression evaluation, so ANY expression text carrying
       # one pins the task - see ITEM5_DESIGN.md §1b.
@@ -170,7 +170,7 @@ module AgentPartition
       nil
     end
 
-    private def expression_texts(task : CrystalPlay::Task) : Array(String)
+    private def expression_texts(task : Krikri::Task) : Array(String)
       texts = [] of String
       task.params.each_value { |v| texts << v }
       task.vars.each_value { |v| texts << v.to_s }
@@ -211,7 +211,7 @@ all_reasons = Hash(String, Int32).new(0)
 
 playbooks.each do |path|
   begin
-    playbook = CrystalPlay::PlaybookParser.parse(path)
+    playbook = Krikri::PlaybookParser.parse(path)
   rescue ex
     printf("%-42s %s\n", File.basename(path), "PARSE FAILED: #{ex.message.to_s[0, 28]}")
     next

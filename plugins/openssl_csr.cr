@@ -1,13 +1,13 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
 lib LibC
   fun umask(mask : ModeT) : ModeT
 end
 
-module CrystalPlay
+module Krikri
   # openssl_csr plugin (community.crypto.openssl_csr) - generates
   # certificate signing requests.
   #
@@ -316,5 +316,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::OpensslCsrPlugin.new(config)
+plugin = Krikri::OpensslCsrPlugin.new(config)
 plugin.run

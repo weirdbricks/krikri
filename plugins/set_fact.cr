@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # set_fact plugin - sets arbitrary variables for subsequent tasks on the
   # same host (ansible.builtin.set_fact). Never touches the filesystem or
   # network and never reports changed, so it's safe under --check.
@@ -120,5 +120,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::SetFactPlugin.new(config)
+plugin = Krikri::SetFactPlugin.new(config)
 plugin.run

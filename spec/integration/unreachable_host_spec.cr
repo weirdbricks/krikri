@@ -11,7 +11,7 @@ require "../spec_helper"
 # it returns whenever any host was unreachable, ahead of a failed host's
 # 2. Verified for all-unreachable, mixed-with-ok and mixed-with-failed.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 
 private def run_inventory(inventory : String)
   dir = File.tempname("unreachable")

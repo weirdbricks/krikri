@@ -1,13 +1,13 @@
 require "../spec_helper"
-require "../../src/crystal_play/variable_substitutor/filter_engine"
-require "../../src/crystal_play/variable_substitutor/expression_evaluator"
+require "../../src/krikri/variable_substitutor/filter_engine"
+require "../../src/krikri/variable_substitutor/expression_evaluator"
 
 private def s(value : String) : JSON::Any
   JSON::Any.new(value)
 end
 
-describe CrystalPlay::VariableSubstitutor::FilterEngine do
-  engine = CrystalPlay::VariableSubstitutor::FilterEngine.new
+describe Krikri::VariableSubstitutor::FilterEngine do
+  engine = Krikri::VariableSubstitutor::FilterEngine.new
 
   it "applies default when value is empty" do
     engine.apply(s(""), %(default('fallback'))).as_s.should eq("fallback")
@@ -37,7 +37,7 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     vars = Hash(String, JSON::Any).new
     vars["users_home"] = JSON::Any.new("/home")
     vars["username"] = JSON::Any.new("alice")
-    scoped_engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(vars)
+    scoped_engine = Krikri::VariableSubstitutor::FilterEngine.new(vars)
 
     scoped_engine.apply(JSON::Any.new(nil), %(default(users_home ~ '/' ~ username))).as_s.should eq("/home/alice")
   end
@@ -132,7 +132,7 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     # name/template filename that doesn't exist under that name.
     vars = Hash(String, JSON::Any).new
     vars["ansible_collection_name"] = JSON::Any.new("prometheus.prometheus")
-    scoped_engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(vars)
+    scoped_engine = Krikri::VariableSubstitutor::FilterEngine.new(vars)
 
     result = scoped_engine.apply(s("prometheus.prometheus.node_exporter"), %(regex_replace(ansible_collection_name ~ '.', '')))
     result.as_s.should eq("node_exporter")
@@ -271,7 +271,7 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
   end
 
   it "does not split a | that appears inside a quoted filter argument" do
-    chain = CrystalPlay::VariableSubstitutor::FilterEngine.split_chain(%(replace('a|b', 'c') | upper))
+    chain = Krikri::VariableSubstitutor::FilterEngine.split_chain(%(replace('a|b', 'c') | upper))
     chain.should eq([%(replace('a|b', 'c')), "upper"])
   end
 
@@ -362,7 +362,7 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     # exactly this way) was silently never installed.
     v = Hash(String, JSON::Any).new
     v["security_package_state"] = JSON::Any.new("present")
-    engine_with_vars = CrystalPlay::VariableSubstitutor::FilterEngine.new(v)
+    engine_with_vars = Krikri::VariableSubstitutor::FilterEngine.new(v)
     value = JSON.parse(%([{"packages": ["chrony"], "state": "{{ security_package_state }}", "enabled": true}]))
 
     result = engine_with_vars.apply(value, %(selectattr('state', 'equalto', 'present')))
@@ -413,7 +413,7 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     # themselves unchanged instead of concatenating their `packages`
     # attribute). With a list-valued start:, real Jinja2's sum()
     # concatenates rather than numerically adds.
-    engine_with_vars = CrystalPlay::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
+    engine_with_vars = Krikri::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
     value = JSON.parse(%([{"packages": ["foo", "bar"]}, {"packages": ["baz"]}]))
 
     result = engine_with_vars.apply(value, %(sum(attribute='packages', start=[])))
@@ -430,7 +430,7 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     # (always-undefined) plain variable lookup, silently resolving to "".
     v = Hash(String, JSON::Any).new
     v["vault_install_hashi_repo"] = JSON::Any.new(false)
-    engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(v)
+    engine = Krikri::VariableSubstitutor::FilterEngine.new(v)
 
     result = engine.apply(JSON::Any.new(""), %(default(('/opt/vault/tls' if (vault_install_hashi_repo) else '/etc/vault/tls'), true)))
     result.as_s.should eq("/etc/vault/tls")
@@ -444,7 +444,7 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     # variable lookup on the literal identifier "false", resolving the
     # whole default() call to JSON null - which stringifies to "" - not
     # the literal false it was supposed to substitute.
-    engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
+    engine = Krikri::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
     engine.apply(JSON::Any.new(""), "default(false, true)").as_bool.should eq(false)
     engine.apply(JSON::Any.new(""), "default(true, true)").as_bool.should eq(true)
   end
@@ -461,12 +461,12 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     v = Hash(String, JSON::Any).new
     v["fallback_var"] = JSON::Any.new("{{ real_val }}")
     v["real_val"] = JSON::Any.new("resolved")
-    engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(v)
+    engine = Krikri::VariableSubstitutor::FilterEngine.new(v)
     engine.apply(JSON::Any.new(nil), "default(fallback_var)").as_s.should eq("resolved")
   end
 
   it "regex_findall extracts every non-overlapping match, groups as a nested list" do
-    engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
+    engine = Krikri::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
     result = engine.apply(s("abc123  file1.tar.gz"), %(regex_findall('^([a-fA-F0-9]+)\\s+(.+)$'))).as_a
     result.size.should eq(1)
     result[0].as_a.map(&.as_s).should eq(["abc123", "file1.tar.gz"])
@@ -474,7 +474,7 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
 
   it "flatten collapses nested lists by default, skipping nulls" do
     v = JSON::Any.new([JSON.parse(%([1, [2, 3]])), JSON::Any.new(nil), JSON.parse("4")])
-    engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
+    engine = Krikri::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
     engine.apply(v, "flatten").as_a.map(&.as_i64).should eq([1_i64, 2_i64, 3_i64, 4_i64])
   end
 
@@ -491,7 +491,7 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     # silently degrading to an effectively empty pattern that matched
     # the empty string at every position instead of the real groups.
     v = JSON::Any.new(["abc123  file1.tar.gz", "def456  file2.tar.gz"].map { |str| JSON::Any.new(str) })
-    engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
+    engine = Krikri::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
     result = engine.apply(v, %(map('regex_findall', '^([a-fA-F0-9]+)\\s+(.+)$'))).as_a
     result.map { |mat| mat.as_a[0].as_a.map(&.as_s) }.should eq([["abc123", "file1.tar.gz"], ["def456", "file2.tar.gz"]])
   end
@@ -504,7 +504,7 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
     # evaluator_spec.cr; this is the narrower dict()-only case.
     vars = Hash(String, JSON::Any).new
     vars["pairs"] = JSON.parse(%([["a", 1], ["b", 2]]))
-    result = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate("dict(pairs)")
+    result = Krikri::VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate("dict(pairs)")
     (JSON.parse(result) rescue nil).should eq(JSON.parse(%({"a": 1, "b": 2})))
   end
 
@@ -641,7 +641,7 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
   it "union combines two lists preserving order and dedup" do
     v = Hash(String, JSON::Any).new
     v["other"] = JSON.parse(%([2, 3, 4]))
-    vars_engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(v)
+    vars_engine = Krikri::VariableSubstitutor::FilterEngine.new(v)
     result = vars_engine.apply(JSON.parse(%([1, 2, 3])), "union(other)")
     result.as_a.map(&.as_i).should eq([1, 2, 3, 4])
   end
@@ -677,7 +677,7 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
   it "zip combines lists element-wise, truncating to the shortest" do
     v = Hash(String, JSON::Any).new
     v["other"] = JSON.parse(%(["x", "y"]))
-    vars_engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(v)
+    vars_engine = Krikri::VariableSubstitutor::FilterEngine.new(v)
     result = vars_engine.apply(JSON.parse(%([1, 2, 3])), "zip(other)").as_a
     result.map { |row| row.as_a.map(&.to_s) }.should eq([["1", "x"], ["2", "y"]])
   end
@@ -685,7 +685,7 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
   it "zip_longest pads shorter lists with fillvalue" do
     v = Hash(String, JSON::Any).new
     v["other"] = JSON.parse(%(["x"]))
-    vars_engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(v)
+    vars_engine = Krikri::VariableSubstitutor::FilterEngine.new(v)
     result = vars_engine.apply(JSON.parse(%([1, 2])), %(zip_longest(other, fillvalue="-"))).as_a
     result.map { |row| row.as_a.map(&.to_s) }.should eq([["1", "x"], ["2", "-"]])
   end
@@ -693,7 +693,7 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
   it "product computes the Cartesian product with another list" do
     v = Hash(String, JSON::Any).new
     v["other"] = JSON.parse(%([1, 2]))
-    vars_engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(v)
+    vars_engine = Krikri::VariableSubstitutor::FilterEngine.new(v)
     result = vars_engine.apply(JSON.parse(%(["a", "b"])), "product(other)").as_a
     result.map { |row| row.as_a.map(&.to_s) }.should eq([["a", "1"], ["a", "2"], ["b", "1"], ["b", "2"]])
   end
@@ -769,7 +769,7 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
   it "symmetric_difference returns elements in exactly one of the two lists" do
     v = Hash(String, JSON::Any).new
     v["other"] = JSON.parse(%([2, 3, 4]))
-    vars_engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(v)
+    vars_engine = Krikri::VariableSubstitutor::FilterEngine.new(v)
     result = vars_engine.apply(JSON.parse(%([1, 2, 3])), "symmetric_difference(other)").as_a.map(&.as_i).sort!
     result.should eq([1, 4])
   end
@@ -794,7 +794,7 @@ describe CrystalPlay::VariableSubstitutor::FilterEngine do
   it "extract indexes into a container using the piped value" do
     v = Hash(String, JSON::Any).new
     v["container"] = JSON.parse(%(["zero", "one", "two"]))
-    vars_engine = CrystalPlay::VariableSubstitutor::FilterEngine.new(v)
+    vars_engine = Krikri::VariableSubstitutor::FilterEngine.new(v)
     vars_engine.apply(JSON::Any.new(1_i64), "extract(container)").as_s.should eq("one")
   end
 

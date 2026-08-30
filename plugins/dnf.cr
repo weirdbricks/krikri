@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # DNF plugin - manages packages with the dnf package manager
   # Compatible with Ansible's ansible.builtin.dnf module
   #
@@ -207,7 +207,7 @@ module CrystalPlay
     # whatever repos ARE available. The raw `dnf` CLI this plugin shells
     # out to is stricter and hard-fails with "Error: Unknown repo: 'X'"
     # instead - found benchmarking round166's buluma.elasticsearch_curator
-    # on Rocky 9.6 (crystal-ansible failed the task, real ansible-playbook
+    # on Rocky 9.6 (krikri-playbook failed the task, real ansible-playbook
     # installed successfully via whatever repos were already present).
     # Strip the offending --enablerepo=X flag(s) and retry rather than
     # failing the task, matching real Ansible's lenient behavior.
@@ -644,5 +644,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::DnfPlugin.new(config)
+plugin = Krikri::DnfPlugin.new(config)
 plugin.run

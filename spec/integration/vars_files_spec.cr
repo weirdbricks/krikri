@@ -6,7 +6,7 @@ require "../spec_helper"
 # task failed. Expectations below come from an ansible-core 2.19.4 run of
 # the same playbooks.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 
 private def run_play(playbook : String, files : Hash(String, String))
   dir = File.tempname("vars-files")

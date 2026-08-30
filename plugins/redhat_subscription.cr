@@ -13,9 +13,9 @@
 # fires BEFORE any binary check, exactly like the real module's
 # AnsibleModule argument validation.
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   class RedhatSubscriptionPlugin < BasePlugin
     def execute : PluginResult
       state = @params["state"]? || "present"
@@ -90,5 +90,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::RedhatSubscriptionPlugin.new(config)
+plugin = Krikri::RedhatSubscriptionPlugin.new(config)
 plugin.run

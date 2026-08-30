@@ -8,7 +8,7 @@ require "file_utils"
 # global `--check` flag reached the plugins - so a task the playbook
 # wanted simulated was really executed.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 private TMP_DIR      = File.join(PROJECT_ROOT, "spec", "tmp", "task_check_mode")
 

@@ -1,6 +1,6 @@
 require "../spec_helper"
 require "file_utils"
-require "../../src/crystal_play/role_loader"
+require "../../src/krikri/role_loader"
 
 private ROLES_ROOT = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "role_loader_spec")
 
@@ -52,11 +52,11 @@ private def roles_yaml(source : String) : Array(YAML::Any)
   YAML.parse(source).as_a
 end
 
-private def fresh_play : CrystalPlay::Play
-  CrystalPlay::Play.new("test play", "all")
+private def fresh_play : Krikri::Play
+  Krikri::Play.new("test play", "all")
 end
 
-describe CrystalPlay::RoleLoader do
+describe Krikri::RoleLoader do
   before_each do
     FileUtils.rm_rf(ROLES_ROOT) if Dir.exists?(ROLES_ROOT)
     Dir.mkdir_p(ROLES_ROOT)
@@ -69,7 +69,7 @@ describe CrystalPlay::RoleLoader do
           msg: hi
       YAML
 
-    tasks, handlers = CrystalPlay::RoleLoader.load_roles(roles_yaml("- simple"), fresh_play, ROLES_ROOT)
+    tasks, handlers = Krikri::RoleLoader.load_roles(roles_yaml("- simple"), fresh_play, ROLES_ROOT)
 
     tasks.map(&.name).should eq(["hello"])
     handlers.should be_empty
@@ -89,7 +89,7 @@ describe CrystalPlay::RoleLoader do
         YAML
     end
 
-    _, handlers = CrystalPlay::RoleLoader.load_roles(roles_yaml("- with_handler"), fresh_play, ROLES_ROOT)
+    _, handlers = Krikri::RoleLoader.load_roles(roles_yaml("- with_handler"), fresh_play, ROLES_ROOT)
 
     handlers.map(&.name).should eq(["restart thing"])
   end
@@ -104,7 +104,7 @@ describe CrystalPlay::RoleLoader do
       role.defaults("port: 8080\n")
     end
 
-    tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- defaulted"), fresh_play, ROLES_ROOT)
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- defaulted"), fresh_play, ROLES_ROOT)
 
     tasks[0].role_defaults.as(Hash(String, JSON::Any))["port"].as_i.should eq(8080)
   end
@@ -123,7 +123,7 @@ describe CrystalPlay::RoleLoader do
         YAML
     end
 
-    tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- bool_keyed"), fresh_play, ROLES_ROOT)
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- bool_keyed"), fresh_play, ROLES_ROOT)
 
     defaults = tasks[0].role_defaults.as(Hash(String, JSON::Any))
     inner = defaults["my_dict"].as_h
@@ -141,7 +141,7 @@ describe CrystalPlay::RoleLoader do
       role.vars("env: from-vars-file\nregion: us-east\n")
     end
 
-    tasks, _ = CrystalPlay::RoleLoader.load_roles(
+    tasks, _ = Krikri::RoleLoader.load_roles(
       roles_yaml("- role: varred\n  vars:\n    env: from-invocation\n"),
       fresh_play,
       ROLES_ROOT
@@ -159,7 +159,7 @@ describe CrystalPlay::RoleLoader do
           msg: hi
       YAML
 
-    tasks, _ = CrystalPlay::RoleLoader.load_roles(
+    tasks, _ = Krikri::RoleLoader.load_roles(
       roles_yaml("- role: inline_vars\n  port: 9090\n"),
       fresh_play,
       ROLES_ROOT
@@ -178,7 +178,7 @@ describe CrystalPlay::RoleLoader do
       role.file("hello.txt", "hi\n")
     end
 
-    tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- with_files"), fresh_play, ROLES_ROOT)
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- with_files"), fresh_play, ROLES_ROOT)
 
     tasks[0].role_files_dir.should eq(File.join(ROLES_ROOT, "roles", "with_files", "files"))
     tasks[0].role_templates_dir.should be_nil
@@ -214,7 +214,7 @@ describe CrystalPlay::RoleLoader do
     end
 
     relative_dir = Path.new(ROLES_ROOT).relative_to(Dir.current).to_s
-    tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- with_files"), fresh_play, relative_dir)
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- with_files"), fresh_play, relative_dir)
 
     role_path = (tasks[0].role_path || raise "unexpected nil")
     role_path.should start_with("/")
@@ -238,7 +238,7 @@ describe CrystalPlay::RoleLoader do
       role.meta("dependencies:\n  - base\n")
     end
 
-    tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- dependent"), fresh_play, ROLES_ROOT)
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- dependent"), fresh_play, ROLES_ROOT)
 
     tasks.map(&.name).should eq(["base task", "dependent task"])
   end
@@ -269,7 +269,7 @@ describe CrystalPlay::RoleLoader do
       role.meta("dependencies:\n  - src: base\n    version: v1.0.0\n")
     end
 
-    tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- dependent"), fresh_play, ROLES_ROOT)
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- dependent"), fresh_play, ROLES_ROOT)
 
     tasks.map(&.name).should eq(["base task", "dependent task"])
   end
@@ -291,7 +291,7 @@ describe CrystalPlay::RoleLoader do
       role.meta("dependencies:\n  - dep_defaults_base\n")
     end
 
-    tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- dep_defaults_user"), fresh_play, ROLES_ROOT)
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- dep_defaults_user"), fresh_play, ROLES_ROOT)
 
     user_task = tasks.find! { |task| task.name == "user task" }
     (user_task.role_defaults || raise "unexpected nil")["mysql_root_password"].as_s.should eq("s3Cur31t4.")
@@ -309,7 +309,7 @@ describe CrystalPlay::RoleLoader do
       role.meta("dependencies:\n  - dep_defaults_base2\n")
     end
 
-    tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- dep_defaults_user2"), fresh_play, ROLES_ROOT)
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- dep_defaults_user2"), fresh_play, ROLES_ROOT)
 
     user_task = tasks.find! { |task| task.name == "user2 task" }
     (user_task.role_defaults || raise "unexpected nil")["shared_name"].as_s.should eq("from_self")
@@ -331,14 +331,14 @@ describe CrystalPlay::RoleLoader do
       role.meta("dependencies:\n  - shared\n")
     end
 
-    tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- shared\n- depends_on_shared\n"), fresh_play, ROLES_ROOT)
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- shared\n- depends_on_shared\n"), fresh_play, ROLES_ROOT)
 
     tasks.map(&.name).should eq(["shared task", "dependent task"])
   end
 
   it "raises with a clear message when the role directory can't be found" do
     expect_raises(Exception, /Role not found: nonexistent/) do
-      CrystalPlay::RoleLoader.load_roles(roles_yaml("- nonexistent"), fresh_play, ROLES_ROOT)
+      Krikri::RoleLoader.load_roles(roles_yaml("- nonexistent"), fresh_play, ROLES_ROOT)
     end
   end
 
@@ -349,7 +349,7 @@ describe CrystalPlay::RoleLoader do
           msg: hi
       YAML
 
-    tasks, _ = CrystalPlay::RoleLoader.load_roles(
+    tasks, _ = Krikri::RoleLoader.load_roles(
       roles_yaml("- role: tagged\n  tags: [deploy]\n"),
       fresh_play,
       ROLES_ROOT
@@ -375,7 +375,7 @@ describe CrystalPlay::RoleLoader do
 
     ENV["ANSIBLE_COLLECTIONS_PATH"] = collections_root
     begin
-      tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- acme.widgets.installer"), fresh_play, ROLES_ROOT)
+      tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- acme.widgets.installer"), fresh_play, ROLES_ROOT)
       tasks.map(&.name).should eq(["from collection"])
     ensure
       ENV.delete("ANSIBLE_COLLECTIONS_PATH")
@@ -421,7 +421,7 @@ describe CrystalPlay::RoleLoader do
       # (round-24 devsec_mysql install). mysql_hardening is the
       # smallest role (3 task files, 6 handlers, no networking
       # surface), so use it as the test FQCN.
-      tasks, _ = CrystalPlay::RoleLoader.load_roles(
+      tasks, _ = Krikri::RoleLoader.load_roles(
         roles_yaml("- devsec.hardening.mysql_hardening"),
         fresh_play,
         ROLES_ROOT,
@@ -450,7 +450,7 @@ describe CrystalPlay::RoleLoader do
         YAML
     end
 
-    tasks, _ = CrystalPlay::RoleLoader.load_single_role(
+    tasks, _ = Krikri::RoleLoader.load_single_role(
       "multi_entry", Hash(String, JSON::Any).new, [] of String, fresh_play, ROLES_ROOT, "install.yml"
     )
 
@@ -467,7 +467,7 @@ describe CrystalPlay::RoleLoader do
         YAML
     end
 
-    tasks, _ = CrystalPlay::RoleLoader.load_single_role(
+    tasks, _ = Krikri::RoleLoader.load_single_role(
       "multi_entry2", Hash(String, JSON::Any).new, [] of String, fresh_play, ROLES_ROOT, "install"
     )
 
@@ -482,7 +482,7 @@ describe CrystalPlay::RoleLoader do
     # ansible_parent_role_names | length > 0`.
     build_role("nested") { |role| role.tasks("- name: t\n  ansible.builtin.debug:\n    msg: hi\n") }
 
-    tasks, _ = CrystalPlay::RoleLoader.load_single_role(
+    tasks, _ = Krikri::RoleLoader.load_single_role(
       "nested", Hash(String, JSON::Any).new, [] of String, fresh_play, ROLES_ROOT, nil, ["outer", "inner"]
     )
 
@@ -492,7 +492,7 @@ describe CrystalPlay::RoleLoader do
   it "a plain roles: entry gets an empty (not nil) role_parent_names" do
     build_role("toplevel") { |role| role.tasks("- name: t\n  ansible.builtin.debug:\n    msg: hi\n") }
 
-    tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- toplevel"), fresh_play, ROLES_ROOT)
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- toplevel"), fresh_play, ROLES_ROOT)
 
     tasks[0].role_parent_names.should eq([] of String)
   end
@@ -513,14 +513,14 @@ describe CrystalPlay::RoleLoader do
 
     ENV["ANSIBLE_COLLECTIONS_PATH"] = collections_root
     begin
-      tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- acme.widgets.installer"), fresh_play, ROLES_ROOT)
+      tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- acme.widgets.installer"), fresh_play, ROLES_ROOT)
       tasks[0].ansible_collection_name.should eq("acme.widgets")
     ensure
       ENV.delete("ANSIBLE_COLLECTIONS_PATH")
     end
 
     build_role("bare_role") { |role| role.tasks("- name: t\n  ansible.builtin.debug:\n    msg: hi\n") }
-    bare_tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- bare_role"), fresh_play, ROLES_ROOT)
+    bare_tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- bare_role"), fresh_play, ROLES_ROOT)
     bare_tasks[0].ansible_collection_name.should be_nil
   end
 
@@ -538,7 +538,7 @@ describe CrystalPlay::RoleLoader do
     write(File.join(role_dir, "defaults", "main", "other.yml"), "my_other: hello\n")
     write(File.join(role_dir, "tasks", "main.yml"), "- name: t\n  ansible.builtin.debug:\n    msg: hi\n")
 
-    tasks, _ = CrystalPlay::RoleLoader.load_roles(roles_yaml("- dir_defaults_role"), fresh_play, ROLES_ROOT)
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- dir_defaults_role"), fresh_play, ROLES_ROOT)
     defaults = (tasks[0].role_defaults || raise "unexpected nil")
     defaults["my_network"]?.try(&.as_s).should eq("10.9.0.0")
     defaults["my_other"]?.try(&.as_s).should eq("hello")

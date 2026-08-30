@@ -2,9 +2,9 @@
 
 require "json"
 require "random"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # Htpasswd plugin - manages entries in an Apache-style htpasswd file
   # Compatible with (a subset of) community.general.htpasswd
   #
@@ -211,5 +211,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::HtpasswdPlugin.new(config)
+plugin = Krikri::HtpasswdPlugin.new(config)
 plugin.run

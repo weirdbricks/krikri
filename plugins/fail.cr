@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # fail plugin (ansible.builtin.fail) - unconditionally fails the task
   # (its own `when:`, evaluated by the executor before a plugin ever
   # runs, is what makes real playbooks use it conditionally - the module
@@ -22,5 +22,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::FailPlugin.new(config)
+plugin = Krikri::FailPlugin.new(config)
 plugin.run

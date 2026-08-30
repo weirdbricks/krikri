@@ -1,10 +1,10 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/cron_table"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/cron_table"
 
-module CrystalPlay
+module Krikri
   # Cron plugin - manages a named entry in a crontab-style file
   # Compatible with (a subset of) Ansible's ansible.builtin.cron module
   #
@@ -121,7 +121,7 @@ module CrystalPlay
     # Install the updated crontab via a tmp file. Returns the failure
     # result when `crontab` rejects it, nil on success.
     private def install_user_crontab(crontab_target : String, new_content : String) : PluginResult?
-      tmp_path = "/tmp/.crystal-ansible-crontab-#{Random.rand(100000..999999)}"
+      tmp_path = "/tmp/.krikri-playbook-crontab-#{Random.rand(100000..999999)}"
       begin
         # CronTable.upsert already appends its own single trailing "\n"
         # to a non-empty new_content - adding another here produced a
@@ -162,5 +162,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::CronPlugin.new(config)
+plugin = Krikri::CronPlugin.new(config)
 plugin.run

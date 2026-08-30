@@ -1,6 +1,6 @@
 require "../spec_helper"
 require "file_utils"
-require "../../src/crystal_play/inventory_parser"
+require "../../src/krikri/inventory_parser"
 
 private ROOT = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "inventory_parser_spec")
 
@@ -14,7 +14,7 @@ private def write_script(path : String, content : String)
   File.chmod(path, 0o755)
 end
 
-describe CrystalPlay::InventoryParser do
+describe Krikri::InventoryParser do
   before_each do
     FileUtils.rm_rf(ROOT) if Dir.exists?(ROOT)
     Dir.mkdir_p(ROOT)
@@ -27,7 +27,7 @@ describe CrystalPlay::InventoryParser do
         web1 port=8080
         INI
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
       inventory.hosts["web1"].vars["port"].should eq(JSON::Any.new(8080_i64))
     end
 
@@ -37,7 +37,7 @@ describe CrystalPlay::InventoryParser do
         web1 version=2.5
         INI
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
       inventory.hosts["web1"].vars["version"].should eq(JSON::Any.new(2.5))
     end
 
@@ -54,7 +54,7 @@ describe CrystalPlay::InventoryParser do
         web1 active=true enabled=yes switched=on
         INI
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
       inventory.hosts["web1"].vars["active"].should eq(JSON::Any.new("true"))
       inventory.hosts["web1"].vars["enabled"].should eq(JSON::Any.new("yes"))
       inventory.hosts["web1"].vars["switched"].should eq(JSON::Any.new("on"))
@@ -66,7 +66,7 @@ describe CrystalPlay::InventoryParser do
         web1 active=false enabled=no
         INI
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
       inventory.hosts["web1"].vars["active"].should eq(JSON::Any.new("false"))
       inventory.hosts["web1"].vars["enabled"].should eq(JSON::Any.new("no"))
     end
@@ -78,7 +78,7 @@ describe CrystalPlay::InventoryParser do
         web1 active=True enabled=False
         INI
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
       inventory.hosts["web1"].vars["active"].should eq(JSON::Any.new(true))
       inventory.hosts["web1"].vars["enabled"].should eq(JSON::Any.new(false))
     end
@@ -89,7 +89,7 @@ describe CrystalPlay::InventoryParser do
         web1 version="0123"
         INI
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
       inventory.hosts["web1"].vars["version"].should eq(JSON::Any.new("0123"))
     end
 
@@ -99,7 +99,7 @@ describe CrystalPlay::InventoryParser do
         web1 flag="true"
         INI
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
       inventory.hosts["web1"].vars["flag"].should eq(JSON::Any.new("true"))
     end
 
@@ -109,7 +109,7 @@ describe CrystalPlay::InventoryParser do
         web1 code='007'
         INI
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
       inventory.hosts["web1"].vars["code"].should eq(JSON::Any.new("007"))
     end
 
@@ -119,7 +119,7 @@ describe CrystalPlay::InventoryParser do
         web1 myvar=null
         INI
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
       inventory.hosts["web1"].vars["myvar"].should eq(JSON::Any.new("null"))
     end
 
@@ -129,7 +129,7 @@ describe CrystalPlay::InventoryParser do
         web1 myvar=None
         INI
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
       inventory.hosts["web1"].vars["myvar"].should eq(JSON::Any.new(nil))
     end
 
@@ -141,7 +141,7 @@ describe CrystalPlay::InventoryParser do
         web1 myvar=~
         INI
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
       inventory.hosts["web1"].vars["myvar"].should eq(JSON::Any.new("~"))
     end
 
@@ -151,7 +151,7 @@ describe CrystalPlay::InventoryParser do
         web1 a=NULL b=Null c=none d=NONE e=None
         INI
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
       inventory.hosts["web1"].vars["a"].should eq(JSON::Any.new("NULL"))
       inventory.hosts["web1"].vars["b"].should eq(JSON::Any.new("Null"))
       inventory.hosts["web1"].vars["c"].should eq(JSON::Any.new("none"))
@@ -177,7 +177,7 @@ describe CrystalPlay::InventoryParser do
         mixed=[True, None, 'x']
         INI
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
       vars = inventory.groups["web"].vars
       vars["nums"].as_a.map(&.as_i).should eq([1, 2])
       vars["names"].as_a.map(&.as_s).should eq(["a", "b"])
@@ -198,7 +198,7 @@ describe CrystalPlay::InventoryParser do
         broken=[1, oops]
         INI
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
       inventory.groups["web"].vars["broken"].should eq(JSON::Any.new("[1, oops]"))
     end
 
@@ -208,7 +208,7 @@ describe CrystalPlay::InventoryParser do
         web1 env=staging
         INI
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
       inventory.hosts["web1"].vars["env"].should eq(JSON::Any.new("staging"))
     end
   end
@@ -220,7 +220,7 @@ describe CrystalPlay::InventoryParser do
         web1 ansible_user=deploy ansible_port=2222
         INI
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
 
       host = inventory.hosts["web1"]
       host.user.should eq("deploy")
@@ -239,7 +239,7 @@ describe CrystalPlay::InventoryParser do
         datacenter: dc1
         YAML
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
 
       inventory.hosts["web1"].vars["datacenter"].as_s.should eq("dc1")
       inventory.hosts["web2"].vars["datacenter"].as_s.should eq("dc1")
@@ -256,7 +256,7 @@ describe CrystalPlay::InventoryParser do
         role: webserver
         YAML
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
 
       inventory.hosts["web1"].vars["role"].as_s.should eq("webserver")
       inventory.hosts["db1"].vars.has_key?("role").should be_false
@@ -271,7 +271,7 @@ describe CrystalPlay::InventoryParser do
         app_version: "1.2.3"
         YAML
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
 
       inventory.hosts["web1"].vars["app_version"].as_s.should eq("1.2.3")
       inventory.hosts["web2"].vars.has_key?("app_version").should be_false
@@ -288,7 +288,7 @@ describe CrystalPlay::InventoryParser do
         env: production
         YAML
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
 
       inventory.hosts["web1"].vars["env"].as_s.should eq("production")
     end
@@ -301,7 +301,7 @@ describe CrystalPlay::InventoryParser do
         ansible_user: file_user
         YAML
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
 
       inventory.hosts["web1"].user.should eq("inline_user")
     end
@@ -316,7 +316,7 @@ describe CrystalPlay::InventoryParser do
         ansible_port: 2200
         YAML
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
 
       inventory.hosts["web1"].user.should eq("deploy")
       inventory.hosts["web1"].port.should eq(2200)
@@ -327,7 +327,7 @@ describe CrystalPlay::InventoryParser do
         web1
         INI
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
 
       inventory.hosts["web1"].vars.empty?.should be_true
     end
@@ -340,7 +340,7 @@ describe CrystalPlay::InventoryParser do
         [ "$1" = "--list" ] && echo '{"web": {"hosts": ["web1"]}}'
         SH
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "dynamic-inventory"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "dynamic-inventory"))
 
       inventory.hosts.has_key?("web1").should be_true
       inventory.groups["web"].hosts.has_key?("web1").should be_true
@@ -361,7 +361,7 @@ describe CrystalPlay::InventoryParser do
         fi
         SH
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "dynamic-inventory"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "dynamic-inventory"))
 
       inventory.hosts["web1"].vars["ansible_host"].as_s.should eq("10.0.0.1")
       inventory.hosts["web1"].vars["role"].as_s.should eq("webserver")
@@ -374,7 +374,7 @@ describe CrystalPlay::InventoryParser do
         [ "$1" = "--list" ] && echo '{"web": ["web1", "web2"]}'
         SH
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "dynamic-inventory"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "dynamic-inventory"))
 
       inventory.groups["web"].hosts.keys.sort!.should eq(["web1", "web2"])
     end
@@ -389,7 +389,7 @@ describe CrystalPlay::InventoryParser do
         fi
         SH
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "dynamic-inventory"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "dynamic-inventory"))
 
       inventory.hosts["web1"].vars["ansible_host"].as_s.should eq("10.0.0.9")
     end
@@ -402,7 +402,7 @@ describe CrystalPlay::InventoryParser do
         SH
 
       expect_raises(Exception, /Dynamic inventory script.*failed/) do
-        CrystalPlay::InventoryParser.parse(File.join(ROOT, "dynamic-inventory"))
+        Krikri::InventoryParser.parse(File.join(ROOT, "dynamic-inventory"))
       end
     end
 
@@ -415,7 +415,7 @@ describe CrystalPlay::InventoryParser do
         datacenter: dc1
         YAML
 
-      inventory = CrystalPlay::InventoryParser.parse(File.join(ROOT, "dynamic-inventory"))
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "dynamic-inventory"))
 
       inventory.hosts["web1"].vars["datacenter"].as_s.should eq("dc1")
     end

@@ -1,14 +1,14 @@
 require "../spec_helper"
-require "../../src/crystal_play/plugin_helpers/iptables_command"
+require "../../src/krikri/plugin_helpers/iptables_command"
 
 # Flag ordering verified against real Ansible's own ansible.builtin.iptables
 # module (`construct_rule()` in ansible/modules/iptables.py) - see
 # plugins/iptables.cr's own doc comment for why this is split out (real
 # `iptables -C`/`-A` need CAP_NET_ADMIN, unavailable in the spec sandbox).
-describe CrystalPlay::PluginHelpers::IptablesCommand do
+describe Krikri::PluginHelpers::IptablesCommand do
   describe ".construct_rule" do
     it "builds the robertdebock.natrouter NAT masquerade shape" do
-      rule = CrystalPlay::PluginHelpers::IptablesCommand.construct_rule({
+      rule = Krikri::PluginHelpers::IptablesCommand.construct_rule({
         "out_interface" => "eth0",
         "source"        => "192.168.1.0/24",
         "destination"   => "0.0.0.0/0",
@@ -28,7 +28,7 @@ describe CrystalPlay::PluginHelpers::IptablesCommand do
     end
 
     it "puts -o after -j for out_interface (real module ordering)" do
-      rule = CrystalPlay::PluginHelpers::IptablesCommand.construct_rule({
+      rule = Krikri::PluginHelpers::IptablesCommand.construct_rule({
         "out_interface" => "eth0",
         "jump"          => "MASQUERADE",
       })
@@ -36,35 +36,35 @@ describe CrystalPlay::PluginHelpers::IptablesCommand do
     end
 
     it "negates a value prefixed with !" do
-      rule = CrystalPlay::PluginHelpers::IptablesCommand.construct_rule({
+      rule = Krikri::PluginHelpers::IptablesCommand.construct_rule({
         "source" => "!192.168.1.0/24",
       })
       rule.should eq(["!", "-s", "192.168.1.0/24"])
     end
 
     it "adds -m multiport before --dports" do
-      rule = CrystalPlay::PluginHelpers::IptablesCommand.construct_rule({
+      rule = Krikri::PluginHelpers::IptablesCommand.construct_rule({
         "destination_ports" => "80,443",
       })
       rule.should eq(["-m", "multiport", "--dports", "80,443"])
     end
 
     it "adds an implicit -m conntrack when ctstate is set without an explicit match" do
-      rule = CrystalPlay::PluginHelpers::IptablesCommand.construct_rule({
+      rule = Krikri::PluginHelpers::IptablesCommand.construct_rule({
         "ctstate" => "ESTABLISHED,RELATED",
       })
       rule.should eq(["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED"])
     end
 
     it "single-quotes the comment value" do
-      rule = CrystalPlay::PluginHelpers::IptablesCommand.construct_rule({
+      rule = Krikri::PluginHelpers::IptablesCommand.construct_rule({
         "comment" => "Ansible NAT Masquerade",
       })
       rule.should eq(["-m", "comment", "--comment", "'Ansible NAT Masquerade'"])
     end
 
     it "returns an empty rule (chain-only operation) when no rule params are given" do
-      CrystalPlay::PluginHelpers::IptablesCommand.construct_rule({} of String => String).should eq([] of String)
+      Krikri::PluginHelpers::IptablesCommand.construct_rule({} of String => String).should eq([] of String)
     end
   end
 end

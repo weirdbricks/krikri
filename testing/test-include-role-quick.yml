@@ -8,7 +8,7 @@
     - include_role:
         name: include_role_target
       vars:
-        target: crystal-ansible
+        target: krikri-playbook
       loop: [x, y]
 
     - name: SUCCESS

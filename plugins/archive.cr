@@ -9,10 +9,10 @@ require "bz2"
 require "system/user"
 require "system/group"
 require "openssl/digest"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/archive_paths"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/archive_paths"
 
-module CrystalPlay
+module Krikri
   # Archive plugin - compresses/archives files and directories.
   # Compatible with Ansible's archive module - registered here as
   # community.general.archive, matching its real FQCN (it lives in the
@@ -71,9 +71,9 @@ module CrystalPlay
   # shelling out too - no format shells out anymore.
   #
   # Idempotency is checksum-based like real Ansible, but computed by
-  # reading crystal-ansible's own previously-built archive back natively
+  # reading krikri-playbook's own previously-built archive back natively
   # rather than replicating Python's tarfile per-member header checksum
-  # exactly - this compares crystal-ansible's own archives against
+  # exactly - this compares krikri-playbook's own archives against
   # themselves across runs, which
   # doesn't require bit-for-bit parity with Python's internal algorithm to
   # be correct. Note: upgrading from the previous shell-based
@@ -233,7 +233,7 @@ module CrystalPlay
       expanded_paths : Array(String),
       remove : Bool,
     ) : PluginResult
-      tmp_dest = "#{dest}.crystal-ansible-tmp-#{Random::Secure.hex(6)}"
+      tmp_dest = "#{dest}.krikri-playbook-tmp-#{Random::Secure.hex(6)}"
 
       build_result = if single_compress
                        build_compress(found_paths[0], format, tmp_dest)
@@ -640,5 +640,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::ArchivePlugin.new(config)
+plugin = Krikri::ArchivePlugin.new(config)
 plugin.run

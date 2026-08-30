@@ -1,23 +1,23 @@
 require "../spec_helper"
-require "../../src/crystal_play/task_batcher"
+require "../../src/krikri/task_batcher"
 
-private def task(name : String, register : String? = nil) : CrystalPlay::Task
+private def task(name : String, register : String? = nil) : Krikri::Task
   # ansible.builtin.command: a plain module with no action plugin - was
   # ansible.builtin.debug until debug: itself became a (batching-
   # excluded) controller-side action plugin, which broke every "generic
   # batchable task" fixture in this file for reasons unrelated to what
   # each spec actually tests (register:/when: run-splitting logic, not
   # debug: semantics specifically).
-  t = CrystalPlay::Task.new(name, "ansible.builtin.command")
+  t = Krikri::Task.new(name, "ansible.builtin.command")
   t.register = register
   t
 end
 
-describe CrystalPlay::TaskBatcher do
+describe Krikri::TaskBatcher do
   it "groups a run of fully independent tasks into a single batch" do
     tasks = [task("a"), task("b"), task("c")]
 
-    groups = CrystalPlay::TaskBatcher.plan(tasks)
+    groups = Krikri::TaskBatcher.plan(tasks)
 
     groups.size.should eq(1)
     groups.first.map(&.name).should eq(["a", "b", "c"])
@@ -33,7 +33,7 @@ describe CrystalPlay::TaskBatcher do
     b.notify = ["no_such_handler"]
     c = task("c")
 
-    groups = CrystalPlay::TaskBatcher.plan([a, b, c], ->(t : CrystalPlay::Task) { t.notify == ["no_such_handler"] })
+    groups = Krikri::TaskBatcher.plan([a, b, c], ->(t : Krikri::Task) { t.notify == ["no_such_handler"] })
 
     groups.map(&.map(&.name)).should eq([["a", "b"], ["c"]])
   end
@@ -44,7 +44,7 @@ describe CrystalPlay::TaskBatcher do
     b.notify = ["real handler"]
     c = task("c")
 
-    groups = CrystalPlay::TaskBatcher.plan([a, b, c], ->(_t : CrystalPlay::Task) { false })
+    groups = Krikri::TaskBatcher.plan([a, b, c], ->(_t : Krikri::Task) { false })
 
     groups.size.should eq(1)
     groups.first.map(&.name).should eq(["a", "b", "c"])
@@ -56,7 +56,7 @@ describe CrystalPlay::TaskBatcher do
     b.when_condition = "result_a.changed"
     tasks = [a, b]
 
-    groups = CrystalPlay::TaskBatcher.plan(tasks)
+    groups = Krikri::TaskBatcher.plan(tasks)
 
     groups.map { |group| group.map(&.name) }.should eq([["a"], ["b"]])
   end
@@ -67,7 +67,7 @@ describe CrystalPlay::TaskBatcher do
     b.params["msg"] = "value is {{ result_a.stdout }}"
     tasks = [a, b]
 
-    groups = CrystalPlay::TaskBatcher.plan(tasks)
+    groups = Krikri::TaskBatcher.plan(tasks)
 
     groups.map { |group| group.map(&.name) }.should eq([["a"], ["b"]])
   end
@@ -83,7 +83,7 @@ describe CrystalPlay::TaskBatcher do
     c = task("c")
     tasks = [a, b, c]
 
-    groups = CrystalPlay::TaskBatcher.plan(tasks)
+    groups = Krikri::TaskBatcher.plan(tasks)
 
     groups.map { |group| group.map(&.name) }.should eq([["a"], ["b", "c"]])
   end
@@ -94,7 +94,7 @@ describe CrystalPlay::TaskBatcher do
     b.when_condition = "result_extended.changed" # "result" is a substring but not a whole-word match
     tasks = [a, b]
 
-    groups = CrystalPlay::TaskBatcher.plan(tasks)
+    groups = Krikri::TaskBatcher.plan(tasks)
 
     groups.size.should eq(1)
   end
@@ -112,49 +112,49 @@ describe CrystalPlay::TaskBatcher do
     # `services`, always silently skipping - a real behavioral
     # divergence from real Ansible, not just wasted batching.
     a = task("a")
-    b = CrystalPlay::Task.new("b", "ansible.builtin.service_facts")
+    b = Krikri::Task.new("b", "ansible.builtin.service_facts")
     c = task("c")
     c.when_condition = "\"foo.service\" in services"
     tasks = [a, b, c]
 
-    groups = CrystalPlay::TaskBatcher.plan(tasks)
+    groups = Krikri::TaskBatcher.plan(tasks)
 
     groups.map { |group| group.map(&.name) }.should eq([["a"], ["b"], ["c"]])
   end
 
   it "ends the run at a block: task" do
     a = task("a")
-    b = CrystalPlay::Task.new("b", "_block")
-    b.block_tasks = [] of CrystalPlay::Task
+    b = Krikri::Task.new("b", "_block")
+    b.block_tasks = [] of Krikri::Task
     c = task("c")
     tasks = [a, b, c]
 
-    groups = CrystalPlay::TaskBatcher.plan(tasks)
+    groups = Krikri::TaskBatcher.plan(tasks)
 
     groups.map { |group| group.map(&.name) }.should eq([["a"], ["b"], ["c"]])
   end
 
   it "ends the run at an include_tasks: task" do
     a = task("a")
-    b = CrystalPlay::Task.new("b", "_include_tasks")
+    b = Krikri::Task.new("b", "_include_tasks")
     b.include_file = "x.yml"
     b.include_file_dir = "."
     c = task("c")
     tasks = [a, b, c]
 
-    groups = CrystalPlay::TaskBatcher.plan(tasks)
+    groups = Krikri::TaskBatcher.plan(tasks)
 
     groups.map { |group| group.map(&.name) }.should eq([["a"], ["b"], ["c"]])
   end
 
   it "ends the run at an include_role: task" do
     a = task("a")
-    b = CrystalPlay::Task.new("b", "_include_role")
+    b = Krikri::Task.new("b", "_include_role")
     b.include_role_name = "x"
     c = task("c")
     tasks = [a, b, c]
 
-    groups = CrystalPlay::TaskBatcher.plan(tasks)
+    groups = Krikri::TaskBatcher.plan(tasks)
 
     groups.map { |group| group.map(&.name) }.should eq([["a"], ["b"], ["c"]])
   end
@@ -166,7 +166,7 @@ describe CrystalPlay::TaskBatcher do
     c = task("c")
     tasks = [a, b, c]
 
-    groups = CrystalPlay::TaskBatcher.plan(tasks)
+    groups = Krikri::TaskBatcher.plan(tasks)
 
     groups.map { |group| group.map(&.name) }.should eq([["a"], ["b"], ["c"]])
   end
@@ -178,7 +178,7 @@ describe CrystalPlay::TaskBatcher do
     c = task("c")
     tasks = [a, b, c]
 
-    groups = CrystalPlay::TaskBatcher.plan(tasks)
+    groups = Krikri::TaskBatcher.plan(tasks)
 
     groups.map { |group| group.map(&.name) }.should eq([["a"], ["b"], ["c"]])
   end
@@ -190,7 +190,7 @@ describe CrystalPlay::TaskBatcher do
     c = task("c")
     tasks = [a, b, c]
 
-    groups = CrystalPlay::TaskBatcher.plan(tasks)
+    groups = Krikri::TaskBatcher.plan(tasks)
 
     groups.map { |group| group.map(&.name) }.should eq([["a"], ["b"], ["c"]])
   end
@@ -202,7 +202,7 @@ describe CrystalPlay::TaskBatcher do
     c = task("c")
     tasks = [a, b, c]
 
-    groups = CrystalPlay::TaskBatcher.plan(tasks)
+    groups = Krikri::TaskBatcher.plan(tasks)
 
     groups.map { |group| group.map(&.name) }.should eq([["a"], ["b"], ["c"]])
   end
@@ -216,11 +216,11 @@ describe CrystalPlay::TaskBatcher do
     # target actually reboots, instead of the single dedicated
     # connection execute_reboot expects to control itself.
     a = task("a")
-    b = CrystalPlay::Task.new("reboot", "ansible.builtin.reboot")
+    b = Krikri::Task.new("reboot", "ansible.builtin.reboot")
     c = task("c")
     tasks = [a, b, c]
 
-    groups = CrystalPlay::TaskBatcher.plan(tasks)
+    groups = Krikri::TaskBatcher.plan(tasks)
 
     groups.map { |group| group.map(&.name) }.should eq([["a"], ["reboot"], ["c"]])
   end
@@ -232,7 +232,7 @@ describe CrystalPlay::TaskBatcher do
     c = task("c")
     tasks = [a, b, c]
 
-    groups = CrystalPlay::TaskBatcher.plan(tasks)
+    groups = Krikri::TaskBatcher.plan(tasks)
 
     groups.map { |group| group.map(&.name) }.should eq([["a"], ["b"], ["c"]])
   end
@@ -244,7 +244,7 @@ describe CrystalPlay::TaskBatcher do
     c = task("c")
     tasks = [a, b, c]
 
-    groups = CrystalPlay::TaskBatcher.plan(tasks)
+    groups = Krikri::TaskBatcher.plan(tasks)
 
     groups.map { |group| group.map(&.name) }.should eq([["a"], ["b"], ["c"]])
   end
@@ -256,7 +256,7 @@ describe CrystalPlay::TaskBatcher do
     c = task("c")
     tasks = [a, b, c]
 
-    groups = CrystalPlay::TaskBatcher.plan(tasks)
+    groups = Krikri::TaskBatcher.plan(tasks)
 
     groups.map { |group| group.map(&.name) }.should eq([["a"], ["b"], ["c"]])
   end
@@ -266,7 +266,7 @@ describe CrystalPlay::TaskBatcher do
     c.when_condition = "r.changed"
     tasks = [task("a"), task("b", register: "r"), c]
 
-    groups = CrystalPlay::TaskBatcher.plan(tasks)
+    groups = Krikri::TaskBatcher.plan(tasks)
 
     groups.flat_map(&.map(&.name)).should eq(["a", "b", "c"])
   end

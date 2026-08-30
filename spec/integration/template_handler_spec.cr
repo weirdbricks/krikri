@@ -5,7 +5,7 @@ require "../spec_helper"
 # TaskExecutor#execute_handler_plugin_once, a private method not
 # reachable from a unit spec without constructing a whole TaskExecutor.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "a template: task written as a handler (handlers/main.yml, not tasks/)" do

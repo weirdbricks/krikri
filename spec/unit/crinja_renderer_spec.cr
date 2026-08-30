@@ -1,12 +1,12 @@
 require "../spec_helper"
 require "http/server"
-require "../../src/crystal_play/variable_substitutor/crinja_renderer"
+require "../../src/krikri/variable_substitutor/crinja_renderer"
 # The custom Crinja filters/tests (`comment`, `ternary`, `ansible.builtin.*`
 # aliases, ...) are registered by jinja_filters.cr's own require-time
 # `Crinja.filter`/`Crinja.test` calls - without it this spec compiles against
 # a bare Crinja environment and every filter-backed render falls back to the
 # raw template text.
-require "../../src/crystal_play/jinja_filters"
+require "../../src/krikri/jinja_filters"
 
 # Same tiny local HTTP server pattern as url_lookup_spec.cr, reused here
 # to test lookup('url', ...) reaching Crinja's own global function (real
@@ -31,7 +31,7 @@ Fiber.yield
 
 crinja_url_lookup_base = "http://#{crinja_url_lookup_test_address}"
 
-describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
+describe Krikri::VariableSubstitutor::CrinjaRenderer do
   it "re-templates a variable whose own value is itself a {{ }} expression" do
     # Real bug found benchmarking geerlingguy.nginx: role defaults/main.yml
     # commonly defines a var whose *value* is itself more Jinja -
@@ -49,7 +49,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     v = Hash(String, JSON::Any).new
     v["ansible_processor_count"] = JSON::Any.new(1_i64)
     v["nginx_worker_processes"] = JSON::Any.new(%("{{ ansible_processor_vcpus | default(ansible_processor_count) }}"))
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render("worker_processes  {{ nginx_worker_processes }};").should eq(%(worker_processes  "1";))
   end
@@ -71,7 +71,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     v = Hash(String, JSON::Any).new
     v["inventory_hostname"] = JSON::Any.new("web1.example.com")
     v["common_hostname"] = JSON::Any.new("{{ inventory_hostname }}")
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render("hostname is {{ common_hostname }}").should eq("hostname is web1.example.com")
   end
@@ -86,7 +86,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     # width). Fixed upstream in the Crinja fork (crystal-play-0.9.11).
     v = Hash(String, JSON::Any).new
     v["s"] = JSON::Any.new("Extra spaces.")
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render("{{ s | wordwrap(5) }}").should eq("Extra\nspace\ns.")
   end
@@ -113,7 +113,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     # with nothing else around it.
     v = Hash(String, JSON::Any).new
     v["inner_list"] = JSON::Any.new("{{ ['docker'] }}")
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render("{{ inner_list | length }}").should eq("1")
   end
@@ -133,7 +133,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     v = Hash(String, JSON::Any).new
     v["postgresql_auth_method"] = JSON::Any.new("md5")
     v["postgresql_hba_entries"] = JSON.parse(%([{"type": "host", "auth_method": "{{ postgresql_auth_method }}"}]))
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     result = renderer.render("{% for client in postgresql_hba_entries %}{{ client.type }} {{ client.auth_method }}{% endfor %}")
     result.should eq("host md5")
@@ -142,7 +142,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
   it "leaves an ordinary variable (no embedded template) unaffected" do
     v = Hash(String, JSON::Any).new
     v["greeting"] = JSON::Any.new("hello")
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render("{{ greeting }}, world").should eq("hello, world")
   end
@@ -161,7 +161,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     # if %}` (which forces escalation to the full Crinja renderer).
     v = Hash(String, JSON::Any).new
     v["solr_version"] = JSON::Any.new("8.11.2")
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render("{% if solr_version.split('.')[0] < '9' %}old{% else %}new{% endif %}").should eq("old")
   end
@@ -183,14 +183,14 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     # operand").
     v = Hash(String, JSON::Any).new
     v["x"] = JSON::Any.new(true)
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render("cp -r {% if x %}A{% else %}B{% endif %} /dest/").should eq("cp -r A /dest/")
   end
 
   it "defaults the comment filter to a bare '#' style" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render("{{ 'Ansible managed' | comment }}").should eq("#\n# Ansible managed\n#")
   end
@@ -205,7 +205,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     # undefined" failed the whole template render outright).
     v = Hash(String, JSON::Any).new
     v["security_rhel7_audit_foo"] = JSON::Any.new(true)
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render("{{ vars['security_rhel7_audit_foo'] }}").should eq("True")
   end
@@ -219,7 +219,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     # NULL for a ZEND_INI_PARSER_ENTRY"), even though the file looked
     # fine to a human reader.
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render("{{ 'Ansible managed' | comment(decoration='; ') }}").should eq(";\n; Ansible managed\n;")
   end
@@ -234,7 +234,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     # name crashed the whole template render ("Unexpected POINT")
     # instead of resolving like a plain `| ternary(...)` call.
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render("{{ true | ansible.builtin.ternary('YES', 'NO') }}").should eq("YES")
     renderer.render("{{ false | ansible.builtin.ternary('YES', 'NO') }}").should eq("NO")
@@ -250,7 +250,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     # 'cblock'/'xml', each with its own decoration and (for cblock/xml)
     # distinct begin/end border lines.
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render("{{ 'Ansible managed' | comment('c') }}").should eq("//\n// Ansible managed\n//")
     renderer.render("{{ 'Ansible managed' | comment('erlang') }}").should eq("%\n% Ansible managed\n%")
@@ -271,7 +271,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     v = Hash(String, JSON::Any).new
     v["a"] = JSON::Any.new("")
     v["b"] = JSON::Any.new("")
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render(%({% if a and b %}T{% else %}F{% endif %})).should eq("F")
   end
@@ -285,7 +285,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     # Crinja's own Finalizer had no Bool-specific stringify overload and
     # fell through to Crystal's native lowercase Bool#to_s.
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render("{{ true }}").should eq("True")
     renderer.render("{{ false }}").should eq("False")
@@ -300,7 +300,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     # to ", "/": " separators, not Crystal stdlib's compact ","/":" -
     # verified directly against Python's own json.dumps.
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render(%({{ ["a", "b"] | to_json }})).should eq(%(["a", "b"]))
     renderer.render(%({{ {"a": 1, "b": "two"} | to_json }})).should eq(%({"a": 1, "b": "two"}))
@@ -312,7 +312,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     # - Crinja raised "no filter with name \"hash\" registered", failing
     # the whole template render. Values verified against Python's own
     # hashlib.
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new({} of String => JSON::Any)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new({} of String => JSON::Any)
     renderer.render(%({{ "mysecret" | hash('sha1') }})).should eq("e9fe51f94eadabf54dbf2fbbd57188b9abee436e")
     renderer.render(%({{ "mysecret" | hash }})).should eq("e9fe51f94eadabf54dbf2fbbd57188b9abee436e")
     renderer.render(%({{ "mysecret" | hash('md5') }})).should eq("06c219e5bc8378f3a8a3f83b4b7e4649")
@@ -329,7 +329,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     # replacement was emitted completely literally ("$1" instead of
     # the captured "8.9"), and every downstream `is version(...)` gate
     # depending on the parsed value evaluated wrong as a result.
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new({} of String => JSON::Any)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new({} of String => JSON::Any)
     renderer.render(
       %({{ "OpenSSH_8.9p1 Ubuntu-3, OpenSSL 3.0.2 15 Mar 2022" | regex_replace('.*_([0-9]*.[0-9]).*', '\\1') }})
     ).should eq("8.9")
@@ -342,7 +342,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     # Crinja raised "no filter with name \"to_nice_yaml\" registered",
     # failing the whole template render (all-or-nothing).
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render(%({{ [{"name": "x", "rules": ["a", "b"]}] | to_nice_yaml }})).should eq(
       "- name: x\n  rules:\n  - a\n  - b"
@@ -351,7 +351,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
 
   it "sorts to_nice_yaml's own mapping keys by default, honors sort_keys=False" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render(%({{ {"b": 1, "a": 2} | to_nice_yaml }})).should eq("a: 2\nb: 1")
     renderer.render(%({{ {"b": 1, "a": 2} | to_nice_yaml(sort_keys=False) }})).should eq("b: 1\na: 2")
@@ -359,7 +359,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
 
   it "b64encode/b64decode round-trip in a .j2 template" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render(%({{ "hello world" | b64encode }})).should eq("aGVsbG8gd29ybGQ=")
     renderer.render(%({{ "aGVsbG8gd29ybGQ=" | b64decode }})).should eq("hello world")
@@ -367,28 +367,28 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
 
   it "from_json parses a JSON string into a real dict usable by dotted access" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render(%({{ ('{"a": 1}' | from_json).a }})).should eq("1")
   end
 
   it "from_yaml parses a YAML string into a real dict" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render(%({{ ("a: 1\nb: 2\n" | from_yaml).b }})).should eq("2")
   end
 
   it "renders to_yaml, real Ansible's own filter (sorted keys, block style)" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render(%({{ {"b": 1, "a": 2} | to_yaml }})).should eq("a: 2\nb: 1")
   end
 
   it "checksum computes a sha1 hex digest" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render(%({{ "hello" | checksum }})).should eq("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d")
   end
@@ -396,7 +396,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
   it "union combines two lists preserving order and dedup" do
     v = Hash(String, JSON::Any).new
     v["other"] = JSON.parse(%([2, 3, 4]))
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render(%({{ [1, 2, 3] | union(other) }})).should eq("[1, 2, 3, 4]")
   end
@@ -405,7 +405,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     v = Hash(String, JSON::Any).new
     v["small"] = JSON.parse(%(["a", "b"]))
     v["big"] = JSON.parse(%(["a", "b", "c"]))
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render(%({% if small is subset(big) %}yes{% else %}no{% endif %})).should eq("yes")
     renderer.render(%({% if big is subset(small) %}yes{% else %}no{% endif %})).should eq("no")
@@ -416,7 +416,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
 
   it "renders lookup('env', ...) in a real .j2 template" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     ENV["CRYSTAL_ANSIBLE_SPEC_CRINJA_LOOKUP_ENV"] = "hello"
     renderer.render(%({{ lookup('env', 'CRYSTAL_ANSIBLE_SPEC_CRINJA_LOOKUP_ENV') }})).should eq("hello")
@@ -427,7 +427,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     v = Hash(String, JSON::Any).new
     v["env_prod_port"] = JSON::Any.new(8080_i64)
     v["target_env"] = JSON::Any.new("prod")
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render(%({{ lookup('vars', 'env_' + target_env + '_port') }})).should eq("8080")
   end
@@ -438,13 +438,13 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     File.write(path, "secret-content\n")
 
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render(%({{ lookup('file', '#{path}') }})).should eq("secret-content")
   end
 
   it "renders lookup('pipe', command) running a local shell command" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render(%({{ lookup('pipe', 'echo hello-from-pipe') }})).should eq("hello-from-pipe")
   end
 
@@ -455,7 +455,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
 
     v = Hash(String, JSON::Any).new
     v["my_var"] = JSON::Any.new("computed")
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render(%({{ lookup('template', '#{path}') }})).should eq("value is computed")
   end
 
@@ -464,7 +464,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     File.delete(path) if File.exists?(path)
 
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     first = renderer.render(%({{ lookup('password', '#{path} length=8') }}))
     first.size.should eq(8)
 
@@ -475,7 +475,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
 
   it "renders lookup('url', ...) fetching lines from the controller, with and without wantlist" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render(%({{ lookup('url', '#{crinja_url_lookup_base}/lines.txt') }}))
       .should eq("line one,line two,line three")
@@ -486,7 +486,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
 
   it "renders lookup('url', ...) following a redirect, matching how GitHub serves release assets" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render(%({{ lookup('url', '#{crinja_url_lookup_base}/redirect.txt') }}))
       .should eq("line one,line two,line three")
@@ -500,7 +500,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     v = Hash(String, JSON::Any).new
     v["role_path"] = JSON::Any.new(role_dir)
     v["distro"] = JSON::Any.new("Debian")
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     result = renderer.render(%({{ lookup('first_found', {'files': ['{{ distro }}.yml', 'default.yml'], 'paths': ['vars']}) }}))
     result.should eq(File.join(role_dir, "vars", "Debian.yml"))
@@ -513,7 +513,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
 
     v = Hash(String, JSON::Any).new
     v["role_path"] = JSON::Any.new(role_dir)
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     result = renderer.render(%({{ lookup('first_found', {'files': ['main.yml']}) }}))
     result.should eq(File.join(role_dir, "vars", "main.yml"))
@@ -522,7 +522,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
   it "raises a clean error rendering first/last on a genuinely empty sequence, rather than silently rendering the raw template text" do
     v = Hash(String, JSON::Any).new
     v["mylist"] = JSON::Any.new([] of JSON::Any)
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     expect_raises(Exception, "No first item, sequence was empty.") { renderer.render!("{{ mylist | first }}") }
     expect_raises(Exception, "No last item, sequence was empty.") { renderer.render!("{{ mylist | last }}") }
@@ -530,32 +530,32 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
 
   it "leaves an undefined target's first filter lenient, matching the vendored library's own prior behavior" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render(%({{ nonexistent_var | first | default('fallback') }})).should eq("fallback")
   end
 
   it "path_join joins a list of path components, an absolute one resets" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render(%({{ ["a", "b", "c.txt"] | path_join }})).should eq("a/b/c.txt")
     renderer.render(%({{ ["a", "/b", "c.txt"] | path_join }})).should eq("/b/c.txt")
   end
 
   it "splitext splits a path into [root, ext]" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render(%({{ "/etc/foo.conf" | splitext }})).should eq(%(['/etc/foo', '.conf']))
   end
 
   it "urldecode percent-decodes a string" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render(%({{ "hello%20world" | urldecode }})).should eq("hello world")
   end
 
   it "urlsplit returns a component when given one, the full dict otherwise" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render(%({{ "https://example.com:8080/path" | urlsplit('hostname') }})).should eq("example.com")
     renderer.render(%({{ "https://example.com:8080/path" | urlsplit('port') }})).should eq("8080")
   end
@@ -563,7 +563,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
   it "zip/zip_longest/product combine lists" do
     v = Hash(String, JSON::Any).new
     v["other"] = JSON.parse(%(["x", "y"]))
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render(%({{ [1, 2] | zip(other) }})).should eq(%([[1, 'x'], [2, 'y']]))
     renderer.render(%({{ [1] | zip_longest(other, fillvalue="-") }})).should eq(%([[1, 'x']]))
     renderer.render(%({{ [1, 2] | product(other) }})).should eq(%([[1, 'x'], [1, 'y'], [2, 'x'], [2, 'y']]))
@@ -571,26 +571,26 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
 
   it "regex_escape escapes regex special characters" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render(%({{ "1.2.3" | regex_escape }})).should eq("1\\.2\\.3")
   end
 
   it "renders to_nice_json, sorted keys by default" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render(%({{ {"b": 1, "a": 2} | to_nice_json }})).should eq(%({\n  "a": 2,\n  "b": 1\n}))
   end
 
   it "human_readable/human_to_bytes round-trip a byte count" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render(%({{ 1024 | human_readable }})).should eq("1.00 KB")
     renderer.render(%({{ "2GB" | human_to_bytes }})).should eq((2_i64 * 1024 * 1024 * 1024).to_s)
   end
 
   it "md5/sha1 compute standalone hex digests" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render(%({{ "hello" | md5 }})).should eq("5d41402abc4b2a76b9719d911017c592")
     renderer.render(%({{ "hello" | sha1 }})).should eq("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d")
   end
@@ -608,7 +608,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     v["f"] = JSON::Any.new(file_path)
     v["d"] = JSON::Any.new(dir_path)
     v["l"] = JSON::Any.new(link_path)
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render(%({% if f is exists %}yes{% else %}no{% endif %})).should eq("yes")
     renderer.render(%({% if f is file %}yes{% else %}no{% endif %})).should eq("yes")
@@ -624,7 +624,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
 
   it "expanduser/expandvars expand ~ and $VAR from the controller's environment" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     ENV["HOME"] = "/home/testuser"
     renderer.render(%({{ "~/foo" | expanduser }})).should eq("/home/testuser/foo")
     ENV["CRYSTAL_ANSIBLE_SPEC_CRINJA_EXPANDVAR"] = "hello"
@@ -634,7 +634,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
 
   it "normpath/relpath/commonpath mirror Python's os.path helpers" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render(%({{ "a/./b/../c" | normpath }})).should eq("a/c")
     renderer.render(%({{ "/a/b/c" | relpath("/a") }})).should eq("b/c")
     renderer.render(%({{ ["/a/b/c", "/a/b/d"] | commonpath }})).should eq("/a/b")
@@ -642,14 +642,14 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
 
   it "log/pow compute logarithms and powers" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render(%({{ 8.0 | log(2) }})).should eq("3.0")
     renderer.render(%({{ 2.0 | pow(10) }})).should eq("1024.0")
   end
 
   it "to_uuid produces a deterministic UUID5" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     a = renderer.render(%({{ "hello" | to_uuid }}))
     b = renderer.render(%({{ "hello" | to_uuid }}))
     a.should eq(b)
@@ -658,7 +658,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
   it "symmetric_difference/combinations/permutations" do
     v = Hash(String, JSON::Any).new
     v["other"] = JSON.parse(%([2, 3, 4]))
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render(%({{ [1, 2, 3] | symmetric_difference(other) }})).should eq("[1, 4]")
     renderer.render(%({{ [1, 2, 3] | combinations(2) }})).should eq("[[1, 2], [1, 3], [2, 3]]")
     renderer.render(%({{ [1, 2] | permutations }})).should eq("[[1, 2], [2, 1]]")
@@ -666,44 +666,44 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
 
   it "rekey_on_member converts a list of dicts into a dict keyed by a field" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render(%({{ ([{"name": "a", "v": 1}] | rekey_on_member("name")).a.v }})).should eq("1")
   end
 
   it "extract indexes into a container using the piped value" do
     v = Hash(String, JSON::Any).new
     v["container"] = JSON.parse(%(["zero", "one", "two"]))
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render(%({{ 1 | extract(container) }})).should eq("one")
   end
 
   it "from_yaml_all parses a multi-document YAML string" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render(%({{ ("a: 1\n---\nb: 2\n" | from_yaml_all)[1].b }})).should eq("2")
   end
 
   it "vault/unvault round-trip through real ansible-vault ciphertext" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     encrypted = renderer.render(%({{ "plaintext" | vault("secret123") }}))
     encrypted.should start_with("$ANSIBLE_VAULT;")
     v["ciphertext"] = JSON::Any.new(encrypted)
-    renderer2 = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer2 = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer2.render(%({{ ciphertext | unvault("secret123") }})).should eq("plaintext")
   end
 
   it "renders is mount against the CONTROLLER's real mount table" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render(%({% if "/" is mount %}yes{% else %}no{% endif %})).should eq("yes")
   end
 
   it "renders is vault_encrypted / is vaulted_file / is urn" do
     v = Hash(String, JSON::Any).new
-    v["ciphertext"] = JSON::Any.new(CrystalPlay::Vault.encrypt("secret", "password123"))
+    v["ciphertext"] = JSON::Any.new(Krikri::Vault.encrypt("secret", "password123"))
     v["urn"] = JSON::Any.new("urn:isbn:0451450523")
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render(%({% if ciphertext is vault_encrypted %}yes{% else %}no{% endif %})).should eq("yes")
     renderer.render(%({% if urn is urn %}yes{% else %}no{% endif %})).should eq("yes")
@@ -713,7 +713,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     v = Hash(String, JSON::Any).new
     v["job"] = JSON.parse(%({"started": 1, "finished": 0}))
     v["conn"] = JSON.parse(%({"unreachable": true}))
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render(%({% if job is started %}yes{% else %}no{% endif %})).should eq("yes")
     renderer.render(%({% if job is finished %}yes{% else %}no{% endif %})).should eq("no")
@@ -726,7 +726,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     v["mydict"] = JSON.parse(%({"a": 1}))
     v["l1"] = JSON.parse(%([1, 2]))
     v["l2"] = JSON.parse(%(["x", "y"]))
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render(%({{ (lookup('dict', mydict))[0].key }})).should eq("a")
     renderer.render(%({{ lookup('list', 1, 2) }})).should eq("[1, 2]")
@@ -740,7 +740,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
   it "renders lookup('lines'/'sequence'/'varnames', ...)" do
     v = Hash(String, JSON::Any).new
     v["nginx_port"] = JSON::Any.new(80_i64)
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render(%({{ lookup('lines', 'printf "a\\nb\\n"') }})).should eq("['a', 'b']")
     renderer.render(%({{ lookup('sequence', 'start=1 end=3') }})).should eq("['1', '2', '3']")
@@ -750,7 +750,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
   it "renders lookup('subelements'/'csvfile'/'ini'/'unvault', ...)" do
     v = Hash(String, JSON::Any).new
     v["users"] = JSON.parse(%([{"name": "alice", "groups": ["a"]}]))
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render(%({{ (lookup('subelements', users, 'groups'))[0][1] }})).should eq("a")
 
     csv_path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "crinja_lookup_csvfile_test.csv")
@@ -762,10 +762,10 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     renderer.render(%({{ lookup('ini', 'port section=db file=#{ini_path}') }})).should eq("5432")
 
     unvault_path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "crinja_lookup_unvault_test.txt")
-    File.write(unvault_path, CrystalPlay::Vault.encrypt("hidden", "pw123"))
-    CrystalPlay::Vault.password = "pw123"
+    File.write(unvault_path, Krikri::Vault.encrypt("hidden", "pw123"))
+    Krikri::Vault.password = "pw123"
     renderer.render(%({{ lookup('unvault', '#{unvault_path}') }})).should eq("hidden")
-    CrystalPlay::Vault.password = nil
+    Krikri::Vault.password = nil
   end
 
   it "type_debug returns Python's own type name" do
@@ -775,7 +775,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     # variable's actual (correct) type.
     v = Hash(String, JSON::Any).new
     v["mylist"] = JSON.parse(%(["a", "b"]))
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render("{{ mylist | type_debug }}").should eq("list")
     renderer.render(%({{ "x" | type_debug }})).should eq("str")
@@ -784,7 +784,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
 
   it "password_hash produces a real crypt(3) hash" do
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     result = renderer.render(%({{ "secret" | password_hash('sha512') }}))
     result.should start_with("$6$")
@@ -801,7 +801,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     # "x". The block-tag form (`{%- if x -%}`) already worked correctly;
     # only the expression-tag form was broken.
     v = Hash(String, JSON::Any).new
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render(%(a{{ 'x' -}}b)).should eq("axb")
     renderer.render(%(a{{- 'x' }}b)).should eq("axb")
@@ -820,20 +820,20 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     # inline `if`/`else` expression fixed here.
     v = Hash(String, JSON::Any).new
     v["x"] = JSON::Any.new(true)
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render(%({{ 'a' if x else 'b' }})).should eq("a")
     renderer.render(%({{ ('a' if x else 'b') }})).should eq("a")
 
     v["x"] = JSON::Any.new(false)
-    renderer2 = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer2 = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer2.render(%({{ 'a' if x else 'b' }})).should eq("b")
   end
 
   it "renders the exact real-world block-tag + parenthesized-ternary + is-test combination" do
     v = Hash(String, JSON::Any).new
     v["pkg_mgr"] = JSON::Any.new("apt")
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     result = renderer.render(%({% if pkg_mgr == 'apt' %}{{ ('python-apt' if (1 is number) else 'python3-apt') -}}{% else %}{% endif %}))
     result.should eq("python-apt")
@@ -842,7 +842,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
   it "still renders correctly when the trim-marker fix runs alongside real {% %} block tags" do
     v = Hash(String, JSON::Any).new
     v["pkg_mgr"] = JSON::Any.new("apt")
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     result = renderer.render(%({% if pkg_mgr == 'apt' %}{{ 'python3-apt' -}}{% else %}{% endif %}))
     result.should eq("python3-apt")
@@ -890,7 +890,7 @@ describe CrystalPlay::VariableSubstitutor::CrinjaRenderer do
     v["__common_github_api_headers"] = JSON::Any.new(
       %({{ {'GITHUB_TOKEN': lookup('ansible.builtin.env', 'GITHUB_TOKEN')} if (lookup('ansible.builtin.env', 'GITHUB_TOKEN')) else {} }})
     )
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     started = Time.instant
     result = renderer.render("{{ _common_dependencies }}")
@@ -919,7 +919,7 @@ describe "CrinjaRenderer.rerender_nested_templates (round 170 - scalar-vs-contai
     v = Hash(String, JSON::Any).new
     v["bind_default_python_version"] = JSON::Any.new("3")
     v["bind_python_version"] = JSON::Any.new("{{ bind_default_python_version }}")
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render("{{ bind_python_version }}").should eq("3")
     renderer.render("{{ 'True' if (bind_python_version == '3') else 'False' }}").should eq("True")
@@ -930,7 +930,7 @@ describe "CrinjaRenderer.rerender_nested_templates (round 170 - scalar-vs-contai
     v["_docker_pip_packages"] = JSON.parse(%({"Debian": ["docker"]}))
     v["ansible_facts"] = JSON.parse(%({"os_family": "Debian"}))
     v["docker_pip_packages"] = JSON::Any.new("{{ _docker_pip_packages[ansible_facts['os_family']] }}")
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render("{{ docker_pip_packages | length }}").should eq("1")
   end

@@ -3,9 +3,9 @@
 require "json"
 require "http/client"
 require "uri"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # ec2_metadata_facts plugin - populates ansible_ec2_* facts from the
   # EC2 Instance Metadata Service (IMDSv2). Compatible with (a subset
   # of) Ansible's amazon.aws.ec2_metadata_facts module.
@@ -209,5 +209,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::Ec2MetadataFactsPlugin.new(config)
+plugin = Krikri::Ec2MetadataFactsPlugin.new(config)
 plugin.run

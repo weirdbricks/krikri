@@ -1,10 +1,10 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/async_jobs"
+require "../src/krikri/base_plugin"
+require "../src/krikri/async_jobs"
 
-module CrystalPlay
+module Krikri
   # async_status plugin - checks on a background job started by a task
   # with async:. Compatible with Ansible's ansible.builtin.async_status.
   #
@@ -52,5 +52,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::AsyncStatusPlugin.new(config)
+plugin = Krikri::AsyncStatusPlugin.new(config)
 plugin.run

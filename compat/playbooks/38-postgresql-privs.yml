@@ -53,7 +53,7 @@
         port: 5432
         timeout: 60
 
-    # crystal-ansible parses become:/become_user: but plain su avoids any
+    # krikri-playbook parses become:/become_user: but plain su avoids any
     # doubt either way - same convention 36-postgresql-db.yml uses.
     - name: set a password for the postgres superuser
       ansible.builtin.shell: |

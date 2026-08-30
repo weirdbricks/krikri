@@ -24,9 +24,9 @@
 require "json"
 require "digest/md5"
 require "file_utils"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   class AssemblePlugin < BasePlugin
     def execute : PluginResult
       src = @params["src"]?
@@ -108,5 +108,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::AssemblePlugin.new(config)
+plugin = Krikri::AssemblePlugin.new(config)
 plugin.run

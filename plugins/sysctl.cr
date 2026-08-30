@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # Sysctl plugin - manages entries in a sysctl config file (and
   # optionally applies them to the running kernel). Compatible with
   # Ansible's ansible.posix.sysctl module.
@@ -186,5 +186,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::SysctlPlugin.new(config)
+plugin = Krikri::SysctlPlugin.new(config)
 plugin.run

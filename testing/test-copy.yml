@@ -9,7 +9,7 @@
   tasks:
     - name: Setup - Create test directory
       ansible.builtin.file:
-        path: /tmp/crystal-play-copy-test
+        path: /tmp/krikri-playbook-copy-test
         state: directory
         mode: '0755'
     
@@ -20,7 +20,7 @@
           This is test content
           Line 2
           Line 3
-        dest: /tmp/crystal-play-copy-test/content.txt
+        dest: /tmp/krikri-playbook-copy-test/content.txt
         mode: '0644'
     
     # Test 2: Idempotency - same content again (should be ok, not changed)
@@ -30,7 +30,7 @@
           This is test content
           Line 2
           Line 3
-        dest: /tmp/crystal-play-copy-test/content.txt
+        dest: /tmp/krikri-playbook-copy-test/content.txt
         mode: '0644'
     
     # Test 3: Content change (should detect change)
@@ -39,31 +39,31 @@
         content: |
           This is DIFFERENT content
           New line 2
-        dest: /tmp/crystal-play-copy-test/content.txt
+        dest: /tmp/krikri-playbook-copy-test/content.txt
         mode: '0644'
     
     # Test 4: File-based copy (src parameter)
     - name: Test 4 - Create local source file
       ansible.builtin.copy:
         content: "Source file content for testing"
-        dest: /tmp/crystal-play-copy-test/source.txt
+        dest: /tmp/krikri-playbook-copy-test/source.txt
         mode: '0644'
     
     - name: Test 5 - Copy from src to dest
       ansible.builtin.copy:
-        src: /tmp/crystal-play-copy-test/source.txt
-        dest: /tmp/crystal-play-copy-test/copied.txt
+        src: /tmp/krikri-playbook-copy-test/source.txt
+        dest: /tmp/krikri-playbook-copy-test/copied.txt
         mode: '0644'
     
     # Test 6: Mode/permissions
     - name: Test 6 - Copy with specific mode
       ansible.builtin.copy:
         content: "File with 0600 permissions"
-        dest: /tmp/crystal-play-copy-test/restricted.txt
+        dest: /tmp/krikri-playbook-copy-test/restricted.txt
         mode: '0600'
     
     - name: Test 7 - Verify permissions
-      ansible.builtin.shell: stat -c '%a' /tmp/crystal-play-copy-test/restricted.txt
+      ansible.builtin.shell: stat -c '%a' /tmp/krikri-playbook-copy-test/restricted.txt
       register: perms
     
     - name: Test 8 - Show permissions
@@ -74,13 +74,13 @@
     - name: Test 9 - Copy with backup
       ansible.builtin.copy:
         content: "New content that will trigger backup"
-        dest: /tmp/crystal-play-copy-test/content.txt
+        dest: /tmp/krikri-playbook-copy-test/content.txt
         backup: yes
         mode: '0644'
     
     # Test 10: Verify files exist
     - name: Test 10 - List all created files
-      ansible.builtin.shell: ls -lh /tmp/crystal-play-copy-test/
+      ansible.builtin.shell: ls -lh /tmp/krikri-playbook-copy-test/
       register: files
     
     - name: Test 11 - Show created files
@@ -89,7 +89,7 @@
     
     # Test 12: Read and verify content
     - name: Test 12 - Verify final content
-      ansible.builtin.command: cat /tmp/crystal-play-copy-test/content.txt
+      ansible.builtin.command: cat /tmp/krikri-playbook-copy-test/content.txt
       register: final_content
     
     - name: Test 13 - Show final content
@@ -98,7 +98,7 @@
     
     - name: SUCCESS
       ansible.builtin.debug:
-        msg: "✓ Copy plugin tests complete! Files kept at /tmp/crystal-play-copy-test/"
+        msg: "✓ Copy plugin tests complete! Files kept at /tmp/krikri-playbook-copy-test/"
 
 # Expected results:
 # Test 1: changed=true (file created)

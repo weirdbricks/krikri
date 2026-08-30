@@ -5,9 +5,9 @@
 # password changes, tag updates and vhost permission grants - the subset
 # the corpus actually calls.
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   class RabbitmqUserPlugin < BasePlugin
     def execute : PluginResult
       # community.rabbitmq.rabbitmq_user's own argspec: `name` (the user),
@@ -120,5 +120,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::RabbitmqUserPlugin.new(config)
+plugin = Krikri::RabbitmqUserPlugin.new(config)
 plugin.run

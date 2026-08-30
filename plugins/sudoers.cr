@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # sudoers plugin - manages /etc/sudoers.d/-style rule files.
   # Compatible with (a subset of) Ansible's community.general.sudoers
   # module.
@@ -150,5 +150,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::SudoersPlugin.new(config)
+plugin = Krikri::SudoersPlugin.new(config)
 plugin.run

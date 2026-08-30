@@ -1,7 +1,7 @@
 require "../spec_helper"
-require "../../src/crystal_play/plugin_helpers/authorized_keys_file"
+require "../../src/krikri/plugin_helpers/authorized_keys_file"
 
-private alias AuthorizedKeysFile = CrystalPlay::PluginHelpers::AuthorizedKeysFile
+private alias AuthorizedKeysFile = Krikri::PluginHelpers::AuthorizedKeysFile
 
 private RSA_KEY = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC test@example.com"
 

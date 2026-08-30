@@ -5,7 +5,7 @@ require "../spec_helper"
 # expectations taken from an ansible-core 2.19.4 run of the same
 # inventory.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 
 private def run_inventory(inventory : String, playbook : String, extra : Hash(String, String)? = nil) : String
   dir = File.tempname("inv-range")

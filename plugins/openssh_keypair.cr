@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # openssh_keypair plugin (community.crypto.openssh_keypair) - (re)
   # generates an OpenSSH private/public keypair via `ssh-keygen`. Ported
   # from the real module's `opensshbin` backend (the module's own
@@ -227,5 +227,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::OpensshKeypairPlugin.new(config)
+plugin = Krikri::OpensshKeypairPlugin.new(config)
 plugin.run

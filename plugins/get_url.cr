@@ -3,10 +3,10 @@
 require "json"
 require "http/client"
 require "uri"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/http_download"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/http_download"
 
-module CrystalPlay
+module Krikri
   # get_url plugin (ansible.builtin.get_url) - downloads a URL to a file.
   #
   # Uses Crystal stdlib HTTP::Client natively rather than shelling to
@@ -209,5 +209,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::GetUrlPlugin.new(config)
+plugin = Krikri::GetUrlPlugin.new(config)
 plugin.run

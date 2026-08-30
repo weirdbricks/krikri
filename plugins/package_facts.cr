@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # PackageFacts Plugin - populate the ansible_facts.packages dict with the
   # installed packages, matching ansible.builtin.package_facts (manager:
   # auto). The fact shape follows real Ansible: a dict keyed by package name
@@ -113,5 +113,5 @@ end
 # Entry point
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::PackageFactsPlugin.new(config)
+plugin = Krikri::PackageFactsPlugin.new(config)
 plugin.run

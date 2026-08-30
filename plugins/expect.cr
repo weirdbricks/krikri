@@ -30,7 +30,7 @@
 #   creates/removes (optional): idempotency guards, same as command:
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
 @[Link("util")]
 lib LibPty
@@ -56,7 +56,7 @@ end
 # pty).
 TIOCSCTTY = 0x540E_u64
 
-module CrystalPlay
+module Krikri
   class ExpectPlugin < BasePlugin
     def execute : PluginResult
       command = @params["command"]? || @params["_raw_params"]?
@@ -257,5 +257,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::ExpectPlugin.new(config)
+plugin = Krikri::ExpectPlugin.new(config)
 plugin.run

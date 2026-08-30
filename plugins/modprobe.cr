@@ -1,10 +1,10 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/modprobe_command"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/modprobe_command"
 
-module CrystalPlay
+module Krikri
   # modprobe plugin - loads/unloads a kernel module. Compatible (for
   # the parameters implemented here) with Ansible's community.general.
   # modprobe module.
@@ -89,5 +89,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::ModprobePlugin.new(config)
+plugin = Krikri::ModprobePlugin.new(config)
 plugin.run

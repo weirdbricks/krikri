@@ -10,7 +10,7 @@ notes, and the fork's own `PATCHES.md`.
 
 - Two independent Jinja2 evaluators coexist: a hand-rolled `{{ }}` evaluator
   (`ExpressionEvaluator`/`ConditionalEvaluator`/`ComparisonEvaluator`/
-  `FilterEngine`, under `src/crystal_play/variable_substitutor/`) and the
+  `FilterEngine`, under `src/krikri/variable_substitutor/`) and the
   vendored **Crinja** shard, used for real `.j2` files and `{% %}`/`{# #}`
   block tags via `CrinjaRenderer`.
 - Crinja is **forked** to `github: weirdbricks/crinja`, pinned by **tag** (never
@@ -18,7 +18,7 @@ notes, and the fork's own `PATCHES.md`.
   `.gitignore`d and re-fetched by `shards install` — **never edit it directly**;
   edit the fork's source, commit, tag, push, and repin.
 - Every `crinja_*_ext.cr` monkey-patch was migrated into the fork's real source
-  long ago (0.9.323). crystal-ansible carries **zero** Crinja patches.
+  long ago (0.9.323). krikri-playbook carries **zero** Crinja patches.
   `jinja_filters.cr` still holds the genuinely **Ansible-specific** filters/
   tests that don't belong in a general-purpose Jinja2 engine (`to_datetime`,
   `bool`, `ternary`, `comment`, `password_hash`, `regex_search`, `flatten`,
@@ -72,10 +72,10 @@ branch tries Crinja first). What remains hand-rolled is intentional:
 ## Working with it (bare minimum)
 
 - Add/fix Crinja behavior: edit the fork clone (`~/git_work/crinja`), add a
-  fork spec, commit, tag (`crystal-play-<n>`), push, repin `shard.yml`, `shards
+  fork spec, commit, tag (`krikri-playbook-<n>`), push, repin `shard.yml`, `shards
   update`, run specs + `./build.sh`. Keep the fork's own spec suite (all green)
   green — it's the first line of defense.
-- crystal-ansible's raw-Crinja rebase canary: `spec/unit/crinja_direct_spec.cr`
+- krikri-playbook's raw-Crinja rebase canary: `spec/unit/crinja_direct_spec.cr`
   tests the maintained registrations against `Crinja.new` directly — after any
   fork rebase it flags redundant (safe-to-delete) or regressed registrations.
 - Bug-fix discipline: the same bug class (recursive re-templating, truthiness,

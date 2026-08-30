@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # WaitForConnection plugin - matches ansible.builtin.wait_for_connection.
   #
   # Entirely unimplemented before - robertdebock.test_connection's own
@@ -32,5 +32,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::WaitForConnectionPlugin.new(config)
+plugin = Krikri::WaitForConnectionPlugin.new(config)
 plugin.run

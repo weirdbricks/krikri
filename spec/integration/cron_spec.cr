@@ -40,11 +40,11 @@ describe "cron plugin" do
       "job"       => "/tmp/lynis/lynis --cronjob audit system",
       "hour"      => "4",
       "minute"    => "23",
-      "cron_file" => "crystal-ansible-spec-relative",
+      "cron_file" => "krikri-playbook-spec-relative",
     })
 
     result["failed"]?.try(&.as_bool).should be_true
-    result["msg"].as_s.should contain("/etc/cron.d/crystal-ansible-spec-relative")
+    result["msg"].as_s.should contain("/etc/cron.d/krikri-playbook-spec-relative")
   end
 
   it "is idempotent on a second run with the same parameters" do

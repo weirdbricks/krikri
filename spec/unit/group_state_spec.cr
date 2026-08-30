@@ -1,7 +1,7 @@
 require "../spec_helper"
-require "../../src/crystal_play/plugin_helpers/group_state"
+require "../../src/krikri/plugin_helpers/group_state"
 
-private alias GroupState = CrystalPlay::PluginHelpers::GroupState
+private alias GroupState = Krikri::PluginHelpers::GroupState
 
 describe GroupState do
   describe ".parse" do

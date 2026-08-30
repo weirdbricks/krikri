@@ -9,7 +9,7 @@ require "../spec_helper"
 # the play rather than erroring, so a play aimed at a parent group just
 # quietly did nothing.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 
 private INVENTORY = <<-INI
   [web]

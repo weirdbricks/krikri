@@ -2,10 +2,10 @@
 
 require "json"
 require "docr"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/docker_client"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/docker_client"
 
-module CrystalPlay
+module Krikri
   # Docker network plugin - creates/removes a Docker network.
   # Compatible with Ansible's community.docker.docker_network module.
   #
@@ -226,5 +226,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::DockerNetworkPlugin.new(config)
+plugin = Krikri::DockerNetworkPlugin.new(config)
 plugin.run

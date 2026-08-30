@@ -1,30 +1,30 @@
 require "../spec_helper"
 require "file_utils"
-require "../../src/crystal_play/variable_substitutor/expression_evaluator"
+require "../../src/krikri/variable_substitutor/expression_evaluator"
 # Pull in the real Ansible-specific Crinja filter registrations (to_datetime
 # etc.), as template_action_plugin.cr does for every real template-rendering
 # binary - without this the ExpressionEvaluator's Crinja env has none of them.
-require "../../src/crystal_play/jinja_filters"
+require "../../src/krikri/jinja_filters"
 
-describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
+describe Krikri::VariableSubstitutor::ExpressionEvaluator do
   it "dispatches simple lookups" do
     v = Hash(String, JSON::Any).new
     v["name"] = JSON::Any.new("ada")
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("name").should eq("ada")
   end
 
   it "dispatches nested lookups" do
     v = Hash(String, JSON::Any).new
     v["user"] = JSON.parse(%({"name": "ada"}))
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("user.name").should eq("ada")
   end
 
   it "dispatches indexed access" do
     v = Hash(String, JSON::Any).new
     v["items"] = JSON.parse(%(["a", "b"]))
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("items[0]").should eq("a")
   end
 
@@ -34,13 +34,13 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     # against real Python's own jinja2.Environment.
     v = Hash(String, JSON::Any).new
     v["rc"] = JSON::Any.new(0_i64)
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("rc == 0").should eq("True")
   end
 
   it "applies a filter to a simple variable" do
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate(%(missing | default('fallback'))).should eq("fallback")
   end
 
@@ -54,11 +54,11 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     # own bare-conditional path.
     v = Hash(String, JSON::Any).new
     v["mylist"] = JSON::Any.new([JSON::Any.new("a"), JSON::Any.new("b"), JSON::Any.new("c")])
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("mylist | length > 0").should eq("True")
 
     v["mylist"] = JSON::Any.new([] of JSON::Any)
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("mylist | length > 0").should eq("False")
   end
 
@@ -69,25 +69,25 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     # running the loop body once with `item` undefined instead of 10
     # times.
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("range(3) | list").should eq(%([0,1,2]))
   end
 
   it "evaluates bare range(stop) with no filter at all" do
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("range(3)").should eq(%([0,1,2]))
   end
 
   it "evaluates range(start, stop)" do
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("range(1, 11) | list").should eq(%([1,2,3,4,5,6,7,8,9,10]))
   end
 
   it "evaluates range(start, stop, step) including a negative step" do
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("range(0, 10, 2) | list").should eq(%([0,2,4,6,8]))
     evaluator.evaluate("range(5, 0, -1) | list").should eq(%([5,4,3,2,1]))
   end
@@ -95,7 +95,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
   it "evaluates range() arguments that are themselves variables" do
     v = Hash(String, JSON::Any).new
     v["n"] = JSON::Any.new(4_i64)
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("range(1, n) | list").should eq(%([1,2,3]))
   end
 
@@ -116,7 +116,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     v = Hash(String, JSON::Any).new
     v["role_path"] = JSON::Any.new(role_dir)
     v["params"] = JSON.parse(%({"files": ["Debian.yml"]}))
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("lookup('first_found', params)").should eq(File.join(role_dir, "vars", "Debian.yml"))
   end
 
@@ -129,7 +129,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     v = Hash(String, JSON::Any).new
     v["role_path"] = JSON::Any.new(role_dir)
     v["params"] = JSON.parse(%({"files": ["x.yml"], "paths": [#{File.join(role_dir, "otherdir").to_json}]}))
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("lookup('first_found', params)").should eq(File.join(role_dir, "otherdir", "x.yml"))
   end
 
@@ -141,7 +141,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     # plain-lookup fallback, treating the literal text (quotes included)
     # as a variable NAME to resolve, always undefined.
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("'hello' | upper").should eq("HELLO")
     evaluator.evaluate("'/var/log/mysql/mysql.err' | dirname").should eq("/var/log/mysql")
   end
@@ -160,7 +160,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     v = Hash(String, JSON::Any).new
     v["role_path"] = JSON::Any.new(role_dir)
     v["params"] = JSON.parse(%({"files": ["Debian.yml"], "paths": ["vars"]}))
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("lookup('first_found', params)").should eq(File.join(role_dir, "vars", "Debian.yml"))
   end
 
@@ -179,14 +179,14 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     v = Hash(String, JSON::Any).new
     v["role_path"] = JSON::Any.new(role_dir)
     v["params"] = JSON.parse(%({"files": ["Debian.yml"], "paths": ["vars"]}))
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("query('first_found', params)").should eq(%([#{File.join(role_dir, "vars", "Debian.yml").to_json}]))
   end
 
   it "query('first_found', ...) with no match returns an empty list, not a single undefined item" do
     v = Hash(String, JSON::Any).new
     v["params"] = JSON.parse(%({"files": ["NoSuchFile.yml"], "paths": ["/nonexistent"]}))
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("query('first_found', params)").should eq("[]")
   end
 
@@ -206,7 +206,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     v = Hash(String, JSON::Any).new
     v["role_path"] = JSON::Any.new(role_dir)
     v["params"] = JSON.parse(%({"files": ["Debian.yml"], "paths": ["../vars"]}))
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("lookup('first_found', params)").should eq(File.join(role_dir, "vars", "Debian.yml"))
   end
 
@@ -217,7 +217,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     # (only 'first_found' was), always "undefined" regardless of the
     # real env var.
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
 
     ENV["CRYSTAL_ANSIBLE_SPEC_ENV_LOOKUP_TEST"] = "hello"
     evaluator.evaluate("lookup('env', 'CRYSTAL_ANSIBLE_SPEC_ENV_LOOKUP_TEST')").should eq("hello")
@@ -246,7 +246,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     v = Hash(String, JSON::Any).new
     v["mydir"] = JSON::Any.new(dir)
     v["myname"] = JSON::Any.new("greeting")
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
 
     evaluator.evaluate(%(lookup("file", "{{ mydir }}/{{ myname }}.txt"))).should eq("hello there")
   ensure
@@ -257,14 +257,14 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     v = Hash(String, JSON::Any).new
     v["env_prod_port"] = JSON::Any.new(8080_i64)
     v["target_env"] = JSON::Any.new("prod")
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
 
     evaluator.evaluate(%(lookup('vars', 'env_' + target_env + '_port'))).should eq("8080")
   end
 
   it "evaluates lookup('vars', ...) as undefined for a name that doesn't resolve" do
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
 
     evaluator.evaluate(%(lookup('vars', 'no_such_variable'))).should eq("undefined")
   end
@@ -275,7 +275,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     File.write(path, "secret-content\n")
 
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate(%(lookup('file', '#{path}'))).should eq("secret-content")
   end
 
@@ -291,7 +291,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
   # Ansible does.
   it "raises (does not silently return 'undefined') for lookup('file', ...) on a missing file" do
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     expect_raises(Exception, /lookup plugin 'file' failed.*File not found/) do
       evaluator.evaluate(%(lookup('file', '/no/such/file/at/all')))
     end
@@ -299,7 +299,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
 
   it "evaluates lookup('pipe', command) running a local shell command" do
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate(%(lookup('pipe', 'echo hello-from-pipe'))).should eq("hello-from-pipe")
   end
 
@@ -310,7 +310,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
 
     v = Hash(String, JSON::Any).new
     v["my_var"] = JSON::Any.new("computed")
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate(%(lookup('template', '#{path}'))).should eq("value is computed")
   end
 
@@ -319,7 +319,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     File.delete(path) if File.exists?(path)
 
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     first = evaluator.evaluate(%(lookup('password', '#{path}')))
     first.should_not be_empty
     File.exists?(path).should be_true
@@ -334,7 +334,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     File.delete(path) if File.exists?(path)
 
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     result = evaluator.evaluate(%(lookup('password', '#{path} length=8')))
     result.size.should eq(8)
     File.delete(path)
@@ -343,7 +343,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
   it "evaluates lookup('dict', ...) as a list of {key, value} dicts" do
     v = Hash(String, JSON::Any).new
     v["mydict"] = JSON.parse(%({"a": 1, "b": 2}))
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
 
     result = JSON.parse(evaluator.evaluate("lookup('dict', mydict)"))
     result.as_a.map { |item| {item["key"].as_s, item["value"].as_i} }.should eq([{"a", 1}, {"b", 2}])
@@ -353,7 +353,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     v = Hash(String, JSON::Any).new
     v["a"] = JSON::Any.new(1_i64)
     v["b"] = JSON::Any.new(2_i64)
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
 
     JSON.parse(evaluator.evaluate("lookup('list', a, b)")).as_a.map(&.as_i).should eq([1, 2])
   end
@@ -362,7 +362,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     v = Hash(String, JSON::Any).new
     v["l1"] = JSON.parse(%([1, 2]))
     v["l2"] = JSON.parse(%([3, 4]))
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
 
     JSON.parse(evaluator.evaluate("lookup('items', l1, l2)")).as_a.map(&.as_i).should eq([1, 2, 3, 4])
   end
@@ -371,7 +371,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     v = Hash(String, JSON::Any).new
     v["l1"] = JSON.parse(%([1, 2, 3]))
     v["l2"] = JSON.parse(%(["x", "y"]))
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
 
     result = JSON.parse(evaluator.evaluate("lookup('together', l1, l2)")).as_a
     result[0].as_a.should eq([JSON::Any.new(1_i64), JSON::Any.new("x")])
@@ -382,7 +382,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     v = Hash(String, JSON::Any).new
     v["l1"] = JSON.parse(%(["a", "b"]))
     v["l2"] = JSON.parse(%([1, 2]))
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
 
     result = JSON.parse(evaluator.evaluate("lookup('nested', l1, l2)")).as_a
     result.map { |row| row.as_a.map(&.to_s) }.should eq([["a", "1"], ["a", "2"], ["b", "1"], ["b", "2"]])
@@ -390,7 +390,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
 
   it "evaluates lookup('lines', ...) splitting command output into a list of lines" do
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
 
     JSON.parse(evaluator.evaluate(%(lookup('lines', 'printf "a\\nb\\nc\\n"')))).as_a.map(&.as_s).should eq(["a", "b", "c"])
   end
@@ -400,7 +400,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     v["nginx_port"] = JSON::Any.new(80_i64)
     v["nginx_host"] = JSON::Any.new("example.com")
     v["apache_port"] = JSON::Any.new(8080_i64)
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
 
     result = JSON.parse(evaluator.evaluate(%(lookup('varnames', '^nginx_')))).as_a.map(&.as_s).sort!
     result.should eq(["nginx_host", "nginx_port"])
@@ -408,14 +408,14 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
 
   it "evaluates lookup('sequence', ...) generating a numeric range" do
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
 
     JSON.parse(evaluator.evaluate(%(lookup('sequence', 'start=1 end=3')))).as_a.map(&.as_s).should eq(["1", "2", "3"])
   end
 
   it "evaluates lookup('sequence', ...) honoring the shorthand start-end form and format=" do
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
 
     JSON.parse(evaluator.evaluate(%(lookup('sequence', '1-3 format=web%02d')))).as_a.map(&.as_s).should eq(["web01", "web02", "web03"])
   end
@@ -423,7 +423,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
   it "evaluates lookup('indexed_items', ...) as [index, item] pairs" do
     v = Hash(String, JSON::Any).new
     v["l"] = JSON.parse(%(["a", "b"]))
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
 
     result = JSON.parse(evaluator.evaluate("lookup('indexed_items', l)")).as_a
     result.map { |pair| {pair[0].as_i, pair[1].as_s} }.should eq([{0, "a"}, {1, "b"}])
@@ -432,7 +432,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
   it "evaluates lookup('random_choice', ...) returning one element from the combined lists" do
     v = Hash(String, JSON::Any).new
     v["l"] = JSON.parse(%(["only"]))
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
 
     evaluator.evaluate("lookup('random_choice', l)").should eq("only")
   end
@@ -440,7 +440,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
   it "evaluates lookup('subelements', ...) yielding [parent, child] pairs" do
     v = Hash(String, JSON::Any).new
     v["users"] = JSON.parse(%([{"name": "alice", "groups": ["a", "b"]}, {"name": "bob", "groups": ["c"]}]))
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
 
     result = JSON.parse(evaluator.evaluate("lookup('subelements', users, 'groups')")).as_a
     result.size.should eq(3)
@@ -453,7 +453,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     File.write(path, "alice,30,engineer\nbob,25,designer\n")
 
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate(%(lookup('csvfile', 'bob file=#{path} delimiter=, col=2'))).should eq("designer")
     File.delete(path)
   end
@@ -463,21 +463,21 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     File.write(path, "[web]\nport = 8080\n\n[db]\nport = 5432\n")
 
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate(%(lookup('ini', 'port section=db file=#{path}'))).should eq("5432")
     File.delete(path)
   end
 
   it "evaluates lookup('unvault', ...) decrypting a file with the session's vault password" do
     path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "lookup_unvault_test.txt")
-    File.write(path, CrystalPlay::Vault.encrypt("top secret", "runpassword"))
-    CrystalPlay::Vault.password = "runpassword"
+    File.write(path, Krikri::Vault.encrypt("top secret", "runpassword"))
+    Krikri::Vault.password = "runpassword"
 
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate(%(lookup('unvault', '#{path}'))).should eq("top secret")
 
-    CrystalPlay::Vault.password = nil
+    Krikri::Vault.password = nil
     File.delete(path)
   end
 
@@ -495,7 +495,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     # even once reached) instead of "" (real Ansible's own lookup('env',
     # ...) return for an unset var).
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
 
     evaluator.evaluate(%(lookup('env', 'CRYSTAL_ANSIBLE_SPEC_ENV_LOOKUP_TEST_2') | default('2.0.3', true))).should eq("2.0.3")
   end
@@ -509,11 +509,11 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     # vault_enterprise`, always resolving to "undefined".
     v = Hash(String, JSON::Any).new
     v["vault_enterprise"] = JSON::Any.new(false)
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate(%('+ent' if vault_enterprise)).should eq("")
 
     v["vault_enterprise"] = JSON::Any.new(true)
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate(%('+ent' if vault_enterprise)).should eq("+ent")
   end
 
@@ -530,11 +530,11 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     # directly against real Python's own jinja2.Environment.
     v = Hash(String, JSON::Any).new
     v["vault_install_hashi_repo"] = JSON::Any.new(false)
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("false if vault_install_hashi_repo else true").should eq("True")
 
     v["vault_install_hashi_repo"] = JSON::Any.new(true)
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("false if vault_install_hashi_repo else true").should eq("False")
   end
 
@@ -548,11 +548,11 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     # saw it as truthy regardless of what it actually rendered to.
     v = Hash(String, JSON::Any).new
     v["vault_tls_gossip"] = JSON::Any.new(%({{ lookup('env', 'CRYSTAL_ANSIBLE_SPEC_FILTER_ENV_TEST') | default(false, true) }}))
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("vault_tls_gossip | bool").should eq("False")
 
     ENV["CRYSTAL_ANSIBLE_SPEC_FILTER_ENV_TEST"] = "true"
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("vault_tls_gossip | bool").should eq("True")
     ENV.delete("CRYSTAL_ANSIBLE_SPEC_FILTER_ENV_TEST")
   end
@@ -567,11 +567,11 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     v = Hash(String, JSON::Any).new
     v["vault_version"] = JSON::Any.new("2.0.3")
     v["vault_enterprise"] = JSON::Any.new(false)
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("vault_version~('+ent' if vault_enterprise)").should eq("2.0.3")
 
     v["vault_enterprise"] = JSON::Any.new(true)
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("vault_version~('+ent' if vault_enterprise)").should eq("2.0.3+ent")
   end
 
@@ -584,7 +584,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     # arithmetic involved), both fell through to a plain variable-name
     # lookup on the literal digit text itself, always "undefined".
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
 
     evaluator.evaluate("5").should eq("5")
     evaluator.evaluate("5.7").should eq("5.7")
@@ -607,7 +607,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     # tighter than `+`/`-` (`2 + 3 * 4` == 14, not 20).
     v = Hash(String, JSON::Any).new
     v["n"] = JSON::Any.new(268435456_i64)
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
 
     evaluator.evaluate("10 / 2").should eq("5.0")
     evaluator.evaluate("10 / 3").should eq("3.3333333333333335")
@@ -626,7 +626,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     # degrades leniently to "Infinity" rather than raising; `//` now
     # matches that convention (nil/"undefined") instead of crashing.
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("10 // 0").should eq("")
   end
 
@@ -645,11 +645,11 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     v["result"] = JSON.parse(%({"failed": false}))
     v["a"] = JSON::Any.new("x")
     v["b"] = JSON::Any.new("x")
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("result is failed or a != b").should eq("False")
 
     v["b"] = JSON::Any.new("y")
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("result is failed or a != b").should eq("True")
   end
 
@@ -664,15 +664,15 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     # `useradd: group 'True' does not exist` was the resulting failure.
     v = Hash(String, JSON::Any).new
     v["groups"] = JSON.parse(%(["ops", "sudo"]))
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("groups | join(',') or omit").should eq("ops,sudo")
 
     v["groups"] = JSON.parse(%([]))
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
-    evaluator.evaluate("groups | join(',') or omit").should eq(CrystalPlay::OMIT_SENTINEL)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("groups | join(',') or omit").should eq(Krikri::OMIT_SENTINEL)
 
     v2 = Hash(String, JSON::Any).new
-    evaluator2 = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v2)
+    evaluator2 = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v2)
     evaluator2.evaluate("'ops,sudo' or 'fallback'").should eq("ops,sudo")
     evaluator2.evaluate("'' or 'fallback'").should eq("fallback")
     evaluator2.evaluate("5 or 'fallback'").should eq("5")
@@ -680,7 +680,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
 
   it "treats a plain-value `and` as a value-selector too" do
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("'first' and 'second'").should eq("second")
     evaluator.evaluate("'' and 'second'").should eq("")
   end
@@ -696,7 +696,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     # method-call dispatch its own top-level structure actually needs.
     v = Hash(String, JSON::Any).new
     v["ansible_facts"] = JSON.parse(%({"architecture": "x86_64"}))
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
 
     evaluator.evaluate(%({'x86_64': 'amd64'}.get(ansible_facts['architecture'], ansible_facts['architecture']))).should eq("amd64")
   end
@@ -709,7 +709,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     # first (fork crystal-play-0.9.4 fixed dict()'s kernel-args-only
     # empty-dict bug); the fallback is identical if anything raises.
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate(%(dict([['a', 1], ['b', 2]]))).should eq(%({"a":1,"b":2}))
     evaluator.evaluate(%(dict({'x': 'y'}))).should eq(%({"x":"y"}))
   end
@@ -722,7 +722,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     # in one pass instead of falling back to the hand-rolled tagged-JSON
     # path. Either way the answer is the same - this pins it.
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate(
       %(( 'Jan 02, 2024' | to_datetime('%b %d, %Y') - 'Jan 01, 2024' | to_datetime('%b %d, %Y') ).days)
     ).should eq("1")
@@ -741,7 +741,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     v["installed_vault_version"] = JSON.parse(%({"stdout": "2.0.3"}))
     v["vault_version"] = JSON::Any.new("2.0.3")
     v["vault_enterprise"] = JSON::Any.new(false)
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("installed_vault_version.stdout != vault_version~('+ent' if vault_enterprise)").should eq("False")
   end
 
@@ -755,7 +755,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     # than a plain string value, always undefined. No prior spec covered
     # a bare `{{ '...' }}` span with no `|`/ternary/operator at all.
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate(%('http://127.0.0.1:8080/some.file.txt')).should eq("http://127.0.0.1:8080/some.file.txt")
   end
 
@@ -771,7 +771,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     # middle of the "URL".
     v = Hash(String, JSON::Any).new
     v["prometheus_version"] = JSON::Any.new("2.27.0")
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate(%('https://example.com/v' + prometheus_version + '/sums.txt')).should eq("https://example.com/v2.27.0/sums.txt")
   end
 
@@ -787,7 +787,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     # itself handles this exact input correctly when called directly.
     v = Hash(String, JSON::Any).new
     v["items"] = JSON.parse(%(["a", "b", "c", "d"]))
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("items[1:3]").should eq(%(["b","c"]))
     evaluator.evaluate("items[:2]").should eq(%(["a","b"]))
     evaluator.evaluate("items[2:]").should eq(%(["c","d"]))
@@ -813,7 +813,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     v = Hash(String, JSON::Any).new
     v["inner_dict"] = JSON.parse(%({"name":"spamassassin","state":"started"}))
     v["outer_var"] = JSON::Any.new("{{ inner_dict }}")
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("outer_var").should eq(%({"name":"spamassassin","state":"started"}))
     evaluator.evaluate("outer_var.name").should eq("spamassassin")
   end
@@ -830,8 +830,8 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     # memoized a RESULT instead of just the shape) would show the first
     # instance's answer leaking into the second.
     it "evaluates the same literal ternary text correctly across different ExpressionEvaluator instances/values" do
-      first = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any){"flag" => JSON::Any.new(true)})
-      second = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any){"flag" => JSON::Any.new(false)})
+      first = Krikri::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any){"flag" => JSON::Any.new(true)})
+      second = Krikri::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any){"flag" => JSON::Any.new(false)})
 
       first.evaluate("'yes' if flag else 'no'").should eq("yes")
       second.evaluate("'yes' if flag else 'no'").should eq("no")
@@ -843,16 +843,16 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
     end
 
     it "evaluates the same literal else-less-ternary text correctly across different values" do
-      first = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any){"flag" => JSON::Any.new(true)})
-      second = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any){"flag" => JSON::Any.new(false)})
+      first = Krikri::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any){"flag" => JSON::Any.new(true)})
+      second = Krikri::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any){"flag" => JSON::Any.new(false)})
 
       first.evaluate("'shown' if flag").should eq("shown")
       second.evaluate("'shown' if flag").should eq("")
     end
 
     it "evaluates the same literal boolean-logic text correctly across different values" do
-      first = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any){"a" => JSON::Any.new(true), "b" => JSON::Any.new(false)})
-      second = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any){"a" => JSON::Any.new(false), "b" => JSON::Any.new(false)})
+      first = Krikri::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any){"a" => JSON::Any.new(true), "b" => JSON::Any.new(false)})
+      second = Krikri::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any){"a" => JSON::Any.new(false), "b" => JSON::Any.new(false)})
 
       first.evaluate("a or b").should eq("True")
       second.evaluate("a or b").should eq("False")
@@ -866,7 +866,7 @@ describe CrystalPlay::VariableSubstitutor::ExpressionEvaluator do
       # silently defeating most of the point of caching. Evaluated twice
       # to exercise both the cache-miss (first call) and cache-hit
       # (second call) path for the SAME "no match" text.
-      evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any){"x" => JSON::Any.new(5_i64)})
+      evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any){"x" => JSON::Any.new(5_i64)})
       evaluator.evaluate("x + 1").should eq("6")
       evaluator.evaluate("x + 1").should eq("6")
     end

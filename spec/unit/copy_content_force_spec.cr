@@ -13,7 +13,7 @@ require "file_utils"
 # "Arrays | Ensure mdadm conf file exists" task is exactly
 # `content: "" / force: false` aimed at the distro's own
 # /etc/mdadm/mdadm.conf. Real ansible-playbook left the 688-byte file
-# untouched and reported ok; crystal-ansible truncated it to 0 bytes and
+# untouched and reported ok; krikri-playbook truncated it to 0 bytes and
 # reported changed. That is data loss, not a cosmetic verdict
 # difference, which is why this is pinned at the plugin level rather
 # than left to the benchmark round that caught it.

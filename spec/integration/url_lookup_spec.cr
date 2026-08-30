@@ -1,7 +1,7 @@
 require "../spec_helper"
 require "http/server"
-require "../../src/crystal_play/variable_substitutor/expression_evaluator"
-require "../../src/crystal_play/jinja_filters"
+require "../../src/krikri/variable_substitutor/expression_evaluator"
+require "../../src/krikri/jinja_filters"
 
 # A tiny local HTTP server (same pattern as get_url_spec.cr) serving a
 # small multi-line checksums-style file plus a redirect, since real
@@ -36,7 +36,7 @@ describe "lookup('url', ...)" do
     # the right architecture's checksum. lookup('url', ...) was entirely
     # unimplemented before - always "undefined".
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     result = evaluator.evaluate(%(lookup('url', '#{url_lookup_base}/lines.txt', wantlist=True)))
     JSON.parse(result).as_a.map(&.as_s).should eq(["line one", "line two", "line three"])
   end
@@ -47,7 +47,7 @@ describe "lookup('url', ...)" do
     # release URL) returned an empty 302 body instead of the checksums
     # file.
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     result = evaluator.evaluate(%(lookup('url', '#{url_lookup_base}/redirect.txt', wantlist=True)))
     JSON.parse(result).as_a.map(&.as_s).should eq(["line one", "line two", "line three"])
   end
@@ -55,7 +55,7 @@ describe "lookup('url', ...)" do
   it "supports a `+`-concatenated URL expression, real Ansible's own idiom for versioned release URLs" do
     v = Hash(String, JSON::Any).new
     v["path"] = JSON::Any.new("lines.txt")
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     result = evaluator.evaluate(%(lookup('url', '#{url_lookup_base}/' + path, wantlist=True)))
     JSON.parse(result).as_a.map(&.as_s).should eq(["line one", "line two", "line three"])
   end
@@ -72,7 +72,7 @@ describe "lookup('url', ...)" do
     # so the literal text `["v1.31.0"]` got spliced into the URL
     # instead of the plain string `v1.31.0`, a 404.
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     result = evaluator.evaluate(%(lookup('url', '#{url_lookup_base}/lines.txt')))
     result.should eq("line one,line two,line three")
   end
@@ -92,7 +92,7 @@ describe "lookup('url', ...)" do
     # Ansible even though both engines ultimately failed the
     # broken-upstream role overall.
     v = Hash(String, JSON::Any).new
-    evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     expect_raises(Exception, /HTTP Error 404/) do
       evaluator.evaluate(%(lookup('url', '#{url_lookup_base}/missing.txt', wantlist=True)))
     end

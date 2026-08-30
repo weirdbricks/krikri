@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # Filesystem plugin - creates (or wipes) a filesystem via the
   # appropriate `mkfs.*`/`mkswap`/`pvcreate` command, matching (a
   # pragmatic subset of) community.general.filesystem.
@@ -128,5 +128,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::FilesystemPlugin.new(config)
+plugin = Krikri::FilesystemPlugin.new(config)
 plugin.run

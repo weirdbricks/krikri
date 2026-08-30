@@ -1,7 +1,7 @@
 require "../spec_helper"
-require "../../src/crystal_play/conditional_evaluator"
-require "../../src/crystal_play/jinja_filters"
-require "../../src/crystal_play/variable_substitutor/crinja_renderer"
+require "../../src/krikri/conditional_evaluator"
+require "../../src/krikri/jinja_filters"
+require "../../src/krikri/variable_substitutor/crinja_renderer"
 
 # P2.4-P2.7 (FINDINGS_CHECKLIST.md / PATTERN2_AUDIT.md): the remaining
 # core test spellings.
@@ -44,69 +44,69 @@ describe "boolean-identity / URL / NaN / meta tests (P2.4-P2.7)" do
 
   describe "true / false boolean-identity tests (P2.4)" do
     it "passes only for the actual booleans (hand-rolled evaluator)" do
-      CrystalPlay::ConditionalEvaluator.evaluate("flag_true is true", vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("flag_false is true", vars).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("flag_true is false", vars).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("flag_false is false", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("flag_true is true", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("flag_false is true", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("flag_true is false", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("flag_false is false", vars).should be_true
     end
 
     it "rejects truthy/falsy NON-booleans (identity, not truthiness)" do
       # These are the cases a truthiness implementation gets wrong.
-      CrystalPlay::ConditionalEvaluator.evaluate("yes_str is true", vars).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("num_one is true", vars).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("num_zero is false", vars).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("empty_list is false", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("yes_str is true", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("num_one is true", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("num_zero is false", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("empty_list is false", vars).should be_false
     end
 
     it "supports the is not negation (hand-rolled evaluator)" do
-      CrystalPlay::ConditionalEvaluator.evaluate("flag_false is not true", vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("flag_true is not false", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("flag_false is not true", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("flag_true is not false", vars).should be_true
     end
   end
 
   describe "falsy test (P2.4)" do
     it "is !truthy: null/false/0/empty-string/empty-list pass (hand-rolled evaluator)" do
-      CrystalPlay::ConditionalEvaluator.evaluate("flag_false is falsy", vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("num_zero is falsy", vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("empty_str is falsy", vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("empty_list is falsy", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("flag_false is falsy", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("num_zero is falsy", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("empty_str is falsy", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("empty_list is falsy", vars).should be_true
     end
 
     it "rejects truthy values (hand-rolled evaluator)" do
-      CrystalPlay::ConditionalEvaluator.evaluate("yes_str is falsy", vars).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("num_one is falsy", vars).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("flag_true is falsy", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("yes_str is falsy", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("num_one is falsy", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("flag_true is falsy", vars).should be_false
     end
   end
 
   describe "uri / url tests (P2.5)" do
     it "accepts scheme://rest strings (hand-rolled evaluator)" do
-      CrystalPlay::ConditionalEvaluator.evaluate("url_str is uri", vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("url_str is url", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("url_str is uri", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("url_str is url", vars).should be_true
     end
 
     it "rejects scheme-less strings (hand-rolled evaluator)" do
-      CrystalPlay::ConditionalEvaluator.evaluate("not_url is uri", vars).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("not_url is url", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("not_url is uri", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("not_url is url", vars).should be_false
     end
 
     it "supports the is not negation (hand-rolled evaluator)" do
-      CrystalPlay::ConditionalEvaluator.evaluate("not_url is not uri", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("not_url is not uri", vars).should be_true
     end
   end
 
   describe "abs / isnan / nan tests (P2.6)" do
     it "abs passes for numbers only (hand-rolled evaluator)" do
-      CrystalPlay::ConditionalEvaluator.evaluate("num_one is abs", vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("float_num is abs", vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("yes_str is abs", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("num_one is abs", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("float_num is abs", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("yes_str is abs", vars).should be_false
     end
 
     it "isnan/nan pass only for a real NaN float (hand-rolled evaluator)" do
-      CrystalPlay::ConditionalEvaluator.evaluate("float_nan is isnan", vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("float_nan is nan", vars).should be_true
-      CrystalPlay::ConditionalEvaluator.evaluate("float_num is isnan", vars).should be_false
-      CrystalPlay::ConditionalEvaluator.evaluate("num_one is nan", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("float_nan is isnan", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("float_nan is nan", vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("float_num is isnan", vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("num_one is nan", vars).should be_false
     end
   end
 
@@ -136,7 +136,7 @@ describe "boolean-identity / URL / NaN / meta tests (P2.4-P2.7)" do
     end
 
     it "filter/test meta-tests resolve against the combined registry" do
-      # 'upper' is a Crinja built-in; 'ternary' is crystal-ansible's own
+      # 'upper' is a Crinja built-in; 'ternary' is krikri-playbook's own
       # registration - both must be visible.
       crinja_render("{{ x is filter('upper') }}").should eq("True")
       crinja_render("{{ x is filter('ternary') }}").should eq("True")
@@ -152,7 +152,7 @@ describe "boolean-identity / URL / NaN / meta tests (P2.4-P2.7)" do
     v = Hash(String, JSON::Any).new
     v["docker_enable"] = JSON::Any.new(true)
     v["registry_url"] = JSON::Any.new("https://registry.example.com")
-    renderer = CrystalPlay::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     # Boolean-identity gate shape roles actually write.
     renderer.render(%({% if docker_enable is true %}enabled{% else %}disabled{% endif %})).should eq("enabled")
     # URL validation of a user-supplied endpoint var.

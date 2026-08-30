@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # git_config plugin - reads/writes git configuration via `git config`.
   # Compatible with (a subset of) Ansible's community.general.git_config
   # module.
@@ -122,5 +122,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::GitConfigPlugin.new(config)
+plugin = Krikri::GitConfigPlugin.new(config)
 plugin.run

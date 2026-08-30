@@ -95,8 +95,8 @@ describe "command plugin" do
     # attempt to `Dir.cd` back to that now-nonexistent path afterward
     # would raise (ENOENT, not EACCES, but the same "restore blows up"
     # failure class), which the fix avoids entirely by not restoring.
-    original = File.join(Dir.tempdir, "crystal-ansible-spec-original-#{Random.rand(1_000_000)}")
-    target = File.join(Dir.tempdir, "crystal-ansible-spec-chdir-target-#{Random.rand(1_000_000)}")
+    original = File.join(Dir.tempdir, "krikri-playbook-spec-original-#{Random.rand(1_000_000)}")
+    target = File.join(Dir.tempdir, "krikri-playbook-spec-chdir-target-#{Random.rand(1_000_000)}")
     Dir.mkdir(target) unless Dir.exists?(target)
     Dir.mkdir(original) unless Dir.exists?(original)
     saved_cwd = Dir.current
@@ -122,10 +122,10 @@ describe "command plugin" do
     # expansion) can never match, so the task reported changed: true on
     # every single run and never converged.
     home = ENV["HOME"]? || "/root"
-    marker = File.join(home, "crystal-ansible-spec-tilde-marker")
+    marker = File.join(home, "krikri-playbook-spec-tilde-marker")
     File.write(marker, "present")
 
-    result = PluginSpecHelper.run("command", {"cmd" => "echo should-be-skipped", "creates" => "~/crystal-ansible-spec-tilde-marker"})
+    result = PluginSpecHelper.run("command", {"cmd" => "echo should-be-skipped", "creates" => "~/krikri-playbook-spec-tilde-marker"})
 
     result["changed"].as_bool.should be_false
   ensure

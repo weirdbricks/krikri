@@ -1,8 +1,8 @@
 # Ansible compatibility harness
 
-Verifies crystal-ansible's behavior against **real** `ansible-playbook`,
+Verifies krikri-playbook's behavior against **real** `ansible-playbook`,
 not just documentation - for each playbook under `playbooks/*.yml`, runs it
-once with `ansible-playbook` and once with `bin/crystal-ansible`, each in
+once with `ansible-playbook` and once with `bin/krikri-playbook`, each in
 its own fresh, throwaway container, then diffs:
 
 - success/failure (exit code 0 vs nonzero)
@@ -25,7 +25,7 @@ Requires `docker` (or a `docker`-compatible CLI, e.g. podman with the
 docker shim). The first run builds `compat/Dockerfile` - an image with
 real `ansible-core` + `ansible.posix` (for `authorized_key`, which lives
 outside ansible-core) installed via pip/ansible-galaxy, and a from-source
-build of crystal-ansible - which takes a few minutes. Subsequent runs
+build of krikri-playbook - which takes a few minutes. Subsequent runs
 reuse Docker's layer cache unless the source changed.
 
 Containers are genuinely disposable (`--rm`), so playbooks are run for
@@ -48,7 +48,7 @@ anyone was looking for them:
    `ansible.builtin.authorized_key` doesn't exist - `ansible-doc` inside
    the container confirmed it lives in the separate `ansible.posix`
    collection. A real playbook author would write
-   `ansible.posix.authorized_key`; crystal-ansible only recognized the
+   `ansible.posix.authorized_key`; krikri-playbook only recognized the
    `ansible.builtin.` form, which would silently fail to parse against a
    real-world playbook. Fixed by registering it as
    `ansible.posix.authorized_key` and teaching `PluginManager`'s FQCN
@@ -67,7 +67,7 @@ anyone was looking for them:
    `json["user"]?.try(&.as_s)` only guards against a *missing* key -
    a key present with a JSON `null` value still makes `.as_s` raise, since
    the `JSON::Any` itself is non-nil even though it wraps `null`. Every one
-   of crystal-ansible's own test fixtures uses an *empty* inventory file,
+   of krikri-playbook's own test fixtures uses an *empty* inventory file,
    which takes a separate "implicit localhost" code path that always
    defaults a non-nil user - so this was never exercised until the compat
    harness used an explicit `localhost ansible_connection=local` line (an
@@ -178,7 +178,7 @@ real Ansible). `get_url` (`28-get-url.yml`) and `uri` (`30-uri.yml`) both
 start a real local `python3 -m http.server` in the background (no real
 network access in this container) and hit it - `get_url`'s idempotent
 rerun uses a `checksum:` computed ahead of time via `stat:`, not
-crystal-ansible's own get_url result (a real field-naming bug this
+krikri-playbook's own get_url result (a real field-naming bug this
 playbook caught - see git log's `get_url`/0.9.25 commits). `blockinfile`
 (`29-blockinfile.yml`) covers insert-at-EOF, an idempotent rerun, an
 in-place content update, `insertbefore:` with custom markers, removal,
@@ -210,7 +210,7 @@ prove the content matched.
 `postgresql_db`'s compat playbook sets the `postgres` superuser's password
 via a plain `su postgres -c '...'` shell command rather than
 `become:`/`become_user:` - at the time this playbook was written,
-crystal-ansible parsed `become:` but didn't actually apply privilege
+krikri-playbook parsed `become:` but didn't actually apply privilege
 escalation to command execution (a real, previously-undocumented gap found
 while writing this playbook - see git log, 0.9.41), so using it here would
 have silently run as root on one engine and as `postgres` on the other.
@@ -232,7 +232,7 @@ that user - proving the *whole plugin process* is escalated, not just a
 shell command inside it); and an invalid `become_user:` being rejected
 (both engines fail the task, though for different reasons - real
 Ansible's own become/privilege-setup machinery rejects it one way,
-crystal-ansible's username validation rejects it before ever reaching a
+krikri-playbook's username validation rejects it before ever reaching a
 shell another way; the compat comparison only checks the `failed:` result
 matches, not the exact error text, the same way `find`'s own compat
 playbook compares `matched` counts rather than exact path lists).
@@ -261,7 +261,7 @@ backgrounds a *shell* that blocks in `wait()` on `daemon` (a trailing `&`
 backgrounds the whole `&&`-list, and `nohup` only suppresses `SIGHUP` - it
 doesn't exempt a child from its parent's own `wait()`), so if `daemon`
 never exits, neither does the shell holding the pipe open, and
-`Process.run` never sees EOF. Confirmed this is a real crystal-ansible
+`Process.run` never sees EOF. Confirmed this is a real krikri-playbook
 gap and not a fixture mistake: the identical command ran fine under real
 `ansible-playbook` in the same container. `32-wait-for.yml` works around
 it with `nohup sh -c 'sleep N; daemon' &` (one process backgrounded
@@ -271,7 +271,7 @@ suggested fix direction in git log, 0.9.33.
 `ufw` has no compat playbook, unusually for this repo - `ufw` itself
 refuses to run at all without root (even a bare `ufw status` fails), and
 the container lacks working netfilter access even running as root.
-Confirmed this isn't crystal-ansible-specific: real `ansible-playbook`'s
+Confirmed this isn't krikri-playbook-specific: real `ansible-playbook`'s
 own `community.general.ufw` module fails identically in the same
 container, even in `--check` mode. See git log's `ufw` commits for
 what verification *was* possible (unit tests on the pure
@@ -298,7 +298,7 @@ batching on or off.
 `compat/run.cr`'s `compare_batching` (used only for this one playbook,
 via `BATCHING_PLAYBOOK_NAME`) instead spins up *two* fresh containers
 from the same image - a "target" (runs its own real `sshd`) and a
-"controller" (runs `ansible-playbook`/`crystal-ansible` against the
+"controller" (runs `ansible-playbook`/`krikri-playbook` against the
 target over a real SSH connection, batching live by default on the
 latter) - on a dedicated `docker network` so they can reach each other
 by IP.
@@ -313,7 +313,7 @@ target container instead of the one the engine ran inside of.
 ## Why this isn't wired into GitHub Actions
 
 `.github/workflows/ci.yml` runs `crystal spec` + `ameba` on every push and
-needs to stay fast. This harness rebuilds a from-source crystal-ansible
+needs to stay fast. This harness rebuilds a from-source krikri-playbook
 inside a fresh container and spins up ~20 more containers on top of that
 - multiple minutes, and it needs `docker`/a container runtime, which the
 existing CI image doesn't set up. It's a manually-invoked verification

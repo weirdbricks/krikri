@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # Seboolean plugin - toggles an SELinux boolean via `getsebool`/
   # `setsebool`. Compatible with Ansible's ansible.posix.seboolean
   # (verified against real ansible-playbook on a Rocky 9.6 target with
@@ -68,5 +68,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::SebooleanPlugin.new(config)
+plugin = Krikri::SebooleanPlugin.new(config)
 plugin.run

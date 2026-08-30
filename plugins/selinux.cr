@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # Selinux Plugin - Configure SELinux state and policy, matching
   # ansible.posix.selinux for the subset os_hardening uses.
   #
@@ -124,5 +124,5 @@ end
 # Entry point
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::SelinuxPlugin.new(config)
+plugin = Krikri::SelinuxPlugin.new(config)
 plugin.run

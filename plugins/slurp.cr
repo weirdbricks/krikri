@@ -15,9 +15,9 @@
 
 require "json"
 require "base64"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   class SlurpPlugin < BasePlugin
     def execute : PluginResult
       src = @params["src"]? || @params["path"]?
@@ -48,5 +48,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::SlurpPlugin.new(config)
+plugin = Krikri::SlurpPlugin.new(config)
 plugin.run

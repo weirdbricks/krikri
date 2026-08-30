@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # Yum plugin - manages packages with the `yum` command. Compatible with
   # Ansible's ansible.builtin.yum module - a near-duplicate of dnf.cr's
   # own DnfPlugin (see build.sh's own convention of one tiny compiled
@@ -274,7 +274,7 @@ module CrystalPlay
       # benchmarking geerlingguy.selenium's "Install Chrome (if
       # configured, RedHat)" task (direct google-chrome-stable RPM URL,
       # no imported key) - real ansible failed with "Failed to validate
-      # GPG signature", crystal-ansible installed it anyway.
+      # GPG signature", krikri-playbook installed it anyway.
       if true?(@params["disable_gpg_check"]?)
         options << "--nogpgcheck"
       else
@@ -700,5 +700,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::YumPlugin.new(config)
+plugin = Krikri::YumPlugin.new(config)
 plugin.run

@@ -2,9 +2,9 @@
 
 require "json"
 require "digest/md5"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # Template plugin - writes pre-rendered template content to files
   #
   # This plugin ONLY works with action plugins.
@@ -150,7 +150,7 @@ module CrystalPlay
       # cross-device link" and failed the whole task. Found via
       # konstruktoid-hardening's "Configure sshd using sshd_config.d" task
       # (writing to /usr/lib/tmpfiles.d/ssh.conf).
-      temp_file = File.join(dest_dir, ".crystal-play-template-#{Random::Secure.hex(8)}.tmp")
+      temp_file = File.join(dest_dir, ".krikri-playbook-template-#{Random::Secure.hex(8)}.tmp")
 
       begin
         # Write content using native Crystal File.write
@@ -326,5 +326,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::TemplatePlugin.new(config)
+plugin = Krikri::TemplatePlugin.new(config)
 plugin.run

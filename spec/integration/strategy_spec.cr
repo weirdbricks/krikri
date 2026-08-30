@@ -7,7 +7,7 @@ require "../spec_helper"
 # from ansible-core 2.19.4 with h1 deliberately sleeping in the first
 # task, which is what makes the difference observable.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 
 private def run_strategy(strategy : String?) : {Int32, Array(String)}
   dir = File.tempname("strategy")

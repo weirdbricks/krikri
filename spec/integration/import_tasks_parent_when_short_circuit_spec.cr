@@ -19,7 +19,7 @@ require "../spec_helper"
 # tasks are skipped, but the second one's `when:` references the
 # (never-set) registered var.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_playbook(pb : String, inner : String) : {Process::Status, String}

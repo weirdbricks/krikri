@@ -1,7 +1,7 @@
 require "../spec_helper"
-require "../../src/crystal_play/plugin_helpers/user_state"
+require "../../src/krikri/plugin_helpers/user_state"
 
-private alias UserState = CrystalPlay::PluginHelpers::UserState
+private alias UserState = Krikri::PluginHelpers::UserState
 
 private SAMPLE_LINE   = "alice:x:1001:1001:Alice Example:/home/alice:/bin/bash"
 private SAMPLE_USER   = UserState.parse(SAMPLE_LINE).as(UserState::User)

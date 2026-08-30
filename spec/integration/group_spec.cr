@@ -6,7 +6,7 @@ require "../spec_helper"
 # throwaway CI container - so this file never actually invokes groupadd/
 # groupmod/groupdel for real, even against a scratch group name.
 
-private NONEXISTENT_GROUP = "crystal-ansible-test-nonexistent-group"
+private NONEXISTENT_GROUP = "krikri-playbook-test-nonexistent-group"
 
 describe "group plugin" do
   it "reports no change for an existing group whose gid already matches (read-only getent check)" do

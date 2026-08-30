@@ -1,10 +1,10 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/ufw_command"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ufw_command"
 
-module CrystalPlay
+module Krikri
   # Ufw plugin - manages the Uncomplicated Firewall. Compatible with
   # Ansible's ufw module - registered here as community.general.ufw,
   # matching its real FQCN (verified via `ansible-doc ufw`; it lives in
@@ -18,7 +18,7 @@ module CrystalPlay
   #   interface_in/interface_out/log/from_ip/from_port/to_ip/to_port/
   #   proto/name (app profile)/comment/delete/insert/route - command
   #   shape verified against community.general's actual ufw.py source
-  #   (see `src/crystal_play/plugin_helpers/ufw_command.cr`)
+  #   (see `src/krikri/plugin_helpers/ufw_command.cr`)
   # - check_mode: run with `--dry-run` instead of applying for real
   #
   # `ufw` itself refuses to run at all without root - even a bare
@@ -233,5 +233,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::UfwPlugin.new(config)
+plugin = Krikri::UfwPlugin.new(config)
 plugin.run

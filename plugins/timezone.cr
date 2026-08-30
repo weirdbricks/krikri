@@ -18,9 +18,9 @@
 # benchmarked so far uses - not implemented; only `name:`.
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   class TimezonePlugin < BasePlugin
     def execute : PluginResult
       name = @params["name"]?
@@ -70,5 +70,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::TimezonePlugin.new(config)
+plugin = Krikri::TimezonePlugin.new(config)
 plugin.run

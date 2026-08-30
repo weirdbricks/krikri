@@ -4,7 +4,7 @@ require "file_utils"
 # Runs the compiled binary against a real playbook, since this bug is
 # in the executor's include_role: vars: rendering path end to end.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "include_role: vars: where one entry references a sibling entry" do

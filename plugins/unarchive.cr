@@ -3,9 +3,9 @@
 require "json"
 require "http/client"
 require "uri"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # Unarchive plugin - extracts an archive into a directory. Compatible
   # with Ansible's ansible.builtin.unarchive module (verified via
   # `ansible-doc unarchive` - unlike `community.general.archive`, this one
@@ -14,12 +14,12 @@ module CrystalPlay
   #
   # Supported parameters:
   # - src: path to the archive (required) - a local (already-on-target)
-  #   path in the common case, matching how crystal-ansible's copy:
+  #   path in the common case, matching how krikri-playbook's copy:
   #   plugin already handles local-vs-remote; a plain `remote_src` param
   #   is accepted for compatibility but otherwise has no effect. If src:
   #   contains "://" (a URL), it's fetched first regardless of
   #   remote_src:'s own value - real Ansible's own documented behavior
-  # - dest: existing directory to extract into (required - crystal-ansible
+  # - dest: existing directory to extract into (required - krikri-playbook
   #   fails if it doesn't already exist, same as real Ansible: this module
   #   never creates dest itself)
   # - creates: skip extraction if this path already exists (checked
@@ -140,7 +140,7 @@ module CrystalPlay
     private def resolve_src(src : String) : PluginResult | {String, String?}
       return {src, nil} unless src.starts_with?("http://") || src.starts_with?("https://")
 
-      tmp_download_path = "/tmp/.crystal-ansible-unarchive-#{Random.rand(100000..999999)}"
+      tmp_download_path = "/tmp/.krikri-playbook-unarchive-#{Random.rand(100000..999999)}"
       begin
         download(src, tmp_download_path)
       rescue ex
@@ -306,7 +306,7 @@ module CrystalPlay
     # A meaningful-difference line from `tar --compare`'s own output -
     # matches real Ansible's TgzArchive#is_unarchived exactly (down to
     # the regex set), NOT a raw exit-code check. GNU tar's own exit code
-    # from --compare is nonzero for CATEGORIES of output crystal-ansible
+    # from --compare is nonzero for CATEGORIES of output krikri-playbook
     # must NOT treat as "changed": most notably the bogus "Cannot stat:
     # No such file or directory" warning `--strip-components` itself
     # always emits for the now-empty top-level path it stripped away -
@@ -341,7 +341,7 @@ module CrystalPlay
       # alertmanager round 134: its own `mode: 0755` unarchive task
       # re-extracted (changed: true) on every single rerun purely because
       # LICENSE/NOTICE/alertmanager.yml's archived mode (0644) differed
-      # from the 0755 crystal-ansible (correctly) chmod'd them to.
+      # from the 0755 krikri-playbook (correctly) chmod'd them to.
       owner_set = !@params["owner"]?.nil?
       group_set = !@params["group"]?.nil?
       mode_set = !@params["mode"]?.nil?
@@ -423,7 +423,7 @@ module CrystalPlay
     # nextcloud` task (`owner: www-data, group: www-data`) left the
     # ENTIRE extracted tree www-data:www-data on real ansible-playbook
     # (dest itself, every subdirectory, every file down to AUTHORS) -
-    # crystal-ansible's own previous `chown #{owner} #{dest}` (no `-R`)
+    # krikri-playbook's own previous `chown #{owner} #{dest}` (no `-R`)
     # left everything but dest itself still root:root, which then broke
     # the role's own downstream `occ` commands ("Cannot write into
     # 'apps' directory") since the role's own permissions pass only
@@ -475,5 +475,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::UnarchivePlugin.new(config)
+plugin = Krikri::UnarchivePlugin.new(config)
 plugin.run

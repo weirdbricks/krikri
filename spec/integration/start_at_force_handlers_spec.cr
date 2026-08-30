@@ -3,7 +3,7 @@ require "../spec_helper"
 # --start-at-task and --force-handlers, both checked against a real
 # ansible-core 2.19.4 run of the same playbooks.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_with(args : Array(String), yaml : String)

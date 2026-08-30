@@ -2,11 +2,11 @@
 
 require "json"
 require "mysql"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/mysql_connection"
-require "../src/crystal_play/plugin_helpers/mysql_privileges"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/mysql_connection"
+require "../src/krikri/plugin_helpers/mysql_privileges"
 
-module CrystalPlay
+module Krikri
   # MySQL user plugin - creates/removes a user and manages its
   # privileges. Compatible with Ansible's community.mysql.mysql_user
   # module.
@@ -25,7 +25,7 @@ module CrystalPlay
   # - state: present (default) / absent
   # - priv: "db.table:PRIV1,PRIV2" (multiple grants separated by "/"),
   #   same format real Ansible's mysql_user uses - see
-  #   src/crystal_play/plugin_helpers/mysql_privileges.cr. Diffed against
+  #   src/krikri/plugin_helpers/mysql_privileges.cr. Diffed against
   #   the account's actual SHOW GRANTS output; a mismatch REVOKEs
   #   everything and re-GRANTs the desired set from scratch rather than
   #   computing a minimal add/remove delta - simpler, and idempotent
@@ -473,5 +473,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::MysqlUserPlugin.new(config)
+plugin = Krikri::MysqlUserPlugin.new(config)
 plugin.run

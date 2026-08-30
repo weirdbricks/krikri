@@ -6,7 +6,7 @@ require "../spec_helper"
 # exited 1 for both cases below. Verified against a real local
 # ansible-core 2.19.4 install.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_playbook_file(path : String, dir : String? = nil)

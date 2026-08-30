@@ -1,10 +1,10 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/gem_command"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/gem_command"
 
-module CrystalPlay
+module Krikri
   # Gem plugin - manages Ruby gems via the `gem` CLI. Compatible with (a
   # subset of) Ansible's community.general.gem module - real Ansible's
   # own module also just shells out to the `gem` command line tool
@@ -123,5 +123,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::GemPlugin.new(config)
+plugin = Krikri::GemPlugin.new(config)
 plugin.run

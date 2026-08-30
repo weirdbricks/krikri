@@ -9,7 +9,7 @@ require "http/server"
 # the whole process as an unhandled exception.
 
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 lookup_url_failure_server = HTTP::Server.new do |context|
@@ -27,7 +27,7 @@ describe "a task whose argument resolution raises (lookup('url', ...) hitting a 
     # once lookup('url', ...) was fixed to raise on an HTTP error
     # (matching real Ansible - see url_lookup_spec.cr's own "raises on
     # a 404" spec), nothing in the call chain from execute_task_once up
-    # through crystal-play.cr's own top-level `run` caught that
+    # through krikri-playbook.cr's own top-level `run` caught that
     # exception at all - it crashed the ENTIRE process with an
     # unhandled-exception Crystal stack trace instead of failing just
     # the one task, unlike real Ansible (which fails the enclosing

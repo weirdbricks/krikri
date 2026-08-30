@@ -22,9 +22,9 @@
 # as command:/shell:) unless creates:/removes: skips the run entirely.
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   class ScriptPlugin < BasePlugin
     def execute : PluginResult
       cmd = @params["cmd"]? || @params["_raw_params"]?
@@ -100,5 +100,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::ScriptPlugin.new(config)
+plugin = Krikri::ScriptPlugin.new(config)
 plugin.run

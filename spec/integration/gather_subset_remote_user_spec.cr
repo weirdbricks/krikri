@@ -9,7 +9,7 @@ require "../spec_helper"
 # is reused). The real behavior only shows with those unset - a trap
 # worth recording, since it makes the feature look already-correct.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 
 private def run_play(playbook : String) : String
   dir = File.tempname("gs-ru")

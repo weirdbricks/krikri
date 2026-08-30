@@ -10,7 +10,7 @@ require "../spec_helper"
 # not inherited by children (and children never filtered), and no
 # --skip-tags at all.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 private FLAT_PLAYBOOK = <<-YAML

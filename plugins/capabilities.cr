@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # community.general.capabilities - manages Linux file capabilities via
   # getcap(8)/setcap(8). Ported from the real Python module
   # (community/general/plugins/modules/capabilities.py) - same getcap
@@ -131,5 +131,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::CapabilitiesPlugin.new(config)
+plugin = Krikri::CapabilitiesPlugin.new(config)
 plugin.run

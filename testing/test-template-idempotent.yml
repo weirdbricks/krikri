@@ -7,8 +7,8 @@
   gather_facts: false
   
   vars:
-    server_name: crystal-play.example.com
-    document_root: /var/www/crystal-play
+    server_name: krikri-playbook.example.com
+    document_root: /var/www/krikri-playbook
     nginx_port: 8080
     enable_ssl: true
     max_upload_size: 50M
@@ -20,24 +20,24 @@
   tasks:
     - name: Create output directory
       ansible.builtin.file:
-        path: /tmp/crystal-play-template-test
+        path: /tmp/krikri-playbook-template-test
         state: directory
         mode: '0755'
     
     - name: Render template (1st time in this run)
       ansible.builtin.template:
         src: testing/templates/nginx-simple.conf.j2
-        dest: /tmp/crystal-play-template-test/nginx.conf
+        dest: /tmp/krikri-playbook-template-test/nginx.conf
         mode: '0644'
     
     - name: Render template (2nd time in same run - should be ok)
       ansible.builtin.template:
         src: testing/templates/nginx-simple.conf.j2
-        dest: /tmp/crystal-play-template-test/nginx.conf
+        dest: /tmp/krikri-playbook-template-test/nginx.conf
         mode: '0644'
     
     - name: Read rendered template
-      ansible.builtin.command: cat /tmp/crystal-play-template-test/nginx.conf
+      ansible.builtin.command: cat /tmp/krikri-playbook-template-test/nginx.conf
       register: rendered
     
     - name: Show rendered template
@@ -46,10 +46,10 @@
     
     - name: SUCCESS
       ansible.builtin.debug:
-        msg: "✓ Template rendered. File kept at /tmp/crystal-play-template-test/nginx.conf"
+        msg: "✓ Template rendered. File kept at /tmp/krikri-playbook-template-test/nginx.conf"
 
 # To cleanup manually:
-# ssh root@104.245.38.247 "rm -rf /tmp/crystal-play-template-test"
+# ssh root@104.245.38.247 "rm -rf /tmp/krikri-playbook-template-test"
 
 # Expected on FIRST run:
 # - Task 1: changed (directory created)

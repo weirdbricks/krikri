@@ -5,7 +5,7 @@ require "../spec_helper"
 # 2.19.4 run on the same input - byte-compared, because the point of the
 # change was matching it exactly.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 private def syntax_check(content : String)

@@ -5,7 +5,7 @@ require "../spec_helper"
 # rewrite pass), since this bug is specifically about
 # TemplateActionPlugin#rewrite_in_expr, a private method.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "a real Jinja2 `in` test inside {% if %} against a variable-bound list" do

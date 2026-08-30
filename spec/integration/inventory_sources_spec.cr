@@ -6,7 +6,7 @@ require "file_utils"
 # usable inventory at all (implicit localhost). All differentialed
 # against ansible-core 2.19.4.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private TMP_DIR      = File.join(PROJECT_ROOT, "spec", "tmp", "inventory_sources")
 
 Spec.before_suite do

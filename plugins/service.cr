@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # Service Plugin - Manage system services
   #
   # Parameters:
@@ -206,5 +206,5 @@ end
 # Entry point
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::ServicePlugin.new(config)
+plugin = Krikri::ServicePlugin.new(config)
 plugin.run

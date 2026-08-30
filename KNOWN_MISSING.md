@@ -20,7 +20,7 @@ is the record.
 ## The parity-breaking tier was built, measured, and removed (0.9.641)
 
 `OPUS_PERFORMANCE_IMPROVEMENTS.md` Tier 2 - a second binary
-(`crystal-ansible-fast`) carrying optimizations that deliberately do not
+(`krikri-playbook-fast`) carrying optimizations that deliberately do not
 preserve parity - shipped in 0.9.639/0.9.640 and was deleted in 0.9.641.
 Recorded here so it is not re-proposed without the numbers.
 
@@ -285,8 +285,8 @@ fat-binary generator keys on, so `facts` was not in the fat binary at
 all and a daemon request for it would only have hit the generated
 dispatcher's "unknown plugin" fallback.
 
-The gathering body is now `CrystalPlay::FactsGatherer`
-(`src/crystal_play/plugin_helpers/facts_gatherer.cr`), lifted out
+The gathering body is now `Krikri::FactsGatherer`
+(`src/krikri/plugin_helpers/facts_gatherer.cr`), lifted out
 VERBATIM - the only change is being wrapped in a module, which matters
 once it is linked alongside 80+ other plugins, since it defines
 top-level `capture`/`gather_*` helpers. Its two C bindings stay at top
@@ -373,7 +373,7 @@ real engine bug found on the way, fixed and re-verified live.
 
 **Item 0 - `--timing-profile` (0.9.632).** Every other item in the plan
 was an estimate until a run's wall clock could be attributed to
-something. New `src/crystal_play/timing_profile.cr` buckets a run into
+something. New `src/krikri/timing_profile.cr` buckets a run into
 playbook/inventory parse, plugin upload, task execution and fact
 gathering; ssh exec / exec_script / local ssh process spawn / daemon
 request / daemon start / scp / rsync / local plugin exec; and
@@ -817,11 +817,11 @@ installed on a fresh Rocky 9.6 image, both engines hit the same
 NEW real engine bug (`buluma.forensics` Rocky 9.6, crystal rc=2 vs
 py rc=0 - the role's `command_collector | Save output` task uses
 `delegate_to: localhost` for an `ansible.builtin.copy` module, and
-crystal-ansible tries to scp the plugin binary to `localhost:22`
+krikri-playbook tries to scp the plugin binary to `localhost:22`
 before running it, which fails with "Connection refused" on a cloud
 VPS whose controller has no sshd running; real ansible-core runs
 the plugin via `connection: local` and never ssh's to itself). Fix is
-in `src/crystal_play/task_executor/executor.cr` `delegate_to:`
+in `src/krikri/task_executor/executor.cr` `delegate_to:`
 resolution: short-circuit to `connection: local` when the delegate
 target is the controller (localhost / 127.0.0.1 / controller
 hostname), so the SSH plugin-upload step is bypassed entirely and

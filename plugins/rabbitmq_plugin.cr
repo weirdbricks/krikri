@@ -8,9 +8,9 @@
 # ENABLED plugins, one per line, with a trailing marker comment) for the
 # plugin's short name before doing anything.
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   class RabbitmqPluginPlugin < BasePlugin
     def execute : PluginResult
       name = @params["name"]?
@@ -86,5 +86,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::RabbitmqPluginPlugin.new(config)
+plugin = Krikri::RabbitmqPluginPlugin.new(config)
 plugin.run

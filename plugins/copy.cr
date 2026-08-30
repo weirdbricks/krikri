@@ -2,9 +2,9 @@
 
 require "json"
 require "digest/md5"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # Copy plugin - copies files to destinations
   # This version ALWAYS uses native Crystal file operations
   # The PluginManager handles uploading to remote hosts if needed
@@ -523,5 +523,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::CopyPlugin.new(config)
+plugin = Krikri::CopyPlugin.new(config)
 plugin.run

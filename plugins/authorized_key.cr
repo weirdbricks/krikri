@@ -1,10 +1,10 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/authorized_keys_file"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/authorized_keys_file"
 
-module CrystalPlay
+module Krikri
   # Authorized_key plugin - manages a public key in a user's
   # ~/.ssh/authorized_keys file
   # Compatible with (a subset of) Ansible's ansible.posix.authorized_key module
@@ -104,5 +104,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::AuthorizedKeyPlugin.new(config)
+plugin = Krikri::AuthorizedKeyPlugin.new(config)
 plugin.run

@@ -5,7 +5,7 @@ require "file_utils"
 # the executor's controller-side handler dispatch, not something a unit
 # spec against a single method can exercise cleanly.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "a looped handler with a per-item when: referencing item" do

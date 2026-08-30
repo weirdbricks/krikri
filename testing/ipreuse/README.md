@@ -23,14 +23,14 @@ hazard).
 
     # 1. populate the cache against one container
     podman run -d --name host-a -p 2222:22 ipreuse-test
-    crystal-ansible -i inv.ini play.yml
+    krikri-playbook -i inv.ini play.yml
 
     # 2. replace it with a DIFFERENT container at the same address
     podman rm -f host-a
     podman run -d --name host-b -p 2222:22 ipreuse-test
 
     # 3. this must still succeed - recovery re-uploads
-    crystal-ansible -i inv.ini play.yml
+    krikri-playbook -i inv.ini play.yml
 
 `inv.ini` is one line:
 

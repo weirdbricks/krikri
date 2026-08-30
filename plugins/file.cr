@@ -4,10 +4,10 @@ require "json"
 require "file_utils"
 require "system/user"
 require "system/group"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/stat_fields"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/stat_fields"
 
-module CrystalPlay
+module Krikri
   # File plugin - manages files and file properties
   # Compatible with Ansible's ansible.builtin.file module
   #
@@ -1097,5 +1097,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::FilePlugin.new(config)
+plugin = Krikri::FilePlugin.new(config)
 plugin.run

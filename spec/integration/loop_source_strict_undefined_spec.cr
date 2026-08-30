@@ -11,7 +11,7 @@ require "../spec_helper"
 # it in a generic "Task failed: " at the outer layer, exactly as it does
 # for the when: case this engine already matches.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_playbook(yaml : String)

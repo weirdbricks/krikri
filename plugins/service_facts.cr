@@ -1,10 +1,10 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/service_facts_parser"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/service_facts_parser"
 
-module CrystalPlay
+module Krikri
   # ServiceFacts plugin - populates the ansible_facts.services dict,
   # matching ansible.builtin.service_facts. The fact shape follows real
   # Ansible: a dict keyed by unit name (`"sshd.service"`) with
@@ -70,5 +70,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::ServiceFactsPlugin.new(config)
+plugin = Krikri::ServiceFactsPlugin.new(config)
 plugin.run

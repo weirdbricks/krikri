@@ -7,7 +7,7 @@ require "../spec_helper"
 # as `failed=1 rescued=1`, not `failed=2 rescued=0`. Only the rescue's
 # own failure counts as a play failure.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_playbook(yaml : String)

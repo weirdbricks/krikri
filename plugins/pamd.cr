@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # pamd plugin - edits a /etc/pam.d/<name> service config. Ported to
   # match community.general.pamd's own Python logic (linked-list-of-
   # rules model, control normalization, insert-skip-comments behavior)
@@ -364,5 +364,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::PamdPlugin.new(config)
+plugin = Krikri::PamdPlugin.new(config)
 plugin.run

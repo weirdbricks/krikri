@@ -1,10 +1,10 @@
 # Compatibility test image: real ansible-core AND a from-source build of
-# crystal-ansible, side by side, so compat/run.cr can run the same
+# krikri-playbook, side by side, so compat/run.cr can run the same
 # playbook through both and diff the results.
 #
 # Built FROM the official Crystal image (not a bind-mounted host binary)
 # specifically to avoid a glibc version mismatch between the build host and
-# the container - crystal-ansible is compiled fresh, inside this image,
+# the container - krikri-playbook is compiled fresh, inside this image,
 # against this image's own glibc.
 FROM docker.io/crystallang/crystal:1.20.3
 
@@ -61,7 +61,7 @@ RUN python3 -m venv --system-site-packages /opt/ansible-venv \
 ENV PATH="/opt/ansible-venv/bin:${PATH}"
 
 # authorized_key isn't part of ansible-core - it lives in the separate
-# ansible.posix collection (crystal-ansible registers it as
+# ansible.posix collection (krikri-playbook registers it as
 # ansible.posix.authorized_key to match). archive/unarchive likewise live
 # in community.general, not ansible-core. mysql_db/mysql_user and
 # postgresql_db/postgresql_user live in community.mysql /

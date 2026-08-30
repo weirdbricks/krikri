@@ -2,10 +2,10 @@
 
 require "json"
 require "mysql"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/plugin_helpers/mysql_connection"
+require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/mysql_connection"
 
-module CrystalPlay
+module Krikri
   # MySQL info plugin - reads server metadata. Compatible (for the
   # filters implemented here) with Ansible's community.mysql.mysql_info
   # module.
@@ -93,5 +93,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::MysqlInfoPlugin.new(config)
+plugin = Krikri::MysqlInfoPlugin.new(config)
 plugin.run

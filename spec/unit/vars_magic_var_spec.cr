@@ -1,5 +1,5 @@
 require "../spec_helper"
-require "../../src/crystal_play/conditional_evaluator"
+require "../../src/krikri/conditional_evaluator"
 
 # Real Ansible's `vars` magic variable - a dict of every variable in
 # scope. Most real uses are membership tests rather than value reads:
@@ -30,19 +30,19 @@ describe "vars magic variable" do
   end
 
   it "answers membership for a variable that exists" do
-    CrystalPlay::ConditionalEvaluator.evaluate("'my_thing' in vars", context_with_vars).should be_true
+    Krikri::ConditionalEvaluator.evaluate("'my_thing' in vars", context_with_vars).should be_true
   end
 
   it "answers membership for one that does not" do
-    CrystalPlay::ConditionalEvaluator.evaluate("'definitely_absent' in vars", context_with_vars).should be_false
-    CrystalPlay::ConditionalEvaluator.evaluate("'definitely_absent' not in vars", context_with_vars).should be_true
+    Krikri::ConditionalEvaluator.evaluate("'definitely_absent' in vars", context_with_vars).should be_false
+    Krikri::ConditionalEvaluator.evaluate("'definitely_absent' not in vars", context_with_vars).should be_true
   end
 
   it "handles the concatenated form the prometheus collection uses" do
     # `prefix ~ '_thing'` builds the name at runtime - this is the exact
     # shape that surfaced the bug.
-    CrystalPlay::ConditionalEvaluator.evaluate("prefix ~ '_thing' in vars", context_with_vars).should be_true
-    CrystalPlay::ConditionalEvaluator.evaluate("prefix ~ '_absent' not in vars", context_with_vars).should be_true
+    Krikri::ConditionalEvaluator.evaluate("prefix ~ '_thing' in vars", context_with_vars).should be_true
+    Krikri::ConditionalEvaluator.evaluate("prefix ~ '_absent' not in vars", context_with_vars).should be_true
   end
 
   it "does not let the snapshot contain itself" do

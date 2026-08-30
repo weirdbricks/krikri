@@ -16,7 +16,7 @@
 # (see this directory's own README on bucket E's "expected noise").
 # Switched to `jinja_filters.cr` directly (2026-08-13) after repeatedly
 # forgetting to add a new ext file to this list separately from the real
-# require chains (`src/crystal_play/jinja_filters.cr`/`variable_
+# require chains (`src/krikri/jinja_filters.cr`/`variable_
 # substitutor/crinja_renderer.cr`), AND after several filters/tests added
 # directly in `jinja_filters.cr` itself (`match`/`search`/`ne`/`truthy`/
 # `boolean`/`integer`/`float`) kept showing as "missing" here even after
@@ -37,7 +37,7 @@
 # entry, same order.
 
 require "json"
-require "../../src/crystal_play/jinja_filters"
+require "../../src/krikri/jinja_filters"
 
 def shared_env : Crinja
   env = Crinja.new

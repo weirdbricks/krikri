@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # Setup Plugin - gather facts, matching ansible.builtin.setup.
   #
   # This engine gathers facts up front through its own `facts` plugin (via
@@ -28,5 +28,5 @@ end
 # Entry point
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::SetupPlugin.new(config)
+plugin = Krikri::SetupPlugin.new(config)
 plugin.run

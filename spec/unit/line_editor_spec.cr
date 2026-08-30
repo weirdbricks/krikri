@@ -1,7 +1,7 @@
 require "../spec_helper"
-require "../../src/crystal_play/plugin_helpers/line_editor"
+require "../../src/krikri/plugin_helpers/line_editor"
 
-private alias LineEditor = CrystalPlay::PluginHelpers::LineEditor
+private alias LineEditor = Krikri::PluginHelpers::LineEditor
 
 describe LineEditor do
   describe ".remove_matching" do

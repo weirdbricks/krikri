@@ -1,5 +1,5 @@
 #!/bin/bash
-# Crystal Play - Build Script
+# krikri - Build Script
 # Fast, Ansible-compatible automation tool
 
 # Colors for output
@@ -32,7 +32,7 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         --help)
-            echo "Crystal Play - Build Script"
+            echo "krikri - Build Script"
             echo ""
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -62,16 +62,16 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║     Crystal Play - Build System        ║${NC}"
+echo -e "${BLUE}║     krikri - Build System        ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
 echo ""
 
 # Ensure we're in the project root directory
-if [ ! -f "crystal-play.cr" ]; then
-    echo -e "${RED}❌ Error: crystal-play.cr not found!${NC}"
+if [ ! -f "krikri-playbook.cr" ]; then
+    echo -e "${RED}❌ Error: krikri-playbook.cr not found!${NC}"
     echo ""
     echo -e "${YELLOW}Please run this script from the project root directory:${NC}"
-    echo -e "${BLUE}  cd /path/to/crystal-play${NC}"
+    echo -e "${BLUE}  cd /path/to/krikri-playbook${NC}"
     echo -e "${BLUE}  ./build.sh${NC}"
     echo ""
     exit 1
@@ -134,7 +134,7 @@ if [ "$BUILD_MODE" = "release" ]; then
     # strip step below then takes the static .symtab / .strtab on top
     # of any remaining debug symbols. Measured on this tree (Crystal
     # 1.20.3, 0.9.497):
-    #   * `crystal-ansible`:        17M (debug) / 11.3M (--release alone)
+    #   * `krikri-playbook`:        17M (debug) / 11.3M (--release alone)
     #                               -> 5.0M (--no-debug) -> 4.4M (+ strip)
     #   * `.fat-plugin` binary:    15M (debug) -> 4.4M -> 3.9M
     #   * `facts` standalone:      ~5M (debug) -> 1.1M -> 976K
@@ -190,7 +190,7 @@ strip_release_binary() {
     # trivial (~1KB per binary, just the few leftover debug-only
     # symbols); --strip-unneeded additionally drops the static
     # .symtab / .strtab, which is the bulk of what's still in the
-    # file post-link (e.g. ~450KB on bin/crystal-ansible, ~120KB on
+    # file post-link (e.g. ~450KB on bin/krikri-playbook, ~120KB on
     # the fat plugin binary, ~120KB on each standalone plugin).
     # The dynamic symbol table (.dynsym) is preserved - that's what
     # the runtime linker needs, and what Crystal's own exception
@@ -221,8 +221,8 @@ strip_release_binary() {
 # Build main executable
 echo -e "${YELLOW}🔨 Building main executable...${NC}"
 
-MAIN_BINARY="$OUTPUT_DIR/crystal-ansible"
-MAIN_SOURCE="crystal-play.cr"
+MAIN_BINARY="$OUTPUT_DIR/krikri-playbook"
+MAIN_SOURCE="krikri-playbook.cr"
 
 # Check if main executable needs rebuilding
 NEEDS_BUILD=false
@@ -232,11 +232,11 @@ if [ ! -f "$MAIN_BINARY" ]; then
 elif [ "$MAIN_SOURCE" -nt "$MAIN_BINARY" ]; then
     NEEDS_BUILD=true
 elif find src -name '*.cr' -newer "$MAIN_BINARY" -print -quit | grep -q .; then
-    # crystal-play.cr's own mtime doesn't change when only its src/ deps do
+    # krikri-playbook.cr's own mtime doesn't change when only its src/ deps do
     NEEDS_BUILD=true
 elif [ -d lib ] && find lib -name '*.cr' -newer "$MAIN_BINARY" -print -quit | grep -q .; then
     # A `shards update` (e.g. pulling in a Crinja fork fix) touches
-    # lib/'s own mtimes but never crystal-play.cr's - without this
+    # lib/'s own mtimes but never krikri-playbook.cr's - without this
     # check the whole rebuild silently no-ops, compiling nothing, and
     # every subsequent "verify the fix" step re-tests the SAME stale
     # binary. Found live: round 116's wordwrap fix appeared to not
@@ -246,8 +246,8 @@ elif [ -d lib ] && find lib -name '*.cr' -newer "$MAIN_BINARY" -print -quit | gr
 fi
 
 if [ "$NEEDS_BUILD" = true ]; then
-    echo -n "   Building crystal-ansible... "
-    if ! OUTPUT=$(crystal build crystal-play.cr -o "$MAIN_BINARY" $BUILD_FLAGS 2>&1); then
+    echo -n "   Building krikri-playbook... "
+    if ! OUTPUT=$(crystal build krikri-playbook.cr -o "$MAIN_BINARY" $BUILD_FLAGS 2>&1); then
         echo -e "${RED}✗${NC}"
         echo ""
         echo -e "${RED}❌ Build failed for main executable${NC}"
@@ -258,17 +258,17 @@ if [ "$NEEDS_BUILD" = true ]; then
     fi
     echo -e "${GREEN}✓${NC}"
     strip_release_binary "$MAIN_BINARY"
-    echo -e "${GREEN}✅ Main executable built: $OUTPUT_DIR/crystal-ansible${NC}"
+    echo -e "${GREEN}✅ Main executable built: $OUTPUT_DIR/krikri-playbook${NC}"
 else
-    echo -e "   ${BLUE}✓${NC} crystal-ansible (up to date)"
+    echo -e "   ${BLUE}✓${NC} krikri-playbook (up to date)"
     echo -e "${GREEN}✅ Main executable up to date${NC}"
 fi
 
-# Build ansible (ad-hoc CLI)
-echo -e "${YELLOW}🔨 Building ansible (ad-hoc CLI)...${NC}"
+# Build krikri (ad-hoc CLI)
+echo -e "${YELLOW}🔨 Building krikri (ad-hoc CLI)...${NC}"
 
-ADHOC_BINARY="$OUTPUT_DIR/ansible"
-ADHOC_SOURCE="ansible.cr"
+ADHOC_BINARY="$OUTPUT_DIR/krikri"
+ADHOC_SOURCE="krikri.cr"
 
 NEEDS_BUILD=false
 
@@ -283,11 +283,11 @@ elif [ -d lib ] && find lib -name '*.cr' -newer "$ADHOC_BINARY" -print -quit | g
 fi
 
 if [ "$NEEDS_BUILD" = true ]; then
-    echo -n "   Building ansible... "
-    if ! OUTPUT=$(crystal build ansible.cr -o "$ADHOC_BINARY" $BUILD_FLAGS 2>&1); then
+    echo -n "   Building krikri... "
+    if ! OUTPUT=$(crystal build krikri.cr -o "$ADHOC_BINARY" $BUILD_FLAGS 2>&1); then
         echo -e "${RED}✗${NC}"
         echo ""
-        echo -e "${RED}❌ Build failed for ansible${NC}"
+        echo -e "${RED}❌ Build failed for krikri${NC}"
         echo ""
         echo "$OUTPUT"
         echo ""
@@ -295,10 +295,10 @@ if [ "$NEEDS_BUILD" = true ]; then
     fi
     echo -e "${GREEN}✓${NC}"
     strip_release_binary "$ADHOC_BINARY"
-    echo -e "${GREEN}✅ ansible built: $OUTPUT_DIR/ansible${NC}"
+    echo -e "${GREEN}✅ krikri built: $OUTPUT_DIR/krikri${NC}"
 else
-    echo -e "   ${BLUE}✓${NC} ansible (up to date)"
-    echo -e "${GREEN}✅ ansible up to date${NC}"
+    echo -e "   ${BLUE}✓${NC} krikri (up to date)"
+    echo -e "${GREEN}✅ krikri up to date${NC}"
 fi
 echo ""
 
@@ -431,8 +431,8 @@ STANDALONE_PLUGINS=("debug" "assert" "fail" "set_fact" "pause")
 # runs on every host in every play - frequently the slowest single step
 # of a warm run - paid a fresh ssh fork and remote process spawn every
 # time. Its gathering body now lives in
-# `src/crystal_play/plugin_helpers/facts_gatherer.cr`
-# (`CrystalPlay::FactsGatherer.run`), which both this binary and the
+# `src/krikri/plugin_helpers/facts_gatherer.cr`
+# (`Krikri::FactsGatherer.run`), which both this binary and the
 # still-buildable standalone `plugins/facts.cr` driver call, so there is
 # exactly one implementation and its output is unchanged.
 FAT_EXTRA_MODULES=("facts")
@@ -500,8 +500,8 @@ build_fat_plugin() {
 
         {
             echo 'require "json"'
-            echo 'require "../src/crystal_play/plugin_daemon"'
-            echo 'require "../src/crystal_play/plugin_helpers/facts_gatherer"'
+            echo 'require "../src/krikri/plugin_daemon"'
+            echo 'require "../src/krikri/plugin_helpers/facts_gatherer"'
             for plugin in "${FAT_PLUGINS[@]}"; do
                 is_extra=false
                 for extra in "${FAT_EXTRA_MODULES[@]}"; do
@@ -544,7 +544,7 @@ build_fat_plugin() {
             echo '# daemon path, which must never exit the whole long-lived process'
             echo '# over one bad request - it turns a nil into a normal JSON failed'
             echo '# result instead, so an unknown module fails just that ONE task.'
-            echo 'module CrystalPlay::FatPluginDispatch'
+            echo 'module Krikri::FatPluginDispatch'
             echo '  def self.call(name : String, config : JSON::Any) : String?'
             echo '    case name'
             for plugin in "${FAT_PLUGINS[@]}"; do
@@ -555,13 +555,13 @@ build_fat_plugin() {
                 [ "$is_extra" = true ] && continue
                 cls=$(grep -oP 'class \K\w+Plugin(?= < BasePlugin)' "plugins/$plugin.cr" | head -1)
                 echo "    when \"$plugin\""
-                echo "      CrystalPlay::$cls.new(config).run_and_capture"
+                echo "      Krikri::$cls.new(config).run_and_capture"
             done
             # FAT_EXTRA_MODULES: hand-written, since these have no
             # BasePlugin class for the loop above to name. FactsGatherer
             # .run returns the same JSON string run_and_capture does.
             echo '    when "facts"'
-            echo '      CrystalPlay::FactsGatherer.run(config)'
+            echo '      Krikri::FactsGatherer.run(config)'
             echo '    else'
             echo '      nil'
             echo '    end'
@@ -576,14 +576,14 @@ build_fat_plugin() {
             echo '# real `.fat-plugin` path, not a per-module hardlink, so PROGRAM_NAME'
             echo '# is irrelevant to it), not a new file to upload/dedupe.'
             echo 'if ARGV[0]? == "--daemon"'
-            echo '  CrystalPlay::PluginDaemon.serve do |name, config|'
-            echo '    CrystalPlay::FatPluginDispatch.call(name, config) ||'
+            echo '  Krikri::PluginDaemon.serve do |name, config|'
+            echo '    Krikri::FatPluginDispatch.call(name, config) ||'
             echo '      {"changed" => false, "failed" => true, "msg" => "unknown plugin: #{name}"}.to_json'
             echo '  end'
             echo 'else'
             echo '  name = File.basename(PROGRAM_NAME)'
             echo '  config = JSON.parse(STDIN.gets_to_end)'
-            echo '  if result = CrystalPlay::FatPluginDispatch.call(name, config)'
+            echo '  if result = Krikri::FatPluginDispatch.call(name, config)'
             echo '    puts result'
             echo '  else'
             echo '    STDERR.puts "unknown plugin: #{name}"'
@@ -777,14 +777,14 @@ echo -e "${BLUE}╔════════════════════�
 echo -e "${BLUE}║         Build Complete! 🎉             ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "${GREEN}Executable:${NC} $OUTPUT_DIR/crystal-ansible"
-echo -e "${GREEN}Executable:${NC} $OUTPUT_DIR/ansible"
+echo -e "${GREEN}Executable:${NC} $OUTPUT_DIR/krikri-playbook"
+echo -e "${GREEN}Executable:${NC} $OUTPUT_DIR/krikri"
 echo -e "${GREEN}Plugins:${NC} $PLUGINS_DIR/ ($PLUGIN_COUNT plugins)"
 echo ""
 echo -e "${YELLOW}Quick Start:${NC}"
-echo -e "  ${BLUE}./bin/crystal-ansible test-facts.yml${NC}"
-echo -e "  ${BLUE}./bin/crystal-ansible --diff test-lineinfile.yml${NC}"
-echo -e "  ${BLUE}./bin/crystal-ansible --check test-handlers.yml${NC}"
+echo -e "  ${BLUE}./bin/krikri-playbook test-facts.yml${NC}"
+echo -e "  ${BLUE}./bin/krikri-playbook --diff test-lineinfile.yml${NC}"
+echo -e "  ${BLUE}./bin/krikri-playbook --check test-handlers.yml${NC}"
 echo ""
 
 # Show size information

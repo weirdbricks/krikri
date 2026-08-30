@@ -65,7 +65,7 @@
           INSERT INTO t VALUES (1, 'alice'), (2, 'bob');
           CREATE TABLE IF NOT EXISTS secret (id INT PRIMARY KEY, val VARCHAR(50));
           INSERT INTO secret VALUES (1, 'shh');
-        dest: /tmp/crystal-ansible-mysql-seed.sql
+        dest: /tmp/krikri-playbook-mysql-seed.sql
 
     - name: write a my.cnf-format config_file with login credentials
       ansible.builtin.copy:
@@ -73,14 +73,14 @@
           [client]
           user={{ login_user }}
           password={{ login_password }}
-        dest: /tmp/crystal-ansible-mysql-my.cnf
+        dest: /tmp/krikri-playbook-mysql-my.cnf
         mode: "0600"
 
     - name: import the seed data
       community.mysql.mysql_db:
         name: "{{ test_db }}"
         state: import
-        target: /tmp/crystal-ansible-mysql-seed.sql
+        target: /tmp/krikri-playbook-mysql-seed.sql
         login_host: "{{ login_host }}"
         login_port: "{{ login_port }}"
         login_user: "{{ login_user }}"
@@ -91,7 +91,7 @@
       community.mysql.mysql_db:
         name: "{{ test_db }}"
         state: dump
-        target: /tmp/crystal-ansible-mysql-dump.sql.gz
+        target: /tmp/krikri-playbook-mysql-dump.sql.gz
         login_host: "{{ login_host }}"
         login_port: "{{ login_port }}"
         login_user: "{{ login_user }}"
@@ -110,7 +110,7 @@
       community.mysql.mysql_db:
         name: "{{ test_db }}_restored"
         state: import
-        target: /tmp/crystal-ansible-mysql-dump.sql.gz
+        target: /tmp/krikri-playbook-mysql-dump.sql.gz
         login_host: "{{ login_host }}"
         login_port: "{{ login_port }}"
         login_user: "{{ login_user }}"
@@ -137,7 +137,7 @@
       community.mysql.mysql_db:
         name: "{{ test_db }}"
         state: dump
-        target: /tmp/crystal-ansible-mysql-dump.sql.zst
+        target: /tmp/krikri-playbook-mysql-dump.sql.zst
         login_host: "{{ login_host }}"
         login_port: "{{ login_port }}"
         login_user: "{{ login_user }}"
@@ -156,7 +156,7 @@
       community.mysql.mysql_db:
         name: "{{ test_db }}_zst"
         state: import
-        target: /tmp/crystal-ansible-mysql-dump.sql.zst
+        target: /tmp/krikri-playbook-mysql-dump.sql.zst
         login_host: "{{ login_host }}"
         login_port: "{{ login_port }}"
         login_user: "{{ login_user }}"
@@ -183,8 +183,8 @@
       community.mysql.mysql_db:
         name: "{{ test_db }}"
         state: dump
-        target: /tmp/crystal-ansible-mysql-dump-knobs.sql
-        config_file: /tmp/crystal-ansible-mysql-my.cnf
+        target: /tmp/krikri-playbook-mysql-dump-knobs.sql
+        config_file: /tmp/krikri-playbook-mysql-my.cnf
         login_host: "{{ login_host }}"
         login_port: "{{ login_port }}"
         ignore_tables:
@@ -207,8 +207,8 @@
       community.mysql.mysql_db:
         name: "{{ test_db }}_knobs"
         state: import
-        target: /tmp/crystal-ansible-mysql-dump-knobs.sql
-        config_file: /tmp/crystal-ansible-mysql-my.cnf
+        target: /tmp/krikri-playbook-mysql-dump-knobs.sql
+        config_file: /tmp/krikri-playbook-mysql-my.cnf
         login_host: "{{ login_host }}"
         login_port: "{{ login_port }}"
       register: db_import_knobs

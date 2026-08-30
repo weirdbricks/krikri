@@ -14,7 +14,7 @@
 # (release build matters here - this is a perf measurement, not a
 # correctness check).
 
-require "../../src/crystal_play/variable_substitutor"
+require "../../src/krikri/variable_substitutor"
 
 N = 200_000
 
@@ -34,10 +34,10 @@ expressions = [
   "items | join(',')",
 ]
 
-evaluator = CrystalPlay::VariableSubstitutor::ExpressionEvaluator.new(vars)
+evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(vars)
 
 crinja_vars = Hash(String, Crinja::Value).new
-vars.each { |k, v| crinja_vars[k] = CrystalPlay::VariableSubstitutor::CrinjaRenderer.json_any_to_crinja_value(v) }
+vars.each { |k, v| crinja_vars[k] = Krikri::VariableSubstitutor::CrinjaRenderer.json_any_to_crinja_value(v) }
 
 env = Crinja.new
 env.config.trim_blocks = true

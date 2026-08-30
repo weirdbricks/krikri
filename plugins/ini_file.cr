@@ -2,9 +2,9 @@
 
 require "json"
 require "file_utils"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # ini_file plugin - manages [section]/option=value entries in an INI-style
   # config file. Compatible with community.general.ini_file's common shape
   # (path/dest, section, option, value, state, create, exclusive,
@@ -155,7 +155,7 @@ module CrystalPlay
     # `matches.empty?` was always true for a role that ships its config
     # template with every option pre-listed but commented out (very
     # common, e.g. journald.conf/logind.conf's own upstream defaults) -
-    # crystal-ansible always appended a brand-new active line at the
+    # krikri-playbook always appended a brand-new active line at the
     # end of the section instead of uncommenting the existing one in
     # place, unlike real Ansible. Found benchmarking robertdebock.
     # systemd's own journald.conf `LineMax` setting.
@@ -262,5 +262,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::IniFilePlugin.new(config)
+plugin = Krikri::IniFilePlugin.new(config)
 plugin.run

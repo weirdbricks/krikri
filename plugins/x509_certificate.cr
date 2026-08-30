@@ -2,9 +2,9 @@
 
 require "json"
 require "random/secure"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # x509_certificate plugin (community.crypto.x509_certificate) -
   # issues certificates from a CSR, either self-signed or signed by a
   # CA you own.
@@ -410,5 +410,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::X509CertificatePlugin.new(config)
+plugin = Krikri::X509CertificatePlugin.new(config)
 plugin.run

@@ -1,11 +1,11 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # pause plugin (ansible.builtin.pause) - waits, or (in real Ansible)
-  # interactively prompts. crystal-ansible has no interactive TTY/prompt
+  # interactively prompts. krikri-playbook has no interactive TTY/prompt
   # model, so only the countdown form (`seconds:`/`minutes:`) is
   # implemented - the documented scope cut this entry itself called for.
   # A bare `pause:` with neither given would block on stdin in real
@@ -68,5 +68,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::PausePlugin.new(config)
+plugin = Krikri::PausePlugin.new(config)
 plugin.run

@@ -4,7 +4,7 @@ require "../spec_helper"
 # wrapper. The point (per CRINJA.md's "Also worth doing opportunistically"
 # note): after a fork rebase or `shards update`, these specs tell you at a
 # glance whether a maintained registration / behavior became (a) redundant
-# (fixed upstream - then the redundant crystal-ansible fix can be deleted)
+# (fixed upstream - then the redundant krikri-playbook fix can be deleted)
 # or (b) newly broken (a regression to chase). They are NOT testing
 # CrinjaRenderer's own re-templating/var-context machinery - crinja_
 # renderer_spec.cr covers that.
@@ -12,7 +12,7 @@ require "../spec_helper"
 # Requires the real Ansible-specific registrations (jinja_filters.cr), as
 # every real template-rendering binary pulls them in via
 # template_action_plugin.cr.
-require "../../src/crystal_play/jinja_filters"
+require "../../src/krikri/jinja_filters"
 
 private def crinja_render(tpl : String, vars = nil) : String
   env = Crinja.new

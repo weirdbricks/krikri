@@ -9,7 +9,7 @@
   tasks:
     # Test 1: Basic command execution
     - name: Test 1 - Simple echo command
-      ansible.builtin.command: echo "Hello from Crystal Play"
+      ansible.builtin.command: echo "Hello from krikri"
       register: echo_result
     
     - name: Show echo result
@@ -38,12 +38,12 @@
     
     # Test 4: creates parameter (idempotency)
     - name: Test 4a - Create test file
-      ansible.builtin.shell: echo "test" > /tmp/crystal-play-command-test.txt
+      ansible.builtin.shell: echo "test" > /tmp/krikri-playbook-command-test.txt
     
     - name: Test 4b - Command with creates (should skip)
       ansible.builtin.command:
         cmd: echo "This should be skipped"
-        creates: /tmp/crystal-play-command-test.txt
+        creates: /tmp/krikri-playbook-command-test.txt
       register: creates_test
     
     - name: Show creates result
@@ -54,7 +54,7 @@
     - name: Test 5a - Command with removes (should run)
       ansible.builtin.command:
         cmd: echo "File exists, running command"
-        removes: /tmp/crystal-play-command-test.txt
+        removes: /tmp/krikri-playbook-command-test.txt
       register: removes_test_run
     
     - name: Show removes result (should run)
@@ -63,13 +63,13 @@
     
     - name: Test 5b - Delete test file
       ansible.builtin.file:
-        path: /tmp/crystal-play-command-test.txt
+        path: /tmp/krikri-playbook-command-test.txt
         state: absent
     
     - name: Test 5c - Command with removes (should skip)
       ansible.builtin.command:
         cmd: echo "This should be skipped"
-        removes: /tmp/crystal-play-command-test.txt
+        removes: /tmp/krikri-playbook-command-test.txt
       register: removes_test_skip
     
     - name: Show removes result (should skip)
@@ -131,7 +131,7 @@
         msg: "✓ Command plugin tests complete!"
 
 # Expected results:
-# Test 1: changed=true, shows "Hello from Crystal Play"
+# Test 1: changed=true, shows "Hello from krikri"
 # Test 2: changed=true, shows directory listing
 # Test 3: changed=true, shows "/var/log"
 # Test 4b: skipped=true (file exists, creates condition met)

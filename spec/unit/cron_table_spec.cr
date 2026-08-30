@@ -1,7 +1,7 @@
 require "../spec_helper"
-require "../../src/crystal_play/plugin_helpers/cron_table"
+require "../../src/krikri/plugin_helpers/cron_table"
 
-private alias CronTable = CrystalPlay::PluginHelpers::CronTable
+private alias CronTable = Krikri::PluginHelpers::CronTable
 
 describe CronTable do
   describe ".schedule" do

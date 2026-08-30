@@ -1,10 +1,10 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
-require "../src/crystal_play/variable_substitutor/variable_lookup"
+require "../src/krikri/base_plugin"
+require "../src/krikri/variable_substitutor/variable_lookup"
 
-module CrystalPlay
+module Krikri
   # Debug plugin - prints messages and variable values
   # Compatible with Ansible's ansible.builtin.debug module
   #
@@ -134,5 +134,5 @@ end
 input = STDIN.gets_to_end
 config = JSON.parse(input)
 
-plugin = CrystalPlay::DebugPlugin.new(config)
+plugin = Krikri::DebugPlugin.new(config)
 plugin.run

@@ -8,7 +8,7 @@ require "../spec_helper"
 # vars_prompt: piping "c" continues, and closing stdin is treated as an
 # interrupt (exit 99).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
-private BINARY       = File.join(PROJECT_ROOT, "bin", "crystal-ansible")
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 
 private def run_debug(playbook : String, input : String?) : {Int32, String}
   dir = File.tempname("debugger")

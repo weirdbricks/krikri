@@ -1,9 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "../src/crystal_play/base_plugin"
+require "../src/krikri/base_plugin"
 
-module CrystalPlay
+module Krikri
   # Make plugin - runs targets in a Makefile. Compatible with
   # community.general.make (ported from its own real Python source
   # exactly, including its idempotency check).
@@ -80,5 +80,5 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
-plugin = CrystalPlay::MakePlugin.new(config)
+plugin = Krikri::MakePlugin.new(config)
 plugin.run

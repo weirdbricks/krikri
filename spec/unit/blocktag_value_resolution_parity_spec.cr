@@ -1,5 +1,5 @@
 require "../spec_helper"
-require "../../src/crystal_play/variable_substitutor"
+require "../../src/krikri/variable_substitutor"
 
 # P1.2 (FINDINGS_CHECKLIST.md) - the resolution-path parity guard.
 #
@@ -50,14 +50,14 @@ describe "block-tag-valued variable resolves through every lookup path" do
   shapes.each do |label, (tpl, expected)|
     it label do
       strict = label.includes?("strict")
-      sub = CrystalPlay::VarSubstitutor.new(vars: guard_vars, host_name: "h")
+      sub = Krikri::VarSubstitutor.new(vars: guard_vars, host_name: "h")
       sub.substitute(tpl, strict: strict).should eq(expected)
     end
   end
 
   it "strict path still raises for a block-tag condition rooted at a MISSING var" do
-    sub = CrystalPlay::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h")
-    expect_raises(CrystalPlay::UndefinedVariableError, /'nosuch' is undefined/) do
+    sub = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h")
+    expect_raises(Krikri::UndefinedVariableError, /'nosuch' is undefined/) do
       sub.substitute("{% if nosuch.attr == 'x' %}y{% endif %}", strict: true)
     end
   end

@@ -1,12 +1,12 @@
 require "../spec_helper"
-require "../../src/crystal_play/variable_substitutor"
-require "../../src/crystal_play/conditional_evaluator"
+require "../../src/krikri/variable_substitutor"
+require "../../src/krikri/conditional_evaluator"
 # The P2 registrations live in the GLOBAL Crinja default library, but this
 # file is only pulled in by the template action plugin - a spec that requires
 # only variable_substitutor sees a BARE Crinja env, so both "engines" would
 # error identically and any parity assertion would be vacuously true. Load
 # the registrations explicitly so the pure side sees the real feature set.
-require "../../src/crystal_play/jinja_filters"
+require "../../src/krikri/jinja_filters"
 
 # P2.16 (FINDINGS_CHECKLIST.md) - the cross-engine parity matrix.
 #
@@ -15,7 +15,7 @@ require "../../src/crystal_play/jinja_filters"
 # can reach it with:
 #
 #   1. a PURE `Crinja.new` environment (what a plain template render sees),
-#   2. crystal-ansible's real render path (`VarSubstitutor#substitute`, the
+#   2. krikri-playbook's real render path (`VarSubstitutor#substitute`, the
 #      hand-rolled ExpressionEvaluator + FilterEngine with its Crinja
 #      delegation),
 #   3. the hand-rolled `ConditionalEvaluator` (`when:`/`assert:` conditions),
@@ -65,7 +65,7 @@ end
 # assert.
 private def pure_crinja(tpl : String) : String
   bindings = parity_vars.each_with_object(Hash(String, Crinja::Value).new) do |(key, json), acc|
-    acc[key] = CrystalPlay::VariableSubstitutor::CrinjaRenderer.json_any_to_crinja_value(json)
+    acc[key] = Krikri::VariableSubstitutor::CrinjaRenderer.json_any_to_crinja_value(json)
   end
   Crinja.new.from_string(tpl).render(bindings)
 rescue e
@@ -73,13 +73,13 @@ rescue e
 end
 
 private def engine_substitute(tpl : String) : String
-  CrystalPlay::VarSubstitutor.new(vars: parity_vars, host_name: "h").substitute(tpl)
+  Krikri::VarSubstitutor.new(vars: parity_vars, host_name: "h").substitute(tpl)
 rescue e
   "ERR: #{e.message}"
 end
 
 private def conditional(expr : String) : String
-  CrystalPlay::ConditionalEvaluator.evaluate(expr, parity_vars).to_s
+  Krikri::ConditionalEvaluator.evaluate(expr, parity_vars).to_s
 rescue e
   "ERR: #{e.message}"
 end
@@ -154,7 +154,7 @@ describe "P2.16 cross-engine parity matrix" do
   conditionals.each do |label, expr|
     it "conditional evaluator agrees on '#{label}'" do
       expected = pure_crinja("{{ #{expr} }}") == "True"
-      CrystalPlay::ConditionalEvaluator.evaluate(expr, parity_vars).should eq(expected)
+      Krikri::ConditionalEvaluator.evaluate(expr, parity_vars).should eq(expected)
     end
   end
 
@@ -173,13 +173,13 @@ describe "P2.16 cross-engine parity matrix" do
     end
 
     it "a string \"true\" fails `is true` in the conditional evaluator" do
-      CrystalPlay::ConditionalEvaluator.evaluate("flag is true", parity_vars).should be_false
+      Krikri::ConditionalEvaluator.evaluate("flag is true", parity_vars).should be_false
     end
 
     it "a real Bool passes `is true` in all three engines" do
       engine_substitute("{{ bool_flag is true }}").should eq("True")
       pure_crinja("{{ bool_flag is true }}").should eq("True")
-      CrystalPlay::ConditionalEvaluator.evaluate("bool_flag is true", parity_vars).should be_true
+      Krikri::ConditionalEvaluator.evaluate("bool_flag is true", parity_vars).should be_true
     end
   end
 end

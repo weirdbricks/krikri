@@ -13,7 +13,7 @@ Layout/TrailingWhitespace:
   - plugins/copy.cr
   - plugins/lineinfile.cr
   - plugins/facts.cr
-  - src/crystal_play/plugin_helpers/facts_gatherer.cr
+  - src/krikri/plugin_helpers/facts_gatherer.cr
   - plugins/template.cr
   - plugins/shell.cr
   - plugins/file.cr
@@ -27,43 +27,43 @@ Layout/TrailingWhitespace:
   - plugins/package.cr
   - plugins/dnf.cr
   - plugins/command.cr
-  - crystal-play.cr
-  - src/crystal_play/inventory_parser.cr
-  - src/crystal_play/variable_substitutor.cr
-  - src/crystal_play/conditional_evaluator.cr
-  - src/crystal_play/base_action_plugin.cr
-  - src/crystal_play/ssh_manager.cr
-  - src/crystal_play/ssh_config.cr
-  - src/crystal_play/version.cr
-  - src/crystal_play/template_action_plugin.cr
-  - src/crystal_play/task_executor/result_display.cr
-  - src/crystal_play/task_executor/executor.cr
-  - src/crystal_play/task_executor/handler_runner.cr
-  - src/crystal_play/task_executor/variable_context.cr
-  - src/crystal_play/base_plugin.cr
-  - src/crystal_play/variable_substitutor/array_slicer.cr
-  - src/crystal_play/variable_substitutor/comparison_evaluator.cr
-  - src/crystal_play/variable_substitutor/filter_engine.cr
-  - src/crystal_play/variable_substitutor/expression_evaluator.cr
-  - src/crystal_play/variable_substitutor/variable_lookup.cr
-  - src/crystal_play/variable_substitutor/crinja_renderer.cr
-  - src/crystal_play/plugin_manager.cr
-  - src/crystal_play/facts_gatherer/environment_facts.cr
-  - src/crystal_play/facts_gatherer/python_facts.cr
-  - src/crystal_play/facts_gatherer/os_facts.cr
-  - src/crystal_play/facts_gatherer/hostname_facts.cr
-  - src/crystal_play/facts_gatherer/user_facts.cr
-  - src/crystal_play/facts_gatherer/gatherer.cr
-  - src/crystal_play/facts_gatherer/date_time_facts.cr
-  - src/crystal_play/facts_gatherer/network_facts.cr
-  - src/crystal_play/facts_gatherer/hardware_facts.cr
-  - src/crystal_play/facts_gatherer/facts_gatherer.cr
-  - src/crystal_play/local_executor.cr
-  - src/crystal_play/host.cr
-  - src/crystal_play/task_executor.cr
-  - src/crystal_play/action_plugin_manager.cr
-  - src/crystal_play/playbook_parser.cr
-  - src/crystal_play.cr
+  - krikri-playbook.cr
+  - src/krikri/inventory_parser.cr
+  - src/krikri/variable_substitutor.cr
+  - src/krikri/conditional_evaluator.cr
+  - src/krikri/base_action_plugin.cr
+  - src/krikri/ssh_manager.cr
+  - src/krikri/ssh_config.cr
+  - src/krikri/version.cr
+  - src/krikri/template_action_plugin.cr
+  - src/krikri/task_executor/result_display.cr
+  - src/krikri/task_executor/executor.cr
+  - src/krikri/task_executor/handler_runner.cr
+  - src/krikri/task_executor/variable_context.cr
+  - src/krikri/base_plugin.cr
+  - src/krikri/variable_substitutor/array_slicer.cr
+  - src/krikri/variable_substitutor/comparison_evaluator.cr
+  - src/krikri/variable_substitutor/filter_engine.cr
+  - src/krikri/variable_substitutor/expression_evaluator.cr
+  - src/krikri/variable_substitutor/variable_lookup.cr
+  - src/krikri/variable_substitutor/crinja_renderer.cr
+  - src/krikri/plugin_manager.cr
+  - src/krikri/facts_gatherer/environment_facts.cr
+  - src/krikri/facts_gatherer/python_facts.cr
+  - src/krikri/facts_gatherer/os_facts.cr
+  - src/krikri/facts_gatherer/hostname_facts.cr
+  - src/krikri/facts_gatherer/user_facts.cr
+  - src/krikri/facts_gatherer/gatherer.cr
+  - src/krikri/facts_gatherer/date_time_facts.cr
+  - src/krikri/facts_gatherer/network_facts.cr
+  - src/krikri/facts_gatherer/hardware_facts.cr
+  - src/krikri/facts_gatherer/facts_gatherer.cr
+  - src/krikri/local_executor.cr
+  - src/krikri/host.cr
+  - src/krikri/task_executor.cr
+  - src/krikri/action_plugin_manager.cr
+  - src/krikri/playbook_parser.cr
+  - src/krikri.cr
   Enabled: true
   Severity: Convention
 
@@ -78,7 +78,7 @@ Lint/Formatting:
   - plugins/copy.cr
   - plugins/lineinfile.cr
   - plugins/facts.cr
-  - src/crystal_play/plugin_helpers/facts_gatherer.cr
+  - src/krikri/plugin_helpers/facts_gatherer.cr
   - plugins/template.cr
   - plugins/shell.cr
   - plugins/file.cr
@@ -92,43 +92,43 @@ Lint/Formatting:
   - plugins/package.cr
   - plugins/dnf.cr
   - plugins/command.cr
-  - crystal-play.cr
-  - src/crystal_play/inventory_parser.cr
-  - src/crystal_play/variable_substitutor.cr
-  - src/crystal_play/conditional_evaluator.cr
-  - src/crystal_play/base_action_plugin.cr
-  - src/crystal_play/ssh_manager.cr
-  - src/crystal_play/ssh_config.cr
-  - src/crystal_play/version.cr
-  - src/crystal_play/template_action_plugin.cr
-  - src/crystal_play/task_executor/result_display.cr
-  - src/crystal_play/task_executor/executor.cr
-  - src/crystal_play/task_executor/handler_runner.cr
-  - src/crystal_play/task_executor/variable_context.cr
-  - src/crystal_play/base_plugin.cr
-  - src/crystal_play/variable_substitutor/array_slicer.cr
-  - src/crystal_play/variable_substitutor/comparison_evaluator.cr
-  - src/crystal_play/variable_substitutor/filter_engine.cr
-  - src/crystal_play/variable_substitutor/expression_evaluator.cr
-  - src/crystal_play/variable_substitutor/variable_lookup.cr
-  - src/crystal_play/variable_substitutor/crinja_renderer.cr
-  - src/crystal_play/plugin_manager.cr
-  - src/crystal_play/facts_gatherer/environment_facts.cr
-  - src/crystal_play/facts_gatherer/python_facts.cr
-  - src/crystal_play/facts_gatherer/os_facts.cr
-  - src/crystal_play/facts_gatherer/hostname_facts.cr
-  - src/crystal_play/facts_gatherer/user_facts.cr
-  - src/crystal_play/facts_gatherer/gatherer.cr
-  - src/crystal_play/facts_gatherer/date_time_facts.cr
-  - src/crystal_play/facts_gatherer/network_facts.cr
-  - src/crystal_play/facts_gatherer/hardware_facts.cr
-  - src/crystal_play/facts_gatherer/facts_gatherer.cr
-  - src/crystal_play/local_executor.cr
-  - src/crystal_play/host.cr
-  - src/crystal_play/task_executor.cr
-  - src/crystal_play/action_plugin_manager.cr
-  - src/crystal_play/playbook_parser.cr
-  - src/crystal_play.cr
+  - krikri-playbook.cr
+  - src/krikri/inventory_parser.cr
+  - src/krikri/variable_substitutor.cr
+  - src/krikri/conditional_evaluator.cr
+  - src/krikri/base_action_plugin.cr
+  - src/krikri/ssh_manager.cr
+  - src/krikri/ssh_config.cr
+  - src/krikri/version.cr
+  - src/krikri/template_action_plugin.cr
+  - src/krikri/task_executor/result_display.cr
+  - src/krikri/task_executor/executor.cr
+  - src/krikri/task_executor/handler_runner.cr
+  - src/krikri/task_executor/variable_context.cr
+  - src/krikri/base_plugin.cr
+  - src/krikri/variable_substitutor/array_slicer.cr
+  - src/krikri/variable_substitutor/comparison_evaluator.cr
+  - src/krikri/variable_substitutor/filter_engine.cr
+  - src/krikri/variable_substitutor/expression_evaluator.cr
+  - src/krikri/variable_substitutor/variable_lookup.cr
+  - src/krikri/variable_substitutor/crinja_renderer.cr
+  - src/krikri/plugin_manager.cr
+  - src/krikri/facts_gatherer/environment_facts.cr
+  - src/krikri/facts_gatherer/python_facts.cr
+  - src/krikri/facts_gatherer/os_facts.cr
+  - src/krikri/facts_gatherer/hostname_facts.cr
+  - src/krikri/facts_gatherer/user_facts.cr
+  - src/krikri/facts_gatherer/gatherer.cr
+  - src/krikri/facts_gatherer/date_time_facts.cr
+  - src/krikri/facts_gatherer/network_facts.cr
+  - src/krikri/facts_gatherer/hardware_facts.cr
+  - src/krikri/facts_gatherer/facts_gatherer.cr
+  - src/krikri/local_executor.cr
+  - src/krikri/host.cr
+  - src/krikri/task_executor.cr
+  - src/krikri/action_plugin_manager.cr
+  - src/krikri/playbook_parser.cr
+  - src/krikri.cr
   Enabled: true
   Severity: Warning
 
@@ -143,21 +143,21 @@ Metrics/CyclomaticComplexity:
   # ordered substring tests; the debugger prompt's command set), and
   # splitting them up would obscure the correspondence the corpus
   # differential in distribution_facts_spec.cr checks against.
-  - src/crystal_play/plugin_helpers/distribution_facts.cr
+  - src/krikri/plugin_helpers/distribution_facts.cr
   # PackageCoalescer's disqualifier predicates are a flat list of "ways
   # a package task can depend on running separately". The branch count
   # IS the safety argument (item 11 is parity-BREAKING, so every missing
   # branch is a way to merge something that should not be merged), and
   # splitting past the two it already has would scatter one rule across
   # four methods for no gain. Already reduced 25 -> 12.
-  - src/crystal_play/package_coalescer.cr
-  - src/crystal_play/task_debugger.cr
+  - src/krikri/package_coalescer.cr
+  - src/krikri/task_debugger.cr
   - plugins/debug.cr
-  - src/crystal_play/template_action_plugin.cr
+  - src/krikri/template_action_plugin.cr
   - plugins/apt.cr
   - plugins/copy.cr
   - plugins/facts.cr
-  - src/crystal_play/plugin_helpers/facts_gatherer.cr
+  - src/krikri/plugin_helpers/facts_gatherer.cr
   - plugins/template.cr
   - plugins/shell.cr
   - plugins/service.cr
@@ -170,18 +170,18 @@ Metrics/CyclomaticComplexity:
   - plugins/package.cr
   - plugins/dnf.cr
   - plugins/command.cr
-  - src/crystal_play/inventory_parser.cr
-  - src/crystal_play/conditional_evaluator.cr
-  - src/crystal_play/task_executor/result_display.cr
-  - src/crystal_play/task_executor/executor.cr
-  - src/crystal_play/variable_substitutor/array_slicer.cr
-  - src/crystal_play/variable_substitutor/comparison_evaluator.cr
-  - src/crystal_play/variable_substitutor/filter_engine.cr
-  - src/crystal_play/plugin_manager.cr
-  - src/crystal_play/facts_gatherer/os_facts.cr
-  - src/crystal_play/facts_gatherer/date_time_facts.cr
-  - src/crystal_play/facts_gatherer/hardware_facts.cr
-  - src/crystal_play/playbook_parser.cr
+  - src/krikri/inventory_parser.cr
+  - src/krikri/conditional_evaluator.cr
+  - src/krikri/task_executor/result_display.cr
+  - src/krikri/task_executor/executor.cr
+  - src/krikri/variable_substitutor/array_slicer.cr
+  - src/krikri/variable_substitutor/comparison_evaluator.cr
+  - src/krikri/variable_substitutor/filter_engine.cr
+  - src/krikri/plugin_manager.cr
+  - src/krikri/facts_gatherer/os_facts.cr
+  - src/krikri/facts_gatherer/date_time_facts.cr
+  - src/krikri/facts_gatherer/hardware_facts.cr
+  - src/krikri/playbook_parser.cr
   Enabled: true
   Severity: Warning
 
@@ -196,9 +196,9 @@ Style/RedundantReturn:
   - plugins/apt.cr
   - plugins/lineinfile.cr
   - plugins/package.cr
-  - src/crystal_play/conditional_evaluator.cr
-  - src/crystal_play/template_action_plugin.cr
-  - src/crystal_play/variable_substitutor/crinja_renderer.cr
+  - src/krikri/conditional_evaluator.cr
+  - src/krikri/template_action_plugin.cr
+  - src/krikri/variable_substitutor/crinja_renderer.cr
   Enabled: true
   Severity: Convention
 
@@ -222,9 +222,9 @@ Naming/PredicateName:
   - plugins/package.cr
   - plugins/dnf.cr
   - plugins/command.cr
-  - src/crystal_play/template_action_plugin.cr
-  - src/crystal_play/base_plugin.cr
-  - src/crystal_play/plugin_manager.cr
+  - src/krikri/template_action_plugin.cr
+  - src/krikri/base_plugin.cr
+  - src/krikri/plugin_manager.cr
   Enabled: true
   Severity: Convention
 
@@ -247,11 +247,11 @@ Naming/QueryBoolMethods:
   - plugins/getent.cr
   - plugins/package.cr
   - plugins/command.cr
-  - src/crystal_play/base_action_plugin.cr
-  - src/crystal_play/ssh_config.cr
-  - src/crystal_play/task_executor/executor.cr
-  - src/crystal_play/base_plugin.cr
-  - src/crystal_play/playbook_parser.cr
+  - src/krikri/base_action_plugin.cr
+  - src/krikri/ssh_config.cr
+  - src/krikri/task_executor/executor.cr
+  - src/krikri/base_plugin.cr
+  - src/krikri/playbook_parser.cr
   Enabled: true
   Severity: Convention
 
@@ -262,8 +262,8 @@ Lint/UselessAssign:
   ExcludeTypeDeclarations: false
   Excluded:
   - plugins/copy.cr
-  - src/crystal_play/inventory_parser.cr
-  - src/crystal_play/plugin_manager.cr
+  - src/krikri/inventory_parser.cr
+  - src/krikri/plugin_manager.cr
   Enabled: true
   Severity: Warning
 
@@ -279,9 +279,9 @@ Lint/NotNil:
   - plugins/package_facts.cr
   - plugins/replace.cr
   - plugins/getent.cr
-  - crystal-play.cr
-  - src/crystal_play/playbook_parser.cr
-  - src/crystal_play.cr
+  - krikri-playbook.cr
+  - src/krikri/playbook_parser.cr
+  - src/krikri.cr
   Enabled: true
   Severity: Warning
 
@@ -291,8 +291,8 @@ Performance/ChainedCallWithNoBang:
   Description: Identifies usage of chained calls not utilizing the bang method variants
   Excluded:
   - plugins/facts.cr
-  - src/crystal_play/plugin_helpers/facts_gatherer.cr
-  - src/crystal_play/task_executor/result_display.cr
+  - src/krikri/plugin_helpers/facts_gatherer.cr
+  - src/krikri/task_executor/result_display.cr
   CallNames:
   - uniq
   - sort
@@ -310,10 +310,10 @@ Naming/BlockParameterName:
   AllowNamesEndingInNumbers: true
   Excluded:
   - plugins/dnf.cr
-  - crystal-play.cr
-  - src/crystal_play/inventory_parser.cr
-  - src/crystal_play/facts_gatherer/network_facts.cr
-  - src/crystal_play.cr
+  - krikri-playbook.cr
+  - src/krikri/inventory_parser.cr
+  - src/krikri/facts_gatherer/network_facts.cr
+  - src/krikri.cr
   AllowedNames:
   - e
   - i
@@ -344,8 +344,8 @@ Documentation/DocumentationAdmonition:
   Timezone: UTC
   Excluded:
   - plugins/command.cr
-  - crystal-play.cr
-  - src/crystal_play.cr
+  - krikri-playbook.cr
+  - src/krikri.cr
   Admonitions:
   - TODO
   - FIXME
@@ -361,10 +361,10 @@ Lint/UnusedArgument:
   IgnoreBlocks: false
   IgnoreProcs: false
   Excluded:
-  - crystal-play.cr
-  - src/crystal_play/inventory_parser.cr
-  - src/crystal_play/plugin_manager.cr
-  - src/crystal_play.cr
+  - krikri-playbook.cr
+  - src/krikri/inventory_parser.cr
+  - src/krikri/plugin_manager.cr
+  - src/krikri.cr
   Enabled: true
   Severity: Warning
 
@@ -373,8 +373,8 @@ Lint/UnusedArgument:
 Performance/AnyInsteadOfEmpty:
   Description: Identifies usage of arg-less `any?` calls
   Excluded:
-  - crystal-play.cr
-  - src/crystal_play.cr
+  - krikri-playbook.cr
+  - src/krikri.cr
   Enabled: true
   Severity: Warning
 
@@ -389,8 +389,8 @@ Style/VerboseBlock:
   ExcludeSetters: false
   MaxLength: 50
   Excluded:
-  - crystal-play.cr
-  - src/crystal_play.cr
+  - krikri-playbook.cr
+  - src/krikri.cr
   Enabled: true
   Severity: Convention
 
@@ -399,8 +399,8 @@ Style/VerboseBlock:
 Performance/ExcessiveAllocations:
   Description: Identifies usage of excessive collection allocations
   Excluded:
-  - src/crystal_play/inventory_parser.cr
-  - src/crystal_play/task_executor/result_display.cr
+  - src/krikri/inventory_parser.cr
+  - src/krikri/task_executor/result_display.cr
   CallNames:
     codepoints: each_codepoint
     graphemes: each_grapheme
@@ -414,7 +414,7 @@ Performance/ExcessiveAllocations:
 Naming/AccessorMethodName:
   Description: Makes sure that accessor methods are named properly
   Excluded:
-  - src/crystal_play/variable_substitutor.cr
+  - src/krikri/variable_substitutor.cr
   Enabled: true
   Severity: Convention
 
@@ -423,8 +423,8 @@ Naming/AccessorMethodName:
 Style/RedundantBegin:
   Description: Disallows redundant begin blocks
   Excluded:
-  - src/crystal_play/template_action_plugin.cr
-  - src/crystal_play/base_plugin.cr
-  - src/crystal_play/facts_gatherer/gatherer.cr
+  - src/krikri/template_action_plugin.cr
+  - src/krikri/base_plugin.cr
+  - src/krikri/facts_gatherer/gatherer.cr
   Enabled: true
   Severity: Convention
