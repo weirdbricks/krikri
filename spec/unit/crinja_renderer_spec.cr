@@ -1,6 +1,12 @@
 require "../spec_helper"
 require "http/server"
 require "../../src/crystal_play/variable_substitutor/crinja_renderer"
+# The custom Crinja filters/tests (`comment`, `ternary`, `ansible.builtin.*`
+# aliases, ...) are registered by jinja_filters.cr's own require-time
+# `Crinja.filter`/`Crinja.test` calls - without it this spec compiles against
+# a bare Crinja environment and every filter-backed render falls back to the
+# raw template text.
+require "../../src/crystal_play/jinja_filters"
 
 # Same tiny local HTTP server pattern as url_lookup_spec.cr, reused here
 # to test lookup('url', ...) reaching Crinja's own global function (real
