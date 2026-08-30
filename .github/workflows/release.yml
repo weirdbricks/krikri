@@ -23,23 +23,35 @@ jobs:
           - runner: ubuntu-latest
             arch: x86_64
     runs-on: ${{ matrix.runner }}
+    # Alpine (musl) rather than the glibc image: --static below produces
+    # a binary with NO runtime libc dependency at all, so it runs on
+    # any Linux host regardless of glibc version - the usual reason to
+    # ship musl-static release binaries for a CLI tool. This is a
+    # multi-arch image, so the same tag works unchanged once arm64 is
+    # added to the matrix.
     container:
-      image: crystallang/crystal:1.20.3
+      image: crystallang/crystal:1.20.3-alpine
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install build dependencies
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            libbz2-dev liblzma-dev zlib1g-dev libssl-dev libpcre2-dev
+          apk add --no-cache \
+            bash git grep file binutils \
+            pcre2-dev pcre2-static \
+            openssl-dev openssl-libs-static \
+            bzip2-dev bzip2-static \
+            xz-dev xz-libs \
+            zlib-dev zlib-static \
+            gc-dev gc-static \
+            libunwind-dev libunwind-static
 
       - name: Install shards
         run: shards install
 
       - name: Build release binaries
-        run: ./build.sh --release
+        run: ./build.sh --release --static
 
       - name: Package
         run: |
