@@ -31,8 +31,8 @@ module CrystalPlay
     # version-gate idiom.
     REGEX_VERSION_TEST      = /\A(.+?)\s+is\s+version(?:_compare)?\(\s*(.+?)\s*,\s*(.+?)\s*\)\z/
     REGEX_MATCH_SEARCH_TEST = /^(.+?)\s+is\s+(not\s+)?(match|search)\((.+)\)\s*$/
-    REGEX_SUBSET_TEST       = /^(.+?)\s+is\s+(not\s+)?(subset|superset|contains)\((.+)\)\s*$/
-    REGEX_SAME_FILE_TEST    = /^(.+?)\s+is\s+(not\s+)?same_file\((.+)\)\s*$/
+    REGEX_SUBSET_TEST       = /^(.+?)\s+is\s+(not\s+)?(issubset|issuperset|subset|superset|contains)\((.+)\)\s*$/
+    REGEX_SAME_FILE_TEST    = /^(.+?)\s+is\s+(not\s+)?(?:is_)?same_file\((.+)\)\s*$/
     REGEX_GENERIC_IS_TEST   = /\bis\s+(not\s+)?\w/
     REGEX_BARE_CALL         = /\A\w+\s*\(.*\)\z/
     REGEX_DIGITS            = /\d+/
@@ -342,7 +342,12 @@ module CrystalPlay
       # #evaluate_truthiness and always evaluated false, failing the
       # assert on every role that uses this idiom regardless of the
       # variable's real type.
-      {"mapping", "sequence", "boolean", "number", "string", "integer", "float", "iterable", "none"}.each do |test_name|
+      # 'true'/'false' are BOOLEAN IDENTITY tests (only real True/False
+      # pass - not truthiness, P2.4); 'falsy' is !truthy (null, false,
+      # 0, "", empty list/dict). 'abs' is the abs-as-test spelling
+      # (value is a number); 'isnan'/'nan' the float-NaN test; 'uri'/
+      # 'url' the URL-shaped-string test (P2.5/P2.6).
+      {"true", "false", "falsy", "abs", "isnan", "nan", "uri", "url", "mapping", "sequence", "boolean", "number", "string", "integer", "float", "iterable", "none"}.each do |test_name|
         if condition.includes?(" is not #{test_name}")
           var_name = condition.gsub(" is not #{test_name}", "").strip
           return !matches_type_test?(vars, var_name, test_name)
@@ -408,7 +413,7 @@ module CrystalPlay
       # contains " is link" as a substring, so testing "link" first
       # would misfire on it (gsub(" is link", "") on "l is link_exists"
       # leaves the mangled var_name "l_exists", always undefined/false).
-      {"link_exists", "exists", "file", "directory", "link"}.each do |test_name|
+      {"is_file", "is_dir", "is_link", "link_exists", "exists", "file", "directory", "link"}.each do |test_name|
         if condition.includes?(" is not #{test_name}")
           var_name = condition.gsub(" is not #{test_name}", "").strip
           return !matches_path_test?(vars, var_name, test_name)
@@ -440,6 +445,24 @@ module CrystalPlay
       # "trust a real system tool" approach dpkg_selections/subversion/
       # known_hosts already take. Runs on the CONTROLLER, same rule
       # every other path-check test here follows.
+      if condition.includes?(" is not is_mount")
+        var_name = condition.gsub(" is not is_mount", "").strip
+        return !mount_point?(vars, var_name)
+      elsif condition.includes?(" is is_mount")
+        var_name = condition.gsub(" is is_mount", "").strip
+        return mount_point?(vars, var_name)
+      end
+
+      # Handle 'is is_abs' (plus "is not ...") - the `is*` spelling
+      # (P2.3) of real Ansible's absolute-path test, os.path.isabs.
+      if condition.includes?(" is not is_abs")
+        var_name = condition.gsub(" is not is_abs", "").strip
+        return !(resolve_test_operand(var_name, vars).try(&.as_s?) || "").starts_with?("/")
+      elsif condition.includes?(" is is_abs")
+        var_name = condition.gsub(" is is_abs", "").strip
+        return (resolve_test_operand(var_name, vars).try(&.as_s?) || "").starts_with?("/")
+      end
+
       if condition.includes?(" is not mount")
         var_name = condition.gsub(" is not mount", "").strip
         return !mount_point?(vars, var_name)
@@ -546,6 +569,9 @@ module CrystalPlay
         var_expr = test_match[1].strip
         negate = !test_match[2]?.nil?
         test_name = test_match[3]
+        # `issubset`/`issuperset` - the `is*` spellings (P2.1); identical
+        # semantics to the base names, so normalize before dispatch.
+        test_name = {"issubset" => "subset", "issuperset" => "superset"}.fetch(test_name, test_name)
         arg_expr = test_match[4].strip
 
         left = resolve_test_operand(var_expr, vars)
@@ -928,6 +954,12 @@ module CrystalPlay
       return false unless path
 
       case test_name
+      when "is_dir"
+        Dir.exists?(path)
+      when "is_file"
+        File.file?(path)
+      when "is_link"
+        File.symlink?(path)
       when "exists"
         File.exists?(path)
       when "file"
@@ -1071,6 +1103,30 @@ module CrystalPlay
       return false unless value
 
       case test_name
+      when "true"
+        value.raw.is_a?(Bool) && value.raw.as(Bool) == true
+      when "false"
+        value.raw.is_a?(Bool) && value.raw.as(Bool) == false
+      when "falsy"
+        # !truthy: null, false, 0, "", empty list/dict (P2.4)
+        case raw = value.raw
+        when Nil         then true
+        when Bool        then !raw
+        when Int64       then raw == 0
+        when Float64     then raw == 0.0
+        when String      then raw.empty?
+        when Array       then raw.empty?
+        when Hash        then raw.empty?
+        else                  false
+        end
+      when "abs"
+        # abs-as-test: the value is a number (P2.6)
+        value.raw.is_a?(Int64) || value.raw.is_a?(Float64)
+      when "isnan", "nan"
+        value.raw.is_a?(Float64) && value.raw.as(Float64).nan?
+      when "uri", "url"
+        # URL-shaped string: scheme://rest (P2.5)
+        !!(value.as_s? =~ /\A[a-zA-Z][a-zA-Z0-9+.\-]*:\/\/\S+\z/)
       when "mapping"
         value.raw.is_a?(Hash)
       when "sequence"

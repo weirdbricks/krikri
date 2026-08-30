@@ -223,6 +223,72 @@ module CrystalPlay
       end
     end
 
+    # Unwraps a raw value that Crinja's JSON shim (crinja/json) left as
+    # a (possibly nested) JSON::Any. JSON::Any vars are the norm on every
+    # JSON-var code path, and any `raw.is_a?(Bool)`-style identity check
+    # silently fails while the value is still wrapped.
+    def self.unwrap_crinja_raw(raw)
+      while raw.is_a?(JSON::Any)
+        raw = raw.raw
+      end
+      raw
+    end
+
+    # Full JSON::Any -> Crinja::Value tree conversion (unlike
+    # #unwrap_crinja_raw, which only unwraps the top level): nested
+    # JSON::Any arrays/dicts are not `Array(Crinja::Value)` /
+    # `Crinja::Dictionary`, so Value#to_a / [key] lookups silently miss
+    # on them. Used by filters that walk value structure (subelements).
+    def self.json_any_to_value(any : JSON::Any) : Crinja::Value
+      case raw = any.raw
+      when Nil
+        Crinja::Value.new(nil)
+      when Bool, Int64, Float64, String
+        Crinja::Value.new(raw)
+      when Array
+        Crinja::Value.new(raw.map { |x| json_any_to_value(x) })
+      when Hash
+        dict = Crinja::Dictionary.new
+        raw.each { |k, v| dict[Crinja::Value.new(k)] = json_any_to_value(v) }
+        Crinja::Value.new(dict)
+      else
+        Crinja::Value.new(raw.to_s)
+      end
+    end
+
+    # Normalizes a Crinja::Value that may still be JSON-shim-wrapped
+    # into a fully Crinja-native value tree.
+    def self.crinja_native(value : Crinja::Value) : Crinja::Value
+      raw = value.raw
+      raw.is_a?(JSON::Any) ? json_any_to_value(raw) : value
+    end
+
+    # Real Python/Jinja2 truthiness (same semantics as #real_truthy?
+    # above) but JSON-shim aware: a Crinja::Value whose raw is a
+    # JSON::Any container/array still gets proper empty-checks instead
+    # of falling into the catch-all `true`.
+    def self.json_aware_truthy?(value : Crinja::Value) : Bool
+      return false if value.undefined?
+      case raw = unwrap_crinja_raw(value.raw)
+      when Nil
+        false
+      when Bool
+        raw
+      when String
+        !raw.empty?
+      when Int32, Int64
+        raw != 0
+      when Float64
+        raw != 0.0
+      when Array
+        !raw.empty?
+      when Hash
+        !raw.empty?
+      else
+        true
+      end
+    end
+
     # Recursively converts a Crinja::Value into a YAML::Any, for
     # #to_nice_yaml. Deliberately NOT built via Value#to_json (a JSON
     # round-trip is a valid YAML flow subset, and would have been
@@ -1256,6 +1322,23 @@ module CrystalPlay
       target_arr = target.sequence? ? target.to_a : [] of Crinja::Value
       other_arr.all? { |item| target_arr.includes?(item) }
     end
+    # `issubset`/`issuperset` - real Jinja2/Ansible `is*` test spellings
+    # of the `subset`/`superset` tests above. Same class of alias as the
+    # `eq`/`lt`/... operator spellings below: identical semantics, just
+    # the other spelling roles actually write (`x is issubset(y)`).
+    Crinja.test({other: [] of Crinja::Value}, :issubset) do
+      other = arguments["other"]
+      other_arr = other.sequence? ? other.to_a : [] of Crinja::Value
+      target_arr = target.sequence? ? target.to_a : [] of Crinja::Value
+      target_arr.all? { |item| other_arr.includes?(item) }
+    end
+    Crinja.test({other: [] of Crinja::Value}, :issuperset) do
+      other = arguments["other"]
+      other_arr = other.sequence? ? other.to_a : [] of Crinja::Value
+      target_arr = target.sequence? ? target.to_a : [] of Crinja::Value
+      other_arr.all? { |item| target_arr.includes?(item) }
+    end
+
     # `contains(item)` - Python's `item in a` for whichever container
     # shape *a* (target) actually is.
     Crinja.test({other: nil}, :contains) do
@@ -1292,6 +1375,23 @@ module CrystalPlay
     # real `mountpoint(8)` utility (util-linux), same approach the
     # ConditionalEvaluator copy of this test takes.
     Crinja.test(:mount) { Process.run("mountpoint", ["-q", target.to_s]).success? rescue false }
+    # `is_dir`/`is_file`/`is_link`/`is_mount`/`is_same_file` - the `is*`
+    # spellings of the path-check tests above (ansible.builtin registers
+    # both; the `is_*` names are the FQCN-adjacent alias class from
+    # PATTERN2_AUDIT.md). `is_abs` - real Ansible's absolute-path test,
+    # os.path.isabs; no non-`is` base spelling exists in ansible-core.
+    Crinja.test(:is_dir) { Dir.exists?(target.to_s) }
+    Crinja.test(:is_file) { File.file?(target.to_s) }
+    Crinja.test(:is_link) { File.symlink?(target.to_s) }
+    Crinja.test(:is_mount) { Process.run("mountpoint", ["-q", target.to_s]).success? rescue false }
+    Crinja.test({other: ""}, :is_same_file) do
+      path1 = target.to_s
+      path2 = arguments["other"].to_s
+      (File.exists?(path1) && File.exists?(path2)) ? File.same?(path1, path2) : false
+    end
+    Crinja.test(:is_abs) { target.to_s.starts_with?("/") }
+
+
 
     # `vault_encrypted`/`vaulted_file` - real Ansible tests:
     # vault_encrypted checks a STRING value's own content; vaulted_file
@@ -1346,6 +1446,60 @@ module CrystalPlay
     Crinja.test({other: 0}, :ge) { target.to_i >= arguments["other"].to_i }
 
     Crinja.test(:boolean) { target.raw.is_a?(Bool) }
+
+    # `true`/`false`/`falsy` - real Jinja2/Ansible tests (P2.4).
+    # `true`/`false` are BOOLEAN IDENTITY tests, not truthiness checks:
+    # only the actual booleans True/False pass ("yes"/1/[] must fail
+    # them). `falsy` is the inverse of the truthy test Crinja already
+    # registers (!truthy - null, false, 0, "", empty list/dict all pass).
+    # Values routed through Crinja's JSON shim (crinja/json, used by
+    # every JSON-var code path) arrive as nested JSON::Any, so unwrap
+    # before the identity check.
+    Crinja.test(:true) do
+      raw = JinjaFilters.unwrap_crinja_raw(target.raw)
+      raw.is_a?(Bool) && raw == true
+    end
+    Crinja.test(:false) do
+      raw = JinjaFilters.unwrap_crinja_raw(target.raw)
+      raw.is_a?(Bool) && raw == false
+    end
+    Crinja.test(:falsy) { !JinjaFilters.json_aware_truthy?(target) }
+
+    # `abs` - the abs-as-test spelling (P2.6): true when the value is a
+    # number (i.e. taking its absolute value is meaningful). Rare
+    # spelling, but ansible-core registers it.
+    Crinja.test(:abs) do
+      raw = JinjaFilters.unwrap_crinja_raw(target.raw)
+      raw.is_a?(Int32) || raw.is_a?(Int64) || raw.is_a?(Float64)
+    end
+
+    # `isnan`/`nan` - real Jinja2 float-NaN test, both spellings
+    # (P2.6). Only a Float64 can be NaN; ints/strings/bools are not.
+    Crinja.test(:isnan) do
+      raw = JinjaFilters.unwrap_crinja_raw(target.raw)
+      raw.is_a?(Float64) && raw.as(Float64).nan?
+    end
+    Crinja.test(:nan) do
+      raw = JinjaFilters.unwrap_crinja_raw(target.raw)
+      raw.is_a?(Float64) && raw.as(Float64).nan?
+    end
+
+    # `uri`/`url` - real Ansible URL-shape tests (P2.5): a string with a
+    # scheme and a non-empty remainder (scheme://rest). Used by roles
+    # validating user-supplied endpoint vars. Both spellings.
+    URL_PATTERN = /\A[a-zA-Z][a-zA-Z0-9+.\-]*:\/\/\S+\z/
+    Crinja.test(:uri) { !!(target.to_s =~ URL_PATTERN) }
+    Crinja.test(:url) { !!(target.to_s =~ URL_PATTERN) }
+
+    # `filter`/`test` - real Jinja2 meta-tests (P2.7): `x is filter('json')`
+    # checks that a FILTER with the given name is registered; `x is
+    # test('defined')` likewise for tests. The target value itself is
+    # irrelevant - only the registry lookup matters. Checked against the
+    # default feature libraries (which include crystal-ansible's own
+    # registrations, since jinja_filters.cr runs before any render).
+    Crinja.test({name: ""}, :filter) { Crinja::Filter::Library.new.keys.includes?(arguments["name"].to_s) }
+    Crinja.test({name: ""}, :test) { Crinja::Test::Library.new.keys.includes?(arguments["name"].to_s) }
+
 
     # `failed`/`changed`/`skipped`/`succeeded`/`success` - real Ansible's
     # own register-result introspection tests (`{{ some_result is failed
@@ -1463,6 +1617,106 @@ module CrystalPlay
       format = arguments["format"].to_s
       Crinja::Value.new(Time.parse(target.to_s, format, Time::Location::UTC))
     end
+
+    # `strftime(format)` - real Ansible filter (P2.10), a datetime's
+    # Python-strftime rendering. Accepts a `to_datetime` result (the
+    # standard `{{ ts | to_datetime | strftime('%H:%M') }}` idiom), a
+    # raw epoch integer, or an epoch string. SUPPORTED DIRECTIVE
+    # SUBSET (documented per the checklist): whatever Crystal's own
+    # Time#to_s(format) supports - %Y %C %y %m %B %b %h %d %e %j %a %A
+    # %u %w %H %I %M %S %L %N %p %P %z %:z %Z %s %n %t %%, i.e. the
+    # common subset Python roles actually use. Python-only directives
+    # without a Crystal equivalent (e.g. %-d, %-m, %f microseconds via
+    # %f) are NOT supported - they render literally rather than raising,
+    # so a role using one gets visibly-wrong-but-detectable output; add
+    # them here (pre-formatting the Time) if a role ever needs one.
+    Crinja.filter({format: "%Y-%m-%d %H:%M:%S"}, :strftime) do
+      raw = JinjaFilters.unwrap_crinja_raw(target.raw)
+      time = case raw
+             when Time
+               raw
+             when Int32, Int64
+               Time.unix(raw)
+             when String
+               raw.to_i64? ? Time.unix(raw.to_i64) : nil
+             else
+               nil
+             end
+      if time
+        Crinja::Value.new(time.to_s(arguments["format"].to_s))
+      else
+        raise Crinja::RuntimeError.new("strftime: target is not a datetime or epoch value (got #{raw.class})")
+      end
+    end
+
+    # `subelements(obj, 'key', skip_missing=false)` - real Ansible
+    # filter (P2.9): produces [element, subelement] pairs for loop
+    # usage, the dict/list equivalent of `with_subelements`. A single
+    # field name (string) or a LIST of field names (nested descent, the
+    # `subfields` form) is accepted; a missing key raises unless
+    # skip_missing=true, matching real Ansible's own behavior of
+    # skipping such elements when asked.
+    Crinja.filter({subfields: Crinja::UNDEFINED, skip_missing: false}, :subelements) do
+      field_spec = arguments["subfields"]
+      # NOTE: Value#sequence? is true for a STRING too (it iterates as
+      # chars), so the field-name string must be checked first.
+      fields = field_spec.string? ? [field_spec.to_s] : field_spec.to_a.map(&.to_s)
+      skip_missing = arguments["skip_missing"].truthy?
+      results = [] of Array(Crinja::Value)
+
+      # JSON-shim-wrapped values (the norm on every JSON-var path) are
+      # not `sequence?`/`mapping?` as-is - unwrap them into plain
+      # Crinja-native values first.
+      normalize = ->(value : Crinja::Value) do
+        JinjaFilters.crinja_native(value)
+      end
+
+      walk = uninitialized Proc(Array(Crinja::Value), Array(String), Nil)
+      walk = ->(elements : Array(Crinja::Value), remaining : Array(String)) do
+        field = remaining[0]
+        elements.each do |element|
+          element = normalize.call(element)
+          value = element.mapping? ? normalize.call(element[field]?) : Crinja::Value.new(Crinja::UNDEFINED)
+          if value.undefined?
+            next if skip_missing
+            raise Crinja::RuntimeError.new("subelements: element missing key '#{field}': #{element}")
+          end
+          if remaining.size > 1
+            walk.call(value.sequence? ? value.to_a : [] of Crinja::Value, remaining[1..])
+          elsif value.sequence?
+            value.to_a.each { |sub| results << [element, sub] }
+          else
+            results << [element, value]
+          end
+        end
+        nil
+      end
+
+      elements = normalize.call(target)
+      elements = elements.sequence? ? elements.to_a : [] of Crinja::Value
+      walk.call(elements, fields)
+      Crinja::Value.new(results.map { |pair| Crinja::Value.new(pair) })
+    end
+
+    # `count`/`d`/`e`/`items` - real Jinja2's own short aliases (P2.13).
+    # `count` -> `length`, `e` -> `escape`, `items` -> `dict2items`-style
+    # (checklist's own wording for the dict.items() filter shape), and
+    # `d` -> `default` (NOTE: the checklist says "dict", but real Jinja2
+    # registers `d` as the `default` alias - `x | d(5)` is the fallback
+    # idiom; aliasing it to `dict` would break every such template, so
+    # real-Jinja semantics win here). Registered through the feature
+    # library's own alias mechanism, so they resolve to the exact same
+    # callables - one implementation, zero divergence risk.
+    Crinja::Filter::Library.alias(:count, :length)
+    Crinja::Filter::Library.alias(:d, :default)
+    Crinja::Filter::Library.alias(:e, :escape)
+    Crinja::Filter::Library.alias(:items, :dict2items)
+
+    # `root` - path-root filter (P2.13): returns the filesystem-root
+    # prefix of a path ("/" for absolute paths, "" for relative ones),
+    # the `~/x`-expansion base component. Low-frequency spelling, kept
+    # deliberately minimal.
+    Crinja.filter(:root) { Crinja::Value.new(target.to_s.starts_with?("/") ? "/" : "") }
 
     # Splits a version string into its numeric components (`"8.9p1"` ->
     # `[8, 9, 1]`, ignoring the non-digit "p" separator), then compares
