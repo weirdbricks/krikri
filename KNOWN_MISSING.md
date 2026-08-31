@@ -11,7 +11,7 @@ instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
 **Currently at `0.9.663`.** Vendored `crinja` fork now at tag
-`crystal-play-0.9.17` (see `shard.yml`).
+`crystal-play-0.9.19` (see `shard.yml`).
 
 ---
 
