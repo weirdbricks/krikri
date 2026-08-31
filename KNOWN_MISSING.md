@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.643`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.648`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
@@ -28,24 +28,6 @@ re-gathered) - same failing task otherwise, not a correctness bug in the
 failing task itself, just an ok/changed-count mismatch caused by the missing
 feature. Not fixed - no fact-cache plugin architecture exists yet to hang a
 fix off of.
-
-### kubelet idempotency divergence on `geerlingguy.kubernetes` - not reproduced independently (round 201)
-
-Warm rerun of `service: {name: kubelet, state: started, enabled: true}`
-showed py `ok=16 changed=0 failed=1` vs cr `ok=16 changed=1 failed=1` (kubeadm
-init had already failed cold for lack of a container runtime on a
-single-CPU G3.2GB host, so kubelet was plausibly `activating`/crash-looping
-rather than `active`). Two targeted follow-up repros against `plugins/
-service.cr` directly - a healthy `active`/`enabled` nginx unit, and a
-deliberately crash-looping unit (`ExecStart=/bin/false`, `Restart=on-
-failure`) - both matched real Ansible's expected behavior exactly (no
-change on a healthy unit; `changed: true` every rerun on a genuinely
-crash-looping one, which real Ansible would also do). The original hosts
-were destroyed before kubelet's exact `ActiveState`/`SubState` was
-captured, so the specific divergence couldn't be pinned down to either
-scenario. Needs a fresh `geerlingguy.kubernetes` round with `systemctl
-show kubelet -p ActiveState,SubState` captured live around the warm
-rerun before treating this as a confirmed `service.cr` bug.
 
 ## The parity-breaking tier was built, measured, and removed (0.9.641)
 

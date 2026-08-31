@@ -97,8 +97,15 @@ module Krikri
 
       # Handle state
       if state
-        result = remote_exec("systemctl is-active #{name} 2>/dev/null")
-        is_running = result[:exit_code] == 0
+        # `systemctl is-active` only exits 0 for ActiveState=active - a unit
+        # that's `activating`/`auto-restart` (e.g. crash-looping under
+        # Restart=on-failure) exits non-zero even though real Ansible's
+        # systemd module already considers it "running" and won't reissue
+        # `start` for it. Read the raw ActiveState instead so a
+        # crash-looping unit doesn't get restarted (and reported changed)
+        # on every single run.
+        active_state = remote_exec("systemctl show #{name} --property=ActiveState --value 2>/dev/null")[:stdout].to_s.strip
+        is_running = {"active", "activating"}.includes?(active_state)
 
         case state
         when "started"
