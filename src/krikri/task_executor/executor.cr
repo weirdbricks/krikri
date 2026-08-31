@@ -2345,6 +2345,18 @@ module Krikri
         roots << File.join(File.dirname(vars_dir), "defaults")
       end
       task.include_file_dir.try { |dir| roots << dir }
+      # A relative include_vars: path in a role's own top-level tasks/
+      # main.yml (not reached via include_tasks:, so include_file_dir
+      # above is nil) resolves against that file's own directory, real
+      # Ansible's usual "relative to the file it's written in" rule -
+      # jnv.debian-backports's own `include_vars: "../defaults/{{
+      # ansible_distribution }}.yml"` needs roles/<role>/tasks/ as a
+      # root to reach roles/<role>/defaults/Ubuntu.yml via the literal
+      # "../defaults/" it wrote. Without this, a role with no vars/ dir
+      # at all (only defaults/, like this one) had no matching root
+      # here whatsoever - role_vars_dir stays nil, include_file_dir
+      # stays nil, leaving only the process's own irrelevant Dir.current.
+      task.role_path.try { |role_dir| roots << File.join(role_dir, "tasks") }
       roots << Dir.current
 
       first_existing(roots, candidate)

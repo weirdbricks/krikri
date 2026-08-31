@@ -1,0 +1,6 @@
+- name: add distribution-specific variables
+  ansible.builtin.include_vars: "../defaults/{{ ansible_distribution | default('generic') }}.yml"
+
+- name: show it
+  ansible.builtin.debug:
+    msg: "backports_marker={{ backports_marker | default('MISSING') }}"

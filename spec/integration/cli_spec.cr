@@ -527,6 +527,26 @@ describe "krikri-playbook CLI (--check mode)" do
       status.success?.should be_true
       output.should contain("arillso_authorized_key_marker=found-via-custom-paths")
     end
+
+    it "resolves a relative include_vars: path against the role's own tasks/ dir, not just role_vars_dir/Dir.current" do
+      # Real bug found benchmarking jnv.debian-backports's own "add
+      # distribution-specific variables" task: `include_vars:
+      # "../defaults/{{ ansible_distribution }}.yml"` - a plain relative
+      # path (not with_first_found:), meant to resolve against the
+      # CURRENT task file's own directory. A role with no vars/ dir at
+      # all (only defaults/, like this one) had no matching search root
+      # here whatsoever - role_vars_dir stays nil, include_file_dir
+      # stays nil (only set for an actually include_tasks:'d file, not
+      # a role's own top-level tasks/main.yml), leaving only the
+      # process's own irrelevant Dir.current - so the file was never
+      # found even though it genuinely exists.
+      status, output = run_playbook(
+        "test-include-vars-relative-path.yml", [] of String, inventory: testservers
+      )
+
+      status.success?.should be_true
+      output.should contain("backports_marker=found-via-relative-path")
+    end
   end
 
   describe "strict-undefined module-arg templating" do

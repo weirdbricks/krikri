@@ -1,0 +1,16 @@
+# Real bug found benchmarking jnv.debian-backports's own "add
+# distribution-specific variables" task: `include_vars: "../defaults/{{
+# ansible_distribution }}.yml"` - a plain relative path (not with_
+# first_found:), meant to resolve against the CURRENT task file's own
+# directory (tasks/), same as real Ansible's usual "relative to the
+# file it's written in" rule. A role with no vars/ dir at all (only
+# defaults/, like this one) had no matching search root at all - only
+# role_vars_dir (nil here)/its sibling defaults dir and include_file_dir
+# (only set for an actually include_tasks:'d file, not a role's own
+# top-level tasks/main.yml) were tried, so the file was never found
+# even though it genuinely exists.
+- name: "include_vars: with a relative ../ path in a role's own top-level tasks/main.yml"
+  hosts: testservers
+  gather_facts: false
+  roles:
+    - include_vars_relative_path
