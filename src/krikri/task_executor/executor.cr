@@ -4743,6 +4743,19 @@ module Krikri
 
         result_hash = result.as_h.dup
         result_hash["item"] = item
+        # loop_control: { loop_var: some_name } exposes the item under
+        # that CUSTOM name too, in addition to "item" (real Ansible's
+        # own behavior, matching how the live execution context already
+        # binds both - see label_context above) - previously only ever
+        # set here regardless of loop_control, so a later `map(attribute:
+        # <custom_name>)`/`selectattr(<custom_name>, ...)` over
+        # registered.results always saw that key as missing (null).
+        # Found benchmarking githubixx.containerd's own "Set
+        # modprobe_location" (`loop_control: { loop_var: path }` +
+        # `modprobe_locations.results | ... | map(attribute='path')`).
+        if loop_var = task.loop_var
+          result_hash[loop_var] = item
+        end
         results << JSON::Any.new(result_hash)
       end
 

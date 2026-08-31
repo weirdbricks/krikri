@@ -1658,6 +1658,49 @@ describe "a task combining a module with a pre-2.0 legacy directive" do
   end
 end
 
+describe "a loop_control: loop_var: name in a registered result's own results list" do
+  it "is exposed under the custom name too, not just the default 'item'" do
+    # Real bug found benchmarking githubixx.containerd's own "Set
+    # modprobe_location": `loop_control: { loop_var: path }` on a
+    # stat: loop, registered, then `modprobe_locations.results | ... |
+    # map(attribute='path')` over the registered results. Each per-
+    # iteration result dict only ever got the literal "item" key set
+    # (finish_looped_task's own result_hash["item"] = item), regardless
+    # of loop_control - a later map(attribute: <custom_name>)/
+    # selectattr(<custom_name>, ...) over registered.results always saw
+    # that key as missing (null), even though the live execution
+    # context correctly bound both names during the loop itself.
+    write_notify_playbook("loop_var_in_registered_results.yml", <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: loop with a custom loop_var, registered
+            ansible.builtin.debug:
+              msg: "{{ path }}"
+            loop:
+              - a
+              - b
+            loop_control:
+              loop_var: path
+            register: looped
+          - name: assert the custom name is present in each registered result
+            ansible.builtin.assert:
+              that:
+                - looped.results | map(attribute='path') | list == ['a', 'b']
+      YAML
+
+    status, output = run_playbook(
+      File.join("..", "spec", "tmp", "loop_var_in_registered_results.yml"),
+      mode_args: [] of String,
+      inventory: EXPLICIT_LOCALHOST_INVENTORY,
+    )
+
+    status.exit_code.should eq(0)
+    output.should_not contain("FAILED")
+  end
+end
+
 describe "a halted host after a task failure" do
   it "stops printing TASK banners for tasks after the failure, matching real ansible-playbook" do
     write_notify_playbook("halted_host_no_more_banners.yml", <<-YAML)
