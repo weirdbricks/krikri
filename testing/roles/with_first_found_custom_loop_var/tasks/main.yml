@@ -1,0 +1,13 @@
+- name: Include OS specific variables
+  ansible.builtin.include_vars: "{{ loop_vars }}"
+  with_first_found:
+    - files:
+        - "{{ inventory_hostname }}.yml"
+      paths:
+        - "vars"
+  loop_control:
+    loop_var: loop_vars
+
+- name: show it
+  ansible.builtin.debug:
+    msg: "arillso_marker={{ arillso_marker | default('MISSING') }}"

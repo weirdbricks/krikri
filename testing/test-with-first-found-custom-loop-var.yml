@@ -1,0 +1,13 @@
+# Real bug found benchmarking arillso.docker/.motd/.ntp/.openvpn/.sshd/
+# .sudoers/etc (13 roles sharing this exact idiom): with_first_found:
+# (the dedicated keyword, not lookup()/query()) combined with
+# loop_control: { loop_var: loop_vars } - the dedicated with_first_found:
+# branch in TaskExecutor#execute_include_vars only ever bound the found
+# candidate to the literal name "item", ignoring loop_control entirely,
+# so `include_vars: "{{ loop_vars }}"` always resolved to "undefined"
+# regardless of which candidate file actually matched.
+- name: "with_first_found: as an include_vars: loop source, with a custom loop_var"
+  hosts: testservers
+  gather_facts: false
+  roles:
+    - with_first_found_custom_loop_var

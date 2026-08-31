@@ -487,6 +487,28 @@ describe "krikri-playbook CLI (--check mode)" do
       status.success?.should be_true
       output.should contain("confluence_marker=found-via-query")
     end
+
+    it "resolves with_first_found: as an include_vars: loop source, with a custom loop_var" do
+      # Real bug found benchmarking 13 different arillso.* roles
+      # (docker, motd, ntp, openvpn, sshd, sudoers, ...), all sharing
+      # this exact idiom: with_first_found: (the dedicated keyword, not
+      # lookup()/query()) combined with loop_control: { loop_var:
+      # loop_vars }. Unlike the loop:/query() path above (fixed for
+      # buluma.confluence, round165), the DEDICATED with_first_found:
+      # branch in TaskExecutor#execute_include_vars is a separate code
+      # path that only ever bound the found candidate to the literal
+      # name "item", ignoring loop_control entirely - `include_vars:
+      # "{{ loop_vars }}"` always resolved to the literal text
+      # "undefined" regardless of which candidate file actually
+      # matched, failing "include_vars: file not found: undefined" on
+      # every single one of these roles.
+      status, output = run_playbook(
+        "test-with-first-found-custom-loop-var.yml", [] of String, inventory: testservers
+      )
+
+      status.success?.should be_true
+      output.should contain("arillso_marker=found-via-with-first-found")
+    end
   end
 
   describe "strict-undefined module-arg templating" do

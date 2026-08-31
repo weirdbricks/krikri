@@ -2519,6 +2519,22 @@ module Krikri
           return
         end
         vars_context["item"] = items.first
+        # loop_control: { loop_var: some_name } exposes the found
+        # candidate under a CUSTOM name instead of (real Ansible: in
+        # addition to) the default "item" - this dedicated with_
+        # first_found: path only ever bound "item", the same gap
+        # already fixed for the loop_items branch above (round165,
+        # buluma.confluence) but missed here since with_first_found:
+        # resolves through this separate branch entirely. arillso.*'s
+        # own `include_vars: '{{ loop_vars }}'` with `loop_control:
+        # loop_var: loop_vars` needs `loop_vars` bound to resolve at
+        # all - without this it stayed undefined regardless of which
+        # candidate file first_found actually matched, failing
+        # "include_vars: file not found: undefined" on literally every
+        # role sharing this idiom.
+        if lv = task.loop_var
+          vars_context[lv] = items.first
+        end
       end
 
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
