@@ -99,46 +99,14 @@ Native compiled modules, one persistent SSH connection per host, and
 batched round trips make the biggest difference on **idempotent
 re-runs** - the common case for a config-management tool running on a
 schedule, where most tasks find nothing to change but Python still pays
-a fresh interpreter-and-module cost per task regardless.
+a fresh interpreter-and-module cost per task regardless. On a 10-role
+random sample benchmarked against real `ansible-playbook`, with `PLAY
+RECAP` parity matched exactly on all 10, warm re-runs were **3.5x-11.9x
+faster (mean ~6.3x)** and cold runs **1.2x-6.7x faster (mean ~2.2x)**.
 
-Measured against real `ansible-playbook` (`ansible-core` 2.19.4): 10
-real Galaxy roles drawn at random from the project's verified-clean
-list, each on its own **fresh** Atlantic.net `G3.2GB` Ubuntu-22.04 host
-pair (one host per engine, never reused, destroyed immediately after),
-cold (first touch) and warm (idempotent re-run) on both engines,
-`--forks 1` on both sides. krikri-playbook was built `--release` and
-stripped, and ran with `--persistent-daemon --no-batching` (one
-long-lived `ssh ... -- <plugin binary> --daemon` connection per host
-instead of a fresh `ssh`+`bash`+exec per task; batching was disabled
-during measurement because, at the time, it routed around that path).
-**That caveat is now historical** - as of 0.9.635 batched groups go over
-the daemon too, so the two features compose and a re-run of this table
-would no longer need `--no-batching`. The numbers below predate that and
-are not re-measured here. `PLAY RECAP`
-parity with real Ansible (`ok=`/`changed=`/`failed=`/`skipped=`) was
-checked per role, cold AND warm, and matched exactly on all 10:
-
-| Role (author) | Python cold | Crystal cold | Cold speedup | Python warm | Crystal warm | Warm speedup |
-|---|---|---|---|---|---|---|
-| `robertdebock.remi` | 4.39s | 3.55s | 1.2x | 2.82s | **0.72s** | **3.9x** |
-| `geerlingguy.helm` | 27.28s | **9.74s** | **2.8x** | 5.81s | **1.66s** | **3.5x** |
-| `geerlingguy.clamav` | 74.15s | **52.19s** | 1.4x | 29.53s | **2.49s** | **11.9x** |
-| `geerlingguy.node_exporter` | 54.64s | **8.16s** | **6.7x** | 19.56s | **2.32s** | **8.4x** |
-| `robertdebock.types` | 5.34s | 3.34s | 1.6x | 3.15s | **0.65s** | **4.8x** |
-| `robertdebock.docker_ce` | 81.13s | **50.45s** | 1.6x | 15.56s | **2.54s** | **6.1x** |
-| `robertdebock.digitalocean_agent` | 37.22s | **23.29s** | 1.6x | 17.60s | **2.37s** | **7.4x** |
-| `geerlingguy.adminer` | 15.79s | **9.50s** | 1.7x | 9.00s | **2.01s** | **4.5x** |
-| `robertdebock.upgrade` | 9.24s | **4.84s** | 1.9x | 6.90s | **1.59s** | **4.3x** |
-| `robertdebock.fail2ban` | 39.62s | **21.63s** | 1.8x | 22.33s | **2.65s** | **8.4x** |
-
-Cold runs are dominated by real apt/download time (both engines wait on
-the same mirrors), so the trustworthy signal is the warm column:
-crystal warm runs are **3.5x-11.9x faster (mean ~6.3x)**, cold runs
-1.2x-6.7x faster (mean ~2.2x). Real Ansible pays a fresh Python-
-interpreter-and-module cost per task on every run regardless of whether
-anything changes; krikri-playbook's compiled-binary-plus-persistent-
-connection model is why its warm numbers drop so far below its own
-cold.
+Per-role cold/warm timings, for every role tested (not just that
+10-role sample), live in [ROLES_TESTED.md](ROLES_TESTED.md) rather than
+duplicated here.
 
 ---
 

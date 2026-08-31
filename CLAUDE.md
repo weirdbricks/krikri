@@ -96,6 +96,9 @@ starting a round.
    and re-verify live before considering the fix done.
 8. Update `KNOWN_MISSING.md` (the running per-round narrative) and `ROLES_TESTED.md` (the
    current-status table) together in one commit; bump `README.md`'s version badge too.
+   **Every role tested gets a cold/warm timing recorded in its `ROLES_TESTED.md` row**
+   (both engines), not just roles picked for a dedicated benchmark comparison - this is
+   the only place per-role timings live (see `ROLES_TESTED.md`'s own note at the top).
 9. Destroy the hosts (`terraform destroy`), clean up `known_hosts`, shred the staged credentials
    `.env`.
 
@@ -108,7 +111,9 @@ Atlantic.net API keys used in the real-host benchmark workflow come from.
 
 - `KNOWN_MISSING.md` - per-round bug narrative, newest first, no fixed-bug detail duplicated (that
   lives in `git log` commit messages).
-- `ROLES_TESTED.md` - one-line current status per role tested, no history.
+- `ROLES_TESTED.md` - one-line current status per role tested, no history, cold/warm timing
+  included on every row. Also owns the 10-role benchmark comparison table (moved here from
+  `README.md` - detailed per-role numbers belong here, not in the README).
 - `README.md` - version badge only for round history; no "Recent changes" section (removed - round
   history lives in `git log`, not here). The README leads with "How this differs from real
   Ansible"/"What's missing"/"Performance" rather than round history - those sections should stay
