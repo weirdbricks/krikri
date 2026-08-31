@@ -10,12 +10,35 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.663`.** Vendored `crinja` fork now at tag
-`crystal-play-0.9.19` (see `shard.yml`).
+**Currently at `0.9.665`.** Vendored `crinja` fork now at tag
+`crystal-play-0.9.20` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
+
+### Ansible's lazy dict-templating (`_AnsibleLazyTemplateDict`) not replicated - a variable built via `.update()` side-effect + concatenation stays a real dict in real Ansible, becomes unusable here
+
+Found round 755/753 (`jtyr.nsswitch`/`jtyr.motd`): both roles define a
+config variable via the idiom `some_var: "{{ some_dict.update(other_dict)
+}}{{ some_dict }}"` (call `.update()` purely for its mutating side
+effect, discard its `None` return, then render the now-merged dict).
+Real Ansible's templar preserves `some_var` as a genuine dict-like
+object all the way through (confirmed live: its Python `__class__` is
+`_AnsibleLazyTemplateDict`, a private ansible-core internal for lazy,
+type-preserving templating) - `{% for key, val in some_var | sort %}`
+and `{% for key, value in item %}` (iterating a list of such dicts)
+both work correctly on the real object. This engine's plain
+string-based substitution has no equivalent - the multi-block template
+coerces to a string, and a later `{% for key, val in ... %}` over it
+fails with "cannot unpack multiple values of type Crinja::Value" (each
+sorted/iterated element isn't a real key-value pair). Not fixed -
+replicating ansible-core's own private lazy-dict-templating machinery
+faithfully would be a major architectural undertaking (deferred
+evaluation + type preservation through the whole vars pipeline), not a
+one-line filter fix; needs deliberate design work, not chased further
+without cost-benefit tracking closer to the actual frequency of this
+idiom in real-world roles.
 
 ### `template:`/`copy:`'s `validate:` stages in `dest_dir`, not real Ansible's `remote_tmp`
 

@@ -54,6 +54,22 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     renderer.render("worker_processes  {{ nginx_worker_processes }};").should eq(%(worker_processes  "1";))
   end
 
+  it "repeats a string by an Int64 count, not just Int32 (the '| int' filter's own output type)" do
+    # Real bug found benchmarking jtyr.motd's own MOTD-formatting
+    # template: `{{ ' ' * (motd_initial_spaces | int) }}`. Crinja's `*`
+    # operator's string-repeat branch only recognized Float64 | Int32
+    # for the numeric operand - the `| int` filter produces an Int64,
+    # so this fell through to the generic "Both operators need to be
+    # numeric" error even though the operand genuinely was a real
+    # integer, just the wrong Crystal integer width. Fixed upstream in
+    # the vendored crinja fork (crystal-play-0.9.20).
+    v = Hash(String, JSON::Any).new
+    v["n"] = JSON::Any.new("3")
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render(%({{ '-' * (n | int) }})).should eq("---")
+  end
+
   it "re-templates a variable whose own value references inventory_hostname against the REAL host, not the literal string \"localhost\"" do
     # Real bug found benchmarking robertdebock.common: its own
     # `common_hostname: "{{ inventory_hostname }}"` default needs

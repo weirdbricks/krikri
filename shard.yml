@@ -10,7 +10,7 @@ authors:
 dependencies:
   crinja:
     github: weirdbricks/crinja
-    tag: crystal-play-0.9.19
+    tag: crystal-play-0.9.20
   docr:
     github: weirdbricks/docr
     branch: master
