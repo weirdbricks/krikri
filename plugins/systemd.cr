@@ -347,9 +347,20 @@ module Krikri
     end
 
     # Whether the unit is currently active (running).
+    #
+    # `systemctl is-active` only exits 0 for ActiveState=active - a unit
+    # that's `activating`/`auto-restart` (e.g. crash-looping under
+    # Restart=on-failure, same class as plugins/service.cr's 0.9.648 fix -
+    # a separate plugin, separate check, so the fix didn't carry over here
+    # automatically) exits non-zero even though real Ansible's systemd
+    # module already considers it "running" and won't reissue `start` for
+    # it. Read the raw ActiveState instead so a crash-looping unit doesn't
+    # get restarted (and reported changed) on every single run. Found
+    # benchmarking cloudalchemy.cortex's "ensure cortex all-in-one service
+    # is started and enabled" task.
     private def active?(name : String) : Bool
-      result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} is-active #{name} 2>/dev/null")
-      result[:exit_code] == 0
+      active_state = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} show #{name} --property=ActiveState --value 2>/dev/null")[:stdout].to_s.strip
+      {"active", "activating"}.includes?(active_state)
     end
 
     # Whether the unit is enabled on boot.

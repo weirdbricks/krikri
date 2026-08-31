@@ -573,7 +573,7 @@ module Krikri
       any = JinjaFilters.crinja_value_to_yaml_any(target)
       any = JinjaFilters.sort_yaml_keys(any) if sort_keys
 
-      Crinja::Value.new(any.to_yaml.sub(/\A---\n/, "").rstrip)
+      Crinja::Value.new(any.to_yaml.sub(/\A---[ \t]*\n?/, "").rstrip)
     end
 
     # `to_yaml(**kwargs)` - real Ansible's own filter, real PyYAML
@@ -583,7 +583,7 @@ module Krikri
     # kept as a separate registration since real Ansible does too.
     Crinja.filter(:to_yaml) do
       any = JinjaFilters.sort_yaml_keys(JinjaFilters.crinja_value_to_yaml_any(target))
-      Crinja::Value.new(any.to_yaml.sub(/\A---\n/, "").rstrip)
+      Crinja::Value.new(any.to_yaml.sub(/\A---[ \t]*\n?/, "").rstrip)
     end
 
     # `b64encode(encoding='utf-8')`/`b64decode()` - real Ansible's own

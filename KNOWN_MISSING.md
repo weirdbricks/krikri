@@ -10,12 +10,24 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.648`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.649`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
+
+### Generic `PLAY [Play 1]`/`TASK [Task 1]` labels on a nameless play/task, plus a spurious inventory warning
+
+Surfaced twice in round 300-303 (`cloudalchemy.cortex`, `gantsign.intellij-plugins`): (1) a
+play or task with no `name:` gets a generic `Play 1`/`Task 1` label; real
+Ansible instead derives one from context (`PLAY [all]`, `TASK [<role> :
+<action>]`). Cosmetic only - doesn't affect ok/changed/failed counts or
+control flow, just console output. (2) krikri prints an extra "Host
+'localhost' has no user specified" inventory warning that real Ansible
+doesn't emit for the same inventory. Not fixed - low priority, purely
+cosmetic, needs a dedicated look at how the display layer derives task/
+play labels when `name:` is absent.
 
 ### No fact-caching support (`ANSIBLE_CACHE_PLUGIN_CONNECTION` / `fact_caching` config)
 

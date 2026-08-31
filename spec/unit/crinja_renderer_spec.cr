@@ -357,6 +357,21 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     renderer.render(%({{ {"b": 1, "a": 2} | to_nice_yaml(sort_keys=False) }})).should eq("b: 1\na: 2")
   end
 
+  it "renders an empty dict as {} for to_nice_yaml/to_yaml, not a stray '--- {}' doc marker" do
+    # Real bug found benchmarking cloudalchemy.cortex's own config
+    # template: an empty dict section rendered as "--- {}" instead of
+    # "{}" - Crystal's YAML::Any#to_yaml emits an empty hash inline
+    # ("--- {}\n"), not on its own line ("---\n"), so the old
+    # `.sub(/\A---\n/, "")` never matched and left the doc-start marker
+    # in the output. That stray "--- " broke Cortex's own YAML parser
+    # ("cannot unmarshal !!str `--- {}`"), crash-looping the service.
+    v = Hash(String, JSON::Any).new
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render(%({{ {} | to_nice_yaml }})).should eq("{}")
+    renderer.render(%({{ {} | to_yaml }})).should eq("{}")
+  end
+
   it "b64encode/b64decode round-trip in a .j2 template" do
     v = Hash(String, JSON::Any).new
     renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)

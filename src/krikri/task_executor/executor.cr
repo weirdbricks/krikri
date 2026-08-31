@@ -6580,6 +6580,24 @@ module Krikri
       any_changed = false
       any_failed = false
 
+      # An empty loop: source (e.g. cloudalchemy.cortex's "reload cortex
+      # services" handler looping over `cortex_services | dict2items`
+      # when cortex_all_in_one: leaves that dict empty) skips the whole
+      # handler in real Ansible ("All items skipped") rather than running
+      # zero times silently - found via a real ok/skipped-count off-by-
+      # one against real ansible-playbook. Without this, the handler fell
+      # through to the empty loop below, never printed a "skipping:"
+      # line, and #record_handler_result's already_displayed branch
+      # counted the no-op result as "ok" instead of "skipped".
+      if loop_items.empty?
+        puts "skipping: [#{host.connection_host}]".colorize(:cyan)
+        return JSON.parse({
+          "changed" => false,
+          "failed"  => false,
+          "skipped" => true,
+        }.to_json)
+      end
+
       loop_items.each_with_index do |item, idx|
         vars_context = base_vars_context.dup
         vars_context["item"] = item

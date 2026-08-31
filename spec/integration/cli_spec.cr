@@ -1545,6 +1545,46 @@ end
 # task and gets halted, real ansible-playbook ends the play right there -
 # it does not keep printing "TASK [...]" banners for the tasks that follow,
 # since there is no host left to run them against.
+describe "a notified handler with an empty loop: source" do
+  it "is counted as skipped, not ok, matching real ansible-playbook" do
+    # Real bug found benchmarking cloudalchemy.cortex's own "reload
+    # cortex services" handler (`loop: "{{ cortex_services | dict2items
+    # }}"`, empty when cortex_all_in_one: is set): real Ansible skips
+    # the whole handler ("All items skipped") and counts it in the
+    # recap's skipped= tally. execute_handler_loop previously fell
+    # through its own empty loop silently - no "skipping:" line, and
+    # record_handler_result's already_displayed branch counted the
+    # no-op changed=false/failed=false result as ok instead, inflating
+    # ok= by one and undercounting skipped= by one.
+    write_notify_playbook("empty_loop_handler_skipped.yml", <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: notify a handler with nothing to loop over
+            ansible.builtin.command: echo hi
+            notify: reload things
+        handlers:
+          - name: reload things
+            ansible.builtin.debug:
+              msg: "{{ item }}"
+            loop: "{{ [] }}"
+      YAML
+
+    status, output = run_playbook(
+      File.join("..", "spec", "tmp", "empty_loop_handler_skipped.yml"),
+      mode_args: [] of String,
+      inventory: EXPLICIT_LOCALHOST_INVENTORY,
+    )
+
+    status.exit_code.should eq(0)
+    output.should contain("HANDLER [reload things]")
+    output.should contain("skipping: [localhost]")
+    output.should contain("ok=1")
+    output.should contain("skipped=1")
+  end
+end
+
 describe "a halted host after a task failure" do
   it "stops printing TASK banners for tasks after the failure, matching real ansible-playbook" do
     write_notify_playbook("halted_host_no_more_banners.yml", <<-YAML)
