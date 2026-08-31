@@ -1,0 +1,41 @@
+name: Auto Tag Release
+
+# Runs daily. Reads the current VERSION from src/krikri/version.cr and
+# pushes a matching v<VERSION> tag ONLY if that tag doesn't already
+# exist - which, since this project bumps VERSION with every commit
+# that changes engine/plugin behavior (see CLAUDE.md), is exactly
+# "there's new code since the last release". Pushing the tag is all
+# this does: the existing release.yml workflow already builds and
+# publishes a GitHub Release for any v* tag push, unchanged.
+
+on:
+  schedule:
+    - cron: "0 12 * * *" # daily at 12:00 UTC
+  workflow_dispatch: {} # allow a manual run too
+
+permissions:
+  contents: write
+
+jobs:
+  tag-if-new:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Tag the current VERSION if it hasn't been released yet
+        run: |
+          VERSION=$(grep -oP 'VERSION = "\K[^"]+' src/krikri/version.cr)
+          TAG="v${VERSION}"
+
+          if git rev-parse "$TAG" >/dev/null 2>&1 || git ls-remote --tags origin | grep -q "refs/tags/$TAG$"; then
+            echo "Tag $TAG already exists - no new version since the last release. Nothing to do."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "$TAG"
+          git push origin "$TAG"
+          echo "Pushed new tag $TAG - this triggers release.yml automatically."
