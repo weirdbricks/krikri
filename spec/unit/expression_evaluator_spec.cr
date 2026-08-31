@@ -120,6 +120,28 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("lookup('first_found', params)").should eq(File.join(role_dir, "vars", "Debian.yml"))
   end
 
+  it "accepts a fully-qualified lookup plugin name, not just the bare one" do
+    # Real bug found benchmarking several juju4.* roles (bind, cribl,
+    # ollama, opkssh, openwebui, ...), which all share this exact idiom:
+    # `include_vars: "{{ lookup('ansible.builtin.first_found', params)
+    # }}"` - the FQCN spelling, not the bare "first_found" every other
+    # first_found spec above uses. evaluate_lookup's `case lookup_type`
+    # only ever matched the bare form, so this fell through every branch
+    # to the final "undefined" fallback regardless of whether any
+    # candidate file actually existed - failing "file not found:
+    # undefined" for every one of these roles.
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_fqcn_spec")
+    `rm -rf #{role_dir}`
+    Dir.mkdir_p(File.join(role_dir, "vars"))
+    File.write(File.join(role_dir, "vars", "Debian.yml"), "greeting: hello\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    v["params"] = JSON.parse(%({"files": ["Debian.yml"]}))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("lookup('ansible.builtin.first_found', params)").should eq(File.join(role_dir, "vars", "Debian.yml"))
+  end
+
   it "still honors an explicit absolute paths: entry, unaffected by role-relative resolution" do
     role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_explicit_paths_spec")
     `rm -rf #{role_dir}`

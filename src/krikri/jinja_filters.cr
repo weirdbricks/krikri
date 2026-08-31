@@ -1775,7 +1775,12 @@ module Krikri
     # keyword-args form can't be truly variadic" tradeoff zip/product
     # filters already made above).
     Crinja.function({type: "", a1: Crinja::UNDEFINED, a2: Crinja::UNDEFINED, a3: Crinja::UNDEFINED, a4: Crinja::UNDEFINED}, :lookup) do
-      lookup_type = arguments["type"].to_s
+      # Real Ansible accepts a lookup plugin's name either bare
+      # ('first_found') or fully-qualified ('ansible.builtin.
+      # first_found') - see ExpressionEvaluator#evaluate_lookup's
+      # identical fix for the full rationale (juju4.* roles' own
+      # `lookup('ansible.builtin.first_found', params)` idiom).
+      lookup_type = arguments["type"].to_s.sub(/^ansible\.(builtin|legacy)\./, "")
       arg1 = arguments["a1"]
       role_path_value = env.context["role_path"]
       role_path = role_path_value.undefined? ? nil : role_path_value.to_s

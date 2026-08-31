@@ -1620,6 +1620,17 @@ module Krikri
         parts = split_top_level_commas(args).map { |part| rerender_double_templated_literal(part) }
         lookup_type = parts[0]?.try { |part| quoted_string_literal(part.strip) }.try(&.as_s?)
 
+        # Real Ansible accepts a lookup plugin's name either bare
+        # ('first_found') or fully-qualified ('ansible.builtin.
+        # first_found') - every `when "..."` case below only matches the
+        # bare form. Without this, `lookup('ansible.builtin.first_found',
+        # params)` (juju4.*'s own idiom across many of its roles) fell
+        # through every case to the final "undefined" fallback, breaking
+        # `include_vars: "{{ lookup('ansible.builtin.first_found',
+        # params) }}"` outright regardless of whether any candidate file
+        # actually existed.
+        lookup_type = lookup_type.try(&.sub(/^ansible\.(builtin|legacy)\./, ""))
+
         evaluate_lookup_scalar(lookup_type, parts) ||
           evaluate_lookup_file(lookup_type, parts) ||
           evaluate_lookup_list(lookup_type, parts) ||

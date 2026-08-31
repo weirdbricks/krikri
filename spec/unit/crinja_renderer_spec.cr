@@ -521,6 +521,23 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     result.should eq(File.join(role_dir, "vars", "Debian.yml"))
   end
 
+  it "accepts a fully-qualified lookup plugin name, not just the bare one" do
+    # Same fix as ExpressionEvaluator's identical spec - see that one for
+    # the full juju4.* rationale. This engine's own `case lookup_type` in
+    # jinja_filters.cr's :lookup function had the identical bare-name-only
+    # gap, independent of the plain-evaluator one above.
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "crinja_first_found_fqcn_spec")
+    Dir.mkdir_p(File.join(role_dir, "vars"))
+    File.write(File.join(role_dir, "vars", "Debian.yml"), "found: debian\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    result = renderer.render(%({{ lookup('ansible.builtin.first_found', {'files': ['Debian.yml'], 'paths': ['vars']}) }}))
+    result.should eq(File.join(role_dir, "vars", "Debian.yml"))
+  end
+
   it "renders lookup('first_found', {...}) with a default paths: search order when omitted" do
     role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "crinja_first_found_default_paths_spec")
     Dir.mkdir_p(File.join(role_dir, "vars"))
