@@ -31,6 +31,9 @@ get_url_test_server = HTTP::Server.new do |context|
   when "/sha256sums-no-match.txt"
     context.response.status_code = 200
     context.response.print("0000000000000000000000000000000000000000000000000000000000000000  other.txt\n")
+  when "/file.txt.sha256-bare"
+    context.response.status_code = 200
+    context.response.print("#{FILE_CHECKSUM}\n")
   else
     context.response.status_code = 404
   end
@@ -207,6 +210,28 @@ describe "get_url plugin" do
     dest = File.tempname("get-url-spec")
     result = PluginSpecHelper.run("get_url", {
       "url" => "#{get_url_base}/file.txt", "dest" => dest, "checksum" => "sha256:#{get_url_base}/sha256sums.txt",
+    })
+
+    result["changed"].as_bool.should be_true
+    result["failed"].as_bool.should be_false
+    File.read(dest).should eq(FILE_CONTENT)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "resolves a checksum URL that holds only a bare hash, no filename at all" do
+    # Real bug found benchmarking githubixx.kubectl's own "Download
+    # kubectl binary" task: dl.k8s.io publishes one "<binary>.sha512"
+    # file per binary containing NOTHING but the hex hash (no filename,
+    # unlike the multi-file sha256sums format above) - real Ansible's
+    # get_url accepts this shape directly. The sha*sums-style "<hash>
+    # <filename>" parsing only ever matched a line with a filename
+    # token to compare against, so a single bare-hash line never
+    # matched anything and always raised "no checksum entry found",
+    # even though the hash itself was right there on its own.
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {
+      "url" => "#{get_url_base}/file.txt", "dest" => dest, "checksum" => "sha256:#{get_url_base}/file.txt.sha256-bare",
     })
 
     result["changed"].as_bool.should be_true

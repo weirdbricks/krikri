@@ -161,10 +161,28 @@ module Krikri
         PluginHelpers::HTTPDownload.download(checksum_url, tmp_path, download_options)
 
         target_basename = File.basename(URI.parse(target_url).path)
-        File.each_line(tmp_path) do |line|
+        lines = File.read_lines(tmp_path).map(&.strip).reject(&.empty?)
+
+        # A checksum-url file holding exactly ONE line that is itself
+        # just a bare hex hash (no filename at all) - real Ansible's own
+        # get_url module accepts this shape directly, most commonly seen
+        # on Kubernetes release artifacts (dl.k8s.io publishes one
+        # "<binary>.sha512" file per binary containing nothing but the
+        # hash). Found benchmarking githubixx.kubectl's own "Download
+        # kubectl binary" task: the sha*sums-style "<hash> <filename>"
+        # parsing below only ever matched a MULTI-file listing, so a
+        # single-line hash-only file never matched (no filename token to
+        # compare against target_basename at all) and always raised "no
+        # checksum entry found", even though the hash itself was right
+        # there on its own.
+        if lines.size == 1 && lines[0].matches?(/\A[0-9a-fA-F]+\z/)
+          return lines[0].downcase
+        end
+
+        lines.each do |line|
           # sha*sums format: "<hex-hash> [*]<filename>" (the optional "*"
           # marks binary mode, per sha256sum(1)).
-          hash, _, filename = line.strip.partition(/\s+/)
+          hash, _, filename = line.partition(/\s+/)
           next if hash.empty? || filename.empty?
           filename = filename.lstrip('*')
           return hash.downcase if File.basename(filename) == target_basename
