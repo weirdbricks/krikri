@@ -40,9 +40,23 @@ jobs:
       # runner and only the actual build inside Alpine sidesteps that
       # for both architectures uniformly. The image is multi-arch, so
       # the same tag pulls the right variant on both runners unchanged.
+      # Packaging (cp -al + tar) happens INSIDE this same container, as
+      # the same (root) user that built bin/ - not as a separate
+      # host-side step. GitHub Actions' Docker runs the container as
+      # real root (unlike a rootless-podman dev box, where the
+      # container's root maps back to the host user), so bin/* comes
+      # out root-owned; a later host-side step running as the
+      # unprivileged `runner` user then can't hardlink to those files
+      # at all (Linux's fs.protected_hardlinks blocks a non-owner from
+      # hardlinking someone else's file: "Operation not permitted",
+      # found live on the first attempt). Doing cp -al/tar here, still
+      # as root, sidesteps the ownership boundary entirely. Reading the
+      # finished .tar.gz back out as the host `runner` user afterward
+      # is fine - no hardlink involved, just a normal file read.
       - name: Build release binaries (Alpine/musl, static)
         run: |
-          docker run --rm -v "$PWD:/repo" -w /repo crystallang/crystal:1.20.3-alpine sh -c '
+          PKG="krikri-${GITHUB_REF_NAME}-linux-${{ matrix.arch }}"
+          docker run --rm -v "$PWD:/repo" -w /repo crystallang/crystal:1.20.3-alpine sh -c "
             set -e
             apk add --no-cache \
               bash git grep file binutils \
@@ -55,21 +69,16 @@ jobs:
               libunwind-dev libunwind-static
             shards install
             ./build.sh --release --static
-          '
-
-      - name: Package
-        run: |
-          PKG="krikri-${GITHUB_REF_NAME}-linux-${{ matrix.arch }}"
-          mkdir -p "dist/${PKG}"
-          # -al (hardlink, not copy): bin/plugins/.fat-plugin is
-          # hardlinked under 96 plugin names sharing one inode - a plain
-          # `cp -r` doesn't preserve that and turns each name into its
-          # own full ~10M copy, bloating the tarball to ~400M instead
-          # of the real ~50-70M. Hardlinking here keeps them sharing one
-          # inode so tar's own hardlink detection stores the content once.
-          cp -al bin/* "dist/${PKG}/"
-          tar -C dist -czf "dist/${PKG}.tar.gz" "${PKG}"
-          ls -lh "dist/${PKG}.tar.gz"
+            # -al (hardlink, not copy): bin/plugins/.fat-plugin is
+            # hardlinked under 96 plugin names sharing one inode - a
+            # plain 'cp -r' doesn't preserve that and turns each name
+            # into its own full ~10M copy, bloating the tarball to
+            # ~400M instead of the real ~50-70M.
+            mkdir -p 'dist/${PKG}'
+            cp -al bin/* 'dist/${PKG}/'
+            tar -C dist -czf 'dist/${PKG}.tar.gz' '${PKG}'
+            ls -lh 'dist/${PKG}.tar.gz'
+          "
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
