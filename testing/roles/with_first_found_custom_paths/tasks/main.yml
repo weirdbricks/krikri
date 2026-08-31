@@ -1,0 +1,9 @@
+- name: include distribution tasks
+  ansible.builtin.include_tasks: "{{ loop_distribution }}"
+  with_first_found:
+    - files:
+        - "{{ inventory_hostname }}.yml"
+      paths:
+        - "distribution"
+  loop_control:
+    loop_var: loop_distribution

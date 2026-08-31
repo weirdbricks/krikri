@@ -98,6 +98,14 @@ module Krikri
     # rather than an error.
     property loop_first_found : Array(String)?
     property? loop_first_found_skip : Bool
+    # with_first_found:'s own paths: sub-key (as opposed to the
+    # lookup('first_found', {files:, paths:})/query() function-call
+    # idiom, which already threads paths: through via evaluate_first_found
+    # since it goes through a raw hash, not this dedicated keyword parser).
+    # Previously silently discarded - resolution always fell back to the
+    # hardcoded files/templates/vars/role-root search roots regardless of
+    # what paths: actually specified.
+    property loop_first_found_paths : Array(String)?
     # loop:/with_items:/with_dict:/with_nested:/with_indexed_items: given as
     # a Jinja variable reference ("{{ some_var }}") rather than a literal
     # inline list/dict. Unresolvable at parse time since the YAML value is
@@ -334,6 +342,7 @@ module Krikri
       @loop_file = nil
       @loop_first_found = nil
       @loop_first_found_skip = false
+      @loop_first_found_paths = nil
       @loop_template_kind = nil
       @loop_template = nil
       @loop_flattened = nil
@@ -1924,6 +1933,7 @@ module Krikri
       elsif with_first_found = task_hash["with_first_found"]?
         task.loop_first_found = parse_first_found(with_first_found)
         task.loop_first_found_skip = first_found_skip?(with_first_found)
+        task.loop_first_found_paths = parse_first_found_paths(with_first_found)
       elsif with_fileglob = task_hash["with_fileglob"]?
         task.loop_fileglob = if with_fileglob.as_a?
                                with_fileglob.as_a.map(&.as_s)
@@ -2031,10 +2041,8 @@ module Krikri
 
     # with_first_found: accepts either a bare list of candidate paths, or
     # real Ansible's dict form - `- files: [...]` with an optional
-    # `skip: true` (and `paths:`, which this engine does not model: it
-    # searches the role's own vars//files/ directories and the playbook
-    # directory, which covers the cases relative paths are actually used
-    # for). Only the first entry is read, matching how the dict form is
+    # `skip: true` and `paths:` (see #parse_first_found_paths below for
+    # that). Only the first entry is read, matching how the dict form is
     # written in practice.
     private def self.parse_first_found(yaml : YAML::Any) : Array(String)
       if list = yaml.as_a?
@@ -2059,6 +2067,28 @@ module Krikri
       return false unless hash
 
       hash["skip"]?.try(&.as_bool?) || false
+    end
+
+    # with_first_found:'s own paths: sub-key - only present in the dict
+    # form (`- files: [...] paths: [...]`), nil for the bare-list form
+    # (which has no paths: to give at all). Found via arillso.authorized_
+    # key's own "include distribution tasks" (`with_first_found: - files:
+    # [...] paths: ['distribution']`): a custom, non-standard directory
+    # name outside the hardcoded files/templates/vars/role-root search
+    # roots #resolve_first_found_path otherwise always used - the
+    # candidate was never found and the loop silently skipped every time,
+    # regardless of which file actually existed under that directory.
+    private def self.parse_first_found_paths(yaml : YAML::Any) : Array(String)?
+      list = yaml.as_a?
+      return nil unless list
+      first = list.first?
+      return nil unless first
+      hash = first.as_h?
+      return nil unless hash
+
+      paths = hash["paths"]?
+      return nil unless paths
+      paths.as_a?.try(&.map(&.as_s)) || [paths.as_s]
     end
 
     # include_vars: - a controller-side pseudo-module ("_include_vars").
@@ -2108,6 +2138,7 @@ module Krikri
       if with_first_found = task_hash["with_first_found"]?
         task.loop_first_found = parse_first_found(with_first_found)
         task.loop_first_found_skip = first_found_skip?(with_first_found)
+        task.loop_first_found_paths = parse_first_found_paths(with_first_found)
       elsif with_fileglob = task_hash["with_fileglob"]?
         # `with_fileglob:` (geerlingguy.php_versions' own "Include OS-
         # specific variables." - `include_vars: "{{ item }}" with_
@@ -2520,6 +2551,7 @@ module Krikri
       elsif with_first_found = task_hash["with_first_found"]?
         task.loop_first_found = parse_first_found(with_first_found)
         task.loop_first_found_skip = first_found_skip?(with_first_found)
+        task.loop_first_found_paths = parse_first_found_paths(with_first_found)
       end
 
       # loop_control.loop_var - expose each item under the custom name

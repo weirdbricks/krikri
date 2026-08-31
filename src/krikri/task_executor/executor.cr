@@ -2306,6 +2306,20 @@ module Krikri
     private def resolve_first_found_path(task : Task, candidate : String) : String?
       return File.exists?(candidate) ? candidate : nil if candidate.starts_with?("/")
 
+      # An explicit paths: sub-key (the dict form's own `- files: [...]
+      # paths: [...]`) names the ONLY directories real Ansible searches -
+      # found via arillso.authorized_key's own `paths: ['distribution']`,
+      # a custom, non-standard directory name outside the hardcoded roots
+      # below. A relative entry resolves against the role root (real
+      # Ansible's own behavior for with_first_found:'s paths:), an
+      # absolute one passes through unchanged.
+      if custom_paths = task.loop_first_found_paths
+        roots = custom_paths.map do |path|
+          path.starts_with?("/") ? path : (task.role_path.try { |role_dir| File.join(role_dir, path) } || path)
+        end
+        return first_existing(roots, candidate)
+      end
+
       roots = [] of String
       task.role_files_dir.try { |dir| roots << dir }
       task.role_templates_dir.try { |dir| roots << dir }

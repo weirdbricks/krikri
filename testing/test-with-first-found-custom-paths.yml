@@ -1,0 +1,12 @@
+# Real bug found benchmarking arillso.authorized_key's own "include
+# distribution tasks": with_first_found:'s dict form (`- files: [...]
+# paths: [...]`) silently discarded its own paths: sub-key at parse
+# time - resolution always fell back to the hardcoded files/templates/
+# vars/role-root search roots regardless of what paths: actually named,
+# so a custom directory (here, "distribution") was never searched and
+# the loop always found nothing, silently skipping every time.
+- name: "with_first_found: honoring a custom paths: sub-key"
+  hosts: testservers
+  gather_facts: false
+  roles:
+    - with_first_found_custom_paths

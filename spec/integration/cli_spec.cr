@@ -509,6 +509,24 @@ describe "krikri-playbook CLI (--check mode)" do
       status.success?.should be_true
       output.should contain("arillso_marker=found-via-with-first-found")
     end
+
+    it "honors with_first_found:'s own custom paths: sub-key, not just the hardcoded search roots" do
+      # Real bug found benchmarking arillso.authorized_key's own
+      # "include distribution tasks": with_first_found:'s dict form
+      # (`- files: [...] paths: [...]`) silently discarded its own
+      # paths: sub-key at parse time (PlaybookParser#parse_first_found
+      # only ever extracted files:) - resolution always fell back to the
+      # hardcoded files/templates/vars/role-root search roots regardless
+      # of what paths: actually named, so a custom directory ("distribution"
+      # here) was never searched and the loop always silently skipped,
+      # matching neither real Ansible's success nor a real failure.
+      status, output = run_playbook(
+        "test-with-first-found-custom-paths.yml", [] of String, inventory: testservers
+      )
+
+      status.success?.should be_true
+      output.should contain("arillso_authorized_key_marker=found-via-custom-paths")
+    end
   end
 
   describe "strict-undefined module-arg templating" do
