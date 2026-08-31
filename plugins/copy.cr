@@ -168,23 +168,18 @@ module Krikri
         create_backup(dest)
       end
 
-      # Ensure destination directory exists
+      # Real Ansible's copy module does NOT create a missing single-file
+      # destination directory - it fails with this exact message. See
+      # plugins/template.cr's identical fix (same bug, same root cause:
+      # a leftover `Dir.mkdir_p` that only diverged from real Ansible
+      # once the parent genuinely didn't exist yet) for the repro.
       dest_dir = File.dirname(dest)
       unless Dir.exists?(dest_dir)
-        begin
-          Dir.mkdir_p(dest_dir)
-
-          # Set directory mode if specified
-          if dir_mode = @params["directory_mode"]?
-            File.chmod(dest_dir, dir_mode.to_i(8))
-          end
-        rescue ex
-          return PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "Failed to create destination directory: #{ex.message}"
-          )
-        end
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Destination directory #{dest_dir} does not exist"
+        )
       end
 
       # Write the file using native Crystal
@@ -345,18 +340,16 @@ module Krikri
         create_backup(dest)
       end
 
-      # Ensure destination directory exists
+      # Real Ansible's copy module does NOT create a missing single-file
+      # destination directory - it fails with this exact message. See
+      # #handle_content_copy's identical fix above for the repro.
       dest_dir = File.dirname(dest)
       unless Dir.exists?(dest_dir)
-        begin
-          Dir.mkdir_p(dest_dir)
-        rescue ex
-          return PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "Failed to create destination directory: #{ex.message}"
-          )
-        end
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Destination directory #{dest_dir} does not exist"
+        )
       end
 
       # Copy the file

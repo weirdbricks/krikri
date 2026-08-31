@@ -126,18 +126,25 @@ module Krikri
         backup_file = create_backup(dest)
       end
 
-      # Ensure destination directory exists
+      # Real Ansible's template/copy modules do NOT create a missing
+      # destination directory - they fail with this exact message
+      # ("Destination directory X does not exist"). This plugin used to
+      # silently `Dir.mkdir_p` it instead, diverging from real Ansible
+      # only when the parent genuinely didn't exist yet (the common case
+      # - dest already inside an existing dir like /etc/nginx - never hit
+      # this path). Found benchmarking bertvv.mariadb's own "Add official
+      # MariaDB repository (yum)" task templating into /etc/yum.repos.d
+      # on Ubuntu, where that directory never exists: real Ansible
+      # refused the task; krikri quietly created the directory and wrote
+      # the file, reporting `changed` where real Ansible reported
+      # `failed`.
       dest_dir = File.dirname(dest)
       unless Dir.exists?(dest_dir)
-        begin
-          Dir.mkdir_p(dest_dir)
-        rescue ex
-          return PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "Failed to create destination directory: #{ex.message}"
-          )
-        end
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Destination directory #{dest_dir} does not exist"
+        )
       end
 
       # Write to temporary file first (for atomic write + validation).
