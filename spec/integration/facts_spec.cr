@@ -23,6 +23,23 @@ describe "facts plugin" do
     end
   end
 
+  describe "ansible_virtualization_role fact" do
+    # Real bug found benchmarking Ansible-Security-Compliance's
+    # rhel7-role-hipaa (round823): its own audit-rule tasks gate on
+    # `ansible_virtualization_role != "guest" or ansible_virtualization_
+    # type != "docker"`. This fact was entirely missing before -
+    # `ansible_virtualization_role` resolved as undefined, and the
+    # `when:` raised "Error while evaluating conditional" and crashed
+    # the whole run outright instead of just skipping/running that one
+    # task.
+    it "is set alongside ansible_virtualization_type, not left undefined" do
+      result = PluginSpecHelper.run("facts", {} of String => String)
+
+      result["ansible_facts"]["ansible_virtualization_type"].as_s.should_not be_empty
+      result["ansible_facts"]["ansible_virtualization_role"].as_s.should_not be_empty
+    end
+  end
+
   describe "ansible_python_version fact" do
     # Round 134 (prometheus.prometheus.alertmanager): real Ansible ALSO
     # exposes a separate flat `ansible_python_version` ("major.minor.micro",

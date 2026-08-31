@@ -347,6 +347,24 @@ module Krikri
       # (os_hardening's modprobe/sysctl tasks do exactly this).
       facts["ansible_virtualization_type"] = detect_virtualization
 
+      # virtualization_role ("guest"/"host"/"NA") - entirely missing
+      # before this, found benchmarking Ansible-Security-Compliance's
+      # rhel7-role-hipaa (round823): its own audit-rule tasks gate on
+      # `ansible_virtualization_role != "guest" or ansible_virtualization_
+      # type != "docker"` (skip certain host-only audit rules on a
+      # container/VM guest) - real Ansible resolves this fine on a real
+      # cloud VM (role: "guest"), this engine raised "Error while
+      # evaluating conditional: 'ansible_virtualization_role' is
+      # undefined" and crashed the whole run outright instead of just
+      # this one task's when:. This engine's own #detect_virtualization
+      # never distinguishes hypervisor-host detection from guest
+      # detection (real Ansible's own host-side checks - a populated
+      # /etc/xen/, a running libvirtd, etc - are rare in practice and not
+      # implemented here), so "host" is never reported; every detected
+      # type maps to "guest", matching the overwhelming common case (a
+      # real role's target is virtualized, not the hypervisor itself).
+      facts["ansible_virtualization_role"] = facts["ansible_virtualization_type"] == "None" ? "NA" : "guest"
+
       # apparmor.status - real Ansible's own ApparmorFactCollector just
       # checks for /sys/kernel/security/apparmor's existence (not whether any
       # profile is actually enforcing) - "enabled" if present, "disabled"
