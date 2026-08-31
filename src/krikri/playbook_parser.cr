@@ -1700,16 +1700,35 @@ module Krikri
                        "ansible.legacy.include_role", "ansible.legacy.include_vars",
                        "ansible.legacy.meta"]
 
+      # Pre-2.0 Ansible top-level task attributes, removed for a long time
+      # now but still found verbatim in old roles sitting alongside a real
+      # module key (nickjj.mariadb/.postgres/.phpfpm's own tasks/main.yml,
+      # all three independently) - real ansible-core's ModuleArgsParser
+      # recognizes this specific set and refuses to even START the run
+      # ("[ERROR]: conflicting action statements: <module>, <legacy_key>"),
+      # the same whole-playbook-abort class as RemovedActionError above,
+      # not a per-task failure. Excluded from the module-name search below
+      # (rather than added to special_keys) so one of these appearing
+      # BEFORE the real module key in the YAML can't get mistaken for the
+      # module itself either.
+      legacy_conflicting_keys = ["sudo", "sudo_user", "sudo_pass", "su", "su_user", "su_pass", "always_run"]
+
       module_name = nil
       module_params = nil
+      legacy_conflict_key = nil
 
       task_hash.each do |key, value|
         key_str = key.to_s
-        unless special_keys.includes?(key_str)
+        if legacy_conflicting_keys.includes?(key_str)
+          legacy_conflict_key = key_str
+        elsif !special_keys.includes?(key_str) && !module_name
           module_name = key_str
           module_params = value
-          break
         end
+      end
+
+      if module_name && legacy_conflict_key
+        raise RemovedActionError.new("conflicting action statements: #{module_name}, #{legacy_conflict_key}")
       end
 
       unless module_name

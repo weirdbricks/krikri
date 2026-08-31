@@ -1585,6 +1585,39 @@ describe "a notified handler with an empty loop: source" do
   end
 end
 
+describe "a task combining a module with a pre-2.0 legacy directive" do
+  it "aborts the whole run with 'conflicting action statements', matching real ansible-playbook" do
+    # Real bug found benchmarking nickjj.mariadb/.postgres/.phpfpm, all
+    # three independently: an old task carrying both a real module key
+    # and a pre-2.0 Ansible top-level attribute (always_run:, sudo_user:,
+    # etc.) that was removed a long time ago. Real ansible-core's
+    # ModuleArgsParser refuses to even START the run for this
+    # ("[ERROR]: conflicting action statements: shell, always_run",
+    # rc=1) - this engine previously just silently ignored the legacy
+    # key (or, if it happened to appear first in the YAML, mistook it
+    # for the module name outright) and ran the task normally instead.
+    write_notify_playbook("conflicting_action_statements.yml", <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: an old task with a removed legacy directive
+            shell: echo hi
+            always_run: true
+      YAML
+
+    status, output = run_playbook(
+      File.join("..", "spec", "tmp", "conflicting_action_statements.yml"),
+      mode_args: [] of String,
+      inventory: EXPLICIT_LOCALHOST_INVENTORY,
+    )
+
+    status.exit_code.should eq(1)
+    output.should contain("[ERROR]: conflicting action statements: shell, always_run")
+    output.should_not contain("PLAY RECAP")
+  end
+end
+
 describe "a halted host after a task failure" do
   it "stops printing TASK banners for tasks after the failure, matching real ansible-playbook" do
     write_notify_playbook("halted_host_no_more_banners.yml", <<-YAML)
