@@ -1,9 +1,8 @@
 name: Release
 
 # Triggered by pushing a tag like v0.9.646. Builds a release (optimized +
-# stripped) binary set per architecture and attaches them to the matching
-# GitHub Release. x86_64 only for now - arm64 gets added to the matrix
-# below once ubuntu-24.04-arm capacity is confirmed for this repo.
+# stripped, fully static via Alpine/musl) binary set per architecture
+# and attaches them to the matching GitHub Release.
 
 on:
   push:
@@ -22,13 +21,15 @@ jobs:
         include:
           - runner: ubuntu-latest
             arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
     runs-on: ${{ matrix.runner }}
     # Alpine (musl) rather than the glibc image: --static below produces
     # a binary with NO runtime libc dependency at all, so it runs on
     # any Linux host regardless of glibc version - the usual reason to
     # ship musl-static release binaries for a CLI tool. This is a
-    # multi-arch image, so the same tag works unchanged once arm64 is
-    # added to the matrix.
+    # multi-arch image, so the same tag pulls the right variant on both
+    # the x86_64 and arm64 (ubuntu-24.04-arm) runners unchanged.
     container:
       image: crystallang/crystal:1.20.3-alpine
     steps:
