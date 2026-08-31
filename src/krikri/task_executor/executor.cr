@@ -6770,6 +6770,57 @@ module Krikri
         end
       end
 
+      # include_tasks: on a handler (Anthony25.unbound's own "restart
+      # unbound": `include_tasks: tasks/restart_unbound.yml`) - real
+      # Ansible lets a handler include a task file exactly like a regular
+      # task can, splicing its tasks into the flush_handlers run. This
+      # engine only special-cased include_tasks? on the regular-task path
+      # (execute_task's own `return execute_include_tasks(task, host) if
+      # task.include_tasks?` dispatch) - a handler fell all the way
+      # through to the plugin-dispatch code below unconditionally, which
+      # tried to upload/run a plugin binary for the synthetic "_include_
+      # tasks" pseudo-module name and crashed the whole run outright
+      # ("Plugin binary not found: _include_tasks") instead of running
+      # the included file's tasks. Mirrors run_include_tasks_once's own
+      # file-resolution + parse + run_task_list sequence (the same
+      # method the regular-task path already delegates to), minus that
+      # method's loop/vars: handling (round174-style handler loops are
+      # already resolved one level up in #execute_handler_internal, and
+      # a handler's own include_tasks: has no separate loop of its own
+      # beyond the handler's).
+      if handler.include_tasks?
+        path_substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+        file_rel = path_substitutor.substitute(handler.include_file.as(String))
+        resolved_path = PlaybookParser.resolve_include_path(file_rel, handler.include_file_dir.as(String))
+
+        unless File.exists?(resolved_path)
+          return JSON.parse({
+            "changed" => false,
+            "failed"  => true,
+            "msg"     => "Included tasks file not found: #{resolved_path}",
+          }.to_json)
+        end
+
+        yaml = YAML.parse(Vault.maybe_decrypt(File.read(resolved_path)))
+        unless yaml.as_a?
+          return JSON.parse({
+            "changed" => false,
+            "failed"  => true,
+            "msg"     => "Included tasks file must be a YAML list: #{resolved_path}",
+          }.to_json)
+        end
+
+        inherited = Play.new("", "")
+        inherited.become = handler.become?
+        inherited.become_user = handler.become_user
+        included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path))
+        propagate_role_context(handler, included_tasks)
+
+        run_task_list(included_tasks, host)
+
+        return JSON.parse({"changed" => false, "failed" => false}.to_json)
+      end
+
       substitutor = VarSubstitutor.new(
         vars: vars_context,
         host_name: host.name
