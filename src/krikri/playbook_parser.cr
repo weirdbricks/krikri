@@ -1471,7 +1471,34 @@ module Krikri
         return stripped if File.exists?(stripped)
       end
 
+      # Real Ansible's own relative-include search doesn't stop at the
+      # including file's own directory - for a role task file (tasks/
+      # main.yml, or a subdirectory under tasks/), it also searches the
+      # ROLE ROOT itself (one level above the topmost tasks/ dir) before
+      # giving up. Found benchmarking ansible-network.cisco_ios
+      # (round821): tasks/main.yml's own `include_tasks: includes/
+      # init.yaml` targets <role>/includes/init.yaml, a sibling of
+      # tasks/ - not <role>/tasks/includes/init.yaml, which doesn't
+      # exist. Real ansible-playbook finds it via this same role-root
+      # fallback; this engine raised "Included tasks file not found" and
+      # crashed the whole run outright instead of just failing this one
+      # task.
+      if role_root = role_root_from_tasks_dir(file_dir)
+        via_role_root = File.expand_path(file_rel, role_root)
+        return via_role_root if File.exists?(via_role_root)
+      end
+
       direct
+    end
+
+    # <role>/tasks(/…nested) -> <role>, or nil if file_dir isn't under a
+    # "tasks" directory at all (a bare playbook-level include, which has
+    # no role root to fall back to).
+    private def self.role_root_from_tasks_dir(file_dir : String) : String?
+      parts = file_dir.split(File::SEPARATOR)
+      tasks_index = parts.rindex("tasks")
+      return nil unless tasks_index
+      parts[0...tasks_index].join(File::SEPARATOR)
     end
 
     private def self.try_parse_import_tasks(yaml : YAML::Any, play : Play, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil) : Array(Task)?

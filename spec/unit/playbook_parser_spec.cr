@@ -2045,4 +2045,25 @@ describe Krikri::PlaybookParser do
       task.params["creates"].should eq("/path with spaces/marker")
     end
   end
+
+  describe ".resolve_include_path" do
+    it "falls back to the role root when the target isn't under the including file's own tasks/ dir" do
+      # Real bug found benchmarking ansible-network.cisco_ios (round821):
+      # tasks/main.yml's own `include_tasks: includes/init.yaml` targets
+      # <role>/includes/init.yaml, a sibling of tasks/ - not <role>/
+      # tasks/includes/init.yaml, which doesn't exist. Real ansible-
+      # playbook finds it via its own role-root fallback search; this
+      # engine raised "Included tasks file not found" and crashed the
+      # whole run outright instead of just failing this one task.
+      role_root = File.tempname("role-root")
+      Dir.mkdir_p(File.join(role_root, "tasks"))
+      Dir.mkdir_p(File.join(role_root, "includes"))
+      File.write(File.join(role_root, "includes", "init.yaml"), "- name: noop\n  ansible.builtin.debug: {msg: hi}\n")
+
+      resolved = Krikri::PlaybookParser.resolve_include_path("includes/init.yaml", File.join(role_root, "tasks"))
+      resolved.should eq(File.join(role_root, "includes", "init.yaml"))
+    ensure
+      FileUtils.rm_rf(role_root) if role_root
+    end
+  end
 end
