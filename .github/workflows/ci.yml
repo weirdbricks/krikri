@@ -34,7 +34,7 @@ jobs:
           apt-get install -y -qq \
             liblzma-dev libbz2-dev libssl-dev libpcre2-dev \
             libevent-dev libgmp-dev libyaml-dev libxml2-dev zlib1g-dev \
-            curl zip unzip python3 python3-pip
+            curl zip unzip python3 python3-pip sudo
 
       - name: Cache shards
         uses: actions/cache@v4
