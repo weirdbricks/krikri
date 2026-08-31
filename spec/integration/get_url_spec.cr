@@ -34,6 +34,13 @@ get_url_test_server = HTTP::Server.new do |context|
   when "/file.txt.sha256-bare"
     context.response.status_code = 200
     context.response.print("#{FILE_CHECKSUM}\n")
+  when "/echo-headers.txt"
+    if context.request.headers.has_key?("{}")
+      context.response.status_code = 400
+    else
+      context.response.status_code = 200
+      context.response.print(context.request.headers["X-Custom"]? || "no-custom-header")
+    end
   else
     context.response.status_code = 404
   end
@@ -52,6 +59,46 @@ describe "get_url plugin" do
     result["changed"].as_bool.should be_true
     result["failed"].as_bool.should be_false
     File.read(dest).should eq(FILE_CONTENT)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "accepts headers: as a real dict (JSON text), not just the comma-separated string form" do
+    # Real bug found benchmarking caddy_ansible.caddy_ansible: its own
+    # `headers: '{{ caddy_github_headers }}'` (a real dict, `{}` by
+    # default) arrives here as its JSON text ("{}") - previously always
+    # split on "," then partitioned on ":" regardless of shape, turning
+    # the literal text "{}" into an HTTP header literally NAMED "{}"
+    # with an empty value. GitHub's real API rejected that outright
+    # with 400 Bad Request; this spec's local server does the same.
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {"url" => "#{get_url_base}/echo-headers.txt", "dest" => dest, "headers" => "{}"})
+
+    result["changed"].as_bool.should be_true
+    result["failed"].as_bool.should be_false
+    File.read(dest).should eq("no-custom-header")
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "sends a populated dict's own key/value pairs as real headers" do
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {"url" => "#{get_url_base}/echo-headers.txt", "dest" => dest, "headers" => %({"X-Custom":"hello"})})
+
+    result["changed"].as_bool.should be_true
+    result["failed"].as_bool.should be_false
+    File.read(dest).should eq("hello")
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "still supports the comma-separated string form (key:value,key2:value2)" do
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {"url" => "#{get_url_base}/echo-headers.txt", "dest" => dest, "headers" => "X-Custom:legacy-form"})
+
+    result["changed"].as_bool.should be_true
+    result["failed"].as_bool.should be_false
+    File.read(dest).should eq("legacy-form")
   ensure
     File.delete(dest) if dest && File.exists?(dest)
   end

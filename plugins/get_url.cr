@@ -224,9 +224,30 @@ module Krikri
       headers["User-Agent"] = @params["http_agent"]? || "ansible-httpget"
 
       if headers_param = @params["headers"]?
-        headers_param.split(",").each do |pair|
-          key, _, value = pair.partition(":")
-          headers[key.strip] = value.strip unless key.blank?
+        # headers: real Ansible documents (and accepts) this as a real
+        # DICT, not just the comma-separated "key:value,key2:value2"
+        # string this plugin originally only supported. A dict param
+        # value arrives here as its JSON text (module-arg finalization
+        # stringifies every param into this plugin's Hash(String,
+        # String) @params) - real bug found benchmarking caddy_ansible.
+        # caddy_ansible's own `headers: '{{ caddy_github_headers }}'`
+        # (caddy_github_headers a real dict, `{}` by default, built via
+        # `| combine(...)` when a token is set): the literal 2-character
+        # text "{}" was split on "," (["{}"]  ) then partitioned on ":"
+        # (key="{}", value=""), setting an HTTP header literally NAMED
+        # "{}" with an empty value - GitHub's API rejected the request
+        # outright with 400 Bad Request instead of the header-less
+        # request real Ansible actually sends for an empty dict.
+        parsed_dict = (JSON.parse(headers_param).as_h? rescue nil)
+        if parsed_dict
+          parsed_dict.each do |key, value|
+            headers[key] = value.as_s? || value.to_s
+          end
+        else
+          headers_param.split(",").each do |pair|
+            key, _, value = pair.partition(":")
+            headers[key.strip] = value.strip unless key.blank?
+          end
         end
       end
 
