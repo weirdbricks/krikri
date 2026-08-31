@@ -61,8 +61,15 @@ jobs:
         run: |
           PKG="krikri-${GITHUB_REF_NAME}-linux-${{ matrix.arch }}"
           mkdir -p "dist/${PKG}"
-          cp -r bin/* "dist/${PKG}/"
+          # -al (hardlink, not copy): bin/plugins/.fat-plugin is
+          # hardlinked under 96 plugin names sharing one inode - a plain
+          # `cp -r` doesn't preserve that and turns each name into its
+          # own full ~10M copy, bloating the tarball to ~400M instead
+          # of the real ~50-70M. Hardlinking here keeps them sharing one
+          # inode so tar's own hardlink detection stores the content once.
+          cp -al bin/* "dist/${PKG}/"
           tar -C dist -czf "dist/${PKG}.tar.gz" "${PKG}"
+          ls -lh "dist/${PKG}.tar.gz"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
