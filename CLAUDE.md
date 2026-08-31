@@ -72,38 +72,56 @@ starting a round.
 1. **Check `ROLES_TESTED.md` first** for a role shortlist - avoids re-discovering Galaxy-404s
    (`geerlingguy.mongodb`/`.consul`/`.golang` don't exist anymore) or re-verifying already-clean
    roles as if new (unless deliberately re-checking after something made a host suspect).
-2. Provision a fresh 2-node Atlantic.net pair (`G3.2GB`, Ubuntu 22.04) - one host runs real
-   `ansible-playbook`, the other runs the just-built `krikri-playbook`. Use a fresh host pair for
-   every round (one role, or one small role batch run to completion) rather than reusing a pair
-   across rounds - accumulated state (stale apt lists, port contention from earlier roles,
-   occasional AppArmor/apt-key drift) starts producing environmental noise indistinguishable from
-   real bugs the longer a pair stays alive. Destroy and reprovision between rounds even if it
-   means more terraform apply/destroy cycles.
-3. Run the SAME playbook against both. Any divergence needs to be reproduced with a minimal
-   repro and confirmed against real `ansible-playbook` (not assumed) before treating it as a
-   krikri-playbook bug - plenty of "bugs" turn out to be broken upstream repos, missing Galaxy
-   roles, or role-side gaps (e.g. `php-mysql`'s own repo ships no `vars/Debian.yml` at all) that
-   affect real Ansible identically.
-4. **Test idempotency explicitly** (run the role twice) - a single successful run can hide a
-   non-idempotency bug that only shows up on rerun (found this way more than once: `cron:`'s
-   trailing-newline bug, `lineinfile`'s `!regexp` gate, `get_url`'s `force: true` always-changed).
-5. Verify real service health (`systemctl is-active`, an actual health-check curl/config-validate
-   command), not just the playbook's own exit code.
-6. Fix, add a regression spec where practically possible (some things - real dpkg/apt mutation,
-   real crontab mutation, real pip installs - have no spec at all by design; verify those live
-   instead and say so in the commit message).
-7. Bump `VERSION`, run the full `crystal spec` suite, `./build.sh`, redeploy the fixed binary,
-   and re-verify live before considering the fix done.
-8. Update `KNOWN_MISSING.md` (the running per-round narrative) and `ROLES_TESTED.md` (the
-   current-status table) together in one commit; bump `README.md`'s version badge too.
+
+2. **Batch phase (parallel, up to 4 pairs / 8 hosts):** Atlantic.net allows up to 10 servers
+   total; 2 are permanently claimed by the Dirless project and must not be touched, leaving 8 -
+   i.e. up to 4 independent 2-node pairs. Provision one fresh pair per role (`G3.2GB`, Ubuntu
+   22.04, one host runs real `ansible-playbook`, the other the just-built `krikri-playbook`),
+   pick up to 4 different roles from the `ROLES_TESTED.md` shortlist, and run all 4 pairs'
+   rounds concurrently - each pair gets its own terraform workspace/state and its own
+   `known_hosts` entries so they can't collide. Use a fresh host pair for every role rather than
+   reusing one across rounds - accumulated state (stale apt lists, port contention from earlier
+   roles, occasional AppArmor/apt-key drift) starts producing environmental noise
+   indistinguishable from real bugs the longer a pair stays alive.
+   - Within each pair: run the SAME playbook against both hosts, then **test idempotency
+     explicitly** (run the role twice - a single successful run can hide a non-idempotency bug
+     that only shows up on rerun, e.g. `cron:`'s trailing-newline bug, `lineinfile`'s `!regexp`
+     gate, `get_url`'s `force: true` always-changed), then verify real service health
+     (`systemctl is-active`, an actual health-check curl/config-validate command), not just the
+     playbook's own exit code.
+   - Do **not** make any engine code changes during this phase - just collect each pair's
+     divergences (if any) into a round-summary. Any divergence needs to be reproduced with a
+     minimal repro and confirmed against real `ansible-playbook` (not assumed) before treating
+     it as a krikri-playbook bug - plenty of "bugs" turn out to be broken upstream repos, missing
+     Galaxy roles, or role-side gaps (e.g. `php-mysql`'s own repo ships no `vars/Debian.yml` at
+     all) that affect real Ansible identically.
+
+3. **Triage:** once all pairs in the batch finish, dedupe the collected divergences - if two or
+   more roles hit the same root cause, that's one fix to make, not two.
+
+4. **Fix phase (serial):** apply fixes one at a time against the unit specs (concurrent edits to
+   the same evaluator/plugin code aren't safe to parallelize even though the discovery phase is).
+   Add a regression spec where practically possible (some things - real dpkg/apt mutation, real
+   crontab mutation, real pip installs - have no spec at all by design; verify those live instead
+   and say so in the commit message). Bump `VERSION` per logical fix or tightly-related group of
+   fixes, run the full `crystal spec` suite, and `./build.sh`.
+
+5. **Confirm phase (parallel):** redeploy the fixed binary and re-run *only* the roles that
+   diverged in the batch phase, reusing still-warm pairs where available or provisioning fresh
+   ones otherwise, before considering any fix done.
+
+6. Update `KNOWN_MISSING.md` (the running per-round narrative) and `ROLES_TESTED.md` (the
+   current-status table) together in one commit, covering the whole batch at once rather than
+   per-pair; bump `README.md`'s version badge too.
    **Every role tested gets its own row in `ROLES_TESTED.md`'s table** (one role per row,
    not bundled into a shared "role / role / role" line even when several fail the same
    way) **and that row must include its cold/warm timing for both engines** - not just
    roles picked for a dedicated benchmark comparison. This is the only place per-role
    timings live (see `ROLES_TESTED.md`'s own note at the top). Older rows predating this
    convention (bundled entries, missing timings) are left as-is, not backfilled.
-9. Destroy the hosts (`terraform destroy`), clean up `known_hosts`, shred the staged credentials
-   `.env`.
+
+7. Destroy all hosts in the batch (`terraform destroy`), clean up `known_hosts`, shred the
+   staged credentials `.env`.
 
 ## Credentials for the benchmark workflow
 

@@ -17,6 +17,36 @@ is the record.
 
 ## Real gaps (worth revisiting)
 
+### No fact-caching support (`ANSIBLE_CACHE_PLUGIN_CONNECTION` / `fact_caching` config)
+
+Real Ansible skips "Gathering Facts" on a rerun when fact caching is configured
+and warm; krikri-playbook has no fact-cache backend at all and always
+re-gathers. Surfaced in round 201 (`geerlingguy.raspberry-pi`): with
+`ANSIBLE_CACHE_PLUGIN_CONNECTION` set, real Ansible's warm rerun showed
+`ok=0` (facts served from cache) where krikri showed `ok=1` (facts
+re-gathered) - same failing task otherwise, not a correctness bug in the
+failing task itself, just an ok/changed-count mismatch caused by the missing
+feature. Not fixed - no fact-cache plugin architecture exists yet to hang a
+fix off of.
+
+### kubelet idempotency divergence on `geerlingguy.kubernetes` - not reproduced independently (round 201)
+
+Warm rerun of `service: {name: kubelet, state: started, enabled: true}`
+showed py `ok=16 changed=0 failed=1` vs cr `ok=16 changed=1 failed=1` (kubeadm
+init had already failed cold for lack of a container runtime on a
+single-CPU G3.2GB host, so kubelet was plausibly `activating`/crash-looping
+rather than `active`). Two targeted follow-up repros against `plugins/
+service.cr` directly - a healthy `active`/`enabled` nginx unit, and a
+deliberately crash-looping unit (`ExecStart=/bin/false`, `Restart=on-
+failure`) - both matched real Ansible's expected behavior exactly (no
+change on a healthy unit; `changed: true` every rerun on a genuinely
+crash-looping one, which real Ansible would also do). The original hosts
+were destroyed before kubelet's exact `ActiveState`/`SubState` was
+captured, so the specific divergence couldn't be pinned down to either
+scenario. Needs a fresh `geerlingguy.kubernetes` round with `systemctl
+show kubelet -p ActiveState,SubState` captured live around the warm
+rerun before treating this as a confirmed `service.cr` bug.
+
 ## The parity-breaking tier was built, measured, and removed (0.9.641)
 
 The perf-tracking Tier 2 - a second binary
