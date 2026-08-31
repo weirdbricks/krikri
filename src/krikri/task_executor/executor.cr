@@ -5970,6 +5970,10 @@ module Krikri
       resolved = params.dup
       resolved.delete("src")
       resolved["content"] = content
+      # copy.cr's own handle_content_copy needs this to append the
+      # right basename when dest: is an existing directory - see that
+      # call site's own comment for the full "Is a directory" story.
+      resolved["__original_src_basename"] = File.basename(src)
       resolved
     end
 

@@ -54,6 +54,21 @@ module Krikri
 
       # Handle content-based copy
       if content
+        # __original_src_basename - set by TaskExecutor#
+        # inline_copy_source_content when a small src: file's content
+        # was read on the controller and forwarded as content: instead
+        # (see that method's own comment) - the same rewrite copy.cr's
+        # own src:-based handle_file_copy already accounts for via this
+        # exact param name. Without checking it here too, a `copy:
+        # {src: brim.desktop, dest: /usr/share/applications/}` (an
+        # existing directory) tried to write straight to the directory
+        # itself once inline_copy_source_content rewrote it to content:
+        # - "Failed to write file: ... 'Is a directory'" - since only
+        # handle_file_copy's OWN dest-is-directory basename-append
+        # logic existed, and this path never reaches it.
+        if (basename = @params["__original_src_basename"]?.presence) && Dir.exists?(dest)
+          dest = File.join(dest, basename)
+        end
         return handle_content_copy(content, dest)
       end
 

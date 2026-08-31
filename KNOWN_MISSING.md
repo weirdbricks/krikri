@@ -10,28 +10,12 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.656`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.657`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
-
-### `copy:` to an existing directory `dest:` fails over real SSH despite working correctly in local repro
-
-Found round 524 (`juju4.brim`): `copy: {src: brim.desktop, dest: /usr/
-share/applications/}` (dest already exists as a directory) fails live
-("Failed to write file: ... 'Is a directory'"). Both `copy.cr`'s own
-dest-is-directory basename-append logic (`dest = File.join(dest,
-basename) if Dir.exists?(dest)`) and the controller-side checksum-
-precompute optimization (`precomputed_copy_match`, whose own remote
-probe script already handles `[ -d "$p" ] && p="$p/$basename"`) were
-confirmed CORRECT via a local `connection: local` repro with an
-absolute `src:` - the actual divergence point over real SSH with a
-role-relative `src:` wasn't isolated. Needs a fresh live-host round
-reproducing the exact role structure (bare `src:` resolved against the
-role's own `files/` dir) rather than the absolute-path stand-in tried
-locally.
 
 ### Compound boolean `and` conditional mistyped as `str` on one specific loop item
 
