@@ -793,7 +793,19 @@ playbook.plays.each_with_index do |play, _play_index|
     next
   end
 
-  if tasks_to_run.empty?
+  # A task-less play still isn't a full no-op in real Ansible: fact
+  # gathering is a synthetic step real ansible-playbook always runs
+  # (unless gather_facts: false), independent of the play's own task
+  # list - found benchmarking arubanetworks.aoscx_role/aos_wlan_role
+  # (round833/834, both entirely task-less placeholder roles): real
+  # ansible-playbook's own recap still shows `ok=1` (just "Gathering
+  # Facts"). This engine's own early "Skipping play" exit below used to
+  # fire regardless of gather_facts:, skipping the TaskExecutor
+  # construction entirely and recapping `ok=0` - a real, if narrow,
+  # divergence for any play with zero tasks and facts left enabled.
+  effective_gather_facts = gathering == "explicit" ? (play.gather_facts_set? && play.gather_facts?) : play.gather_facts?
+
+  if tasks_to_run.empty? && !effective_gather_facts
     puts "Skipping play - no tasks defined".colorize(:yellow)
     next
   end
@@ -815,7 +827,7 @@ playbook.plays.each_with_index do |play, _play_index|
       # --gathering explicit gathers only for plays that actually wrote
       # `gather_facts: true`; an unset gather_facts (which defaults to true
       # under implicit/smart) means "don't" here.
-      gather_facts: gathering == "explicit" ? (play.gather_facts_set? && play.gather_facts?) : play.gather_facts?,
+      gather_facts: effective_gather_facts,
       inventory: inventory,
       inventory_path: inventory_file,
       batching_enabled: batching_enabled,
