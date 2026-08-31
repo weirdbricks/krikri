@@ -876,6 +876,49 @@ describe Krikri::ConditionalEvaluator do
       ).should be_true
     end
 
+    # Real bug found benchmarking jdauphant.dns's own "Ensure dns
+    # servers are configured in dhclient.conf" task: `when:
+    # dns_forced_in_dhclientconf and item.value != ""`, where
+    # dns_forced_in_dhclientconf DEFAULTS to a whole-value template
+    # (`"{{ansible_os_family == 'Debian' or ansible_os_family ==
+    # 'Redhat'}}"`). Real Ansible's Jinja2-native templating preserves
+    # the boolean TYPE all the way through variable storage for a
+    # whole-value template like this; this codebase's string-based
+    # substitution renders the SAME semantic value as the literal text
+    # "True" instead - previously indistinguishable from a genuinely
+    # non-boolean string (which real Ansible DOES correctly reject
+    # under ansible-core 2.19's strict conditional-boolean requirement)
+    # and always raised, even for the plain bare-variable idiom (`when:
+    # dns_forced_in_dhclientconf` alone), not just combined via `and`.
+    it "does not raise for a bare variable whose value is the string \"True\"/\"False\"" do
+      v = Hash(String, JSON::Any).new
+      v["dns_forced_in_dhclientconf"] = JSON::Any.new("True")
+      Krikri::ConditionalEvaluator.evaluate(
+        "dns_forced_in_dhclientconf", v, strict: true
+      ).should be_true
+
+      v["dns_forced_in_dhclientconf"] = JSON::Any.new("False")
+      Krikri::ConditionalEvaluator.evaluate(
+        "dns_forced_in_dhclientconf", v, strict: true
+      ).should be_false
+    end
+
+    it "does not raise for that same boolean-string variable combined via 'and'" do
+      v = Hash(String, JSON::Any).new
+      v["dns_forced_in_dhclientconf"] = JSON::Any.new("True")
+      Krikri::ConditionalEvaluator.evaluate(
+        %(dns_forced_in_dhclientconf and (1 == 1)), v, strict: true
+      ).should be_true
+    end
+
+    it "still raises for a genuinely non-boolean string, unaffected by the True/False carve-out" do
+      v = Hash(String, JSON::Any).new
+      v["some_string"] = JSON::Any.new("hello")
+      expect_raises(Krikri::ConditionalEvaluator::ConditionalBooleanError) do
+        Krikri::ConditionalEvaluator.evaluate("some_string", v, strict: true)
+      end
+    end
+
     it "does not raise for a list-form when: made entirely of `| bool` filter chains" do
       v = Hash(String, JSON::Any).new
       v["a"] = JSON::Any.new("yes")

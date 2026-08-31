@@ -10,25 +10,12 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.657`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.658`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
-
-### Compound boolean `and` conditional mistyped as `str` on one specific loop item
-
-Found round 563 (`jdauphant.dns`): `when: dns_forced_in_dhclientconf
-and item.value != ""`, evaluated once per loop item over a 3-item list
-- fails ONLY on the last item ("domain-search") with "Conditional
-result (True) was derived from value of type 'str'. Conditionals must
-have a boolean result", even though the other 2 items (identical
-`{name, value}` shape) evaluate cleanly and real Ansible succeeds on
-all 3. Root cause not isolated - a narrow boolean-coercion edge case
-specific to this `and` expression's operand types on the last
-iteration; needs a live-host repro with the exact loop items rather
-than a guessed-at local reproduction.
 
 ### `template:`/`copy:`'s `validate:` stages in `dest_dir`, not real Ansible's `remote_tmp`
 

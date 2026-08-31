@@ -1348,7 +1348,25 @@ module Krikri
         when String
           # "undefined" is this codebase's own unresolved-lookup
           # sentinel, reported below as the NoneType it stands for.
-          unless raw_value == "undefined"
+          #
+          # A raw value of exactly "True"/"False" is this codebase's own
+          # string rendering of a variable whose ENTIRE value is a `{{
+          # boolean-expression }}` (e.g. jdauphant.dns's own
+          # `dns_forced_in_dhclientconf: "{{ansible_os_family == 'Debian'
+          # or ansible_os_family == 'Redhat'}}"`, used bare or combined
+          # via `and` in a when:). Real Ansible's Jinja2-native templating
+          # preserves the boolean TYPE all the way through variable
+          # storage for a whole-value template like this, so `when:
+          # dns_forced_in_dhclientconf` never sees anything but a real
+          # bool there; this codebase's string-based substitution loses
+          # that typing, rendering the SAME semantic value as the text
+          # "True" instead - previously indistinguishable from a
+          # genuinely non-boolean string (`when: some_string_var`, which
+          # real Ansible DOES correctly reject under ansible-core 2.19's
+          # strict conditional-boolean requirement) and always raised,
+          # even for the common bare-variable idiom, not just the `and`
+          # case found benchmarking jdauphant.dns.
+          unless raw_value == "undefined" || raw_value == "True" || raw_value == "False"
             raise ConditionalBooleanError.new(
               "Conditional result (#{raw_value.empty? ? "False" : "True"}) was derived from value of type 'str'. " \
               "Conditionals must have a boolean result.")
