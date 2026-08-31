@@ -30,7 +30,19 @@ module Krikri
       dest = File.directory?(dest) ? File.join(dest, File.basename(URI.parse(url).path)) : dest
 
       checksum = nil
-      if checksum_param = @params["checksum"]?
+      # An empty checksum: string is real Ansible's own signal for "no
+      # checksum given" (its get_url module explicitly treats a falsy
+      # checksum the same as an absent one), NOT a value to actually
+      # verify against - found via juju4.openobserve's own `checksum:
+      # "{{ openobserve_hash | default(omit) }}"` where openobserve_hash
+      # DEFAULTS to "" (a real, DEFINED empty string, not undefined) for
+      # this OS/arch combination, so default(omit) never fires for
+      # either engine - both receive checksum: "" identically. Without
+      # this, krikri tried to verify the real download against an empty
+      # expected hash and failed every single time ("checksum mismatch:
+      # expected , got <real hash>") where real Ansible correctly skips
+      # verification.
+      if (checksum_param = @params["checksum"]?) && !checksum_param.strip.empty?
         begin
           checksum = parse_checksum(checksum_param, url)
         rescue ex

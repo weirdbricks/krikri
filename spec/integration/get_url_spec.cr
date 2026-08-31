@@ -65,6 +65,27 @@ describe "get_url plugin" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
+  it "treats an empty checksum: string the same as no checksum at all" do
+    # Real bug found benchmarking juju4.openobserve's own "Download
+    # openobserve from openobserve.ai" task: `checksum: "{{
+    # openobserve_hash | default(omit) }}"` where openobserve_hash
+    # DEFAULTS to "" - a real, DEFINED empty string, not undefined - for
+    # this OS/arch combination, so default(omit) never fires; both real
+    # Ansible and krikri receive checksum: "" identically. Real
+    # Ansible's own get_url module treats a falsy checksum the same as
+    # an absent one; this previously tried to verify against the empty
+    # string and failed every download with "checksum mismatch:
+    # expected , got <real hash>".
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {"url" => "#{get_url_base}/file.txt", "dest" => dest, "checksum" => ""})
+
+    result["changed"].as_bool.should be_true
+    result["failed"].as_bool.should be_false
+    File.read(dest).should eq(FILE_CONTENT)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
   it "verifies a sha384 checksum correctly, not silently as sha1" do
     # Real bug found benchmarking geerlingguy.composer's own "Download
     # Composer installer." task: `checksum: "sha384:{{ ... }}"`.
