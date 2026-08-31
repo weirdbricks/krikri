@@ -792,6 +792,24 @@ module Krikri
       # silently evaluated true, always picking the wrong (nonexistent on
       # modern Ubuntu) `python-apt` package name.
       facts["ansible_python_version"] = "#{parsed["major"]}.#{parsed["minor"]}.#{parsed["micro"]}"
+
+      # ansible_python_interpreter - real Ansible's own auto-discovered
+      # interpreter path (INTERPRETER_PYTHON=auto, the default since 2.8),
+      # exposed as a flat magic var that plenty of real roles reference
+      # directly in command:/shell: tasks - most commonly the exact idiom
+      # `{{ ansible_python_interpreter if ansible_python_interpreter is
+      # defined else 'python' }}` (azavea.pip's own "Install pip" task).
+      # Entirely missing before: with no fact at all, that expression's
+      # `is defined` check went the "undefined" branch and fell back to
+      # the bare literal "python" - which doesn't exist as a command on
+      # any modern Debian/Ubuntu target (python3-only) - so the task
+      # failed with "python: No such file or directory" where real
+      # Ansible succeeds using its own discovered /usr/bin/python3.
+      # Reuses the same python_bin this method already resolved above
+      # rather than re-discovering it - real Ansible's own discovered
+      # interpreter and its self-reported sys.executable are the same
+      # path in every case this matters for.
+      facts["ansible_python_interpreter"] = python_bin
     end
 
     def gather_user_facts(facts)

@@ -43,6 +43,30 @@ describe "facts plugin" do
     end
   end
 
+  describe "ansible_python_interpreter fact" do
+    # Found via a real-host round on azavea.pip (a dependency of several
+    # azavea.* roles: celery, curator, aws-cli, beaver): this flat magic
+    # var - real Ansible's own auto-discovered interpreter path
+    # (INTERPRETER_PYTHON=auto, the default since 2.8) - was never set at
+    # all, even though gather_python_facts already resolves the exact
+    # same executable path into the nested `ansible_python.executable`
+    # fact just above. The role's own "Install pip" task uses the common
+    # idiom `{{ ansible_python_interpreter if ansible_python_interpreter
+    # is defined else 'python' }}` - with the fact missing, `is defined`
+    # took the false branch and fell back to the bare literal "python",
+    # which doesn't exist as a command on any modern Debian/Ubuntu target
+    # (python3-only), failing with "python: No such file or directory"
+    # where real Ansible succeeds via its own discovered /usr/bin/python3.
+    it "is set to the same executable path as ansible_python.executable" do
+      result = PluginSpecHelper.run("facts", {} of String => String)
+
+      interpreter = result["ansible_facts"]["ansible_python_interpreter"].as_s
+      executable = result["ansible_facts"]["ansible_python"]["executable"].as_s
+      interpreter.should eq(executable)
+      interpreter.should contain("python")
+    end
+  end
+
   describe "ansible_default_ipv4 fact" do
     # Real bug found benchmarking buluma.checkmk_agent's own `when:
     # ansible_facts['default_ipv4'].gateway is defined`: gather_network_
