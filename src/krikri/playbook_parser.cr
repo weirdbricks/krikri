@@ -84,6 +84,13 @@ module Krikri
     # with_fileglob patterns, resolved at execution time (needs {{ vars }}
     # substitution and filesystem access, neither available at parse time).
     property loop_fileglob : Array(String)?
+    # with_file: entries - unlike with_fileglob (a pattern to match
+    # filenames), each entry names a specific file whose CONTENT becomes
+    # `item` (real Ansible's `file` lookup plugin). Resolved at execution
+    # time for the same reasons as loop_fileglob (needs {{ vars }}
+    # substitution and filesystem access, plus role_path for a relative
+    # entry - conventionally searched under the role's own files/ dir).
+    property loop_file : Array(String)?
     # with_first_found candidate paths, resolved at execution time for the
     # same reasons as loop_fileglob. Unlike a glob this yields at most one
     # item - the first candidate that exists. loop_first_found_skip is the
@@ -324,6 +331,7 @@ module Krikri
       @loop = nil
       @loop_items = nil
       @loop_fileglob = nil
+      @loop_file = nil
       @loop_first_found = nil
       @loop_first_found_skip = false
       @loop_template_kind = nil
@@ -1687,7 +1695,7 @@ module Krikri
       # Find the module (first key that's not a special keyword)
       special_keys = ["name", "when", "register", "ignore_errors", "check_mode",
                       "diff", "become", "become_user", "tags", "args", "listen", "with_items", "loop",
-                      "with_dict", "with_fileglob", "with_first_found", "with_nested", "with_sequence",
+                      "with_dict", "with_fileglob", "with_file", "with_first_found", "with_nested", "with_sequence",
                       "with_flattened", "with_community.general.flattened", "with_subelements", "with_indexed_items", "until", "retries", "delay",
                       "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "delegate_facts", "run_once", "connection",
                       "async", "poll", "vars", "environment", "no_log", "module_defaults", "ignore_unreachable", "throttle", "remote_user", "debugger",
@@ -1922,6 +1930,12 @@ module Krikri
                              else
                                [with_fileglob.as_s]
                              end
+      elsif with_file = task_hash["with_file"]?
+        task.loop_file = if with_file.as_a?
+                          with_file.as_a.map(&.as_s)
+                        else
+                          [with_file.as_s]
+                        end
       elsif with_flattened = (task_hash["with_flattened"]? || task_hash["with_community.general.flattened"]?)
         # `with_flattened:` (the short lookup-plugin-name alias real
         # playbooks actually write - confirmed via dev-sec.os-hardening's
@@ -2352,7 +2366,7 @@ module Krikri
       # predate loop: (round-166 wireguard, the round-190
       # marathon, etc.).
       "with_first_found", "with_items", "with_dict", "with_nested",
-      "with_sequence", "with_indexed_items", "with_fileglob",
+      "with_sequence", "with_indexed_items", "with_fileglob", "with_file",
       "notify", "listen", "environment", "changed_when",
       "failed_when", "until", "retries", "delay", "check_mode",
       "diff", "delegate_to", "delegate_facts", "connection",

@@ -1211,17 +1211,17 @@ module Krikri
       # apply_changed_failed_when still builds its own, and must: it
       # evaluates against a different context (see there).
       shared_sub = nil.as(VarSubstitutor?)
-      if task.delegate_to || task.loop_fileglob
+      if task.delegate_to || task.loop_fileglob || task.loop_file
         shared_sub = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       end
 
       exec_host = resolve_delegate_host(task, host, vars_context, shared: shared_sub)
 
-      # with_fileglob needs a substitutor (for {{ vars }} in the pattern) and
-      # the filesystem, so it can only be resolved here, not at parse time.
-      # loop_template is a loop:/with_*: keyword given as "{{ some_var }}"
-      # instead of a literal list/dict - also only resolvable once the
-      # variable context exists.
+      # with_fileglob/with_file need a substitutor (for {{ vars }} in the
+      # pattern) and the filesystem, so they can only be resolved here,
+      # not at parse time. loop_template is a loop:/with_*: keyword given
+      # as "{{ some_var }}" instead of a literal list/dict - also only
+      # resolvable once the variable context exists.
       #
       # resolve_loop_items_or_raise: a genuinely undefined/wrong-type loop
       # source now fails the task (round174 matrix) instead of silently
@@ -1232,6 +1232,7 @@ module Krikri
         loop_items = resolve_loop_items_or_raise(task, host, vars_context) do
           task.loop_items || resolve_first_found(task, host, vars_context) ||
             resolve_fileglob(task, host, vars_context, shared: shared_sub) ||
+            resolve_with_file(task, host, vars_context, shared: shared_sub) ||
             resolve_loop_template(task, vars_context) ||
             resolve_loop_flattened(task, vars_context, host.name) ||
             resolve_loop_subelements(task, vars_context)
@@ -2687,6 +2688,51 @@ module Krikri
 
       matches.sort!
       matches.map { |path| JSON::Any.new(path) }
+    end
+
+    # Resolve with_file: entries (if any) - real Ansible's `file` lookup
+    # plugin, reading each LISTED file's CONTENT (unlike with_fileglob,
+    # which matches filenames by pattern) and binding it to `item`. A
+    # relative entry is searched under the current role's own files/
+    # dir, same convention lookup('file', ...)/copy:/template: already
+    # use (ExpressionEvaluator#resolve_lookup_path). Entirely
+    # unimplemented before - `item` never got bound at all, failing
+    # with "'item' is undefined" regardless of whether the file existed.
+    # Found via juju4.adduser's own `with_file: "{{ adduser_public_keys
+    # }}"` (a templated single value resolving to a real list, e.g.
+    # `[dummykey.pub]` - the common with_fileglob idiom too, so this
+    # mirrors that method's own "{{ }} resolves to a JSON array text}"
+    # handling).
+    private def resolve_with_file(task : Task, host : Host, vars_context : Hash(String, JSON::Any), shared : VarSubstitutor? = nil) : Array(JSON::Any)?
+      entries = task.loop_file
+      return nil unless entries
+
+      substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
+      role_path = vars_context["role_path"]?.try(&.as_s?)
+      paths = [] of String
+
+      entries.each do |entry|
+        substituted = substitutor.substitute(entry, strict: true)
+
+        if substituted.starts_with?('[')
+          parsed = (JSON.parse(substituted).as_a? rescue nil)
+          if parsed
+            paths.concat(parsed.map(&.to_s))
+            next
+          end
+        end
+
+        paths << substituted
+      end
+
+      paths.map do |path|
+        resolved = path.starts_with?('/') || !role_path ? path : File.join(role_path, "files", path)
+        begin
+          JSON::Any.new(File.read(resolved).chomp)
+        rescue
+          raise WhenEvaluationError.new("Unable to access the file '#{resolved}': not found")
+        end
+      end
     end
 
     # Resolve a loop:/with_items:/with_dict:/with_nested:/with_indexed_items:

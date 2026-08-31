@@ -10,27 +10,12 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.655`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.656`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
-
-### `with_file:` lookup type entirely unimplemented
-
-Found round 517 (`juju4.adduser`): `with_file: "{{ adduser_public_keys
-}}"` - real Ansible's `file` lookup plugin, reading each LISTED
-file's CONTENT (resolving a relative filename against the current
-role's own `files/` dir, same convention `first_found`/`copy`/
-`template` already implement elsewhere) and binding that content to
-`item`. Only the different `with_fileglob:` (pattern-matching
-filenames, not reading content) exists today. Without it, `item` never
-gets bound for a `with_file:` loop at all - real Ansible resolves
-`adduser_public_keys: [dummykey.pub]` to the demo key's real file
-contents (`ssh-rsa ABCDEF...`) and succeeds; krikri fails the task
-outright with `'item' is undefined`. Not fixed - a real new loop-source
-type, not a one-line fix.
 
 ### `copy:` to an existing directory `dest:` fails over real SSH despite working correctly in local repro
 
