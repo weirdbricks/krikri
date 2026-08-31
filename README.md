@@ -59,8 +59,7 @@ No arbitrary Python execution (a role's private `library/*.py` module
 can't run - there's no interpreter to run it in), cloud provider modules/
 inventory plugins (`amazon.aws`, `azure_rm_*`, ...), and a handful of
 narrower cuts (`docker_*`'s `api_version:` pin, a few `meta:` actions).
-See **What's missing** below - it's the single current-state list, kept
-there rather than duplicated here.
+See **What's missing** below.
 
 ---
 
@@ -68,8 +67,7 @@ there rather than duplicated here.
 
 Gaps here are found by running real production Ansible roles (from
 Galaxy) against both engines on real hosts and diffing the result, not
-from a pre-planned feature checklist. That status changes as new roles
-get tested, so it's tracked in one place rather than duplicated here:
+from a pre-planned feature checklist:
 
 - **[KNOWN_MISSING.md](KNOWN_MISSING.md)** - the current, short,
   up-to-date list of any open real gaps plus the full explicit scope-cut
@@ -79,10 +77,6 @@ get tested, so it's tracked in one place rather than duplicated here:
   real Ansible Galaxy role that's been benchmarked against a live host,
   one line each, so you can check whether something resembling your own
   playbooks has already been exercised.
-
-Both files describe **current state only** - the fix history for
-everything already resolved lives in `git log`, not duplicated in either
-file (searchable, e.g. `git log --all --grep=auth_socket`).
 
 ---
 
@@ -97,9 +91,7 @@ random sample benchmarked against real `ansible-playbook`, with `PLAY
 RECAP` parity matched exactly on all 10, warm re-runs were **3.5x-11.9x
 faster (mean ~6.3x)** and cold runs **1.2x-6.7x faster (mean ~2.2x)**.
 
-Per-role cold/warm timings, for every role tested (not just that
-10-role sample), live in [ROLES_TESTED.md](ROLES_TESTED.md) rather than
-duplicated here.
+Per-role cold/warm timings: see [ROLES_TESTED.md](ROLES_TESTED.md).
 
 ---
 
