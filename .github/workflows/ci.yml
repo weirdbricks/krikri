@@ -13,17 +13,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system libs (liblzma-dev)
-        # Crystal's stdlib links against liblzma via pkg-config; without
-        # the dev package + pkg-config file present, `pkg-config --libs
-        # liblzma` fails and the shell fallback in Crystal's own @[Link]
-        # annotation kicks in - but that fallback string is the invalid
-        # linker flag "--llzma" (double-dash) instead of "-llzma", which
-        # cc rejects outright ("unrecognized command-line option
-        # '--llzma'"), failing the whole build. Installing the real
-        # dev package here means pkg-config succeeds and that broken
-        # fallback is never reached at all.
-        run: apt-get update -qq && apt-get install -y -qq liblzma-dev
+      - name: Install system libs
+        # Crystal's stdlib links against several system libs (bz2, lzma,
+        # openssl, pcre2, event, gmp, yaml, xml2) via pkg-config or -l
+        # flags baked into its own @[Link] annotations. Every CI run
+        # since v0.9.646 (17 in a row) failed at the build step because
+        # the crystallang/crystal:1.20.3 image is missing these dev
+        # packages - first surfaced as "cc: error: unrecognized
+        # command-line option '--llzma'" (Crystal's own pkg-config-
+        # fallback flag string for liblzma is a real typo, double-dash
+        # instead of single-, only reached because pkg-config itself
+        # couldn't find liblzma at all without its dev package), then
+        # "/usr/bin/ld: cannot find -lbz2" once that first gap was
+        # closed - installing the full set up front here rather than
+        # discovering the rest one link error at a time. The release
+        # workflow's own Alpine build already installs the equivalent
+        # (xz-dev/xz-libs, etc.) and has never hit this.
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq \
+            liblzma-dev libbz2-dev libssl-dev libpcre2-dev \
+            libevent-dev libgmp-dev libyaml-dev libxml2-dev zlib1g-dev
 
       - name: Cache shards
         uses: actions/cache@v4
