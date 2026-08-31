@@ -18,10 +18,12 @@ picture, on either the controller or the target - it's one compiled binary
 
 It is not a new automation DSL you have to learn, and not a "mostly
 compatible" reimplementation verified by eyeballing docs - every plugin's
-behavior is checked against real `ansible-playbook` output on real hosts
-(see **Differences** and **What's missing** below), and a Docker-based
-compatibility harness (`compat/`) runs the same playbooks through both
-engines side by side and diffs the resulting state. Any observed
+behavior is checked against real `ansible-playbook` output on real hosts,
+across **~1,250 real Galaxy roles tested to date** (see
+[ROLES_TESTED.md](ROLES_TESTED.md); **Differences** and **What's missing**
+below), and a Docker-based compatibility harness (`compat/`) runs the same
+playbooks through both engines side by side and diffs the resulting
+state. Any observed
 divergence from real Ansible's behavior is treated as a bug in this
 project, not a documented limitation, unless it's one of the deliberate
 structural exclusions called out below.
