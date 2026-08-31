@@ -369,6 +369,28 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     result.as_a.size.should eq(1)
   end
 
+  it "selectattr() accepts a dotted path into a nested dict, real Jinja2's own behavior" do
+    # Real bug found benchmarking githubixx.containerd's own "Set
+    # modprobe_location": `modprobe_locations.results | selectattr(
+    # 'stat.exists', '==', True) | map(attribute='path') | first`, over
+    # a real stat: loop's registered results (each a dict with a nested
+    # `stat: {exists: true/false, ...}`). A single `item[attr]?` lookup
+    # treated "stat.exists" as one literal top-level key, which never
+    # exists on the result dict - always nil, excluding every item
+    # regardless of the real nested value, so the whole loop's `first`
+    # then raised on an always-empty list even though 2 of 3 stat
+    # results genuinely had exists: true.
+    engine = Krikri::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
+    value = JSON.parse(%([
+      {"path": "/a", "stat": {"exists": false}},
+      {"path": "/b", "stat": {"exists": true}}
+    ]))
+
+    result = engine.apply(value, %(selectattr('stat.exists', '==', True)))
+    result.as_a.size.should eq(1)
+    result.as_a[0]["path"].as_s.should eq("/b")
+  end
+
   it "unescapes a real Python/Jinja2 string literal's own backslash escapes when used as a filter argument" do
     # Real bug found benchmarking prometheus.prometheus._common's own
     # preflight.yml: `reject('match', '.+:\d+$')`, written inside a

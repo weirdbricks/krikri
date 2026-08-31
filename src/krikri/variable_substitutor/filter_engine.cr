@@ -1241,8 +1241,30 @@ module Krikri
         JSON::Any.new(filtered)
       end
 
+      # `selectattr`/`rejectattr`'s attr argument accepts a dotted path
+      # into a nested dict, real Jinja2's own behavior for exactly this
+      # idiom (`stat_results.results | selectattr('stat.exists', '==',
+      # true)`, picking whichever stat: loop result actually exists).
+      # A single `item[attr]?` lookup treats "stat.exists" as one
+      # literal top-level key, which never exists - always nil,
+      # excluding every item regardless of the real nested value. Found
+      # benchmarking githubixx.containerd's own "Set modprobe_location"
+      # (`modprobe_locations.results | selectattr('stat.exists', '==',
+      # True) | map(attribute='path') | first`): stat.exists was
+      # correctly true for 2 of 3 candidates, but selectattr excluded
+      # all three, so `first` then raised on the resulting empty list -
+      # real Jinja2's own genuine error text for that case, but reached
+      # here for the wrong reason (a selectattr bug, not a real empty
+      # candidate set).
+      private def dotted_attr_value(item : JSON::Any, attr : String) : JSON::Any?
+        attr.split('.').reduce(item) do |current, key|
+          return nil unless current
+          current.raw.is_a?(Hash) ? current[key]? : nil
+        end
+      end
+
       private def selectattr_matches?(item : JSON::Any, attr : String, test : String, compare_value : JSON::Any?) : Bool
-        attr_value = item.raw.is_a?(Hash) ? item[attr]? : nil
+        attr_value = item.raw.is_a?(Hash) ? dotted_attr_value(item, attr) : nil
 
         # A dict-list entry's own attribute can itself be an unrendered
         # template string - openstack.ansible-hardening's own
