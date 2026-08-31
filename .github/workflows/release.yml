@@ -24,35 +24,38 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: arm64
     runs-on: ${{ matrix.runner }}
-    # Alpine (musl) rather than the glibc image: --static below produces
-    # a binary with NO runtime libc dependency at all, so it runs on
-    # any Linux host regardless of glibc version - the usual reason to
-    # ship musl-static release binaries for a CLI tool. This is a
-    # multi-arch image, so the same tag pulls the right variant on both
-    # the x86_64 and arm64 (ubuntu-24.04-arm) runners unchanged.
-    container:
-      image: crystallang/crystal:1.20.3-alpine
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install build dependencies
+      # Alpine (musl) rather than the glibc image: --static below
+      # produces a binary with NO runtime libc dependency at all, so it
+      # runs on any Linux host regardless of glibc version - the usual
+      # reason to ship musl-static release binaries for a CLI tool.
+      # Invoked via plain `docker run` (not a job-level `container:`)
+      # because GitHub's JS-based actions (checkout/upload-artifact)
+      # can't run inside an Alpine container on an arm64 runner ("only
+      # supported on x64 Linux runners") - found live on the first
+      # arm64 attempt. Running checkout/upload on the bare (glibc)
+      # runner and only the actual build inside Alpine sidesteps that
+      # for both architectures uniformly. The image is multi-arch, so
+      # the same tag pulls the right variant on both runners unchanged.
+      - name: Build release binaries (Alpine/musl, static)
         run: |
-          apk add --no-cache \
-            bash git grep file binutils \
-            pcre2-dev pcre2-static \
-            openssl-dev openssl-libs-static \
-            bzip2-dev bzip2-static \
-            xz-dev xz-libs \
-            zlib-dev zlib-static \
-            gc-dev gc-static \
-            libunwind-dev libunwind-static
-
-      - name: Install shards
-        run: shards install
-
-      - name: Build release binaries
-        run: ./build.sh --release --static
+          docker run --rm -v "$PWD:/repo" -w /repo crystallang/crystal:1.20.3-alpine sh -c '
+            set -e
+            apk add --no-cache \
+              bash git grep file binutils \
+              pcre2-dev pcre2-static \
+              openssl-dev openssl-libs-static \
+              bzip2-dev bzip2-static \
+              xz-dev xz-libs \
+              zlib-dev zlib-static \
+              gc-dev gc-static \
+              libunwind-dev libunwind-static
+            shards install
+            ./build.sh --release --static
+          '
 
       - name: Package
         run: |
