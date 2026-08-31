@@ -21,7 +21,10 @@ compatible" reimplementation verified by eyeballing docs - every plugin's
 behavior is checked against real `ansible-playbook` output on real hosts
 (see **Differences** and **What's missing** below), and a Docker-based
 compatibility harness (`compat/`) runs the same playbooks through both
-engines side by side and diffs the resulting state.
+engines side by side and diffs the resulting state. Any observed
+divergence from real Ansible's behavior is treated as a bug in this
+project, not a documented limitation, unless it's one of the deliberate
+structural exclusions called out below.
 
 ---
 
@@ -44,14 +47,6 @@ same host are also batched into a single SSH round trip by default
 
 This is the single biggest practical difference, and it shows up directly
 in wall-clock time - see **Performance** below.
-
-### What's the same
-
-Playbook syntax, inventory format, `roles/` layout, Jinja2 templating
-(filters, tests, block tags), `become:`, Vault, `--check`/`--diff`,
-`--tags`/`--limit`, handlers, loops, `block:`/`rescue:`/`always:` - all
-parsed and executed the same way, from the same YAML files you already
-have.
 
 ### What's structurally different (by design, not a gap)
 
@@ -266,6 +261,14 @@ Contributions welcome! Please:
 ## 📄 License
 
 MIT License - see [LICENSE](LICENSE) file for details.
+
+---
+
+## 🐐 Why "krikri"?
+
+The kri-kri (κρι-κρι) is the [Cretan wild
+goat](https://en.wikipedia.org/wiki/Cretan_goat) - a sturdy, agile animal
+native to Crete, found almost nowhere else.
 
 ---
 
