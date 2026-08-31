@@ -95,8 +95,7 @@ starting a round.
 7. Bump `VERSION`, run the full `crystal spec` suite, `./build.sh`, redeploy the fixed binary,
    and re-verify live before considering the fix done.
 8. Update `KNOWN_MISSING.md` (the running per-round narrative) and `ROLES_TESTED.md` (the
-   current-status table) together in one commit; update `README.md`'s version badge and
-   "Recent changes" section too.
+   current-status table) together in one commit; bump `README.md`'s version badge too.
 9. Destroy the hosts (`terraform destroy`), clean up `known_hosts`, shred the staged credentials
    `.env`.
 
@@ -110,10 +109,10 @@ Atlantic.net API keys used in the real-host benchmark workflow come from.
 - `KNOWN_MISSING.md` - per-round bug narrative, newest first, no fixed-bug detail duplicated (that
   lives in `git log` commit messages).
 - `ROLES_TESTED.md` - one-line current status per role tested, no history.
-- `README.md` - version badge + a short rolling summary of the most recent rounds in "Recent
-  changes" (keep it short - 5-6 entries; older history lives in `git log`, not here). The README
-  leads with "How this differs from real Ansible"/"What's missing"/"Performance" rather than
-  round history - those sections should stay current-state-focused, not accumulate a changelog.
+- `README.md` - version badge only for round history; no "Recent changes" section (removed - round
+  history lives in `git log`, not here). The README leads with "How this differs from real
+  Ansible"/"What's missing"/"Performance" rather than round history - those sections should stay
+  current-state-focused, not accumulate a changelog.
 
 Don't let these drift from `git log`/reality - they're the first thing a new session (or this one,
 next time) reads to avoid re-deriving context that already exists.
