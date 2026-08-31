@@ -13,6 +13,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install system libs (liblzma-dev)
+        # Crystal's stdlib links against liblzma via pkg-config; without
+        # the dev package + pkg-config file present, `pkg-config --libs
+        # liblzma` fails and the shell fallback in Crystal's own @[Link]
+        # annotation kicks in - but that fallback string is the invalid
+        # linker flag "--llzma" (double-dash) instead of "-llzma", which
+        # cc rejects outright ("unrecognized command-line option
+        # '--llzma'"), failing the whole build. Installing the real
+        # dev package here means pkg-config succeeds and that broken
+        # fallback is never reached at all.
+        run: apt-get update -qq && apt-get install -y -qq liblzma-dev
+
       - name: Cache shards
         uses: actions/cache@v4
         with:
