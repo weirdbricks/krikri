@@ -1213,6 +1213,43 @@ describe Krikri::PlaybookParser do
       playbook.plays[0].tasks.map(&.name).should eq(["stig task"])
     end
 
+    it "treats a comment-only import_tasks: target as zero tasks, not an error" do
+      # Real bug found benchmarking ansistrano.deploy (round826): its
+      # tasks/main.yml does `include_tasks: "{{ ansistrano_before_setup_
+      # tasks_file | default('empty.yml') }}"` at 10 different hook
+      # points, all defaulting to the same deliberately-empty tasks/
+      # empty.yml (a comment-only no-op file, shipped by the role itself
+      # for exactly this "no custom hook" case). YAML.parse returns a
+      # bare `nil` document for comment-only content, not an empty
+      # array - `unless imported_yaml.as_a?` (written for a genuinely
+      # malformed file) treated `nil` the same way, raising "Imported
+      # tasks file must be a YAML list" and crashing the whole run
+      # outright instead of just running zero tasks, matching real
+      # Ansible.
+      root = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "playbook_parser_import_tasks_comment_only_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+      File.write(File.join(root, "roles", "myrole", "tasks", "empty.yml"), "# intentionally empty\n")
+      File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - name: before hook
+          import_tasks: empty.yml
+        - name: real task
+          ansible.builtin.debug:
+            msg: after import
+        YAML
+
+      playbook_yaml = <<-YAML
+        - name: play
+          hosts: all
+          roles:
+            - myrole
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
+
+      playbook.plays[0].tasks.map(&.name).should eq(["real task"])
+    end
+
     it "raises a fatal StaticImportUndefinedError (aborts the whole playbook) when an import_tasks: path references a fact, not a var/default" do
       # Round172's buluma.php_versions repro (Rocky 9.6), reduced to a
       # minimal case and verified directly against real ansible-playbook:

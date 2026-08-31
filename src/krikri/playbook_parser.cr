@@ -1547,6 +1547,13 @@ module Krikri
       raise "Imported tasks file not found: #{resolved_path}" unless File.exists?(resolved_path)
 
       imported_yaml = YAML.parse(Vault.maybe_decrypt(File.read(resolved_path)))
+      # A comment-only (or entirely blank) tasks file - real Ansible
+      # treats this as zero tasks, not an error (ansistrano.deploy's own
+      # tasks/empty.yml, a deliberate no-op include target - see
+      # TaskExecutor's identical include_tasks: fix found in the same
+      # round). YAML.parse returns a bare `nil` document for
+      # comment-only content, not an empty array.
+      return [] of Task if imported_yaml.raw.nil?
       raise "Imported tasks file must be a YAML list: #{resolved_path}" unless imported_yaml.as_a?
 
       imported_tasks = parse_tasks(imported_yaml.as_a, play, "task in imported #{resolved_path}", File.dirname(resolved_path), known_vars)

@@ -871,6 +871,19 @@ module Krikri
       run_groups.each do |resolved_path, group_hosts|
         begin
           yaml = YAML.parse(Vault.maybe_decrypt(File.read(resolved_path)))
+          # A comment-only (or entirely blank) tasks file - real Ansible
+          # treats this as zero tasks, not an error (ansistrano.deploy's
+          # own tasks/empty.yml, deliberately shipped as a no-op include
+          # target for every before_*/after_* hook point a caller
+          # doesn't override - see #resolve_include_path's own comment
+          # for the sibling fix found in the same round). YAML.parse
+          # returns a bare `nil` document for comment-only content, NOT
+          # an empty array, so this can't just be folded into the
+          # `unless yaml.as_a?` check below without also accepting a
+          # genuinely malformed (e.g. a bare scalar/mapping) tasks file.
+          if yaml.raw.nil?
+            next
+          end
           unless yaml.as_a?
             group_hosts.each { |host| fail_include(task, host, "Included tasks file must be a YAML list: #{resolved_path}") }
             next
@@ -5310,6 +5323,10 @@ module Krikri
       end
 
       yaml = YAML.parse(Vault.maybe_decrypt(File.read(resolved_path)))
+      # A comment-only (or entirely blank) tasks file - see the batched
+      # #execute_include_tasks_multi path's identical check for why this
+      # can't be folded into the `unless yaml.as_a?` check below.
+      return if yaml.raw.nil?
       unless yaml.as_a?
         fail_include(task, host, "Included tasks file must be a YAML list: #{resolved_path}")
         return
@@ -6802,6 +6819,9 @@ module Krikri
         end
 
         yaml = YAML.parse(Vault.maybe_decrypt(File.read(resolved_path)))
+        # A comment-only (or entirely blank) tasks file - see the
+        # regular-task include_tasks: path's identical check for why.
+        return JSON.parse({"changed" => false, "failed" => false}.to_json) if yaml.raw.nil?
         unless yaml.as_a?
           return JSON.parse({
             "changed" => false,
