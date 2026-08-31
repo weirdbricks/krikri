@@ -96,9 +96,12 @@ starting a round.
    and re-verify live before considering the fix done.
 8. Update `KNOWN_MISSING.md` (the running per-round narrative) and `ROLES_TESTED.md` (the
    current-status table) together in one commit; bump `README.md`'s version badge too.
-   **Every role tested gets a cold/warm timing recorded in its `ROLES_TESTED.md` row**
-   (both engines), not just roles picked for a dedicated benchmark comparison - this is
-   the only place per-role timings live (see `ROLES_TESTED.md`'s own note at the top).
+   **Every role tested gets its own row in `ROLES_TESTED.md`'s table** (one role per row,
+   not bundled into a shared "role / role / role" line even when several fail the same
+   way) **and that row must include its cold/warm timing for both engines** - not just
+   roles picked for a dedicated benchmark comparison. This is the only place per-role
+   timings live (see `ROLES_TESTED.md`'s own note at the top). Older rows predating this
+   convention (bundled entries, missing timings) are left as-is, not backfilled.
 9. Destroy the hosts (`terraform destroy`), clean up `known_hosts`, shred the staged credentials
    `.env`.
 

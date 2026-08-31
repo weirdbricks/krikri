@@ -6,10 +6,11 @@ see `KNOWN_MISSING.md` and `git log` for that history). Check this before
 picking a shortlist for the next round, to avoid re-discovering Galaxy-404s
 or already-clean roles as if they were new.
 
-Every row below should carry cold/warm timings for both engines where the
-run produced a real timing (rc=0 or a genuine both-fail past setup) - see
-`CLAUDE.md`'s benchmark-round workflow. Rows predating that convention may
-be missing them.
+Every newly tested role gets its own row (not bundled into a shared
+"role / role / role" line) with cold/warm timings for both engines where
+the run produced a real timing (rc=0 or a genuine both-fail past setup) -
+see `CLAUDE.md`'s benchmark-round workflow. Rows predating that convention
+may be bundled and/or missing timings; not backfilled.
 
 ## Benchmark: 10 random verified-clean roles, fresh host pair each
 
