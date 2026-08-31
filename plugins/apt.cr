@@ -670,8 +670,21 @@ module Krikri
     private def should_update_cache?(cache_valid_time : Int32) : Bool
       return true if cache_valid_time == 0
 
-      # Check last update time of apt lists
-      result = remote_exec("stat -c %Y /var/lib/apt/lists/partial 2>/dev/null || echo 0")
+      # Real Ansible's apt.py checks /var/lib/apt/periodic/update-success-
+      # stamp's mtime if present (written by APT::Periodic's own update
+      # timer/unattended-upgrades), else falls back to the /var/lib/apt/
+      # lists DIRECTORY's own mtime. This previously stat'd /var/lib/apt/
+      # lists/partial instead - a transient staging dir apt-get update
+      # barely touches, not a real freshness signal - so its mtime stayed
+      # old (image-build time) and `age > cache_valid_time` was almost
+      # always true, refreshing (and reporting changed: true for) a cache
+      # real Ansible correctly saw as still valid and left alone. Found
+      # benchmarking Stouts.apt's own "Update apt cache" task (default
+      # apt_cache_valid_time: 3600) - py reported `ok`, cr `changed`.
+      result = remote_exec(
+        "stat -c %Y /var/lib/apt/periodic/update-success-stamp 2>/dev/null || " \
+        "stat -c %Y /var/lib/apt/lists 2>/dev/null || echo 0"
+      )
       last_update = result[:stdout].strip.to_i
       current_time = Time.utc.to_unix
 

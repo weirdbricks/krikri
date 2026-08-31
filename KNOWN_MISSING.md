@@ -10,12 +10,28 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.649`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.650`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
+
+### `RemovedActionError`'s hardcoded message text has drifted from current ansible-core wording
+
+Found round 307 (`Stouts.django`): krikri's message for a removed
+`ansible.builtin.include` (`playbook_parser.cr`'s `RemovedActionError`,
+"The 'ansible.builtin.include' action plugin has been removed...") was
+worded to match whichever ansible-core version confirmed it originally
+(2.19.4, per `mrlesmithjr.firewalld`'s round 176 fix); real ansible-core
+2.17.14 now says "[DEPRECATED]: ansible.builtin.include has been
+removed. Use include_tasks or import_tasks instead...". Same detection,
+same `rc=1` both engines - cosmetic text only. Not fixed: the "correct"
+wording is a moving target across ansible-core minor versions (this
+session alone has hit both 2.17.14 and 2.19.4 on different hosts), so
+hardcoding to one specific version's phrasing doesn't durably fix
+anything - would need either a version-aware message table or accepting
+this as permanently approximate.
 
 ### Generic `PLAY [Play 1]`/`TASK [Task 1]` labels on a nameless play/task, plus a spurious inventory warning
 
