@@ -336,6 +336,45 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate(%(lookup('template', '#{path}'))).should eq("value is computed")
   end
 
+  it "strips a leading #jinja2: directive line from lookup('template', path)'s rendered output" do
+    # Real bug found benchmarking bimdata.ferm: its own get_vars.j2
+    # opens with `#jinja2: lstrip_blocks: True` (a per-template Jinja2
+    # config override, metadata for the renderer - real Ansible strips
+    # it before rendering, same as TemplateActionPlugin already does
+    # for the `template:` module). This lookup plugin never did,
+    # leaking the literal "#jinja2: ..." line into the returned text -
+    # fatal for the role's own `| from_json` pipeline right after this
+    # lookup, which saw that line prepended to the real JSON and raised
+    # "invalid JSON input".
+    path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "lookup_template_jinja2_directive_test.j2")
+    Dir.mkdir_p(File.dirname(path))
+    File.write(path, "#jinja2: lstrip_blocks: True\nvalue is {{ my_var }}\n")
+
+    v = Hash(String, JSON::Any).new
+    v["my_var"] = JSON::Any.new("computed")
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(%(lookup('template', '#{path}'))).should eq("value is computed")
+  end
+
+  it "evaluates lookup('template', path, template_vars=dict(...)) merging the kwarg's dict into the rendered template's own vars" do
+    # Real bug found benchmarking bimdata.ferm's own defaults/main.yml:
+    # `_ferm_rules: "{{ lookup('template', 'get_vars.j2', template_vars=
+    # dict(app_name='ferm', var_type='rule')) | from_json }}"` - real
+    # Ansible's own template lookup plugin merges template_vars='s dict
+    # into the vars available to the rendered template, on top of (never
+    # replacing) the calling context's own vars. Entirely ignored
+    # before - the template rendered with app_name/var_type undefined
+    # regardless of what template_vars= actually passed.
+    path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "lookup_template_vars_kwarg_test.j2")
+    Dir.mkdir_p(File.dirname(path))
+    File.write(path, "{{ app_name }}-{{ my_var }}\n")
+
+    v = Hash(String, JSON::Any).new
+    v["my_var"] = JSON::Any.new("computed")
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(%(lookup('template', '#{path}', template_vars=dict(app_name='ferm')))).should eq("ferm-computed")
+  end
+
   it "evaluates lookup('password', path) generating and persisting a password across calls" do
     path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "lookup_password_test.txt")
     File.delete(path) if File.exists?(path)

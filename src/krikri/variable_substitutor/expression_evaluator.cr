@@ -1835,18 +1835,62 @@ module Krikri
       end
 
       private def lookup_template(parts : Array(String)) : String
-        # lookup('template', path) - renders a local (controller-side)
-        # `.j2` file through the same Crinja pipeline `template:`
-        # tasks use, against this expression's own vars, and returns
-        # the rendered text with one trailing newline stripped
-        # (matches real Ansible's own template lookup plugin, which
-        # is explicitly documented to strip a single trailing newline
-        # the way Jinja2's own template rendering leaves one).
+        # lookup('template', path[, template_vars=dict(...)]) - renders
+        # a local (controller-side) `.j2` file through the same Crinja
+        # pipeline `template:` tasks use, against this expression's own
+        # vars, and returns the rendered text with one trailing newline
+        # stripped (matches real Ansible's own template lookup plugin,
+        # which is explicitly documented to strip a single trailing
+        # newline the way Jinja2's own template rendering leaves one).
         path = parts[1]?.try { |part| evaluate(part.strip) }
         return "undefined" unless path
         resolved_path = resolve_lookup_path(path)
+
+        # template_vars=dict(...) - real Ansible's own template lookup
+        # plugin merges this kwarg's dict into the vars available to
+        # the rendered template, ON TOP of (never replacing) the
+        # calling context's own vars - the whole point of the kwarg is
+        # to hand the template a few extra values (bimdata.ferm's own
+        # get_vars.j2, rendered 4 times with a different app_name:/
+        # var_type: pair each time via this exact kwarg) without
+        # requiring a real Ansible variable of that name to exist.
+        # Entirely ignored before - the template rendered with
+        # `app_name`/`var_type` undefined, so its own `lookup('varnames',
+        # '^' ~ app_name ~ ...)` pattern matched nothing regardless of
+        # which of the 4 calls it was, silently producing an empty
+        # result for all of them instead of each one's own distinct set.
+        template_vars_part = parts[2..].find(&.strip.starts_with?("template_vars="))
+        render_vars = @vars
+        if template_vars_part
+          dict_expr = template_vars_part.strip.sub(/^template_vars=/, "")
+          extra = render_via_crinja_value(dict_expr).try(&.as_h?)
+          if extra && !extra.empty?
+            render_vars = @vars.dup
+            extra.each { |key, value| render_vars[key] = value }
+          end
+        end
+
         begin
-          crinja_renderer.render(File.read(resolved_path)).chomp
+          template_content = File.read(resolved_path)
+          # A `#jinja2: key:value, ...` directive on the template's very
+          # first line (real Ansible's own per-template Jinja2 config
+          # override) is metadata for the renderer, not template
+          # content - real Ansible strips it before rendering.
+          # TemplateActionPlugin already does this for the `template:`
+          # module; this lookup plugin never did, so the directive
+          # leaked into the returned text as a literal "#jinja2: ..."
+          # line - fatal for bimdata.ferm's own `| from_json` pipeline
+          # right after this lookup (its own get_vars.j2 opens with
+          # `#jinja2: lstrip_blocks: True`), which saw that line
+          # prepended to the real JSON and raised "invalid JSON input".
+          first_line_end = template_content.index('\n')
+          first_line = first_line_end ? template_content[0...first_line_end] : template_content
+          if first_line.strip.starts_with?("#jinja2:")
+            template_content = first_line_end ? template_content[(first_line_end + 1)..] : ""
+          end
+
+          renderer = render_vars.same?(@vars) ? crinja_renderer : CrinjaRenderer.new(render_vars)
+          renderer.render(template_content).chomp
         rescue
           "undefined"
         end

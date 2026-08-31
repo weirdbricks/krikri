@@ -687,6 +687,8 @@ module Krikri
         next if @vars.has_key?(root)
         next if loop_var == ident || loop_var == root
         next if block_tag_ref_is_filter_call(cond_no_strings, ident)
+        next if block_tag_ref_is_function_call(cond_no_strings, mat.end)
+        next if block_tag_ref_is_kwarg_name(cond_no_strings, mat.end)
         raise UndefinedVariableError.new("'#{root}' is undefined")
       end
     end
@@ -725,6 +727,33 @@ module Krikri
       idx = cond_no_strings.index(ident)
       return false unless idx
       idx > 0 && cond_no_strings[idx - 1] == '|'
+    end
+
+    # An identifier immediately followed by `(` is being CALLED, not
+    # referenced as a variable - a Jinja2 global function (`namespace()`,
+    # `dict()`, `range()`, a user-defined `{% macro %}`, ...), never a
+    # bare var lookup. Real bug found benchmarking bimdata.ferm's own
+    # get_vars.j2 (`{% set ns = namespace(items=[]) %}`): this scan
+    # (written before any real role used a `{% set %}` RHS other than a
+    # plain variable/expression) treated the whole RHS the same way an
+    # `{% if %}` condition is scanned, matched "namespace" as a bare
+    # identifier not in `@vars`, and raised "'namespace' is undefined" -
+    # even though Crinja itself resolves `namespace()` (and every other
+    # builtin global function) just fine once actually rendered; this
+    # strict pre-check never gave it the chance.
+    private def block_tag_ref_is_function_call(cond_no_strings : String, match_end : Int32) : Bool
+      cond_no_strings[match_end]? == '('
+    end
+
+    # `namespace(items=[])`/`dict(a=1, b=2)` - a bare identifier
+    # immediately followed by `=` (never `==`, a comparison) is a
+    # KEYWORD ARGUMENT NAME inside a function call, not a variable
+    # reference - real bug found alongside the function-call fix above
+    # (the exact same `{% set ns = namespace(items=[]) %}` shape: "items"
+    # only happened to already be in SCAN_STRICT_BLOCK_TAG_BUILTIN_
+    # FILTERS, masking this for that one specific kwarg name).
+    private def block_tag_ref_is_kwarg_name(cond_no_strings : String, match_end : Int32) : Bool
+      cond_no_strings[match_end]? == '=' && cond_no_strings[match_end + 1]? != '='
     end
 
     private def scan_strict_block_tags_for_undefined(text : String) : Nil
