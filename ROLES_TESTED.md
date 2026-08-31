@@ -1614,3 +1614,70 @@ The 4-agents-in-parallel process from rounds 300-315 spent a large amount of tok
 | arillso.sshd | ubuntu | ⚠️ Fixed in 0.9.659, same class as arillso.defaultuser above. Times: cold py 13.79s vs cr 3.15s; warm py 23.89s vs cr 0.24s |
 | arillso.sudoers | ubuntu | ⚠️ Fixed in 0.9.659, same class as arillso.defaultuser above. Times: cold py 9.65s vs cr 3.89s; warm py 7.29s vs cr 0.24s |
 | arillso.traefik | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 5.95s vs cr 3.33s; warm py 3.92s vs cr 0.62s |
+
+### Round 700-759: third 60-role campaign via the non-agentic bench script
+
+This round also surfaced and fixed a serious, separate infrastructure issue while investigating why GitHub Actions CI had failed on every push since v0.9.646: missing CI system libraries, plus a 9-commit dependency drift where krikri's vendored `crinja` fork was pinned to a stale tag (`crystal-play-0.9.18`) missing several fixes this whole session had been silently testing against via a locally-drifted `lib/crinja` checkout. See `git log` (`a11b701`..`17af1e6`) for that investigation - not role-testing work, so not detailed further here.
+
+4 real krikri-playbook bugs found and fixed in this batch (0.9.665-0.9.667): the `*` operator's string-repeat branch only accepted `Int32` for the numeric operand, not the `Int64` the `\| int` filter actually produces (jtyr.motd, fixed upstream in `crinja` itself, re-pinned as `crystal-play-0.9.20`); `and`/`or` conditional evaluation wrongly applied ansible-core 2.19's strict boolean-result requirement to each individual sub-operand instead of only the whole expression's final result, rejecting a perfectly valid non-boolean truthy operand mid-chain (ANXS.postgresql); and a relative `include_vars:` path in a role's own top-level `tasks/main.yml` (not reached via `include_tasks:`) had no matching search root at all for a role with no `vars/` dir (jnv.debian-backports). 1 more real gap found but NOT fixed - documented in KNOWN_MISSING.md as a major architectural undertaking, not a quick fix: real Ansible's private `_AnsibleLazyTemplateDict` internals preserve a dict variable built via `.update()` side-effect + concatenation as a genuine dict all the way through; this engine's plain string substitution can't replicate that (jtyr.motd's OWN remaining failure after its Int64 fix, and jtyr.nsswitch). 3 roles were Galaxy-404 (ANXS.mysql, jtyr.dracut, jtyr.environment). jnv.iojs-debian is a genuinely dead technology (io.js merged back into Node.js in 2015) - both engines fail on the same broken/gone upstream repo, at different points, not chased. The rest were clean, mostly the `jtyr.*` cluster's near-instant role-side-early-exit roles.
+
+| ANXS.apt | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 35.27s vs cr 39.52s; warm py 13.77s vs cr 4.80s |
+| ANXS.cron | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 7.85s vs cr 5.33s; warm py 6.30s vs cr 0.49s |
+| ANXS.fail2ban | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 29.77s vs cr 14.46s; warm py 15.95s vs cr 2.03s |
+| ANXS.hostname | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 37.20s vs cr 42.30s; warm py 13.62s vs cr 5.23s |
+| ANXS.logwatch | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 10.06s vs cr 4.42s; warm py 6.95s vs cr 1.12s |
+| ANXS.monit | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 30.87s vs cr 8.18s; warm py 29.03s vs cr 1.26s |
+| ANXS.mysql | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| ANXS.oracle-jdk | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 9.20s vs cr 5.71s; warm py 7.14s vs cr 0.81s |
+| ANXS.postgresql | ubuntu | ⚠️ Fixed in 0.9.666: `when: postgresql_apt_key_url and postgresql_apt_key_id and postgresql_install_repository` (the first two operands are plain non-boolean strings, a URL and a key ID) failed "Conditional result (True) was derived from value of type 'str'" - see round header. py `ok=27 changed=12 failed=0 skipped=62` vs cr (pre-fix) `ok=4 changed=0 failed=1 skipped=0`. Times: cold py 164.64s vs cr 28.68s; warm py 94.97s vs cr 4.64s |
+| ANXS.scala | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.43s vs cr 0.00s; warm py 0.43s vs cr 0.00s |
+| ANXS.timezone | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 14.15s vs cr 6.07s; warm py 10.40s vs cr 0.70s |
+| ANXS.tmpreaper | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 28.84s vs cr 8.94s; warm py 17.67s vs cr 0.94s |
+| ANXS.utilities | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 10.22s vs cr 10.09s; warm py 4.93s vs cr 1.82s |
+| ANXS.vim | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 16.55s vs cr 15.59s; warm py 6.40s vs cr 0.40s |
+| jnv.debian-backports | ubuntu | ⚠️ Fixed in 0.9.667: `include_vars: "../defaults/{{ ansible_distribution }}.yml"` in the role's own top-level tasks/main.yml (no vars/ dir at all, only defaults/) had no matching search root - see round header. py `ok=4 changed=1 failed=0 skipped=4` vs cr (pre-fix) `ok=1 changed=0 failed=1 skipped=0`. Times: cold py 37.60s vs cr 3.14s; warm py 6.02s vs cr 0.22s |
+| jnv.iojs-debian | ubuntu | ⚠️ real divergence, NOT chased - io.js is a genuinely dead technology (merged back into Node.js in 2015); both engines fail on the same broken/gone Nodesource repo, just at different points (py: apt-key add fails on a bad/expired key; cr: apt cache update fails, no Release file). py `ok=1 changed=0 failed=1 skipped=0` vs cr `ok=2 changed=1 failed=1 skipped=0`. Times: cold py 6.00s vs cr 25.78s; warm py 5.92s vs cr 3.04s |
+| jnv.mosh | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 19.09s vs cr 9.14s; warm py 12.38s vs cr 0.82s |
+| jnv.unattended-upgrades | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.44s vs cr 0.00s; warm py 0.45s vs cr 0.00s |
+| jtyr.ad_auth | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 5.02s vs cr 3.54s; warm py 2.69s vs cr 0.29s |
+| jtyr.aide | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.47s vs cr 0.00s; warm py 0.44s vs cr 0.00s |
+| jtyr.apache | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 4.55s vs cr 3.58s; warm py 4.24s vs cr 0.42s |
+| jtyr.archlinux_aur | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.43s vs cr 0.00s; warm py 0.42s vs cr 0.00s |
+| jtyr.artifactory | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.52s vs cr 0.00s; warm py 0.43s vs cr 0.00s |
+| jtyr.bacula_client | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.42s vs cr 0.00s; warm py 0.50s vs cr 0.00s |
+| jtyr.bacula_console | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.41s vs cr 0.00s; warm py 0.41s vs cr 0.00s |
+| jtyr.bacula_director | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.41s vs cr 0.00s; warm py 0.41s vs cr 0.00s |
+| jtyr.bacula_storage | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.42s vs cr 0.00s; warm py 0.42s vs cr 0.00s |
+| jtyr.bind | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.41s vs cr 0.00s; warm py 0.41s vs cr 0.00s |
+| jtyr.carbon | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 9.20s vs cr 4.62s; warm py 7.86s vs cr 0.33s |
+| jtyr.clamav | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.43s vs cr 0.00s; warm py 0.42s vs cr 0.00s |
+| jtyr.clamav_mirror | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.41s vs cr 0.00s; warm py 0.41s vs cr 0.00s |
+| jtyr.collectd | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.42s vs cr 0.00s; warm py 0.41s vs cr 0.00s |
+| jtyr.dhclient | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.41s vs cr 0.00s; warm py 0.41s vs cr 0.00s |
+| jtyr.docker | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.41s vs cr 0.00s; warm py 0.41s vs cr 0.00s |
+| jtyr.docker_gitlab_runner | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 5.50s vs cr 5.20s; warm py 4.32s vs cr 0.30s |
+| jtyr.dracut | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| jtyr.elasticsearch | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.47s vs cr 0.00s; warm py 0.46s vs cr 0.00s |
+| jtyr.environment | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| jtyr.filebeat | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.42s vs cr 0.00s; warm py 0.41s vs cr 0.00s |
+| jtyr.freeipa_client | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.46s vs cr 0.00s; warm py 0.46s vs cr 0.00s |
+| jtyr.gerrit | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.43s vs cr 0.00s; warm py 0.42s vs cr 0.00s |
+| jtyr.gitweb | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.42s vs cr 0.00s; warm py 0.41s vs cr 0.00s |
+| jtyr.glusterfs_client | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 73.40s vs cr 36.62s; warm py 55.36s vs cr 4.93s |
+| jtyr.glusterfs_server | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 58.96s vs cr 27.04s; warm py 48.53s vs cr 4.48s |
+| jtyr.grafana | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.46s vs cr 0.00s; warm py 0.48s vs cr 0.00s |
+| jtyr.graphite | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.45s vs cr 0.00s; warm py 0.45s vs cr 0.00s |
+| jtyr.hostname | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 11.56s vs cr 5.10s; warm py 7.75s vs cr 0.52s |
+| jtyr.influxdb | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.44s vs cr 0.00s; warm py 0.43s vs cr 0.00s |
+| jtyr.jenkins_master | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.44s vs cr 0.00s; warm py 0.42s vs cr 0.00s |
+| jtyr.jenkins_slave | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 4.50s vs cr 3.71s; warm py 3.22s vs cr 0.28s |
+| jtyr.kibana | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.41s vs cr 0.00s; warm py 0.43s vs cr 0.00s |
+| jtyr.logstash | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.42s vs cr 0.00s; warm py 0.46s vs cr 0.00s |
+| jtyr.mongodb | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.44s vs cr 0.00s; warm py 0.45s vs cr 0.00s |
+| jtyr.motd | ubuntu | ⚠️ Partially fixed in 0.9.665 (the `*` operator's Int64 gap, upstream in `crinja` - see round header); the role's own downstream "cannot unpack multiple values" failure is a separate, deeper gap NOT fixed (documented in KNOWN_MISSING.md: real Ansible's private `_AnsibleLazyTemplateDict` internals preserve a `.update()`-then-concatenated dict variable as a real dict, which this engine's string-based substitution can't replicate). py `ok=2 changed=1 failed=0` vs cr (pre-fix) `ok=1 changed=0 failed=1`. Times: cold py 8.05s vs cr 4.73s; warm py 5.89s vs cr 0.26s |
+| jtyr.nginx | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.42s vs cr 0.00s; warm py 0.42s vs cr 0.00s |
+| jtyr.nsswitch | ubuntu | ⚠️ real confirmed gap, NOT fixed - same `_AnsibleLazyTemplateDict` architectural gap as jtyr.motd above (documented once in KNOWN_MISSING.md, not duplicated). py `ok=2 changed=1 failed=0` vs cr `ok=1 changed=0 failed=1`. Times: cold py 6.88s vs cr 3.14s; warm py 5.84s vs cr 0.24s |
+| jtyr.ntp | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.41s vs cr 0.00s; warm py 0.42s vs cr 0.00s |
+| jtyr.oddjob | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.44s vs cr 0.00s; warm py 0.42s vs cr 0.00s |
+| jtyr.openvpn | ubuntu | ✅ clean, identical both cold and warm (near-instant both). Times: cold py 0.44s vs cr 0.00s; warm py 0.43s vs cr 0.00s |
+| jtyr.oracle_java | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 4.29s vs cr 3.62s; warm py 3.30s vs cr 0.24s |
