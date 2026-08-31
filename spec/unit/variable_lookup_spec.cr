@@ -295,6 +295,24 @@ describe Krikri::VariableSubstitutor::VariableLookup do
     (result || raise "unexpected nil").as_a.map(&.as_s).should eq(["hello", "world"])
   end
 
+  it "re-renders a bracket-indexed BASE variable that is itself still-unrendered {{ }} text before indexing into it" do
+    # Same recursive re-templating bug class as the dotted-access case
+    # just above (resolve_nested's own base fetch), this time for
+    # resolve_indexed's base fetch, which never had the same guard.
+    # Found via atosatto.docker-swarm's own vars/main.yml (round836):
+    # `docker_repo: "{{ docker_repo_ce_stable }}"` (docker_repo_ce_stable
+    # a real dict defined earlier in the same file) - a task references
+    # `docker_repo['apt_gpg_key']`. resolve_indexed fetched `docker_repo`
+    # via resolve_simple (no re-render), got the literal `{{
+    # docker_repo_ce_stable }}` text back, and tried to bracket-index a
+    # STRING - always nil/"undefined" instead of the real dict's key.
+    v = Hash(String, JSON::Any).new
+    v["inner"] = JSON.parse(%({"key": "value"}))
+    v["outer"] = JSON::Any.new("{{ inner }}")
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
+    (lookup.resolve("outer['key']") || raise "unexpected nil").as_s.should eq("value")
+  end
+
   it "resolves Python's `SEP.join(iterable)` method-call syntax on a quoted-literal separator" do
     # Real bug found benchmarking Oefenweb.fail2ban's own `name: "{{ '
     # '.join(fail2ban_dependencies).split() }}"` (building apt's package

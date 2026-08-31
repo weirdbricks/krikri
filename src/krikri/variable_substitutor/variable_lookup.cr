@@ -644,6 +644,17 @@ module Krikri
         current = base_expr.includes?('.') ? resolve_nested(base_expr) : resolve_simple(base_expr)
         return nil unless current
 
+        # Same recursive re-templating guard resolve_nested's own base
+        # fetch already applies (see that method's own comment for the
+        # full story) - a bracket-indexed base can equally be a role var
+        # whose OWN value is itself unrendered `{{ }}` text
+        # (`docker_repo: "{{ docker_repo_ce_stable }}"`, atosatto.
+        # docker-swarm's own vars/main.yml). Without this, `walk`
+        # received the literal text "{{ docker_repo_ce_stable }}" as
+        # *current* and tried to index a STRING with `['apt_gpg_key']`,
+        # always nil/"undefined" instead of the real nested value.
+        current = rerender_if_templated(current)
+
         walk(current, expr[base_end..])
       end
 
