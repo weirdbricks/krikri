@@ -10,12 +10,56 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.650`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.655`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.17` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
+
+### `with_file:` lookup type entirely unimplemented
+
+Found round 517 (`juju4.adduser`): `with_file: "{{ adduser_public_keys
+}}"` - real Ansible's `file` lookup plugin, reading each LISTED
+file's CONTENT (resolving a relative filename against the current
+role's own `files/` dir, same convention `first_found`/`copy`/
+`template` already implement elsewhere) and binding that content to
+`item`. Only the different `with_fileglob:` (pattern-matching
+filenames, not reading content) exists today. Without it, `item` never
+gets bound for a `with_file:` loop at all - real Ansible resolves
+`adduser_public_keys: [dummykey.pub]` to the demo key's real file
+contents (`ssh-rsa ABCDEF...`) and succeeds; krikri fails the task
+outright with `'item' is undefined`. Not fixed - a real new loop-source
+type, not a one-line fix.
+
+### `copy:` to an existing directory `dest:` fails over real SSH despite working correctly in local repro
+
+Found round 524 (`juju4.brim`): `copy: {src: brim.desktop, dest: /usr/
+share/applications/}` (dest already exists as a directory) fails live
+("Failed to write file: ... 'Is a directory'"). Both `copy.cr`'s own
+dest-is-directory basename-append logic (`dest = File.join(dest,
+basename) if Dir.exists?(dest)`) and the controller-side checksum-
+precompute optimization (`precomputed_copy_match`, whose own remote
+probe script already handles `[ -d "$p" ] && p="$p/$basename"`) were
+confirmed CORRECT via a local `connection: local` repro with an
+absolute `src:` - the actual divergence point over real SSH with a
+role-relative `src:` wasn't isolated. Needs a fresh live-host round
+reproducing the exact role structure (bare `src:` resolved against the
+role's own `files/` dir) rather than the absolute-path stand-in tried
+locally.
+
+### Compound boolean `and` conditional mistyped as `str` on one specific loop item
+
+Found round 563 (`jdauphant.dns`): `when: dns_forced_in_dhclientconf
+and item.value != ""`, evaluated once per loop item over a 3-item list
+- fails ONLY on the last item ("domain-search") with "Conditional
+result (True) was derived from value of type 'str'. Conditionals must
+have a boolean result", even though the other 2 items (identical
+`{name, value}` shape) evaluate cleanly and real Ansible succeeds on
+all 3. Root cause not isolated - a narrow boolean-coercion edge case
+specific to this `and` expression's operand types on the last
+iteration; needs a live-host repro with the exact loop items rather
+than a guessed-at local reproduction.
 
 ### `template:`/`copy:`'s `validate:` stages in `dest_dir`, not real Ansible's `remote_tmp`
 
