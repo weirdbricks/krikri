@@ -125,7 +125,7 @@ krikri-playbook/
 ├── krikri-playbook.cr              # CLI entry point
 ├── src/krikri/            # Engine: parser, task executor, SSH,
 │                                 # inventory, roles, loops, vault, facts
-├── plugins/                     # One binary per Ansible module (87 total)
+├── plugins/                     # One binary per Ansible module
 ├── spec/                        # crystal spec unit + integration tests
 ├── compat/                      # Docker-based real-ansible-playbook
 │                                 # compatibility harness
@@ -133,6 +133,8 @@ krikri-playbook/
 ├── build.sh                     # Build script (all plugins + CLI)
 └── shard.yml                    # Dependencies
 ```
+
+Go to [`plugins/`](plugins) to see the implemented plugins.
 
 ---
 
