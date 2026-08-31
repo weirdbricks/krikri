@@ -17,6 +17,30 @@ is the record.
 
 ## Real gaps (worth revisiting)
 
+### `template:`/`copy:`'s `validate:` stages in `dest_dir`, not real Ansible's `remote_tmp`
+
+Found round 312 (`bertvv.dhcp`)'s "Install config file" task
+(`validate: 'dhcpd -t -cf %s'`): real Ansible stages the rendered file
+in its own `remote_tmp` (`~/.ansible/tmp/ansible-tmp-.../`) before
+running the validate command against it; `plugins/template.cr` instead
+stages next to `dest_dir` (`.krikri-playbook-template-*.tmp`). Usually
+invisible, but a validate command confined by AppArmor/SELinux to only
+the program's own real config paths (dhcpd's own profile permits
+`/etc/dhcp/` but not `/root/.ansible/tmp/`) sees a different outcome
+depending on which directory the temp file lands in - real Ansible got
+"Permission denied" and failed the whole play; krikri's dest-adjacent
+placement happened to be permitted, so it validated and proceeded where
+real Ansible couldn't.
+
+Not fixed: switching to `remote_tmp` staging would reintroduce a real,
+already-fixed bug (`File.rename`'s cross-device-link failure when
+`remote_tmp` and `dest_dir` are different filesystems, found on
+konstruktoid-hardening - see `template.cr`'s own comment on
+`temp_file`) unless a copy-then-delete fallback is added alongside it,
+which is a real design change, not a one-line fix. Needs deliberate work
+with full spec coverage across every `validate:`-using plugin
+(`template.cr`/`copy.cr`), not a solo benchmark-round patch.
+
 ### `RemovedActionError`'s hardcoded message text has drifted from current ansible-core wording
 
 Found round 307 (`Stouts.django`): krikri's message for a removed
