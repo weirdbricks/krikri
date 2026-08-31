@@ -66,17 +66,10 @@ there rather than duplicated here.
 
 ## ❓ What's missing
 
-**Short version: as of this version, there is one known real correctness
-gap left open** (a Crystal/OpenSSL TLS-compatibility limitation talking
-to a server running very old TLS - see KNOWN_MISSING.md) - the primary
-way gaps get found here is running real production Ansible roles (from
+Gaps here are found by running real production Ansible roles (from
 Galaxy) against both engines on real hosts and diffing the result, not
-a pre-planned feature checklist, and every OTHER gap found that way has
-been fixed. The structural differences above are the only *deliberate*
-exclusions.
-
-That status changes as new roles get tested, so it's tracked in one place
-rather than duplicated here:
+from a pre-planned feature checklist. That status changes as new roles
+get tested, so it's tracked in one place rather than duplicated here:
 
 - **[KNOWN_MISSING.md](KNOWN_MISSING.md)** - the current, short,
   up-to-date list of any open real gaps plus the full explicit scope-cut
