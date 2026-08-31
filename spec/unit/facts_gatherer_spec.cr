@@ -1,7 +1,7 @@
 require "../spec_helper"
 require "../../src/krikri/plugin_helpers/facts_gatherer"
 
-# OPUS_PERFORMANCE_IMPROVEMENTS.md item 2 - `facts` under the daemon.
+# Perf item 2 - `facts` under the daemon.
 #
 # The item itself is one line (drop "facts" from
 # DAEMON_INELIGIBLE_PLUGINS); the actual work, and the actual risk, was

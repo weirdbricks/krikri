@@ -19,7 +19,7 @@ is the record.
 
 ## The parity-breaking tier was built, measured, and removed (0.9.641)
 
-`OPUS_PERFORMANCE_IMPROVEMENTS.md` Tier 2 - a second binary
+The perf-tracking Tier 2 - a second binary
 (`krikri-playbook-fast`) carrying optimizations that deliberately do not
 preserve parity - shipped in 0.9.639/0.9.640 and was deleted in 0.9.641.
 Recorded here so it is not re-proposed without the numbers.
@@ -204,7 +204,7 @@ general claim from this round is the python-vs-crystal one: ~6.7x mean
 warm, ~1.0x cold.
 
 
-## Performance item 3 (OPUS_PERFORMANCE_IMPROVEMENTS.md, 0.9.635)
+## Performance item 3 (0.9.635)
 
 **Batched groups and the daemon now compose.** NOT-BREAKING: only this
 engine's own daemon protocol changed. `TaskBatcher.plan`'s grouping and
@@ -271,7 +271,7 @@ running tasks the playbook asked for. A wrongly-repeated idempotent
 module beats a silently dropped one.
 
 
-## Performance item 2 (OPUS_PERFORMANCE_IMPROVEMENTS.md, 0.9.634)
+## Performance item 2 (0.9.634)
 
 **`facts` under the persistent daemon.** NOT-BREAKING; the fact payload
 is unchanged and every measured pair produced an identical `PLAY RECAP`.
@@ -365,7 +365,7 @@ the regression. Read the number the user feels, not the nearest bucket.
 
 
 
-## Performance items 0-1 (OPUS_PERFORMANCE_IMPROVEMENTS.md, 0.9.632 -> 0.9.633)
+## Performance items 0-1 (0.9.632 -> 0.9.633)
 
 First two items of the new performance plan, both NOT-BREAKING (an
 unmodified real Ansible playbook observes the identical result). One

@@ -72,8 +72,8 @@ module Krikri
       # codebase's hand-rolled `ExpressionEvaluator` for most tested
       # expression shapes; with it, Crinja is 2-9x faster across the
       # board (e.g. `flag and foo == 'bar'`: 727ns vs 5806ns/call) -
-      # see CRINJA.md's "Decision 3" section for what this means for the
-      # dual-evaluator convergence question.
+      # this is why the hand-rolled evaluator converges toward trying
+      # Crinja first wherever possible.
       #
       # Same single-fiber-at-a-time safety argument as `@@env` above
       # applies to this `||=` read-check-write: Crinja's render path
@@ -88,8 +88,8 @@ module Krikri
 
       # Render a template containing Jinja2 control structures, raising
       # on any failure instead of swallowing it - for a caller (like
-      # `ExpressionEvaluator`'s own Crinja-delegation branches, see
-      # CRINJA.md's step-5 notes) that wants to fall back to a DIFFERENT
+      # `ExpressionEvaluator`'s own Crinja-delegation branches) that
+      # wants to fall back to a DIFFERENT
       # rendering strategy on failure, rather than `#render`'s own
       # "give back the original unrendered text" behavior, which would
       # be actively wrong for a caller expecting a real evaluated value.
@@ -148,9 +148,9 @@ module Krikri
       # existing internal "render sub-expression to a String, `JSON.
       # parse` it back into structured data" round trip used throughout
       # `expression_evaluator.cr`/`filter_engine.cr`/`comparison_
-      # evaluator.cr`/`variable_lookup.cr` keeps working unchanged - see
-      # CRINJA.md's step-5 "general filter-chain dispatch" notes for the
-      # full investigation that found this was necessary (a naive
+      # evaluator.cr`/`variable_lookup.cr` keeps working unchanged - the
+      # general filter-chain dispatch investigation found this was
+      # necessary (a naive
       # `format_value` Python-repr rewrite broke that round trip outright
       # since Python-repr text isn't valid JSON).
       #

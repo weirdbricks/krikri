@@ -5,7 +5,7 @@
 #
 # The gathering itself lives in
 # `src/krikri/plugin_helpers/facts_gatherer.cr` so the fat plugin
-# binary can link it too (OPUS_PERFORMANCE_IMPROVEMENTS.md item 2) -
+# binary can link it too (perf item 2) -
 # this file is now only the standalone driver, kept so `facts` still
 # builds and runs as its own binary for a `crystal build plugins/facts.cr`
 # or any caller that wants one.

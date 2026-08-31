@@ -1,6 +1,6 @@
 # Crinja differential test harness
 
-Implements CRINJA.md's "Strategy and next steps" step 1: scrapes real
+Implements step 1 of the Crinja convergence strategy: scrapes real
 `{{ }}` / `{% if %}` expressions out of every role/collection benchmarked
 across rounds 1-21 (`~/scratch/round*_bench`) plus `testing/roles`, renders
 each through real Python jinja2 (the oracle) and through raw Crinja
@@ -34,7 +34,7 @@ python3 scripts/crinja_corpus/diff.py
 directory - not part of the corpus/diff pipeline above. It measures the
 hand-rolled `ExpressionEvaluator` against raw Crinja (both uncached and
 with a source-keyed `Template` parse cache) for a handful of
-representative expression shapes, informing CRINJA.md's step-5
+representative expression shapes, informing the dual-evaluator-convergence
 performance question. Run with `crystal run --release
 scripts/crinja_corpus/bench_evaluators.cr` (release build matters, it's a
 perf measurement).

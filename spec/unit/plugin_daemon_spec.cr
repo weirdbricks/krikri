@@ -1,6 +1,6 @@
 require "../spec_helper"
 
-# OPUS_PERFORMANCE_IMPROVEMENTS.md items 1-3 - drives the REAL
+# Perf items 1-3 - drives the REAL
 # compiled `.fat-plugin --daemon` binary as a local subprocess (no SSH
 # involved at all), the same "exercise the real entrypoint, not a
 # reimplementation of it" spirit `PluginSpecHelper` already uses for
@@ -52,7 +52,7 @@ end
 describe "fat plugin binary --daemon mode" do
   daemon_binary = File.join(PluginSpecHelper::PLUGINS_DIR, ".fat-plugin")
 
-  # OPUS_PERFORMANCE_IMPROVEMENTS.md item 2. `facts` was the one real
+  # Perf item 2. `facts` was the one real
   # remote module missing from this binary's dispatch table, so it was
   # explicitly held off the daemon path (DAEMON_INELIGIBLE_PLUGINS) -
   # otherwise every fact gather, the one task that runs on every host in
@@ -60,7 +60,7 @@ describe "fat plugin binary --daemon mode" do
   # the check that the exclusion is genuinely no longer needed: a real
   # `--daemon` process must answer a facts request with real facts, and
   # must still serve an ordinary module afterwards on the same pipe.
-  # OPUS_PERFORMANCE_IMPROVEMENTS.md item 3. Batching and the daemon
+  # Perf item 3. Batching and the daemon
   # used to be mutually exclusive PER TASK: a batched group went out as
   # a fresh ssh + bash + base64 script and the daemon served only solo
   # tasks, so every task took one optimization and forfeited the other.

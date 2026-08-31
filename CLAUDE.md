@@ -102,11 +102,8 @@ starting a round.
 
 ## Credentials for the benchmark workflow
 
-Atlantic.net API keys come from KeePass (`~/Dropbox/Dirless/DirlessPasswords.kdbx`, `atlanticnet`
-entry) via `/usr/local/bin/keypass-tool.sh` piped into `keepassxc-cli` - always redirect its
-stderr to `/dev/null`, never `2>&1`, or the "Enter password to unlock" prompt text gets captured
-into the credential itself. Maps to `ATLANTICNET_ACCESS_KEY`/`ATLANTICNET_PRIVATE_KEY` (not
-`_USERNAME`/`_PASSWORD`).
+See `CLAUDE.local.md` (gitignored, not part of this public repo) for where the
+Atlantic.net API keys used in the real-host benchmark workflow come from.
 
 ## Docs that must stay in sync
 

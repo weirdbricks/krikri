@@ -622,7 +622,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     # `10 // 0` previously raised an uncaught OverflowError (`(10.0 /
     # 0.0).floor` is Float64::INFINITY, and `Infinity.to_i64` overflows
     # Int64) - found probing whether */,/// were safe to converge to
-    # Crinja-first for CRINJA.md step 5. `/`'s own by-zero case already
+    # Crinja-first as part of the dual-evaluator convergence. `/`'s own by-zero case already
     # degrades leniently to "Infinity" rather than raising; `//` now
     # matches that convention (nil/"undefined") instead of crashing.
     v = Hash(String, JSON::Any).new
@@ -777,7 +777,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
 
   it "routes a slice with both bounds present to ArraySlicer, not just an empty-bound slice" do
     # Real bug found probing whether the `[`-dispatch branch was safe to
-    # converge to Crinja-first (CRINJA.md step 5): the slice-detection
+    # converge to Crinja-first as part of the dual-evaluator convergence: the slice-detection
     # check was `expr.includes?("[:") || expr.includes?(":]")`, which
     # only matches an EMPTY start or end (`items[:3]`, `items[2:]`) -
     # `items[1:3]` (both bounds present) has neither literal substring

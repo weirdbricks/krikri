@@ -1,9 +1,8 @@
 # IP-reuse test for the item-6a plugin state cache
 
-`OPUS_PERFORMANCE_IMPROVEMENTS.md` item 6a records, on the CONTROLLER,
-which plugin binaries were verified present on which host, so a later
-run can skip the verification round trip. The record is keyed on
-`user@host:port`.
+Perf item 6a records, on the CONTROLLER, which plugin binaries were
+verified present on which host, so a later run can skip the
+verification round trip. The record is keyed on `user@host:port`.
 
 The dangerous case is therefore **a different machine answering at the
 same address**: a cloud provider recycling an IP, or a host rebuilt in

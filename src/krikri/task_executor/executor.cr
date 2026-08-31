@@ -3506,7 +3506,7 @@ module Krikri
     # Both transports below honour that identically, and both apply the
     # same fail-fast rule, so which one ran a group is not observable.
     #
-    # OPUS_PERFORMANCE_IMPROVEMENTS.md item 3: batching and the daemon
+    # Perf item 3: batching and the daemon
     # used to be mutually exclusive per task - a batched group always
     # went out as a fresh ssh + bash + base64 script, and the daemon
     # served only solo tasks, so every task took one optimization and
@@ -3519,7 +3519,7 @@ module Krikri
 
       interpreted = interpret_batch_script(host, connection_host, steps)
 
-      # OPUS_PERFORMANCE_IMPROVEMENTS.md item 6a's safety net, on the
+      # Perf item 6a's safety net, on the
       # BATCH path. Item 6a lets a run skip the "which plugin binaries
       # are present on this host" round trip when a previous run already
       # verified them. If that belief is wrong - /var/tmp swept, host
@@ -5705,7 +5705,7 @@ module Krikri
               # decimal digits do NOT already look like a valid octal
               # mode (`\A[0-7]{3,4}\z`, matching `parse_numeric_mode`'s
               # own regex in plugins/file.cr). Real bug found live-
-              # verifying CRINJA.md step 5 against dev-sec os_hardening:
+              # verifying the Crinja convergence work against dev-sec os_hardening:
               # this reformatting assumes every Int64-typed mode value
               # came from Crystal's YAML parser octal-converting an
               # UNQUOTED literal (`redis_conf_dir_mode: 02770` -> decimal

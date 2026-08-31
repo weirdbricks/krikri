@@ -1,7 +1,7 @@
 require "../spec_helper"
 require "../../src/krikri/timing_profile"
 
-# OPUS_PERFORMANCE_IMPROVEMENTS.md item #0 (`--timing-profile`).
+# Perf item #0 (`--timing-profile`).
 #
 # The load-bearing property of TimingProfile is not "it can time a
 # block" - it is that overlapping buckets do not double-count, because

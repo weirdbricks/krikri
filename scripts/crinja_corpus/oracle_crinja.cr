@@ -1,8 +1,9 @@
-# Step 1c of CRINJA.md's differential-test-harness plan.
+# Step 1c of the Crinja differential-test-harness plan (see this
+# directory's README.md).
 #
 # Renders every corpus.jsonl entry through raw Crinja directly (Crinja.new /
 # env.from_string(...).render - bypassing this codebase's own CrinjaRenderer
-# wrapper, per CRINJA.md's own recommendation), with the FULL real-runtime
+# wrapper, to isolate raw-Crinja behavior), with the FULL real-runtime
 # require chain loaded (`jinja_filters.cr`, which transitively requires
 # every `crinja_*_ext.cr` patch AND registers every Ansible-specific
 # filter/test this codebase adds - `ternary`, `regex_replace`, `match`,

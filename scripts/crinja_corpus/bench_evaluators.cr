@@ -1,14 +1,13 @@
-# CRINJA.md step 5's own performance gate: "substitute runs 2-4x per
-# task per host, and Crinja re-parses on every from_string - its
-# template_cache only covers loader-based templates, not string ones."
+# Performance gate for the dual-evaluator convergence work: substitute
+# runs 2-4x per task per host, and Crinja re-parses on every from_string -
+# its template_cache only covers loader-based templates, not string ones.
 #
 # Measures three things per representative expression shape:
 #   1. the current hand-rolled ExpressionEvaluator#evaluate
 #   2. raw Crinja, re-parsing via env.from_string(...).render every call
 #      (today's actual CrinjaRenderer behavior for a plain {{ }} escalation)
 #   3. raw Crinja with a source-keyed Template cache (parse once, render
-#      many) - the fix CRINJA.md names as the lever to make Crinja fast
-#      enough for the hot path
+#      many) - the fix that makes Crinja fast enough for the hot path
 #
 # Run from the repo root: crystal run --release scripts/crinja_corpus/bench_evaluators.cr
 # (release build matters here - this is a perf measurement, not a

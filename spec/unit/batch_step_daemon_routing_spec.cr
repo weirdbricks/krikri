@@ -1,7 +1,7 @@
 require "../spec_helper"
 require "../../src/krikri/batch_script"
 
-# OPUS_PERFORMANCE_IMPROVEMENTS.md item 3 - the controller-side half.
+# Perf item 3 - the controller-side half.
 #
 # A daemon is a single resident process running as ONE user, so the
 # eligibility rule for sending a batch group over one is that every step

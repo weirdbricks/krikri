@@ -3,7 +3,7 @@ require "../../src/krikri/conditional_evaluator"
 
 # Jinja2's `in` TEST spelling (`x is in y` / `x is not in y`, Jinja
 # 2.10+). Found live benchmarking devsec.hardening.os_hardening during
-# the OPUS_PERFORMANCE_IMPROVEMENTS item-1 round: its user_accounts.yml
+# the perf item-1 round: its user_accounts.yml
 # gates every interactive-user task on `item is not in
 # os_always_ignore_users`, and the ConditionalEvaluator's `not in`
 # OPERATOR handler ran first and split on " not in ", handing the

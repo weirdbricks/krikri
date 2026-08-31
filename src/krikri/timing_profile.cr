@@ -1,5 +1,5 @@
 module Krikri
-  # OPUS_PERFORMANCE_IMPROVEMENTS.md item #0 - `--timing-profile`.
+  # Perf item #0 - `--timing-profile`.
   #
   # Every other item in that document is an estimate until the run's
   # wall-clock time can actually be attributed to something. This is

@@ -2,7 +2,7 @@ require "../spec_helper"
 require "../../src/krikri/plugin_manager"
 require "../../src/krikri/ssh_manager"
 
-# OPUS_PERFORMANCE_IMPROVEMENTS.md item 1 - `become:` under the
+# Perf item 1 - `become:` under the
 # persistent daemon.
 #
 # Before this, `PluginManager.daemon_eligible?` returned false for

@@ -65,8 +65,8 @@ describe "mode: piped through a variable that's itself an unquoted-octal YAML li
   end
 
   it "does not re-reformat an int mode that was already decimal-coerced from an octal-style STRING" do
-    # Real bug found live-verifying CRINJA.md step 5 against dev-sec
-    # os_hardening on a real host: its own dynamic `set_fact: "{{
+    # Real bug found live-verifying the Crinja convergence work against
+    # dev-sec os_hardening on a real host: its own dynamic `set_fact: "{{
     # item.key }}": "{{ item.value }}"` (see plugins/set_fact.cr's own
     # `coerce`) decimal-parses an already-octal-style STRING like "1777"
     # into the int 1777 directly - no YAML octal-literal parsing

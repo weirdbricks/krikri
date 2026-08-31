@@ -40,8 +40,8 @@ describe "set_fact plugin" do
   end
 
   it "does not coerce a leading-zero numeric-looking string (octal-style file mode) to an int" do
-    # Real bug found live-verifying CRINJA.md step 5 against dev-sec
-    # os_hardening: "0755".to_i64? happily parses as decimal 755,
+    # Real bug found live-verifying the Crinja convergence work against
+    # dev-sec os_hardening: "0755".to_i64? happily parses as decimal 755,
     # silently dropping the leading zero - os_hardening's own dynamic
     # `set_fact: "{{ item.key }}": "{{ item.value }}"` round-trips every
     # os_mnt_*_dir_mode value through this coercion, and a downstream

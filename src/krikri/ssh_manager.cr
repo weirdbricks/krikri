@@ -273,7 +273,7 @@ module Krikri
       end
     end
 
-    # OPUS_PERFORMANCE_IMPROVEMENTS.md items 1-3 (formerly
+    # Perf items 1-3 (formerly
     # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15, a doc since
     # deleted) - the persistent
     # remote executor's controller half. `exec`/`exec_script` above pay
@@ -296,7 +296,7 @@ module Krikri
     # comment already documents - a given host's daemon connection is
     # never touched by two fibers at once, so no correlation ID or lock
     # is needed on top of this Hash.
-    # OPUS_PERFORMANCE_IMPROVEMENTS.md item 1: keyed on the become_user
+    # Perf item 1: keyed on the become_user
     # too, not just (host, user, port). A daemon is one resident process
     # running as one fixed user, so `become: true` tasks cannot share
     # the unprivileged host connection's daemon - but they can have
@@ -383,7 +383,7 @@ module Krikri
       raise ex
     end
 
-    # OPUS_PERFORMANCE_IMPROVEMENTS.md item 3: send a whole batch of
+    # Perf item 3: send a whole batch of
     # steps as ONE daemon request. Same connection, same framing and the
     # same rescue-and-let-the-caller-fall-back contract as #daemon_send
     # above; only the payload shape differs.
@@ -579,7 +579,7 @@ module Krikri
       # rounding error while `become:` tasks were daemon-ineligible (a
       # typical all-`become:` role held no daemons at all, so this
       # returned early at the `processes.empty?` guard above and cost
-      # nothing). OPUS_PERFORMANCE_IMPROVEMENTS.md item 1 changed that:
+      # nothing). Perf item 1 changed that:
       # now essentially every real run holds at least one daemon, and a
       # flat second on the way out was eating a third of item 1's own
       # measured warm-run saving on devsec.hardening.os_hardening -

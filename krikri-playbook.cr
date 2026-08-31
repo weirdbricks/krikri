@@ -75,9 +75,9 @@ inventory_explicit = false
 check_mode = false
 diff_mode = false
 batching_enabled = true
-# OPUS_PERFORMANCE_IMPROVEMENTS.md items 1-3 (formerly
-# SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15, a doc since deleted):
-# persistent remote executor - one long-lived ssh+plugin-daemon session
+# Perf items 1-3 (formerly SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15,
+# a doc since deleted): persistent remote executor - one long-lived
+# ssh+plugin-daemon session
 # per (host, become_user) instead of forking ssh+exec per task. Was
 # opt-in behind --persistent-daemon
 # from 0.9.496 through 0.9.499; promoted to default at 0.9.501 based
@@ -154,11 +154,11 @@ begin
       diff_mode = true
     end
 
-    parser.on("--timing-profile", "(OPUS_PERFORMANCE_IMPROVEMENTS.md item #0) Print a wall-clock attribution block after the PLAY RECAP: how much of the run went to playbook/inventory parse, plugin upload, fact gathering, each transport path (ssh fork, daemon pipe, scp/rsync, local exec) and controller-side templating/conditionals/display. Off by default; measurement itself is a bare block yield when off.") do
+    parser.on("--timing-profile", "Print a wall-clock attribution block after the PLAY RECAP: how much of the run went to playbook/inventory parse, plugin upload, fact gathering, each transport path (ssh fork, daemon pipe, scp/rsync, local exec) and controller-side templating/conditionals/display. Off by default; measurement itself is a bare block yield when off.") do
       Krikri::TimingProfile.enable
     end
 
-    parser.on("--no-plugin-state-cache", "(OPUS_PERFORMANCE_IMPROVEMENTS.md item 6a) Always re-verify which plugin binaries are present on each target, instead of trusting the controller-side record of a previous run's verification. The record is TTL-bounded and self-heals if a binary turns out to be missing, so this is for debugging and for pinning down a suspected staleness problem rather than something a normal run needs.") do
+    parser.on("--no-plugin-state-cache", "Always re-verify which plugin binaries are present on each target, instead of trusting the controller-side record of a previous run's verification. The record is TTL-bounded and self-heals if a binary turns out to be missing, so this is for debugging and for pinning down a suspected staleness problem rather than something a normal run needs.") do
       Krikri::PluginManager.host_state_cache_enabled = false
     end
 
@@ -166,7 +166,7 @@ begin
       batching_enabled = false
     end
 
-    parser.on("--persistent-daemon", "(OPUS_PERFORMANCE_IMPROVEMENTS.md items 1-3, on by default since 0.9.501): keep one persistent ssh+plugin-daemon connection per remote host and become_user instead of forking ssh+exec per task, for solo (non-batched) remote tasks. Batched task groups and remote fact-gathering always use the existing per-task path regardless of this flag. Equivalent to the default; accepted for backward compatibility with playbooks/aliases that set it explicitly.") do
+    parser.on("--persistent-daemon", "On by default since 0.9.501: keep one persistent ssh+plugin-daemon connection per remote host and become_user instead of forking ssh+exec per task, for solo (non-batched) remote tasks. Batched task groups and remote fact-gathering always use the existing per-task path regardless of this flag. Equivalent to the default; accepted for backward compatibility with playbooks/aliases that set it explicitly.") do
       persistent_daemon = true
     end
 
@@ -929,20 +929,20 @@ end
 # accumulates across every play the same way real Ansible's set does.
 any_failed = !permanently_failed_hosts.empty?
 
-# OPUS_PERFORMANCE_IMPROVEMENTS.md items 1-3: close any persistent
+# Perf items 1-3: close any persistent
 # daemon connections before either exit path below - a no-op when
 # --persistent-daemon was never passed (the Hash it iterates is simply
 # empty), so this is safe to call unconditionally.
 Krikri::SSHManager.close_all_daemons
 
-# OPUS_PERFORMANCE_IMPROVEMENTS.md item 6a: persist which plugin
+# Perf item 6a: persist which plugin
 # binaries were verified present on which hosts, so the next run can
 # skip the verification round trip. Written once here rather than on
 # every mutation - it is a cache, and losing it only costs one round
 # trip next time.
 Krikri::PluginManager.flush_host_state
 
-# OPUS_PERFORMANCE_IMPROVEMENTS.md item #0: emitted after the recap and
+# Perf item #0: emitted after the recap and
 # after the daemon connections are torn down (so daemon shutdown cost is
 # outside the numbers), and before every exit path below, so a failed or
 # unreachable run still gets its profile.

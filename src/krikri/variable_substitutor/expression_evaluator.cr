@@ -34,7 +34,7 @@ module Krikri
         @crinja_renderer ||= VariableSubstitutor::CrinjaRenderer.new(@vars)
       end
 
-      # Guards the CRINJA.md step-5 delegation branches below against
+      # Guards the Crinja-first delegation branches below against
       # genuine infinite recursion: `CrinjaRenderer#prepare_crinja_vars`
       # re-templates any variable whose OWN value still contains `{{` by
       # building a fresh `VarSubstitutor`/`ExpressionEvaluator` and
@@ -179,8 +179,8 @@ module Krikri
 
       def evaluate(expr : String) : String
         if ternary = split_ternary(expr)
-          # CRINJA.md step 5, second construct after boolean_logic?
-          # below: real Jinja2's inline ternary is right-associative
+          # Crinja-first delegation, ternary construct (after boolean_logic?
+          # below): real Jinja2's inline ternary is right-associative
           # (`a if b else c if d else e` chains) and its condition can
           # itself be any expression, including one this hand-rolled
           # evaluator's OWN #split_ternary/#evaluate_ternary don't fully
@@ -240,8 +240,8 @@ module Krikri
           # and returns nil otherwise, leaving the boolean-coercion
           # fallback below untouched for genuine conditions.
           #
-          # CRINJA.md step 5 (converge the dual evaluators): this branch
-          # is the first, deliberately narrow, piece of that convergence
+          # Dual-evaluator convergence: this branch is the first,
+          # deliberately narrow, piece of that convergence
           # - `or`/`and`/`is` is the highest historical bug density part
           # of this file (this very comment documents one), and Crinja's
           # real recursive-descent parser gets precedence right BY
@@ -425,8 +425,8 @@ module Krikri
         # so `| bool` downstream treated it as truthy regardless of the
         # actual condition).
         #
-        # CRINJA.md step 5, fourth construct (first #evaluate_expr
-        # sub-piece, "bare literals"): tries Crinja first, same
+        # Crinja-first delegation, "bare literals" construct (first
+        # #evaluate_expr sub-piece): tries Crinja first, same
         # render_via_crinja/rescue pattern as constructs 1-3. Found a
         # latent inconsistency doing this: the old unconditional
         # `expr.downcase` returned lowercase "true"/"false" here, at odds
@@ -460,7 +460,7 @@ module Krikri
         # piped straight into a filter with no variable or arithmetic
         # involved at all (`{{ 256.0 | int }}`) hit this same gap.
         if literal = numeric_literal(expr)
-          # CRINJA.md step 5, fourth construct: try-Crinja-first, same
+          # Crinja-first delegation, "bare literals" construct: try-Crinja-first, same
           # pattern as above. Crinja's own number-literal grammar is
           # stricter than Crystal's `to_i64?`/`to_f64?` (rejects
           # scientific notation like `1e10`, underscore separators like
@@ -498,7 +498,7 @@ module Krikri
         # `lookup('url', 'https://...v' + prometheus_version + '/...',
         # wantlist=True)` - the URL argument is built exactly this way.
         if literal = sole_quoted_literal?(expr)
-          # CRINJA.md step 5, fourth construct: try-Crinja-first, same
+          # Crinja-first delegation, "bare literals" construct: try-Crinja-first, same
           # pattern as above. `sole_quoted_literal?` itself never
           # unescapes anything (a literal `\'` inside the string comes
           # back with the backslash still attached) - Crinja's real
@@ -563,8 +563,9 @@ module Krikri
         # top_level_pipe? routes any expression with a `|` straight past
         # this method into evaluate_with_filter before this line runs.
         if bare_call?(expr, "range(")
-          # CRINJA.md step 5, seventh construct (continued): unlike
-          # `dict()` just below, `range()`'s raw-value output matches
+          # Crinja-first delegation, general filter-chain-dispatch
+          # construct (continued): unlike `dict()` just below,
+          # `range()`'s raw-value output matches
           # the hand-rolled path exactly (probed across positive/
           # negative step, variable arguments) - safe via the same
           # #render_via_crinja_value pattern as the literal array/dict
@@ -593,7 +594,7 @@ module Krikri
         # cr's own lib/function/dict.cr), reached only once escalated
         # to the full Crinja renderer.
         if bare_call?(expr, "dict(")
-          # CRINJA.md step 5: converged 2026-08-14 (0.9.340). The blocker
+          # Dual-evaluator convergence: converged 2026-08-14 (0.9.340). The blocker
           # documented below (Crinja's own `dict()` reading only kwargs
           # and silently producing an EMPTY dict for a positional arg)
           # is fixed fork-side (`weirdbricks/crinja` `crystal-play-0.9.4`,
@@ -617,7 +618,7 @@ module Krikri
       private def evaluate_expr_operator(expr : String) : String?
         # Check for comparison operators FIRST (before filters)
         if has_comparison?(expr)
-          # CRINJA.md step 5, third construct: same try-Crinja-first,
+          # Crinja-first delegation, comparison construct: same try-Crinja-first,
           # fall-back-to-the-exact-previous-code pattern as the
           # boolean_logic?/ternary swaps above. `@comparison.evaluate`
           # returns Crystal's own lowercase "true"/"false" (`Bool#to_s`)
@@ -700,9 +701,9 @@ module Krikri
         # (re-)install was needed regardless of what was actually
         # installed.
         if segments = split_top_level_tilde(expr)
-          # CRINJA.md step 5, fifth construct (part of the general
-          # filter-chain-dispatch sub-piece of next-step #4): try-Crinja-
-          # first, same pattern as constructs 1-4. Crinja natively
+          # Crinja-first delegation, general filter-chain-dispatch
+          # construct (tilde-concat): try-Crinja-first, same pattern
+          # as the other constructs. Crinja natively
           # supports `~` (`src/lib/operator/tilde.cr`); probing it
           # against this hand-rolled path first (empirically, across
           # strings/numbers/undefined/multi-segment chains, all
@@ -752,7 +753,7 @@ module Krikri
         # operator at all still reaches this unchanged, since split_top_
         # level_plus/minus return nil for those and fall through here.
         if paren = split_leading_paren(expr)
-          # CRINJA.md step 5, ninth (and final) construct: leading-paren
+          # Crinja-first delegation, final construct: leading-paren
           # wrapper (`(expr).attr[idx] | filter`) - try Crinja first on
           # the FULL original expr text via the raw-value path, same
           # pattern as the rest of `#evaluate_expr`. Probed matching
@@ -836,8 +837,8 @@ module Krikri
       # #evaluate_expr_access purely to keep that method's own branch
       # count under ameba's cyclomatic-complexity threshold.
       private def evaluate_expr_dotted(expr : String) : String
-        # CRINJA.md step 5, seventh construct (continued): dotted
-        # variable/attribute access - try Crinja first via the
+        # Crinja-first delegation, general filter-chain-dispatch
+        # construct (dotted variable/attribute access) - try Crinja first via the
         # raw-value path, same pattern and rationale as the literal
         # array/dict and range() cases above. Probed extensively
         # (nested dict/array traversal, `.get(key, default)`, Python
@@ -879,8 +880,8 @@ module Krikri
       # can't misfire on real indexing/slicing.
       private def evaluate_bracket_expr(expr : String) : String
         if literal_array_expr?(expr)
-          # CRINJA.md step 5, seventh construct (general filter-chain
-          # dispatch sub-piece: literal array/dict expressions) - try
+          # Crinja-first delegation, general filter-chain-dispatch
+          # construct (literal array/dict expressions) - try
           # Crinja first via the raw-value path (#render_via_crinja_
           # value), which preserves this codebase's own JSON-compact
           # `format_value` output instead of Crinja's Python-repr
@@ -897,8 +898,8 @@ module Krikri
           end
         end
         # Real bug found probing whether this branch was safe to converge
-        # to Crinja-first (CRINJA.md step 5's general filter-chain
-        # dispatch sub-piece): `expr.includes?("[:") || expr.includes?
+        # to Crinja-first as part of the general filter-chain-dispatch
+        # construct: `expr.includes?("[:") || expr.includes?
         # (":]")` only catches a slice with an EMPTY start or end
         # (`items[:3]`, `items[2:]`) - a slice with BOTH bounds present
         # (`items[1:3]`) has neither literal substring (there's a digit
@@ -909,8 +910,8 @@ module Krikri
         # `ArraySlicer#slice` itself already implicitly requires via its
         # own `/^([^\[]+)\[([^:]*):([^\]]*)\]/` regex.
         if expr.matches?(/\[[^\[\]]*:[^\[\]]*\]/)
-          # CRINJA.md step 5, seventh construct (continued): Python slice
-          # syntax - the fork already has real support for it
+          # Crinja-first delegation, general filter-chain-dispatch
+          # construct (Python slice syntax) - the fork already has real support for it
           # (`PATCHES.md`'s "Python slice syntax" entry), verified
           # matching `ArraySlicer#slice`'s own output across both-bounds/
           # single-bound/negative-index slices via the raw-value path.
@@ -922,8 +923,8 @@ module Krikri
           end
         end
 
-        # CRINJA.md step 5, seventh construct (continued): general
-        # indexed access (`var[key]`, `var[0]`, `var[-1]`) - same
+        # Crinja-first delegation, general filter-chain-dispatch
+        # construct (general indexed access: `var[key]`, `var[0]`, `var[-1]`) - same
         # pattern as the dotted-access/simple-lookup cases above.
         begin
           value = render_via_crinja_value(expr)
@@ -1253,9 +1254,9 @@ module Krikri
       # (true division, even for an evenly-divisible pair), `*`
       # preserves int when both operands are int, `//` floors to int.
       private def evaluate_mult_div(expr : String, parts : Array(String), ops : Array(String)) : String
-        # CRINJA.md step 5, sixth construct (part of the general
-        # filter-chain-dispatch sub-piece of next-step #4): try-Crinja-
-        # first, same pattern as constructs 1-5. Probed extensively
+        # Crinja-first delegation, general filter-chain-dispatch
+        # construct (mult/div): try-Crinja-first, same pattern as the
+        # other constructs. Probed extensively
         # against the hand-rolled path below (int/float mixes, chained
         # `*`, both directions of negative floor division, division by
         # zero) - matched in every case Crinja itself didn't cleanly
@@ -1293,8 +1294,8 @@ module Krikri
           # uncaught `OverflowError` (`(10.0 / 0.0).floor` is
           # `Float64::INFINITY`, and `Infinity.to_i64` overflows Int64) -
           # found probing whether `*`/`/`/`//` were safe to converge to
-          # Crinja-first (CRINJA.md step 5's general-filter-chain-dispatch
-          # sub-piece); real Crinja raises a clean `DivisionByZeroError`
+          # Crinja-first as part of the general filter-chain-dispatch
+          # construct; real Crinja raises a clean `DivisionByZeroError`
           # for the same input instead of crashing, which is what exposed
           # this. `/`'s own by-zero case already degrades leniently to
           # `Infinity` rather than raising (line above) - matching that
@@ -2736,11 +2737,11 @@ module Krikri
       # into `join`, not a JSON-encoded string `sort` had no choice but to
       # return before.
       private def evaluate_with_filter(expr : String) : String
-        # CRINJA.md step 5, eighth (final) construct: `|`-filter chains -
+        # Crinja-first delegation, filter-chain construct: `|`-filter chains -
         # try Crinja first via the raw-value path, same pattern as the
         # rest of #evaluate_expr's now-converged constructs. Safe because
-        # of (a) the filter-coverage audit (CRINJA.md step-5 next-step
-        # #2) already established every `FilterEngine` filter/test has a
+        # of (a) a filter-coverage audit that already established every
+        # `FilterEngine` filter/test has a
         # Crinja/`jinja_filters.cr` equivalent bar `to_datetime`, and
         # (b) extensive empirical probing across real chain shapes used
         # throughout this codebase's own history (`combine`, `selectattr`

@@ -1055,7 +1055,7 @@ module Krikri
     # codebase's own hand-rolled `FilterEngine` (found missing there via
     # geerlingguy.mysql's `mysql_log_error | dirname` - see that file's
     # own comment for the exact failure mode) to close the same gap in
-    # Crinja, as prep for CRINJA.md's step-5 evaluator convergence -
+    # Crinja, as prep for the dual-evaluator convergence work -
     # Crinja had neither registered at all.
     Crinja.filter(:basename) { File.basename(target.to_s) }
     Crinja.filter(:dirname) { File.dirname(target.to_s) }
@@ -1603,8 +1603,8 @@ module Krikri
     # ).days`. Not shipped in the general-purpose fork (Ansible-specific);
     # registered here, producing a real `Crinja::Value` wrapping a
     # `::Time` - the "Crinja-side Time type" this file previously had no
-    # way to produce (CRINJA.md's documented reason it was never
-    # registered). Subtraction between two such values works via the
+    # way to produce, which is why it was never registered before.
+    # Subtraction between two such values works via the
     # fork's `-`/TimeDelta support (crystal-play-0.9.5); the hand-rolled
     # FilterEngine#parse_to_datetime tagged-JSON path is unchanged and
     # remains the fallback. On an unparseable string, raising routes the

@@ -51,8 +51,8 @@ module Krikri
         JSON::Any.new(false)
       else
         if leading_zero_number?(value)
-          # Real bug found live-verifying CRINJA.md step 5's templating
-          # convergence against dev-sec os_hardening: `.to_i64?` happily
+          # Real bug found live-verifying the Crinja templating convergence
+          # work against dev-sec os_hardening: `.to_i64?` happily
           # parses "0755" as decimal 755 - Crystal's decimal integer
           # parsing simply ignores leading zeros, the same way `"0755".
           # to_i` does in most languages. os_hardening's own dynamic

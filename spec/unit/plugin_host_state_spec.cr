@@ -2,7 +2,7 @@ require "../spec_helper"
 require "file_utils"
 require "../../src/krikri/plugin_manager"
 
-# OPUS_PERFORMANCE_IMPROVEMENTS.md item 6a - the controller-side record
+# Perf item 6a - the controller-side record
 # of "which plugin binaries were verified present on which host".
 #
 # A warm run's bootstrap was two round trips before any real work: one

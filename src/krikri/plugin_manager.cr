@@ -31,7 +31,7 @@ module Krikri
     # Cache of plugins already uploaded to remote hosts
     @@uploaded_plugins = Hash(String, Set(String)).new
 
-    # OPUS_PERFORMANCE_IMPROVEMENTS.md item 6a - the safe half of "an
+    # Perf item 6a - the safe half of "an
     # agent that outlives the run".
     #
     # A warm run's bootstrap is two round trips before any real work:
@@ -174,7 +174,7 @@ module Krikri
     # Resolved path of the running binary - see get_local_plugin_path.
     @@executable_path : String?
 
-    # OPUS_PERFORMANCE_IMPROVEMENTS.md items 1-3 - opt-in only, set
+    # Perf items 1-3 - opt-in only, set
     # by `--persistent-daemon` on the CLI (krikri-playbook.cr). Default
     # `false` means #execute_remote_plugin's behavior is byte-for-byte
     # unchanged from before this item landed - nothing here is reached
@@ -204,7 +204,7 @@ module Krikri
     # generated dispatcher's "unknown plugin" fallback. That exclusion
     # cost a fresh ssh fork and remote process spawn for the one task
     # that runs on every host in every play, so
-    # OPUS_PERFORMANCE_IMPROVEMENTS.md item 2 put `facts` INTO the fat
+    # Perf item 2 put `facts` INTO the fat
     # binary (`build.sh`'s FAT_EXTRA_MODULES) and removed it from here.
     # `debug`/`assert`/`fail`/`set_fact`/`pause` need no entry here
     # at all: `ActionPluginManager.skips_module_dispatch?` already keeps
@@ -214,7 +214,7 @@ module Krikri
     # remote or local).
     #
     # `become:` used to be excluded here unconditionally - the original
-    # landing's documented scope cut. OPUS_PERFORMANCE_IMPROVEMENTS.md
+    # landing's documented scope cut. Perf
     # item 1 closed it: nearly every real Galaxy role runs `become:
     # true`, so excluding it meant the single biggest measured
     # optimization in the project was switched off for the
@@ -915,7 +915,7 @@ module Krikri
 
       ensure_uploaded(host, plugin_name, vars)
 
-      # OPUS_PERFORMANCE_IMPROVEMENTS.md items 1-3: try the
+      # Perf items 1-3: try the
       # persistent daemon connection first when opted in and eligible -
       # on ANY failure (never established, broken pipe, timed out,
       # target rebooted mid-play and the old pipe is stale) this rescues
@@ -940,7 +940,7 @@ module Krikri
       # path only matters the very first time a host needs a daemon;
       # every later call for a DIFFERENT module on the same host reuses
       # the cached process without re-touching this argument at all.
-      # OPUS_PERFORMANCE_IMPROVEMENTS.md item 1: a `become:` task uses a
+      # Perf item 1: a `become:` task uses a
       # daemon of its own, spawned as become_user - so the daemon_user
       # here is the become_user for a privileged task and nil for an
       # unprivileged one, which is exactly SSHManager's daemon key.
@@ -985,9 +985,9 @@ module Krikri
       # `PluginManager::NEEDS_FULL_VARS` unreachable on the normal path.
       # Measured on a play including `package_facts:`, every task's
       # config is 215-242 bytes and stays flat as the context grows
-      # (62 -> 65 vars, payload unchanged). See
-      # OPUS_PERFORMANCE_IMPROVEMENTS.md item 4, which was written
-      # against this stale comment and closed as already-satisfied.
+      # (62 -> 65 vars, payload unchanged). Perf
+      # item 4 was written against this stale comment and closed
+      # as already-satisfied.
       #
       # The execve() reasoning below is still live and still the reason
       # this path uses exec_script rather than exec - a task's PARAMS can

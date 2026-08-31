@@ -1,3 +1,7 @@
+# Local-only Claude Code instructions (personal paths/credential workflow -
+# never committed, this repo is public)
+/CLAUDE.local.md
+
 # Compiled binaries
 /bin/
 

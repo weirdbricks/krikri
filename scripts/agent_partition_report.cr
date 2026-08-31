@@ -1,6 +1,6 @@
 #!/usr/bin/env crystal
 #
-# ITEM5_DESIGN.md §3/§6: measure how a real role would partition under a
+# Measures how a real role would partition under a
 # target-side agent, WITHOUT executing anything.
 #
 # Item 5 ("ship the play, not the tasks") claims N x RTT -> ~1 RTT per
@@ -31,7 +31,7 @@ require "../src/krikri/playbook_parser"
 
 module AgentPartition
   # Modules whose implementation reads the controller's filesystem
-  # before dispatch - see ITEM5_DESIGN.md §1a and the staging chain in
+  # before dispatch - see the staging chain in
   # executor.cr (resolve_role_relative_src, inline_copy_source_content,
   # stage_unarchive_remote_src, stage_script_src, stage_assemble_dir),
   # plus TemplateActionPlugin which renders on the controller.
@@ -156,7 +156,7 @@ module AgentPartition
     private def expression_reason(task : Krikri::Task) : String?
       # lookup()/query() reach the controller's env/FS/subprocess from
       # inside expression evaluation, so ANY expression text carrying
-      # one pins the task - see ITEM5_DESIGN.md §1b.
+      # one pins the task to the controller.
       if expr = expression_texts(task).find { |text| text.includes?("lookup(") || text.includes?("query(") }
         _ = expr
         return "lookup()/query() in an expression"

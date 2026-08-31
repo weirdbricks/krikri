@@ -41,7 +41,7 @@ lib LibC
 end
 
 module Krikri
-  # OPUS_PERFORMANCE_IMPROVEMENTS.md item 2 - the fact-gathering body,
+  # Perf item 2 - the fact-gathering body,
   # lifted verbatim out of `plugins/facts.cr` so the fat plugin binary
   # can link it and serve `facts` over the persistent daemon like every
   # other module.

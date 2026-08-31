@@ -1,7 +1,7 @@
 require "json"
 
 module Krikri
-  # OPUS_PERFORMANCE_IMPROVEMENTS.md items 1-3 (formerly
+  # Perf items 1-3 (formerly
   # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #15, a doc since
   # deleted) - the persistent
   # remote executor. Today's per-task remote path forks a local `ssh`
@@ -17,7 +17,7 @@ module Krikri
   # `ssh_manager.cr`'s `daemon_send`.
   #
   # Deliberately opt-in and narrowly scoped - see this class's own
-  # design notes in OPUS_PERFORMANCE_IMPROVEMENTS.md items 1-5 for
+  # design notes (perf items 1-5) for
   # what remains out of scope (batching, remote async:, vars-context
   # residency; become: is no longer - see item 1). Nothing here changes
   # default behavior: this module is only ever invoked by `--daemon`,
@@ -81,7 +81,7 @@ module Krikri
       # STDIN closed - clean shutdown.
     end
 
-    # OPUS_PERFORMANCE_IMPROVEMENTS.md item 3: a batch request carries a
+    # Perf item 3: a batch request carries a
     # LIST of steps and runs them all in this one process, in order,
     # before replying once. Batching and the daemon used to be mutually
     # exclusive PER TASK - a batched group went out as a fresh `ssh` +

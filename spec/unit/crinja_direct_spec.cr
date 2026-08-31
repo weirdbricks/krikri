@@ -1,8 +1,7 @@
 require "../spec_helper"
 # Regression canary against raw Crinja (Crinja.new / env.from_string(...).
 # render) - deliberately bypassing this codebase's own CrinjaRenderer
-# wrapper. The point (per CRINJA.md's "Also worth doing opportunistically"
-# note): after a fork rebase or `shards update`, these specs tell you at a
+# wrapper. The point: after a fork rebase or `shards update`, these specs tell you at a
 # glance whether a maintained registration / behavior became (a) redundant
 # (fixed upstream - then the redundant krikri-playbook fix can be deleted)
 # or (b) newly broken (a regression to chase). They are NOT testing
@@ -51,7 +50,7 @@ describe "raw Crinja (rebase canary)" do
   end
 
   # to_datetime (jinja_filters.cr) + fork Time subtraction -> TimeDelta.days
-  # (fork crystal-play-0.9.5). CF CRINJA.md step-5 next-step #3.
+  # (fork crystal-play-0.9.5).
   it "subtracts two to_datetime values and reads .days" do
     crinja_render(
       "{{ (a | to_datetime('%b %d, %Y') - b | to_datetime('%b %d, %Y')).days }}",
@@ -108,9 +107,8 @@ describe "raw Crinja (rebase canary)" do
   # here in jinja_filters.cr so a `.j2` template's `{% for %}` block-tag
   # chain can use them. The hand-rolled FilterEngine has the same pair
   # for the plain `{{ }}` filter chain (spec/unit/filter_engine_spec.cr) -
-  # this is the Crinja-side dual registration the project's CRINJA.md
-  # warns is the bug class that historically lived independently in both
-  # evaluators.
+  # this is the Crinja-side dual registration of the bug class that
+  # historically lived independently in both evaluators.
   it "registers dict2items (default key_name='key', value_name='value')" do
     crinja_render("{{ {'a': 1, 'b': 2} | dict2items | length }}").should eq("2")
     crinja_render("{{ {'a': 1} | dict2items | first | type_debug }}").should eq("dict")

@@ -37,7 +37,7 @@ module Krikri
       # Already resolved via PluginManager.remote_plugin_target - the
       # bare plugin path, or `sudo -n -u <user> -- <path>` if become:.
       # Used only by the bash-script transport below; the daemon
-      # transport (OPUS_PERFORMANCE_IMPROVEMENTS.md item 3) dispatches
+      # transport (perf item 3) dispatches
       # by module NAME inside an already-running process instead, and
       # gets its privilege from which daemon it is sent to.
       getter plugin_target : String
