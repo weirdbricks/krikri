@@ -348,6 +348,33 @@ describe Krikri::PlaybookParser do
       playbook.plays[0].tasks[0].unavailable_module.should eq("ansible.builtin.mount")
     end
 
+    it "marks a role-local underscore-prefixed custom module (e.g. `_check_platform:`) unavailable instead of treating it as a resolved builtin" do
+      # Real bug found benchmarking amtega.check_platform/amtega.epel
+      # (round814/815): resolve_module_name used to blanket-pass any
+      # module name starting with '_' straight through as "resolved",
+      # on the mistaken assumption every leading-underscore name was one
+      # of this engine's own internal pseudo-modules (_block, _meta,
+      # etc - which are never routed through resolve_module_name at all,
+      # they're constructed directly via Task.new). A role's own custom
+      # action plugin conventionally named with a leading underscore hit
+      # that bypass instead, got treated as available with no backing
+      # plugin binary, and crashed the whole run outright in
+      # PluginManager#get_local_plugin_path ("Plugin binary not found:
+      # _check_platform") instead of taking the graceful unavailable_module
+      # skip path already built for exactly this case.
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML
+        - name: Uses a role-local custom module
+          hosts: all
+          tasks:
+            - name: Check platform
+              _check_platform:
+        YAML
+      )
+
+      playbook.plays[0].tasks.size.should eq(1)
+      playbook.plays[0].tasks[0].unavailable_module.should eq("_check_platform")
+    end
+
     it "raises when no plays parse successfully" do
       expect_raises(Exception, /No valid plays found/) do
         Krikri::PlaybookParser.parse_string(<<-YAML

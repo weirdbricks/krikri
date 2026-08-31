@@ -1028,7 +1028,7 @@ module Krikri
 
     def self.resolve_module_name(raw : String) : String?
       return MODULE_ALIASES[raw] if MODULE_ALIASES.has_key?(raw)
-      return raw if AVAILABLE_PLUGINS.includes?(raw) || raw.starts_with?('_')
+      return raw if AVAILABLE_PLUGINS.includes?(raw)
 
       MODULE_SEARCH_COLLECTIONS.each do |collection|
         qualified = "#{collection}.#{raw}"
