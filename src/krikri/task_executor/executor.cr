@@ -649,12 +649,22 @@ module Krikri
           @halted_hosts.includes?(host.name) || @unreachable_hosts.includes?(host.name)
         end
 
-        if task.block? && !active_hosts.empty?
+        # Once every host in scope is halted/unreachable, real Ansible ends
+        # the play right there rather than continuing to print empty "TASK
+        # [...]" banners for the remaining tasks - a host can't become
+        # active again within this same task list (only rescue:/always:
+        # temporarily un-halt, and those run via their own separate
+        # run_task_batch call). Found via geerlingguy.raspberry-pi: a
+        # single-host play kept printing banners for every task after its
+        # one host failed and halted.
+        break if active_hosts.empty?
+
+        if task.block?
           execute_block_multi(task, active_hosts)
           next
         end
 
-        if task.include_tasks? && !task_has_loop?(task) && !active_hosts.empty?
+        if task.include_tasks? && !task_has_loop?(task)
           execute_include_tasks_multi(task, active_hosts)
           next
         end

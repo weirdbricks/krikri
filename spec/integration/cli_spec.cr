@@ -1540,3 +1540,35 @@ describe "krikri-playbook CLI (--check mode)" do
     File.delete(bad_playbook)
   end
 end
+
+# Found via a real-host geerlingguy.raspberry-pi round: once a host fails a
+# task and gets halted, real ansible-playbook ends the play right there -
+# it does not keep printing "TASK [...]" banners for the tasks that follow,
+# since there is no host left to run them against.
+describe "a halted host after a task failure" do
+  it "stops printing TASK banners for tasks after the failure, matching real ansible-playbook" do
+    write_notify_playbook("halted_host_no_more_banners.yml", <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: this one fails
+            ansible.builtin.fail:
+              msg: boom
+          - name: should never be reached
+            ansible.builtin.debug:
+              msg: should never be reached
+      YAML
+
+    status, output = run_playbook(
+      File.join("..", "spec", "tmp", "halted_host_no_more_banners.yml"),
+      mode_args: [] of String,
+      inventory: EXPLICIT_LOCALHOST_INVENTORY,
+    )
+
+    status.exit_code.should eq(2)
+    output.should contain("TASK [this one fails]")
+    output.should_not contain("TASK [should never be reached]")
+    output.should_not contain("should never be reached")
+  end
+end
