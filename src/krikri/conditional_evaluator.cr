@@ -198,9 +198,29 @@ module Krikri
       # were skipped outright and helm was never installed.
       #
       # Handle 'or' operator (split and evaluate any part)
+      #
+      # Each operand is evaluated non-strict (`strict: false`, always -
+      # NOT the incoming `strict` param) regardless of whether the
+      # OVERALL when: clause is itself strict: real Python/Jinja2's
+      # `or`/`and` never require an individual operand to already be a
+      # bool - they use each operand's plain truthiness for short-
+      # circuiting, same as a bare `when: some_string` would under
+      # non-strict rules. The strict conditional-boolean requirement
+      # (ansible-core 2.19+) only constrains the FINAL result of the
+      # WHOLE when: expression, which `parts.any?`/`parts.all?` already
+      # guarantees is a real Bool regardless of any operand's own type.
+      # Found benchmarking ANXS.postgresql's own `when: postgresql_
+      # apt_key_url and postgresql_apt_key_id and postgresql_install_
+      # repository` - the first two operands are plain non-boolean
+      # strings (a URL and a key ID) that are perfectly valid `and`
+      # operands in real Ansible; passing strict: true down here made
+      # evaluating EACH of them raise "Conditional result (True) was
+      # derived from value of type 'str'" on its own, even though the
+      # THIRD operand (postgresql_install_repository: true, a real
+      # bool) is what Python's actual short-circuit `and` would return.
       if condition.includes?(" or ")
         parts = split_by_operator(condition, " or ")
-        return parts.any? { |part| evaluate(part.strip, vars, strict, raise_undefined) } if split_progressed?(parts, condition)
+        return parts.any? { |part| evaluate(part.strip, vars, false, raise_undefined) } if split_progressed?(parts, condition)
       end
 
       # Handle 'and' operator (split and evaluate all parts).
@@ -216,7 +236,9 @@ module Krikri
       # evaluate/evaluate_truthiness deal with it, which terminates.
       if condition.includes?(" and ")
         parts = split_by_operator(condition, " and ")
-        return parts.all? { |part| evaluate(part.strip, vars, strict, raise_undefined) } if split_progressed?(parts, condition)
+        # Non-strict per operand - see the identical rationale on the
+        # 'or' branch just above.
+        return parts.all? { |part| evaluate(part.strip, vars, false, raise_undefined) } if split_progressed?(parts, condition)
       end
 
       # Handle 'not' at the beginning - checked last (highest

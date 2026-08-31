@@ -911,6 +911,30 @@ describe Krikri::ConditionalEvaluator do
       ).should be_true
     end
 
+    it "does not raise for a plain non-boolean string operand mid-'and'-chain, only the overall result matters" do
+      # Real bug found benchmarking ANXS.postgresql's own `when:
+      # postgresql_apt_key_url and postgresql_apt_key_id and
+      # postgresql_install_repository` - the first two operands are
+      # plain non-boolean strings (a URL and a key ID), perfectly valid
+      # `and` operands in real Python/Jinja2 (which use each operand's
+      # own truthiness for short-circuiting, never requiring it to
+      # already be a bool). The 'and'/'or' branches previously passed
+      # the incoming `strict` flag down into EACH operand's own
+      # recursive #evaluate call, so evaluating a plain truthy string
+      # operand on its own raised "Conditional result (True) was
+      # derived from value of type 'str'" - even though the chain's own
+      # `parts.all?`/`parts.any?` combinator always yields a genuine
+      # Bool for the strict check that actually matters, on the WHOLE
+      # when: clause.
+      v = Hash(String, JSON::Any).new
+      v["postgresql_apt_key_url"] = JSON::Any.new("https://example.com/key.asc")
+      v["postgresql_apt_key_id"] = JSON::Any.new("ACCC4CF8")
+      v["postgresql_install_repository"] = JSON::Any.new(true)
+      Krikri::ConditionalEvaluator.evaluate(
+        "postgresql_apt_key_url and postgresql_apt_key_id and postgresql_install_repository", v, strict: true
+      ).should be_true
+    end
+
     it "still raises for a genuinely non-boolean string, unaffected by the True/False carve-out" do
       v = Hash(String, JSON::Any).new
       v["some_string"] = JSON::Any.new("hello")
