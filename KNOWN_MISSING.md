@@ -104,6 +104,35 @@ failing task itself, just an ok/changed-count mismatch caused by the missing
 feature. Not fixed - no fact-cache plugin architecture exists yet to hang a
 fix off of.
 
+### `namespace()`-accumulated loop results via `lookup('varnames', ...)` don't survive to `| to_json`/Crinja's own `lookup('template', ...)`
+
+Found benchmarking bimdata.ferm (round849): its own `get_vars.j2` builds a
+result list with `{% set ns = namespace(items=[]) %}` +
+`{% for varname in lookup('varnames', pattern, wantlist=True) %}...{% set _ =
+ns.items.append(...) %}{% endfor %}`, then emits `{{ ns.items | to_json }}`.
+This engine's hand-rolled evaluator now runs `namespace()`/kwarg calls inside
+`{% set %}` without crashing (0.9.674 fixed the strict-scan false positive
+that used to raise "'namespace' is undefined" outright), and a *direct*
+`lookup('template', path, template_vars=dict(...))` call now correctly merges
+its kwarg into the rendered template's own vars - but the role's real usage
+goes through a SEPARATE path: `defaults/main.yml` pre-declares `_ferm_rules:
+"{{ lookup('template', ..., template_vars=dict(...)) | from_json }}"`, whose
+own value is itself unrendered `{{ }}` text, later re-rendered on read via
+`CrinjaRenderer.convert_var`/`rerender_nested_templates` - which dispatches to
+Crinja's OWN native `lookup` function (`jinja_filters.cr`'s `:lookup`,
+independent of `expression_evaluator.cr`'s hand-rolled one per this repo's own
+two-evaluator split - see this file's own top-of-repo `CLAUDE.md`) rather than
+the hand-rolled `lookup_template` just fixed. That native path doesn't honor
+`template_vars=` at all, so `app_name`/`var_type` stay undefined inside the
+re-rendered template, and the resulting `namespace().items` accumulation -
+even once that's fixed - would need to survive back out through `to_json` and
+then `from_json` on the OTHER end of the pipe. Not fixed: needs the identical
+`template_vars=` + `#jinja2:`-stripping fix ported into `jinja_filters.cr`'s
+own `:lookup` implementation (the "same bug, independently, in the other
+evaluator" pattern this repo's CLAUDE.md already names as the most common
+recurring bug class here), then re-verified end to end against this exact
+role before considering it closed.
+
 ## The parity-breaking tier was built, measured, and removed (0.9.641)
 
 The perf-tracking Tier 2 - a second binary

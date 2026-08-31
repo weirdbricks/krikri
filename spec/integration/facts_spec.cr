@@ -40,6 +40,21 @@ describe "facts plugin" do
     end
   end
 
+  describe "ansible_interfaces fact" do
+    # Real bug found benchmarking brianshumate.consul: its own "Check
+    # specified ethernet interface" task does `when: consul_iface in
+    # ansible_interfaces`. This fact was entirely missing - it resolved
+    # as undefined, and the when: raised "Error while evaluating
+    # conditional: 'ansible_interfaces' is undefined" and crashed the
+    # whole run outright instead of just evaluating the membership test.
+    it "lists interface names, including the loopback interface" do
+      result = PluginSpecHelper.run("facts", {} of String => String)
+
+      interfaces = result["ansible_facts"]["ansible_interfaces"].as_a.map(&.as_s)
+      interfaces.should contain("lo")
+    end
+  end
+
   describe "ansible_python_version fact" do
     # Round 134 (prometheus.prometheus.alertmanager): real Ansible ALSO
     # exposes a separate flat `ansible_python_version` ("major.minor.micro",

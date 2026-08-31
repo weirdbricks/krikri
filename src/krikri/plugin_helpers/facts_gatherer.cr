@@ -600,6 +600,20 @@ module Krikri
         addresses = all_ipv4.split("\n").map(&.strip).reject(&.empty?)
         facts["ansible_all_ipv4_addresses"] = addresses
       end
+
+      # ansible_interfaces - a flat list of every network interface NAME
+      # (not addresses) real Ansible's own LinuxNetwork fact module
+      # always sets. Entirely missing before this, found benchmarking
+      # brianshumate.consul: its own "Check specified ethernet
+      # interface" task does `when: consul_iface in ansible_interfaces`
+      # - with the fact undefined, the when: raised "Error while
+      # evaluating conditional: 'ansible_interfaces' is undefined" and
+      # crashed the whole run outright instead of just evaluating the
+      # membership test. `/sys/class/net` lists exactly the interface
+      # names real Ansible's own netifaces-based collection reports.
+      if Dir.exists?("/sys/class/net")
+        facts["ansible_interfaces"] = Dir.children("/sys/class/net").sort
+      end
     end
 
     def gather_hardware_facts(facts)
