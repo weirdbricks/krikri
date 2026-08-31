@@ -51,36 +51,16 @@ Playbook syntax, inventory format, `roles/` layout, Jinja2 templating
 (filters, tests, block tags), `become:`, Vault, `--check`/`--diff`,
 `--tags`/`--limit`, handlers, loops, `block:`/`rescue:`/`always:` - all
 parsed and executed the same way, from the same YAML files you already
-have. See **Features** below for the full list of what's implemented.
+have.
 
 ### What's structurally different (by design, not a gap)
 
-- **No arbitrary Python execution.** A role's own private `library/*.py`
-  module (outside the `ansible.builtin`/`community.*` set this project
-  ships as native binaries) can't run - there's no Python interpreter to
-  run it in. The task is skipped with a warning rather than crashing the
-  play, but anything downstream depending on its result sees an undefined
-  value.
-- **Cloud provider modules and inventory plugins are out of scope for
-  now** - `amazon.aws`/`community.aws` (`ec2_instance`, `s3_object`, IAM,
-  security groups, ...), `azure_rm_*`, and dynamic cloud inventory
-  plugins (`aws_ec2.yml` etc.) aren't implemented. These are a
-  fundamentally different kind of module (HTTP calls to a cloud API from
-  the controller, not shell commands run on a managed target) and would
-  need a real API client built from scratch - a much bigger undertaking
-  than adding another module that shells out to a CLI tool. Not planned
-  unless a specific real-world need justifies the investment.
-- **`docker_*`'s `api_version:` pin isn't supported** - the underlying
-  Docker client talks unversioned API endpoints throughout, which
-  negotiate fine against current Docker/Podman, but pinning a specific
-  API version would mean touching every endpoint individually.
-- **`meta:` supports `clear_facts`/`flush_handlers`/`end_host`/
-  `end_play`/`clear_host_errors`/`noop`/`refresh_inventory`** -
-  `reset_connection`/`end_batch`/`end_role` still act on execution-flow
-  machinery this engine models differently (persistent-connection
-  control, `serial:` batching, and role-scoped early-return
-  respectively), and are rejected at parse time rather than silently
-  accepted and ignored.
+No arbitrary Python execution (a role's private `library/*.py` module
+can't run - there's no interpreter to run it in), cloud provider modules/
+inventory plugins (`amazon.aws`, `azure_rm_*`, ...), and a handful of
+narrower cuts (`docker_*`'s `api_version:` pin, a few `meta:` actions).
+See **What's missing** below - it's the single current-state list, kept
+there rather than duplicated here.
 
 ---
 
