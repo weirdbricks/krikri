@@ -157,16 +157,30 @@ root-caused to a specific line - needs tracing why `env` inside a
 than the top-level render path does, before the bimdata.ferm round-trip can
 be verified end to end.
 
-### brunobenchimol.certbot_dns (round855) - recap skip-count mismatch, not yet root-caused
+### brunobenchimol.certbot_dns (round855) - recap skip-count mismatch, narrowed but not yet root-caused
 
 `rc=0` on both engines, no crash - but real Ansible's recap shows `ok=8
-skipped=40` where this engine shows `ok=9 skipped=21`, a ~19-task gap far
-bigger than the individual per-task skip/ok differences seen elsewhere in
-this round. Not yet isolated to a specific task or task-list divergence
-(the two engines' TASK banners mostly line up 1:1 by name once the
-cosmetic role-name-prefix difference is discounted) - needs a proper
-side-by-side task-list diff, not just a recap-count comparison, before a
-fix can be targeted.
+skipped=40` where this engine shows `ok=9 skipped=21`. A side-by-side
+TASK-banner diff (not just a recap-count comparison) rules out the two
+most obvious hypotheses: (1) the role's `meta/main.yml` dependency on
+`geerlingguy.certbot` (with `certbot_create_if_missing: false` passed as a
+role param) runs exactly ONCE on both engines, not double-counted or
+duplicated on either side; (2) the later explicit `import_role: name:
+geerlingguy.certbot` in `certbot_dns`'s own `tasks/main.yml` (gated `when:
+certbot_create_if_missing`) is correctly skipped by BOTH engines - real
+Ansible's recap never shows a "Certbot Create Certificates." banner
+either, matching `geerlingguy.certbot`'s own default (`false`) for that
+var, so there's no role-params-leaking-across-role-boundaries bug here.
+py's TASK-banner count (48) is still substantially higher than crystal's
+(30) even after accounting for both of the above - the remaining
+difference is most likely a loop-expansion-vs-single-skip counting gap on
+one of the role's `with_items:`/`loop:`-driven tasks (real Ansible can
+expand a skipped loop into one recap entry per item under some
+conditions; this engine's loop handling may be collapsing a
+whole-loop-skipped task into a single skip regardless of item count) -
+not yet pinned to a specific task; needs the loop-by-loop skip semantics
+compared directly against real ansible-core 2.19.4's own strategy code,
+not just recap totals.
 
 ## The parity-breaking tier was built, measured, and removed (0.9.641)
 
@@ -724,11 +738,6 @@ are recorded in `ROLES_TESTED.md`'s round-191 rows.
   community.general's own construction that ufw treats the re-applied
   rules as new. Real rule-tuple diffing (the module's actual
   idempotency check) needs netfilter access to verify; deferred.
-- **`template:` search path** (Oefenweb.haproxy, round 196): a template
-  task inside the role failed here with "global.cfg.j2 could not be
-  found by FileSystemLoader(<work dir>)" while real ansible found it in
-  the role's own templates/ directory. Only this role shape has hit it
-  so far; needs a loader-path fix in the templating engine.
 - **collection modules**: `community.general.redhat_subscription`
   (linux-system-roles.rhc), `community.rabbitmq.rabbitmq_plugin/_user`
   (mrlesmithjr.rabbitmq) - unimplemented, rc=4 "unavailable modules"
