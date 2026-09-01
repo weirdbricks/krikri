@@ -561,6 +561,53 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate(%(lookup('env', 'CRYSTAL_ANSIBLE_SPEC_ENV_LOOKUP_TEST_2') | default('2.0.3', true))).should eq("2.0.3")
   end
 
+  it "applies a .method() chained directly onto lookup(...) with no | filter in between (round 199, bodsch.tomcat)" do
+    # filter_chain_special_head's own `lookup(` branch assumed the call's
+    # matching close paren was var_expr's LAST character - true when a
+    # `|` filter follows (split_chain isolates the call before this
+    # runs), false for a bare trailing method call with no `|` at all:
+    # `lookup(...).splitlines()`'s own closing paren is what
+    # ends_with?(')') actually matched, so the old slice produced a
+    # garbled, unbalanced lookup() argument string.
+    path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "lookup_splitlines_test.txt")
+    File.write(path, "line one\nline two\n")
+
+    v = Hash(String, JSON::Any).new
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(%(lookup('file', '#{path}').splitlines() | length)).should eq("2")
+    File.delete(path)
+  end
+
+  it "applies a .method() chained directly onto lookup(...) with no filter chain at all (a bare mustache)" do
+    # Sibling bug to the one above, in evaluate_expr_bare_call's own
+    # separate `lookup(` dispatch (reached when there's no `|` anywhere
+    # in the expression) - bare_call? requires the lookup call's own
+    # matching close paren to be the WHOLE expression's last character,
+    # which a trailing `.splitlines()` breaks, so this fell through to a
+    # plain variable-name lookup on the literal text and always resolved
+    # "undefined".
+    path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "lookup_splitlines_bare_test.txt")
+    File.write(path, "line one\nline two\n")
+
+    v = Hash(String, JSON::Any).new
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    result = evaluator.evaluate(%(lookup('file', '#{path}').splitlines()))
+    (JSON.parse(result) rescue JSON::Any.new(result)).as_a.map(&.as_s).should eq(["line one", "line two"])
+    File.delete(path)
+  end
+
+  it "still routes lookup(...) | default(...) through the filter-chain dispatch, not the method-suffix one" do
+    # Regression guard for the fix above: a bare mustache lookup(...)
+    # whose "suffix" is actually a ` | filter` pipe, not a `.method()`
+    # continuation, must still reach top_level_pipe?/split_chain
+    # unchanged - the new lookup(...).method() dispatch only fires when
+    # the text right after lookup(...)'s own closing paren is a literal
+    # "." continuation.
+    v = Hash(String, JSON::Any).new
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(%(lookup('env', 'CRYSTAL_ANSIBLE_SPEC_ENV_LOOKUP_TEST_3') | default('2.0.3', true))).should eq("2.0.3")
+  end
+
   it "evaluates an else-less inline if as empty string when the condition is false" do
     # Real bug found benchmarking ansible-community.ansible-vault's own
     # `vault_version_release_site_suffix: "{{ '+ent' if vault_enterprise

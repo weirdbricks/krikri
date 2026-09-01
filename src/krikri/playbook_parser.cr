@@ -1234,12 +1234,12 @@ module Krikri
       end
 
       # Get play name
-      name = yaml["name"]?.try(&.as_s) || "Play #{index + 1}"
+      explicit_name = yaml["name"]?.try(&.as_s)
 
       # Get hosts (required)
       hosts_yaml = yaml["hosts"]?
       unless hosts_yaml
-        raise "Play '#{name}' missing required 'hosts' field"
+        raise "Play '#{explicit_name || "Play #{index + 1}"}' missing required 'hosts' field"
       end
 
       hosts = if hosts_yaml.as_a?
@@ -1247,6 +1247,11 @@ module Krikri
               else
                 hosts_yaml.as_s
               end
+
+      # A nameless play displays as its `hosts:` value in real Ansible
+      # (`PLAY [all]`, `PLAY [web,db]` for a list) - not a generic
+      # "Play N" placeholder, which real ansible-playbook never shows.
+      name = explicit_name || (hosts.is_a?(Array) ? hosts.join(",") : hosts)
 
       play = Play.new(name, hosts)
 

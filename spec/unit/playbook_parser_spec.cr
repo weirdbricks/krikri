@@ -75,6 +75,34 @@ describe Krikri::PlaybookParser do
       task.tags.should eq(["demo"])
     end
 
+    it "falls back to the hosts: value as the play name, not a generic 'Play N' placeholder" do
+      # Real ansible-playbook displays a nameless play's PLAY banner as
+      # its hosts: value (`PLAY [all]`), never a generic placeholder -
+      # found round 300-303 (cloudalchemy.cortex, gantsign.intellij-
+      # plugins).
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
+        - hosts: all
+          gather_facts: false
+          tasks:
+            - ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      playbook.plays[0].name.should eq("all")
+    end
+
+    it "joins a list hosts: value with commas for the fallback play name" do
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
+        - hosts: [web, db]
+          gather_facts: false
+          tasks:
+            - ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      playbook.plays[0].name.should eq("web,db")
+    end
+
     it "keeps a task whose own integer param exceeds Int32 range, instead of silently dropping it with \"Arithmetic overflow\"" do
       # Regression: safe_yaml_to_string/stringify_value both did
       # `yaml.as_i.to_s` - YAML::Any#as_i is Int32-only, so a real

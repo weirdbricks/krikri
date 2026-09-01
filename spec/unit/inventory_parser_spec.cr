@@ -420,4 +420,25 @@ describe Krikri::InventoryParser do
       inventory.hosts["web1"].vars["datacenter"].as_s.should eq("dc1")
     end
   end
+
+  describe ".validate" do
+    it "does not warn about a host with no explicit user - real ansible-playbook never emits this warning" do
+      # Found round 300-303: this engine printed a spurious "Host 'x' has
+      # no user specified" inventory warning that real ansible-playbook
+      # never shows for the identical inventory (SSH falls back to the
+      # local OS user, or the host is localhost/local-connection and
+      # needs no user at all).
+      write(File.join(ROOT, "hosts.ini"), "node ansible_connection=local\n")
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "hosts.ini"))
+
+      Krikri::InventoryParser.validate(inventory).should eq([] of String)
+    end
+
+    it "still warns when the inventory has no hosts at all" do
+      write(File.join(ROOT, "empty.ini"), "\n")
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "empty.ini"))
+
+      Krikri::InventoryParser.validate(inventory).should contain("Inventory has no hosts")
+    end
+  end
 end

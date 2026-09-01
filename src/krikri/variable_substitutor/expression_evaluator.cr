@@ -531,6 +531,36 @@ module Krikri
           return evaluate_lookup(expr[7..-2])
         end
 
+        # `lookup(...).method()` chained directly with no `|` filter at
+        # all (a bare `{{ }}` mustache, not a filter chain - the sibling
+        # bug to filter_chain_special_head's own lookup( branch, same
+        # root cause: bare_call? above requires lookup(...)'s own
+        # matching close paren to be expr's LAST character, which is
+        # false once a method call like `.splitlines()` follows it, so
+        # this bare-mustache shape fell through to a plain variable-name
+        # lookup on the whole literal text and always resolved
+        # "undefined" - round 199, bodsch.tomcat).
+        if expr.starts_with?("lookup(") && !top_level_pipe?(expr)
+          if close_idx = matching_close_paren_index(expr, 6)
+            suffix = expr[(close_idx + 1)..]
+            # Only a genuine `.method()` continuation, not a ` | filter`
+            # chain (that's a different expression shape entirely,
+            # already handled by top_level_pipe?/split_chain further
+            # down this dispatch - `lookup(...) | default(...)` and
+            # `lookup(...).splitlines() | length` (a method call
+            # FOLLOWED by a filter, top_level_pipe? is true for both)
+            # must fall through to it unchanged, not be swallowed here;
+            # filter_chain_special_head's own lookup( branch has the
+            # equivalent fix for the pipe case).
+            if suffix.lstrip.starts_with?('.')
+              lookup_rendered = evaluate_lookup(expr[7...close_idx])
+              result = (JSON.parse(lookup_rendered) rescue JSON::Any.new(lookup_rendered))
+              result = @lookup.apply_method_suffix(result, suffix) || result
+              return result.raw.is_a?(String) ? result.as_s : result.to_json
+            end
+          end
+        end
+
         # `query('first_found', params)` - real Ansible's OTHER lookup-
         # invocation syntax; unlike `lookup(...)` (which comma-joins a
         # multi-result lookup into a scalar string unless `wantlist=True`
@@ -2449,6 +2479,36 @@ module Krikri
       # string (filter chain included) into evaluate_lookup as one
       # garbled, unbalanced argument, never reaching top_level_pipe?/
       # evaluate_with_filter at all.
+      # Returns the index of the closing paren that matches the opening
+      # paren at *open_index*, depth/quote-aware - unlike #bare_call?,
+      # doesn't require that close to be the expression's last
+      # character, so a caller can locate a call's real end even when
+      # something else (a chained `.method()`) follows it. nil if
+      # *open_index* isn't actually an open paren or none matches.
+      private def matching_close_paren_index(expr : String, open_index : Int32) : Int32?
+        return nil unless expr[open_index]? == '('
+
+        depth = 1
+        quote : Char? = nil
+        ((open_index + 1)...expr.size).each do |i|
+          char = expr[i]
+          if quote
+            quote = nil if char == quote
+            next
+          end
+          case char
+          when '\'', '"'
+            quote = char
+          when '('
+            depth += 1
+          when ')'
+            depth -= 1
+            return i if depth == 0
+          end
+        end
+        nil
+      end
+
       private def bare_call?(expr : String, prefix : String) : Bool
         return false unless expr.starts_with?(prefix) && expr.ends_with?(')')
 
@@ -2888,8 +2948,29 @@ module Krikri
           # for `lookup(`'s own open paren is the expression's
           # actual last character, not just checking whether the
           # tail of the string happens to be some `)`.
-          lookup_rendered = evaluate_lookup(var_expr[7..-2])
-          return (JSON.parse(lookup_rendered) rescue JSON::Any.new(lookup_rendered))
+          #
+          # A bare trailing method call chained directly onto the
+          # lookup with no `|` in between (`lookup("file", "{{ a }}/
+          # {{ b }}").splitlines() | select(...) | list`, bodsch.
+          # tomcat round 199) also satisfies ends_with(')') - its own
+          # closing paren, not lookup(...)'s - so var_expr[7..-2]
+          # sliced a garbled, unbalanced argument string ("...".
+          # splitlines(" minus its last char). Locate lookup(...)'s
+          # OWN matching close paren depth-aware instead of assuming
+          # it is the expression's last character, then dispatch
+          # anything after it (".splitlines()") as a method-call
+          # suffix on the lookup's result via VariableLookup, the
+          # same dispatcher a plain variable's own dotted method
+          # chain already goes through (variable_lookup.cr's
+          # `string_method_call`/`apply_method_suffix`).
+          close_idx = matching_close_paren_index(var_expr, 6)
+          if close_idx
+            lookup_rendered = evaluate_lookup(var_expr[7...close_idx])
+            result = (JSON.parse(lookup_rendered) rescue JSON::Any.new(lookup_rendered))
+            suffix = var_expr[(close_idx + 1)..]
+            result = @lookup.apply_method_suffix(result, suffix) || result unless suffix.empty?
+            return result
+          end
         end
 
         nil

@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.678`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.681`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.20` (see `shard.yml`).
 
 ---
@@ -80,17 +80,26 @@ hardcoding to one specific version's phrasing doesn't durably fix
 anything - would need either a version-aware message table or accepting
 this as permanently approximate.
 
-### Generic `PLAY [Play 1]`/`TASK [Task 1]` labels on a nameless play/task, plus a spurious inventory warning
+### Generic `TASK [Task 1]` label on a nameless task
 
-Surfaced twice in round 300-303 (`cloudalchemy.cortex`, `gantsign.intellij-plugins`): (1) a
-play or task with no `name:` gets a generic `Play 1`/`Task 1` label; real
-Ansible instead derives one from context (`PLAY [all]`, `TASK [<role> :
-<action>]`). Cosmetic only - doesn't affect ok/changed/failed counts or
-control flow, just console output. (2) krikri prints an extra "Host
-'localhost' has no user specified" inventory warning that real Ansible
-doesn't emit for the same inventory. Not fixed - low priority, purely
-cosmetic, needs a dedicated look at how the display layer derives task/
-play labels when `name:` is absent.
+Surfaced round 300-303 (`cloudalchemy.cortex`, `gantsign.intellij-plugins`): a
+task with no `name:` gets a generic `Task 1` label; real Ansible instead
+derives one from the action itself (`TASK [debug]`, or `TASK [<role> :
+<action>]` inside a role). Cosmetic only - doesn't affect ok/changed/failed
+counts or control flow, just console output. Not fixed: `parse_task` doesn't
+yet know the resolved module/directive name at the point the fallback name is
+assigned, and the real-Ansible convention differs per directive type
+(`include_tasks`, `include_role`, a plain module task, a block, ...) - fixing
+this needs a wider, per-branch change across `parse_task`/`parse_block_task`/
+`parse_include_tasks`/`parse_include_role` etc., each verified against real
+Ansible's own convention for that shape, not a single one-line fallback.
+
+(The sibling `PLAY [Play 1]` label and the spurious "Host 'x' has no user
+specified" inventory warning from the same round are both fixed: a nameless
+play now displays its `hosts:` value, matching real Ansible - see
+`parse_play`'s `explicit_name` handling - and the inventory-user-check
+warning was removed outright, since real `ansible-playbook` never emits it at
+all regardless of connection type.)
 
 ### No fact-caching support (`ANSIBLE_CACHE_PLUGIN_CONNECTION` / `fact_caching` config)
 
@@ -104,34 +113,49 @@ failing task itself, just an ok/changed-count mismatch caused by the missing
 feature. Not fixed - no fact-cache plugin architecture exists yet to hang a
 fix off of.
 
-### `namespace()`-accumulated loop results via `lookup('varnames', ...)` don't survive to `| to_json`/Crinja's own `lookup('template', ...)`
+### `namespace()` doesn't render at all when reached through a nested `lookup('template', ...)` call via Crinja's native `:lookup`
 
 Found benchmarking bimdata.ferm (round849): its own `get_vars.j2` builds a
 result list with `{% set ns = namespace(items=[]) %}` +
 `{% for varname in lookup('varnames', pattern, wantlist=True) %}...{% set _ =
-ns.items.append(...) %}{% endfor %}`, then emits `{{ ns.items | to_json }}`.
-This engine's hand-rolled evaluator now runs `namespace()`/kwarg calls inside
-`{% set %}` without crashing (0.9.674 fixed the strict-scan false positive
-that used to raise "'namespace' is undefined" outright), and a *direct*
-`lookup('template', path, template_vars=dict(...))` call now correctly merges
-its kwarg into the rendered template's own vars - but the role's real usage
-goes through a SEPARATE path: `defaults/main.yml` pre-declares `_ferm_rules:
-"{{ lookup('template', ..., template_vars=dict(...)) | from_json }}"`, whose
-own value is itself unrendered `{{ }}` text, later re-rendered on read via
-`CrinjaRenderer.convert_var`/`rerender_nested_templates` - which dispatches to
-Crinja's OWN native `lookup` function (`jinja_filters.cr`'s `:lookup`,
-independent of `expression_evaluator.cr`'s hand-rolled one per this repo's own
-two-evaluator split - see this file's own top-of-repo `CLAUDE.md`) rather than
-the hand-rolled `lookup_template` just fixed. That native path doesn't honor
-`template_vars=` at all, so `app_name`/`var_type` stay undefined inside the
-re-rendered template, and the resulting `namespace().items` accumulation -
-even once that's fixed - would need to survive back out through `to_json` and
-then `from_json` on the OTHER end of the pipe. Not fixed: needs the identical
-`template_vars=` + `#jinja2:`-stripping fix ported into `jinja_filters.cr`'s
-own `:lookup` implementation (the "same bug, independently, in the other
-evaluator" pattern this repo's CLAUDE.md already names as the most common
-recurring bug class here), then re-verified end to end against this exact
-role before considering it closed.
+ns.items.append(...) %}{% endfor %}`, then emits `{{ ns.items | to_json }}`,
+reached via `defaults/main.yml`'s `_ferm_rules: "{{ lookup('template', ...,
+template_vars=dict(...)) | from_json }}"` - a `{{ }}`-valued default that
+gets re-rendered on read via `CrinjaRenderer.convert_var`/
+`rerender_nested_templates`, which dispatches to Crinja's own native
+`lookup` function (`jinja_filters.cr`'s `:lookup`, independent of
+`expression_evaluator.cr`'s hand-rolled `lookup_template` per this repo's own
+two-evaluator split - see this file's own top-of-repo `CLAUDE.md`).
+
+**Fixed in 0.9.681: `template_vars=dict(...)` and the `#jinja2:` directive-
+strip, ported into `jinja_filters.cr`'s native `:lookup` "template" case**
+(the identical fix `expression_evaluator.cr`'s `lookup_template` already
+had) - verified directly: `{{ lookup('template', path, template_vars=
+dict(app_name='myapp', var_type='prod')) }}` now correctly resolves
+`app_name`/`var_type` inside the nested template, and a leading `#jinja2:`
+line no longer leaks into the output. See
+`spec/unit/crinja_renderer_spec.cr`.
+
+**Still open, and more precisely diagnosed than before: `namespace()`
+specifically does not render at all when it appears inside a template
+reached through THIS nested `lookup('template', ...)` call.** Minimal
+repro: `{% set ns = namespace(items=[]) %}{% set _ = ns.items.append('x')
+%}{{ ns.items | to_json }}` as the `.j2` file's entire content, rendered via
+`{{ lookup('template', path) }}` - the ENTIRE nested template comes back as
+the literal, completely unrendered source text (not an error, not
+"undefined" - the raw `{% set %}...{% endfor %}` text itself), even though
+`namespace()` works fine as a top-level bare `{{ }}` expression and even a
+plain `{% for %}` loop over a literal list renders correctly through this
+same nested-lookup code path (`{% for x in [1,2,3] %}{{ x }},{% endfor %}`
+comes back `1,2,3,` correctly). Something about `namespace()` specifically
+- not `{% set %}`/`{% for %}` in general - makes `env.from_string(content).
+render` silently fail to parse/render the whole template as tags at all
+inside this nested-call context, unlike a real top-level `.j2` file render
+via `CrinjaRenderer`, where `namespace()` already works (0.9.674). Not yet
+root-caused to a specific line - needs tracing why `env` inside a
+`Crinja.function` block behaves differently for `namespace()` specifically
+than the top-level render path does, before the bimdata.ferm round-trip can
+be verified end to end.
 
 ### brunobenchimol.certbot_dns (round855) - recap skip-count mismatch, not yet root-caused
 
@@ -625,50 +649,6 @@ are recorded in `ROLES_TESTED.md`'s round-191 rows.
 
 ## Real gaps (worth revisiting)
 
-- **FIXED 2026-08-30 (P1.1, FINDINGS_CHECKLIST.md) - the round-200
-  traefik "vundefined.yml" gap.** The original diagnosis in this entry
-  (a missing re-render in `resolve_simple` / a missing `@lookup.simple`
-  fallback in `evaluate_expr_access`) was the SYMPTOM, not the cause -
-  which is why that fix attempt broke the three strict-undefined specs
-  and was reverted: it patched the sentinel output while the real
-  producer of the sentinel stayed. Two actual root causes, both fixed:
-
-  1. **`scan_block_tag_refs` checked a dotted/bracketed chain as a flat
-     `@vars` key.** `SCAN_STRICT_BLOCK_TAG_REF` matches
-     `traefik_ver.major` as ONE token and the scan asked
-     `@vars.has_key?("traefik_ver.major")` - a key that can never exist -
-     so EVERY `{% if %}` condition using ordinary attribute access on a
-     defined dict/list was reported undefined under strict.
-     `CrinjaRenderer.convert_var` asks exactly that probe
-     (`unresolvable_template?`) before handing Crinja a value, so the
-     WHOLE variable became `Crinja::Undefined` and a bare
-     `{{ traefik_install_ver }}` rendered the sentinel text. The scan now
-     resolves the chain by its ROOT (`traefik_ver`), which is also what
-     real ansible-core 2.19.4 does (`{% if d.attr == 'x' %}` with `d`
-     defined does not raise there; a missing ATTRIBUTE is a different
-     error class, "has no attribute", and Crinja's lenient Undefined
-     already covers the non-strict shape).
-  2. **`rerender_string_value` only re-rendered values containing `{{`.**
-     A pure `{% %}`-block value reached Crinja's context still raw. A
-     bare `{{ v }}` was saved by the outer re-pass loop (the rendered
-     result still contains `{%`), but a FILTER-CHAIN head was not:
-     `{{ v | upper }}` applied `upper` to the literal
-     `{% IF FLAG %}...{% ENDIF %}` text, mangling the tag keywords so no
-     later pass could ever parse them; a `default()` argument failed the
-     same way. The re-render now fires for `{%`/`{#` too, at conversion
-     time.
-
-  Neither fix touches `resolve_simple` (still deliberately raw - it is
-  the strict chain-walker's lookup primitive) or the strict raise
-  semantics, which is why the three specs that the reverted attempt broke
-  (`nested_undefined_chain_spec.cr`,
-  `variable_substitutor_blocktag_undefined_spec.cr`,
-  `var_substitutor_caching_spec.cr`) pass unchanged. Regression cover:
-  `spec/unit/blocktag_dotted_attr_strict_spec.cr` (P1.1's shapes) and
-  `spec/unit/blocktag_value_resolution_parity_spec.cr` (the P1.2
-  resolution-path parity guard: bare / dotted / indexed / filter-chain
-  head / default() arg / ternary branch / inside-a-larger-string, all
-  through a block-tag-valued variable).
 - **Role-private `library/*.py` modules stay skipped** (documented
   no-arbitrary-Python scope cut, now seen live twice): the
   linux-system-roles family's `sr_fingerprint` success-fingerprint tasks
@@ -713,29 +693,6 @@ are recorded in `ROLES_TESTED.md`'s round-191 rows.
   list. Likely the same "default() doesn't preserve the fallback
   argument's real JSON type" class as the FilterEngine boolean-passthrough
   fixed elsewhere for other filters - not yet traced to a specific line.
-- **`lookup(...).method()` chained directly (no `|` filter) mis-locates
-  the lookup call's own closing paren** (round 199, bodsch.tomcat):
-  `filter_chain_special_head`'s `var_expr.starts_with?("lookup(") &&
-  var_expr.ends_with?(')')` check (`expression_evaluator.cr`) assumes
-  the lookup call's matching close paren IS the expression's last
-  character - true when a `|` filter follows (`split_chain` already
-  isolated the call before this runs), but false for a bare trailing
-  method call with no `|` at all (`lookup("file", "{{ tomcat_local_tmp_
-  directory }}/apache-tomcat-{{ tomcat_version }}.tar.gz.sha512").
-  splitlines() | select(...) | list` - the `.splitlines()` suffix's own
-  closing paren is what `ends_with?(')')` actually matches, so
-  `var_expr[7..-2]` slices a garbled, unbalanced argument string).
-  `evaluate_expr`'s own analogous `bare_call?` helper already solves
-  this correctly (confirms the matching close for a given prefix is the
-  string's actual last char, paren/quote-depth aware) but isn't reused
-  here. Needs a paren-depth-aware scan for the lookup call's real end
-  before slicing, then re-dispatching the `.splitlines()`/`.method()`
-  suffix the same way a plain variable's method-chain already is
-  (`variable_lookup.cr`'s `string_method_call`). The related "argument
-  ITSELF contains an unrendered `{{ }}` span" half of this same repro
-  (`lookup("file", "{{ a }}/{{ b }}")` with nothing chained after) is
-  fixed as of 0.9.642 - only the `.method()`-directly-after-`lookup(...)`
-  shape (no separating `|`) is still open.
 - **`changed_when` with a missing dict attribute is lenient**
   (cloudalchemy.pushgateway): the role's own `changed_when` references
   `.diff` on a dict result that has none - real ansible-core 2.19 raises

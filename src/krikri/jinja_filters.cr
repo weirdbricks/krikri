@@ -1833,7 +1833,46 @@ module Krikri
         path = arg1.to_s
         resolved = JinjaFilters.resolve_lookup_path(path, role_path)
         begin
-          Crinja::Value.new(env.from_string(File.read(resolved)).render.chomp)
+          content = File.read(resolved)
+          # A `#jinja2: key:value, ...` directive on the template's very
+          # first line is metadata for the renderer, not template
+          # content - real Ansible strips it before rendering. Same fix
+          # as ExpressionEvaluator#lookup_template's own (see that
+          # method's comment) - this native Crinja `:lookup` path is a
+          # SEPARATE implementation (this repo's own two-evaluator
+          # split) that needed the identical fix ported in, not
+          # inherited automatically.
+          first_line_end = content.index('\n')
+          first_line = first_line_end ? content[0...first_line_end] : content
+          if first_line.strip.starts_with?("#jinja2:")
+            content = first_line_end ? content[(first_line_end + 1)..] : ""
+          end
+
+          # template_vars=dict(...) - real Ansible's own template lookup
+          # plugin merges this kwarg's dict into the vars available to
+          # the rendered template, ON TOP of (never replacing) the
+          # calling context's own vars. Entirely ignored before in this
+          # native Crinja path (ExpressionEvaluator#lookup_template
+          # already had the equivalent fix) - a template rendered via
+          # `{{ lookup('template', path, template_vars=dict(...)) }}`
+          # reached here with the kwarg's values simply absent, so any
+          # `{{ app_name }}` etc. inside the template rendered
+          # "undefined" regardless of which call passed which values
+          # (bimdata.ferm's own get_vars.j2, rendered 4 times with a
+          # different app_name:/var_type: pair each time via this exact
+          # kwarg - round 849).
+          extra = arguments.kwargs["template_vars"]?.try { |val| val.raw.is_a?(Crinja::Dictionary) ? val.raw.as(Crinja::Dictionary) : nil }
+          if extra && !extra.empty?
+            saved = extra.keys.to_h { |key| {key, env.context[key.to_s]} }
+            extra.each { |key, value| env.context[key.to_s] = value }
+            begin
+              Crinja::Value.new(env.from_string(content).render.chomp)
+            ensure
+              saved.each { |key, value| env.context[key.to_s] = value }
+            end
+          else
+            Crinja::Value.new(env.from_string(content).render.chomp)
+          end
         rescue
           Crinja::Value.new(nil)
         end

@@ -267,7 +267,18 @@ module Krikri
         return nil unless current
         current = rerender_if_templated(current)
 
-        parts[1..-1].each do |part|
+        apply_dotted_parts(current, parts[1..-1])
+      end
+
+      # The dotted-suffix walking loop `resolve_nested` runs after
+      # resolving its own base variable - split out so a caller that
+      # already has a resolved value in hand (not a variable NAME) can
+      # apply a dotted/method-call suffix to it directly. See
+      # #apply_method_suffix for that public entry point - added for
+      # ExpressionEvaluator's `lookup(...).method()` shape, where the
+      # "base" is a lookup() call's return value, not a `@vars` name.
+      private def apply_dotted_parts(current : JSON::Any, parts : Array(String)) : JSON::Any?
+        parts.each do |part|
           dict_method = hash_method_call(current, part)
           if dict_method
             current = dict_method
@@ -310,6 +321,18 @@ module Krikri
         end
 
         current
+      end
+
+      # Applies a dotted/method-call SUFFIX (e.g. "splitlines()", the
+      # text after a `lookup(...)` call's own closing paren) to an
+      # already-resolved value - used by ExpressionEvaluator's
+      # `filter_chain_special_head` for `lookup(...).method()` chained
+      # directly with no `|` filter in between (round 199, bodsch.tomcat).
+      def apply_method_suffix(current : JSON::Any, suffix : String) : JSON::Any?
+        return current if suffix.empty?
+
+        suffix = suffix[1..] if suffix.starts_with?('.')
+        apply_dotted_parts(current, split_dotted_parts(suffix))
       end
 
       # Splits a dotted access path on top-level "." only - outside

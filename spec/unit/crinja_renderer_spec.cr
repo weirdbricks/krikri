@@ -490,6 +490,35 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     renderer.render(%({{ lookup('template', '#{path}') }})).should eq("value is computed")
   end
 
+  it "renders lookup('template', path, template_vars=dict(...)) merging the kwarg's dict into the rendered template's own vars" do
+    # Round 849, bimdata.ferm: real Ansible's template lookup plugin
+    # merges template_vars=dict(...) into the vars available to the
+    # rendered template, ON TOP of the calling context's own vars. This
+    # native Crinja :lookup path (jinja_filters.cr, independent of
+    # ExpressionEvaluator#lookup_template which already had the
+    # equivalent fix) ignored the kwarg entirely before, so a template
+    # rendered this way saw app_name/var_type as undefined regardless
+    # of which values were passed.
+    path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "crinja_lookup_template_vars_test.j2")
+    Dir.mkdir_p(File.dirname(path))
+    File.write(path, "{{ app_name }}-{{ var_type }}\n")
+
+    v = Hash(String, JSON::Any).new
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ lookup('template', '#{path}', template_vars=dict(app_name='myapp', var_type='prod')) }})).should eq("myapp-prod")
+  end
+
+  it "strips a #jinja2: directive line from lookup('template', ...) output, same as the template: module" do
+    path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "crinja_lookup_template_directive_test.j2")
+    Dir.mkdir_p(File.dirname(path))
+    File.write(path, "#jinja2: lstrip_blocks: True\nvalue is {{ my_var }}\n")
+
+    v = Hash(String, JSON::Any).new
+    v["my_var"] = JSON::Any.new("computed")
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ lookup('template', '#{path}') }})).should eq("value is computed")
+  end
+
   it "renders lookup('password', path) generating and persisting a password across renders" do
     path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "crinja_lookup_password_test.txt")
     File.delete(path) if File.exists?(path)

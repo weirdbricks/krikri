@@ -1031,13 +1031,6 @@ module Krikri
         warnings << "Inventory has no hosts"
       end
 
-      # Check for hosts without required vars
-      inventory.hosts.each do |name, host|
-        unless host.user.presence
-          warnings << "Host '#{name}' has no user specified"
-        end
-      end
-
       warnings
     end
 
