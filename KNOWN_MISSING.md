@@ -10,8 +10,8 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.682`.** Vendored `crinja` fork now at tag
-`crystal-play-0.9.20` (see `shard.yml`).
+**Currently at `0.9.683`.** Vendored `crinja` fork now at tag
+`crystal-play-0.9.21` (see `shard.yml`).
 
 ---
 
@@ -113,7 +113,7 @@ failing task itself, just an ok/changed-count mismatch caused by the missing
 feature. Not fixed - no fact-cache plugin architecture exists yet to hang a
 fix off of.
 
-### `namespace()` doesn't render at all when reached through a nested `lookup('template', ...)` call via Crinja's native `:lookup`
+### bimdata.ferm's `namespace()`-accumulator + nested `lookup('template', ...)` round-trip - root-caused and fixed (0.9.681 + 0.9.682's crinja bump)
 
 Found benchmarking bimdata.ferm (round849): its own `get_vars.j2` builds a
 result list with `{% set ns = namespace(items=[]) %}` +
@@ -127,35 +127,39 @@ gets re-rendered on read via `CrinjaRenderer.convert_var`/
 `expression_evaluator.cr`'s hand-rolled `lookup_template` per this repo's own
 two-evaluator split - see this file's own top-of-repo `CLAUDE.md`).
 
-**Fixed in 0.9.681: `template_vars=dict(...)` and the `#jinja2:` directive-
-strip, ported into `jinja_filters.cr`'s native `:lookup` "template" case**
-(the identical fix `expression_evaluator.cr`'s `lookup_template` already
-had) - verified directly: `{{ lookup('template', path, template_vars=
-dict(app_name='myapp', var_type='prod')) }}` now correctly resolves
-`app_name`/`var_type` inside the nested template, and a leading `#jinja2:`
-line no longer leaks into the output. See
-`spec/unit/crinja_renderer_spec.cr`.
+Three separate bugs, all now fixed, needed to make this real round-trip
+work end to end:
 
-**Still open, and more precisely diagnosed than before: `namespace()`
-specifically does not render at all when it appears inside a template
-reached through THIS nested `lookup('template', ...)` call.** Minimal
-repro: `{% set ns = namespace(items=[]) %}{% set _ = ns.items.append('x')
-%}{{ ns.items | to_json }}` as the `.j2` file's entire content, rendered via
-`{{ lookup('template', path) }}` - the ENTIRE nested template comes back as
-the literal, completely unrendered source text (not an error, not
-"undefined" - the raw `{% set %}...{% endfor %}` text itself), even though
-`namespace()` works fine as a top-level bare `{{ }}` expression and even a
-plain `{% for %}` loop over a literal list renders correctly through this
-same nested-lookup code path (`{% for x in [1,2,3] %}{{ x }},{% endfor %}`
-comes back `1,2,3,` correctly). Something about `namespace()` specifically
-- not `{% set %}`/`{% for %}` in general - makes `env.from_string(content).
-render` silently fail to parse/render the whole template as tags at all
-inside this nested-call context, unlike a real top-level `.j2` file render
-via `CrinjaRenderer`, where `namespace()` already works (0.9.674). Not yet
-root-caused to a specific line - needs tracing why `env` inside a
-`Crinja.function` block behaves differently for `namespace()` specifically
-than the top-level render path does, before the bimdata.ferm round-trip can
-be verified end to end.
+1. **`template_vars=dict(...)` and the `#jinja2:` directive-strip were
+   missing from `jinja_filters.cr`'s native `:lookup` "template" case**
+   (0.9.681) - the identical fix `expression_evaluator.cr`'s
+   `lookup_template` already had, ported in.
+2. **Crinja's `Resolver#resolve_attribute` crashed with "Invalid Int32:
+   ..." on `namespace().items.append(...)`** - its numeric-index fallback
+   called the raising `name.to_i` on ANY failed attribute lookup,
+   including a genuine method-call name like "append" (not just inside a
+   nested lookup - this crashed `namespace()`-accumulation everywhere,
+   including a plain top-level `.j2` template render, once actually
+   traced down; the original "comes back as literal unrendered text"
+   symptom first seen was from a different path - a bare `{{ }}` task
+   param, which doesn't dispatch complex block-tag expressions to Crinja
+   at all, not a namespace()-specific rendering failure inside nested
+   lookups as first suspected).
+3. **`Array` had no `crinja_call` at all**, so even once #2 stopped
+   crashing, `.append(x)`/`.extend(iterable)` simply weren't implemented -
+   Crinja's method dispatch only calls through to `crinja_call` for types
+   that implement it.
+
+\#2 and #3 are fixed in the vendored `crinja` fork itself
+(`weirdbricks/crinja` tag `crystal-play-0.9.21`, `shard.yml` bumped) -
+`src/runtime/resolver.cr`'s rescue-guarded probe and the new
+`src/runtime/python_list_methods.cr` (mirroring the existing
+`python_hash_methods.cr`'s `Hash#crinja_call` pattern for `Hash#keys`/
+`#values`/`#items`/`#get`). See that fork's own `PATCHES.md` for the full
+detail. Verified end to end against the exact bimdata.ferm shape -
+`namespace()` accumulation through `to_json`/`from_json` via a nested
+`lookup('template', ..., template_vars=dict(...))` call now resolves
+correctly. See `spec/unit/crinja_renderer_spec.cr`.
 
 ### brunobenchimol.certbot_dns (round855) - recap skip-count mismatch, root-caused and fixed (0.9.682)
 

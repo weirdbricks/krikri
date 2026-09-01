@@ -519,6 +519,39 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     renderer.render(%({{ lookup('template', '#{path}') }})).should eq("value is computed")
   end
 
+  it "resolves namespace()-accumulated items through a nested lookup('template', ..., template_vars=dict(...)) round-trip via to_json/from_json" do
+    # Full bimdata.ferm shape (round849): defaults/main.yml pre-declares
+    # `_ferm_rules: "{{ lookup('template', ..., template_vars=dict(...))
+    #  | from_json }}"`, whose own template accumulates a result list via
+    # `{% set ns = namespace(items=[]) %}` + `{% set _ =
+    # ns.items.append(...) %}` inside a `{% for %}`, then emits `{{
+    # ns.items | to_json }}`. Was broken by TWO separate bugs, now both
+    # fixed: (1) this repo's own template_vars=/#jinja2: porting into
+    # jinja_filters.cr's native :lookup "template" case (see the spec
+    # above), and (2) two bugs in the vendored crinja fork itself
+    # (weirdbricks/crinja tag crystal-play-0.9.21) - Resolver#
+    # resolve_attribute's numeric-index fallback crashed with "Invalid
+    # Int32: ..." on any non-numeric attribute miss (including
+    # "append"), and Array had no crinja_call at all so .append()/
+    # .extend() weren't implemented - see that fork's own PATCHES.md.
+    path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "crinja_namespace_lookup_template_test.j2")
+    Dir.mkdir_p(File.dirname(path))
+    File.write(path, <<-J2)
+      {% set ns = namespace(items=[]) %}
+      {% for varname in lookup('varnames', '^' ~ app_name ~ '_.*', wantlist=True) %}
+      {% set _ = ns.items.append(varname) %}
+      {% endfor %}
+      {{ ns.items | to_json }}
+      J2
+
+    v = Hash(String, JSON::Any).new
+    v["myapp_rule_one"] = JSON::Any.new("foo")
+    v["myapp_rule_two"] = JSON::Any.new("bar")
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    result = renderer.render(%({{ lookup('template', '#{path}', template_vars=dict(app_name='myapp')) }}))
+    JSON.parse(result).as_a.map(&.as_s).sort.should eq(["myapp_rule_one", "myapp_rule_two"])
+  end
+
   it "renders lookup('password', path) generating and persisting a password across renders" do
     path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "crinja_lookup_password_test.txt")
     File.delete(path) if File.exists?(path)
