@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.665`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.678`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.20` (see `shard.yml`).
 
 ---
@@ -132,6 +132,17 @@ own `:lookup` implementation (the "same bug, independently, in the other
 evaluator" pattern this repo's CLAUDE.md already names as the most common
 recurring bug class here), then re-verified end to end against this exact
 role before considering it closed.
+
+### brunobenchimol.certbot_dns (round855) - recap skip-count mismatch, not yet root-caused
+
+`rc=0` on both engines, no crash - but real Ansible's recap shows `ok=8
+skipped=40` where this engine shows `ok=9 skipped=21`, a ~19-task gap far
+bigger than the individual per-task skip/ok differences seen elsewhere in
+this round. Not yet isolated to a specific task or task-list divergence
+(the two engines' TASK banners mostly line up 1:1 by name once the
+cosmetic role-name-prefix difference is discounted) - needs a proper
+side-by-side task-list diff, not just a recap-count comparison, before a
+fix can be targeted.
 
 ## The parity-breaking tier was built, measured, and removed (0.9.641)
 

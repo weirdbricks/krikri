@@ -2277,7 +2277,7 @@ module Krikri
         # "no such file", so skip the candidate instead.
         next if candidate.includes?("{{")
 
-        if found = resolve_first_found_path(task, candidate)
+        if found = resolve_first_found_path(task, candidate, substitutor)
           return [JSON::Any.new(found)]
         end
       end
@@ -2316,7 +2316,7 @@ module Krikri
     # (`skip: true` on the with_first_found meant it skipped rather than
     # failed) and every var the role expected from that file - including
     # mysql_daemon - stayed undefined for the rest of the run.
-    private def resolve_first_found_path(task : Task, candidate : String) : String?
+    private def resolve_first_found_path(task : Task, candidate : String, substitutor : VarSubstitutor) : String?
       return File.exists?(candidate) ? candidate : nil if candidate.starts_with?("/")
 
       # An explicit paths: sub-key (the dict form's own `- files: [...]
@@ -2326,9 +2326,23 @@ module Krikri
       # below. A relative entry resolves against the role root (real
       # Ansible's own behavior for with_first_found:'s paths:), an
       # absolute one passes through unchanged.
+      #
+      # Each custom path is templated first - `paths: ['{{ role_path }}/
+      # vars']` is a very common idiom (andrewrothstein.kubic/.gpg among
+      # others), and without rendering it, the raw literal string
+      # "{{ role_path }}/vars" doesn't start with "/" so it fell into the
+      # relative branch and got joined onto task.role_path AGAIN,
+      # producing a garbage path with literal "{{"/"}}" in it that can
+      # never exist. Every candidate then missed and `skip: true` turned
+      # that into a silent skip instead of a visible failure - found
+      # benchmarking andrewrothstein.buildah (round 152 3-way benchmark),
+      # whose "Resolve platform specific vars" task always skipped,
+      # leaving kubic_pkg_mgr undefined and silently omitting the whole
+      # apt-key/apt-repo setup real Ansible attempts.
       if custom_paths = task.loop_first_found_paths
         roots = custom_paths.map do |path|
-          path.starts_with?("/") ? path : (task.role_path.try { |role_dir| File.join(role_dir, path) } || path)
+          rendered = substitutor.substitute(path).strip
+          rendered.starts_with?("/") ? rendered : (task.role_path.try { |role_dir| File.join(role_dir, rendered) } || rendered)
         end
         return first_existing(roots, candidate)
       end
