@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.681`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.682`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.20` (see `shard.yml`).
 
 ---
@@ -157,30 +157,40 @@ root-caused to a specific line - needs tracing why `env` inside a
 than the top-level render path does, before the bimdata.ferm round-trip can
 be verified end to end.
 
-### brunobenchimol.certbot_dns (round855) - recap skip-count mismatch, narrowed but not yet root-caused
+### brunobenchimol.certbot_dns (round855) - recap skip-count mismatch, root-caused and fixed (0.9.682)
 
-`rc=0` on both engines, no crash - but real Ansible's recap shows `ok=8
-skipped=40` where this engine shows `ok=9 skipped=21`. A side-by-side
-TASK-banner diff (not just a recap-count comparison) rules out the two
-most obvious hypotheses: (1) the role's `meta/main.yml` dependency on
-`geerlingguy.certbot` (with `certbot_create_if_missing: false` passed as a
-role param) runs exactly ONCE on both engines, not double-counted or
-duplicated on either side; (2) the later explicit `import_role: name:
-geerlingguy.certbot` in `certbot_dns`'s own `tasks/main.yml` (gated `when:
-certbot_create_if_missing`) is correctly skipped by BOTH engines - real
-Ansible's recap never shows a "Certbot Create Certificates." banner
-either, matching `geerlingguy.certbot`'s own default (`false`) for that
-var, so there's no role-params-leaking-across-role-boundaries bug here.
-py's TASK-banner count (48) is still substantially higher than crystal's
-(30) even after accounting for both of the above - the remaining
-difference is most likely a loop-expansion-vs-single-skip counting gap on
-one of the role's `with_items:`/`loop:`-driven tasks (real Ansible can
-expand a skipped loop into one recap entry per item under some
-conditions; this engine's loop handling may be collapsing a
-whole-loop-skipped task into a single skip regardless of item count) -
-not yet pinned to a specific task; needs the loop-by-loop skip semantics
-compared directly against real ansible-core 2.19.4's own strategy code,
-not just recap totals.
+`rc=0` on both engines, no crash - but real Ansible's recap showed `ok=8
+skipped=40` where this engine showed `ok=9 skipped=21`. A side-by-side
+TASK-banner diff (not just a recap-count comparison) ruled out two
+hypotheses before finding the real one: the role's `meta/main.yml`
+dependency on `geerlingguy.certbot` runs exactly once on both engines, and
+the later explicit `import_role: name: geerlingguy.certbot` (gated `when:
+certbot_create_if_missing`, default `false`) is correctly skipped by both -
+neither is a role-params-leaking-across-role-boundaries bug.
+
+**Root cause: `import_role:`'s `when:` was evaluated once against the
+IMPORT ITSELF, instead of being combined onto every task the role expands
+to.** Real Ansible resolves `import_role:`/`import_tasks:` statically - the
+import line produces no task result of its own at all, only its expanded
+children do, and its `when:` is combined (parent PREPENDED, matching
+`import_tasks:`'s own already-fixed short-circuit ordering - see
+`try_parse_import_tasks`'s comment) onto EVERY one of those children. A
+`when: false` static import must therefore still show each inner task
+individually as `TASK [...]`/`skipping:` under its own real name - real
+Ansible's py output here showed the entirety of `geerlingguy.certbot`'s own
+task list expanded and skipped this way. This engine's
+`run_include_role_once` instead returned early on a false `when:` without
+ever loading or expanding the role's tasks at all, undercounting `skipped`
+by the whole imported role's task count - not a loop-counting issue as
+first suspected; the role's own `with_items:`-driven "Delete Certificates."
+task was unaffected on both engines throughout.
+
+Fixed by loading the role's tasks unconditionally for a static import, then
+propagating the import's own `when:` onto each (parent prepended, same
+short-circuit-safe ordering `import_tasks:` already uses - a child
+referencing a `register:` result from an earlier task the parent gate
+would have skipped stays safe, verified directly). See
+`spec/integration/import_role_when_expansion_spec.cr`.
 
 ## The parity-breaking tier was built, measured, and removed (0.9.641)
 

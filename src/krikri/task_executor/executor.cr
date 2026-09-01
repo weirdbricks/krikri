@@ -5557,7 +5557,29 @@ module Krikri
     end
 
     private def run_include_role_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?)
-      if when_condition = task.when_condition
+      # A static import_role: (Task#is_static_import) is resolved at
+      # parse time in real Ansible - the import line itself produces NO
+      # task result at all, ever (see the "ok" comment below), and a
+      # `when:` on the import is combined onto EVERY task the role
+      # expands to, not evaluated once against the import as a whole.
+      # So a `when: false` import_role: must still load and expand the
+      # role's tasks - each shows its own "TASK [...]"/"skipping:"
+      # banner under its own real name - rather than being treated as
+      # one atomic no-op with nothing printed at all. Found via
+      # brunobenchimol.certbot_dns (round855): real Ansible's recap
+      # showed every one of geerlingguy.certbot's own tasks individually
+      # skipped (`TASK [geerlingguy.certbot : Symlink certbot into
+      # place.]` / `skipping:`, etc.) where this engine printed nothing
+      # for that import at all, undercounting `skipped` by the role's
+      # entire task count.
+      #
+      # A DYNAMIC include_role: (not static) keeps the old behavior
+      # unchanged - real Ansible's own IncludeRole task DOES produce a
+      # single result of its own when its `when:` is false, so returning
+      # early with one "skipping:" line for the include_role: task
+      # itself is correct there (see the "ok" comment below for the
+      # sibling true-branch rationale).
+      if (when_condition = task.when_condition) && !task.is_static_import?
         begin
           when_result = evaluate_when(when_condition, vars_context, host)
         rescue ex : WhenEvaluationError
@@ -5566,17 +5588,10 @@ module Krikri
         end
 
         unless when_result
-          # A static import_role: (Task#is_static_import) produces no
-          # result at all when skipped, same as its "ok" path below - the
-          # banner is already suppressed by run_task_batch/run_task_list,
-          # so printing "skipping:" here with no banner above it would be
-          # an orphaned line (see is_static_import's own comment).
-          unless task.is_static_import?
-            connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-            suffix = item_label ? " => (item=#{item_label})" : ""
-            puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
-            @results[host.name]["skipped"] += 1
-          end
+          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+          suffix = item_label ? " => (item=#{item_label})" : ""
+          puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
+          @results[host.name]["skipped"] += 1
           return
         end
       end
@@ -5652,6 +5667,25 @@ module Krikri
       rescue ex
         fail_include(task, host, "Failed to load role '#{role_name}': #{ex.message}")
         return
+      end
+
+      # Same parent-when-PREPENDED propagation import_tasks: already
+      # applies to its own flattened tasks (playbook_parser.cr's
+      # try_parse_import_tasks - see that code's own comment on why
+      # prepended, not appended, matters for short-circuit evaluation
+      # order) - import_role: needed the identical fix, applied here at
+      # runtime since (unlike import_tasks:, resolved fully at parse
+      # time) the role's tasks aren't loaded until this include_role:
+      # task actually executes.
+      if task.is_static_import? && (import_when = task.when_condition)
+        # Handlers are deliberately excluded: they're only ever executed
+        # when notified via flush_handlers, not gated by whatever
+        # skipped the import itself - propagating the import's when:
+        # onto a handler DEFINITION would be a behavior real Ansible
+        # doesn't have, not a fix for anything seen live.
+        included_tasks.each do |included_task|
+          included_task.when_condition = included_task.when_condition ? "(#{import_when}) and (#{included_task.when_condition})" : import_when
+        end
       end
 
       @results[host.name]["ok"] += 1 unless task.is_static_import?
