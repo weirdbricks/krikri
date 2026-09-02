@@ -243,14 +243,24 @@ jobs:
           end
           EOF
 
+      # README's Version badge (found stale at 0.9.646 while several
+      # releases had already shipped past it - it used to only get
+      # bumped by hand as part of a benchmark round's docs commit) is
+      # now kept current the same way the formula is: regenerated every
+      # release rather than relying on someone to remember.
+      - name: Update README version badge
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i -E "s#(badge/version-)[^-]+(-blue)#\1${VERSION}\2#" README.md
+
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/krikri.rb
+          git add Formula/krikri.rb README.md
           if git diff --cached --quiet; then
-            echo "Formula unchanged - nothing to commit."
+            echo "Nothing to commit."
           else
-            git commit -m "Update Formula/krikri.rb for ${GITHUB_REF_NAME}"
+            git commit -m "Update Formula/krikri.rb and README version badge for ${GITHUB_REF_NAME}"
             git push origin HEAD:main
           fi
