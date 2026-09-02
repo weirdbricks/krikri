@@ -22,11 +22,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: brew install --formula (local file, no tap needed)
-        run: brew install --formula Formula/krikri.rb
+      # Linuxbrew isn't preinstalled on GitHub's Ubuntu runners (unlike
+      # Homebrew, which is preinstalled on the macOS ones) - confirmed
+      # live, "brew: command not found".
+      - name: Install Homebrew (Linux only)
+        if: runner.os == 'Linux'
+        uses: Homebrew/actions/setup-homebrew@master
+
+      # Modern Homebrew rejects a bare untapped formula file outright
+      # ("Homebrew requires formulae to be in a tap", confirmed live) -
+      # `brew install --formula <path>` no longer works at all. Tapping
+      # this checkout directly (a local path is a valid tap URL) matches
+      # what a real user's `brew tap weirdbricks/krikri
+      # https://github.com/weirdbricks/krikri` does, without needing a
+      # network fetch of this same commit.
+      - name: Tap this checkout and install
+        run: |
+          brew tap weirdbricks/krikri "$GITHUB_WORKSPACE"
+          brew install weirdbricks/krikri/krikri
 
       - name: brew test
-        run: brew test krikri
+        run: brew test weirdbricks/krikri/krikri
 
       - name: Sanity-check the installed binary directly
         run: krikri-playbook --version
