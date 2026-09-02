@@ -86,9 +86,51 @@ jobs:
           name: krikri-linux-${{ matrix.arch }}
           path: dist/*.tar.gz
 
+  build-macos:
+    name: Build (macOS ${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            arch: arm64
+          - runner: macos-13
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Crystal
+        run: brew install crystal
+
+      - name: Install deps
+        run: shards install
+
+      # Not statically linked - unlike the Linux musl build above,
+      # macOS has no equivalent fully-static toolchain, so this links
+      # against the Homebrew-installed libs (pcre2, openssl, gc, ...)
+      # on the build runner. Fine for a Homebrew-distributed binary,
+      # since Homebrew guarantees those same libs on the install
+      # machine too.
+      - name: Build release binaries
+        run: |
+          PKG="krikri-${GITHUB_REF_NAME}-darwin-${{ matrix.arch }}"
+          ./build.sh --release
+          mkdir -p "dist/${PKG}"
+          cp -a bin/* "dist/${PKG}/"
+          tar -C dist -czf "dist/${PKG}.tar.gz" "${PKG}"
+          ls -lh "dist/${PKG}.tar.gz"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: krikri-darwin-${{ matrix.arch }}
+          path: dist/*.tar.gz
+
   release:
     name: Publish release
-    needs: build
+    needs: [build, build-macos]
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts

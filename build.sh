@@ -15,6 +15,23 @@ PLUGINS_DIR="$OUTPUT_DIR/plugins"
 BUILD_MODE="debug"
 STATIC=false
 
+# GNU vs BSD coreutils/binutils: macOS ships BSD stat/strip, which take
+# different flags than the GNU ones Linux uses. --strip-unneeded and
+# stat -c are GNU-only; strip -S -x and stat -f are the closest BSD
+# equivalents (strip -S drops debug symbols, -x drops non-global ones -
+# BSD strip has no single flag that also drops the static .symtab the
+# way --strip-unneeded does on GNU, so the macOS binaries end up
+# slightly less aggressively stripped, but still far smaller than
+# unstripped).
+STAT_SIZE_FLAG="-c %s"
+STAT_INODE_FLAG="-c %i"
+STRIP_FLAGS="--strip-unneeded"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    STAT_SIZE_FLAG="-f %z"
+    STAT_INODE_FLAG="-f %i"
+    STRIP_FLAGS="-S -x"
+fi
+
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -198,7 +215,7 @@ strip_release_binary() {
     [ -f "$binary" ] || return 0
 
     local before after
-    before=$(stat -c %s "$binary" 2>/dev/null || echo 0)
+    before=$(stat $STAT_SIZE_FLAG "$binary" 2>/dev/null || echo 0)
     # --strip-unneeded (not just --strip-debug): drops the static
     # symbol table and string table on top of any remaining debug
     # info. --no-debug at compile time already removed the multi-MB
@@ -214,8 +231,8 @@ strip_release_binary() {
     # in a crash dump since the static table is gone, but the crash
     # itself will still be reported with line numbers / addresses,
     # not a missing-binary total failure).
-    strip --strip-unneeded "$binary" 2>/dev/null
-    after=$(stat -c %s "$binary" 2>/dev/null || echo 0)
+    strip $STRIP_FLAGS "$binary" 2>/dev/null
+    after=$(stat $STAT_SIZE_FLAG "$binary" 2>/dev/null || echo 0)
     if [ "$before" -gt 0 ] && [ "$after" -gt 0 ] && [ "$after" -lt "$before" ]; then
         local saved=$((before - after))
         # Use a unit that fits the size: a few hundred KB of .symtab
@@ -644,10 +661,10 @@ build_fat_plugin() {
     # standalone file at this path) not already hardlinked to the
     # current fat binary.
     local fat_inode
-    fat_inode=$(stat -c %i "$fat_binary")
+    fat_inode=$(stat $STAT_INODE_FLAG "$fat_binary")
     for plugin in "${FAT_PLUGINS[@]}"; do
         local target="$PLUGINS_DIR/$plugin"
-        if [ ! -e "$target" ] || [ "$(stat -c %i "$target" 2>/dev/null)" != "$fat_inode" ]; then
+        if [ ! -e "$target" ] || [ "$(stat $STAT_INODE_FLAG "$target" 2>/dev/null)" != "$fat_inode" ]; then
             ln -f "$fat_binary" "$target"
         fi
     done
@@ -761,7 +778,7 @@ if [ "$REBUILT_COUNT" -gt 0 ]; then
             # current BUILD_MODE / STRIP_AVAILABLE captured closures).
             # Cheap, identical behavior.
             if [ "$BUILD_MODE" = "release" ] && [ "$STRIP_AVAILABLE" = "true" ] && [ -f "$binary" ]; then
-                strip --strip-unneeded "$binary" 2>/dev/null
+                strip $STRIP_FLAGS "$binary" 2>/dev/null
             fi
             echo -e "   ${GREEN}✓${NC} $plugin"
         else
@@ -770,7 +787,7 @@ if [ "$REBUILT_COUNT" -gt 0 ]; then
         fi
     }
     export -f build_one_plugin
-    export PLUGINS_DIR BUILD_FLAGS STATUS_DIR RED GREEN YELLOW NC BZ2_STATIC_PLUGINS BUILD_MODE STRIP_AVAILABLE STATIC
+    export PLUGINS_DIR BUILD_FLAGS STATUS_DIR RED GREEN YELLOW NC BZ2_STATIC_PLUGINS BUILD_MODE STRIP_AVAILABLE STATIC STRIP_FLAGS
 
     printf '%s\n' "${TO_BUILD[@]}" | xargs -P "$JOBS" -I{} bash -c 'build_one_plugin "$@"' _ {}
 
