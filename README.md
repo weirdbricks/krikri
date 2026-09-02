@@ -94,6 +94,16 @@ Per-role cold/warm timings: see [ROLES_TESTED.md](ROLES_TESTED.md).
 
 ## 🚀 Quick Start
 
+### Install via Homebrew (macOS/Linux, prebuilt binaries)
+
+```bash
+brew tap weirdbricks/krikri https://github.com/weirdbricks/krikri
+brew install weirdbricks/krikri/krikri
+```
+
+Covers macOS (arm64/x86_64) and Linux (arm64/x86_64) - no Crystal
+toolchain needed. See **Build & Run** below to build from source instead.
+
 ### Prerequisites
 - Crystal (tested with 1.20.x - see `shard.yml` for the declared minimum)
   ([install guide](https://crystal-lang.org/install/))

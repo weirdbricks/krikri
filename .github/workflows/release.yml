@@ -145,6 +145,15 @@ jobs:
     needs: [build, build-macos]
     runs-on: ubuntu-latest
     steps:
+      # Checked out first, before "Download artifacts" populates dist/ -
+      # actions/checkout runs `git clean -ffdx` on the workspace by
+      # default, which would delete those untracked tarballs if it ran
+      # afterward instead.
+      - name: Checkout (for later pushing the formula update)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -158,3 +167,90 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Formula/krikri.rb hardcodes this tag's version/url/sha256 for all
+      # 4 assets - without this, every release leaves it silently
+      # pointing at the previous release until someone remembers to bump
+      # it by hand. Regenerated from a template rather than sed-patched
+      # in place, so a change to the formula's structure (a new
+      # depends_on, say) doesn't get clobbered by a future auto-bump -
+      # only the version/url/sha256 lines are templated.
+      - name: Update Formula/krikri.rb
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          declare -A SHA
+          for f in dist/*.tar.gz; do
+            SHA[$(basename "$f")]=$(sha256sum "$f" | cut -d' ' -f1)
+          done
+          asset() { echo "krikri-${GITHUB_REF_NAME}-$1.tar.gz"; }
+          sha() { echo "${SHA[$(asset "$1")]}"; }
+
+          cat > Formula/krikri.rb <<EOF
+          class Krikri < Formula
+            desc "Ansible-compatible automation tool, written in Crystal"
+            homepage "https://github.com/weirdbricks/krikri"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/weirdbricks/krikri/releases/download/${GITHUB_REF_NAME}/$(asset darwin-arm64)"
+                sha256 "$(sha darwin-arm64)"
+              else
+                url "https://github.com/weirdbricks/krikri/releases/download/${GITHUB_REF_NAME}/$(asset darwin-x86_64)"
+                sha256 "$(sha darwin-x86_64)"
+              end
+
+              # Unlike the Linux binaries (fully static musl builds, zero runtime
+              # deps), the macOS binaries are dynamically linked against these at
+              # their Homebrew-installed paths (confirmed via the release build's
+              # own link command: -lgc/-lpcre2-8 resolve to
+              # /opt/homebrew/opt/{bdw-gc,pcre2}, -lssl/-lcrypto to openssl@3) -
+              # without them declared here, a fresh \`brew install\` never pulls
+              # them in and krikri-playbook fails at dyld load time (confirmed
+              # live: "Library not loaded: .../bdw-gc/lib/libgc.1.dylib"). libz/
+              # libbz2/liblzma/libiconv/libutil are all system-provided on macOS,
+              # no formula needed for those.
+              depends_on "openssl@3"
+              depends_on "pcre2"
+              depends_on "bdw-gc"
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/weirdbricks/krikri/releases/download/${GITHUB_REF_NAME}/$(asset linux-arm64)"
+                sha256 "$(sha linux-arm64)"
+              else
+                url "https://github.com/weirdbricks/krikri/releases/download/${GITHUB_REF_NAME}/$(asset linux-x86_64)"
+                sha256 "$(sha linux-x86_64)"
+              end
+            end
+
+            # Each Ansible module is its own small binary, dispatched from
+            # src/krikri/plugin_manager.cr#get_local_plugin_path by resolving a
+            # "plugins" directory next to krikri-playbook's own (symlink-resolved)
+            # executable path - so plugins/ must land in the same Cellar bin/ dir
+            # as the two top-level binaries, not the usual libexec/share split.
+            def install
+              bin.install "krikri-playbook"
+              bin.install "krikri"
+              bin.install "plugins"
+            end
+
+            test do
+              assert_match "krikri #{version}", shell_output("#{bin}/krikri-playbook --version")
+            end
+          end
+          EOF
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/krikri.rb
+          if git diff --cached --quiet; then
+            echo "Formula unchanged - nothing to commit."
+          else
+            git commit -m "Update Formula/krikri.rb for ${GITHUB_REF_NAME}"
+            git push origin HEAD:main
+          fi
