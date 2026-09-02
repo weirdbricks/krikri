@@ -11,6 +11,37 @@ require "./local_executor"
 require "./plugin_helpers/stat_fields"
 
 module Krikri
+  # LibC::Stat's timestamp fields are named differently per libc: glibc
+  # (Linux) uses st_atim/st_mtim/st_ctim, while Darwin's BSD-derived libc
+  # uses st_atimespec/st_mtimespec/st_ctimespec for the same `Timespec`
+  # struct. Only matters for compiling a macOS controller binary - the
+  # plugin binaries this stats normally run on the (Linux) target host,
+  # but ansible_connection=local and the controller's own bookkeeping
+  # exercise this on whatever host krikri-playbook itself runs on.
+  def self.stat_atime_sec(stat : LibC::Stat) : Int64
+    {% if flag?(:darwin) %}
+      stat.st_atimespec.tv_sec.to_i64
+    {% else %}
+      stat.st_atim.tv_sec.to_i64
+    {% end %}
+  end
+
+  def self.stat_mtime_sec(stat : LibC::Stat) : Int64
+    {% if flag?(:darwin) %}
+      stat.st_mtimespec.tv_sec.to_i64
+    {% else %}
+      stat.st_mtim.tv_sec.to_i64
+    {% end %}
+  end
+
+  def self.stat_ctime_sec(stat : LibC::Stat) : Int64
+    {% if flag?(:darwin) %}
+      stat.st_ctimespec.tv_sec.to_i64
+    {% else %}
+      stat.st_ctim.tv_sec.to_i64
+    {% end %}
+  end
+
   # Plugin result structure with diff support
   class PluginResult
     property? changed : Bool
@@ -291,9 +322,9 @@ module Krikri
         gid: stat.st_gid.to_i64,
         pw_name: pw_name,
         gr_name: gr_name,
-        atime: stat.st_atim.tv_sec.to_i64,
-        mtime: stat.st_mtim.tv_sec.to_i64,
-        ctime: stat.st_ctim.tv_sec.to_i64,
+        atime: Krikri.stat_atime_sec(stat),
+        mtime: Krikri.stat_mtime_sec(stat),
+        ctime: Krikri.stat_ctime_sec(stat),
         inode: stat.st_ino.to_i64,
         dev: stat.st_dev.to_i64,
         nlink: stat.st_nlink.to_i64,

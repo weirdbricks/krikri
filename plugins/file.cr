@@ -939,8 +939,8 @@ module Krikri
       current = lstat(path)
       return true unless current
 
-      time_param_would_change?(@params["modification_time"]?, Time.unix(current.st_mtim.tv_sec.to_i64)) ||
-        time_param_would_change?(@params["access_time"]?, Time.unix(current.st_atim.tv_sec.to_i64))
+      time_param_would_change?(@params["modification_time"]?, Time.unix(Krikri.stat_mtime_sec(current))) ||
+        time_param_would_change?(@params["access_time"]?, Time.unix(Krikri.stat_atime_sec(current)))
     end
 
     private def time_param_would_change?(param : String?, current_time : Time) : Bool
@@ -986,8 +986,8 @@ module Krikri
     private def set_time(path : String, atime : Time? = nil, mtime : Time? = nil)
       current = stat(path)
       return unless current
-      new_atime = atime || Time.unix(current.st_atim.tv_sec.to_i64)
-      new_mtime = mtime || Time.unix(current.st_mtim.tv_sec.to_i64)
+      new_atime = atime || Time.unix(Krikri.stat_atime_sec(current))
+      new_mtime = mtime || Time.unix(Krikri.stat_mtime_sec(current))
       File.utime(new_atime, new_mtime, path)
     rescue
     end
