@@ -1,0 +1,32 @@
+name: Brew Formula Test
+
+# Verifies Formula/krikri.rb actually installs and runs on every platform
+# it targets. Triggered manually and on any change to the formula itself
+# (a bumped url/sha256/version is exactly the kind of edit likely to be
+# wrong until proven otherwise on a real runner).
+
+on:
+  workflow_dispatch: {}
+  push:
+    paths:
+      - "Formula/krikri.rb"
+
+jobs:
+  brew-test:
+    name: brew install (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-14, macos-15-intel, ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: brew install --formula (local file, no tap needed)
+        run: brew install --formula Formula/krikri.rb
+
+      - name: brew test
+        run: brew test krikri
+
+      - name: Sanity-check the installed binary directly
+        run: krikri-playbook --version
