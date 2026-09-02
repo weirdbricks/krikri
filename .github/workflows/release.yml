@@ -104,8 +104,17 @@ jobs:
       - name: Install Crystal
         run: brew install crystal
 
+      # --without-development: ameba (a dev-only lint dependency, unused
+      # by the release binaries themselves) has its own `shards build`
+      # postinstall hook that broke against a newer Crystal it doesn't
+      # yet support (confirmed live: v0.9.687's macOS x86_64 job pulled
+      # Crystal 1.21.0 via Homebrew - a different bottle than arm64's
+      # 1.20.2 - and ameba 1.6.4's postinstall failed with "undefined
+      # method 'next_string_array_token' for Crystal::Lexer"). Skipping
+      # it entirely for release builds sidesteps that fragility rather
+      # than pinning to a specific Crystal version.
       - name: Install deps
-        run: shards install
+        run: shards install --without-development
 
       # Not statically linked - unlike the Linux musl build above,
       # macOS has no equivalent fully-static toolchain, so this links

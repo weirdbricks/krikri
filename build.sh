@@ -26,10 +26,12 @@ STATIC=false
 STAT_SIZE_FLAG="-c %s"
 STAT_INODE_FLAG="-c %i"
 STRIP_FLAGS="--strip-unneeded"
+IS_DARWIN=false
 if [[ "$(uname -s)" == "Darwin" ]]; then
     STAT_SIZE_FLAG="-f %z"
     STAT_INODE_FLAG="-f %i"
     STRIP_FLAGS="-S -x"
+    IS_DARWIN=true
 fi
 
 # Parse arguments
@@ -643,8 +645,14 @@ build_fat_plugin() {
         # of dynamic object" on libbz2.so/libssl.so/etc - the combined
         # -Wl,-Bstatic ... -Wl,-Bdynamic ... --static sequence leaves
         # ld in a contradictory mode for every library after bz2).
+        # Also skipped on Darwin: -Wl,-Bstatic/-Bdynamic are GNU-ld
+        # syntax that Apple's linker (invoked via clang here) doesn't
+        # understand, and the libbz2.so.1.0-missing-on-RHEL problem this
+        # trick works around doesn't exist on macOS at all (no bare-RHEL
+        # equivalent target, and Homebrew's libbz2 is always present at
+        # its fixed dylib path).
         fat_link_flags=()
-        if [ "$STATIC" != true ]; then
+        if [ "$STATIC" != true ] && [ "$IS_DARWIN" != true ]; then
             fat_link_flags=("--link-flags=-Wl,-Bstatic -lbz2 -Wl,-Bdynamic")
         fi
         if OUTPUT=$(crystal build "$generated" -o "$fat_binary" $BUILD_FLAGS "${fat_link_flags[@]}" 2>&1); then
@@ -755,9 +763,9 @@ if [ "$REBUILT_COUNT" -gt 0 ]; then
         local binary="$PLUGINS_DIR/$plugin"
 
         local link_flags=()
-        # Skipped under --static - see the fat-plugin build's own comment
-        # above for why combining this with a global --static breaks ld.
-        if [ "$STATIC" != true ] && [[ " $BZ2_STATIC_PLUGINS " == *" $plugin "* ]]; then
+        # Skipped under --static or on Darwin - see the fat-plugin build's
+        # own comment above for why.
+        if [ "$STATIC" != true ] && [ "$IS_DARWIN" != true ] && [[ " $BZ2_STATIC_PLUGINS " == *" $plugin "* ]]; then
             # Must stay one argument (crystal splits --link-flags' OWN
             # value on whitespace internally) - an unquoted expansion
             # here would let bash split it into three separate argv
@@ -791,7 +799,7 @@ if [ "$REBUILT_COUNT" -gt 0 ]; then
         fi
     }
     export -f build_one_plugin
-    export PLUGINS_DIR BUILD_FLAGS STATUS_DIR RED GREEN YELLOW NC BZ2_STATIC_PLUGINS BUILD_MODE STRIP_AVAILABLE STATIC STRIP_FLAGS
+    export PLUGINS_DIR BUILD_FLAGS STATUS_DIR RED GREEN YELLOW NC BZ2_STATIC_PLUGINS BUILD_MODE STRIP_AVAILABLE STATIC STRIP_FLAGS IS_DARWIN
 
     printf '%s\n' "${TO_BUILD[@]}" | xargs -P "$JOBS" -I{} bash -c 'build_one_plugin "$@"' _ {}
 
