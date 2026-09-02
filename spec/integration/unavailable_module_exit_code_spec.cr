@@ -124,6 +124,35 @@ describe "unavailable module exit code" do
     status.exit_code.should eq(4)
   end
 
+  # Real Ansible resolves a task's module/action before it ever looks at
+  # what the loop would iterate over - an empty loop: source must not
+  # hide an unresolvable module (robertdebock.postgres's own "Create
+  # postgres database" task: community.postgresql.postgresql_db looped
+  # over the empty-by-default postgres_databases). Previously
+  # when_passes? - the only place this check ran - is never called at
+  # all when the loop resolves to zero items, so the task silently
+  # "skipped" and the run exited 0 instead of the fatal 4 real Ansible
+  # gives.
+  it "counts a module whose task's loop: resolves to zero items" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          empty_list: []
+        tasks:
+          - name: uses a module that does not exist, looped over nothing
+            nonexistent_module_xyz: {}
+            loop: "{{ empty_list }}"
+          - name: later task
+            ansible.builtin.debug:
+              msg: "LATER-TASK-RAN"
+      YAML
+
+    status.exit_code.should eq(4)
+    output.should contain("LATER-TASK-RAN")
+  end
+
   # Guard against over-reach: a playbook using only real modules must
   # still exit 0.
   it "does not affect a playbook whose modules all exist" do

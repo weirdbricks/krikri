@@ -3340,6 +3340,32 @@ module Krikri
       raise WhenEvaluationError.new(ex.message)
     end
 
+    # Real Ansible resolves a task's module/action plugin before it ever
+    # looks at what the loop would iterate over - an unresolvable module
+    # is a fatal error regardless of whether the loop it's attached to
+    # turns out to have zero items. Shared by when_passes? (the per-item/
+    # non-looped path, called at least once whenever there's ≥1 loop item
+    # to evaluate a when: against) and execute_looped_task's empty-loop
+    # case (loop_items.empty?, where when_passes? is never reached at all
+    # - nothing to iterate means nothing to call it on - so this module
+    # check would otherwise silently never run and the task would just
+    # print "skipping:" instead of the fatal rc=4 real Ansible gives).
+    # Found via robertdebock.postgres's "Create postgres database" task:
+    # community.postgresql.postgresql_db, looped over the (empty-by-
+    # default) postgres_databases, with the community.postgresql
+    # collection not installed.
+    private def register_reachable_unavailable_module(task : Task, vars_context : Hash(String, JSON::Any), host : Host, shared : VarSubstitutor? = nil) : Nil
+      return unless module_name = task.unavailable_module
+
+      would_run = begin
+        when_condition = task.when_condition
+        when_condition.nil? || evaluate_when(when_condition, vars_context, host, shared)
+      rescue
+        false
+      end
+      reachable_unavailable_modules << module_name if would_run
+    end
+
     private def when_passes?(task : Task, vars_context : Hash(String, JSON::Any), host : Host, item_label : String? = nil, shared : VarSubstitutor? = nil, defer_stats : Bool = false, defer_display : Bool = false) : Bool
       # An unavailable-module task (see Task#unavailable_module) always
       # takes the skip path below, regardless of its own when: (or lack
@@ -3351,14 +3377,8 @@ module Krikri
       # WhenEvaluationError (an undefined var the when: itself
       # references) is treated conservatively as "can't tell, don't
       # count" rather than crashing the run over this bookkeeping.
-      if module_name = task.unavailable_module
-        would_run = begin
-          when_condition = task.when_condition
-          when_condition.nil? || evaluate_when(when_condition, vars_context, host, shared)
-        rescue
-          false
-        end
-        reachable_unavailable_modules << module_name if would_run
+      if task.unavailable_module
+        register_reachable_unavailable_module(task, vars_context, host, shared)
       else
         return true unless when_condition = task.when_condition
 
@@ -4515,6 +4535,13 @@ module Krikri
       loop_items : Array(JSON::Any),
       exec_host : Host = host,
     )
+      # See register_reachable_unavailable_module's own comment: an empty
+      # loop means no item ever reaches when_passes?, so the module-
+      # resolution check that call normally carries has to happen here
+      # instead, once, against the task's own when: (there's no item to
+      # bind yet either way).
+      register_reachable_unavailable_module(task, base_vars_context, host) if loop_items.empty?
+
       # Render each item *before* it's ever bound to "item" or checked
       # against when: - a literal loop: entry can itself be a template
       # string (dev-sec mysql_hardening's own "Ensure permissions on
@@ -6760,6 +6787,10 @@ module Krikri
       # line, and #record_handler_result's already_displayed branch
       # counted the no-op result as "ok" instead of "skipped".
       if loop_items.empty?
+        # Same module-resolution-before-loop-emptiness gap execute_looped_task's
+        # own call handles for regular tasks - a handler's module is just as
+        # reachable via a fired notify: regardless of what its loop resolves to.
+        register_reachable_unavailable_module(handler, base_vars_context, host)
         puts "skipping: [#{host.connection_host}]".colorize(:cyan)
         return JSON.parse({
           "changed" => false,
