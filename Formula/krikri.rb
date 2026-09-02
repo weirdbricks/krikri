@@ -12,6 +12,20 @@ class Krikri < Formula
       url "https://github.com/weirdbricks/krikri/releases/download/v0.9.689/krikri-v0.9.689-darwin-x86_64.tar.gz"
       sha256 "a9dc310c943e1a25d5a7aa8b55aca68ecb95eafe5b11b4cf6b2c24305eaa6331"
     end
+
+    # Unlike the Linux binaries (fully static musl builds, zero runtime
+    # deps), the macOS binaries are dynamically linked against these at
+    # their Homebrew-installed paths (confirmed via the release build's
+    # own link command: -lgc/-lpcre2-8 resolve to
+    # /opt/homebrew/opt/{bdw-gc,pcre2}, -lssl/-lcrypto to openssl@3) -
+    # without them declared here, a fresh `brew install` never pulls
+    # them in and krikri-playbook fails at dyld load time (confirmed
+    # live: "Library not loaded: .../bdw-gc/lib/libgc.1.dylib"). libz/
+    # libbz2/liblzma/libiconv/libutil are all system-provided on macOS,
+    # no formula needed for those.
+    depends_on "openssl@3"
+    depends_on "pcre2"
+    depends_on "bdw-gc"
   end
 
   on_linux do
