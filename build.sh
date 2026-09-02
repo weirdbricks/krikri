@@ -586,7 +586,11 @@ build_fat_plugin() {
                     [ "$plugin" = "$extra" ] && is_extra=true && break
                 done
                 [ "$is_extra" = true ] && continue
-                cls=$(grep -oP 'class \K\w+Plugin(?= < BasePlugin)' "plugins/$plugin.cr" | head -1)
+                # sed, not grep -oP: -P (PCRE, needed for \K/lookahead) is a
+                # GNU-grep-only extension - BSD grep (macOS) rejects it
+                # outright. This basic-regex capture-group form works
+                # identically on GNU and BSD sed.
+                cls=$(sed -n 's/^[[:space:]]*class \([A-Za-z_][A-Za-z0-9_]*Plugin\) < BasePlugin.*/\1/p' "plugins/$plugin.cr" | head -1)
                 echo "    when \"$plugin\""
                 echo "      Krikri::$cls.new(config).run_and_capture"
             done
