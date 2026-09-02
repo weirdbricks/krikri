@@ -127,7 +127,10 @@ jobs:
           PKG="krikri-${GITHUB_REF_NAME}-darwin-${{ matrix.arch }}"
           ./build.sh --release
           mkdir -p "dist/${PKG}"
-          cp -a bin/* "dist/${PKG}/"
+          # -l (hardlink, not copy): see the Linux job's own comment above -
+          # bin/plugins/.fat-plugin is hardlinked under 96 plugin names
+          # sharing one inode. BSD cp (macOS) supports -l the same as GNU.
+          cp -al bin/* "dist/${PKG}/"
           tar -C dist -czf "dist/${PKG}.tar.gz" "${PKG}"
           ls -lh "dist/${PKG}.tar.gz"
 
