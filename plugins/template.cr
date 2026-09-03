@@ -318,8 +318,22 @@ module Krikri
           # producing octal 1200 (`--w------T`) instead of 0640
           # (`rw-r-----`), leaving redis-server unable to even read its
           # own config file. Matches file.cr's own `parse_numeric_mode`.
+          #
+          # A genuinely SYMBOLIC mode (`u+x`, `u+x,g+x`, `a+x`, ...) -
+          # real, common idioms for "make this script executable" -
+          # doesn't match that all-digit regex and used to silently do
+          # NOTHING at all (no error, no chmod, mode left at whatever
+          # File.write's own default was) - found via
+          # grzegorznowak.nvm_node's own `template: ... mode="u+x,g+x"`
+          # writing an install script that a later `command:` task then
+          # failed to execute at all ("Permission denied"). file.cr's
+          # own apply_mode already falls back to shelling out to a real
+          # `chmod` for exactly this case; mirrored here instead of
+          # silently dropping the mode.
           if mode =~ /\A0?[0-7]{3,4}\z/
             File.chmod(path, mode.to_i(8))
+          else
+            Process.run("chmod", [mode, path], output: Process::Redirect::Close, error: Process::Redirect::Close)
           end
         rescue
           # Mode setting failed, continue anyway

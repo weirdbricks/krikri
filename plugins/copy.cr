@@ -569,8 +569,18 @@ module Krikri
           # robertdebock.redis) for the full story - the old
           # `starts_with?("0") ? octal : decimal` branch corrupted any
           # templated mode value without a literal leading zero.
+          #
+          # A genuinely SYMBOLIC mode (`u+x`, `a+x`, ...) doesn't match
+          # that all-digit regex and used to silently do NOTHING at all
+          # - found via srsp.oracle-java's own `copy: ... mode="a+x"`
+          # copying an executable script that a later `command:` task
+          # then failed to run ("Permission denied"). Mirrors file.cr's
+          # own apply_mode, which already shells out to a real `chmod`
+          # for exactly this case.
           if mode =~ /\A0?[0-7]{3,4}\z/
             File.chmod(path, mode.to_i(8))
+          else
+            Process.run("chmod", [mode, path], output: Process::Redirect::Close, error: Process::Redirect::Close)
           end
         rescue
           # Mode setting failed, continue anyway
