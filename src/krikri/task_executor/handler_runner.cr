@@ -121,7 +121,16 @@ module Krikri
               already_ran[host.name].add(rendered_name)
 
               unless handler_triggered
-                puts "HANDLER [#{rendered_name}]".colorize(:cyan).bold
+                # Display-only role prefix (verified live against
+                # ansible-core 2.19.12: "RUNNING HANDLER [myrole : my
+                # handler]") - reads handler.role_name directly rather
+                # than folding into rendered_name, which
+                # should_run_handler?/eligible_this_pass? also use for
+                # notify: MATCHING; prefixing that shared value would
+                # make a plain `notify: my handler` stop matching a
+                # role handler's own bare notified name.
+                role_prefix = (rn = handler.role_name) ? "#{rn} : " : ""
+                puts "HANDLER [#{role_prefix}#{rendered_name}]".colorize(:cyan).bold
                 handler_triggered = true
               end
 

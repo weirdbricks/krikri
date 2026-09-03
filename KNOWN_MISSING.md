@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.701`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.702`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.21` (see `shard.yml`).
 
 ---
@@ -149,29 +149,6 @@ exists anywhere in this engine to hang a version-aware message table
 off of, and `rc=1`/detection is identical either way - cosmetic text
 only. Left as permanently approximate rather than chasing every
 ansible-core minor release's exact string.
-
-### No role-name prefix on any `TASK [...]` banner, named or nameless
-
-Found investigating the "Generic `TASK [Task 1]`" gap below (now fixed):
-real Ansible prefixes a role-sourced task's banner with the role name
-(`TASK [myrole : Install packages]`), but this engine's
-`render_task_name_for_display`/`TASK [...]` banner in
-`task_executor/executor.cr` only ever prints `task.name` - `task.role_name`
-is populated (see `role_loader.cr`) but used only for magic vars
-(`ansible_role_name`) and `--list-tasks`' own separate formatter
-(`task_lister.cr`'s `display_name`), never folded into the live TASK
-banner. Confirmed live: a role with a named task `A named task` prints
-plain `TASK [A named task]`, not `TASK [myrole : A named task]`. Purely
-cosmetic (doesn't affect ok/changed/failed/skipped counts), but wider
-than the nameless-task label bug - it affects every role task
-regardless of whether it has an explicit `name:`. Not fixed: needs the
-banner call sites (`executor.cr`'s several `TASK [#{render_task_name_for_display(...)}]`
-sites) to consult `task.role_name` the same way `task_lister.cr`
-already does, verified against real Ansible's own prefixing rules
-(present for role tasks, absent for play-level tasks, and interacting
-with `notify:`'s existing " : " handler-name convention - see
-`handler_runner.cr`/`executor.cr`'s existing `rindex(" : ")` handling,
-which must not double up if this is ever added).
 
 ### bimdata.ferm's `namespace()`-accumulator + nested `lookup('template', ...)` round-trip - root-caused and fixed (0.9.681 + 0.9.682's crinja bump)
 

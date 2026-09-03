@@ -687,7 +687,7 @@ module Krikri
         # tasks do (see is_static_import's own comment).
         unless @adhoc || (task.include_role? && task.is_static_import?)
           display_host = active_hosts.first? || hosts.first
-          puts "TASK [#{render_task_name_for_display(task, display_host)}]".colorize(:white).bold
+          puts "TASK [#{task_role_prefix(task)}#{render_task_name_for_display(task, display_host)}]".colorize(:white).bold
           puts "*" * 70
         end
 
@@ -842,7 +842,7 @@ module Krikri
     # collapses to one group holding every host - the case that actually
     # mattered for the ~1.8x cold-run slowdown this was written to fix.
     private def execute_include_tasks_multi(task : Task, hosts : Array(Host))
-      puts "TASK [#{render_task_name_for_display(task, hosts.first)}]".colorize(:white).bold
+      puts "TASK [#{task_role_prefix(task)}#{render_task_name_for_display(task, hosts.first)}]".colorize(:white).bold
       puts "*" * 70
 
       run_hosts, skip_hosts = partition_by_when(task, hosts)
@@ -1393,6 +1393,33 @@ module Krikri
       VarSubstitutor.new(vars: vars_context, host_name: host.name).substitute(task.name)
     rescue
       task.name
+    end
+
+    # The "myrole : " prefix real Ansible puts on a role-sourced task's
+    # own TASK banner (verified live against ansible-core 2.19.12:
+    # `TASK [myrole : Install packages]`, and a NAMELESS role task gets
+    # it too, e.g. `TASK [myrole : debug]` - matching the already-fixed
+    # action-derived fallback name from KNOWN_MISSING.md's "Generic
+    # TASK [Task 1] label" entry). Display-only: task.name itself stays
+    # bare (this helper is deliberately NOT folded into
+    # #render_task_name_for_display, which HandlerRunner also uses as
+    # its own name_resolver for notify: MATCHING bookkeeping, not just
+    # display - prefixing that shared function would make a plain
+    # `notify: my handler` stop matching a role handler's now-prefixed
+    # rendered_name; see handler_runner.cr's own separate, matching-
+    # safe prefix-at-print-time fix for the HANDLER banner).
+    #
+    # `include_role:`/`import_role:` tasks are the one documented
+    # exception - real Ansible never prefixes the include/import task
+    # itself with its OWN enclosing role's name (only what it expands
+    # INTO inherits the new role's prefix): verified live, a NAMED
+    # `include_role:` task inside "myrole" showed just its own name,
+    # no "myrole :" prefix at all.
+    private def task_role_prefix(task : Task) : String
+      role_name = task.role_name
+      return "" unless role_name
+      return "" if task.module_name == "_include_role"
+      "#{role_name} : "
     end
 
     # Substitutes each *notify_list* entry against *task*'s own
@@ -5124,7 +5151,7 @@ module Krikri
           next
         end
 
-        puts "TASK [#{render_task_name_for_display(nested_task, host)}]".colorize(:white).bold
+        puts "TASK [#{task_role_prefix(nested_task)}#{render_task_name_for_display(nested_task, host)}]".colorize(:white).bold
         puts "*" * 70
         puts "skipping: [#{connection_host}]".colorize(:cyan)
         @results[host.name]["skipped"] += 1
@@ -5330,7 +5357,7 @@ module Krikri
           next
         end
 
-        puts "TASK [#{render_task_name_for_display(nested_task, host)}]".colorize(:white).bold
+        puts "TASK [#{task_role_prefix(nested_task)}#{render_task_name_for_display(nested_task, host)}]".colorize(:white).bold
         puts "*" * 70
         execute_task(nested_task, host)
         puts ""

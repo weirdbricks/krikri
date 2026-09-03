@@ -53,8 +53,11 @@ describe "import_role: with when: expands and propagates onto every one of the r
     status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: src_dir)
 
     status.success?.should be_true
-    output.to_s.should contain("TASK [inner task one]")
-    output.to_s.should contain("TASK [inner task two]")
+    # Role-prefixed ("inner : ...") now that TASK banners carry the
+    # owning role's name, matching real Ansible - see executor.cr's
+    # own task_role_prefix.
+    output.to_s.should contain("TASK [inner : inner task one]")
+    output.to_s.should contain("TASK [inner : inner task two]")
     output.to_s.should_not contain("TASK [import inner conditionally]")
     output.to_s.should match(/skipped=2\b/)
   ensure

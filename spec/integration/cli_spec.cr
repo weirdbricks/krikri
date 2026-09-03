@@ -292,7 +292,9 @@ describe "krikri-playbook CLI (--check mode)" do
     status.success?.should be_true
     output.should contain("hello krikri-playbook, item=x")
     output.should contain("hello krikri-playbook, item=y")
-    output.scan("HANDLER [dynamically included handler]").size.should eq(1)
+    # Role-prefixed ("include_role_target : ...") now that HANDLER
+    # banners carry the owning role's name, matching real Ansible.
+    output.scan("HANDLER [include_role_target : dynamically included handler]").size.should eq(1)
     output.should contain("include_role smoke test complete!")
   end
 
