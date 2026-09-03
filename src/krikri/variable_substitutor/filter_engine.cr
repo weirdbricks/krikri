@@ -55,7 +55,7 @@ module Krikri
 
         if raw.includes?("{%") || raw.includes?("{#")
           rendered = CrinjaRenderer.new(vars).render(raw)
-          return (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+          return Krikri.parse_json_or_python_literal(rendered)
         end
 
         inner = raw.strip
@@ -73,7 +73,7 @@ module Krikri
             # mangles into an unparseable expression.
             Krikri::VarSubstitutor.new(vars).substitute(raw)
           end
-        (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+        Krikri.parse_json_or_python_literal(rendered)
       end
 
       # Splits a `|`-joined filter chain into its individual filter

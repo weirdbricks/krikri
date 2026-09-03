@@ -179,6 +179,49 @@ module Krikri
     source
   end
 
+  # Parses *rendered* (text an evaluator's own `.evaluate`/`.evaluate_output`
+  # already rendered, from a whole-value `{{ }}` template being
+  # re-rendered to recover its real type - see every `rerender_if_
+  # templated`-shaped helper across this codebase) back into a real
+  # JSON::Any, tolerating Python's OWN literal spellings that plain
+  # `JSON.parse` rejects outright (`True`/`False`/`None` - capitalized,
+  # not JSON's lowercase `true`/`false`/`null`; a Python dict/list repr
+  # with single-quoted strings, `{'a': 1}` not `{"a": 1}`). Every one of
+  # those independent copies previously just did `(JSON.parse(rendered)
+  # rescue nil) || JSON::Any.new(rendered)` - for a real Python `bool`/
+  # `None` this ALWAYS falls to the rescue branch (JSON.parse("False")
+  # raises, "Unexpected char 'F'"), wrapping the STRING "False" instead
+  # of recovering the real boolean. Found via sscheib.openwrt_
+  # bootstrap's own vars/main.yml: `_bts_install_full_python: "{{
+  # bts_install_full_python | default(_def_bts_install_full_python) }}"`
+  # (a real Python bool default, `false`) rendered to the STRING "False"
+  # here instead of a real bool, so the role's own `_bts_install_full_
+  # python is boolean` assert always failed regardless of the real
+  # (correct) underlying value.
+  def self.parse_json_or_python_literal(rendered : String) : JSON::Any
+    if parsed = (JSON.parse(rendered) rescue nil)
+      return parsed
+    end
+
+    case rendered
+    when "True"  then JSON::Any.new(true)
+    when "False" then JSON::Any.new(false)
+    when "None"  then JSON::Any.new(nil)
+    else
+      # A Python repr dict/list (`{'a': 1}`, `['a', 'b']`) - single-
+      # quoted strings, not valid JSON. Only attempted for text that
+      # actually looks like a container (starts with `{`/`[`), so an
+      # ordinary string value containing a stray apostrophe is never
+      # misinterpreted as almost-JSON and mangled.
+      if (rendered.starts_with?('{') || rendered.starts_with?('[')) &&
+         (repaired = (JSON.parse(rendered.gsub('\'', '"')) rescue nil))
+        repaired
+      else
+        JSON::Any.new(rendered)
+      end
+    end
+  end
+
   # A chained-subscript/dot expression that ultimately resolves to
   # nothing (the inner-most lookup misses, the entire expression
   # renders to the literal text "undefined") - `pkg_upgrade_update_

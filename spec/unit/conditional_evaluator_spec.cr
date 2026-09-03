@@ -1236,5 +1236,30 @@ describe Krikri::ConditionalEvaluator do
       Krikri::ConditionalEvaluator.evaluate("actual_version != enroot_version_string", v).should be_false
       Krikri::ConditionalEvaluator.evaluate("actual_version == enroot_version_string", v).should be_true
     end
+
+    it "'is boolean' on a re-rendered variable recovers a real Python bool, not the string \"False\"" do
+      # Found via sscheib.openwrt_bootstrap's own vars/main.yml:
+      # `_bts_install_full_python: "{{ bts_install_full_python |
+      # default(_def_bts_install_full_python) }}"` (a real Python bool
+      # default, `_def_bts_install_full_python: false`). Every
+      # `rerender_if_templated`-shaped helper across this codebase
+      # (re-rendering a variable whose own raw value is itself
+      # unrendered Jinja) previously did `(JSON.parse(rendered) rescue
+      # nil) || JSON::Any.new(rendered)` - for a real Python bool this
+      # ALWAYS falls to the rescue branch (JSON.parse("False") raises,
+      # JSON requires lowercase "false"), wrapping the STRING "False"
+      # instead of recovering the real boolean - so `_bts_install_full_
+      # python is boolean` always failed regardless of the real
+      # (correct) underlying value. Krikri.parse_json_or_python_literal
+      # (variable_substitutor.cr) now recognizes Python's own True/
+      # False/None spellings too.
+      v = {
+        "_def_bts_install_full_python" => JSON::Any.new(false),
+      } of String => JSON::Any
+      v["_bts_install_full_python"] = JSON::Any.new("{{ bts_install_full_python | default(_def_bts_install_full_python) }}")
+
+      Krikri::ConditionalEvaluator.evaluate("_bts_install_full_python is boolean", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("_bts_install_full_python is not boolean", v).should be_false
+    end
   end
 end

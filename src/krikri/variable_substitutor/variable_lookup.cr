@@ -170,7 +170,7 @@ module Krikri
       end
 
       private def parse_rendered_or_wrap(rendered : String) : JSON::Any
-        (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+        Krikri.parse_json_or_python_literal(rendered)
       end
 
       private def rerender_if_templated(value : JSON::Any) : JSON::Any

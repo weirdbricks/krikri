@@ -2303,7 +2303,7 @@ module Krikri
       # a list, but may itself be a literal.
       private def evaluate_lookup_term(part : String) : JSON::Any
         rendered = evaluate(part)
-        (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+        Krikri.parse_json_or_python_literal(rendered)
       end
 
       private def evaluate_sequence_lookup(raw_arg : String) : String

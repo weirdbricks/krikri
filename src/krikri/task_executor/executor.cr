@@ -3438,13 +3438,13 @@ module Krikri
         # Ansible produces from with_items:'s own scalar-wrapping.
         if raw.includes?("{%") || raw.includes?("{#")
           rendered = VariableSubstitutor::CrinjaRenderer.new(vars_context).render(raw)
-          current = (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+          current = Krikri.parse_json_or_python_literal(rendered)
         else
           current = evaluate_bare_mustache_preserving_type(raw, vars_context) || begin
             inner = raw.strip
             inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
             rendered = VariableSubstitutor::ExpressionEvaluator.new(vars_context).evaluate(inner)
-            (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+            Krikri.parse_json_or_python_literal(rendered)
           end
         end
       end

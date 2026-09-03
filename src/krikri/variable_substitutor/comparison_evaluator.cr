@@ -29,10 +29,10 @@ module Krikri
         # variable_lookup.cr for the full rationale.
         if raw.includes?("{%") || raw.includes?("{#")
           rendered = CrinjaRenderer.new(@vars).render(raw)
-          return (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+          return Krikri.parse_json_or_python_literal(rendered)
         end
 
-        (JSON.parse(rendered = render_raw_template_string(raw)) rescue nil) || JSON::Any.new(rendered)
+        Krikri.parse_json_or_python_literal(render_raw_template_string(raw))
       end
 
       # Same multi-span gap as every other independent copy of this
@@ -159,8 +159,7 @@ module Krikri
         # repeatedly" pattern this codebase's own CLAUDE.md warns about.
         if expr.includes?("|") || expr.starts_with?('(') || expr.includes?("~") || expr.includes?("[")
           rendered = ExpressionEvaluator.new(@vars).evaluate(expr)
-          parsed = (JSON.parse(rendered) rescue nil)
-          return json_any_to_value(parsed || JSON::Any.new(rendered))
+          return json_any_to_value(Krikri.parse_json_or_python_literal(rendered))
         end
 
         # Handle nested variable access (e.g., result.rc)

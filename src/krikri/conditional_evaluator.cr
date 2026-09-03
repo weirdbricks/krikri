@@ -962,10 +962,10 @@ module Krikri
       # full rationale.
       if raw.includes?("{%") || raw.includes?("{#")
         rendered = VariableSubstitutor::CrinjaRenderer.new(vars).render(raw)
-        return (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+        return Krikri.parse_json_or_python_literal(rendered)
       end
 
-      (JSON.parse(rendered = render_raw_template_string(vars, raw)) rescue nil) || JSON::Any.new(rendered)
+      Krikri.parse_json_or_python_literal(render_raw_template_string(vars, raw))
     end
 
     # Renders *raw* (a String already known to contain "{{") back to its
@@ -1025,7 +1025,7 @@ module Krikri
 
       if expr.includes?("|")
         rendered = VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate(expr)
-        return (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+        return Krikri.parse_json_or_python_literal(rendered)
       end
 
       value = if expr.includes?(".") || expr.includes?("[")
@@ -1193,7 +1193,7 @@ module Krikri
           value = structured
         else
           rendered = VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate(var_name)
-          value = (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+          value = Krikri.parse_json_or_python_literal(rendered)
         end
       else
         value = if var_name.includes?(".") || var_name.includes?("[")
@@ -1641,8 +1641,7 @@ module Krikri
         return true if rendered == "True"
         return false if rendered == "False"
 
-        parsed = (JSON.parse(rendered) rescue nil)
-        return json_any_to_value(parsed || JSON::Any.new(rendered))
+        return json_any_to_value(Krikri.parse_json_or_python_literal(rendered))
       end
 
       # Handle the empty-dict literal (`when: my_dict == {}`) - a dict
@@ -1725,8 +1724,7 @@ module Krikri
         # always evaluated true regardless of the real (false) default.
         if (raw = value.raw).is_a?(String) && raw.includes?("{{")
           rendered = render_raw_template_string(vars, raw)
-          parsed = (JSON.parse(rendered) rescue nil)
-          json_any_to_value(parsed || JSON::Any.new(rendered))
+          json_any_to_value(Krikri.parse_json_or_python_literal(rendered))
         else
           json_any_to_value(value)
         end
