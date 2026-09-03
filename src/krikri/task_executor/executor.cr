@@ -2971,25 +2971,43 @@ module Krikri
       end
 
       case kind
-      when "loop", "with_items"
+      when "with_items"
+        # with_items: has its OWN, distinct legacy scalar-wrapping
+        # behavior - real Ansible ALWAYS wraps a non-list resolution
+        # into a single-item iteration, whether the source was written
+        # array-wrapped (`with_items: ["{{ var }}"]`) or as a DIRECT
+        # scalar template (`with_items: "{{ var }}"`, no square
+        # brackets at all) - verified live against ansible-core
+        # 2.19.12: `with_items: "{{ myscalar }}"` (myscalar: "ruby")
+        # succeeds with exactly one iteration, `item=ruby`, no error.
+        # Found via diodonfrost.amazon_codedeploy's own
+        # `with_items: "{{ package_requirements }}"` (package_
+        # requirements itself a `{%- if -%}...{%- endif -%}` block-tag
+        # expression resolving to a plain scalar), which used to hit
+        # this codebase's own `loop:`-only strict-fail branch below
+        # instead ("The `loop` value must resolve to a 'list', not
+        # 'str'.") - previously combined into one `when "loop",
+        # "with_items"` case that (incorrectly, per this fresh live
+        # check) assumed both directives shared the same strict-fail
+        # rule for a non-array-wrapped scalar source.
+        value.as_a? || [value]
+      when "loop"
         # A single-element array holding one bare `{{ var }}` span
-        # (`with_items: ["{{ scalar_var }}"]`/`loop: ["{{ scalar_var
-        # }}"]`) is what routed this whole task here in the first place
-        # (see find_loop_template's own "flatten one level" comment) -
-        # but that parse-time heuristic can't know whether `var` will
-        # turn out to be a list or a scalar; only this runtime
-        # resolution can. `value.as_a?` alone returns nil for a scalar,
-        # which fell through every other resolver too and left the task
-        # with NO loop items at all - not skipped, not looped, just run
-        # once with `item` whatever (usually nothing) happened to
-        # already be in scope, silently "undefined" instead of the
-        # real value. Verified against real ansible-playbook directly:
-        # both `loop:` and `with_items:` treat a resolved-to-scalar
-        # single-element list as exactly one iteration with that scalar
-        # as `item`, identically - not just with_items:'s own
-        # documented legacy flatten behavior.
+        # (`loop: ["{{ scalar_var }}"]`) is what routed this whole task
+        # here in the first place (see find_loop_template's own
+        # "flatten one level" comment) - but that parse-time heuristic
+        # can't know whether `var` will turn out to be a list or a
+        # scalar; only this runtime resolution can. `value.as_a?` alone
+        # returns nil for a scalar, which fell through every other
+        # resolver too and left the task with NO loop items at all -
+        # not skipped, not looped, just run once with `item` whatever
+        # (usually nothing) happened to already be in scope, silently
+        # "undefined" instead of the real value. Verified against real
+        # ansible-playbook directly: `loop:` treats a resolved-to-scalar
+        # single-element ARRAY-WRAPPED source as exactly one iteration
+        # with that scalar as `item`.
         #
-        # BUT that flatten-to-one-item leniency is only real for the
+        # That flatten-to-one-item leniency is only real for the
         # array-wrapped source form above - task.loop_template_array_
         # wrapped is false for the DIRECT scalar form (`loop: "{{ var
         # }}"`, no square brackets in the YAML at all), and there real
@@ -3321,12 +3339,32 @@ module Krikri
       # main.yml) therefore always failed downstream with "The `loop`
       # value must resolve to a 'list', not 'str'" - real Ansible
       # resolves the ternary to the actual list and iterates it fine.
-      if current && (raw = current.raw).is_a?(String) && raw.includes?("{{")
-        current = evaluate_bare_mustache_preserving_type(raw, vars_context) || begin
-          inner = raw.strip
-          inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
-          rendered = VariableSubstitutor::ExpressionEvaluator.new(vars_context).evaluate(inner)
-          (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+      if current && (raw = current.raw).is_a?(String) && (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#"))
+        # A raw value that's a PURE block-tag expression (`{%- if ... -%}
+        # ruby {%- else -%} ruby2.0 {%- endif -%}`, no `{{` at all) needs
+        # the full Crinja renderer, same as every other "{{ OR {% OR {#"
+        # re-render check in this codebase (see retemplated_lookup_
+        # value's identical branch) - the plain ExpressionEvaluator only
+        # understands `{{ }}` expressions. Found via diodonfrost.
+        # amazon_codedeploy's own `package_requirements: '{%- if ... -%}
+        # ruby {%- else -%} ruby2.0 {%- endif -%}'` fed to `with_items:
+        # "{{ package_requirements }}"` - the old `raw.includes?("{{")`
+        # check was false (no literal "{{" anywhere in the block-tag
+        # text), so this whole re-render branch was skipped and the RAW
+        # unrendered block-tag string was returned as the loop source,
+        # failing downstream with "The `loop` value must resolve to a
+        # 'list', not 'str'" instead of the single-item list real
+        # Ansible produces from with_items:'s own scalar-wrapping.
+        if raw.includes?("{%") || raw.includes?("{#")
+          rendered = VariableSubstitutor::CrinjaRenderer.new(vars_context).render(raw)
+          current = (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+        else
+          current = evaluate_bare_mustache_preserving_type(raw, vars_context) || begin
+            inner = raw.strip
+            inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
+            rendered = VariableSubstitutor::ExpressionEvaluator.new(vars_context).evaluate(inner)
+            (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+          end
         end
       end
 
