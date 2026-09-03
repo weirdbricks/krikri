@@ -10,12 +10,61 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.724`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.725`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.23` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
+
+### `template:`'s real `.j2` files render an undefined variable as empty text instead of raising
+
+Found via alannix_lw.lacework_agent_ansible_role's own `config.json.j2`:
+`"AccessToken" : "{{ lacework_accessToken }}"` where `lacework_accessToken`
+is a genuinely-undefined required credential the harness never provided.
+Real Ansible's `template:` module (Jinja2's own `StrictUndefined`) raises
+`'lacework_accessToken' is undefined` and fails the task outright; this
+engine's `TemplateActionPlugin` (`src/krikri/template_action_plugin.cr`,
+`CrinjaRenderer`) renders it as an empty string and reports `changed`,
+silently producing a broken/incomplete config file instead of failing
+loudly - exactly the "bites silently" failure mode this project's own
+strict-undefined work elsewhere (task-param `{{ }}` substitution, the
+`{% %}` block-tag scan in `variable_substitutor.cr`) was built to catch.
+
+**Root cause, and why it's not a quick fix**: the vendored `crinja`
+fork's own variable resolution (`lib/crinja/src/runtime/context.cr`'s
+bare-name lookup miss) returns the SHARED SINGLETON `Value::UNDEFINED`
+(`Crinja::Value.new(Crinja::Undefined.new)`) - not a fresh instance
+built from any per-Environment/per-render configuration. Crinja already
+HAS a `StrictUndefined` class (`runtime/undefined.cr`) that raises on
+`to_s`/comparison, but nothing in the fork lets a caller opt an
+`Environment`/`Context` into using it instead of the lenient default -
+`Crinja::Config` has no `strict_undefined`-shaped setting at all.
+Making this configurable means editing the fork's own resolution path
+(`context.cr`, `environment.cr`, `resolver.cr` all separately construct
+a bare `Undefined.new(name)`) and verifying it doesn't regress the
+existing 662-example crinja spec suite or leak strictness into the
+OTHER Crinja usages in krikri that deliberately stay lenient (bare
+`{{ }}` task-param substitution already has its OWN separate strict-
+undefined enforcement in `variable_substitutor.cr`, which must keep
+working unchanged).
+
+The narrower alternative already used elsewhere in this codebase for
+exactly this bug class (`scan_strict_block_tags_for_undefined`'s
+pre-render text scan for a bare identifier inside a `{% %}` block,
+found round194 via andrewrothstein.openjdk) doesn't transfer cleanly
+here either: a full `.j2` FILE has real nested scope a single `{%
+if %}` condition never does (`{% for x in y %}` loop vars, `{% set
+%}` locals, `{% macro %}` parameters all need correctly excluding
+from the scan, template-wide, not just within one condition's own
+text) - a naive port risks FALSE POSITIVES that would break currently-
+working templates across the whole existing corpus, worse than the
+current silent-empty-string status quo.
+
+Not fixed this round - flagged here rather than attempted hastily.
+Whoever picks this up next: start in the crinja fork
+(`~/git_work/crinja`), add a `Config#strict_undefined` (or similar)
+knob, and only THEN wire `TemplateActionPlugin` to opt into it.
 
 ### Fact caching only supports the `jsonfile` backend
 

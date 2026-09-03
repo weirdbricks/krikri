@@ -68,12 +68,15 @@ module Krikri
       responses = parse_responses(responses_json)
       return PluginResult.new(changed: false, failed: true, msg: "responses must be a dictionary of pattern -> response") unless responses
 
+      # Same real-Ansible "ok" (not "skipping:") shape and real glob
+      # support as command:/shell:/script: - see path_or_glob_exists?'s
+      # own comment.
       if creates = @params["creates"]?
-        return PluginResult.new(changed: false, failed: false, msg: "skipped, since #{creates} exists", skipped: true) if remote_file_exists?(expand_tilde(creates))
+        return PluginResult.new(changed: false, failed: false, msg: "Did not run command since '#{creates}' exists", stdout: "skipped, since #{creates} exists") if path_or_glob_exists?(expand_tilde(creates))
       end
 
       if removes = @params["removes"]?
-        return PluginResult.new(changed: false, failed: false, msg: "skipped, since #{removes} does not exist", skipped: true) unless remote_file_exists?(expand_tilde(removes))
+        return PluginResult.new(changed: false, failed: false, msg: "Did not run command since '#{removes}' does not exist", stdout: "skipped, since #{removes} does not exist") unless path_or_glob_exists?(expand_tilde(removes))
       end
 
       timeout = @params["timeout"]?.try(&.to_i?) || 30

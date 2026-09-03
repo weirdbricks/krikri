@@ -131,4 +131,43 @@ describe "command plugin" do
   ensure
     File.delete(marker) if marker && File.exists?(marker)
   end
+
+  it "creates: accepts a GLOB pattern, matching real Ansible's glob.glob() check" do
+    # Real bug found via appsilon.mount_efs's own "install | build
+    # amazon-efs-utils" (`creates: ".../build/amazon-efs-utils*deb"`,
+    # the built package's filename varies by version): `File.exists?`
+    # alone never matches a path containing `*` (never a literal
+    # filename), so the build script re-ran on every single warm
+    # rerun instead of correctly no-opping once already built.
+    dir = File.tempname("command-creates-glob-spec")
+    Dir.mkdir_p(dir)
+    File.write(File.join(dir, "amazon-efs-utils_1.2.3.deb"), "")
+
+    result = PluginSpecHelper.run("command", {"cmd" => "echo should-be-skipped", "creates" => File.join(dir, "amazon-efs-utils*.deb")})
+
+    result["changed"].as_bool.should be_false
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
+  it "creates:/removes: report an ordinary ok result, not a task-level skip" do
+    # Live-verified against ansible-core 2.19.4: a creates:-guarded
+    # command: that skips reports `ok: [...] => {"changed": false,
+    # ...}` and recaps under `ok=`, NEVER `skipping:`/`skipped=` - this
+    # codebase's own `skipped: true` on the plugin result used to
+    # divert it into the wrong recap bucket entirely (a real, separate
+    # divergence from the glob gap above).
+    dir = File.tempname("command-creates-not-skipped-spec")
+    Dir.mkdir_p(dir)
+    marker = File.join(dir, "marker")
+    File.write(marker, "")
+
+    result = PluginSpecHelper.run("command", {"cmd" => "echo should-be-skipped", "creates" => marker})
+
+    result["changed"].as_bool.should be_false
+    result["msg"].as_s.should contain("Did not run command since")
+    result.as_h.has_key?("skipped").should be_false
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
 end

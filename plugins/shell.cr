@@ -58,24 +58,39 @@ module Krikri
         )
       end
 
-      # Check creates parameter (idempotency)
+      # Check creates parameter (idempotency). `path_or_glob_exists?`
+      # (not the old `remote_file_exists?`, which - literal-only and
+      # via a shell `test -f` for a remote connection - neither
+      # understood a glob pattern nor matched real Ansible's own
+      # `glob.glob(path)` check) - see that helper's own comment
+      # (appsilon.mount_efs's `creates: ".../amazon-efs-utils*deb"`).
+      # This plugin already runs ON the target (uploaded+executed
+      # remotely, or run locally for a local connection) like every
+      # other non-controller-only plugin, so a plain local Dir.glob
+      # call here already checks the right (target) filesystem - no
+      # separate remote branch needed. Message wording matches real
+      # Ansible's own exactly (live-verified against ansible-core
+      # 2.19.4), not just the functional result.
       if creates = @params["creates"]?
-        if remote_file_exists?(expand_tilde(creates))
+        if path_or_glob_exists?(expand_tilde(creates))
           return PluginResult.new(
             changed: false,
             failed: false,
-            msg: "Skipped: #{creates} already exists"
+            msg: "Did not run command since '#{creates}' exists",
+            stdout: "skipped, since #{creates} exists"
           )
         end
       end
 
-      # Check removes parameter (conditional execution)
+      # Check removes parameter (conditional execution) - same real-
+      # Ansible message shape as creates: above.
       if removes = @params["removes"]?
-        unless remote_file_exists?(expand_tilde(removes))
+        unless path_or_glob_exists?(expand_tilde(removes))
           return PluginResult.new(
             changed: false,
             failed: false,
-            msg: "Skipped: #{removes} does not exist"
+            msg: "Did not run command since '#{removes}' does not exist",
+            stdout: "skipped, since #{removes} does not exist"
           )
         end
       end

@@ -76,16 +76,23 @@ module Krikri
       remote_exec("rm -f #{shell_quote(script_path)}") if script_path
     end
 
+    # Same real-Ansible shape as command:/shell: - an ordinary "ok"
+    # result (changed: false), never a task-level "skipping:" (this
+    # codebase's own `skipped: true` used to divert it into the
+    # `skipped=` recap bucket instead of `ok=`, a real divergence in
+    # its own right - live-verified against ansible-core 2.19.4), and
+    # a real GLOB pattern, not a literal path (`path_or_glob_exists?`,
+    # see that helper's own comment).
     private def skip_reason : PluginResult?
       if creates = @params["creates"]?
-        if remote_file_exists?(expand_tilde(creates))
-          return PluginResult.new(changed: false, failed: false, msg: "skipped, since #{creates} exists", skipped: true)
+        if path_or_glob_exists?(expand_tilde(creates))
+          return PluginResult.new(changed: false, failed: false, msg: "Did not run command since '#{creates}' exists", stdout: "skipped, since #{creates} exists")
         end
       end
 
       if removes = @params["removes"]?
-        unless remote_file_exists?(expand_tilde(removes))
-          return PluginResult.new(changed: false, failed: false, msg: "skipped, since #{removes} does not exist", skipped: true)
+        unless path_or_glob_exists?(expand_tilde(removes))
+          return PluginResult.new(changed: false, failed: false, msg: "Did not run command since '#{removes}' does not exist", stdout: "skipped, since #{removes} does not exist")
         end
       end
 

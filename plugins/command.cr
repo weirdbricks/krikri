@@ -70,26 +70,34 @@ module Krikri
         )
       end
 
-      # Check creates parameter (idempotency)
+      # Check creates parameter (idempotency). Real Ansible reports this
+      # as an ORDINARY "ok" result (changed: false), never a task-level
+      # "skipping:" - `skipped:` here used to be a genuine divergence in
+      # its own right (this codebase's recap counted it under
+      # `skipped=`, real Ansible's own recap counts it under `ok=`),
+      # confirmed live against ansible-core 2.19.4: `ok: [localhost] =>
+      # {"changed": false, ..., "msg": "Did not run command since '...'
+      # exists"}`, recap `ok=1 skipped=0`.
       if creates = @params["creates"]?
-        if File.exists?(expand_tilde(creates))
+        if path_or_glob_exists?(expand_tilde(creates))
           return PluginResult.new(
             changed: false,
             failed: false,
-            msg: "Skipped: #{creates} already exists",
-            skipped: true
+            msg: "Did not run command since '#{creates}' exists",
+            stdout: "skipped, since #{creates} exists"
           )
         end
       end
 
-      # Check removes parameter (conditional execution)
+      # Check removes parameter (conditional execution) - same real-
+      # Ansible "ok", not "skipping:", shape as creates: above.
       if removes = @params["removes"]?
-        unless File.exists?(expand_tilde(removes))
+        unless path_or_glob_exists?(expand_tilde(removes))
           return PluginResult.new(
             changed: false,
             failed: false,
-            msg: "Skipped: #{removes} does not exist",
-            skipped: true
+            msg: "Did not run command since '#{removes}' does not exist",
+            stdout: "skipped, since #{removes} does not exist"
           )
         end
       end

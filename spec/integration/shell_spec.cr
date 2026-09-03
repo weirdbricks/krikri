@@ -1,4 +1,5 @@
 require "../spec_helper"
+require "file_utils"
 
 # Read-only - just runs plain shell commands and inspects captured output,
 # never mutates host state.
@@ -42,5 +43,24 @@ describe "shell plugin" do
     })
 
     result["stdout"].as_s.should eq("1.2.3")
+  end
+
+  it "creates: accepts a GLOB pattern and reports an ordinary ok result, not a skip" do
+    # Same real bug as command:'s own copy (appsilon.mount_efs's
+    # `creates: ".../amazon-efs-utils*deb"`) - see command_spec.cr's
+    # identical case for the full rationale. shell:'s own creates:
+    # check went through a DIFFERENT (also literal-only) helper
+    # (remote_file_exists?) before this fix.
+    dir = File.tempname("shell-creates-glob-spec")
+    Dir.mkdir_p(dir)
+    File.write(File.join(dir, "amazon-efs-utils_1.2.3.deb"), "")
+
+    result = PluginSpecHelper.run("shell", {"cmd" => "echo should-be-skipped", "creates" => File.join(dir, "amazon-efs-utils*.deb")})
+
+    result["changed"].as_bool.should be_false
+    result["msg"].as_s.should contain("Did not run command since")
+    result.as_h.has_key?("skipped").should be_false
+  ensure
+    FileUtils.rm_rf(dir) if dir
   end
 end

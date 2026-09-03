@@ -397,6 +397,24 @@ module Krikri
       remainder.empty? ? home : File.join(home, remainder)
     end
 
+    # command:/shell:'s own `creates:`/`removes:` idempotency check -
+    # real Ansible's own module (Python's `glob.glob(path)`, then "any
+    # match") treats the path as a GLOB PATTERN, not a literal path -
+    # `File.exists?` alone never matches a path containing `*`/`?`/`[`
+    # (those are never literal filenames), always reporting "does not
+    # exist" and re-running the command on every single invocation.
+    # Found via appsilon.mount_efs's own "install | build amazon-efs-
+    # utils" (`creates: "{{ aws_efs_utils_dest_dir }}/build/amazon-efs-
+    # utils*deb"`) - a real idempotency bug: the build script re-ran on
+    # every warm rerun instead of correctly no-opping once the package
+    # was already built. `Dir.glob` degrades to a literal single-path
+    # existence check automatically when *path* has no glob
+    # metacharacters at all, so this is safe for the far more common
+    # literal-path case too - not just the glob one.
+    protected def path_or_glob_exists?(path : String) : Bool
+      !Dir.glob(path).empty?
+    end
+
     # Helper to check if a parameter is truthy
     protected def true?(value : String?, default : Bool = false) : Bool
       return default unless value
