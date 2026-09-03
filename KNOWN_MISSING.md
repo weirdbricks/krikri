@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.700`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.701`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.21` (see `shard.yml`).
 
 ---
@@ -133,17 +133,6 @@ host pair - see `spec/unit/expression_evaluator_spec.cr`'s "+
 concatenation of a list whose own elements need recursive
 re-rendering" and `spec/unit/crinja_renderer_spec.cr`'s "recovers a
 real dict from a Python-repr" specs.
-
-### `copy:`'s `validate:` isn't implemented at all
-
-Found while fixing the `template:` `validate:`/`remote_tmp` gap
-directly below (0.9.695): `plugins/copy.cr` has no handling whatsoever
-for a `validate:` param - unlike `template:`, which does support it.
-Real Ansible's `copy:` module supports `validate:` identically to
-`template:`. Not fixed here - it's a separate, larger feature addition
-(staging + validate-command running + the same remote_tmp/cross-device
-concerns `template.cr` just addressed), not a location bug, so it's
-scoped out of this round's fix.
 
 ### `RemovedActionError`'s message text is only approximate, and this is permanent
 

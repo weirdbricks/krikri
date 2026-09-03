@@ -2,6 +2,7 @@
 
 require "json"
 require "digest/md5"
+require "file_utils"
 require "../src/krikri/base_plugin"
 
 module Krikri
@@ -197,15 +198,9 @@ module Krikri
         )
       end
 
-      # Write the file using native Crystal
-      begin
-        File.write(dest, content)
-      rescue ex
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Failed to write file: #{ex.message}"
-        )
+      # Write the file (staged + validated first when validate: is given)
+      if failure = write_with_optional_validate(content, dest)
+        return PluginResult.new(changed: false, failed: true, msg: failure)
       end
 
       # Set file permissions if requested
@@ -367,15 +362,23 @@ module Krikri
         )
       end
 
-      # Copy the file
-      begin
-        File.copy(src, dest)
-      rescue ex
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Failed to copy file: #{ex.message}"
-        )
+      # Copy the file (staged + validated first when validate: is given -
+      # src_content was already read above for the MD5 check, so this
+      # reuses it rather than reading src a second time).
+      if @params["validate"]?
+        if failure = write_with_optional_validate(src_content, dest)
+          return PluginResult.new(changed: false, failed: true, msg: failure)
+        end
+      else
+        begin
+          File.copy(src, dest)
+        rescue ex
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "Failed to copy file: #{ex.message}"
+          )
+        end
       end
 
       # Set ownership and permissions
@@ -454,6 +457,91 @@ module Krikri
         msg: changed ? "Directory copied successfully" : "Directory already up to date",
         dest: dest_root
       )
+    end
+
+    # `validate:` support - real Ansible's `copy:` supports it identically
+    # to `template:`, which this codebase previously implemented but this
+    # plugin never did at all (see KNOWN_MISSING.md's own writeup: found
+    # while fixing template.cr's validate:/remote_tmp staging gap).
+    # Mirrors template.cr's own approach exactly: stage the final content
+    # under /tmp (remote_tmp-style, matching real Ansible's own
+    # `~/.ansible/tmp/...` location - see that plugin's own comment on
+    # why dest-adjacent staging diverges from real Ansible under
+    # AppArmor/SELinux confinement), run the validate: command against
+    # the staged file, then move it into place via FileUtils.mv, which
+    # already falls back to copy-then-delete on a cross-device
+    # (EXDEV/EPERM) move instead of the plain `File.rename` that broke
+    # on konstruktoid-hardening. When no validate: is given, writes
+    # directly to dest as before - this path is unchanged for the
+    # overwhelmingly common no-validate: case.
+    #
+    # Returns nil on success, or a failure message string.
+    private def write_with_optional_validate(content : String, dest : String) : String?
+      validate_cmd = @params["validate"]?
+      unless validate_cmd
+        File.write(dest, content)
+        return nil
+      end
+
+      temp_file = File.join("/tmp", ".krikri-playbook-copy-#{Random::Secure.hex(8)}.tmp")
+      begin
+        File.write(temp_file, content)
+      rescue ex
+        return "Failed to write temporary file: #{ex.message}"
+      end
+
+      validation = validate_file(temp_file, validate_cmd)
+      unless validation[:ok]
+        # Left in place deliberately, same reasoning as template.cr's
+        # identical choice - the rendered/copied content is almost
+        # always what's actually wrong, and this is the only surviving
+        # copy of it once the real dest was never touched.
+        context = extract_error_context(temp_file, validation[:output])
+        return "Validation failed: #{validation[:output]} (content left at #{temp_file} for inspection)#{context}"
+      end
+
+      begin
+        FileUtils.mv(temp_file, dest)
+      rescue ex
+        File.delete(temp_file) if File.exists?(temp_file)
+        return "Failed to move file to destination: #{ex.message}"
+      end
+
+      nil
+    end
+
+    # Validate file with command - identical to template.cr's own
+    # helper (captures stdout+stderr so a validation failure explains
+    # what's actually wrong, not just that it happened).
+    private def validate_file(path : String, validate_cmd : String) : NamedTuple(ok: Bool, output: String)
+      cmd = validate_cmd.gsub("%s", path)
+      output = IO::Memory.new
+
+      result = Process.run(
+        "/bin/sh",
+        ["-c", cmd],
+        output: output,
+        error: output
+      )
+
+      {ok: result.exit_code == 0, output: output.to_s.strip}
+    end
+
+    # Same context-around-the-cited-line extraction as template.cr's
+    # own helper - see that plugin for the full rationale.
+    private def extract_error_context(path : String, validator_output : String) : String
+      return "" unless match = validator_output.match(/line\s+(\d+):/)
+      line_num = match[1].to_i
+
+      lines = File.read_lines(path)
+      from = Math.max(0, line_num - 3)
+      to = Math.min(lines.size - 1, line_num + 1)
+      return "" if from > to
+
+      context_lines = (from..to).map { |i| "#{i + 1}: #{lines[i]}" }.join("\n")
+      "\n--- context around line #{line_num} ---\n#{context_lines}"
+    rescue
+      ""
     end
 
     # Create backup of file
