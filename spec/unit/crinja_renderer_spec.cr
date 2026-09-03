@@ -583,6 +583,40 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     v["some_dict"].as_h["c"].as_i.should eq(3)
   end
 
+  it "recursively re-renders each merged dict's OWN values, not just the top-level merge" do
+    # Real bug found via a live confirm-phase round against jtyr.nsswitch
+    # on a real host (post-0.9.697): its real `nsswitch__default` isn't
+    # a flat dict of plain scalars like the spec above - EVERY one of
+    # its own values is itself a bare `{{ nsswitch_passwd }}`-style
+    # indirection to a real list (`passwd: "{{ nsswitch_passwd }}"`,
+    # etc.). The first version of the update()+re-reference fix merged
+    # the RAW dict straight from the vars store without re-rendering
+    # each value first, so the merged result still held the literal,
+    # unrendered "{{ nsswitch_passwd }}" TEXT in every value. The
+    # role's own template.j2 then did `{{ val | join(' ') }}` on that
+    # literal string, which iterated its individual CHARACTERS instead
+    # of the real list - no error, no failed task, just a silently
+    # corrupted /etc/nsswitch.conf, which broke NSS `passwd:`
+    # resolution and `sudo` on the real test host outright. Confirmed
+    # fixed live against the same host shape after this test was added.
+    v = Hash(String, JSON::Any).new
+    v["nsswitch_passwd"] = JSON.parse(%(["files", "systemd"]))
+    v["nsswitch_group"] = JSON.parse(%(["files", "systemd"]))
+    v["nsswitch__default"] = JSON::Any.new({
+      "passwd" => JSON::Any.new("{{ nsswitch_passwd }}"),
+      "group"  => JSON::Any.new("{{ nsswitch_group }}"),
+    })
+    v["nsswitch__custom"] = JSON::Any.new(Hash(String, JSON::Any).new)
+    v["nsswitch_config"] = Krikri::VariableSubstitutor::CrinjaRenderer.rerender_nested_templates(
+      JSON::Any.new("{{ nsswitch__default.update(nsswitch__custom) }}{{ nsswitch__default }}"),
+      Krikri::VarSubstitutor.new(vars: v)
+    )
+
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    result = renderer.render("{% for key, val in nsswitch_config.items() | sort %}{{ key }}: {{ val | join(' ') }}\n{% endfor %}")
+    result.should eq("group: files systemd\npasswd: files systemd\n")
+  end
+
   it "renders lookup('password', path) generating and persisting a password across renders" do
     path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "crinja_lookup_password_test.txt")
     File.delete(path) if File.exists?(path)

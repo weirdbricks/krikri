@@ -426,8 +426,22 @@ module Krikri
           target = substitutor.vars[target_name]?
           arg = substitutor.vars[arg_name]?
           if target && target.raw.is_a?(Hash) && arg && arg.raw.is_a?(Hash)
-            merged = target.as_h.dup
-            arg.as_h.each { |key, val| merged[key] = val }
+            # Each dict's OWN values need the same recursive re-render
+            # every other nested-template value in this codebase gets
+            # (see #rerender_nested_templates just below) - found live
+            # via jtyr.nsswitch's real `nsswitch__default` (round
+            # confirm-860s): every one of its values is itself a bare
+            # `{{ nsswitch_passwd }}`-style indirection to a real list.
+            # Merging the RAW dict (unrendered `{{ }}` text still in
+            # every value) silently corrupted the rendered
+            # /etc/nsswitch.conf - `{{ val | join(' ') }}` treated the
+            # literal template text as a string and iterated its
+            # CHARACTERS, one per line, which broke NSS `passwd:`
+            # resolution (and `sudo`, and the whole host) instead of
+            # raising anything - confirmed on a real host before this
+            # fix, not merely theorized.
+            merged = rerender_nested_templates(target, substitutor).as_h.dup
+            rerender_nested_templates(arg, substitutor).as_h.each { |key, val| merged[key] = val }
             merged_json = JSON::Any.new(merged)
             substitutor.vars[target_name] = merged_json
             return merged_json

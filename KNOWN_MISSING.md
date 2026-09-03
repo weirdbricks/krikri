@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.698`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.699`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.21` (see `shard.yml`).
 
 ---
@@ -69,7 +69,43 @@ an attribute-chain target, three or more chained `.update()` calls,
 ...) still hits the old string-coercion behavior - narrow by design,
 not a general solution.
 
-### `copy:`'s `validate:` isn't implemented at all
+**Real bug found and fixed (0.9.699) via a live confirm-phase round
+against `jtyr.nsswitch` on a real host, immediately after 0.9.697
+shipped**: the 0.9.697 merge read `target`/`arg`'s RAW dicts straight
+from the vars store without recursively re-rendering each dict's OWN
+values first. `jtyr.nsswitch`'s real `nsswitch__default` isn't a flat
+dict of plain scalars (unlike the spec that shipped with 0.9.697) -
+every one of ITS values is itself a bare `{{ nsswitch_passwd }}`-style
+indirection to a real list. The merged result held the literal,
+unrendered `"{{ nsswitch_passwd }}"` TEXT in every value; the role's
+own template then did `{{ val | join(' ') }}` on that literal string,
+which iterated its individual CHARACTERS instead of the real list - no
+error, no failed task, just a silently corrupted `/etc/nsswitch.conf`
+that broke NSS `passwd:` resolution and `sudo` outright on the real
+test host (confirmed live: the SECOND, idempotency-check run of
+`ansible-playbook` itself failed with "sudo: you do not exist in the
+passwd database", because the FIRST run's krikri-rendered config had
+already broken user lookups on that host). Fixed by routing each
+dict's values through the same `rerender_nested_templates` recursion
+before merging. See `spec/unit/crinja_renderer_spec.cr`'s "recursively
+re-renders each merged dict's OWN values" spec.
+
+**`jtyr.motd` is STILL divergent (found in the same confirm round, not
+yet fixed)** - a different, harder shape than `.update()`, not covered
+by this fix at all: `motd_info: "{{ motd_info__default +
+motd_info__custom }}"` (list CONCATENATION, not `.update()`) where
+`motd_info__default` is a YAML list whose OWN elements are dicts with
+templated values, one of which is a bare `{{ {...} if cond else {...}
+}}` conditional DICT-LITERAL expression as a whole list item. Fails
+identically: `{% for item in motd_info %}{% for key, value in item
+%}` - "cannot unpack multiple values of type Crinja::Value". This is
+the general "list of natively-typed dicts surviving a `+` concat and
+per-element ternary-dict-literal templating" problem, not the narrow
+`.update()` idiom - would need its own special-case (or the full
+lazy-dict-templating architecture) to fix. Confirmed against real
+`ansible-playbook` (which handles it correctly, `ok=2 changed=1`) on
+the same real host pair. Not fixed - documented here rather than
+guessed at blind.
 
 Found while fixing the `template:` `validate:`/`remote_tmp` gap
 directly below (0.9.695): `plugins/copy.cr` has no handling whatsoever
