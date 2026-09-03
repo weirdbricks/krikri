@@ -38,7 +38,7 @@ module Krikri
       status_codes = (@params["status_code"]? || "200").split(",").map(&.strip.to_i)
 
       begin
-        status, headers, body, redirected = request(url, method)
+        status, headers, body, redirected, final_url = request(url, method)
       rescue ex
         return PluginResult.new(changed: false, failed: true, msg: "Request failed: #{ex.message}", url: url)
       end
@@ -53,7 +53,7 @@ module Krikri
         msg = "OK (#{body.bytesize} bytes)" + (changed ? "" : ", didn't change")
       end
 
-      result = PluginResult.new(changed: changed, failed: failed, msg: msg, url: url, status: status)
+      result = PluginResult.new(changed: changed, failed: failed, msg: msg, url: final_url, status: status)
       apply_response_extras(result, headers, body, redirected)
       result
     end
@@ -114,7 +114,19 @@ module Krikri
       end
     end
 
-    private def request(url : String, method : String, redirects_left : Int32 = MAX_REDIRECTS, redirected : Bool = false) : {Int32, HTTP::Headers, String, Bool}
+    # Returns the FINAL (post-redirect) URL as its 5th element - real
+    # Ansible's own `uri:` result `url` field is this final URL, not the
+    # originally-requested one (verified live against ansible-core
+    # 2.19.12: `uri: {url: .../releases/latest}`'s own result.url comes
+    # back as `.../releases/tag/2.42.0`, the actual GitHub redirect
+    # target). Found via tigattack.mergerfs's own idiom -
+    # `mergerfs_github_release_page['url'].split('/')[-1]` to extract
+    # the real version tag from the redirect target - which this
+    # engine's own previous behavior (always returning the ORIGINAL
+    # request url unchanged) broke silently: `.split('/')[-1]` on the
+    # literal "releases/latest" URL gave the string "latest" instead of
+    # a real version, producing a download URL that 404'd.
+    private def request(url : String, method : String, redirects_left : Int32 = MAX_REDIRECTS, redirected : Bool = false) : {Int32, HTTP::Headers, String, Bool, String}
       raise "too many redirects" if redirects_left < 0
 
       uri = URI.parse(url)
@@ -127,7 +139,7 @@ module Krikri
         return request(resolve_redirect(uri, location), redirect_method(method, response.status_code), redirects_left - 1, true)
       end
 
-      {response.status_code, response.headers, response.body, redirected}
+      {response.status_code, response.headers, response.body, redirected, url}
     ensure
       client.try(&.close)
     end

@@ -103,6 +103,24 @@ describe "uri plugin" do
     result["content"].as_s.should eq("plain text body")
   end
 
+  it "reports the FINAL (post-redirect) URL as result.url, matching real Ansible" do
+    # Real bug found via a live 100-role confirm round:
+    # tigattack.mergerfs's own idiom - `uri: {url: .../releases/
+    # latest}`, then `mergerfs_github_release_page['url'].split('/')
+    # [-1]` to extract the real version tag from the redirect target -
+    # relies on real Ansible's own uri: module behavior: result.url is
+    # the FINAL URL after following redirects, not the originally-
+    # requested one (verified live against ansible-core 2.19.12: GitHub's
+    # own /releases/latest redirects to /releases/tag/<version>, and
+    # result.url comes back as that target). This engine previously
+    # always returned the ORIGINAL request url unchanged, so
+    # `.split('/')[-1]` on a "/releases/latest"-shaped URL produced the
+    # literal string "latest" instead of a real version, silently
+    # breaking any role using this idiom to resolve a "latest" download.
+    result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/redirect"})
+    result["url"].as_s.should eq("#{uri_base}/text")
+  end
+
   it "does not follow a redirect when follow_redirects: none" do
     result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/redirect", "follow_redirects" => "none"})
     result["status"].as_i.should eq(302)
