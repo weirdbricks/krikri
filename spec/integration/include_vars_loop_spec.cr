@@ -107,4 +107,41 @@ describe "include_vars: with with_fileglob: (not with_first_found:/loop:)" do
   ensure
     FileUtils.rm_rf(src_dir) if src_dir
   end
+
+  it "displays a skipped loop item's dict value as clean JSON, not Crystal's own JSON::Any inspect text" do
+    # Real bug found via a live 100-role confirm round: ipr-cnrs.
+    # nftables's own looped include_vars: task, gated by a false
+    # when:, printed "skipping: ... => (item={\"changed\" =>
+    # JSON::Any(false), ...})" - Crystal's raw JSON::Any#to_s/inspect
+    # text - instead of the clean JSON-ish display every other looped
+    # task in this codebase already uses (item_display).
+    src_dir = File.tempname("include-vars-skip-item-display")
+    Dir.mkdir_p(File.join(src_dir, "roles", "myrole", "tasks"))
+    File.write(File.join(src_dir, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+      - name: skip this
+        include_vars: "{{ item.name }}"
+        loop:
+          - name: a.yml
+            groupname: ungrouped
+        when: false
+      YAML
+
+    playbook = File.join(src_dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - myrole
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: src_dir)
+
+    status.success?.should be_true
+    output.to_s.should contain(%({"name":"a.yml","groupname":"ungrouped"}))
+    output.to_s.should_not contain("JSON::Any(")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
 end

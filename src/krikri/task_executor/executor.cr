@@ -2567,7 +2567,15 @@ module Krikri
           # per-iteration re-render.
           task.vars.each { |key, raw_value| item_context[key] = raw_value unless key == "item" }
           render_task_vars(task, item_context, host.name)
-          item_label = item.to_s
+          # item_display (Ansible's own compact JSON-ish display, e.g.
+          # {"changed":false,"item":"ungrouped",...}), not raw
+          # JSON::Any#to_s - found via ipr-cnrs.nftables's own looped
+          # include_vars: task, whose "skipping: ... => (item=...)"
+          # line leaked Crystal's own JSON::Any(...)-wrapped inspect
+          # text (`{"changed" => JSON::Any(false), ...}`) instead of a
+          # clean value, unlike every other looped-task display in this
+          # codebase (which already goes through this same helper).
+          item_label = item_display(item)
           begin
             next unless when_passes?(task, item_context, host, item_label: item_label, defer_stats: true)
           rescue ex : WhenEvaluationError
