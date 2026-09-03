@@ -791,22 +791,6 @@ are recorded in `ROLES_TESTED.md`'s round-191 rows.
   real logic (not just a declarative wrapper), so this author's roles
   specifically will keep diverging from real Ansible by design; not
   worth re-testing more of them expecting a different outcome.
-- **A `vars:`-level filter chain resolving to a real Bool loses its type,
-  coming back as the Python-repr STRING `"True"`/`"False"`** (round 199,
-  robertdebock.epel): `epel_next: "{{ _epel_next[ansible_distribution_
-  release] | default(_epel_next['default']) }}"` where `_epel_next` is a
-  dict whose values are real Jinja booleans (`default: false, Stream:
-  true`) - real ansible-core 2.19.4 resolves `epel_next` to a genuine
-  Bool and a bare `when: [epel_next]` evaluates/skips it normally; this
-  engine's `{{ type_debug }}` on the same variable reports `str` (value
-  text `"False"`), and the strict-conditional check correctly rejects
-  that non-bool result ("Conditional result (True) was derived from
-  value of type 'str'"), turning a should-skip task into a hard failure.
-  Minimal repro: a `vars:`-templated dict-index-with-`default()`-fallback
-  expression whose resolved value is a Bool, referenced bare in a `when:`
-  list. Likely the same "default() doesn't preserve the fallback
-  argument's real JSON type" class as the FilterEngine boolean-passthrough
-  fixed elsewhere for other filters - not yet traced to a specific line.
 - **`changed_when` with a missing dict attribute is lenient**
   (cloudalchemy.pushgateway): the role's own `changed_when` references
   `.diff` on a dict result that has none - real ansible-core 2.19 raises
