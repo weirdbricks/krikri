@@ -925,10 +925,38 @@ module Krikri
         return (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
       end
 
+      (JSON.parse(rendered = render_raw_template_string(vars, raw)) rescue nil) || JSON::Any.new(rendered)
+    end
+
+    # Renders *raw* (a String already known to contain "{{") back to its
+    # real value. A raw value holding exactly ONE {{ }} span and nothing
+    # else (`"{{ some_expr }}"`) goes through ExpressionEvaluator directly
+    # - the same evaluator {{ }} substitution uses, and the only path that
+    # preserves a non-string RESULT type (a real list/hash/int, not its
+    # string rendering). Anything else - multiple spans, or literal text
+    # mixed in around/between them (`"{{ enroot_version }}-{{
+    # enroot_release }}"`, ome.ice's own `enroot_version_string` default)
+    # - used to still take the single-span path: naively slicing off the
+    # first/last 2 characters (`raw[2..-3]`) on a MULTI-span string
+    # produces a malformed expression (" enroot_version }}-{{
+    # enroot_release ", the literal "-{{"/"}}-" left in place), which
+    # ExpressionEvaluator can't parse as a single expression at all - the
+    # comparison this feeds (`ansible_facts.packages['enroot'][0]
+    # ['version'] != enroot_version_string`) then always read as
+    # "not equal" regardless of the real values, since the right side
+    # never resolved to the intended "3.2.0-1" at all. Routed through
+    # VarSubstitutor#substitute instead for this general case - the same
+    # whole-string, multi-segment Jinja substitution real task params use
+    # - and always returns a String (matching real Ansible: a raw value
+    # with literal text around a {{ }} span can never BE anything but a
+    # string once rendered).
+    private def self.render_raw_template_string(vars : Hash(String, JSON::Any), raw : String) : String
       inner = raw.strip
-      inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
-      rendered = VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate(inner)
-      (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+      if (raw.split("{{").size - 1) == 1 && (raw.split("}}").size - 1) == 1 && inner.starts_with?("{{") && inner.ends_with?("}}")
+        VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate(inner[2..-3].strip)
+      else
+        Krikri::VarSubstitutor.new(vars).substitute(raw)
+      end
     end
 
     # Resolves *var_name* (a bare or dotted variable reference, the same
@@ -1656,10 +1684,7 @@ module Krikri
         # text itself is treated as a truthy string, so `vault_enterprise`
         # always evaluated true regardless of the real (false) default.
         if (raw = value.raw).is_a?(String) && raw.includes?("{{")
-          evaluator = VariableSubstitutor::ExpressionEvaluator.new(vars)
-          inner = raw.strip
-          inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
-          rendered = evaluator.evaluate(inner)
+          rendered = render_raw_template_string(vars, raw)
           parsed = (JSON.parse(rendered) rescue nil)
           json_any_to_value(parsed || JSON::Any.new(rendered))
         else

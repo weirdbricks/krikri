@@ -32,10 +32,26 @@ module Krikri
           return (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
         end
 
+        (JSON.parse(rendered = render_raw_template_string(raw)) rescue nil) || JSON::Any.new(rendered)
+      end
+
+      # Same multi-span gap as every other independent copy of this
+      # helper (VariableLookup, ConditionalEvaluator) - a raw value
+      # starting with "{{" and ending with "}}" can still hold TWO (or
+      # more) separate spans with literal text between them
+      # (`"{{ enroot_version }}-{{ enroot_release }}"`), which naively
+      # slicing off just the first/last 2 characters mangles into an
+      # unparseable expression. Only a genuine single whole-string span
+      # goes through ExpressionEvaluator directly (preserves non-string
+      # result types); anything else goes through VarSubstitutor's full
+      # multi-segment substitution instead.
+      private def render_raw_template_string(raw : String) : String
         inner = raw.strip
-        inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
-        rendered = VariableSubstitutor::ExpressionEvaluator.new(@vars).evaluate(inner)
-        (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+        if (raw.split("{{").size - 1) == 1 && (raw.split("}}").size - 1) == 1 && inner.starts_with?("{{") && inner.ends_with?("}}")
+          VariableSubstitutor::ExpressionEvaluator.new(@vars).evaluate(inner[2..-3].strip)
+        else
+          Krikri::VarSubstitutor.new(@vars).substitute(raw)
+        end
       end
 
       # Evaluate a comparison expression
@@ -241,9 +257,7 @@ module Krikri
               return rendered.to_i64? || rendered
             end
             if raw.includes?("{{")
-              inner = raw.strip
-              inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
-              rendered = VariableSubstitutor::ExpressionEvaluator.new(@vars).evaluate(inner)
+              rendered = render_raw_template_string(raw)
               return rendered.to_i64? || rendered
             end
             return raw.strip

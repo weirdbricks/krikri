@@ -1162,5 +1162,29 @@ describe Krikri::ConditionalEvaluator do
         %(xz_version.stdout | ansible.builtin.regex_search("5\\.6\\.(0|1)") is not none), v_hit
       ).should be_true
     end
+
+    it "re-renders a MULTI-span templated variable (two separate {{ }} spans, not one whole-string span) before comparing" do
+      # Found via ome.ice (nvidia.enroot dependency)'s own real-host
+      # confirm round: `enroot_version_string: "{{ enroot_version }}-{{
+      # enroot_release }}"` (two spans with a literal "-" between them,
+      # not one whole-string "{{ ... }}" span). rerender_if_templated's
+      # own single-span fast path checked only "starts with {{ and ends
+      # with }}" - true here too, since the WHOLE string still starts
+      # with "{{" and ends with "}}" even with a second span inside -
+      # then naively sliced off just the first/last 2 characters
+      # (`raw[2..-3]`), leaving the literal "-{{"/"}}-" text in the
+      # "expression" handed to ExpressionEvaluator - unparseable, so
+      # `!= enroot_version_string` always read the right side as
+      # something other than "3.2.0-1", regardless of the real values.
+      v = vars({
+        "enroot_version" => "3.2.0",
+        "enroot_release" => "1",
+      } of String => JSON::Any::Type)
+      v["enroot_version_string"] = JSON::Any.new("{{ enroot_version }}-{{ enroot_release }}")
+      v["actual_version"] = JSON::Any.new("3.2.0-1")
+
+      Krikri::ConditionalEvaluator.evaluate("actual_version != enroot_version_string", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("actual_version == enroot_version_string", v).should be_true
+    end
   end
 end

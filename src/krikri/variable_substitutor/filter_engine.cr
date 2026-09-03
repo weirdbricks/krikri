@@ -59,8 +59,20 @@ module Krikri
         end
 
         inner = raw.strip
-        inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
-        rendered = ExpressionEvaluator.new(vars).evaluate(inner)
+        rendered =
+          if (raw.split("{{").size - 1) == 1 && (raw.split("}}").size - 1) == 1 && inner.starts_with?("{{") && inner.ends_with?("}}")
+            ExpressionEvaluator.new(vars).evaluate(inner[2..-3].strip)
+          else
+            # Same multi-span gap as every other independent copy of
+            # this helper (VariableLookup, ConditionalEvaluator,
+            # ComparisonEvaluator) - a raw value starting with "{{" and
+            # ending with "}}" can still hold TWO (or more) separate
+            # spans with literal text between them
+            # (`"{{ enroot_version }}-{{ enroot_release }}"`), which
+            # naively slicing off just the first/last 2 characters
+            # mangles into an unparseable expression.
+            Krikri::VarSubstitutor.new(vars).substitute(raw)
+          end
         (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
       end
 

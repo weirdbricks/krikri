@@ -193,7 +193,17 @@ module Krikri
         # one plain variable/dotted lookups actually go through) never
         # got the same fix.
         inner = raw.strip
-        whole_span = inner.starts_with?("{{") && inner.ends_with?("}}")
+        # Also require exactly one "{{"/"}}" pair total - a string
+        # starting with "{{" and ending with "}}" can still hold TWO (or
+        # more) separate spans with literal text between them
+        # (`"{{ enroot_version }}-{{ enroot_release }}"`, ome.ice's own
+        # enroot_version_string default) - the prefix/suffix check alone
+        # can't tell that apart from one genuine whole-string span, and
+        # slicing off just the first/last 2 characters on a multi-span
+        # string leaves the inner "-{{"/"}}-" text in place, producing a
+        # malformed expression ExpressionEvaluator can't parse.
+        whole_span = inner.starts_with?("{{") && inner.ends_with?("}}") &&
+                     (raw.split("{{").size - 1) == 1 && (raw.split("}}").size - 1) == 1
 
         # Block tags/comments, or a `{{ }}` span that does NOT span the
         # ENTIRE raw value (`"{{ nginx_conf_path }}/nginx.conf"` - a
