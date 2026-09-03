@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.697`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.698`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.21` (see `shard.yml`).
 
 ---
@@ -1065,14 +1065,34 @@ role, both phases). Two entries remain.
 
   **Verdict: still near zero (1 genuine pattern in 611 roles, ~0.16%)
   even on a much wider, non-Debian-web corpus - the decision rule's
-  "meaningful fraction" bar is not met.** Per the rule, defer the full
-  native-typing rewrite. `robertdebock.java`/`buluma.java`'s
-  `java_version == 8` is now a ready-made motivating role and regression
-  test if the rewrite is ever picked up; it could also be patched as a
-  narrow one-off (special-case numeric equality against an
-  `{{ other_var }}`-only indirection) rather than waiting on the full
-  model change, if this specific role is ever hit in a live benchmark
-  round.
+  "meaningful fraction" bar is not met.** Per the rule, the full
+  native-typing rewrite (deferred evaluation + type preservation
+  through the whole vars pipeline, touching both evaluators) remains
+  NOT done, and shouldn't be picked up without new data changing that
+  verdict.
+
+  **The narrow one-off this entry named as the alternative is done
+  (0.9.698).** `ExpressionEvaluator#type_sensitive_comparison?`
+  (`expression_evaluator.cr`) special-cases exactly `robertdebock.java`/
+  `buluma.java`'s own shape - a `==`/`!=`/`<`/`>`/`<=`/`>=` comparison
+  where at least one operand is a bare variable whose own stored value
+  is a pure, single-level `{{ other_var }}` indirection (no filters, no
+  dotted/bracket access) - and routes it to `ComparisonEvaluator`
+  (which already had the necessary type-preserving reparse, `when:
+  java_version == 8` already worked correctly before this fix) instead
+  of Crinja, whose otherwise-correct string-typed comparison was
+  exactly what disagreed with real Ansible's native-typed one. Verified
+  live: `{{ java_version == 8 }}` now renders `True`, matching
+  ansible-core 2.19; the protected `buluma.bind`
+  `bind_python_version == '3'` idiom (a DIFFERENT indirection whose
+  underlying value is a genuinely quoted string, not an int) still
+  renders `True` too, unregressed. NOT a general fix - `type_debug`,
+  `in`-membership, and a string-literal comparison against a
+  numerically-indirected variable (`ind == '3'`, which
+  `ComparisonEvaluator`'s own pre-existing loose numeric-string
+  coercion still gets wrong the same way it already did before this
+  session) are untouched; only the documented `X == <int-literal>`/
+  `X != <int-literal>` shape is covered.
 
 - **`get_url`/`lookup('url', ...)` can't complete a TLS handshake
   against `subgit.com`.** Found in round 187's 60-role marathon

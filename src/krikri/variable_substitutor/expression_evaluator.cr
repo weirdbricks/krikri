@@ -645,6 +645,70 @@ module Krikri
         nil
       end
 
+      # A bare identifier whose OWN stored raw value is a pure, single-
+      # level `{{ other_var }}` indirection (no filters, no dotted/
+      # bracket access) - the exact shape KNOWN_MISSING.md's "native
+      # typing" gap documents as the one that actually diverges in
+      # practice (found live in robertdebock.java/buluma.java's own
+      # `java_version == 8` gate). This engine's `{{ }}` substitution
+      # deliberately preserves the SOURCE type as a string through such
+      # an indirection rather than re-inferring a scalar type from
+      # rendered text (see crinja_renderer.cr's own `rerender_string_
+      # value` comment on why - protecting `buluma.bind`'s `(
+      # bind_python_version == '3')` idiom, which needs the opposite
+      # behavior) - correct for real Ansible's OWN pre-2.19 templating
+      # model, but ansible-core 2.19 made native types the default, so
+      # a same-run `X == <int>` against exactly this indirected shape
+      # can take the wrong branch silently. Not chased as a general
+      # fix (measured at ~0.16% frequency across 611 real roles - see
+      # KNOWN_MISSING.md's own decision-rule writeup, which explicitly
+      # defers the full native-typing rewrite); this is the narrow
+      # one-off it names as the alternative.
+      INDIRECTION_ONLY_RE = /\A\{\{\s*[A-Za-z_]\w*\s*\}\}\z/
+
+      private def bare_indirected_operand?(name : String) : Bool
+        return false unless name =~ /\A[A-Za-z_]\w*\z/
+        raw = @vars[name]?.try(&.raw)
+        raw.is_a?(String) && INDIRECTION_ONLY_RE.matches?(raw.strip)
+      end
+
+      # True when *expr* is a top-level `==`/`!=`/`<`/`>`/`<=`/`>=`
+      # comparison with at least one bare-indirected operand (see
+      # above) - the shape where Crinja's own (otherwise perfectly
+      # correct) comparison would silently disagree with
+      # ComparisonEvaluator's own already-existing type-preserving
+      # reparse (`rerender_if_templated`, blind `JSON.parse` on any
+      # scalar - already used for `when:`/`assert:`, which is WHY
+      # `when: java_version == 8` already worked correctly before this
+      # fix while the identical comparison inside a `{{ }}` span, e.g.
+      # a `debug: msg:`, did not: #evaluate_expr_operator tries Crinja
+      # FIRST and only falls back to `@comparison` on a Crinja
+      # exception, but Crinja doesn't raise here - it just returns a
+      # plausible, wrong-typed answer).
+      private def type_sensitive_comparison?(expr : String) : Bool
+        ["==", "!=", "<=", ">=", ">", "<"].each do |op|
+          next unless expr.includes?(op)
+          parts = expr.split(op, 2)
+          next if parts.size != 2
+          return true if bare_indirected_operand?(parts[0].strip) || bare_indirected_operand?(parts[1].strip)
+        end
+        false
+      end
+
+      # @comparison.evaluate returns Crystal's own lowercase "true"/
+      # "false" (Bool#to_s); a comparison that IS a whole `{{ }}`
+      # expression's entire content renders that text directly to the
+      # user (a debug: msg:, etc.), where real Python/Jinja2 always
+      # capitalizes - matches the ternary swap's own identical fix
+      # elsewhere in this file.
+      private def capitalize_bool_text(text : String) : String
+        case text
+        when "true"  then "True"
+        when "false" then "False"
+        else              text
+        end
+      end
+
       private def evaluate_expr_operator(expr : String) : String?
         # Check for comparison operators FIRST (before filters)
         if has_comparison?(expr)
@@ -662,10 +726,21 @@ module Krikri
           # in this codebase pattern-matches a bare lowercase "true"/
           # "false" against something this specific method could have
           # produced.
+          #
+          # EXCEPT when type_sensitive_comparison? - there, Crinja is
+          # skipped entirely in favor of @comparison (ComparisonEvaluator),
+          # since it's the one with the type-preserving reparse this
+          # exact shape needs and Crinja's own successful-but-wrong-
+          # typed answer would otherwise never be overridden by the
+          # ordinary rescue-based fallback below.
           return begin
-            render_via_crinja(expr)
+            if type_sensitive_comparison?(expr)
+              capitalize_bool_text(@comparison.evaluate(expr))
+            else
+              render_via_crinja(expr)
+            end
           rescue
-            @comparison.evaluate(expr)
+            capitalize_bool_text(@comparison.evaluate(expr))
           end
         end
 

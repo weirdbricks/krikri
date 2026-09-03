@@ -979,4 +979,49 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
       evaluator.evaluate("x + 1").should eq("6")
     end
   end
+
+  describe "native-typing indirection comparisons (KNOWN_MISSING.md's narrow one-off fix)" do
+    # robertdebock.java/buluma.java's real shape: vars/main.yml maps
+    # ansible_distribution to a YAML-int Java version table, indirects
+    # it twice, and gates a task on `java_version == 8` - on real
+    # ansible-core 2.19 the indirected value stays a native int and the
+    # comparison is True; this engine's `{{ }}` substitution preserves
+    # the SOURCE type as a string through a bare indirection (see
+    # crinja_renderer.cr's own comment on why - protecting a DIFFERENT,
+    # already-fixed idiom, buluma.bind's own quoted-string case just
+    # below), so `{{ java_version == 8 }}` used to render "False" -
+    # wrong, and silently so (no error, no failed task).
+    it "treats a bare-indirected variable's underlying YAML int as a real int in ==" do
+      v = Hash(String, JSON::Any).new
+      v["java_default_version"] = JSON::Any.new(8_i64)
+      v["java_version"] = JSON::Any.new("{{ java_default_version }}")
+      evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+      evaluator.evaluate("java_version == 8").should eq("True")
+      evaluator.evaluate("java_version != 8").should eq("False")
+    end
+
+    # The narrow fix must not regress the case it was explicitly built
+    # around NOT breaking: buluma.bind's own `bind_python_version: "{{
+    # bind_default_python_version }}"` where the referenced var is the
+    # quoted YAML STRING "3" - `(bind_python_version == '3')` must stay
+    # True (real Ansible: string stays a string through the
+    # indirection, same value on both sides of ==).
+    it "still gets buluma.bind's quoted-string indirection idiom right (regression guard)" do
+      v = Hash(String, JSON::Any).new
+      v["bind_default_python_version"] = JSON::Any.new("3")
+      v["bind_python_version"] = JSON::Any.new("{{ bind_default_python_version }}")
+      evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+      evaluator.evaluate("bind_python_version == '3'").should eq("True")
+    end
+
+    it "leaves a DIRECT (non-indirected) int/string comparison untouched" do
+      v = Hash(String, JSON::Any).new
+      v["n"] = JSON::Any.new(8_i64)
+      evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+      evaluator.evaluate("n == 8").should eq("True")
+    end
+  end
 end
