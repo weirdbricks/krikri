@@ -1058,22 +1058,36 @@ role, both phases). Two entries remain.
   round.
 
 - **`get_url`/`lookup('url', ...)` can't complete a TLS handshake
-  against a server running very old OpenSSL/TLS.** Found in round 187's
-  60-role marathon: `andrewrothstein.subgit` downloads
-  `https://subgit.com/download/subgit-3.3.18.zip`, whose server (Apache
-  2.4.25, OpenSSL 1.0.2u per its own response header) real Ansible's
-  Python TLS stack negotiates fine but Crystal's stdlib `HTTP::Client`
-  cannot: `SSL_shutdown: error:0A000197:SSL routines::shutdown while in
-  init`, reproduced directly with a bare `HTTP::Client.get` (not
-  anything this project's own wrapper does differently) - a genuine
-  Crystal/OpenSSL binding limitation talking to a legacy TLS
-  configuration, not a bug in this project's download code. Fixing it
-  properly would mean deliberately relaxing this engine's TLS context
-  (lower minimum version and/or broader cipher list) for every HTTP(S)
-  download - a security-relevant tradeoff worth a real decision, not a
-  quick patch slipped into an unrelated benchmark round. Documented, not
-  fixed. `curl` from the same host reaches the server fine, confirming
-  it's specifically Crystal's own TLS client, not network/DNS/firewall.
+  against `subgit.com`.** Found in round 187's 60-role marathon
+  (`andrewrothstein.subgit` downloading
+  `https://subgit.com/download/subgit-3.3.18.zip`) against the server's
+  OpenSSL 1.0.2u at the time. Re-investigated 2026-09 (session
+  `session_01Jo7RSGKYc2M9GgsC7na46p`): the theory that this was purely
+  "old OpenSSL on the server" no longer holds - the server has since
+  moved behind a modern Let's Encrypt-issued cert (CN `tmatesoft.com`,
+  a large SNI-shared multi-domain cert) and a bare
+  `openssl s_client -connect subgit.com:443 -servername subgit.com`
+  from this project's own dev host succeeds cleanly with default
+  settings on OpenSSL 3.5.7 - yet the bug still reproduces identically
+  (`SSL_shutdown: error:0A000197:SSL routines::shutdown while in init`,
+  confirmed live via the built binary). `curl` also still succeeds
+  against the same host/path. So the divergence is real and current,
+  just not "legacy TLS": something in the ClientHello Crystal's
+  `HTTP::Client`/`OpenSSL::SSL::Context::Client` constructs differs
+  from what `openssl s_client`/`curl` (same system OpenSSL, same box)
+  send, and the server rejects it with a handshake-failure alert.
+  Toggled every relevant option Crystal's OpenSSL bindings expose
+  (`LEGACY_SERVER_CONNECT`, `ALLOW_UNSAFE_LEGACY_RENEGOTIATION`,
+  `NO_TLS_V1_3` to force TLS 1.2, `ciphers=` pinned to curl's own
+  negotiated `ECDHE-RSA-AES256-GCM-SHA384`, `security_level = 0`) -
+  none changed the outcome, ruling out protocol-version/cipher-list/
+  renegotiation-policy as the cause and meaning this isn't fixable
+  through the client-side knobs Crystal's stdlib exposes. Root-causing
+  the actual ClientHello difference needs a packet-capture-level diff
+  (`SSLKEYLOGFILE`/tshark) against `openssl s_client`'s own handshake,
+  not attempted here - out of scope for an application-level fix, and
+  more likely a genuine Crystal stdlib limitation than something to
+  patch around in this codebase. Not fixed.
 
 ## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
 
