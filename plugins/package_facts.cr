@@ -33,6 +33,16 @@ module Krikri
         packages = dpkg_packages
       when "rpm"
         packages = rpm_packages
+      when "apt"
+        # Real Ansible's package_facts module accepts "apt" as its own
+        # explicit manager value (distinct from "auto"/"dpkg" - it
+        # queries via python-apt bindings instead of dpkg-query), but
+        # produces the same {name => [{"name", "version"}]} fact shape
+        # on a Debian/Ubuntu host - found via nvidia.enroot's own
+        # `package_facts: manager: apt`, which this plugin previously
+        # rejected outright as "Unsupported package manager: apt" (the
+        # case dispatch only ever recognized "auto"/"dpkg"/"rpm").
+        packages = dpkg_packages
       else
         return PluginResult.new(
           changed: false,

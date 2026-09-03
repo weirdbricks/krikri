@@ -21,4 +21,17 @@ describe "package_facts plugin" do
     result = PluginSpecHelper.run("package_facts", {"manager" => "bogus"})
     result["failed"].as_bool.should be_true
   end
+
+  it "accepts manager: apt (real Ansible's own distinct, python-apt-backed value), not just auto/dpkg" do
+    # Found via a live 100-role confirm round: nvidia.enroot's own
+    # `package_facts: manager: apt` (verified live against ansible-core
+    # 2.19.12: a real, accepted manager value, not an alias this engine
+    # invented) failed outright with "Unsupported package manager: apt"
+    # - the case dispatch only ever recognized auto/dpkg/rpm.
+    result = PluginSpecHelper.run("package_facts", {"manager" => "apt"})
+
+    result["failed"].as_bool.should be_false
+    packages = result["ansible_facts"]["packages"].as_h
+    packages.size.should be > 0
+  end
 end
