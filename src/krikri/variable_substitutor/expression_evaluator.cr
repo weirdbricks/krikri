@@ -1522,7 +1522,30 @@ module Krikri
       # full Crinja renderer; a `{{ }}`-span re-enters this evaluator) -
       # nil when the value isn't template text at all.
       private def retemplated_lookup_value(resolved : JSON::Any?) : JSON::Any?
-        return nil unless resolved && (raw = resolved.raw).is_a?(String)
+        return nil unless resolved
+
+        # An Array/Hash resolved value can hold nested String elements
+        # that are STILL unrendered `{{ }}` text one level down - the
+        # same class of gap `CrinjaRenderer.rerender_nested_templates`
+        # exists for (already shared process-wide for the Crinja
+        # context-conversion path), just never reached from THIS
+        # plain-lookup fallback before. Found live via jtyr.motd's own
+        # `motd_info: "{{ motd_info__default + motd_info__custom }}"`:
+        # `motd_info__default`'s own list items are dicts whose VALUES
+        # are each a further `{{ ansible_facts.fqdn }}`-style
+        # indirection - resolving the bare `+`-operand `motd_info__
+        # default` here returned the raw, un-re-rendered array, so the
+        # rendered MOTD showed literal `{{ ansible_facts.fqdn }}` text
+        # instead of the real hostname (confirmed live against a real
+        # host). Delegates to the exact same recursive helper the
+        # Crinja path already uses, rather than a second, separately-
+        # maintained copy.
+        raw = resolved.raw
+        if raw.is_a?(Array) || raw.is_a?(Hash)
+          return CrinjaRenderer.rerender_nested_templates(resolved, VarSubstitutor.new(vars: @vars))
+        end
+
+        return nil unless raw.is_a?(String)
         if raw.includes?("{%") || raw.includes?("{#")
           # Block tags need the full Crinja renderer, not this plain
           # `{{ }}`-only evaluator - see variable_lookup.cr's identical

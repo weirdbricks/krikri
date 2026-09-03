@@ -524,7 +524,25 @@ module Krikri
           # era `python-netaddr`/`python-dnspython` package names
           # instead of `python3-*` on every real Debian/Ubuntu target.
           if rendered.strip.starts_with?('[') || rendered.strip.starts_with?('{')
-            (JSON.parse(rendered) rescue nil) || JSON::Any.new(rendered)
+            # A container literal built from a Python-style dict/set
+            # expression (`{ 'Virtual': v } if cond else { 'X': y }`,
+            # jtyr.motd's own motd_info__default) finalizes to
+            # single-quoted Python-repr text ("{'Virtual': 'NO'}"),
+            # which is not valid JSON - JSON.parse fails, and used to
+            # fall all the way back to a plain STRING here, so a later
+            # `{% for key, value in item %}` over it crashed with
+            # "cannot unpack multiple values" instead of seeing the
+            # real dict (confirmed live against a real host running
+            # jtyr.motd). Falling back to a genuine STRUCTURAL Crinja
+            # evaluation (`evaluate_value!`, already used elsewhere for
+            # exactly this "get the real Crinja::Value, not a
+            # stringify-then-reparse round trip" need) instead of
+            # giving up to a plain string recovers the real
+            # array/dict without the JSON-text detour at all.
+            inner = stripped[2..-3].strip
+            (JSON.parse(rendered) rescue nil) ||
+              (CrinjaRenderer.new(substitutor.vars).evaluate_value!(inner) rescue nil) ||
+              JSON::Any.new(rendered)
           else
             JSON::Any.new(rendered)
           end

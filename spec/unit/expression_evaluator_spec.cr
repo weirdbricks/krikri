@@ -1024,4 +1024,26 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
       evaluator.evaluate("n == 8").should eq("True")
     end
   end
+
+  describe "+ concatenation of a list whose own elements need recursive re-rendering" do
+    # Real bug found via a live confirm-phase round against jtyr.motd on
+    # a real host: `motd_info: "{{ motd_info__default + motd_info__
+    # custom }}"` - `motd_info__default`'s own list items are dicts
+    # whose VALUES are each a further `{{ some_fact }}`-style
+    # indirection. resolve_plus_operand's plain-lookup fallback
+    # (retemplated_lookup_value) only re-rendered a resolved value that
+    # was itself a bare String - an Array/Hash containing nested
+    # unrendered String values passed straight through unchanged, so
+    # the concatenated list kept literal "{{ some_fact }}" text in
+    # every dict value instead of the real fact, with no error at all.
+    it "re-renders nested template values inside list items resolved through a bare `+` operand" do
+      v = Hash(String, JSON::Any).new
+      v["hostname_fact"] = JSON::Any.new("myhost")
+      v["list_a"] = JSON.parse(%([{"FQDN": "{{ hostname_fact }}"}]))
+      v["list_b"] = JSON.parse(%([]))
+      evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+      evaluator.evaluate("(list_a + list_b)[0].FQDN").should eq("myhost")
+    end
+  end
 end

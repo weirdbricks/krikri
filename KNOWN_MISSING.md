@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.699`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.700`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.21` (see `shard.yml`).
 
 ---
@@ -90,22 +90,51 @@ dict's values through the same `rerender_nested_templates` recursion
 before merging. See `spec/unit/crinja_renderer_spec.cr`'s "recursively
 re-renders each merged dict's OWN values" spec.
 
-**`jtyr.motd` is STILL divergent (found in the same confirm round, not
-yet fixed)** - a different, harder shape than `.update()`, not covered
-by this fix at all: `motd_info: "{{ motd_info__default +
+**`jtyr.motd`'s divergence (found in the same confirm round) is now
+also fixed (0.9.700)** - a different, harder shape than `.update()`,
+not covered by the 0.9.699 fix: `motd_info: "{{ motd_info__default +
 motd_info__custom }}"` (list CONCATENATION, not `.update()`) where
 `motd_info__default` is a YAML list whose OWN elements are dicts with
 templated values, one of which is a bare `{{ {...} if cond else {...}
-}}` conditional DICT-LITERAL expression as a whole list item. Fails
+}}` conditional DICT-LITERAL expression as a whole list item. Failed
 identically: `{% for item in motd_info %}{% for key, value in item
-%}` - "cannot unpack multiple values of type Crinja::Value". This is
-the general "list of natively-typed dicts surviving a `+` concat and
-per-element ternary-dict-literal templating" problem, not the narrow
-`.update()` idiom - would need its own special-case (or the full
-lazy-dict-templating architecture) to fix. Confirmed against real
-`ansible-playbook` (which handles it correctly, `ok=2 changed=1`) on
-the same real host pair. Not fixed - documented here rather than
-guessed at blind.
+%}` - "cannot unpack multiple values of type Crinja::Value". Two
+separate bugs, both root-caused via a live real-host repro (not
+guessed at):
+
+1. **`ExpressionEvaluator#resolve_plus_operand`'s plain-lookup fallback
+   (`retemplated_lookup_value`) only re-rendered a resolved value that
+   was itself a bare String** - an Array/Hash resolved value (like
+   `motd_info__default`, whose own list items are dicts with `{{
+   ansible_facts.fqdn }}`-style values) passed straight through
+   unrendered. `motd_info` (built from `motd_info__default +
+   motd_info__custom`, a bare `+`-operand resolution) kept literal `{{
+   ansible_facts.fqdn }}` TEXT in every dict value, with no error at
+   all - a silent, wrong-content bug, not a crash. Fixed by delegating
+   to `CrinjaRenderer.rerender_nested_templates` (the same recursive
+   helper the Crinja context-conversion path already used) instead of
+   only handling the top-level-String case.
+2. **A container literal built from a Python-style dict/set expression
+   finalizes to single-quoted Python-repr text** (`"{'Virtual': 'NO'}"`)
+   which `JSON.parse` correctly refuses to parse (not valid JSON) - so
+   `CrinjaRenderer#rerender_string_value`'s container-shaped reparse
+   fell all the way back to a plain STRING instead of a real dict once
+   `JSON.parse` failed, which is what actually crashed the `{% for key,
+   value in item %}` unpack (item 3 of `motd_info__default` is exactly
+   this shape). Fixed by falling back to a genuine STRUCTURAL Crinja
+   evaluation (`evaluate_value!`, already used elsewhere for exactly
+   this "get the real `Crinja::Value`, not a stringify-then-reparse
+   round trip" need) instead of giving up to a string when the JSON
+   reparse fails on container-shaped text.
+
+Verified against the exact real role locally (full rendered MOTD
+matches expected content) and against real ansible-playbook on a fresh
+host pair - see `spec/unit/expression_evaluator_spec.cr`'s "+
+concatenation of a list whose own elements need recursive
+re-rendering" and `spec/unit/crinja_renderer_spec.cr`'s "recovers a
+real dict from a Python-repr" specs.
+
+### `copy:`'s `validate:` isn't implemented at all
 
 Found while fixing the `template:` `validate:`/`remote_tmp` gap
 directly below (0.9.695): `plugins/copy.cr` has no handling whatsoever

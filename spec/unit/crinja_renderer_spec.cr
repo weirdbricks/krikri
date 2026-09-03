@@ -1109,4 +1109,27 @@ describe "CrinjaRenderer.rerender_nested_templates (round 170 - scalar-vs-contai
 
     renderer.render("{{ docker_pip_packages | length }}").should eq("1")
   end
+
+  it "recovers a real dict from a Python-repr (single-quoted) container a JSON reparse can't parse" do
+    # Real bug found via a live confirm-phase round against jtyr.motd on
+    # a real host: one of its motd_info__default list items is a BARE
+    # `{{ {'Virtual': v} if cond else {'X': y} }}` conditional dict-
+    # literal expression - the whole list item is a pure `{{ }}` value,
+    # matching the container-shaped-reparse branch below, but Crinja's
+    # own Finalizer stringifies a dict using single-quoted Python-repr
+    # text ("{'Virtual': 'NO'}"), which JSON.parse correctly refuses to
+    # parse (not valid JSON) - so it fell all the way back to a plain
+    # STRING instead of a real dict, and a role's later
+    # `{% for key, value in item %}` over that "dict" crashed with
+    # "cannot unpack multiple values of type Crinja::Value". Fixed by
+    # falling back to a genuine structural Crinja evaluation
+    # (evaluate_value!) instead of giving up to a string when the JSON
+    # reparse fails on container-shaped text.
+    v = Hash(String, JSON::Any).new
+    v["flag"] = JSON::Any.new(false)
+    v["item"] = JSON::Any.new("{{ {'Virtual': 'NO'} if flag else {'Virtual': 'YES'} }}")
+
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render("{% for key, value in item %}{{ key }}={{ value }}{% endfor %}").should eq("Virtual=YES")
+  end
 end
