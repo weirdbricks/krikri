@@ -1454,6 +1454,36 @@ module Krikri
       vars_context = build_vars_context(task, host)
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       notify_list.each do |handler_name|
+        # A `notify: "{{ some_list_var }}"` whose ENTIRE value is one
+        # pure `{{ }}` span can itself resolve to a real LIST of
+        # handler names, not just a single name - real Ansible notifies
+        # every element (and, for an EMPTY list, notifies nothing at
+        # all - no error). Verified live against ansible-core 2.19.12.
+        # #substitute always flattens to one STRING (Crinja's own
+        # repr for an empty list is the literal text "[]"), which used
+        # to be treated as a single handler literally NAMED "[]" -
+        # found via ome.ice's own dependency role ome.deploy_archive,
+        # whose `notify: "{{ deploy_archive_notifies }}"` (default: an
+        # empty list) crashed the whole run with "The requested
+        # handler '[]' was not found" instead of silently notifying
+        # nothing.
+        stripped = handler_name.strip
+        if stripped.starts_with?("{{") && stripped.ends_with?("}}")
+          structural = begin
+            VariableSubstitutor::CrinjaRenderer.new(vars_context).evaluate_value!(stripped[2..-3].strip)
+          rescue
+            nil
+          end
+          if structural && (list = structural.as_a?)
+            list.each do |item|
+              name = item.as_s? || item.to_s
+              raise_unless_handler_exists(name, task, host)
+              @handler_runner.notify(host, name)
+            end
+            next
+          end
+        end
+
         rendered = handler_name.includes?("{{") ? (substitutor.substitute(handler_name) rescue handler_name) : handler_name
         raise_unless_handler_exists(rendered, task, host)
         @handler_runner.notify(host, rendered)

@@ -80,4 +80,64 @@ describe "notify: with a templated handler name" do
     status.success?.should be_true
     output.should contain("handler ran")
   end
+
+  it "notify: templated to an EMPTY list notifies nothing at all, not a literal '[]' handler lookup" do
+    # Real bug found via a live 100-role confirm round: ome.ice's own
+    # dependency role ome.deploy_archive, whose `notify: "{{
+    # deploy_archive_notifies }}"` (default: an empty list) crashed the
+    # whole run with "The requested handler '[]' was not found in
+    # either the main handlers list nor in the listening handlers
+    # list" instead of silently notifying nothing - verified live
+    # against ansible-core 2.19.12 that a notify: templated to an empty
+    # list is a genuine no-op, not an error.
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          my_notifies: []
+        tasks:
+          - name: trigger
+            ansible.builtin.debug:
+              msg: hi
+            changed_when: true
+            notify: "{{ my_notifies }}"
+        handlers:
+          - name: unused handler
+            ansible.builtin.debug:
+              msg: SHOULD_NOT_RUN
+      YAML
+
+    status.success?.should be_true
+    output.should_not contain("SHOULD_NOT_RUN")
+    output.should_not contain("was not found")
+    output.should match(/ok=1\b/)
+  end
+
+  it "notify: templated to a real (non-empty) list notifies every element" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          my_notifies: ["handler a", "handler b"]
+        tasks:
+          - name: trigger
+            ansible.builtin.debug:
+              msg: hi
+            changed_when: true
+            notify: "{{ my_notifies }}"
+        handlers:
+          - name: handler a
+            ansible.builtin.debug:
+              msg: A_RAN
+          - name: handler b
+            ansible.builtin.debug:
+              msg: B_RAN
+      YAML
+
+    status.success?.should be_true
+    output.should contain("A_RAN")
+    output.should contain("B_RAN")
+  end
 end
