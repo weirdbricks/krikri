@@ -645,12 +645,22 @@ describe "krikri-playbook CLI (--check mode)" do
     testservers = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-testservers-local.ini")
 
     it "defaults to implicit: every play re-gathers facts" do
-      status, output = run_playbook(
-        "test-gathering-smart-quick.yml", [] of String, inventory: testservers
+      # ANSIBLE_GATHERING (a real Ansible config var this engine also
+      # reads, see krikri-playbook.cr) is explicitly cleared here - this
+      # assertion is specifically about the DEFAULT when nothing
+      # overrides it, which would otherwise leak in from a developer's
+      # own shell environment and falsely fail this spec.
+      output = IO::Memory.new
+      status = Process.run(
+        BINARY,
+        ["-i", testservers, File.join(FIXTURES_DIR, "test-gathering-smart-quick.yml")],
+        output: output,
+        error: output,
+        env: {"ANSIBLE_GATHERING" => nil}
       )
 
       status.success?.should be_true
-      output.scan("TASK [Gathering Facts]").size.should eq(3)
+      output.to_s.scan("TASK [Gathering Facts]").size.should eq(3)
     end
 
     it "smart: gathers each host at most once per run" do

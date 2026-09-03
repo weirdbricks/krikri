@@ -10,12 +10,24 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.695`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.696`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.21` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
+
+### Fact caching only supports the `jsonfile` backend
+
+Fact caching (0.9.696, `src/krikri/fact_cache.cr`) only implements
+`ANSIBLE_CACHE_PLUGIN=jsonfile` - by far the most common real-world
+choice, and the only one worth a from-scratch implementation without a
+real client library to lean on. `redis`/`memcached`/etc. would need
+actual client libraries this project doesn't carry, and the built-in
+`memory` backend needs no support at all (this engine's own in-run
+`@facts` store already IS that). Not fixed, low priority - revisit
+only if a real role/round is found actually relying on a non-jsonfile
+backend.
 
 ### Ansible's lazy dict-templating (`_AnsibleLazyTemplateDict`) not replicated - a variable built via `.update()` side-effect + concatenation stays a real dict in real Ansible, becomes unusable here
 
@@ -89,18 +101,6 @@ already does, verified against real Ansible's own prefixing rules
 with `notify:`'s existing " : " handler-name convention - see
 `handler_runner.cr`/`executor.cr`'s existing `rindex(" : ")` handling,
 which must not double up if this is ever added).
-
-### No fact-caching support (`ANSIBLE_CACHE_PLUGIN_CONNECTION` / `fact_caching` config)
-
-Real Ansible skips "Gathering Facts" on a rerun when fact caching is configured
-and warm; krikri-playbook has no fact-cache backend at all and always
-re-gathers. Surfaced in round 201 (`geerlingguy.raspberry-pi`): with
-`ANSIBLE_CACHE_PLUGIN_CONNECTION` set, real Ansible's warm rerun showed
-`ok=0` (facts served from cache) where krikri showed `ok=1` (facts
-re-gathered) - same failing task otherwise, not a correctness bug in the
-failing task itself, just an ok/changed-count mismatch caused by the missing
-feature. Not fixed - no fact-cache plugin architecture exists yet to hang a
-fix off of.
 
 ### bimdata.ferm's `namespace()`-accumulator + nested `lookup('template', ...)` round-trip - root-caused and fixed (0.9.681 + 0.9.682's crinja bump)
 

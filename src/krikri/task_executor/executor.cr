@@ -17,6 +17,7 @@ require "../batch_script"
 require "../ssh_manager"
 require "../custom_stats"
 require "../timing_profile"
+require "../fact_cache"
 require "random/secure"
 
 require "../cli_options"
@@ -1052,6 +1053,27 @@ module Krikri
       # playbook that deliberately re-gathers after a reboot or a package
       # install must keep seeing fresh facts, which is exactly why this
       # is opt-in rather than a silent default flip.
+      #
+      # Also under --gathering smart: a persisted fact-cache
+      # (ANSIBLE_CACHE_PLUGIN=jsonfile) is consulted for any host this
+      # RUN hasn't already gathered, populating @facts from a still-warm
+      # earlier PROCESS's cache the same way an earlier play in this
+      # same run would - see FactCache's own comment for why this is
+      # gated on smart_gathering specifically (real Ansible's own
+      # `implicit` gathering ignores the cache entirely). This is what
+      # makes a warm rerun show `ok=0`/no banner for a fully-cached host
+      # instead of always re-gathering - see KNOWN_MISSING.md.
+      if @smart_gathering && FactCache.enabled?
+        @hosts.each do |host|
+          next unless @facts[host.name].empty?
+          if cached = FactCache.read(host.name)
+            @facts[host.name] = cached
+            @facts_dict_cache.delete(host.name)
+            @hv_generation += 1
+          end
+        end
+      end
+
       targets = if @smart_gathering
                   @hosts.reject { |host| !@facts[host.name].empty? }
                 else
@@ -1157,6 +1179,7 @@ module Krikri
         @facts[host.name] = facts
         @facts_dict_cache.delete(host.name)
         @hv_generation += 1
+        FactCache.write(host.name, facts) if @smart_gathering
       end
 
       {true, nil}

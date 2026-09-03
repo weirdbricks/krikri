@@ -109,7 +109,12 @@ forks = 25
 # "implicit" (default, matching ansible-playbook): every play re-gathers
 # facts. "smart": each host is gathered at most once per run, so a
 # multi-play playbook stops paying N_plays x N_hosts fact round trips.
-gathering = "implicit"
+# Real Ansible's own config source for this is ANSIBLE_GATHERING (or
+# ansible.cfg's [defaults] gathering, which this project doesn't parse -
+# see ssh_manager.cr's own note on that), not a CLI flag; --gathering
+# below is this project's own pragmatic addition on top of that, and
+# wins if both are given.
+gathering = {"implicit", "explicit", "smart"}.includes?(ENV["ANSIBLE_GATHERING"]?) ? ENV["ANSIBLE_GATHERING"].not_nil! : "implicit"
 verbose = false
 limit_hosts = ""
 tags = [] of String
