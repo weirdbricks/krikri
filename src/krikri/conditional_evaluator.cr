@@ -1091,7 +1091,20 @@ module Krikri
       # ExpressionEvaluator instead, the same "evaluate then
       # JSON.parse the result" pattern rerender_if_templated already
       # uses just above for re-rendering an already-resolved value.
-      if var_name.includes?("|")
+      if var_name.includes?("|") || var_name.match(REGEX_BARE_CALL)
+        # var_name may also be a bare function-CALL expression, not a
+        # filter chain - `lookup('vars', item) is not string`
+        # (inmotionhosting.apache's own required-variable-type assert)
+        # matched THIS type-test shortcut (checked before the generic
+        # REGEX_GENERIC_IS_TEST/REGEX_BARE_CALL Crinja-delegation
+        # fallback further down, which never got a chance to run) with
+        # var_name literally "lookup('vars', item)" - the plain hash/
+        # dotted-path lookup below has no notion of a function call at
+        # all, so `vars["lookup('vars', item)"]?` always missed:
+        # undefined, so "is not string" was unconditionally true
+        # regardless of what the lookup actually returned. Same
+        # CrinjaRenderer route the `|` filter-chain branch already uses.
+        #
         # Route through CrinjaRenderer#evaluate_value! (structured, not
         # render-then-parse): a filter chain whose final value is Python
         # None - regex_search with no match, as of the round-189 fix -

@@ -2575,6 +2575,7 @@ module Krikri
         executed = false
         failed = false
         rendered_items = loop_items.map { |item| deep_render_item(item, vars_context, host.name) }
+        rendered_items = flatten_with_items_one_level(rendered_items) if task.loop_items_needs_flatten?
         rendered_items.each_with_index do |item, loop_index|
           item_context = vars_context.dup
           item_context["item"] = item
@@ -3513,6 +3514,22 @@ module Krikri
     # (critically, see 40671ba/0.9.539) no site can add a raising loop
     # resolver without also getting a working rescue, since every call is
     # wrapped by this method.
+    # Real Ansible's with_items: (unlike loop:) implicitly applies
+    # flatten(levels=1) across the rendered elements: `with_items: ["{{
+    # list_a }}", "{{ list_b }}"]`, where list_a/list_b each render to
+    # their own list, yields one iteration per INNER element (all of
+    # list_a's items, then all of list_b's), not one iteration per outer
+    # entry holding a whole list as `item`. Found via nicolai86.
+    # prepare-release's own `with_items: ["{{ default_directories }}",
+    # "{{ directories }}"]`, which previously bound the whole
+    # default_directories array as a single `item` instead of iterating
+    # its elements. Only called when task.loop_items_needs_flatten? (set
+    # at parse time only for a literal with_items: array, never for
+    # loop:, which has no such behavior).
+    private def flatten_with_items_one_level(items : Array(JSON::Any)) : Array(JSON::Any)
+      items.flat_map { |item| item.as_a? || [item] }
+    end
+
     private def resolve_loop_items_or_raise(task : Task, host : Host, vars_context : Hash(String, JSON::Any), & : -> Array(JSON::Any)?) : Array(JSON::Any)?
       yield
     rescue ex : UndefinedVariableError
@@ -4750,6 +4767,7 @@ module Krikri
       # so `item != ""` was always true and a should-have-been-skipped
       # item ran for real, on a bogus literal path.
       rendered_items = loop_items.map { |item| deep_render_item(item, base_vars_context, host.name) }
+      rendered_items = flatten_with_items_one_level(rendered_items) if task.loop_items_needs_flatten?
 
       # Per-item fact target, for delegate_to:/delegate_facts: - only ever
       # diverges from `host` in the non-batched branch below (batching is
@@ -5551,6 +5569,16 @@ module Krikri
         # `mount` in dev-sec os_hardening's per-mountpoint include loop).
         loop_var = task.loop_var
         index_var = task.index_var
+        if task.loop_items_needs_flatten?
+          # with_items:'s implicit flatten(levels=1) needs each raw item
+          # RENDERED first (a raw item here is still an unrendered "{{
+          # default_directories }}"-style template string, not yet the
+          # real array it resolves to) - flatten only makes sense against
+          # the rendered values.
+          loop_items = flatten_with_items_one_level(
+            loop_items.map { |item| deep_render_item(item, base_vars_context, host.name) }
+          )
+        end
         loop_items.each_with_index do |item, idx|
           vars_context = base_vars_context.dup
           # Render any string field of the item that is itself a template
@@ -5843,6 +5871,11 @@ module Krikri
       if loop_items
         loop_var = task.loop_var
         index_var = task.index_var
+        if task.loop_items_needs_flatten?
+          loop_items = flatten_with_items_one_level(
+            loop_items.map { |item| deep_render_item(item, base_vars_context, host.name) }
+          )
+        end
         loop_items.each_with_index do |item, idx|
           vars_context = base_vars_context.dup
           vars_context["item"] = item
@@ -7056,6 +7089,11 @@ module Krikri
       base_vars_context : Hash(String, JSON::Any),
       loop_items : Array(JSON::Any),
     ) : JSON::Any
+      if handler.loop_items_needs_flatten?
+        loop_items = flatten_with_items_one_level(
+          loop_items.map { |item| deep_render_item(item, base_vars_context, host.name) }
+        )
+      end
       loop_var = handler.loop_var
       index_var = handler.index_var
       any_changed = false

@@ -81,6 +81,15 @@ module Krikri
     # Loop items already resolved at parse time (loop:, with_items:,
     # with_dict:, with_nested:, with_sequence:, with_indexed_items:).
     property loop_items : Array(JSON::Any)?
+    # True only when loop_items came from a literal with_items: array
+    # (not loop:, which has no such behavior). Real Ansible's with_items:
+    # implicitly applies flatten(levels=1) across ALL rendered elements -
+    # `with_items: ["{{ list_a }}", "{{ list_b }}"]` where each renders to
+    # its own list yields one iteration per INNER element (list_a's items
+    # then list_b's items), not one iteration per outer element holding a
+    # whole list as `item`. Found via nicolai86.prepare-release's own
+    # `with_items: ["{{ default_directories }}", "{{ directories }}"]`.
+    property? loop_items_needs_flatten : Bool = false
     # with_fileglob patterns, resolved at execution time (needs {{ vars }}
     # substitution and filesystem access, neither available at parse time).
     property loop_fileglob : Array(String)?
@@ -1960,6 +1969,7 @@ module Krikri
       elsif with_items = task_hash["with_items"]?.try(&.as_a?)
         task.loop = with_items.map { |item| JSON.parse(item.to_json) }
         task.loop_items = task.loop
+        task.loop_items_needs_flatten = true
       elsif with_dict = task_hash["with_dict"]?.try(&.as_h?)
         hash = Hash(String, JSON::Any).new
         with_dict.each { |k, v| hash[k.to_s] = JSON.parse(v.to_json) }
@@ -2597,6 +2607,7 @@ module Krikri
         task.loop_items = loop_yaml.map { |item| JSON.parse(item.to_json) }
       elsif with_items = task_hash["with_items"]?.try(&.as_a?)
         task.loop_items = with_items.map { |item| JSON.parse(item.to_json) }
+        task.loop_items_needs_flatten = true
       elsif with_first_found = task_hash["with_first_found"]?
         task.loop_first_found = parse_first_found(with_first_found)
         task.loop_first_found_skip = first_found_skip?(with_first_found)
@@ -2672,6 +2683,7 @@ module Krikri
         task.loop_items = loop_yaml.map { |item| JSON.parse(item.to_json) }
       elsif with_items = task_hash["with_items"]?.try(&.as_a?)
         task.loop_items = with_items.map { |item| JSON.parse(item.to_json) }
+        task.loop_items_needs_flatten = true
       end
 
       if loop_control = task_hash["loop_control"]?.try(&.as_h?)
@@ -3050,7 +3062,10 @@ module Krikri
     # Each element is parenthesized before joining so an element that is
     # itself a compound condition (`a or b`) cannot bind loosely against
     # its neighbours - `(a or b) and (c)`, not `a or b and c`.
-    private def self.condition_to_string(yaml : YAML::Any) : String
+    # Not private: RoleLoader also needs this for a roles: entry's/meta
+    # dependency's own when: (a role-level when: is real Ansible's own
+    # RoleRequirement field too, same list-or-scalar shape as a task's).
+    def self.condition_to_string(yaml : YAML::Any) : String
       if list = yaml.as_a?
         clauses = list.map { |item| safe_yaml_to_string(item).strip }.reject(&.empty?)
         return "" if clauses.empty?

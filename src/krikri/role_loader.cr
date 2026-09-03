@@ -44,8 +44,10 @@ module Krikri
       handlers = [] of Task
 
       roles_yaml.each do |entry|
-        name, invocation_vars, invocation_tags = parse_role_entry(entry)
+        name, invocation_vars, invocation_tags, role_when = parse_role_entry(entry)
+        before_count = tasks.size
         load_role(name, invocation_vars, invocation_tags, play, playbook_dir, seen, tasks, handlers, play_scope: true)
+        apply_role_when(tasks, before_count, role_when)
       end
 
       {tasks, handlers}
@@ -73,9 +75,9 @@ module Krikri
     # A roles: entry is either a bare string ("common") or a mapping with
     # role:/name: (+ optional vars:/tags:, and Ansible also treats any
     # other top-level key as a role var - `roles: [{role: app, port: 8080}]`).
-    private def self.parse_role_entry(entry : YAML::Any) : {String, Hash(String, JSON::Any), Array(String)}
+    private def self.parse_role_entry(entry : YAML::Any) : {String, Hash(String, JSON::Any), Array(String), String?}
       if bare_name = entry.as_s?
-        return {bare_name, Hash(String, JSON::Any).new, [] of String}
+        return {bare_name, Hash(String, JSON::Any).new, [] of String, nil}
       end
 
       hash = entry.as_h
@@ -107,7 +109,7 @@ module Krikri
       # vars context, e.g. via `{{ version }}`, would be a real
       # divergence from what real Ansible - which never exposes these
       # as vars either - provides).
-      reserved = {"role", "name", "src", "version", "scm", "vars", "tags"}
+      reserved = {"role", "name", "src", "version", "scm", "vars", "tags", "when"}
       hash.each do |key, value|
         key_str = key.to_s
         next if reserved.includes?(key_str)
@@ -116,7 +118,22 @@ module Krikri
 
       tags = hash["tags"]?.try(&.as_a?).try(&.map(&.as_s)) || [] of String
 
-      {name, vars, tags}
+      # `when:` on a roles: entry or a meta/main.yml dependency is real
+      # Ansible's own RoleRequirement field - it does NOT gate the role
+      # "as a whole" the way it might look; real Ansible statically
+      # resolves the role's tasks and combines this when: (parent
+      # PREPENDED) onto EVERY one of them, same as import_role:'s own
+      # when: propagation (see execute_include_role's identical fix).
+      # Found via Graylog2.graylog's own `meta/main.yml` dependency on
+      # lean_delivery.java (`when: graylog_install_java`, undefined -
+      # real Ansible skips the whole dependency's task tree; this
+      # engine used to load and run it unconditionally, since neither
+      # parse_role_entry nor load_role/load_meta_dependencies had any
+      # notion of a `when:` on a role entry at all - it silently
+      # dropped through as a role VAR named "when" instead of a gate.
+      role_when = hash["when"]?.try { |w| PlaybookParser.condition_to_string(w) }
+
+      {name, vars, tags, role_when}
     end
 
     private def self.load_role(
@@ -331,12 +348,29 @@ module Krikri
       return collected unless deps
 
       deps.each do |dep|
-        dep_name, dep_vars, dep_tags = parse_role_entry(dep)
+        dep_name, dep_vars, dep_tags, dep_when = parse_role_entry(dep)
+        before_count = tasks.size
         dep_defaults = load_role(dep_name, dep_vars, dep_tags, play, playbook_dir, seen, tasks, handlers, nil, parent_names, parent_paths, parent_defaults, play_scope)
+        apply_role_when(tasks, before_count, dep_when)
         collected.merge!(dep_defaults)
       end
 
       collected
+    end
+
+    # Prepends *role_when* (parent-first, matching import_role:'s own
+    # when: propagation order - see execute_include_role's identical
+    # fix) onto every task newly appended to *tasks* since *before_count*
+    # - i.e. every task this one role entry (and its own meta
+    # dependencies, loaded recursively inside the same call) contributed.
+    # A no-op when role_when is nil (the common case: no when: on this
+    # entry at all).
+    private def self.apply_role_when(tasks : Array(Task), before_count : Int32, role_when : String?) : Nil
+      return unless role_when
+      (before_count...tasks.size).each do |i|
+        task = tasks[i]
+        task.when_condition = task.when_condition ? "(#{role_when}) and (#{task.when_condition})" : role_when
+      end
     end
 
     private def self.resolve_role_dir(name : String, playbook_dir : String) : String?
