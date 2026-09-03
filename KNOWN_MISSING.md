@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.706`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.707`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.22` (see `shard.yml`).
 
 ---

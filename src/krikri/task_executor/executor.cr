@@ -3081,7 +3081,34 @@ module Krikri
       return nil unless key && list_template
 
       value = resolve_template_value(list_template, vars_context)
-      return nil unless value
+
+      # resolve_template_value only understands a bare/dotted variable
+      # reference - a filter chain (`with_subelements: - "{{
+      # authorized_key_list_all | selectattr('authorized_keys',
+      # 'defined') | list }}"`, GROG.authorized-key's own idiom, and
+      # any other selectattr/map/etc-filtered with_subelements: source)
+      # doesn't match its regex at all and returned nil immediately -
+      # not because the list was empty, but because it was never
+      # evaluated. That nil then fell all the way out of the `||` loop-
+      # resolver chain (nothing else recognizes with_subelements:
+      # either), so the task wasn't treated as a loop at all and ran
+      # ONCE with `item` unbound ("'item' is undefined") instead of
+      # correctly iterating (possibly zero times, correctly `skipped:`)
+      # over the real filtered list. Same class of gap
+      # resolve_loop_template already closed for plain loop:/with_items:
+      # filter chains - mirrored here via the same
+      # expression_evaluator_for/parse_list_result path.
+      unless value
+        bare = list_template.strip
+        if bare.starts_with?("{{") && bare.ends_with?("}}")
+          bare = bare[2..-3].strip
+        end
+        result = expression_evaluator_for(vars_context).evaluate(bare)
+        parsed = parse_list_result(result, vars_context)
+        return nil if parsed.nil?
+        return LoopResolver.with_subelements(parsed, key)
+      end
+
       list = value.as_a? || [] of JSON::Any
 
       LoopResolver.with_subelements(list, key)
