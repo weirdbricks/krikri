@@ -157,4 +157,41 @@ describe "a handler nested inside a block:" do
 
     status.success?.should be_false
   end
+
+  # Verified live against real ansible-core 2.19.12 in a container: a
+  # block used as a handler is never itself a runnable unit (only its
+  # flattened children are), so its own top-level notify: - a real
+  # feature for a REGULAR block, firing once if any nested task changed
+  # - never fires; real Ansible's run showed only the notified child's
+  # own handler, never the block's notify: target. This engine's
+  # flatten already drops the enclosing block Task (and its notify:)
+  # once children are promoted to standalone handlers, so this is
+  # already-correct behavior, not a gap - see KNOWN_MISSING.md.
+  it "does not fire the block's own top-level notify: when a flattened child handler runs" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: trigger
+            ansible.builtin.debug:
+              msg: hi
+            changed_when: true
+            notify: inner handler one
+        handlers:
+          - name: block handler group
+            notify: outer notified handler
+            block:
+              - name: inner handler one
+                ansible.builtin.debug:
+                  msg: INNER-RAN
+          - name: outer notified handler
+            ansible.builtin.debug:
+              msg: OUTER-SHOULD-NOT-RUN
+      YAML
+
+    status.success?.should be_true
+    output.should contain("INNER-RAN")
+    output.should_not contain("OUTER-SHOULD-NOT-RUN")
+  end
 end

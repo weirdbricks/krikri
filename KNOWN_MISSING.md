@@ -17,26 +17,6 @@ is the record.
 
 ## Real gaps (worth revisiting)
 
-### A block-level `notify:` on a handler-block itself is untested/unhandled
-
-`handlers/main.yml` entries wrapping a `block:` are now flattened (see
-`TaskExecutor#flatten_handler_blocks`) so each nested task is
-independently notify-able, matching real Ansible's verified behavior
-(only `block:` members flatten; `rescue:`/`always:` are inert for
-handler purposes and the block's own name is never a valid notify
-target; a block-level `when:` still applies to each flattened child).
-
-Not covered: whether a block-level `notify:` on the handler-block
-itself (the block's OWN top-level `notify:` key, distinct from any of
-its children's - a real feature for a REGULAR block, firing once if
-any nested task changed) is even meaningful for a block used as a
-handler. Untested against real Ansible either way; the flatten silently
-drops it since the enclosing block Task is discarded once its children
-are promoted to standalone handlers. Likely rare in practice (a block
-handler whose own wrapper notifies something else, distinct from what
-its nested tasks each notify) - worth a quick real-Ansible check if it
-ever surfaces in a real role.
-
 ### Ansible's lazy dict-templating (`_AnsibleLazyTemplateDict`) not replicated - a variable built via `.update()` side-effect + concatenation stays a real dict in real Ansible, becomes unusable here
 
 Found round 755/753 (`jtyr.nsswitch`/`jtyr.motd`): both roles define a
