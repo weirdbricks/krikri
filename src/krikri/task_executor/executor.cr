@@ -2650,8 +2650,17 @@ module Krikri
         end
 
         if failed
-          @results[host.name]["failed"] += 1
-          @halted_hosts.add(host.name) unless task.ignore_errors?
+          # Same ignore_errors: gap as finish_include_vars_failure's own
+          # fix - a looped include_vars: (with_first_found:/loop:) that
+          # fails on one of its items must count as ok+ignored under
+          # ignore_errors:, not failed, matching real Ansible.
+          if task.ignore_errors?
+            @results[host.name]["ok"] += 1
+            @results[host.name]["ignored"] += 1
+          else
+            @results[host.name]["failed"] += 1
+            @halted_hosts.add(host.name)
+          end
         elsif executed
           @results[host.name]["ok"] += 1
         else
@@ -2751,8 +2760,23 @@ module Krikri
     private def finish_include_vars_failure(task : Task, host : Host, message : String)
       puts "failed: [#{host.name}]".colorize(:red)
       puts "  Message: #{message}".colorize(:red)
-      @results[host.name]["failed"] += 1
-      @halted_hosts.add(host.name) unless task.ignore_errors?
+      # ignore_errors: on a failed include_vars: - matching real
+      # Ansible's own strategy/__init__.py, which counts this as `ok`
+      # AND `ignored`, never `failed`, and never halts the host. Found
+      # via CyVerse-Ansible.ez's own "include variables ..., if error,
+      # just ignore" task (`ignore_errors: yes` on a missing-file
+      # include_vars:): real Ansible's recap showed `ok=10 failed=0
+      # ignored=1`, this engine's own unconditional `failed += 1` here
+      # (the only include_vars: failure path that never consulted
+      # ignore_errors: at all for its OWN stats, unlike every other
+      # failure path in this file) showed `ok=9 failed=1 ignored=0`.
+      if task.ignore_errors?
+        @results[host.name]["ok"] += 1
+        @results[host.name]["ignored"] += 1
+      else
+        @results[host.name]["failed"] += 1
+        @halted_hosts.add(host.name)
+      end
     end
 
     # RoleLoader's auto-synthesized "Validating arguments against arg
@@ -2786,8 +2810,15 @@ module Krikri
       else
         puts "failed: [#{host.name}]".colorize(:red)
         puts "  Message: Validation of arguments failed:\n    #{errors.join("\n    ")}".colorize(:red)
-        @results[host.name]["failed"] += 1
-        @halted_hosts.add(host.name) unless task.ignore_errors?
+        # Same ignore_errors: stats fix as finish_include_vars_failure -
+        # an ignored failure counts as ok+ignored, not failed.
+        if task.ignore_errors?
+          @results[host.name]["ok"] += 1
+          @results[host.name]["ignored"] += 1
+        else
+          @results[host.name]["failed"] += 1
+          @halted_hosts.add(host.name)
+        end
       end
     end
 
@@ -5733,7 +5764,18 @@ module Krikri
       connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
       puts "failed: [#{connection_host}]".colorize(:red)
       puts "  #{message}".colorize(:red)
-      @results[host.name]["failed"] += 1
+      # Same ignore_errors: stats fix as finish_include_vars_failure -
+      # a broken include_tasks:/include_role:/import_* (missing file,
+      # bad YAML shape, load error) under ignore_errors: counts as
+      # ok+ignored, not failed, matching real Ansible. halt_if_failed
+      # already correctly skips halting under ignore_errors: - this
+      # method's own stats increment never did.
+      if task.ignore_errors?
+        @results[host.name]["ok"] += 1
+        @results[host.name]["ignored"] += 1
+      else
+        @results[host.name]["failed"] += 1
+      end
       halt_if_failed(task, host, true)
     end
 
