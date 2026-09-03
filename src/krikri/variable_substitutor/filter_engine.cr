@@ -272,11 +272,12 @@ module Krikri
           # a plain string (Python treats a str as a sequence of
           # characters) - `as_array` only ever extracts a real JSON
           # array, silently returning nil/"" for a String value instead
-          # of its first character. Found via konstruktoid-hardening's
-          # own `... | regex_search(pattern, '\1') | first` (regex_search
-          # with one backreference arg returns a plain string, matching
-          # real Ansible - `first` on that string must then return its
-          # first *character*, not nil).
+          # of its first character. This case still matters for a
+          # genuine plain string (`"hello" | first` -> "h") - regex_
+          # search itself now returns a real one-element LIST for a
+          # group_ref call (see that filter's own case above), so a
+          # `regex_search(...) | first` chain reaches the Array branch
+          # below instead of this one.
           #
           # A genuinely empty sequence (an empty ARRAY specifically, not
           # merely "not an array at all" - `as_array` also returns `[]`
@@ -560,7 +561,21 @@ module Krikri
 
           if match = as_string(value).match(self.class.cached_regex(pattern))
             if group_ref
-              JSON::Any.new(group_ref.gsub(/\\(\d)/) { match[$1.to_i]? || "" })
+              # A backreference group_ref ALWAYS returns a LIST of the
+              # captured group(s), even for a single `\1` - live-
+              # verified against ansible-core 2.19.4 (regex_search with
+              # one group_ref returns `['<captured text>']`, never a
+              # bare string) - the comment above this whole `when
+              # "regex_search"` case previously asserted the opposite
+              # ("returns a plain string, matching real Ansible"),
+              # itself unverified. A bare string here made a chained `|
+              # first` (the idiom every real role using this shape
+              # actually writes) return the STRING'S OWN FIRST
+              # CHARACTER instead of the whole captured group - found
+              # via nginxinc.nginx's own Jinja2-version-check assert:
+              # `regex_search('...', '\1') | first` silently truncated
+              # "3.1.6" down to "3", failing the version check outright.
+              JSON::Any.new([JSON::Any.new(group_ref.gsub(/\\(\d)/) { match[$1.to_i]? || "" })])
             else
               JSON::Any.new(match[0])
             end

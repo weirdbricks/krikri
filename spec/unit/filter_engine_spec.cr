@@ -831,4 +831,18 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     encrypted.should start_with("$ANSIBLE_VAULT;")
     engine.apply(JSON::Any.new(encrypted), %(unvault('secret123'))).as_s.should eq("plaintext")
   end
+
+  it "regex_search with a backreference group_ref returns a LIST, not a bare string" do
+    # Found via nginxinc.nginx's own Jinja2-version-check assert:
+    # `(jinja2_version['stdout'] | regex_search('jinja version = (
+    # [\\d.]+)', '\\1') | first) is version(...)`. Live-verified
+    # against ansible-core 2.19.4: regex_search with one group_ref
+    # returns `['3.1.6']`, never the bare string "3.1.6" - this
+    # matters specifically because a bare string fed to `| first`
+    # returns the STRING'S OWN FIRST CHARACTER ("3"), not the whole
+    # captured group, silently truncating the extracted value.
+    result = engine.apply(s("  jinja version = 3.1.6"), %(regex_search('jinja version = ([\\d.]+)', '\\1')))
+    result.as_a.map(&.as_s).should eq(["3.1.6"])
+    engine.apply(result, "first").as_s.should eq("3.1.6")
+  end
 end

@@ -1234,8 +1234,19 @@ module Krikri
         if group_ref.empty?
           match[0]
         else
+          # A backreference group_ref ALWAYS returns a LIST of the
+          # captured group(s), even for a single `\1` - real Ansible's
+          # own regex_search wraps every group reference this way,
+          # never returning a bare string. Found via nginxinc.nginx's
+          # own Jinja2-version-check assert: `regex_search('...',
+          # '\\1') | first` expects a real list to index into with
+          # `first` - a bare string instead made `| first` return the
+          # STRING'S OWN FIRST CHARACTER ("3" out of "3.1.6"), not the
+          # whole captured group, silently truncating the extracted
+          # version and failing the check outright.
           index = group_ref.gsub(/\D/, "").to_i?
-          index ? match[index]? : nil
+          captured = index ? match[index]? : nil
+          captured ? Crinja::Value.new([captured]) : nil
         end
       end || nil
     end

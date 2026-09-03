@@ -95,7 +95,17 @@ describe "raw Crinja (rebase canary)" do
   # stay registered - a future fork addition would make these redundant
   # (then can be deleted), a regression would fail here.
   it "registers the regex_search filter with backreference arg" do
-    crinja_render("{{ 'aa12bb' | regex_search('(\\d+)', '\\1') }}").should eq("12")
+    # A backreference group_ref ALWAYS returns a LIST of the captured
+    # group(s), even for a single `\1` - live-verified against
+    # ansible-core 2.19.4 (regex_search with one group_ref returns
+    # `['12']`, never a bare "12" string) - this canary previously
+    # asserted the wrong (bare-string) rendering, which had silently
+    # broken any real `regex_search(...) | first` chain (the idiom
+    # every real role using this shape actually writes): `| first` on
+    # a bare string returns the string's own first CHARACTER, not the
+    # whole captured group.
+    crinja_render("{{ 'aa12bb' | regex_search('(\\d+)', '\\1') }}").should eq("['12']")
+    crinja_render("{{ 'aa12bb' | regex_search('(\\d+)', '\\1') | first }}").should eq("12")
   end
 
   it "registers combine (shallow merge, later wins)" do
