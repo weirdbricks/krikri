@@ -199,28 +199,40 @@ module Krikri
       #
       # Handle 'or' operator (split and evaluate any part)
       #
-      # Each operand is evaluated non-strict (`strict: false`, always -
-      # NOT the incoming `strict` param) regardless of whether the
-      # OVERALL when: clause is itself strict: real Python/Jinja2's
-      # `or`/`and` never require an individual operand to already be a
-      # bool - they use each operand's plain truthiness for short-
-      # circuiting, same as a bare `when: some_string` would under
-      # non-strict rules. The strict conditional-boolean requirement
-      # (ansible-core 2.19+) only constrains the FINAL result of the
-      # WHOLE when: expression, which `parts.any?`/`parts.all?` already
-      # guarantees is a real Bool regardless of any operand's own type.
-      # Found benchmarking ANXS.postgresql's own `when: postgresql_
-      # apt_key_url and postgresql_apt_key_id and postgresql_install_
-      # repository` - the first two operands are plain non-boolean
-      # strings (a URL and a key ID) that are perfectly valid `and`
-      # operands in real Ansible; passing strict: true down here made
-      # evaluating EACH of them raise "Conditional result (True) was
-      # derived from value of type 'str'" on its own, even though the
-      # THIRD operand (postgresql_install_repository: true, a real
-      # bool) is what Python's actual short-circuit `and` would return.
+      # Each operand is evaluated non-strict first (`strict: false`) to
+      # find out which one Python's real short-circuit `or`/`and`
+      # semantics would actually RETURN - real Python doesn't coerce
+      # `or`/`and` to a bool at all; it returns one specific operand's
+      # own raw value unchanged (the first truthy one for `or`/first
+      # falsy one for `and`, or the LAST operand if none qualify).
+      # `evaluate_short_circuit_operator` re-checks ONLY that one
+      # deciding operand under the ORIGINAL `strict` - matching
+      # ansible-core 2.19's strict conditional-boolean requirement,
+      # which applies to whatever value the whole expression actually
+      # reduces to, not to each intermediate operand. Found via
+      # ANXS.postgresql's own `when: postgresql_apt_key_url and
+      # postgresql_apt_key_id and postgresql_install_repository` - the
+      # first two operands are plain non-boolean strings (a URL and a
+      # key ID), perfectly valid `and` operands in real Ansible since
+      # `and` never even looks at them once it reaches the FINAL truthy
+      # bool (postgresql_install_repository) - passing strict: true to
+      # every operand independently (the older, incorrect approach)
+      # raised "Conditional result (True) was derived from value of
+      # type 'str'" on the first one alone. The converse gap this same
+      # naive "always false" approach had - stackhpc.systemd_networkd's
+      # own `when: systemd_networkd_network or systemd_networkd_link or
+      # systemd_networkd_netdev` (three EMPTY DICT defaults, all falsy)
+      # - is exactly the case real Ansible DOES reject: Python's `or`
+      # falls through every falsy operand and returns the LAST one
+      # unchanged (a dict, not a bool), which ansible-core correctly
+      # fails on ("Conditionals must have a boolean result") while this
+      # engine used to just coerce the whole expression to `false` and
+      # keep running the gated task.
       if condition.includes?(" or ")
         parts = split_by_operator(condition, " or ")
-        return parts.any? { |part| evaluate(part.strip, vars, false, raise_undefined) } if split_progressed?(parts, condition)
+        if split_progressed?(parts, condition)
+          return evaluate_short_circuit_operator(parts, vars, strict, raise_undefined, is_or: true)
+        end
       end
 
       # Handle 'and' operator (split and evaluate all parts).
@@ -238,7 +250,9 @@ module Krikri
         parts = split_by_operator(condition, " and ")
         # Non-strict per operand - see the identical rationale on the
         # 'or' branch just above.
-        return parts.all? { |part| evaluate(part.strip, vars, false, raise_undefined) } if split_progressed?(parts, condition)
+        if split_progressed?(parts, condition)
+          return evaluate_short_circuit_operator(parts, vars, strict, raise_undefined, is_or: false)
+        end
       end
 
       # Handle 'not' at the beginning - checked last (highest
@@ -738,6 +752,32 @@ module Krikri
     # Whether splitting actually broke the condition down. A single part
     # equal to the original means no real split happened, so recursing on
     # it would not terminate.
+    # Evaluates an `or`/`and`-split condition the way real Python/Jinja2
+    # actually does: `or` returns the first TRUTHY operand's own value
+    # (or the LAST operand if every one is falsy); `and` returns the
+    # first FALSY operand's own value (or the LAST operand if every one
+    # is truthy) - neither ever coerces to a bool. Finds that deciding
+    # operand via a non-strict pass (matching real short-circuiting,
+    # never raising on an operand the real expression wouldn't even
+    # look at), then re-evaluates ONLY that one operand under the
+    # caller's real `strict` - so a non-bool deciding operand still
+    # raises ConditionalBooleanError exactly where real Ansible would,
+    # while an operand the short-circuit never reaches is left alone
+    # regardless of its own type. See the 'or' branch's own comment in
+    # #evaluate_measured for the two real-host cases (ANXS.postgresql,
+    # stackhpc.systemd_networkd) this reconciles.
+    private def self.evaluate_short_circuit_operator(parts : Array(String), vars : Hash(String, JSON::Any), strict : Bool, raise_undefined : Bool, is_or : Bool) : Bool
+      deciding = parts.last
+      parts.each do |part|
+        result = evaluate(part.strip, vars, false, raise_undefined)
+        if result == is_or
+          deciding = part
+          break
+        end
+      end
+      evaluate(deciding.strip, vars, strict, raise_undefined)
+    end
+
     private def self.split_progressed?(parts : Array(String), condition : String) : Bool
       parts.size > 1 || (parts.size == 1 && parts[0].strip != condition.strip)
     end

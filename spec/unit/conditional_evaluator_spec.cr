@@ -943,6 +943,56 @@ describe Krikri::ConditionalEvaluator do
       end
     end
 
+    it "raises when an 'or' chain of all-falsy non-boolean operands returns the LAST one, matching real Python semantics" do
+      # Real bug found via stackhpc.systemd_networkd's own `when:
+      # systemd_networkd_network or systemd_networkd_link or
+      # systemd_networkd_netdev` (three empty-dict defaults, all
+      # falsy). Real Python's `or` never coerces to bool - with every
+      # operand falsy it returns the LAST operand's own raw value
+      # unchanged (here, a dict), and ansible-core 2.19's strict
+      # conditional check correctly rejects that as non-boolean. The
+      # previous fix for the ANXS.postgresql case (see above) made
+      # every 'or'/'and' operand evaluate non-strict UNCONDITIONALLY,
+      # which fixed that regression but went too far the other way -
+      # it also silently swallowed this genuinely-non-boolean case,
+      # always just coercing the whole chain to `false` instead.
+      v = Hash(String, JSON::Any).new
+      v["a"] = JSON.parse("{}")
+      v["b"] = JSON.parse("{}")
+      v["c"] = JSON.parse("{}")
+      expect_raises(Krikri::ConditionalEvaluator::ConditionalBooleanError) do
+        Krikri::ConditionalEvaluator.evaluate("a or b or c", v, strict: true)
+      end
+    end
+
+    it "an 'or' chain short-circuiting on a non-boolean operand still raises - real ansible-core rejects ANY non-bool type" do
+      # The deciding operand for `or` is the first TRUTHY one (`b`, a
+      # non-empty dict) - real Python's `or` never even evaluates `c`
+      # once it finds one. But ansible-core 2.19's strict conditional
+      # check rejects a non-boolean conditional RESULT regardless of
+      # its truthiness (a truthy dict is just as invalid as a falsy
+      # one) - only `c` is skipped by the short-circuit, not the type
+      # check on `b` itself.
+      v = Hash(String, JSON::Any).new
+      v["a"] = JSON.parse("{}")
+      v["b"] = JSON.parse(%({"x": 1}))
+      v["c"] = JSON.parse("{}")
+      expect_raises(Krikri::ConditionalEvaluator::ConditionalBooleanError) do
+        Krikri::ConditionalEvaluator.evaluate("a or b or c", v, strict: true)
+      end
+    end
+
+    it "an 'or' chain short-circuits on a TRUTHY boolean operand with no raise, ignoring a later non-boolean" do
+      # Same short-circuit, but the deciding operand this time (`b`) IS
+      # a real bool - no raise, and `c`'s own dict type never matters
+      # since real Python's `or` never reaches it.
+      v = Hash(String, JSON::Any).new
+      v["a"] = JSON.parse("{}")
+      v["b"] = JSON::Any.new(true)
+      v["c"] = JSON.parse("{}")
+      Krikri::ConditionalEvaluator.evaluate("a or b or c", v, strict: true).should be_true
+    end
+
     it "does not raise for a list-form when: made entirely of `| bool` filter chains" do
       v = Hash(String, JSON::Any).new
       v["a"] = JSON::Any.new("yes")
