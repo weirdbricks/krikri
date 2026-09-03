@@ -10,12 +10,33 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.726`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.727`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.23` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
+
+### `service:` on an upstart host is unsupported
+
+`service:`'s init-system detection (0.9.727) covers systemd, OpenRC and
+SysV init scripts - real Ansible's own branches, in its own precedence
+order. Upstart is *detected* (so an upstart host is never silently
+driven as SysV) but deliberately not implemented: its enable/disable
+path writes an `/etc/init/<name>.override` file whose contents depend on
+the initctl version, and no currently-supported distro still ships it
+(Ubuntu 14.04, its last home, went EOL in 2019). The task fails with a
+clear "upstart-managed services are not supported by this engine"
+rather than guessing at override-file semantics that can't be verified
+against a live host. Revisit only if a real round turns up an upstart
+host.
+
+Related, same module: forcing `use: systemd` on a host where systemd is
+NOT PID 1 fails on both engines, but with different text - real Ansible
+reports "Service is in unknown state", this engine surfaces systemctl's
+own "System has not been booted with systemd as init system (PID 1)".
+Same outcome, same recap; only the message differs, and only for a
+deliberate `use:` override that contradicts the host.
 
 ### Fact caching only supports the `jsonfile` backend
 
