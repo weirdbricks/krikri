@@ -10,8 +10,8 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.703`.** Vendored `crinja` fork now at tag
-`crystal-play-0.9.21` (see `shard.yml`).
+**Currently at `0.9.704`.** Vendored `crinja` fork now at tag
+`crystal-play-0.9.22` (see `shard.yml`).
 
 ---
 
@@ -188,7 +188,7 @@ work end to end:
    that implement it.
 
 \#2 and #3 are fixed in the vendored `crinja` fork itself
-(`weirdbricks/crinja` tag `crystal-play-0.9.21`, `shard.yml` bumped) -
+(`weirdbricks/crinja` tag `crystal-play-0.9.22`, `shard.yml` bumped) -
 `src/runtime/resolver.cr`'s rescue-guarded probe and the new
 `src/runtime/python_list_methods.cr` (mirroring the existing
 `python_hash_methods.cr`'s `Hash#crinja_call` pattern for `Hash#keys`/

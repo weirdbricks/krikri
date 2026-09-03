@@ -1132,4 +1132,18 @@ describe "CrinjaRenderer.rerender_nested_templates (round 170 - scalar-vs-contai
     renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render("{% for key, value in item %}{{ key }}={{ value }}{% endfor %}").should eq("Virtual=YES")
   end
+
+  it "resolves .copy() on a dict, matching Python dict.copy()'s shallow copy" do
+    # Found via a live confirm round against ipr-cnrs.nftables: its own
+    # `nft_global_default_rules.copy()` (copy a default rule set before
+    # customizing it per-table, a real role idiom) rendered
+    # "... .copy is undefined" outright - fixed in the vendored crinja
+    # fork itself (crystal-play-0.9.22), not a krikri-side patch - see
+    # that fork's own PATCHES.md.
+    v = Hash(String, JSON::Any).new
+    v["base_rules"] = JSON.parse(%({"a": 1, "b": 2}))
+
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render("{{ base_rules.copy() }}").should eq("{'a': 1, 'b': 2}")
+  end
 end
