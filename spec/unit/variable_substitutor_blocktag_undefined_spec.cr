@@ -79,5 +79,35 @@ describe Krikri::VarSubstitutor do
       # Lenient path unchanged: undefined == \"jre\" is falsy, no raise.
       sub.substitute("{{ openjdk_install_dir }}/{% if openjdk_app == \"jre\" %}-jre{% endif %}", strict: false).should eq("/usr/local/openjdk/")
     end
+
+    it "does not raise when an undefined ref inside {% if %} is piped through | default(...)" do
+      # Found via geerlingguy.mysql's own vars/setup-Debian.yml:
+      # `deb_mysql_python_package: "{% if 'python3' in
+      # ansible_python_interpreter|default('') %}python3-mysqldb{% else
+      # %}python-mysqldb{% endif %}"`. Real Jinja2's `default` filter
+      # exists specifically to suppress Undefined - `x | default(y)`
+      # never raises regardless of x's own definedness, even under a
+      # strict environment. This scan previously only carved out an
+      # identifier BEING a filter's own name (preceded by `|`), not an
+      # identifier immediately FOLLOWED by `| default(...)` - the far
+      # more common real shape, and the one this idiom uses.
+      v = {} of String => JSON::Any
+      sub = Krikri::VarSubstitutor.new(vars: v)
+      sub.substitute(
+        %({% if 'python3' in ansible_python_interpreter|default('') %}python3-mysqldb{% else %}python-mysqldb{% endif %}),
+        strict: true
+      ).should eq("python-mysqldb")
+    end
+
+    it "still raises for an undefined ref inside {% if %} with NO default() filter" do
+      # Same shape as the openjdk case above, phrased as a direct
+      # regression check that the new default()-carve-out doesn't
+      # accidentally swallow the general case too.
+      v = {} of String => JSON::Any
+      sub = Krikri::VarSubstitutor.new(vars: v)
+      expect_raises(Krikri::UndefinedVariableError, /'some_var' is undefined/) do
+        sub.substitute("{% if some_var == \"x\" %}yes{% endif %}", strict: true)
+      end
+    end
   end
 end

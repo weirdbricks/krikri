@@ -122,7 +122,7 @@ module Krikri
       enabled
     end
 
-    def gather_facts(subset : Array(String) = [] of String) : Hash(String, String | Int64 | Hash(String, String) | Array(String) | Array(Hash(String, String)) | Hash(String, JSON::Any))
+    def gather_facts(subset : Array(String) = [] of String, remote_connection : Bool = false) : Hash(String, String | Int64 | Hash(String, String) | Array(String) | Array(Hash(String, String)) | Hash(String, JSON::Any))
       facts = {} of String => (String | Int64 | Hash(String, String) | Array(String) | Array(Hash(String, String)) | Hash(String, JSON::Any))
 
       # The minimal set, always gathered - hostname, OS/distribution, the
@@ -130,7 +130,7 @@ module Krikri
       # "min" subset covers.
       gather_hostname(facts)
       gather_os_facts(facts)
-      gather_python_facts(facts)
+      gather_python_facts(facts, remote_connection)
       gather_user_facts(facts)
       gather_date_time_facts(facts)
       gather_environment_facts(facts)
@@ -770,7 +770,7 @@ module Krikri
       }
     end
 
-    def gather_python_facts(facts)
+    def gather_python_facts(facts, remote_connection : Bool = false)
       # Real Ansible's PythonFactCollector exposes ansible_facts['python'] as
       # a single nested dict (version/version_info/executable/
       # has_sslcontext/type) - not the flat ansible_python (path string) /
@@ -825,23 +825,32 @@ module Krikri
       # modern Ubuntu) `python-apt` package name.
       facts["ansible_python_version"] = "#{parsed["major"]}.#{parsed["minor"]}.#{parsed["micro"]}"
 
-      # ansible_python_interpreter - real Ansible's own auto-discovered
-      # interpreter path (INTERPRETER_PYTHON=auto, the default since 2.8),
-      # exposed as a flat magic var that plenty of real roles reference
-      # directly in command:/shell: tasks - most commonly the exact idiom
-      # `{{ ansible_python_interpreter if ansible_python_interpreter is
-      # defined else 'python' }}` (azavea.pip's own "Install pip" task).
-      # Entirely missing before: with no fact at all, that expression's
-      # `is defined` check went the "undefined" branch and fell back to
-      # the bare literal "python" - which doesn't exist as a command on
-      # any modern Debian/Ubuntu target (python3-only) - so the task
-      # failed with "python: No such file or directory" where real
-      # Ansible succeeds using its own discovered /usr/bin/python3.
-      # Reuses the same python_bin this method already resolved above
-      # rather than re-discovering it - real Ansible's own discovered
-      # interpreter and its self-reported sys.executable are the same
-      # path in every case this matters for.
-      facts["ansible_python_interpreter"] = python_bin
+      # ansible_python_interpreter - real Ansible's own flat magic var,
+      # but ONLY when the module is running on the CONTROLLER itself
+      # (a genuine ansible_connection: local target, where it's simply
+      # sys.executable) - live-verified against ansible-core 2.19.4 over
+      # a real SSH connection that a genuinely remote target NEVER
+      # defines this var at all: interpreter discovery still happens
+      # (its own warning still prints) but the result is exposed only
+      # internally, never as a templatable fact. `remote_connection`
+      # (threaded down from TaskExecutor#gather_facts_for_host_measured,
+      # which already knows whether this plugin got uploaded and run via
+      # a real SSH round trip) is exactly that distinction.
+      #
+      # 0.9.652 originally set this UNCONDITIONALLY, reasoning from
+      # azavea.pip's own idiom `{{ ansible_python_interpreter if
+      # ansible_python_interpreter is defined else 'python' }}` - but
+      # that reasoning was never verified against a genuine remote SSH
+      # target (real ansible-core FAILS azavea.pip's task the exact same
+      # way krikri did before 0.9.652, both engines identically broken -
+      # not a divergence at all). Always-defining it instead created a
+      # NEW, real divergence: geerlingguy.mysql's own `{% if 'python3' in
+      # ansible_python_interpreter|default('') %}` branch (deciding
+      # between the `python-mysqldb`/`python3-mysqldb` package names)
+      # always took the wrong (krikri-only-defined) branch on a real
+      # remote host. Reuses the same python_bin this method already
+      # resolved above rather than re-discovering it, for the local case.
+      facts["ansible_python_interpreter"] = python_bin unless remote_connection
     end
 
     def gather_user_facts(facts)
@@ -931,7 +940,9 @@ module Krikri
         requested_subset = raw.split(',').map(&.strip).reject(&.empty?)
       end
 
-      facts = gather_facts(requested_subset)
+      remote_connection = config.try(&.["params"]?).try(&.["_remote_connection"]?).try(&.as_s?) == "true"
+
+      facts = gather_facts(requested_subset, remote_connection)
 
       {
         "changed"       => false,

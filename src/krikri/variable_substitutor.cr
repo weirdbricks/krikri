@@ -689,6 +689,7 @@ module Krikri
         next if block_tag_ref_is_filter_call(cond_no_strings, ident)
         next if block_tag_ref_is_function_call(cond_no_strings, mat.end)
         next if block_tag_ref_is_kwarg_name(cond_no_strings, mat.end)
+        next if block_tag_ref_is_defaulted(cond_no_strings, mat.end)
         raise UndefinedVariableError.new("'#{root}' is undefined")
       end
     end
@@ -727,6 +728,29 @@ module Krikri
       idx = cond_no_strings.index(ident)
       return false unless idx
       idx > 0 && cond_no_strings[idx - 1] == '|'
+    end
+
+    # An identifier immediately followed by `| default(...)` is never
+    # fatal regardless of its own definedness - real Jinja2's `default`
+    # filter exists specifically to suppress Undefined (`x | default(y)`
+    # never raises even under a strict environment, only a genuinely
+    # missing filter/attribute lookup elsewhere in the chain would).
+    # This scan previously only recognized the identifier BEING a
+    # filter's own name (`block_tag_ref_is_filter_call`, preceded by
+    # `|`) - not an identifier FOLLOWED by `| default(...)`, which is
+    # the much more common real shape (an operand piped through
+    # default). Found via geerlingguy.mysql's own `{% if 'python3' in
+    # ansible_python_interpreter|default('') %}` (deciding the
+    # `python-mysqldb`/`python3-mysqldb` package name): once
+    # `ansible_python_interpreter` correctly went undefined for a real
+    # remote host (see facts_gatherer.cr's own connection-aware fix),
+    # this scan raised "'ansible_python_interpreter' is undefined"
+    # outright instead of letting `| default('')` do its job, even
+    # though real Ansible/Jinja2 never raises here at all.
+    private def block_tag_ref_is_defaulted(cond_no_strings : String, match_end : Int32) : Bool
+      rest = cond_no_strings[match_end..].lstrip
+      return false unless rest.starts_with?('|')
+      rest[1..].lstrip.starts_with?("default(")
     end
 
     # An identifier immediately followed by `(` is being CALLED, not

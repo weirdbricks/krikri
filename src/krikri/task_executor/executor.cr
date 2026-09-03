@@ -1151,11 +1151,30 @@ module Krikri
       # ansible_connection=local, so decide that up front and serialize
       # once, instead of serializing, parsing and re-serializing just to
       # inject one key afterwards.
+      remote = PluginManager.remote_execution?("facts", host, vars_context)
       wire_vars = vars_context
-      if PluginManager.remote_execution?("facts", host, vars_context)
+      if remote
         wire_vars = vars_context.dup
         wire_vars["ansible_connection"] = JSON::Any.new("local")
       end
+
+      # ansible_python_interpreter: real Ansible only exposes this flat
+      # magic var when the module actually runs on the CONTROLLER itself
+      # (a genuine ansible_connection=local target, where it's just
+      # sys.executable) - live-verified against ansible-core 2.19.4 that
+      # a real REMOTE SSH target never defines it at all (interpreter
+      # discovery happens, prints its own warning, but the result is
+      # never surfaced as this var) - `ansible_python_interpreter is
+      # defined` is False there. `remote` here is exactly that
+      # distinction: true whenever this plugin gets uploaded and
+      # executed via a real SSH round trip, matching what the earlier
+      # (incorrect) 0.9.652 fix conflated with "always define it,
+      # anywhere" - found via geerlingguy.mysql's own `{% if 'python3'
+      # in ansible_python_interpreter|default('') %}` idiom picking the
+      # wrong (always-defined-by-krikri) branch on a real remote host.
+      params = Hash(String, String).new
+      params["gather_subset"] = @gather_subset.join(",") unless @gather_subset.empty?
+      params["_remote_connection"] = remote.to_s
 
       config = {
         "host" => {
@@ -1165,7 +1184,7 @@ module Krikri
         },
         # gather_subset: is forwarded as a comma-separated list; the
         # facts plugin decides which families to skip.
-        "params" => @gather_subset.empty? ? ({} of String => String) : {"gather_subset" => @gather_subset.join(",")},
+        "params" => params,
         "vars"   => wire_vars,
       }
 

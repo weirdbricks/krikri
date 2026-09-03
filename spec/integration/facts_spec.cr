@@ -89,13 +89,40 @@ describe "facts plugin" do
     # which doesn't exist as a command on any modern Debian/Ubuntu target
     # (python3-only), failing with "python: No such file or directory"
     # where real Ansible succeeds via its own discovered /usr/bin/python3.
-    it "is set to the same executable path as ansible_python.executable" do
+    it "is set to the same executable path as ansible_python.executable for a local (non-remote) target" do
       result = PluginSpecHelper.run("facts", {} of String => String)
 
       interpreter = result["ansible_facts"]["ansible_python_interpreter"].as_s
       executable = result["ansible_facts"]["ansible_python"]["executable"].as_s
       interpreter.should eq(executable)
       interpreter.should contain("python")
+    end
+
+    it "is NOT set at all for a real remote (SSH-executed) target" do
+      # Live-verified against ansible-core 2.19.4 over a genuine remote
+      # SSH connection: `ansible_python_interpreter is defined` is
+      # False there - interpreter discovery still happens (its own
+      # warning still prints) but the discovered path is never exposed
+      # as this flat magic var, only for a real ansible_connection:
+      # local target (where it's simply sys.executable). The original
+      # 0.9.652 fix set this fact UNCONDITIONALLY, reasoning from
+      # azavea.pip's own `{{ ansible_python_interpreter if
+      # ansible_python_interpreter is defined else 'python' }}` idiom -
+      # but that reasoning was never checked against a genuine remote
+      # SSH target (real ansible-core fails azavea.pip's task the exact
+      # same way krikri did before 0.9.652 there - both engines
+      # identically broken, not a real divergence at all). Always
+      # defining it instead created a NEW, real divergence:
+      # geerlingguy.mysql's own `{% if 'python3' in
+      # ansible_python_interpreter|default('') %}` branch (deciding the
+      # python-mysqldb/python3-mysqldb package name) always took the
+      # wrong, krikri-only-defined branch on a real remote host.
+      result = PluginSpecHelper.run("facts", {"_remote_connection" => "true"})
+
+      result["ansible_facts"].as_h.has_key?("ansible_python_interpreter").should be_false
+      # ansible_python.executable (the nested fact) is unaffected -
+      # only the flat magic var's connection-dependent exposure changed.
+      result["ansible_facts"]["ansible_python"]["executable"].as_s.should contain("python")
     end
   end
 
