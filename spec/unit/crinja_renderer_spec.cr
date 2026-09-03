@@ -1163,4 +1163,20 @@ describe "CrinjaRenderer.rerender_nested_templates (round 170 - scalar-vs-contai
     renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render("{{ base_rules.copy() }}").should eq("{'a': 1, 'b': 2}")
   end
+
+  it "resolves .update(other) on a dict, matching Python dict.update()'s in-place merge" do
+    # Same role as above (ipr-cnrs.nftables), a second, previously-masked
+    # divergence found on real-host re-verify after the .copy() fix
+    # landed: `globalmerged.update(nft_global_rules)` rendered
+    # "globalmerged.update is undefined" outright - fixed in the vendored
+    # crinja fork (crystal-play-0.9.23), not a krikri-side patch.
+    v = Hash(String, JSON::Any).new
+    v["base_rules"] = JSON.parse(%({"a": 1, "b": 2}))
+    v["overrides"] = JSON.parse(%({"b": 99, "c": 3}))
+
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(
+      "{% set merged = base_rules.copy() %}{% set _ = merged.update(overrides) %}{{ merged }}"
+    ).should eq("{'a': 1, 'b': 99, 'c': 3}")
+  end
 end
