@@ -614,10 +614,29 @@ module Krikri
       end
     end
     Crinja.filter(:from_yaml) do
-      begin
-        Krikri::VariableSubstitutor::CrinjaRenderer.json_any_to_crinja_value(JSON.parse(YAML.parse(target.to_s).to_json))
-      rescue
-        raise "from_yaml: invalid YAML input"
+      # Real Ansible's own `from_yaml` filter (unlike `from_json`,
+      # confirmed live against ansible-core 2.19.12: `mylist |
+      # from_json` on an already-real-list value raises "the JSON
+      # object must be str, bytes or bytearray", but `mylist |
+      # from_yaml` on the same input silently passes it through
+      # unchanged) only ever calls `yaml.safe_load` when its input IS a
+      # string - any other type returns as-is. Found via
+      # christiangda.awscli_configure's own `awscliconf_valid_
+      # credentials_file | from_yaml` where that variable had already
+      # resolved to a real list (from a role default, not a literal
+      # YAML string) - target.to_s stringified it to Python-repr text
+      # ("[{'default': ...}]", single-quoted) before ever reaching
+      # YAML.parse, which correctly rejected that as invalid YAML,
+      # failing the whole template where real Ansible just returned the
+      # list unchanged.
+      if target.raw.is_a?(String)
+        begin
+          Krikri::VariableSubstitutor::CrinjaRenderer.json_any_to_crinja_value(JSON.parse(YAML.parse(target.to_s).to_json))
+        rescue
+          raise "from_yaml: invalid YAML input"
+        end
+      else
+        target
       end
     end
 

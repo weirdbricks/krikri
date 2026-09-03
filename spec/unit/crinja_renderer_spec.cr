@@ -410,6 +410,23 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     renderer.render(%({{ ("a: 1\nb: 2\n" | from_yaml).b }})).should eq("2")
   end
 
+  it "from_yaml passes an already-structured (non-string) value through unchanged, matching real Ansible" do
+    # Found via christiangda.awscli_configure: `awscliconf_valid_
+    # credentials_file | from_yaml`, where that variable had already
+    # resolved to a real list (from a role default, not a literal YAML
+    # string). Real Ansible's own from_yaml filter (unlike from_json,
+    # confirmed live against ansible-core 2.19.12) only calls
+    # yaml.safe_load when its input IS a string - any other type
+    # returns as-is. Stringifying a real list/dict to Python-repr text
+    # first (single-quoted) and feeding THAT to a YAML parser
+    # incorrectly raised "invalid YAML input" instead.
+    v = Hash(String, JSON::Any).new
+    v["mylist"] = JSON.parse(%([{"a": 1}]))
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render(%({{ mylist | from_yaml }})).should eq("[{'a': 1}]")
+  end
+
   it "renders to_yaml, real Ansible's own filter (sorted keys, block style)" do
     v = Hash(String, JSON::Any).new
     renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
