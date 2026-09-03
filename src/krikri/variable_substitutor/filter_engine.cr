@@ -24,6 +24,14 @@ module Krikri
     # string, not a real array) fed straight into `join`, which had no
     # array to actually join - chained filters were silently broken.
     class FilterEngine
+      # Raised when a filter name is not implemented here (and, since
+      # this engine is only ever the fallback path, not implemented by
+      # Crinja either) - real Ansible's own "Syntax error in template:
+      # No filter named 'x'." (verified against ansible-core 2.19),
+      # which fails the task.
+      class UnknownFilterError < Exception
+      end
+
       # Precompiled regexes and process-wide dynamic regex cache.
       REGEX_FILTER_CALL = /^(\w+)\s*\((.*)\)$/m
       @@compiled_regex_cache = Hash(Tuple(String, Regex::Options), Regex).new
@@ -1115,8 +1123,25 @@ module Krikri
           other_set = as_array(resolve_expression(filter_args)).to_set
           JSON::Any.new(as_array(value).uniq.reject { |item| other_set.includes?(item) })
         else
-          # Unknown filter - return value as-is (matches prior behavior)
-          value
+          # Unknown filter - real Ansible raises ("Syntax error in
+          # template: No filter named 'bodsch.core.type'.", verified
+          # live) and fails the task; this used to return *value*
+          # unchanged, which is silent corruption: a third-party
+          # collection's custom filter (bodsch.core.type,
+          # bodsch.core.upgrade, ... - the whole no-arbitrary-Python
+          # scope cut) left its operand un-filtered, and the downstream
+          # `when:`/`set_fact:` built on it then failed with a confusing
+          # type error ("Conditional result (True) was derived from
+          # value of type 'dict'") instead of naming the unsupported
+          # filter. Modules already report "unavailable modules"
+          # explicitly; filters now degrade the same clear way.
+          #
+          # Only reached for a name NEITHER this engine NOR Crinja
+          # implements: ExpressionEvaluator tries Crinja first
+          # (#render_via_crinja_value) and only falls back here when
+          # that raises, so every Crinja-native filter name is resolved
+          # before this branch can see it.
+          raise UnknownFilterError.new("No filter named '#{filter_name}'.")
         end
       end
 

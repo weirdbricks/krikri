@@ -10,61 +10,12 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.725`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.726`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.23` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
-
-### `template:`'s real `.j2` files render an undefined variable as empty text instead of raising
-
-Found via alannix_lw.lacework_agent_ansible_role's own `config.json.j2`:
-`"AccessToken" : "{{ lacework_accessToken }}"` where `lacework_accessToken`
-is a genuinely-undefined required credential the harness never provided.
-Real Ansible's `template:` module (Jinja2's own `StrictUndefined`) raises
-`'lacework_accessToken' is undefined` and fails the task outright; this
-engine's `TemplateActionPlugin` (`src/krikri/template_action_plugin.cr`,
-`CrinjaRenderer`) renders it as an empty string and reports `changed`,
-silently producing a broken/incomplete config file instead of failing
-loudly - exactly the "bites silently" failure mode this project's own
-strict-undefined work elsewhere (task-param `{{ }}` substitution, the
-`{% %}` block-tag scan in `variable_substitutor.cr`) was built to catch.
-
-**Root cause, and why it's not a quick fix**: the vendored `crinja`
-fork's own variable resolution (`lib/crinja/src/runtime/context.cr`'s
-bare-name lookup miss) returns the SHARED SINGLETON `Value::UNDEFINED`
-(`Crinja::Value.new(Crinja::Undefined.new)`) - not a fresh instance
-built from any per-Environment/per-render configuration. Crinja already
-HAS a `StrictUndefined` class (`runtime/undefined.cr`) that raises on
-`to_s`/comparison, but nothing in the fork lets a caller opt an
-`Environment`/`Context` into using it instead of the lenient default -
-`Crinja::Config` has no `strict_undefined`-shaped setting at all.
-Making this configurable means editing the fork's own resolution path
-(`context.cr`, `environment.cr`, `resolver.cr` all separately construct
-a bare `Undefined.new(name)`) and verifying it doesn't regress the
-existing 662-example crinja spec suite or leak strictness into the
-OTHER Crinja usages in krikri that deliberately stay lenient (bare
-`{{ }}` task-param substitution already has its OWN separate strict-
-undefined enforcement in `variable_substitutor.cr`, which must keep
-working unchanged).
-
-The narrower alternative already used elsewhere in this codebase for
-exactly this bug class (`scan_strict_block_tags_for_undefined`'s
-pre-render text scan for a bare identifier inside a `{% %}` block,
-found round194 via andrewrothstein.openjdk) doesn't transfer cleanly
-here either: a full `.j2` FILE has real nested scope a single `{%
-if %}` condition never does (`{% for x in y %}` loop vars, `{% set
-%}` locals, `{% macro %}` parameters all need correctly excluding
-from the scan, template-wide, not just within one condition's own
-text) - a naive port risks FALSE POSITIVES that would break currently-
-working templates across the whole existing corpus, worse than the
-current silent-empty-string status quo.
-
-Not fixed this round - flagged here rather than attempted hastily.
-Whoever picks this up next: start in the crinja fork
-(`~/git_work/crinja`), add a `Config#strict_undefined` (or similar)
-knob, and only THEN wire `TemplateActionPlugin` to opt into it.
 
 ### Fact caching only supports the `jsonfile` backend
 
@@ -777,28 +728,19 @@ are recorded in `ROLES_TESTED.md`'s round-191 rows.
   `bodsch.systemd` collections - `bodsch.core.check_mode`,
   `bodsch.core.facts`, `bodsch.core.type` filter, `bodsch.core.upgrade`
   filter, `bodsch.systemd.journalctl`): real Ansible executes these as
-  ordinary Python; this engine correctly reports "unavailable modules"
-  for a MODULE reference and skips the task, but for a FILTER reference
-  it currently degrades less clearly (an unrecognized filter silently
-  passes its operand through unchanged instead of raising an
-  "unavailable filter" error the way modules do), so a downstream `when:`
-  or `set_fact:` built on the un-filtered value fails with a confusing
-  type error ("Conditional result (True) was derived from value of type
-  'dict'") rather than a clear unsupported-filter message. Confirmed
+  ordinary Python; this engine reports "unavailable modules" for a
+  MODULE reference and skips the task, and (since 0.9.726) fails a
+  FILTER reference with real Ansible's own "No filter named 'x'."
+  rather than silently passing the operand through un-filtered into a
+  downstream `when:`/`set_fact:`. The no-arbitrary-Python scope cut
+  itself is unchanged - these roles still diverge from real Ansible by
+  design, the failure is just named now. Confirmed
   against bodsch.chrony/monitoring_plugins/redis/monit/logrotate/
   tomcat/forgejo, all on Ubuntu 22.04 - every one of these roles calls
   at least one bodsch.core/bodsch.systemd custom module or filter for
   real logic (not just a declarative wrapper), so this author's roles
   specifically will keep diverging from real Ansible by design; not
   worth re-testing more of them expecting a different outcome.
-- **`changed_when` with a missing dict attribute is lenient**
-  (cloudalchemy.pushgateway): the role's own `changed_when` references
-  `.diff` on a dict result that has none - real ansible-core 2.19 raises
-  while evaluating the conditional ("object of type 'dict' has no
-  attribute 'diff'") and fails the task; this engine treats the miss as
-  falsy and rc=0s. Matching 2.19 means raising on missing dotted
-  attributes inside conditionals - a wide behavior change needing its
-  own round.
 - **`include_vars:` with a failing templated path** (gantsign.oh-my-zsh,
   harness-limited): when the path template itself can't resolve, this
   engine reports `include_vars: file not found: undefined` where real

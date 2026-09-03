@@ -1518,6 +1518,26 @@ module Krikri
       end
     end
 
+    # Real ansible-core distinguishes two undefined-reference shapes, and
+    # the distinction is the whole point of the message: a reference whose
+    # ROOT variable doesn't exist is "'x' is undefined", while a dotted
+    # attribute miss on a variable that DOES exist and IS a dict is
+    # "object of type 'dict' has no attribute 'diff'" (verified against
+    # ansible-core 2.19). The latter is what a `changed_when: result.diff`
+    # against a module result carrying no `diff` key produces - naming the
+    # dict, not the whole path, is what tells a role author the variable
+    # resolved fine and only the attribute is missing.
+    private def self.undefined_reference_message(expr : String, vars : Hash(String, JSON::Any)) : String
+      if (idx = expr.rindex('.')) && idx > 0 && idx < expr.size - 1
+        attr = expr[(idx + 1)..]
+        if attr.matches?(/\A\w+\z/)
+          parent = VariableSubstitutor::VariableLookup.new(vars).resolve(expr[0...idx])
+          return "object of type 'dict' has no attribute '#{attr}'" if parent && parent.as_h?
+        end
+      end
+      "'#{expr}' is undefined"
+    end
+
     # Evaluate a value (variable lookup or literal)
     private def self.evaluate_value(expr : String, vars : Hash(String, JSON::Any), raise_undefined : Bool = false) : String | Int64 | Bool | Nil | Array(String)
       expr = expr.strip
@@ -1705,7 +1725,7 @@ module Krikri
           # as-is, un-rendered.
           resolved = rerender_if_templated(vars, VariableSubstitutor::VariableLookup.new(vars).resolve(expr))
           return json_any_to_value(resolved) if resolved
-          raise UndefinedVariableError.new("'#{expr}' is undefined") if raise_undefined
+          raise UndefinedVariableError.new(undefined_reference_message(expr, vars)) if raise_undefined
           return nil
         end
       end

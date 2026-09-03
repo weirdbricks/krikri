@@ -1,6 +1,7 @@
 require "json"
 require "digest/md5"
 require "crinja"
+require "./crinja_strict_undefined"
 require "./jinja_filters"
 require "./base_action_plugin"
 # For the shared JSON::Any -> Crinja::Value converter (this plugin keeps
@@ -158,15 +159,29 @@ module Krikri
       template_vars["template_fullpath"] = Crinja::Value.new(File.expand_path(template_path))
       template_vars["template_run_date"] = Crinja::Value.new(Time.utc.to_s("%Y-%m-%d %H:%M:%S UTC"))
 
-      # Render template
+      # Render template.
+      #
+      # Real Ansible's `template:` uses Jinja2's StrictUndefined: an
+      # undefined variable raises and fails the task rather than
+      # rendering as empty text and silently deploying a broken config
+      # (see Krikri::StrictTemplating). This is the ONE Crinja entry
+      # point that opts in - the bare `{{ }}` task-param substitution
+      # path has its own, separate strict-undefined enforcement in
+      # variable_substitutor.cr and stays untouched.
       template = env.from_string(template_content)
-      rendered = template.render(template_vars)
+      rendered = StrictTemplating.strict { template.render(template_vars) }
 
       # Ensure rendered content ends with newline (matches Ansible behavior and file conventions)
       # This prevents idempotency issues with heredoc writes that add trailing newlines
       rendered += "\n" unless rendered.ends_with?("\n")
 
       rendered
+    rescue ex : Crinja::UndefinedError
+      # Match real Ansible's own wording for a strict-undefined template
+      # variable ("'lacework_accessToken' is undefined") rather than
+      # Crinja's unquoted "x is undefined." phrasing.
+      @render_error = "'#{ex.variable_name}' is undefined"
+      nil
     rescue ex
       @render_error = ex.message
       nil

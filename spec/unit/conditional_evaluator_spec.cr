@@ -1121,6 +1121,29 @@ describe Krikri::ConditionalEvaluator do
       end
     end
 
+    it "reports a missing dict attribute the way real Ansible does, not as a plain undefined" do
+      # cloudalchemy.pushgateway's own `changed_when` references `.diff`
+      # on a module result dict that has none. Real ansible-core 2.19
+      # raises "object of type 'dict' has no attribute 'diff'" (verified
+      # live) - naming the dict, not the whole path, is what tells the
+      # role author the variable itself resolved fine.
+      v = Hash(String, JSON::Any).new
+      v["res"] = JSON::Any.new({"rc" => JSON::Any.new(0_i64)})
+      ex = expect_raises(Krikri::ConditionalEvaluator::UndefinedVariableError) do
+        Krikri::ConditionalEvaluator.evaluate("res.diff", v, strict: true, raise_undefined: true)
+      end
+      ex.message.should eq("object of type 'dict' has no attribute 'diff'")
+    end
+
+    it "still says \"is undefined\" when the dotted path's root is itself missing" do
+      v = Hash(String, JSON::Any).new
+      v["other"] = JSON::Any.new({"rc" => JSON::Any.new(0_i64)})
+      ex = expect_raises(Krikri::ConditionalEvaluator::UndefinedVariableError) do
+        Krikri::ConditionalEvaluator.evaluate("res.diff", v, strict: true, raise_undefined: true)
+      end
+      ex.message.should eq("'res.diff' is undefined")
+    end
+
     it "does NOT raise when the undefined operand goes through a filter/default() - still lenient by design" do
       v = Hash(String, JSON::Any).new
       Krikri::ConditionalEvaluator.evaluate(

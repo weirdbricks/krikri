@@ -4676,17 +4676,33 @@ module Krikri
         substitutor = VarSubstitutor.new(vars: eval_context, host_name: host.name)
 
         begin
+          # raise_undefined: true - real ansible-core 2.19 raises while
+          # EVALUATING a changed_when:/failed_when: that reaches an
+          # undefined reference ("object of type 'dict' has no attribute
+          # 'diff'" for cloudalchemy.pushgateway's own `changed_when`
+          # against a result dict carrying no `diff` key) and fails the
+          # task. This path used to be deliberately lenient - the miss
+          # read as falsy and the task rc=0'd with "no change", which is
+          # the same silent-corruption shape as an unrendered undefined
+          # in a template: no error, wrong verdict, and everything
+          # downstream trusting it. `when:` (Executor#when_passes?) and
+          # `assert:` already own the identical flag; changed_when:/
+          # failed_when: were the last lenient conditional entry point.
+          # Same narrow scope as there: only a BARE or DOTTED reference
+          # reaching evaluate_value's own "not found" exit raises - a
+          # `| default(...)`-guarded chain stays lenient, as it must.
           if changed_when
-            hash["changed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitutor.substitute(changed_when), eval_context, strict: true))
+            hash["changed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitutor.substitute(changed_when), eval_context, strict: true, raise_undefined: true))
           end
 
           if failed_when
-            hash["failed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitutor.substitute(failed_when), eval_context, strict: true))
+            hash["failed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitutor.substitute(failed_when), eval_context, strict: true, raise_undefined: true))
           end
-        rescue e : ConditionalEvaluator::ConditionalBooleanError
+        rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError
           # Matches real Ansible: a changed_when:/failed_when: whose value
-          # resolves to None (not a real boolean) fails the task outright
-          # rather than being silently truthy-converted to false.
+          # resolves to None (not a real boolean), or whose evaluation hits
+          # an undefined variable / missing dict attribute, fails the task
+          # outright rather than being silently truthy-converted to false.
           hash["failed"] = JSON::Any.new(true)
           hash["msg"] = JSON::Any.new(e.message || "")
         end

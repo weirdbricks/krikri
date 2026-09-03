@@ -230,8 +230,21 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     result.should eq(["/srv/nfs/share", "/srv/nfs/other"])
   end
 
-  it "returns the value unchanged for an unknown filter" do
-    engine.apply(s("hello"), "mystery").as_s.should eq("hello")
+  it "raises for an unknown filter instead of passing the value through" do
+    # Real Jinja2/Ansible: "No filter named 'mystery'." fails the task.
+    # Passing the operand through unchanged silently corrupted every
+    # downstream `when:`/`set_fact:` built on it.
+    expect_raises(Krikri::VariableSubstitutor::FilterEngine::UnknownFilterError,
+      "No filter named 'mystery'.") do
+      engine.apply(s("hello"), "mystery")
+    end
+  end
+
+  it "raises for an unimplemented third-party collection filter" do
+    expect_raises(Krikri::VariableSubstitutor::FilterEngine::UnknownFilterError,
+      "No filter named 'bodsch.core.type'.") do
+      engine.apply(s("hello"), "bodsch.core.type")
+    end
   end
 
   it "sorts an array" do
