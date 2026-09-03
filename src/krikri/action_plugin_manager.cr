@@ -79,6 +79,19 @@ module Krikri
         return ActionResult.pass_through
       end
 
+      # debug:'s own verbosity: gate (DebugActionPlugin) reads this back
+      # out - previously never set on THIS path (only build_plugin_config's
+      # remote-dispatch path set it, which the normal debug:/assert:/...
+      # task-execution flow never reaches anymore now that they're
+      # controller-only action plugins - see CONTROLLER_ONLY_MODULES's
+      # own comment). A role's `debug: ... verbosity: N` always compared
+      # against a hardcoded 0 regardless of real -v/-vv/-vvv flags.
+      # Sourced from vars (ansible_verbosity, already set by the
+      # executor's own build_vars_context) rather than adding a new
+      # parameter to this method and every one of its 3 call sites.
+      params = params.dup
+      params["_verbosity"] = (vars["ansible_verbosity"]?.try(&.as_i64?) || 0_i64).to_s
+
       # Create and execute action plugin
       action_plugin = plugin_class.new(params, vars, host)
 

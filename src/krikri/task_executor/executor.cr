@@ -57,6 +57,10 @@ module Krikri
     property handlers : Array(Task)
     property? check_mode : Bool
     property? diff_mode : Bool
+    # Real ansible-playbook's -v/-vv/-vvv/... count, exposed to task
+    # templating as the ansible_verbosity magic var. See
+    # #build_vars_context's own assignment for the full rationale.
+    property verbosity : Int32
     property play_vars : Hash(String, JSON::Any)
     property? gather_facts : Bool
 
@@ -286,6 +290,7 @@ module Krikri
       @handlers = [] of Task,
       @check_mode = false,
       @diff_mode = false,
+      @verbosity = 0,
       @play_vars = {} of String => JSON::Any,
       # Play#all_role_defaults / #all_role_vars - every static role's own
       # defaults/vars, visible to EVERY role in the play including ones
@@ -1779,6 +1784,7 @@ module Krikri
       # hard-failed ("'ansible_check_mode' is undefined") under 0.9.517's
       # strict module-arg templating.
       vars_context["ansible_check_mode"] = JSON::Any.new(@check_mode)
+      vars_context["ansible_verbosity"] = JSON::Any.new(@verbosity.to_i64)
       apply_path_magic_vars(vars_context)
 
       # ansible_connection - real Ansible always resolves this magic var
@@ -6600,6 +6606,11 @@ module Krikri
       final_params = params.dup
       final_params["check_mode"] = resolve_task_check_mode(task, vars_context).to_s
       final_params["diff_mode"] = @diff_mode.to_s
+      # debug.cr's own verbosity: gate reads this back out - previously
+      # never set at all, so a role's `debug: ... verbosity: 2` always
+      # compared against a hardcoded 0 regardless of real -v/-vv/-vvv
+      # flags (see debug.cr's own comment on `_verbosity`).
+      final_params["_verbosity"] = @verbosity.to_s
 
       # environment: - substituted here (once, with the same vars_context
       # every other param already uses) and forwarded as a single JSON
@@ -6794,6 +6805,7 @@ module Krikri
       vars_context["ansible_play_hosts"] = JSON::Any.new(play_host_names)
       vars_context["ansible_version"] = ANSIBLE_VERSION_MAGIC_VAR
       vars_context["ansible_check_mode"] = JSON::Any.new(@check_mode)
+      vars_context["ansible_verbosity"] = JSON::Any.new(@verbosity.to_i64)
       apply_path_magic_vars(vars_context)
       # ansible_connection default - see #build_vars_context's identical
       # comment for the full story (buluma.selinux's block-level `when:

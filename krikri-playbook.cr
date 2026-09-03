@@ -115,7 +115,28 @@ forks = 25
 # below is this project's own pragmatic addition on top of that, and
 # wins if both are given.
 gathering = {"implicit", "explicit", "smart"}.includes?(ENV["ANSIBLE_GATHERING"]?) ? ENV["ANSIBLE_GATHERING"].not_nil! : "implicit"
-verbose = false
+# Real ansible-playbook's -v/-vv/-vvv/... stack into a numeric
+# verbosity level, exposed to task-param templating as the
+# ansible_verbosity magic var - found via marcinpraczko.goss-install's
+# own `when: ansible_verbosity is defined` style check, which raised
+# "'ansible_verbosity' is undefined" outright since this magic var
+# didn't exist anywhere in this engine before (real Ansible always
+# defines it, defaulting to 0 with no -v at all).
+#
+# Computed here from a raw ARGV scan and then STRIPPED out of the args
+# array below, rather than left for OptionParser to dispatch -
+# Crystal's OptionParser treats single-dash multi-char flags like long
+# options for matching purposes, and registering several sharing the
+# "-v" prefix hit real, confirmed ambiguity bugs (a bare "-v" broke
+# positional-arg parsing entirely once any "-vv"-shaped flag was also
+# registered, and "-vv"/"-vvv"/"-vvvv" all triggered the
+# LAST-registered handler instead of their own). Real ansible-playbook
+# also accumulates repeated bare `-v -v -v` the same as one stacked
+# `-vvv`, so this sums every `-v+`-shaped token's own v-count rather
+# than taking the max of one.
+verbosity_level = ARGV.select { |arg| arg =~ /\A-v+\z/ }.sum(&.size.-(1))
+verbose = verbosity_level > 0
+cli_args = ARGV.reject { |arg| arg =~ /\A-v+\z/ }
 limit_hosts = ""
 tags = [] of String
 skip_tags = [] of String
@@ -143,7 +164,7 @@ vault_password_file = nil
 ask_vault_pass = false
 
 begin
-  OptionParser.parse do |parser|
+  OptionParser.parse(cli_args) do |parser|
     parser.banner = "Usage: krikri-playbook [options] playbook.yml"
 
     parser.on("-i INVENTORY", "--inventory=INVENTORY", "Specify inventory file") do |inv|
@@ -195,6 +216,7 @@ begin
     parser.on("-v", "--verbose", "Verbose output") do
       verbose = true
     end
+    parser.on("-vv", "Verbose output (level 2, stacks: -vvv, -vvvv, ...)") { verbose = true }
 
     parser.on("-l SUBSET", "--limit=SUBSET", "Limit to specific hosts") do |subset|
       limit_hosts = subset
@@ -826,6 +848,7 @@ playbook.plays.each_with_index do |play, _play_index|
       handlers: play.handlers,
       check_mode: check_mode,
       diff_mode: diff_mode,
+      verbosity: verbosity_level,
       play_vars: play.vars,
       all_role_defaults: play.all_role_defaults,
       all_role_vars: play.all_role_vars,
