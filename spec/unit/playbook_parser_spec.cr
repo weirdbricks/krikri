@@ -2111,6 +2111,48 @@ describe Krikri::PlaybookParser do
     end
   end
 
+  describe "nameless task fallback name" do
+    it "uses the as-written action name, not an index-based 'Task N', for a nameless module task" do
+      root = File.tempname("nameless-task-spec")
+      Dir.mkdir_p(root)
+      File.write(File.join(root, "site.yml"), <<-YAML)
+        - hosts: all
+          tasks:
+            - debug:
+                msg: hi
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse(File.join(root, "site.yml"))
+
+      playbook.plays.first.tasks.first.name.should eq("debug")
+    ensure
+      FileUtils.rm_rf(root) if root
+    end
+
+    it "falls back to the directive's own keyword for a nameless include_tasks/block/meta task" do
+      root = File.tempname("nameless-task-directives-spec")
+      Dir.mkdir_p(root)
+      File.write(File.join(root, "included.yml"), <<-YAML)
+        - debug: {msg: hi}
+        YAML
+      File.write(File.join(root, "site.yml"), <<-YAML)
+        - hosts: all
+          tasks:
+            - include_tasks: included.yml
+            - block:
+                - debug: {msg: hi}
+            - meta: flush_handlers
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse(File.join(root, "site.yml"))
+
+      names = playbook.plays.first.tasks.map(&.name)
+      names.should eq(["include_tasks", "block", "meta"])
+    ensure
+      FileUtils.rm_rf(root) if root
+    end
+  end
+
   describe ".resolve_include_path" do
     it "falls back to the role root when the target isn't under the including file's own tasks/ dir" do
       # Real bug found benchmarking ansible-network.cisco_ios (round821):

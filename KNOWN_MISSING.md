@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.693`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.694`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.21` (see `shard.yml`).
 
 ---
@@ -84,42 +84,44 @@ which is a real design change, not a one-line fix. Needs deliberate work
 with full spec coverage across every `validate:`-using plugin
 (`template.cr`/`copy.cr`), not a solo benchmark-round patch.
 
-### `RemovedActionError`'s hardcoded message text has drifted from current ansible-core wording
+### `RemovedActionError`'s message text is only approximate, and this is permanent
 
 Found round 307 (`Stouts.django`): krikri's message for a removed
-`ansible.builtin.include` (`playbook_parser.cr`'s `RemovedActionError`,
-"The 'ansible.builtin.include' action plugin has been removed...") was
-worded to match whichever ansible-core version confirmed it originally
-(2.19.4, per `mrlesmithjr.firewalld`'s round 176 fix); real ansible-core
-2.17.14 now says "[DEPRECATED]: ansible.builtin.include has been
-removed. Use include_tasks or import_tasks instead...". Same detection,
-same `rc=1` both engines - cosmetic text only. Not fixed: the "correct"
-wording is a moving target across ansible-core minor versions (this
-session alone has hit both 2.17.14 and 2.19.4 on different hosts), so
-hardcoding to one specific version's phrasing doesn't durably fix
-anything - would need either a version-aware message table or accepting
-this as permanently approximate.
+`ansible.builtin.include` was worded to match whichever ansible-core
+version confirmed it originally. Updated (0.9.694) to the newer
+"[DEPRECATED]: ansible.builtin.include has been removed. Use
+include_tasks or import_tasks instead..." wording (confirmed on
+2.17.14), replacing the older 2.19.4-era phrasing - but this is a
+refresh, not a durable fix: the "correct" wording is a moving target
+across ansible-core minor versions (this session alone hit both
+2.17.14 and 2.19.4 on different hosts), no version-targeting concept
+exists anywhere in this engine to hang a version-aware message table
+off of, and `rc=1`/detection is identical either way - cosmetic text
+only. Left as permanently approximate rather than chasing every
+ansible-core minor release's exact string.
 
-### Generic `TASK [Task 1]` label on a nameless task
+### No role-name prefix on any `TASK [...]` banner, named or nameless
 
-Surfaced round 300-303 (`cloudalchemy.cortex`, `gantsign.intellij-plugins`): a
-task with no `name:` gets a generic `Task 1` label; real Ansible instead
-derives one from the action itself (`TASK [debug]`, or `TASK [<role> :
-<action>]` inside a role). Cosmetic only - doesn't affect ok/changed/failed
-counts or control flow, just console output. Not fixed: `parse_task` doesn't
-yet know the resolved module/directive name at the point the fallback name is
-assigned, and the real-Ansible convention differs per directive type
-(`include_tasks`, `include_role`, a plain module task, a block, ...) - fixing
-this needs a wider, per-branch change across `parse_task`/`parse_block_task`/
-`parse_include_tasks`/`parse_include_role` etc., each verified against real
-Ansible's own convention for that shape, not a single one-line fallback.
-
-(The sibling `PLAY [Play 1]` label and the spurious "Host 'x' has no user
-specified" inventory warning from the same round are both fixed: a nameless
-play now displays its `hosts:` value, matching real Ansible - see
-`parse_play`'s `explicit_name` handling - and the inventory-user-check
-warning was removed outright, since real `ansible-playbook` never emits it at
-all regardless of connection type.)
+Found investigating the "Generic `TASK [Task 1]`" gap below (now fixed):
+real Ansible prefixes a role-sourced task's banner with the role name
+(`TASK [myrole : Install packages]`), but this engine's
+`render_task_name_for_display`/`TASK [...]` banner in
+`task_executor/executor.cr` only ever prints `task.name` - `task.role_name`
+is populated (see `role_loader.cr`) but used only for magic vars
+(`ansible_role_name`) and `--list-tasks`' own separate formatter
+(`task_lister.cr`'s `display_name`), never folded into the live TASK
+banner. Confirmed live: a role with a named task `A named task` prints
+plain `TASK [A named task]`, not `TASK [myrole : A named task]`. Purely
+cosmetic (doesn't affect ok/changed/failed/skipped counts), but wider
+than the nameless-task label bug - it affects every role task
+regardless of whether it has an explicit `name:`. Not fixed: needs the
+banner call sites (`executor.cr`'s several `TASK [#{render_task_name_for_display(...)}]`
+sites) to consult `task.role_name` the same way `task_lister.cr`
+already does, verified against real Ansible's own prefixing rules
+(present for role tasks, absent for play-level tasks, and interacting
+with `notify:`'s existing " : " handler-name convention - see
+`handler_runner.cr`/`executor.cr`'s existing `rindex(" : ")` handling,
+which must not double up if this is ever added).
 
 ### No fact-caching support (`ANSIBLE_CACHE_PLUGIN_CONNECTION` / `fact_caching` config)
 

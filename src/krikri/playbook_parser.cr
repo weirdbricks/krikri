@@ -1650,19 +1650,25 @@ module Krikri
 
       task_hash = yaml.as_h
 
-      # Get task name
-      name = task_hash["name"]?.try(&.as_s) || "Task #{index + 1}"
+      # Get task name. A missing `name:` falls back to the RESOLVED
+      # ACTION's own name, matching real Ansible's `TASK [<action>]`
+      # convention (`TASK [debug]`, `TASK [include_tasks]`, ...) instead
+      # of a meaningless index-based "Task N" - see KNOWN_MISSING.md's
+      # (now-fixed) "Generic TASK [Task 1] label" entry. Each branch
+      # below knows its own directive's name at the point it returns, so
+      # the fallback is resolved per-branch rather than once up front.
+      name = task_hash["name"]?.try(&.as_s)
 
       if block_yaml = task_hash["block"]?.try(&.as_a?)
-        return parse_block_task(name, task_hash, block_yaml, play, file_dir)
+        return parse_block_task(name || "block", task_hash, block_yaml, play, file_dir)
       end
 
       if include_yaml = directive(task_hash, "include_tasks")
-        return parse_include_tasks(name, task_hash, include_yaml, play, file_dir)
+        return parse_include_tasks(name || "include_tasks", task_hash, include_yaml, play, file_dir)
       end
 
       if include_role_yaml = directive(task_hash, "include_role").try(&.as_h?)
-        return parse_include_role(name, task_hash, include_role_yaml, play, file_dir)
+        return parse_include_role(name || "include_role", task_hash, include_role_yaml, play, file_dir)
       end
 
       # import_role: - real Ansible resolves this statically at parse
@@ -1729,15 +1735,15 @@ module Krikri
           end
         end
 
-        return parse_include_role(name, task_hash, import_role_yaml, play, file_dir, is_static: true)
+        return parse_include_role(name || "import_role", task_hash, import_role_yaml, play, file_dir, is_static: true)
       end
 
       if meta_yaml = directive(task_hash, "meta")
-        return parse_meta_task(name, task_hash, meta_yaml)
+        return parse_meta_task(name || "meta", task_hash, meta_yaml)
       end
 
       if include_vars_yaml = directive(task_hash, "include_vars")
-        return parse_include_vars_task(name, task_hash, include_vars_yaml)
+        return parse_include_vars_task(name || "include_vars", task_hash, include_vars_yaml)
       end
 
       # Find the module (first key that's not a special keyword)
@@ -1788,7 +1794,7 @@ module Krikri
       end
 
       unless module_name
-        raise "No module found in task '#{name}'"
+        raise "No module found in task '#{name || "at index #{index + 1}"}'"
       end
 
       # Legacy `action:` directive (round 192 - stefangweichinger.ansible_
@@ -1813,7 +1819,7 @@ module Krikri
             mod = v.to_s if ks == "module"
             args = v if ks == "args"
           end
-          raise "action: is missing 'module' in task '#{name}'" if mod.empty?
+          raise "action: is missing 'module' in task '#{name || "at index #{index + 1}"}'" if mod.empty?
           module_name = mod
           module_params = args || YAML::Any.new(Hash(YAML::Any, YAML::Any).new)
         end
@@ -1829,19 +1835,23 @@ module Krikri
       # bypass the normal graceful-degradation rescues.
       if module_name == "include" || module_name == "ansible.builtin.include" || module_name == "ansible.legacy.include"
         raise RemovedActionError.new(
-          "The 'ansible.builtin.include' action plugin has been removed. " \
+          "[DEPRECATED]: ansible.builtin.include has been removed. " \
           "Use include_tasks or import_tasks instead. This feature was " \
           "removed from ansible-core in a release after 2023-05-16.")
       end
 
       # Check if plugin is available - resolving a bare (non-FQCN) name
       # like `getent:` against ansible.builtin/etc first, same as real
-      # Ansible's own module search path.
+      # Ansible's own module search path. The fallback task name (for a
+      # missing `name:`) uses the AS-WRITTEN action name, not the
+      # FQCN-resolved one - real Ansible's `TASK [debug]` banner echoes
+      # the source spelling, not `ansible.builtin.debug`.
+      as_written_module_name = module_name
       resolved_module_name = resolve_module_name(module_name)
       unavailable_module_name = resolved_module_name ? nil : module_name
       module_name = resolved_module_name || module_name
 
-      task = Task.new(name, module_name)
+      task = Task.new(name || as_written_module_name, module_name)
       task.unavailable_module = unavailable_module_name
 
       # Parse module parameters - skipped for an unavailable module: this
