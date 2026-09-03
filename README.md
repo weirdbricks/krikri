@@ -87,18 +87,19 @@ schedule, where most tasks find nothing to change but Python still pays
 a fresh interpreter-and-module cost per task regardless.
 
 A 3-way benchmark against real `ansible-playbook` and `ansible-playbook`
-with the Mitogen strategy plugin, across a 66-role random sample where all
-three engines produced an identical successful outcome, found:
+with the Mitogen strategy plugin, across a 100-role random sample, found
+61 roles where all three engines produced an identical successful
+outcome:
 
 | Phase | real Ansible | Ansible + Mitogen | krikri-playbook | krikri vs Ansible | krikri vs Mitogen |
 |---|---|---|---|---|---|
-| Cold (total) | 2332.1s | 1351.5s | 975.1s | **2.39x faster** | **1.39x faster** |
-| Cold (median/role) | 21.84s | 11.55s | 5.74s | 3.24x faster | 1.82x faster |
-| Warm (total) | 1410.5s | 635.0s | 196.8s | **7.17x faster** | **3.23x faster** |
-| Warm (median/role) | 14.27s | 7.04s | 2.04s | 7.99x faster | 3.87x faster |
+| Cold (total) | 2176.6s | 1246.2s | 920.6s | **2.36x faster** | **1.35x faster** |
+| Cold (median/role) | 22.04s | 11.54s | 5.32s | 3.43x faster | 1.82x faster |
+| Warm (total) | 1328.0s | 598.2s | 185.3s | **7.17x faster** | **3.23x faster** |
+| Warm (median/role) | 14.49s | 6.97s | 2.00s | 7.99x faster | 4.00x faster |
 
-krikri-playbook was the fastest of the three engines in 62 of 66 roles
-(94%). Full methodology and the broader 87-role set: see
+krikri-playbook was the fastest of the three engines in 57 of 61 roles
+(93%). Full methodology and the broader 78-role set: see
 [ansible-vs-mitogen-vs-krikri.md](ansible-vs-mitogen-vs-krikri.md).
 
 Per-role cold/warm timings: see [ROLES_TESTED.md](ROLES_TESTED.md).

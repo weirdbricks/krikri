@@ -18,14 +18,17 @@ playbooks on matched hosts.
 - Each engine ran the role playbook twice per triplet: a **cold** run
   (fresh host) and a **warm** re-run (idempotent second pass), timed with
   `/usr/bin/time -v`.
-- 120 roles were attempted across 6 batches of 20; 10 failed provisioning
-  (host never came up after 2 retries) and were excluded - infrastructure
-  flakiness, not an engine result. **110 roles completed successfully on
-  all three engines.**
-- Of those 110, **66 roles had identical, fully-successful outcomes
+- 126 roles ended up completing successfully on all three engines across
+  the sampling rounds (a handful of others hit provisioning failures -
+  host never came up after 2 retries - infrastructure flakiness, not an
+  engine result, and were excluded). To keep the headline number a clean,
+  round, pre-registered figure, results are reported on the **first 100
+  of those roles, taken in original random-sample order** (not
+  cherry-picked by outcome or speed).
+- Of those 100, **61 roles had identical, fully-successful outcomes
   (`rc=0`) on all three engines both cold and warm** - the cleanest
   apples-to-apples set, and the one the headline numbers below are drawn
-  from. A broader 87-role set (same outcome across all three engines,
+  from. A broader 78-role set (same outcome across all three engines,
   including roles where all three failed identically) is also reported for
   context.
 - The remaining roles diverged in result across engines (different `rc` on
@@ -34,24 +37,24 @@ playbooks on matched hosts.
 
 ## Results
 
-### 66-role clean set (identical successful outcome on all 3 engines)
+### 61-role clean set (identical successful outcome on all 3 engines)
 
 | Phase | real Ansible | Ansible + Mitogen | krikri-playbook | krikri vs Ansible | krikri vs Mitogen |
 |---|---|---|---|---|---|
-| Cold (total) | 2332.1s | 1351.5s | 975.1s | **2.39x faster** | **1.39x faster** |
-| Cold (median/role) | 21.84s | 11.55s | 5.74s | 3.24x faster | 1.82x faster |
-| Warm (total) | 1410.5s | 635.0s | 196.8s | **7.17x faster** | **3.23x faster** |
-| Warm (median/role) | 14.27s | 7.04s | 2.04s | 7.99x faster | 3.87x faster |
+| Cold (total) | 2176.6s | 1246.2s | 920.6s | **2.36x faster** | **1.35x faster** |
+| Cold (median/role) | 22.04s | 11.54s | 5.32s | 3.43x faster | 1.82x faster |
+| Warm (total) | 1328.0s | 598.2s | 185.3s | **7.17x faster** | **3.23x faster** |
+| Warm (median/role) | 14.49s | 6.97s | 2.00s | 7.99x faster | 4.00x faster |
 
-krikri-playbook was the fastest of the three engines in **62 of 66 roles
-(94%)**.
+krikri-playbook was the fastest of the three engines in **57 of 61 roles
+(93%)**.
 
-### 87-role broader set (identical outcome, any `rc`)
+### 78-role broader set (identical outcome, any `rc`)
 
 | Phase | real Ansible (total) | Ansible + Mitogen (total) | krikri-playbook (total) | krikri vs Ansible | krikri vs Mitogen |
 |---|---|---|---|---|---|
-| Cold | 3223.3s | 1801.9s | 1278.8s | 2.52x faster | 1.41x faster |
-| Warm | 1733.5s | 835.3s | 458.0s | 3.79x faster | 1.82x faster |
+| Cold | 2726.2s | 1642.7s | 1191.1s | 2.29x faster | 1.38x faster |
+| Warm | 1570.3s | 760.0s | 423.3s | 3.71x faster | 1.80x faster |
 
 ## Why warm re-runs show the biggest gap
 
