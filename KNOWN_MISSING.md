@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.696`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.697`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.21` (see `shard.yml`).
 
 ---
@@ -29,7 +29,7 @@ actual client libraries this project doesn't carry, and the built-in
 only if a real role/round is found actually relying on a non-jsonfile
 backend.
 
-### Ansible's lazy dict-templating (`_AnsibleLazyTemplateDict`) not replicated - a variable built via `.update()` side-effect + concatenation stays a real dict in real Ansible, becomes unusable here
+### Ansible's lazy dict-templating (`_AnsibleLazyTemplateDict`) not replicated in general - only the one documented idiom is special-cased
 
 Found round 755/753 (`jtyr.nsswitch`/`jtyr.motd`): both roles define a
 config variable via the idiom `some_var: "{{ some_dict.update(other_dict)
@@ -41,16 +41,33 @@ object all the way through (confirmed live: its Python `__class__` is
 type-preserving templating) - `{% for key, val in some_var | sort %}`
 and `{% for key, value in item %}` (iterating a list of such dicts)
 both work correctly on the real object. This engine's plain
-string-based substitution has no equivalent - the multi-block template
-coerces to a string, and a later `{% for key, val in ... %}` over it
-fails with "cannot unpack multiple values of type Crinja::Value" (each
-sorted/iterated element isn't a real key-value pair). Not fixed -
-replicating ansible-core's own private lazy-dict-templating machinery
-faithfully would be a major architectural undertaking (deferred
-evaluation + type preservation through the whole vars pipeline), not a
-one-line filter fix; needs deliberate design work, not chased further
-without cost-benefit tracking closer to the actual frequency of this
-idiom in real-world roles.
+string-based substitution had no equivalent - the multi-block template
+coerced to a string, and a later `{% for key, val in ... %}` over it
+failed with "cannot unpack multiple values of type Crinja::Value" (each
+sorted/iterated element isn't a real key-value pair).
+
+Fixed (0.9.697) for exactly the documented shape only, NOT the general
+case: `CrinjaRenderer.rerender_string_value`'s new
+`UPDATE_THEN_REREAD_RE` special-cases a raw value that is precisely
+`{{ <var>.update(<arg>) }}{{ <var> }}` with both operands bare
+variable names (no arbitrary Jinja expression inside `.update(...)`,
+no dict-literal argument, no attribute-chain target) - reads both from
+the vars store directly, merges with Python `dict.update`'s own
+shallow-merge/top-level-key-overrides semantics, and persists the
+merge back onto the target variable (matching Python's real in-place
+mutation, visible to any LATER reference of it too). Deliberately NOT
+the general lazy-dict-templating architecture (deferred evaluation +
+type preservation through the whole vars pipeline) - that remains a
+major undertaking, not attempted. Only the Crinja-side path was fixed
+(`crinja_renderer.cr`) - the failure this idiom produces is specifically
+a Crinja `{% for %}` block-tag consumption (`variable_lookup.cr`'s/
+`filter_engine.cr`'s/`comparison_evaluator.cr`'s own separate
+`rerender_if_templated` implementations, the hand-rolled evaluator
+side, were not touched since nothing in the documented repro reaches
+them). Any OTHER shape of this idiom (a dict literal `.update({...})`,
+an attribute-chain target, three or more chained `.update()` calls,
+...) still hits the old string-coercion behavior - narrow by design,
+not a general solution.
 
 ### `copy:`'s `validate:` isn't implemented at all
 

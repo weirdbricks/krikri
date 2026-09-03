@@ -552,6 +552,37 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     JSON.parse(result).as_a.map(&.as_s).sort.should eq(["myapp_rule_one", "myapp_rule_two"])
   end
 
+  it "resolves the some_dict.update(other_dict) + re-reference idiom as a real dict, not a stringified fallback" do
+    # Found round 755/753 (jtyr.nsswitch/jtyr.motd): both roles define a
+    # config variable via `some_var: "{{ some_dict.update(other_dict)
+    # }}{{ some_dict }}"` - call .update() purely for its mutating side
+    # effect, discard its None return, then render the now-merged dict.
+    # Real Ansible's templar preserves this as a genuine dict
+    # (_AnsibleLazyTemplateDict); this engine's plain string-based
+    # substitution used to coerce it to unparseable Python-repr text
+    # instead, so a later `{% for key, val in some_var | sort %}` failed
+    # with "cannot unpack multiple values of type Crinja::Value". See
+    # CrinjaRenderer's own UPDATE_THEN_REREAD_RE for the narrow,
+    # documented-shape-only fix (not the full lazy-dict-templating
+    # architecture - see KNOWN_MISSING.md).
+    v = Hash(String, JSON::Any).new
+    v["some_dict"] = JSON::Any.new({"a" => JSON::Any.new(1_i64), "b" => JSON::Any.new(2_i64)})
+    v["other_dict"] = JSON::Any.new({"b" => JSON::Any.new(99_i64), "c" => JSON::Any.new(3_i64)})
+    v["some_var"] = Krikri::VariableSubstitutor::CrinjaRenderer.rerender_nested_templates(
+      JSON::Any.new("{{ some_dict.update(other_dict) }}{{ some_dict }}"),
+      Krikri::VarSubstitutor.new(vars: v)
+    )
+
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    result = renderer.render("{% for key, val in some_var | sort %}{{ key }}={{ val }} {% endfor %}")
+    result.strip.should eq("a=1 b=99 c=3")
+
+    # The mutation is real and persists onto some_dict itself too,
+    # matching Python's own in-place dict.update semantics.
+    v["some_dict"].as_h["b"].as_i.should eq(99)
+    v["some_dict"].as_h["c"].as_i.should eq(3)
+  end
+
   it "renders lookup('password', path) generating and persisting a password across renders" do
     path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "crinja_lookup_password_test.txt")
     File.delete(path) if File.exists?(path)

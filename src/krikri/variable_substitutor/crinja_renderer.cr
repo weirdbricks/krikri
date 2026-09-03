@@ -399,7 +399,41 @@ module Krikri
       # separate prepare_*_vars (a genuinely separate Crinja
       # environment - see that method's own comment) that needs this
       # identical recursive-re-render fix, not just this class's.
+      # Narrow special case for one specific idiom (found round 755/753,
+      # `jtyr.nsswitch`/`jtyr.motd`): `some_var: "{{ some_dict.update(
+      # other_dict) }}{{ some_dict }}"` - call `.update()` purely for its
+      # mutating side effect, discard its `None` return, then render the
+      # now-merged dict. Real Ansible's templar preserves the result as
+      # a genuine dict (`_AnsibleLazyTemplateDict`, private ansible-core
+      # internals - see KNOWN_MISSING.md's own writeup); replicating
+      # that faithfully (deferred evaluation + type preservation through
+      # the whole vars pipeline) is a major architectural undertaking,
+      # not attempted here. This instead special-cases exactly the
+      # documented shape - both operands bare variable names, no
+      # arbitrary Jinja expression inside `.update(...)` - by reading
+      # both from the vars store directly, merging (matching Python
+      # dict.update's own shallow-merge, top-level-key-overrides
+      # semantics), and persisting the merge back onto the target
+      # variable (matching Python's real in-place mutation, visible to
+      # any LATER reference of it too - not just this one). Falls
+      # through to the general string-rendering path below for anything
+      # that doesn't match this exact shape.
+      UPDATE_THEN_REREAD_RE = /\A\{\{\s*([A-Za-z_]\w*)\.update\(\s*([A-Za-z_]\w*)\s*\)\s*\}\}\{\{\s*\1\s*\}\}\z/
+
       private def self.rerender_string_value(raw : String, value : JSON::Any, substitutor : VarSubstitutor) : JSON::Any
+        if (m = UPDATE_THEN_REREAD_RE.match(raw.strip))
+          target_name, arg_name = m[1], m[2]
+          target = substitutor.vars[target_name]?
+          arg = substitutor.vars[arg_name]?
+          if target && target.raw.is_a?(Hash) && arg && arg.raw.is_a?(Hash)
+            merged = target.as_h.dup
+            arg.as_h.each { |key, val| merged[key] = val }
+            merged_json = JSON::Any.new(merged)
+            substitutor.vars[target_name] = merged_json
+            return merged_json
+          end
+        end
+
         # `{%`/`{#` need the same re-render as `{{`: a variable whose own
         # value is a pure block-tag template (`traefik_install_ver: '{% if
         # traefik_ver.major | int >= 2 %}2{% else %}{{ traefik_ver.major
