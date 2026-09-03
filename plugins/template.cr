@@ -2,6 +2,7 @@
 
 require "json"
 require "digest/md5"
+require "file_utils"
 require "../src/krikri/base_plugin"
 
 module Krikri
@@ -148,16 +149,27 @@ module Krikri
       end
 
       # Write to temporary file first (for atomic write + validation).
-      # Staged in *dest_dir* itself, not a global /tmp path: `File.rename`
-      # is only atomic (and only works at all) within a single
-      # filesystem - `/tmp` is very commonly its own separate tmpfs mount
-      # (systemd's tmp.mount, on by default on many modern distros even
-      # before any hardening role touches it), so renaming a /tmp staging
-      # file onto a destination elsewhere on disk hit "Invalid
-      # cross-device link" and failed the whole task. Found via
-      # konstruktoid-hardening's "Configure sshd using sshd_config.d" task
-      # (writing to /usr/lib/tmpfiles.d/ssh.conf).
-      temp_file = File.join(dest_dir, ".krikri-playbook-template-#{Random::Secure.hex(8)}.tmp")
+      # Staged in a remote_tmp-style location (`/tmp`), matching real
+      # Ansible's own `~/.ansible/tmp/ansible-tmp-.../` staging - NOT
+      # dest_dir, which this plugin used previously. That dest-adjacent
+      # staging was itself a fix for a real cross-device `File.rename`
+      # bug (`/tmp` is very commonly its own separate tmpfs mount, so
+      # renaming a /tmp staging file onto a destination elsewhere on
+      # disk hit "Invalid cross-device link" - found via
+      # konstruktoid-hardening's "Configure sshd using sshd_config.d"
+      # task writing to /usr/lib/tmpfiles.d/ssh.conf) but it diverges
+      # from real Ansible in a way that's independently observable: a
+      # `validate:` command confined by AppArmor/SELinux to only the
+      # target program's OWN real config paths (e.g. dhcpd's profile
+      # permits /etc/dhcp/ but not a temp file dropped next to it) can
+      # see a different validation outcome than real Ansible's own
+      # /root/.ansible/tmp-confined run (found via bertvv.dhcp round
+      # 312). Moving back to /tmp restores real Ansible's location
+      # without reintroducing the cross-device bug: `FileUtils.mv`
+      # (stdlib) already falls back to copy-then-delete on
+      # `Errno::EXDEV`/`EPERM`, exactly the fallback needed - see its
+      # use below instead of a raw `File.rename`.
+      temp_file = File.join("/tmp", ".krikri-playbook-template-#{Random::Secure.hex(8)}.tmp")
 
       begin
         # Write content using native Crystal File.write
@@ -201,9 +213,13 @@ module Krikri
         end
       end
 
-      # Move temp file to destination (atomic operation)
+      # Move temp file to destination. FileUtils.mv renames when possible
+      # (atomic, same filesystem) and transparently falls back to
+      # copy-then-delete on EXDEV/EPERM (cross-device) - see the comment
+      # on temp_file's own staging location above for why that fallback
+      # is required now that staging moved back to /tmp.
       begin
-        File.rename(temp_file, dest)
+        FileUtils.mv(temp_file, dest)
       rescue ex
         File.delete(temp_file) if File.exists?(temp_file)
         return PluginResult.new(

@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.694`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.695`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.21` (see `shard.yml`).
 
 ---
@@ -40,29 +40,16 @@ one-line filter fix; needs deliberate design work, not chased further
 without cost-benefit tracking closer to the actual frequency of this
 idiom in real-world roles.
 
-### `template:`/`copy:`'s `validate:` stages in `dest_dir`, not real Ansible's `remote_tmp`
+### `copy:`'s `validate:` isn't implemented at all
 
-Found round 312 (`bertvv.dhcp`)'s "Install config file" task
-(`validate: 'dhcpd -t -cf %s'`): real Ansible stages the rendered file
-in its own `remote_tmp` (`~/.ansible/tmp/ansible-tmp-.../`) before
-running the validate command against it; `plugins/template.cr` instead
-stages next to `dest_dir` (`.krikri-playbook-template-*.tmp`). Usually
-invisible, but a validate command confined by AppArmor/SELinux to only
-the program's own real config paths (dhcpd's own profile permits
-`/etc/dhcp/` but not `/root/.ansible/tmp/`) sees a different outcome
-depending on which directory the temp file lands in - real Ansible got
-"Permission denied" and failed the whole play; krikri's dest-adjacent
-placement happened to be permitted, so it validated and proceeded where
-real Ansible couldn't.
-
-Not fixed: switching to `remote_tmp` staging would reintroduce a real,
-already-fixed bug (`File.rename`'s cross-device-link failure when
-`remote_tmp` and `dest_dir` are different filesystems, found on
-konstruktoid-hardening - see `template.cr`'s own comment on
-`temp_file`) unless a copy-then-delete fallback is added alongside it,
-which is a real design change, not a one-line fix. Needs deliberate work
-with full spec coverage across every `validate:`-using plugin
-(`template.cr`/`copy.cr`), not a solo benchmark-round patch.
+Found while fixing the `template:` `validate:`/`remote_tmp` gap
+directly below (0.9.695): `plugins/copy.cr` has no handling whatsoever
+for a `validate:` param - unlike `template:`, which does support it.
+Real Ansible's `copy:` module supports `validate:` identically to
+`template:`. Not fixed here - it's a separate, larger feature addition
+(staging + validate-command running + the same remote_tmp/cross-device
+concerns `template.cr` just addressed), not a location bug, so it's
+scoped out of this round's fix.
 
 ### `RemovedActionError`'s message text is only approximate, and this is permanent
 
