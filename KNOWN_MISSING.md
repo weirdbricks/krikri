@@ -10,52 +10,32 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.692`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.693`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.21` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
 
-### Block-nested handlers (`handlers/main.yml` entries wrapping a `block:`/`rescue:`) not supported - `notify:` on the inner task's name fails "handler not found"
+### A block-level `notify:` on a handler-block itself is untested/unhandled
 
-Found via `robertdebock.rsyslog`'s own `handlers/main.yml`, which wraps
-its real handler in a block purely to add rescue-time diagnostics:
+`handlers/main.yml` entries wrapping a `block:` are now flattened (see
+`TaskExecutor#flatten_handler_blocks`) so each nested task is
+independently notify-able, matching real Ansible's verified behavior
+(only `block:` members flatten; `rescue:`/`always:` are inert for
+handler purposes and the block's own name is never a valid notify
+target; a block-level `when:` still applies to each flattened child).
 
-```yaml
-- name: Restart rsyslog block
-  block:
-    - name: Restart rsyslog
-      ansible.builtin.service:
-        name: "{{ rsyslog_service }}"
-        state: restarted
-  rescue:
-    - name: Get rsyslog journal logs after service restart failure
-      ...
-```
-
-Tasks `notify: Restart rsyslog` - the *inner* task's own name, not the
-outer block's. Real Ansible flattens block-nested handlers so the inner
-name is directly notify-able. This engine's `handler_answers_to?`/
-`raise_unless_handler_exists` (`src/krikri/task_executor/executor.cr`)
-and `HandlerRunner#run`/`#should_run_handler?`
-(`src/krikri/task_executor/handler_runner.cr`) only ever compare
-against the flat top-level `handler.name`, never recursing into a
-block-type handler's `block_tasks`/`rescue_tasks` - so the run aborts
-with `HandlerNotFoundError` ("The requested handler 'Restart rsyslog'
-was not found...") even though a real handler of that name exists,
-just nested.
-
-Not fixed: merely teaching the existence check to recurse into block
-members would stop the false abort, but `HandlerRunner#run` would then
-need real support for locating and executing that *specific* nested
-task within its parent block's rescue-on-failure semantics - genuine
-engine work (not a one-line lookup fix), with real design questions
-(e.g. what happens when the SAME nested handler name is notified
-alongside a sibling task in the same block - does the block run once or
-per-notification?) that need deliberate thought before implementing.
-Flat handlers and `listen:`-based handlers are unaffected and work
-correctly.
+Not covered: whether a block-level `notify:` on the handler-block
+itself (the block's OWN top-level `notify:` key, distinct from any of
+its children's - a real feature for a REGULAR block, firing once if
+any nested task changed) is even meaningful for a block used as a
+handler. Untested against real Ansible either way; the flatten silently
+drops it since the enclosing block Task is discarded once its children
+are promoted to standalone handlers. Likely rare in practice (a block
+handler whose own wrapper notifies something else, distinct from what
+its nested tasks each notify) - worth a quick real-Ansible check if it
+ever surfaces in a real role.
 
 ### Ansible's lazy dict-templating (`_AnsibleLazyTemplateDict`) not replicated - a variable built via `.update()` side-effect + concatenation stays a real dict in real Ansible, becomes unusable here
 

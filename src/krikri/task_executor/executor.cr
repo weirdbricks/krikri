@@ -372,6 +372,14 @@ module Krikri
         @facts[host.name] ||= {} of String => JSON::Any
       end
 
+      # See flatten_handler_blocks's own comment: a block:-wrapped
+      # handler (handlers/main.yml entries using block:/rescue: purely
+      # to add rescue-time diagnostics around the real handler) must be
+      # expanded into its nested block_tasks BEFORE HandlerRunner ever
+      # sees @handlers - every downstream handler lookup/dispatch path
+      # only ever understands a flat Array(Task).
+      @handlers = flatten_handler_blocks(@handlers)
+
       # Initialize handler runner
       @handler_runner = HandlerRunner.new(@handlers, @hosts)
     end
@@ -4993,6 +5001,84 @@ module Krikri
       end
     end
 
+    # Expands a block:-wrapped handlers/main.yml entry into its own
+    # block_tasks, so a task's `notify:` naming the INNER task's name
+    # (not the outer block's) resolves correctly - real Ansible flattens
+    # block-nested handlers the same way. Found via robertdebock.rsyslog,
+    # whose handlers/main.yml wraps its real handler purely to add
+    # rescue-time diagnostics:
+    #
+    #   - name: Restart rsyslog block
+    #     block:
+    #       - name: Restart rsyslog
+    #         ansible.builtin.service: {name: "{{ rsyslog_service }}", state: restarted}
+    #     rescue:
+    #       - name: Get rsyslog journal logs after service restart failure
+    #         ...
+    #
+    # `notify: Restart rsyslog` (the inner task) used to abort the whole
+    # run with HandlerNotFoundError - handler_answers_to?/HandlerRunner
+    # only ever compared against the flat top-level handler.name, never
+    # recursing into a block-type handler's own block_tasks.
+    #
+    # Verified live against real ansible-core 2.19.4 and 2.21.3 (both
+    # agree) before writing this, since the obvious guess (teach
+    # HandlerRunner to run a rescue-wrapped sub-block) turns out to be
+    # WRONG:
+    #   - Only block: members are flattened into notify-able handlers.
+    #     rescue:/always: members are NOT flattened and are NOT
+    #     individually notify-able either - completely inert for handler
+    #     purposes. Confirmed live: notifying a rescue: task's own name
+    #     directly still raises "handler not found".
+    #   - The enclosing block's OWN name is never a valid notify target
+    #     ("The requested handler 'Restart rsyslog block' was not
+    #     found...").
+    #   - Notifying a flattened member runs ONLY that one task - sibling
+    #     block: tasks do not run alongside it, and rescue: does NOT fire
+    #     even when the notified task itself fails (confirmed live:
+    #     `rescued=0` in the recap; the run just fails fatally). So this
+    #     method deliberately drops rescue_tasks/always_tasks entirely
+    #     rather than flattening them too - they never become part of
+    #     the flat handler list at all, matching that real "not found"/
+    #     never-runs behavior exactly.
+    #   - A block-level when: DOES apply to each flattened child
+    #     (confirmed live: `when: false` on the block skips the notified
+    #     inner handler with a normal `skipping:` line) - handled here
+    #     via the same #inherit_when_condition helper #execute_block
+    #     already uses for its own (different) when:-inheritance corner
+    #     case.
+    #
+    # become:/become_user: need no extra handling - playbook_parser.cr's
+    # parse_block_task already resolves those onto every block_tasks/
+    # rescue_tasks/always_tasks entry at PARSE time (ambient save/
+    # restore around the three child-list parses). Block-level when:/
+    # vars:/role context are the two runtime-only exceptions
+    # (#execute_block applies them just-in-time via
+    # #inherit_when_condition/#propagate_role_context right before
+    # running block_tasks) - since this flatten bypasses #execute_block
+    # entirely for a handler-block, both must be applied explicitly here
+    # instead, before the block's own Task object (and its now-orphaned
+    # rescue_tasks/always_tasks) is discarded for good.
+    #
+    # Nesting a block: inside a block: used as a handler is a genuine
+    # ansible-core parse-time error ("Using a block as a handler is not
+    # supported") - this recurses through such a case instead of
+    # replicating that error, a deliberately more lenient (never a worse
+    # divergence) simplification.
+    private def flatten_handler_blocks(handlers : Array(Task)) : Array(Task)
+      handlers.flat_map do |handler|
+        next [handler] unless handler.block?
+
+        children = handler.block_tasks || [] of Task
+        propagate_role_context(handler, children)
+        if when_condition = handler.when_condition
+          inherit_when_condition(when_condition, children)
+        end
+
+        flatten_handler_blocks(children)
+      end
+    end
+
     private def print_skipped_tasks(tasks : Array(Task), host : Host)
       tasks.each do |nested_task|
         # A nested block is transparent - like real Ansible, it gets no
@@ -5759,7 +5845,13 @@ module Krikri
         end
       end
 
-      @handler_runner.handlers.concat(included_handlers) unless included_handlers.empty?
+      # flatten_handler_blocks: a dynamically include_role:'d role can
+      # equally define a block:-wrapped handler in its own
+      # handlers/main.yml - same expansion the play's own static
+      # handlers get in #initialize, needed here too since this is the
+      # other (and only other) place a block-type Task can enter
+      # @handler_runner's flat handler list.
+      @handler_runner.handlers.concat(flatten_handler_blocks(included_handlers)) unless included_handlers.empty?
 
       run_task_list(included_tasks, host)
     end
