@@ -461,6 +461,21 @@ module Krikri
         # host's required-plugins set.
         next if ActionPluginManager.skips_module_dispatch?(task.module_name)
 
+        # A controller-only plugin (fetch, wait_for_connection - see
+        # CONTROLLER_ONLY_PLUGINS' own comment) never runs on the
+        # remote host at all, so pre-uploading its binary there was
+        # pure waste for fetch and actively WRONG for
+        # wait_for_connection specifically: this whole batch-upload
+        # pass runs once, up front, before any task executes - forcing
+        # an SSH connection+upload attempt against a host
+        # wait_for_connection: exists specifically to handle being
+        # temporarily UNREACHABLE (the "just triggered a reboot" idiom)
+        # defeats its entire purpose, failing the play outright with
+        # "Failed to upload ... Connection reset by peer" the instant
+        # the connection is actually down, before the task that would
+        # have waited for it patiently ever got a chance to run.
+        next if controller_only?(task.module_name)
+
         required.add(simple_plugin_name(task.module_name))
       end
     end
@@ -731,7 +746,22 @@ module Krikri
     # that's exactly backwards for fetch, which needs to run on the
     # controller and pull via BasePlugin#remote_download (SSHManager, using
     # the *original*, non-overridden host/vars) instead.
-    CONTROLLER_ONLY_PLUGINS = {"fetch", "ansible.builtin.fetch"}
+    # wait_for_connection: real Ansible's own module retries the actual
+    # CONNECTION ATTEMPT from the controller until it succeeds or
+    # timeout: is exceeded - it exists specifically for the "just
+    # rebooted the target" idiom, where the connection is DOWN when the
+    # task starts. Dispatched the normal remote way (upload the plugin
+    # binary, then SSH-exec it ON the target), this whole module can
+    # never do its actual job: by the time its own process is running
+    # at all, the very connection it's supposed to be waiting for has
+    # already succeeded (needed just to get the binary there) - GROG.
+    # reboot's own "Reboot host" -> "Wait for host" sequence hit exactly
+    # this, failing with a generic "Plugin execution failed on remote"
+    # the instant the reboot actually took the SSH connection down.
+    # Controller-only (like fetch above) so it can retry the connection
+    # itself via BasePlugin#remote_exec/SSHManager, the same mechanism
+    # real Ansible's own connection plugin retry uses.
+    CONTROLLER_ONLY_PLUGINS = {"fetch", "ansible.builtin.fetch", "wait_for_connection", "ansible.builtin.wait_for_connection"}
 
     # Whether *plugin_name* must run on the controller regardless of the
     # target host. Exposed so callers building a config String up front

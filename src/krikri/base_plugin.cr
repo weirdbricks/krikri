@@ -196,7 +196,13 @@ module Krikri
       @vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
     end
 
-    protected def remote_exec(command : String) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
+    # timeout: overrides SSHManager's own default per-call process
+    # timeout (SSHManager::DEFAULT_EXEC_TIMEOUT_SECONDS, 3600s) - unused
+    # by every existing caller (all happy with that default), added for
+    # wait_for_connection: (see plugins/wait_for_connection.cr), whose
+    # whole job is retrying a short, bounded connection probe rather
+    # than waiting the normal hour-long ceiling on each attempt.
+    protected def remote_exec(command : String, timeout : Int32? = nil) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       command = with_environment(command)
       if local_connection?
         # Execute locally
@@ -208,6 +214,7 @@ module Krikri
           @host.user || "root",
           command,
           @host.port,
+          timeout: timeout || SSHManager::DEFAULT_EXEC_TIMEOUT_SECONDS,
           identity_file: get_identity_file
         )
       end
