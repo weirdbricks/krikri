@@ -2404,9 +2404,36 @@ module Krikri
       # leaving kubic_pkg_mgr undefined and silently omitting the whole
       # apt-key/apt-repo setup real Ansible attempts.
       if custom_paths = task.loop_first_found_paths
-        roots = custom_paths.map do |path|
+        # A relative custom path resolves against the directory of the
+        # FILE the with_first_found: task is itself written in - real
+        # Ansible's own actual behavior (verified live against
+        # ansible-core 2.19.4/2.19.12: `paths: ["distribution"]` on a
+        # with_first_found: task living in a role's tasks/main.yml
+        # resolved to roles/<role>/tasks/distribution/, not
+        # roles/<role>/distribution/ - `included:
+        # .../tasks/distribution/Linux.yml` in -vv output). Found via
+        # three independent real roles hitting this identically
+        # (sbaerlocher.powercfg/.onedrive/.domain-membership's own
+        # "include distribution tasks" idiom) - `roots` below previously
+        # only ever anchored a custom path at the ROLE ROOT, which is
+        # what an earlier fix (andrewrothstein.buildah, round 152) was
+        # actually verified against, but that role's own `paths:` entry
+        # happened to be role-root-relative, not tasks-dir-relative -
+        # the assumption that ALL custom paths: are role-root-relative
+        # was never itself verified and turned out wrong. Tries the
+        # including file's own directory FIRST (matching what real
+        # Ansible showed), then falls back to the role root and the
+        # general per-task include_file_dir, so the earlier
+        # role-root-relative case still resolves too.
+        including_file_dir = task.include_file_dir || task.role_path.try { |role_dir| File.join(role_dir, "tasks") }
+
+        roots = custom_paths.flat_map do |path|
           rendered = substitutor.substitute(path).strip
-          rendered.starts_with?("/") ? rendered : (task.role_path.try { |role_dir| File.join(role_dir, rendered) } || rendered)
+          if rendered.starts_with?("/")
+            [rendered]
+          else
+            [including_file_dir, task.role_path].compact.uniq.map { |anchor| File.join(anchor, rendered) }
+          end
         end
         return first_existing(roots, candidate)
       end
