@@ -45,6 +45,16 @@ Already set up on this machine:
   Everything here depends on it. Check with `sudo -ln` — and read the
   whole output, not the first few lines: the Defaults block comes first
   and the actual entries come after it.
+- A host-side NAT rule so guests reach the real internet, not just each
+  other's `/24`: `sudo iptables -t nat -A POSTROUTING -s 10.99.0.0/16 -o
+  <host-default-iface> -j MASQUERADE`, plus `net.ipv4.ip_forward=1`
+  (already the default on most desktop kernels — check
+  `/proc/sys/net/ipv4/ip_forward`). Without this a guest gets an address
+  and a working default route (net_up adds that) but every off-subnet
+  packet is dropped at the host: DNS resolution fails, `apt-get update`
+  can't reach a real mirror, `curl`/GitHub-API-style tasks fail outright.
+  `iptables` is deliberately NOT in the NOPASSWD list above (it's a
+  wider, host-network-affecting change) - run this once by hand.
 
 ## Use
 
@@ -110,6 +120,20 @@ is the record of *why*, so nobody re-derives it.
 7. **Debian trixie, not Alpine.** krikri's plugin binaries are glibc-linked
    and are uploaded to the target; a musl guest cannot execute them at all
    and the upload fails before any module runs.
+
+8. **A route added to the netns after the guest has already booted is
+   invisible to the guest.** kata-agent reads the netns's network state
+   once, at sandbox start, and clones it into the guest - `net_up` must
+   add the default route (`ip -n $ns route add default via <gw>`)
+   *before* `up()` calls `ctr run`, not after. Missed this on the first
+   pass and burned most of a 120-role test round on it: guests had an
+   address but no route out, so every role needing real internet (apt
+   beyond the image's build-time-snapshotted cache, `curl`, GitHub API
+   calls) failed identically on both engines but at different points in
+   each engine's own bootstrap order - which *looked* exactly like a pile
+   of real engine divergences until traced back to the network gap.
+   Needs the host-side NAT rule above too, or the route just leads
+   nowhere.
 
 ## Verified
 

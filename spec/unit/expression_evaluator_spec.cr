@@ -142,6 +142,31 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("lookup('ansible.builtin.first_found', params)").should eq(File.join(role_dir, "vars", "Debian.yml"))
   end
 
+  it "resolves lookup('fileglob', ...) to a real (possibly empty) list of matching files" do
+    # Real bug found via PowerDNS.pdns's own per-loop-item `when: lookup(
+    # 'ansible.builtin.fileglob', role_path ~ '/vars/' ~ item, wantlist=
+    # True) | length > 0` guard on an `include_vars:` loop (the standard
+    # "generic to specific OS vars file, skip whichever don't exist"
+    # idiom) - the FUNCTION-call form of fileglob (distinct from the
+    # `map('fileglob')` FILTER form FilterEngine already handled) was
+    # entirely unimplemented, falling to the "undefined" string fallback
+    # - `"undefined" | length > 0` is true (9 chars), so the guard always
+    # ran `include_vars:` even for files that don't exist, failing with
+    # "file not found" where real Ansible just skips the loop iteration.
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "fileglob_lookup_spec")
+    `rm -rf #{role_dir}`
+    Dir.mkdir_p(File.join(role_dir, "vars"))
+    File.write(File.join(role_dir, "vars", "Debian.yml"), "greeting: hello\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("lookup('ansible.builtin.fileglob', role_path ~ '/vars/Debian.yml') | length")
+      .should eq("1")
+    evaluator.evaluate("lookup('ansible.builtin.fileglob', role_path ~ '/vars/Debian-13.yml') | length")
+      .should eq("0")
+  end
+
   it "still honors an explicit absolute paths: entry, unaffected by role-relative resolution" do
     role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_explicit_paths_spec")
     `rm -rf #{role_dir}`

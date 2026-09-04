@@ -159,6 +159,16 @@ module Krikri
       template_vars["template_fullpath"] = Crinja::Value.new(File.expand_path(template_path))
       template_vars["template_run_date"] = Crinja::Value.new(Time.utc.to_s("%Y-%m-%d %H:%M:%S UTC"))
 
+      # Real Ansible's Templar always exposes `environment` as a Jinja
+      # global mapped to the controller process's OS environment
+      # variables (`os.environ`) - CrinjaRenderer (the {{ }} task-param
+      # path) got this same fix, but a REAL .j2 template file renders
+      # through this entirely separate `template.render(template_vars)`
+      # call, which didn't inherit it. Found via GROG.debug-variable's
+      # own dumpall.j2, `{{ environment | to_nice_json }}` - a common
+      # "dump everything" debug template idiom.
+      template_vars["environment"] = Crinja::Value.new(ENV.to_h)
+
       # Render template.
       #
       # Real Ansible's `template:` uses Jinja2's StrictUndefined: an

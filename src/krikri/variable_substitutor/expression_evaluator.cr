@@ -2111,6 +2111,24 @@ module Krikri
           # value) whose name matches ANY of the given regex patterns.
           patterns = parts[1..].compact_map { |part| quoted_string_literal(part.strip).try(&.as_s?) }.compact_map { |pth| Regex.new(pth) rescue nil }
           @vars.keys.select { |name| patterns.any?(&.matches?(name)) }.to_json
+        when "fileglob"
+          # lookup('ansible.builtin.fileglob', pattern, wantlist=True) -
+          # the FUNCTION-call form of the same lookup already handled as
+          # a FILTER in FilterEngine (`map('fileglob')`) - real Ansible
+          # returns the list of existing files matching the glob (empty
+          # list, not an error, when none match). Entirely unimplemented
+          # here before - fell through every case to the "undefined"
+          # fallback, and `"undefined" | length > 0` is true (a 9-char
+          # string), so a per-loop-item `when: lookup('ansible.builtin.
+          # fileglob', role_path ~ '/vars/' ~ item, wantlist=True) |
+          # length > 0` guard meant to skip a nonexistent vars file
+          # (PowerDNS.pdns's own "OS-specific variables, generic to
+          # specific" idiom) always evaluated true instead, running
+          # `include_vars:` on a file that doesn't exist and failing the
+          # whole task where real Ansible just skips it.
+          pattern = parts[1]?.try { |part| evaluate(part.strip) }
+          return "[]" unless pattern
+          Dir.glob(pattern).sort!.to_json
         end
       end
 

@@ -365,6 +365,18 @@ module Krikri
       # real role's target is virtualized, not the hypervisor itself).
       facts["ansible_virtualization_role"] = facts["ansible_virtualization_type"] == "None" ? "NA" : "guest"
 
+      # system_vendor - real Ansible's DMI fact collector reads this straight
+      # from /sys/class/dmi/id/sys_vendor (falling back to "NA" when the file
+      # is missing/unreadable, e.g. inside some container runtimes). Entirely
+      # missing before - sbaerlocher.qemu-guest-agent/.ovirt-guest-agent's own
+      # `when: ansible_system_vendor == 'QEMU'` guard raised "Error while
+      # evaluating conditional: 'ansible_system_vendor' is undefined" instead
+      # of just evaluating (usually to false, correctly skipping the task) -
+      # found on a Kata/cloud-hypervisor guest, where the real value doesn't
+      # even match 'QEMU'.
+      sys_vendor = capture("cat", ["/sys/class/dmi/id/sys_vendor"]).strip
+      facts["ansible_system_vendor"] = sys_vendor.empty? ? "NA" : sys_vendor
+
       # apparmor.status - real Ansible's own ApparmorFactCollector just
       # checks for /sys/kernel/security/apparmor's existence (not whether any
       # profile is actually enforcing) - "enabled" if present, "disabled"
