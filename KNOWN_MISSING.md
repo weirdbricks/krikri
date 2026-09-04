@@ -50,110 +50,39 @@ actual client libraries this project doesn't carry, and the built-in
 only if a real role/round is found actually relying on a non-jsonfile
 backend.
 
-### Ansible's lazy dict-templating (`_AnsibleLazyTemplateDict`) not replicated in general - only the one documented idiom is special-cased
+### Ansible's lazy dict-templating (`_AnsibleLazyTemplateDict`) is not replicated in general - only two specific idioms are special-cased
 
-Found round 755/753 (`jtyr.nsswitch`/`jtyr.motd`): both roles define a
-config variable via the idiom `some_var: "{{ some_dict.update(other_dict)
-}}{{ some_dict }}"` (call `.update()` purely for its mutating side
-effect, discard its `None` return, then render the now-merged dict).
-Real Ansible's templar preserves `some_var` as a genuine dict-like
-object all the way through (confirmed live: its Python `__class__` is
-`_AnsibleLazyTemplateDict`, a private ansible-core internal for lazy,
-type-preserving templating) - `{% for key, val in some_var | sort %}`
-and `{% for key, value in item %}` (iterating a list of such dicts)
-both work correctly on the real object. This engine's plain
-string-based substitution had no equivalent - the multi-block template
-coerced to a string, and a later `{% for key, val in ... %}` over it
-failed with "cannot unpack multiple values of type Crinja::Value" (each
-sorted/iterated element isn't a real key-value pair).
+Real Ansible's templar keeps a variable built from a `{{ }}` expression
+as a genuine dict/list-like object all the way through the vars
+pipeline (its private `_AnsibleLazyTemplateDict`), so `{% for key, val
+in some_var | sort %}` and `{% for key, value in item %}` work on the
+real object. This engine's substitution is string-based and has no
+equivalent: the rendered value coerces to a string, and a later
+`{% for key, val in ... %}` over it fails with "cannot unpack multiple
+values of type Crinja::Value".
 
-Fixed (0.9.697) for exactly the documented shape only, NOT the general
-case: `CrinjaRenderer.rerender_string_value`'s new
-`UPDATE_THEN_REREAD_RE` special-cases a raw value that is precisely
-`{{ <var>.update(<arg>) }}{{ <var> }}` with both operands bare
-variable names (no arbitrary Jinja expression inside `.update(...)`,
-no dict-literal argument, no attribute-chain target) - reads both from
-the vars store directly, merges with Python `dict.update`'s own
-shallow-merge/top-level-key-overrides semantics, and persists the
-merge back onto the target variable (matching Python's real in-place
-mutation, visible to any LATER reference of it too). Deliberately NOT
-the general lazy-dict-templating architecture (deferred evaluation +
-type preservation through the whole vars pipeline) - that remains a
-major undertaking, not attempted. Only the Crinja-side path was fixed
-(`crinja_renderer.cr`) - the failure this idiom produces is specifically
-a Crinja `{% for %}` block-tag consumption (`variable_lookup.cr`'s/
-`filter_engine.cr`'s/`comparison_evaluator.cr`'s own separate
-`rerender_if_templated` implementations, the hand-rolled evaluator
-side, were not touched since nothing in the documented repro reaches
-them). Any OTHER shape of this idiom (a dict literal `.update({...})`,
-an attribute-chain target, three or more chained `.update()` calls,
-...) still hits the old string-coercion behavior - narrow by design,
-not a general solution.
+Two concrete shapes found live are special-cased and work
+(`jtyr.nsswitch`/`jtyr.motd`, 0.9.697-0.9.700 - see `git log` for the
+root-cause detail, and `spec/unit/crinja_renderer_spec.cr` /
+`spec/unit/expression_evaluator_spec.cr` for the regression specs):
 
-**Real bug found and fixed (0.9.699) via a live confirm-phase round
-against `jtyr.nsswitch` on a real host, immediately after 0.9.697
-shipped**: the 0.9.697 merge read `target`/`arg`'s RAW dicts straight
-from the vars store without recursively re-rendering each dict's OWN
-values first. `jtyr.nsswitch`'s real `nsswitch__default` isn't a flat
-dict of plain scalars (unlike the spec that shipped with 0.9.697) -
-every one of ITS values is itself a bare `{{ nsswitch_passwd }}`-style
-indirection to a real list. The merged result held the literal,
-unrendered `"{{ nsswitch_passwd }}"` TEXT in every value; the role's
-own template then did `{{ val | join(' ') }}` on that literal string,
-which iterated its individual CHARACTERS instead of the real list - no
-error, no failed task, just a silently corrupted `/etc/nsswitch.conf`
-that broke NSS `passwd:` resolution and `sudo` outright on the real
-test host (confirmed live: the SECOND, idempotency-check run of
-`ansible-playbook` itself failed with "sudo: you do not exist in the
-passwd database", because the FIRST run's krikri-rendered config had
-already broken user lookups on that host). Fixed by routing each
-dict's values through the same `rerender_nested_templates` recursion
-before merging. See `spec/unit/crinja_renderer_spec.cr`'s "recursively
-re-renders each merged dict's OWN values" spec.
+- `some_var: "{{ some_dict.update(other_dict) }}{{ some_dict }}"` -
+  the mutate-for-side-effect-then-reread idiom, with both operands
+  bare variable names.
+- `motd_info: "{{ list_a + list_b }}"` - list concatenation where the
+  elements are dicts whose own values need recursive re-rendering,
+  including a `{{ {...} if cond else {...} }}` dict-literal element.
 
-**`jtyr.motd`'s divergence (found in the same confirm round) is now
-also fixed (0.9.700)** - a different, harder shape than `.update()`,
-not covered by the 0.9.699 fix: `motd_info: "{{ motd_info__default +
-motd_info__custom }}"` (list CONCATENATION, not `.update()`) where
-`motd_info__default` is a YAML list whose OWN elements are dicts with
-templated values, one of which is a bare `{{ {...} if cond else {...}
-}}` conditional DICT-LITERAL expression as a whole list item. Failed
-identically: `{% for item in motd_info %}{% for key, value in item
-%}` - "cannot unpack multiple values of type Crinja::Value". Two
-separate bugs, both root-caused via a live real-host repro (not
-guessed at):
-
-1. **`ExpressionEvaluator#resolve_plus_operand`'s plain-lookup fallback
-   (`retemplated_lookup_value`) only re-rendered a resolved value that
-   was itself a bare String** - an Array/Hash resolved value (like
-   `motd_info__default`, whose own list items are dicts with `{{
-   ansible_facts.fqdn }}`-style values) passed straight through
-   unrendered. `motd_info` (built from `motd_info__default +
-   motd_info__custom`, a bare `+`-operand resolution) kept literal `{{
-   ansible_facts.fqdn }}` TEXT in every dict value, with no error at
-   all - a silent, wrong-content bug, not a crash. Fixed by delegating
-   to `CrinjaRenderer.rerender_nested_templates` (the same recursive
-   helper the Crinja context-conversion path already used) instead of
-   only handling the top-level-String case.
-2. **A container literal built from a Python-style dict/set expression
-   finalizes to single-quoted Python-repr text** (`"{'Virtual': 'NO'}"`)
-   which `JSON.parse` correctly refuses to parse (not valid JSON) - so
-   `CrinjaRenderer#rerender_string_value`'s container-shaped reparse
-   fell all the way back to a plain STRING instead of a real dict once
-   `JSON.parse` failed, which is what actually crashed the `{% for key,
-   value in item %}` unpack (item 3 of `motd_info__default` is exactly
-   this shape). Fixed by falling back to a genuine STRUCTURAL Crinja
-   evaluation (`evaluate_value!`, already used elsewhere for exactly
-   this "get the real `Crinja::Value`, not a stringify-then-reparse
-   round trip" need) instead of giving up to a string when the JSON
-   reparse fails on container-shaped text.
-
-Verified against the exact real role locally (full rendered MOTD
-matches expected content) and against real ansible-playbook on a fresh
-host pair - see `spec/unit/expression_evaluator_spec.cr`'s "+
-concatenation of a list whose own elements need recursive
-re-rendering" and `spec/unit/crinja_renderer_spec.cr`'s "recovers a
-real dict from a Python-repr" specs.
+**What remains open**: every OTHER shape. A dict literal inside
+`.update({...})`, an attribute-chain target, three or more chained
+`.update()` calls, and anything else that needs a real object rather
+than a string still hits the old coercion. The general fix is
+deferred evaluation plus type preservation through the whole vars
+pipeline, touching BOTH evaluators - a major undertaking, deliberately
+not attempted. Note this is the same architectural rewrite the
+native-typing entry further down independently concluded was not worth
+doing on its own evidence (1 genuine occurrence in a 611-role corpus);
+if it is ever picked up, these two entries are one job, not two.
 
 ### `RemovedActionError`'s message text is only approximate, and this is permanent
 
@@ -170,89 +99,6 @@ exists anywhere in this engine to hang a version-aware message table
 off of, and `rc=1`/detection is identical either way - cosmetic text
 only. Left as permanently approximate rather than chasing every
 ansible-core minor release's exact string.
-
-### bimdata.ferm's `namespace()`-accumulator + nested `lookup('template', ...)` round-trip - root-caused and fixed (0.9.681 + 0.9.682's crinja bump)
-
-Found benchmarking bimdata.ferm (round849): its own `get_vars.j2` builds a
-result list with `{% set ns = namespace(items=[]) %}` +
-`{% for varname in lookup('varnames', pattern, wantlist=True) %}...{% set _ =
-ns.items.append(...) %}{% endfor %}`, then emits `{{ ns.items | to_json }}`,
-reached via `defaults/main.yml`'s `_ferm_rules: "{{ lookup('template', ...,
-template_vars=dict(...)) | from_json }}"` - a `{{ }}`-valued default that
-gets re-rendered on read via `CrinjaRenderer.convert_var`/
-`rerender_nested_templates`, which dispatches to Crinja's own native
-`lookup` function (`jinja_filters.cr`'s `:lookup`, independent of
-`expression_evaluator.cr`'s hand-rolled `lookup_template` per this repo's own
-two-evaluator split - see this file's own top-of-repo `CLAUDE.md`).
-
-Three separate bugs, all now fixed, needed to make this real round-trip
-work end to end:
-
-1. **`template_vars=dict(...)` and the `#jinja2:` directive-strip were
-   missing from `jinja_filters.cr`'s native `:lookup` "template" case**
-   (0.9.681) - the identical fix `expression_evaluator.cr`'s
-   `lookup_template` already had, ported in.
-2. **Crinja's `Resolver#resolve_attribute` crashed with "Invalid Int32:
-   ..." on `namespace().items.append(...)`** - its numeric-index fallback
-   called the raising `name.to_i` on ANY failed attribute lookup,
-   including a genuine method-call name like "append" (not just inside a
-   nested lookup - this crashed `namespace()`-accumulation everywhere,
-   including a plain top-level `.j2` template render, once actually
-   traced down; the original "comes back as literal unrendered text"
-   symptom first seen was from a different path - a bare `{{ }}` task
-   param, which doesn't dispatch complex block-tag expressions to Crinja
-   at all, not a namespace()-specific rendering failure inside nested
-   lookups as first suspected).
-3. **`Array` had no `crinja_call` at all**, so even once #2 stopped
-   crashing, `.append(x)`/`.extend(iterable)` simply weren't implemented -
-   Crinja's method dispatch only calls through to `crinja_call` for types
-   that implement it.
-
-\#2 and #3 are fixed in the vendored `crinja` fork itself
-(`weirdbricks/crinja` tag `crystal-play-0.9.22`, `shard.yml` bumped) -
-`src/runtime/resolver.cr`'s rescue-guarded probe and the new
-`src/runtime/python_list_methods.cr` (mirroring the existing
-`python_hash_methods.cr`'s `Hash#crinja_call` pattern for `Hash#keys`/
-`#values`/`#items`/`#get`). See that fork's own `PATCHES.md` for the full
-detail. Verified end to end against the exact bimdata.ferm shape -
-`namespace()` accumulation through `to_json`/`from_json` via a nested
-`lookup('template', ..., template_vars=dict(...))` call now resolves
-correctly. See `spec/unit/crinja_renderer_spec.cr`.
-
-### brunobenchimol.certbot_dns (round855) - recap skip-count mismatch, root-caused and fixed (0.9.682)
-
-`rc=0` on both engines, no crash - but real Ansible's recap showed `ok=8
-skipped=40` where this engine showed `ok=9 skipped=21`. A side-by-side
-TASK-banner diff (not just a recap-count comparison) ruled out two
-hypotheses before finding the real one: the role's `meta/main.yml`
-dependency on `geerlingguy.certbot` runs exactly once on both engines, and
-the later explicit `import_role: name: geerlingguy.certbot` (gated `when:
-certbot_create_if_missing`, default `false`) is correctly skipped by both -
-neither is a role-params-leaking-across-role-boundaries bug.
-
-**Root cause: `import_role:`'s `when:` was evaluated once against the
-IMPORT ITSELF, instead of being combined onto every task the role expands
-to.** Real Ansible resolves `import_role:`/`import_tasks:` statically - the
-import line produces no task result of its own at all, only its expanded
-children do, and its `when:` is combined (parent PREPENDED, matching
-`import_tasks:`'s own already-fixed short-circuit ordering - see
-`try_parse_import_tasks`'s comment) onto EVERY one of those children. A
-`when: false` static import must therefore still show each inner task
-individually as `TASK [...]`/`skipping:` under its own real name - real
-Ansible's py output here showed the entirety of `geerlingguy.certbot`'s own
-task list expanded and skipped this way. This engine's
-`run_include_role_once` instead returned early on a false `when:` without
-ever loading or expanding the role's tasks at all, undercounting `skipped`
-by the whole imported role's task count - not a loop-counting issue as
-first suspected; the role's own `with_items:`-driven "Delete Certificates."
-task was unaffected on both engines throughout.
-
-Fixed by loading the role's tasks unconditionally for a static import, then
-propagating the import's own `when:` onto each (parent prepended, same
-short-circuit-safe ordering `import_tasks:` already uses - a child
-referencing a `register:` result from an earlier task the parent gate
-would have skipped stays safe, verified directly). See
-`spec/integration/import_role_when_expansion_spec.cr`.
 
 ## The parity-breaking tier was built, measured, and removed (0.9.641)
 

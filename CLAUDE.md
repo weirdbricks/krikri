@@ -64,11 +64,6 @@ This is the primary way bugs get found - unit specs alone (900+) have never been
 round against a production Ansible role finds more. Read `KNOWN_MISSING.md`'s own intro before
 starting a round.
 
-0. **Check `KNOWN_MISSING.md`'s native-typing entry** for the pending
-   passive frequency scan - it asks the round to grep the downloaded role
-   set for one specific shape BEFORE running, without changing which
-   roles the round picks. Cheap, and it is the open question blocking a
-   decision on the last documented gap.
 1. **Check `ROLES_TESTED.md` first** for a role shortlist - avoids re-discovering Galaxy-404s
    (`geerlingguy.mongodb`/`.consul`/`.golang` don't exist anymore) or re-verifying already-clean
    roles as if new (unless deliberately re-checking after something made a host suspect).
