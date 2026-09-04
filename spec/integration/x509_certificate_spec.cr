@@ -31,6 +31,17 @@ private def cert_text(path : String) : String
   `openssl x509 -in #{path} -noout -text 2>/dev/null`
 end
 
+# Subject/issuer one-line output format drifts across OpenSSL versions
+# (3.0 prints "CN = example.com", 3.5 prints "CN=example.com"), so the
+# assertions normalize to the no-space form before comparing.
+private def subject_line(path : String) : String
+  `openssl x509 -in #{path} -noout -subject 2>/dev/null`.strip.gsub(" = ", "=")
+end
+
+private def issuer_line(path : String) : String
+  `openssl x509 -in #{path} -noout -issuer 2>/dev/null`.strip.gsub(" = ", "=")
+end
+
 Spec.before_suite do
   FileUtils.rm_rf(TMP_DIR) if Dir.exists?(TMP_DIR)
   Dir.mkdir_p(TMP_DIR)
@@ -51,8 +62,8 @@ describe "x509_certificate plugin" do
     result["notBefore"].as_s.should match(/\A\d{14}Z\z/)
     result["serial_number"].as_i64.should be > 0
 
-    `openssl x509 -in #{path} -noout -subject 2>/dev/null`.strip.should eq("subject=CN=self.example.com")
-    `openssl x509 -in #{path} -noout -issuer 2>/dev/null`.strip.should eq("issuer=CN=self.example.com")
+    subject_line(path).should eq("subject=CN=self.example.com")
+    issuer_line(path).should eq("issuer=CN=self.example.com")
 
     # ~10 years out, matching selfsigned_not_after's "+3650d" default.
     days = (Time.parse_utc(result["notAfter"].as_s, "%Y%m%d%H%M%SZ") - Time.utc).total_days
@@ -100,7 +111,7 @@ describe "x509_certificate plugin" do
       {"path" => path, "privatekey_path" => key, "csr_path" => csr, "provider" => "selfsigned"})
 
     result["changed"].as_bool.should be_true
-    `openssl x509 -in #{path} -noout -subject 2>/dev/null`.strip.should eq("subject=CN=renamed.example.com")
+    subject_line(path).should eq("subject=CN=renamed.example.com")
   end
 
   it "reissues when the private key no longer matches the certificate" do
@@ -131,7 +142,7 @@ describe "x509_certificate plugin" do
        "ownca_privatekey_path" => ca_key, "provider" => "ownca"})
 
     result["changed"].as_bool.should be_true
-    `openssl x509 -in #{leaf_crt} -noout -issuer 2>/dev/null`.strip.should eq("issuer=CN=My CA")
+    issuer_line(leaf_crt).should eq("issuer=CN=My CA")
     cert_text(leaf_crt).should contain("X509v3 Authority Key Identifier")
     `openssl verify -CAfile #{ca_crt} #{leaf_crt} 2>&1`.should contain("OK")
 

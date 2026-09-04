@@ -23,6 +23,13 @@ private def csr_text(path : String) : String
   `openssl req -in #{path} -noout -text 2>/dev/null`
 end
 
+# Subject one-line output format drifts across OpenSSL versions (3.0
+# prints "CN = example.com", 3.5 prints "CN=example.com"), so the
+# assertions normalize to the no-space form before comparing.
+private def subject_line(path : String) : String
+  `openssl req -in #{path} -noout -subject 2>/dev/null`.strip.gsub(" = ", "=")
+end
+
 describe "openssl_csr plugin" do
   it "generates a CSR carrying the requested subject" do
     path = csr_path("a.csr")
@@ -32,7 +39,7 @@ describe "openssl_csr plugin" do
     result["changed"].as_bool.should be_true
     result["filename"].as_s.should eq(path)
     result["privatekey"].as_s.should eq(KEY)
-    `openssl req -in #{path} -noout -subject 2>/dev/null`.strip.should eq("subject=CN=example.com")
+    subject_line(path).should eq("subject=CN=example.com")
   end
 
   # The single most consequential default in this module: without it the
@@ -67,7 +74,7 @@ describe "openssl_csr plugin" do
       {"path" => path, "privatekey_path" => KEY, "common_name" => "other.com"})
 
     result["changed"].as_bool.should be_true
-    `openssl req -in #{path} -noout -subject 2>/dev/null`.strip.should eq("subject=CN=other.com")
+    subject_line(path).should eq("subject=CN=other.com")
   end
 
   it "regenerates when the private key changes" do
@@ -106,7 +113,7 @@ describe "openssl_csr plugin" do
       "email_address"            => "admin@example.com",
     })
 
-    `openssl req -in #{path} -noout -subject 2>/dev/null`.strip.should eq(
+    subject_line(path).should eq(
       "subject=C=NL, ST=Noord-Holland, L=Amsterdam, O=Acme, OU=IT, CN=full.example.com, emailAddress=admin@example.com")
   end
 
@@ -183,7 +190,7 @@ describe "openssl_csr plugin" do
       {"path" => path, "privatekey_path" => KEY, "common_name" => "slash.example.com",
        "organization_name" => "Acme/Roadrunner"})
 
-    `openssl req -in #{path} -noout -subject 2>/dev/null`.should contain("O=Acme/Roadrunner")
+    subject_line(path).should contain("O=Acme/Roadrunner")
   end
 
   it "returns the CSR content only when asked, and removes it for state: absent" do

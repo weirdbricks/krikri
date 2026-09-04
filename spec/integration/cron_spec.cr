@@ -30,11 +30,11 @@ describe "cron plugin" do
   end
 
   it "resolves a relative cron_file: against /etc/cron.d, matching real Ansible" do
-    # This spec runs unprivileged, so it can't actually write to
-    # /etc/cron.d - it only asserts the path RESOLUTION is correct
-    # (cron.py's CronTab#__init__: a relative cron_file: joins onto
-    # /etc/cron.d, only an absolute path is used as-is). A permission
-    # error at exactly the resolved path is the observable proof.
+    # Path-resolution proof (cron.py's CronTab#__init__: a relative
+    # cron_file: joins onto /etc/cron.d, only an absolute path is used
+    # as-is). The observable evidence depends on privilege:
+    # unprivileged, a permission error at exactly the resolved path;
+    # as root (CI's job container), the file is actually created there.
     result = PluginSpecHelper.run("cron", {
       "name"      => "run lynis",
       "job"       => "/tmp/lynis/lynis --cronjob audit system",
@@ -43,8 +43,15 @@ describe "cron plugin" do
       "cron_file" => "krikri-playbook-spec-relative",
     })
 
-    result["failed"]?.try(&.as_bool).should be_true
-    result["msg"].as_s.should contain("/etc/cron.d/krikri-playbook-spec-relative")
+    resolved = "/etc/cron.d/krikri-playbook-spec-relative"
+    if File.writable?("/etc/cron.d")
+      result["failed"]?.should be_falsey
+      File.read(resolved).should contain("/tmp/lynis/lynis")
+      File.delete(resolved)
+    else
+      result["failed"]?.try(&.as_bool).should be_true
+      result["msg"].as_s.should contain(resolved)
+    end
   end
 
   it "is idempotent on a second run with the same parameters" do

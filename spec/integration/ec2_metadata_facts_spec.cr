@@ -11,7 +11,14 @@ describe "ec2_metadata_facts plugin" do
     result = PluginSpecHelper.run("ec2_metadata_facts", {} of String => String)
 
     result["failed"].as_bool.should be_true
-    result["msg"].as_s.should contain("EC2 metadata service")
+    # Off EC2 the token request times out or refuses ("Could not reach
+    # the EC2 metadata service"), but on a cloud CI runner a real IMDS
+    # answers the token request with a non-2xx ("Failed to retrieve
+    # metadata token ... HTTP 400") - both are clean failures, and the
+    # distinction is the environment's, not the plugin's.
+    msg = result["msg"].as_s
+    msg.should contain("metadata")
+    msg.should match(/EC2 metadata service|HTTP \d+/)
   end
 
   it "fails cleanly for an out-of-range metadata_token_ttl_seconds" do

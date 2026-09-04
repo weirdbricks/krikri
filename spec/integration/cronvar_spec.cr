@@ -27,17 +27,25 @@ describe "cronvar plugin" do
   end
 
   it "resolves a relative cron_file: against /etc/cron.d, matching real Ansible" do
-    # Same proof shape as cron_spec's relative-path example: this spec
-    # runs unprivileged, so a permission error at exactly the resolved
-    # path is the observable evidence of correct resolution.
+    # Same proof shape as cron_spec's relative-path example. The
+    # observable evidence of correct resolution depends on privilege:
+    # unprivileged, a permission error at exactly the resolved path;
+    # as root (CI's job container), the file is actually created there.
     result = PluginSpecHelper.run("cronvar", {
       "name"      => "MAILTO",
       "value"     => "root",
       "cron_file" => "krikri-playbook-spec-relative",
     })
 
-    result["failed"]?.try(&.as_bool).should be_true
-    result["msg"].as_s.should contain("/etc/cron.d/krikri-playbook-spec-relative")
+    resolved = "/etc/cron.d/krikri-playbook-spec-relative"
+    if File.writable?("/etc/cron.d")
+      result["failed"]?.should be_falsey
+      File.read(resolved).should contain("MAILTO=root")
+      File.delete(resolved)
+    else
+      result["failed"]?.try(&.as_bool).should be_true
+      result["msg"].as_s.should contain(resolved)
+    end
   end
 
   it "is idempotent on a second run with the same parameters" do

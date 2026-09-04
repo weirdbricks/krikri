@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "file_utils"
+require "socket"
 
 # These specs drive the compiled `bin/krikri-playbook` binary against the
 # example playbooks in testing/*.yml, in --check mode, using an inventory
@@ -49,6 +50,28 @@ private def run_playbook(
     env: env
   )
   {status, output.to_s}
+end
+
+# The daemon-dependent smoke tests need real daemons the dev box may or
+# may not have running; where they're absent the spec can't exercise
+# anything, so it pendings instead of failing (matches the
+# "requires a real ..." in the titles).
+private def daemon_reachable?(host : String, port : Int32) : Bool
+  sock = TCPSocket.new(host, port, connect_timeout: 1)
+  sock.close
+  true
+rescue
+  false
+end
+
+private def docker_daemon_ready? : Bool
+  # The docker CLI honors DOCKER_HOST; with no env override, a reachable
+  # /var/run/docker.sock is the usual local-daemon signal.
+  return false if ENV["DOCKER_HOST"]?.nil? && !File.exists?("/var/run/docker.sock")
+  status = Process.run("docker", ["info"], output: Process::Redirect::Close, error: Process::Redirect::Close)
+  status.success?
+rescue
+  false
 end
 
 describe "krikri-playbook CLI (--check mode)" do
@@ -1049,7 +1072,12 @@ describe "krikri-playbook CLI (--check mode)" do
     output.should contain("dynamic inventory smoke test complete!")
   end
 
+  # These three smoke tests need real daemons the dev box may or may not
+  # have running; where they're absent the spec can't exercise anything,
+  # so it pendings instead of failing (matches the "requires a real ..."
+  # in the titles).
   it "manages a Docker image/network/container end to end with correct idempotency (requires a real Docker/Podman daemon)" do
+    pending! "no Docker/Podman daemon reachable" unless docker_daemon_ready?
     status, output = run_playbook(
       "test-docker-quick.yml",
       [] of String,
@@ -1066,6 +1094,7 @@ describe "krikri-playbook CLI (--check mode)" do
   end
 
   it "manages a MySQL/MariaDB database and user (with privilege diffing) end to end (requires a real server at 127.0.0.1:13306)" do
+    pending! "no MySQL/MariaDB server at 127.0.0.1:13306" unless daemon_reachable?("127.0.0.1", 13306)
     status, output = run_playbook(
       "test-mysql-quick.yml",
       [] of String,
@@ -1088,6 +1117,7 @@ describe "krikri-playbook CLI (--check mode)" do
   end
 
   it "manages a PostgreSQL database and role (with attribute flag diffing) end to end (requires a real server at 127.0.0.1:15432)" do
+    pending! "no PostgreSQL server at 127.0.0.1:15432" unless daemon_reachable?("127.0.0.1", 15432)
     status, output = run_playbook(
       "test-postgresql-quick.yml",
       [] of String,

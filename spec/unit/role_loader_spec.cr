@@ -408,19 +408,38 @@ describe Krikri::RoleLoader do
     # is why the test uses a REAL collection under a REAL home
     # directory - the dev-sec.hardening collection already installed
     # at `~/.ansible/collections/` from the round-24 devsec_mysql
-    # benchmark is the perfect test fixture (no test-local setup
-    # required, and the test fails the same way the live role would
-    # if anyone ever breaks the tilde expansion again).
+    # benchmark is the natural test fixture, and anywhere it isn't
+    # installed (CI) a minimal stand-in with the same FQCN is created
+    # under the same path and removed afterward.
     ENV.delete("ANSIBLE_COLLECTIONS_PATH")
     ENV.delete("ANSIBLE_COLLECTIONS_PATHS")
     original_cwd = Dir.current
     Dir.cd("/tmp")
+
+    # The loader resolves `~` through the passwd database (the real home),
+    # so a temp HOME can't redirect it - the fixture has to live under the
+    # actual `~/.ansible/collections/`. The devsec.hardening collection
+    # installed by the round-24 devsec_mysql benchmark is the fixture when
+    # present (mysql_hardening is the smallest role there); anywhere else
+    # (CI), create a minimal stand-in collection with the same FQCN and
+    # shape and remove it afterward.
+    # NOTE: Path.home, not File.expand_path("~", ...) - expand_path does
+    # NOT expand a leading tilde in Crystal, which is the very bug this
+    # spec pins. The fixture has to land in the real home.
+    collection_dir = File.join(Path.home.to_s, ".ansible/collections/ansible_collections/devsec/hardening")
+    role_dir = File.join(collection_dir, "roles", "mysql_hardening")
+    fixture_created = false
+    unless Dir.exists?(role_dir)
+      tasks_dir = File.join(role_dir, "tasks")
+      Dir.mkdir_p(tasks_dir)
+      # First task name matches the real role's arg-spec validation entry,
+      # so the sanity assertion below holds for both fixture flavors.
+      File.write(File.join(tasks_dir, "main.yml"),
+        "---\n- name: Validating arguments (fixture)\n  ansible.builtin.debug:\n    msg: role_loader tilde-expansion fixture\n")
+      fixture_created = true
+    end
+
     begin
-      # The devsec.hardening collection is installed at
-      # ~/.ansible/collections/ansible_collections/devsec/hardening
-      # (round-24 devsec_mysql install). mysql_hardening is the
-      # smallest role (3 task files, 6 handlers, no networking
-      # surface), so use it as the test FQCN.
       tasks, _ = Krikri::RoleLoader.load_roles(
         roles_yaml("- devsec.hardening.mysql_hardening"),
         fresh_play,
@@ -432,6 +451,7 @@ describe Krikri::RoleLoader do
       # arguments" task as its first entry (arg-spec validation).
       tasks[0].name.should contain("Validating arguments")
     ensure
+      FileUtils.rm_rf(File.join(collection_dir, "roles", "mysql_hardening")) if fixture_created
       Dir.cd(original_cwd)
     end
   end

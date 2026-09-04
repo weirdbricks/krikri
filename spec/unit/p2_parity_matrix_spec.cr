@@ -39,7 +39,17 @@ private def parity_vars : Hash(String, JSON::Any)
   h = Hash(String, JSON::Any).new
   h["small"] = JSON.parse(%(["a", "b"]))
   h["big"] = JSON.parse(%(["a", "b", "c"]))
-  h["real_file"] = JSON::Any.new("/etc/hosts")
+  # A freshly created plain file, not a well-known path: inside a job
+  # container /etc/hosts is itself a bind mount (GitHub Actions, any
+  # Docker run), so `is_mount` on it would legitimately be True there
+  # and the False expectation would only hold on a dev box.
+  plain_file = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "p2-parity-plain-file.txt")
+  File.delete(plain_file) if File.exists?(plain_file)
+  File.write(plain_file, "plain file for the is_mount=False row\n")
+  at_exit do
+    File.delete(plain_file) if File.exists?(plain_file)
+  end
+  h["real_file"] = JSON::Any.new(plain_file)
   h["real_dir"] = JSON::Any.new("/etc")
   h["rel_path"] = JSON::Any.new("etc/hosts")
   h["flag"] = JSON::Any.new("true")
@@ -97,7 +107,7 @@ describe "P2.16 cross-engine parity matrix" do
     "is_abs positive"                          => {"{{ real_file is is_abs }}", "True"},
     "is_abs negative"                          => {"{{ rel_path is is_abs }}", "False"},
     "is_mount on a plain file"                 => {"{{ real_file is is_mount }}", "False"},
-    "is_same_file identity"                    => {"{{ real_file is is_same_file('/etc/hosts') }}", "True"},
+    "is_same_file identity"                    => {"{{ real_file is is_same_file(real_file) }}", "True"},
     "true test on a real Bool"                 => {"{{ bool_flag is true }}", "True"},
     "false test on a real Bool"                => {"{{ bool_flag is false }}", "False"},
     "falsy on empty string"                    => {"{{ empty is falsy }}", "True"},
