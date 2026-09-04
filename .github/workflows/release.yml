@@ -1,6 +1,10 @@
 name: Release
 
-# Triggered by pushing a tag like v0.9.646. Builds a release (optimized +
+# Triggered by pushing a tag like v0.9.646, or dispatched by auto-tag.yml
+# (which cannot trigger this by pushing the tag itself - a push made with
+# the workflow's own GITHUB_TOKEN never starts another workflow, GitHub's
+# anti-recursion rule - so auto-tag dispatches this explicitly instead).
+# Builds a release (optimized +
 # stripped, fully static via Alpine/musl) binary set per architecture
 # and attaches them to the matching GitHub Release.
 
@@ -8,6 +12,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch: {}
 
 permissions:
   contents: write

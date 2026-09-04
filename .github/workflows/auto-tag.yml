@@ -4,9 +4,12 @@ name: Auto Tag Release
 # pushes a matching v<VERSION> tag ONLY if that tag doesn't already
 # exist - which, since this project bumps VERSION with every commit
 # that changes engine/plugin behavior (see CLAUDE.md), is exactly
-# "there's new code since the last release". Pushing the tag is all
-# this does: the existing release.yml workflow already builds and
-# publishes a GitHub Release for any v* tag push, unchanged.
+# "there's new code since the last release". Pushing the tag alone is
+# NOT enough to release: a push made with this workflow's own
+# GITHUB_TOKEN never triggers release.yml (GitHub ignores events
+# created by the token to prevent workflow recursion - found live
+# Sep 3, when the scheduled run pushed v0.9.720 and no release ever
+# followed), so this dispatches release.yml explicitly after pushing.
 
 on:
   schedule:
@@ -15,6 +18,7 @@ on:
 
 permissions:
   contents: write
+  actions: write # the workflow_dispatch of release.yml below
 
 jobs:
   tag-if-new:
@@ -25,6 +29,8 @@ jobs:
           fetch-depth: 0
 
       - name: Tag the current VERSION if it hasn't been released yet
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           VERSION=$(grep -oP 'VERSION = "\K[^"]+' src/krikri/version.cr)
           TAG="v${VERSION}"
@@ -38,4 +44,6 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -a "$TAG" -m "$TAG"
           git push origin "$TAG"
-          echo "Pushed new tag $TAG - this triggers release.yml automatically."
+          echo "Pushed new tag $TAG"
+
+          gh workflow run release.yml --ref "$TAG"
