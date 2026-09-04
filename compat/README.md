@@ -165,6 +165,17 @@ service, and an idempotent disable rerun - compared via `changed` plus
 `firewall-offline-cmd --query-<thing>` state checks rather than a raw
 zone-file diff, since real Ansible's own module leaves the zone XML in a
 very slightly different (but behaviorally identical) shape.
+`rabbitmq_plugin`/`rabbitmq_user` (`44-rabbitmq.yml`) starts its own
+throwaway rabbitmq node inside the container as the package's `rabbit`
+user (no systemd here, and rabbitmq refuses to run as root) and covers
+plugin enable/disable and user create/delete, each with an idempotent
+rerun - compared via /work snapshots of the enabled-plugin list, the
+user list and the user's permissions captured mid-run (everything
+enabled/present) and at the end (everything disabled/absent), so both
+the converge and un-converge paths are exercised. All captures use the
+`-q`/`-E -m` command forms because their output carries no hostname -
+the two engines run in separate containers, and rabbitmq's banner
+output would otherwise embed one and make byte-diffing impossible.
 
 `set_fact` (`27-set-fact.yml`) covers setting facts of a few different
 types, overwriting one, and deriving a second fact from the first via a

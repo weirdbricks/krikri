@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.731`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.734`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.23` (see `shard.yml`).
 
 ---
@@ -29,21 +29,35 @@ Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
-### `community.rabbitmq` warm-run `changed` delta
+### ~~`community.rabbitmq` warm-run `changed` delta~~ (closed, round 199)
 
-`mrlesmithjr.rabbitmq` re-run: both engines run the role rc=0 with the
-native rabbitmq_plugin/rabbitmq_user plugins, but the warm pass reports
-changed=2 here where real reports changed=0 (one plugin enable, one
-user item). Plugin-side detection was hardened twice already (marker
-regex, ANSI strip, stderr merge); the rest needs the literal
-`rabbitmq-plugins list -e` / `rabbitmqctl list_users` output from a live
-host.
+Was: warm pass reported changed=2 where real reports 0. Live-host
+capture showed the detection had been fine since 0.9.631 - the residue
+was a hardcoded changed flag, a JSON-array tag write that never
+converged, and unconditional set_permissions. Fixed 0.9.734; details
+in the round 199 narrative below.
 
-Worth noting the shape: `community.general.ufw` was filed as exactly
-this ("warm changed=N vs 0, needs a live host") and turned out to be a
-real rule-widening bug where the recap number was only the symptom -
-`port:` was being dropped, so every rule opened every port (0.9.729).
-Diff what the module actually WROTE, not the recap counts.
+### `apt`/`package` doesn't retry an install-miss with an implicit cache update
+
+Found round 312, re-verifying `cronvar`/`apache2_module` against
+`weareinteractive.cron`/`buluma.httpd` on a fresh Ubuntu 24.04 podman
+pair with a genuinely empty apt cache (`/var/lib/apt/lists/` purged, no
+prior `update_cache: true` anywhere in either playbook). Real Ansible's
+`apt` module (and `package:`, which dispatches to it) silently recovers:
+when the initial install can't resolve the package name, it runs an
+implicit cache update and retries once before failing - confirmed via a
+4-line minimal repro (`package: {name: w3m, state: present}` against an
+empty cache) run through real `ansible-playbook` with `-vv`, which
+shows `/var/lib/apt/lists/` going from 0 files to populated mid-task
+even though `update_cache` was never set, and the task succeeds.
+krikri-playbook's `package.cr` shells straight to `apt-get install`
+with no such retry and fails outright: `Unable to locate package w3m`.
+Blocked the `buluma.httpd` role comparison until worked around by
+pre-running `apt-get update` in both test containers - not a fix, since
+the underlying package.cr behavior is still wrong. Needs a retry-on-miss
+path in `package.cr`'s apt/dnf backends (dnf's own CLI already does an
+implicit metadata refresh in most configurations, so this is likely
+apt-specific).
 
 ### Ansible's lazy dict-templating is not replicated in general
 
@@ -74,6 +88,52 @@ not attempted.
 **This is the same rewrite the native-typing entry concluded was not
 worth doing on its own evidence** (1 genuine occurrence in a 611-role
 corpus, ~0.16%). If it is ever picked up, these are one job, not two.
+
+---
+
+## Round 199 (mrlesmithjr.rabbitmq warm-run delta, kata VM, 0.9.733 -> 0.9.734)
+
+Closed the last long-standing open-gap item (`community.rabbitmq` warm
+`changed=2` where real reports 0) on a local kata VM - a real kernel +
+systemd is all rabbitmq needs; no cloud pair required. The live host
+settled it in one pass, and the "diff what the module actually WROTE,
+not the recap counts" lesson was right again: the detection hardening
+in 0.9.631 had worked, but three writing-side bugs remained.
+
+1. **rabbitmq_plugin's changed flag was hardcoded true** - the
+   nothing-to-do fallthrough returned `changed: true` regardless of
+   detection. Detection was fine; the flag never consulted it.
+2. **Tags were written as a JSON array** (`set_user_tags user
+   ["administrator"]`), which rabbitmqctl stores as the LITERAL tag
+   `[administrator]` (list_users shows `[[administrator]]`). The real
+   module passes each tag as its own argv. The tag therefore never
+   converged and every warm pass rewrote it - that was the "one user
+   item".
+3. **set_permissions was applied unconditionally** - the real module
+   queries `list_user_permissions` and compares (dict equality) before
+   acting; and its argspec defaults are `^$`, not `.*`.
+
+Also aligned with the real module: `list -E -m` with exact-line
+membership (bare names, one per line) instead of a `list -e`
+whole-text grep, and the real disable-others behavior for
+state=enabled/new_only=false. Verified live: reset state, cold
+changed=2 / warm changed=0 twice, real `ansible-playbook` warm
+changed=0 on the same host, and the written state confirmed via
+`list -E -m` / `list_users` / `list_user_permissions` (proper single-
+bracket tag, exact privs). No unit spec by design - the decision logic
+is remote-command-shaped; verified live per the no-real-mutation
+convention.
+
+Kata VM timings (not a provisioned pair): py 8.2/4.9s, cr 5.5/2.3s
+cold/warm.
+
+Follow-on: `compat/playbooks/44-rabbitmq.yml` adds this module pair to
+the compat harness (it had no playbook because the modules didn't exist
+when the harness's coverage was built out) - plugin enable/disable and
+user create/delete, each with an idempotent rerun, against a throwaway
+rabbitmq node started inside the container as the package's `rabbitmq`
+user. Both engines rc=0 with byte-identical mid-run and final `/work`
+state snapshots.
 
 ---
 

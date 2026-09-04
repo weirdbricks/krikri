@@ -1,0 +1,125 @@
+# Compat coverage for community.rabbitmq's rabbitmq_plugin / rabbitmq_user
+# (ported 0.9.631, warm-run changed-flag/tag/permission fixes 0.9.734): the
+# playbook starts its own throwaway rabbitmq node inside the container -
+# no systemd in this image, and rabbitmq refuses to run as root, so the
+# start task drops to the package's own `rabbit` user (same shape as the
+# 35/36 db playbooks' init.d trick).
+#
+# Compared via /work snapshots of the enabled-plugin list, the user list
+# and the user's permissions captured mid-run (everything enabled/present)
+# and at the end (everything disabled/absent), so both the converge and
+# un-converge paths are exercised. All captures use the -q / -E -m command
+# forms, whose output carries no hostname - the two engines run in separate
+# containers with different hostnames, and rabbitmq's banner output would
+# otherwise embed one and make byte-diffing impossible.
+
+- name: rabbitmq_plugin / rabbitmq_user compat
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: start the rabbitmq node as the rabbit user
+      ansible.builtin.shell: nohup su rabbitmq -s /bin/sh -c 'rabbitmq-server' >/tmp/rabbitmq-server.log 2>&1 &
+      changed_when: false
+
+    - name: wait for the broker to accept AMQP connections
+      ansible.builtin.wait_for:
+        port: 5672
+        timeout: 120
+
+    - name: enable the management plugin
+      community.rabbitmq.rabbitmq_plugin:
+        name: rabbitmq_management
+        state: enabled
+
+    - name: enabling the same plugin again changes nothing
+      community.rabbitmq.rabbitmq_plugin:
+        name: rabbitmq_management
+        state: enabled
+
+    - name: create the admin user
+      community.rabbitmq.rabbitmq_user:
+        name: rabbitmqadmin
+        password: rabbitmqadmin
+        vhost: /
+        configure_priv: ".*"
+        read_priv: ".*"
+        write_priv: ".*"
+        tags: administrator
+        state: present
+
+    - name: creating the same user again changes nothing
+      community.rabbitmq.rabbitmq_user:
+        name: rabbitmqadmin
+        password: rabbitmqadmin
+        vhost: /
+        configure_priv: ".*"
+        read_priv: ".*"
+        write_priv: ".*"
+        tags: administrator
+        state: present
+
+    - name: capture the enabled-plugin list mid-run
+      ansible.builtin.shell: rabbitmq-plugins list -E -m
+      register: plugins_mid
+      changed_when: false
+
+    - name: capture the user list mid-run
+      ansible.builtin.shell: rabbitmqctl -q list_users
+      register: users_mid
+      changed_when: false
+
+    - name: capture the user's permissions mid-run
+      ansible.builtin.shell: rabbitmqctl -q list_user_permissions rabbitmqadmin
+      register: perms_mid
+      changed_when: false
+
+    - name: write the mid-run state
+      ansible.builtin.copy:
+        content: |
+          plugins:
+          {{ plugins_mid.stdout }}
+          users:
+          {{ users_mid.stdout }}
+          permissions:
+          {{ perms_mid.stdout }}
+        dest: /work/rabbitmq-mid.txt
+
+    - name: disable the management plugin
+      community.rabbitmq.rabbitmq_plugin:
+        name: rabbitmq_management
+        state: disabled
+
+    - name: disabling the same plugin again changes nothing
+      community.rabbitmq.rabbitmq_plugin:
+        name: rabbitmq_management
+        state: disabled
+
+    - name: remove the admin user
+      community.rabbitmq.rabbitmq_user:
+        name: rabbitmqadmin
+        state: absent
+
+    - name: removing an already-absent user changes nothing
+      community.rabbitmq.rabbitmq_user:
+        name: rabbitmqadmin
+        state: absent
+
+    - name: capture the enabled-plugin list at the end
+      ansible.builtin.shell: rabbitmq-plugins list -E -m
+      register: plugins_final
+      changed_when: false
+
+    - name: capture the user list at the end
+      ansible.builtin.shell: rabbitmqctl -q list_users
+      register: users_final
+      changed_when: false
+
+    - name: write the final state
+      ansible.builtin.copy:
+        content: |
+          plugins:
+          {{ plugins_final.stdout }}
+          users:
+          {{ users_final.stdout }}
+        dest: /work/rabbitmq-final.txt

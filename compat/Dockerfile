@@ -35,6 +35,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     mariadb-client \
     postgresql \
     postgresql-client \
+    # rabbitmq node for the rabbitmq_plugin/rabbitmq_user compat playbook
+    # (44): the playbook starts the node itself as the package's `rabbit`
+    # user (no systemd in this image, and rabbitmq refuses to run as root)
+    rabbitmq-server \
     python3-pymysql \
     python3-psycopg2 \
     # link-time deps for the native-format plugins (archive's bz2/xz/z,
@@ -68,7 +72,7 @@ ENV PATH="/opt/ansible-venv/bin:${PATH}"
 # postgresql_db/postgresql_user live in community.mysql /
 # community.postgresql.
 RUN ansible-galaxy collection install ansible.posix community.general \
-    community.mysql community.postgresql
+    community.mysql community.postgresql community.rabbitmq
 
 WORKDIR /repo
 COPY . /repo

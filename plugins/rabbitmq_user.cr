@@ -37,6 +37,11 @@ module Krikri
       # Capture the user's current tags too - the real module skips the
       # set_user_tags call when they already match (an unconditional
       # apply made every warm pass report changed).
+      # Tag parsing mirrors the real module's process_tags: strip ALL
+      # brackets and spaces from the bracketed tag list, then split on
+      # commas. This also converges state written by the old JSON-array
+      # format (rabbitmqctl stored the literal tag ["administrator"],
+      # shown by list_users as [[administrator]]) without a rewrite.
       existing = false
       current_tags : Array(String)? = nil
       (list_out[:stdout] + "\n" + list_out[:stderr]).each_line do |lval|
@@ -44,7 +49,7 @@ module Krikri
         next unless parts.first? == user
         existing = true
         if m = lval.match(/\[(.*)\]/)
-          current_tags = m[1].split(",").map(&.strip)
+          current_tags = m[1].gsub(/[\[\] ]/, "").split(",").reject(&.empty?)
         end
       end
       {existing, current_tags}
@@ -92,21 +97,42 @@ module Krikri
       # requested set (order-insensitive) - real module behavior
       return nil if current_tags && current_tags.sort == tags.sort
 
-      tags_json = "[" + tags.map { |tval| "\"#{tval}\"" }.join(",") + "]"
-      r = remote_exec("rabbitmqctl set_user_tags #{user} #{tags_json}")
+      # real module: each tag as its own argv - `set_user_tags user
+      # tag1 tag2` - NOT a JSON array, which rabbitmqctl stores as the
+      # literal tag string ["tag1"] and so never converges
+      r = remote_exec("rabbitmqctl set_user_tags #{user} #{tags.join(" ")}")
       return PluginResult.new(changed: false, failed: true,
         msg: "Failed to set tags for #{user}: #{r[:stderr]}") if r[:exit_code] != 0
       nil
     end
 
     private def apply_permissions(user : String) : Bool
-      # the module always applies set_permissions (its own "always runs"
-      # behavior); idempotency comes from rabbitmqctl being a no-op when
-      # the privileges already match
+      # real module: compare the user's existing permissions against the
+      # requested ones and only run set_permissions (or report changed)
+      # on a difference - an unconditional apply made every warm pass
+      # report changed (mrlesmithjr.rabbitmq round-196 re-run).
       vhost = @params["vhost"]? || "/"
-      conf_priv = @params["configure_priv"]? || ".*"
-      read_priv = @params["read_priv"]? || ".*"
-      write_priv = @params["write_priv"]? || ".*"
+      conf_priv = @params["configure_priv"]? || "^$"
+      read_priv = @params["read_priv"]? || "^$"
+      write_priv = @params["write_priv"]? || "^$"
+
+      perms_out = remote_exec("rabbitmqctl -q list_user_permissions #{user}")
+      raise CommandError.new("Failed to list permissions for #{user}: #{perms_out[:stderr]}") if perms_out[:exit_code] != 0
+
+      # rows: "vhost\tconfigure\twrite\tread"; the header row is printed
+      # even with -q on rabbitmq 4.x, so filter it
+      existing = nil
+      perms_out[:stdout].each_line do |lval|
+        parts = lval.strip.split("\t")
+        next unless parts.size >= 4
+        next if parts[0] == "vhost"
+        next unless parts[0] == vhost
+        existing = {parts[1], parts[2], parts[3]}
+      end
+
+      requested = {conf_priv, write_priv, read_priv}
+      return false if existing == requested
+
       r = remote_exec("rabbitmqctl set_permissions -p #{vhost} #{user} '#{conf_priv}' '#{read_priv}' '#{write_priv}'")
       raise CommandError.new("Failed to set permissions for #{user} on #{vhost}: #{r[:stderr]}") if r[:exit_code] != 0
 

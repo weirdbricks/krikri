@@ -1251,7 +1251,7 @@ Re-verified clean after fixes (rc parity all phases): cloudalchemy.node_exporter
 | linux-system-roles.systemd | rocky | ⚠️ sr_fingerprint scope cut |
 | gantsign.visual-studio-code-extensions | ubuntu | ✅ identical both-fail rc=2/4 |
 | linux-system-roles.podman | rocky | ⚠️ sr_fingerprint scope cut |
-| mrlesmithjr.rabbitmq | ubuntu | ⚠️ community.rabbitmq module gap (rc=4 vs 0) |
+| mrlesmithjr.rabbitmq | ubuntu | ✅ clean (0.9.734 re-verified on kata VM: warm changed=0 both engines; py 8.2/4.9s, cr 5.5/2.3s cold/warm) |
 | linux-system-roles.ad_integration | rocky | ✅ identical both-fail rc=2 |
 | gantsign.zswap | ubuntu | ✅ clean |
 | gantsign.pyenv | rocky | ✅ clean |
