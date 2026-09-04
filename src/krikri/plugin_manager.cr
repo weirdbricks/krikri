@@ -875,7 +875,7 @@ module Krikri
       stderr = IO::Memory.new
 
       begin
-        process = if become && (sudo_user = become_user)
+        process = if become_needed?(become, become_user, local_username) && (sudo_user = become_user)
                     # No shell involved (args passed as a real argv array,
                     # not interpolated into a command string), so
                     # become_user doesn't need shell-escaping here - unlike
@@ -979,7 +979,7 @@ module Krikri
       # (see #resolve_become and #remote_plugin_target's own note) -
       # required, because it is interpolated into the daemon's own ssh
       # command line the same way the one-shot target string is.
-      daemon_user = become ? (become_user || "root") : nil
+      daemon_user = become_needed?(become, become_user || "root", host.user || "root") ? (become_user || "root") : nil
 
       if @@daemon_enabled && daemon_eligible?(plugin_name, become) &&
          !SSHManager.daemon_unavailable?(connection_host, host.user || "root", host.port, daemon_user)
@@ -999,7 +999,7 @@ module Krikri
         end
       end
 
-      target = remote_plugin_target(plugin_name, become, become_user)
+      target = remote_plugin_target(plugin_name, become, become_user, host.user || "root")
 
       # Execute plugin remotely with config via stdin.
       #
@@ -1166,6 +1166,19 @@ module Krikri
       upload_plugins_to_host(host, [simple_name])
     end
 
+    # The user this process is already running as - the local-connection
+    # equivalent of `remote_user` for #become_needed?. Memoized; falls
+    # back to $USER when the passwd lookup is unavailable.
+    @@local_username : String?
+
+    def self.local_username : String?
+      @@local_username ||= begin
+        System::User.find_by?(id: LibC.getuid.to_s).try(&.username) || ENV["USER"]?
+      rescue
+        ENV["USER"]?
+      end
+    end
+
     # Single-quotes *str* for shell embedding, escaping any embedded
     # single quote - str here is always our own base64 output (alphabet
     # `[A-Za-z0-9+/=]`, never contains a quote), so this is belt-and-
@@ -1176,10 +1189,46 @@ module Krikri
       "'" + str.gsub("'", "'\\''") + "'"
     end
 
-    def self.remote_plugin_target(plugin_name : String, become : Bool, become_user : String?) : String
+    def self.remote_plugin_target(plugin_name : String, become : Bool, become_user : String?, remote_user : String? = nil) : String
       simple_name = plugin_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community.(general|docker|mysql|postgresql|crypto|rabbitmq)|amazon\.aws)\./, "")
       remote_plugin_path = "#{REMOTE_PLUGIN_DIR}/#{simple_name}"
-      become ? "sudo -n -u #{become_user} -- #{remote_plugin_path}" : remote_plugin_path
+      become_needed?(become, become_user, remote_user) ? "sudo -n -u #{become_user} -- #{remote_plugin_path}" : remote_plugin_path
+    end
+
+    # `ANSIBLE_BECOME_ALLOW_SAME_USER` - real Ansible's own config knob,
+    # default false, forcing the escalation even when it is a no-op.
+    def self.become_allow_same_user? : Bool
+      value = ENV["ANSIBLE_BECOME_ALLOW_SAME_USER"]?
+      return false unless value
+      {"1", "true", "yes", "on"}.includes?(value.downcase)
+    end
+
+    # Whether a `become:` task actually needs an escalation command.
+    #
+    # Real Ansible does NOT wrap a command in sudo just because `become:
+    # true` was given - `_low_level_execute_command` gates it on
+    # `C.BECOME_ALLOW_SAME_USER or (buser != ruser or not any((ruser,
+    # buser)))`, so escalating to the user you already are is skipped
+    # entirely. Since `become_user` defaults to root and most inventories
+    # connect as root, that means the overwhelmingly common `become:
+    # true` task runs with NO sudo at all under real Ansible.
+    #
+    # This engine wrapped every such task in `sudo -n -u root --`, which
+    # works only if sudo happens to be installed: on a minimal image
+    # without it (a container, a hardened or slimmed cloud image) EVERY
+    # `become: true` task failed with "sudo: command not found" where
+    # real Ansible succeeded. Found while reproducing an unrelated recap
+    # delta on a plain debian:trixie container, and confirmed with a
+    # two-task minimal repro against real ansible-core 2.19.
+    def self.become_needed?(become : Bool, become_user : String?, remote_user : String?) : Bool
+      return false unless become
+      return true if become_allow_same_user?
+
+      # `not any((ruser, buser))` - with neither side known, real Ansible
+      # escalates rather than guessing they match.
+      return true if (remote_user.nil? || remote_user.empty?) && (become_user.nil? || become_user.empty?)
+
+      become_user != remote_user
     end
 
     # Same become_user allow-list `resolve_become` already enforces,

@@ -37,6 +37,7 @@ private def run_playbook(
   mode_args : Array(String) = ["--check"],
   chdir : String? = nil,
   inventory : String = INVENTORY,
+  env : Hash(String, String)? = nil,
 ) : {Process::Status, String}
   output = IO::Memory.new
   status = Process.run(
@@ -44,7 +45,8 @@ private def run_playbook(
     mode_args + ["-i", inventory, File.join(FIXTURES_DIR, fixture)],
     output: output,
     error: output,
-    chdir: chdir
+    chdir: chdir,
+    env: env
   )
   {status, output.to_s}
 end
@@ -1104,28 +1106,38 @@ describe "krikri-playbook CLI (--check mode)" do
     output.should contain("postgresql plugins smoke test complete!")
   end
 
-  it "wraps a task's plugin execution in sudo -n -u <user> when become: is set, and rejects an invalid become_user without shelling out" do
-    status, output = run_playbook(
-      "test-become-quick.yml",
-      [] of String,
-      inventory: File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-testservers-local.ini")
-    )
+  it "skips a same-user become entirely, matching real Ansible, and rejects an invalid become_user without shelling out" do
+    inventory = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-testservers-local.ini")
+    status, output = run_playbook("test-become-quick.yml", [] of String, inventory: inventory)
 
     status.success?.should be_true
     output.should contain("bad_user_failed=True")
 
-    # become_user: "{{ current_user.stdout }}" - sudo to the same user
-    # already running this process, which every sudo/PAM default allows
-    # without a password since it's not a real privilege change (the same
-    # "don't require real root on whatever machine runs this" convention
-    # spec/integration/user_spec.cr/group_spec.cr use). sudo always sets
-    # SUDO_USER in the child's environment when it actually wraps a
-    # command, so this only passes if become: really executed the plugin
-    # through sudo - not a no-op that happened to not error.
-    match = output.match(/current_user=(\S+) became_sudo_user=(\S+)/)
+    # become_user: "{{ current_user.stdout }}" is an escalation to the
+    # user already running this process - real Ansible does NOT wrap that
+    # in sudo at all (`_low_level_execute_command`'s BECOME_ALLOW_SAME_
+    # USER gate), so SUDO_USER is never set in the child. This engine
+    # used to wrap it unconditionally, which meant every `become: true`
+    # task failed outright on a host with no sudo installed - a minimal
+    # container or slimmed cloud image - where real Ansible succeeds.
+    output.should match(/current_user=\S+ became_sudo_user=$/m)
+    output.should contain("become smoke test complete!")
+
+    # ANSIBLE_BECOME_ALLOW_SAME_USER is real Ansible's own opt-out from
+    # that gate, and forcing it back on is what still exercises the sudo
+    # wrapping itself: sudo always sets SUDO_USER in the child when it
+    # actually wraps a command, so this only passes if become: really
+    # executed the plugin through sudo - not a no-op that happened not to
+    # error.
+    status, forced = run_playbook(
+      "test-become-quick.yml", [] of String, inventory: inventory,
+      env: {"ANSIBLE_BECOME_ALLOW_SAME_USER" => "1"}
+    )
+
+    status.success?.should be_true
+    match = forced.match(/current_user=(\S+) became_sudo_user=(\S+)/)
     match.should_not be_nil
     (match || raise "unexpected nil")[1].should eq((match || raise "unexpected nil")[2])
-    output.should contain("become smoke test complete!")
 
     # Real bug found benchmarking geerlingguy.solr's own "Ensure core
     # configuration directories exist." task (become_user: solr,
@@ -1136,10 +1148,9 @@ describe "krikri-playbook CLI (--check mode)" do
     # /root/... install is a common real-world case) - `sudo: Sorry,
     # user root is not allowed to execute '/root/.../plugins/command'
     # as solr`, really a plain EACCES on /root's own 0700 mode, not an
-    # actual sudoers policy denial. A become: task must now stage a
+    # actual sudoers policy denial. A become: task must stage a
     # world-traversable copy of the plugin binary at REMOTE_PLUGIN_DIR
-    # before sudo-ing to it, exactly as this "become to the current
-    # user" task (command:, become: true) already exercises above.
+    # before sudo-ing to it, which the forced run above exercises.
     staged_command_plugin = "/var/tmp/.krikri-playbook/plugins/command"
     File.exists?(staged_command_plugin).should be_true
     (File.info(staged_command_plugin).permissions.value & 0o777).should eq(0o755)

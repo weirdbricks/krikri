@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.729`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.730`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.23` (see `shard.yml`).
 
 ---
@@ -639,8 +639,18 @@ are recorded in `ROLES_TESTED.md`'s round-191 rows.
   ansible fails a LATER task with "'users' is undefined". Both engines
   fail the role; the failure point and message differ.
 - **±1-task recap deltas** (gantsign.java warm, cloudalchemy cold on
-  re-run pairs sharing controller /tmp state): single loop-item/task
-  counting differences; root cause not yet isolated.
+  re-run pairs sharing controller /tmp state): **did not reproduce** on
+  a fresh container pair at 0.9.730. gantsign.java now matches exactly
+  cold (ok=27 changed=8 skipped=5) and warm (ok=26 changed=0 skipped=6),
+  and cloudalchemy.node_exporter matches exactly on a systemd host
+  (cold ok=16 changed=7 skipped=16) and fails identically on a
+  non-systemd one (the role's own "only works with systemd" assert).
+  The original note already suspected controller /tmp state shared
+  across re-run pairs, and several engine fixes have shipped since
+  round 196. Left recorded rather than deleted: a ±1 delta that only
+  appears on a reused pair is worth recognising if it resurfaces, but
+  it is not a reproducible open bug today. Chasing it did surface the
+  become/sudo divergence fixed in 0.9.730 - see git log.
 - **`community.rabbitmq` warm deltas** (mrlesmithjr.rabbitmq re-run):
   both engines now run the role rc=0 with the new native
   rabbitmq_plugin/rabbitmq_user plugins, but crystal's warm pass reports

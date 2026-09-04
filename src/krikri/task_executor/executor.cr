@@ -4155,7 +4155,7 @@ module Krikri
       # the target before the script is built - pre-upload cannot see
       # modules that only appear inside a runtime include_tasks:.
       PluginManager.ensure_uploaded(host, task.module_name, vars_context)
-      plugin_target = PluginManager.remote_plugin_target(task.module_name, become, become_user)
+      plugin_target = PluginManager.remote_plugin_target(task.module_name, become, become_user, host.user || "root")
 
       # The daemon transport (item 3) dispatches by module NAME inside an
       # already-running process, and takes its privilege from which
@@ -4164,9 +4164,14 @@ module Krikri
       # become_user means "no become", which is a DIFFERENT daemon from
       # `"root"`, so the distinction is carried through rather than
       # normalized away.
+      # Same "is this escalation a no-op?" test the script transport's own
+      # target string already went through (PluginManager.become_needed?):
+      # a `become: true` to the user we already are needs no daemon of its
+      # own, and asking for one would spawn it under a `sudo` that real
+      # Ansible never runs - and that a minimal host may not even have.
       BatchScript::Step.new(plugin_target, config_json, task.ignore_errors?,
         PluginManager.simple_plugin_name(task.module_name),
-        become ? become_user : nil)
+        PluginManager.become_needed?(become, become_user, host.user || "root") ? become_user : nil)
     end
 
     # Run one attempt of a task (when: check + param substitution + action
@@ -4427,7 +4432,7 @@ module Krikri
       end
 
       PluginManager.ensure_uploaded(exec_host, task.module_name, vars)
-      target = PluginManager.remote_plugin_target(task.module_name, become, become_user)
+      target = PluginManager.remote_plugin_target(task.module_name, become, become_user, exec_host.user || "root")
       connection_host = PluginManager.get_connection_host(exec_host, vars)
       user = exec_host.user || "root"
       identity_file = vars["ansible_ssh_private_key_file"]?.try(&.as_s?)

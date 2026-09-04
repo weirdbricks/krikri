@@ -8,6 +8,13 @@
 # signal that become: actually ran the task through sudo, not just a
 # no-op check that the task didn't error.
 #
+# BUT a same-user become is exactly what real Ansible SKIPS by default
+# (0.9.730, see PluginManager.become_needed?), so SUDO_USER is unset on
+# a default run and set only under ANSIBLE_BECOME_ALLOW_SAME_USER. The
+# spec runs this fixture both ways and asserts each; `failed_when: false`
+# below is what lets the unset case report an empty stdout rather than
+# failing on printenv's own rc=1.
+#
 # Targets "testservers" (same convention as test-mysql-quick.yml/
 # test-docker-quick.yml): command:/shell: skip outright under --check
 # (real Ansible behavior, matched here), which would leave
@@ -42,6 +49,7 @@
       become_user: "{{ current_user.stdout }}"
       register: became
       changed_when: false
+      failed_when: false
 
     - name: show results
       ansible.builtin.debug:
