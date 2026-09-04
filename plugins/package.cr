@@ -128,7 +128,7 @@ module Krikri
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Could not detect package manager (tried: dnf, yum, apt)"
+          msg: "Could not detect a package manager on this host"
         )
       end
 
@@ -139,10 +139,13 @@ module Krikri
       when "apt"
         handle_apt(name, state, single_name)
       else
+        # Detected, but this engine ships no backend for it - say which
+        # one, rather than claiming none was found. zypper/pacman/apk are
+        # documented scope cuts (see KNOWN_MISSING.md), not oversights.
         PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Unsupported package manager: #{package_manager}"
+          msg: "package manager '#{package_manager}' is not supported by this engine"
         )
       end
     end
@@ -235,19 +238,42 @@ module Krikri
     end
 
     # Detect which package manager is available
+    # Real Ansible's `package:` is a wrapper: its action plugin reads the
+    # `ansible_pkg_mgr` fact and dispatches to that manager's own module.
+    # This used to run its own separate `which dnf`/`which yum`/`which
+    # apt-get` probe, which diverged from the fact this engine ALREADY
+    # gathers (`FactsGatherer#detect_pkg_mgr`) in two ways, both of which
+    # produce a wrong or misleading answer rather than a clean one:
+    #
+    #   - `which` consults $PATH only, while real Ansible's PKG_MGRS
+    #     table matches on absolute paths - so a manager installed
+    #     outside a non-login SSH shell's PATH went undetected.
+    #   - A host whose package manager is real but unimplemented here
+    #     (apk, pacman, zypper, ...) reported "Could not detect package
+    #     manager (tried: dnf, yum, apt)" - actively false on an Alpine
+    #     or Arch host, which plainly HAS one. Naming the manager that
+    #     was found is the difference between "this engine doesn't
+    #     support your platform" and "your platform looks broken".
+    #
+    # Same path list and same dnf-before-yum priority as the facts
+    # gatherer, so the module and the `ansible_pkg_mgr` a role gates on
+    # can never disagree.
+    PKG_MGR_PATHS = {
+      "/usr/bin/dnf"     => "dnf",
+      "/usr/bin/yum"     => "yum",
+      "/usr/bin/apt-get" => "apt",
+      "/usr/bin/zypper"  => "zypper",
+      "/usr/bin/pacman"  => "pacman",
+      "/sbin/apk"        => "apk",
+      "/usr/sbin/pkg"    => "pkgng",
+    }
+
     private def detect_package_manager : String?
-      # Try dnf first (newer)
-      result = remote_exec("which dnf 2>/dev/null")
-      return "dnf" if result[:exit_code] == 0
-
-      # Try yum (older RHEL/CentOS)
-      result = remote_exec("which yum 2>/dev/null")
-      return "yum" if result[:exit_code] == 0
-
-      # Try apt (Debian/Ubuntu)
-      result = remote_exec("which apt-get 2>/dev/null")
-      return "apt" if result[:exit_code] == 0
-
+      probe = PKG_MGR_PATHS.keys.map { |path| "[ -x #{path} ] && echo #{path}" }.join("; ")
+      found = remote_exec(probe)[:stdout].to_s.lines.map(&.strip).reject(&.empty?)
+      PKG_MGR_PATHS.each do |path, name|
+        return name if found.includes?(path)
+      end
       nil
     end
 

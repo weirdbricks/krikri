@@ -10,12 +10,37 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.727`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.728`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.23` (see `shard.yml`).
 
 ---
 
 ## Real gaps (worth revisiting)
+
+### `service_facts:` covers systemd and SysV only; `package:` covers apt/dnf/yum only
+
+`service_facts:` (0.9.728) gathers from systemd and from SysV
+(`service --status-all`), merged with systemd winning, and reports the
+task skipped when neither finds anything - real Ansible's own module
+order, merge rule and skip message. Its remaining branches are not
+implemented: upstart's `initctl list`, RedHat's chkconfig listing, and
+OpenRC's `rc-status`. On such a host the systemd scan still runs, and
+an empty result is correctly reported skipped rather than as an empty
+`ansible_facts.services` dict.
+
+`package:` detects the host's package manager from the same path table
+and priority as `ansible_pkg_mgr` (0.9.728), but ships backends for
+apt/dnf/yum only. A host running zypper, pacman, apk or pkgng now fails
+by name ("package manager 'pacman' is not supported by this engine")
+instead of claiming none was found. Confirmed live on Arch: real
+Ansible installs via its pacman module, this engine reports the
+unsupported backend. Implementing them is the same scope question as
+the zypper entry further down, not an oversight.
+
+Note apk is doubly out of reach: Alpine is musl and this engine's
+plugin binaries are glibc-linked, so they can't execute there at all -
+the upload fails before any module runs. A musl plugin build would be
+the prerequisite, not an apk backend.
 
 ### `service:` on an upstart host is unsupported
 
