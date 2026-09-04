@@ -125,8 +125,11 @@ Atlantic.net API keys used in the real-host benchmark workflow come from.
 
 ## Docs that must stay in sync
 
-- `KNOWN_MISSING.md` - per-round bug narrative, newest first, no fixed-bug detail duplicated (that
-  lives in `git log` commit messages).
+- `KNOWN_MISSING.md` - two lists plus per-round narrative. **Open gaps** (top) is defects with an
+  unknown or unfinished fix and should stay short; **Deliberate limits** (bottom) is decisions
+  already made, with the reasoning attached. Keep the two apart - an item that stops being a defect
+  moves down or gets deleted, it does not linger at the top, and a fixed item's narrative lives in
+  `git log`, never here. Per-round narrative sits between them, newest first.
 - `ROLES_TESTED.md` - one-line current status per role tested, no history, cold/warm timing
   included on every row. Also owns the 10-role benchmark comparison table (moved here from
   `README.md` - detailed per-role numbers belong here, not in the README).

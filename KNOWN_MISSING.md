@@ -10,120 +10,72 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
+Two lists, and the split is the point: **Open gaps** is defects with an
+unknown or unfinished fix - if you are looking for something to work
+on, it is there and it is short. **Deliberate limits** is decisions
+already made, with the reasoning attached; nothing there is waiting on
+anyone. An item that stops being a defect moves down or gets deleted,
+it does not linger at the top. Everything between the two is per-round
+narrative, newest first.
+
 **Currently at `0.9.730`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.23` (see `shard.yml`).
 
 ---
 
-## Real gaps (worth revisiting)
+## Open gaps
 
-### `service_facts:` covers systemd and SysV only; `package:` covers apt/dnf/yum only
+Genuinely open defects: something is wrong and the fix is unknown or
+unfinished. Everything deliberate lives under "Deliberate limits"
+below - keep the two apart, or this list stops meaning anything.
 
-`service_facts:` (0.9.728) gathers from systemd and from SysV
-(`service --status-all`), merged with systemd winning, and reports the
-task skipped when neither finds anything - real Ansible's own module
-order, merge rule and skip message. Its remaining branches are not
-implemented: upstart's `initctl list`, RedHat's chkconfig listing, and
-OpenRC's `rc-status`. On such a host the systemd scan still runs, and
-an empty result is correctly reported skipped rather than as an empty
-`ansible_facts.services` dict.
+### `community.rabbitmq` warm-run `changed` delta
 
-`package:` detects the host's package manager from the same path table
-and priority as `ansible_pkg_mgr` (0.9.728), but ships backends for
-apt/dnf/yum only. A host running zypper, pacman, apk or pkgng now fails
-by name ("package manager 'pacman' is not supported by this engine")
-instead of claiming none was found. Confirmed live on Arch: real
-Ansible installs via its pacman module, this engine reports the
-unsupported backend. Implementing them is the same scope question as
-the zypper entry further down, not an oversight.
-
-Note apk is doubly out of reach: Alpine is musl and this engine's
-plugin binaries are glibc-linked, so they can't execute there at all -
-the upload fails before any module runs. A musl plugin build would be
-the prerequisite, not an apk backend.
-
-### `service:` on an upstart host is unsupported
-
-`service:`'s init-system detection (0.9.727) covers systemd, OpenRC and
-SysV init scripts - real Ansible's own branches, in its own precedence
-order. Upstart is *detected* (so an upstart host is never silently
-driven as SysV) but deliberately not implemented: its enable/disable
-path writes an `/etc/init/<name>.override` file whose contents depend on
-the initctl version, and no currently-supported distro still ships it
-(Ubuntu 14.04, its last home, went EOL in 2019). The task fails with a
-clear "upstart-managed services are not supported by this engine"
-rather than guessing at override-file semantics that can't be verified
-against a live host. Revisit only if a real round turns up an upstart
+`mrlesmithjr.rabbitmq` re-run: both engines run the role rc=0 with the
+native rabbitmq_plugin/rabbitmq_user plugins, but the warm pass reports
+changed=2 here where real reports changed=0 (one plugin enable, one
+user item). Plugin-side detection was hardened twice already (marker
+regex, ANSI strip, stderr merge); the rest needs the literal
+`rabbitmq-plugins list -e` / `rabbitmqctl list_users` output from a live
 host.
 
-Related, same module: forcing `use: systemd` on a host where systemd is
-NOT PID 1 fails on both engines, but with different text - real Ansible
-reports "Service is in unknown state", this engine surfaces systemctl's
-own "System has not been booted with systemd as init system (PID 1)".
-Same outcome, same recap; only the message differs, and only for a
-deliberate `use:` override that contradicts the host.
+Worth noting the shape: `community.general.ufw` was filed as exactly
+this ("warm changed=N vs 0, needs a live host") and turned out to be a
+real rule-widening bug where the recap number was only the symptom -
+`port:` was being dropped, so every rule opened every port (0.9.729).
+Diff what the module actually WROTE, not the recap counts.
 
-### Fact caching only supports the `jsonfile` backend
-
-Fact caching (0.9.696, `src/krikri/fact_cache.cr`) only implements
-`ANSIBLE_CACHE_PLUGIN=jsonfile` - by far the most common real-world
-choice, and the only one worth a from-scratch implementation without a
-real client library to lean on. `redis`/`memcached`/etc. would need
-actual client libraries this project doesn't carry, and the built-in
-`memory` backend needs no support at all (this engine's own in-run
-`@facts` store already IS that). Not fixed, low priority - revisit
-only if a real role/round is found actually relying on a non-jsonfile
-backend.
-
-### Ansible's lazy dict-templating (`_AnsibleLazyTemplateDict`) is not replicated in general - only two specific idioms are special-cased
+### Ansible's lazy dict-templating is not replicated in general
 
 Real Ansible's templar keeps a variable built from a `{{ }}` expression
-as a genuine dict/list-like object all the way through the vars
-pipeline (its private `_AnsibleLazyTemplateDict`), so `{% for key, val
-in some_var | sort %}` and `{% for key, value in item %}` work on the
-real object. This engine's substitution is string-based and has no
-equivalent: the rendered value coerces to a string, and a later
-`{% for key, val in ... %}` over it fails with "cannot unpack multiple
-values of type Crinja::Value".
+as a genuine dict/list-like object all the way through the vars pipeline
+(its private `_AnsibleLazyTemplateDict`), so `{% for key, val in
+some_var | sort %}` and `{% for key, value in item %}` work on the real
+object. This engine's substitution is string-based: the value coerces to
+a string and a later `{% for key, val in ... %}` fails with "cannot
+unpack multiple values of type Crinja::Value".
 
-Two concrete shapes found live are special-cased and work
-(`jtyr.nsswitch`/`jtyr.motd`, 0.9.697-0.9.700 - see `git log` for the
-root-cause detail, and `spec/unit/crinja_renderer_spec.cr` /
-`spec/unit/expression_evaluator_spec.cr` for the regression specs):
+Two shapes found live are special-cased and work (`jtyr.nsswitch`/
+`jtyr.motd`, 0.9.697-0.9.700 - see `git log` for the root-cause detail
+and `spec/unit/crinja_renderer_spec.cr` / `spec/unit/
+expression_evaluator_spec.cr` for the regression specs):
 
-- `some_var: "{{ some_dict.update(other_dict) }}{{ some_dict }}"` -
-  the mutate-for-side-effect-then-reread idiom, with both operands
-  bare variable names.
+- `some_var: "{{ some_dict.update(other_dict) }}{{ some_dict }}"` - the
+  mutate-for-side-effect-then-reread idiom, both operands bare names.
 - `motd_info: "{{ list_a + list_b }}"` - list concatenation where the
   elements are dicts whose own values need recursive re-rendering,
   including a `{{ {...} if cond else {...} }}` dict-literal element.
 
-**What remains open**: every OTHER shape. A dict literal inside
-`.update({...})`, an attribute-chain target, three or more chained
-`.update()` calls, and anything else that needs a real object rather
-than a string still hits the old coercion. The general fix is
+Every OTHER shape still hits the old coercion. The general fix is
 deferred evaluation plus type preservation through the whole vars
 pipeline, touching BOTH evaluators - a major undertaking, deliberately
-not attempted. Note this is the same architectural rewrite the
-native-typing entry further down independently concluded was not worth
-doing on its own evidence (1 genuine occurrence in a 611-role corpus);
-if it is ever picked up, these two entries are one job, not two.
+not attempted.
 
-### `RemovedActionError`'s message text is only approximate, and this is permanent
+**This is the same rewrite the native-typing entry concluded was not
+worth doing on its own evidence** (1 genuine occurrence in a 611-role
+corpus, ~0.16%). If it is ever picked up, these are one job, not two.
 
-Found round 307 (`Stouts.django`): krikri's message for a removed
-`ansible.builtin.include` was worded to match whichever ansible-core
-version confirmed it originally. Updated (0.9.694) to the newer
-"[DEPRECATED]: ansible.builtin.include has been removed. Use
-include_tasks or import_tasks instead..." wording (confirmed on
-2.17.14), replacing the older 2.19.4-era phrasing - but this is a
-refresh, not a durable fix: the "correct" wording is a moving target
-across ansible-core minor versions (this session alone hit both
-2.17.14 and 2.19.4 on different hosts), no version-targeting concept
-exists anywhere in this engine to hang a version-aware message table
-off of, and `rc=1`/detection is identical either way - cosmetic text
-only. Left as permanently approximate rather than chasing every
-ansible-core minor release's exact string.
+---
 
 ## The parity-breaking tier was built, measured, and removed (0.9.641)
 
@@ -604,68 +556,6 @@ repo), and Alpine-only packages on Ubuntu (alpine_iso_build).
 Times for the round (all 60 roles, per-role cold/warm py-vs-crystal)
 are recorded in `ROLES_TESTED.md`'s round-191 rows.
 
-## Real gaps (worth revisiting)
-
-- **Role-private `library/*.py` modules stay skipped** (documented
-  no-arbitrary-Python scope cut, now seen live twice): the
-  linux-system-roles family's `sr_fingerprint` success-fingerprint tasks
-  (crypto_policies, journald) ship the role's own Python module; real
-  ansible executes it with the target's Python while this engine skips
-  it and exits with the "unavailable modules" rc=4 signal. Both engines
-  otherwise agree; journald's only recap delta was those two skipped
-  tasks (both engines rc=0).
-- **The same no-arbitrary-Python scope cut also covers third-party
-  COLLECTION custom modules and filters, not just role-private
-  `library/*.py`** (round 199, bodsch.* author's own `bodsch.core`/
-  `bodsch.systemd` collections - `bodsch.core.check_mode`,
-  `bodsch.core.facts`, `bodsch.core.type` filter, `bodsch.core.upgrade`
-  filter, `bodsch.systemd.journalctl`): real Ansible executes these as
-  ordinary Python; this engine reports "unavailable modules" for a
-  MODULE reference and skips the task, and (since 0.9.726) fails a
-  FILTER reference with real Ansible's own "No filter named 'x'."
-  rather than silently passing the operand through un-filtered into a
-  downstream `when:`/`set_fact:`. The no-arbitrary-Python scope cut
-  itself is unchanged - these roles still diverge from real Ansible by
-  design, the failure is just named now. Confirmed
-  against bodsch.chrony/monitoring_plugins/redis/monit/logrotate/
-  tomcat/forgejo, all on Ubuntu 22.04 - every one of these roles calls
-  at least one bodsch.core/bodsch.systemd custom module or filter for
-  real logic (not just a declarative wrapper), so this author's roles
-  specifically will keep diverging from real Ansible by design; not
-  worth re-testing more of them expecting a different outcome.
-- **`include_vars:` with a failing templated path** (gantsign.oh-my-zsh,
-  harness-limited): when the path template itself can't resolve, this
-  engine reports `include_vars: file not found: undefined` where real
-  ansible fails a LATER task with "'users' is undefined". Both engines
-  fail the role; the failure point and message differ.
-- **±1-task recap deltas** (gantsign.java warm, cloudalchemy cold on
-  re-run pairs sharing controller /tmp state): **did not reproduce** on
-  a fresh container pair at 0.9.730. gantsign.java now matches exactly
-  cold (ok=27 changed=8 skipped=5) and warm (ok=26 changed=0 skipped=6),
-  and cloudalchemy.node_exporter matches exactly on a systemd host
-  (cold ok=16 changed=7 skipped=16) and fails identically on a
-  non-systemd one (the role's own "only works with systemd" assert).
-  The original note already suspected controller /tmp state shared
-  across re-run pairs, and several engine fixes have shipped since
-  round 196. Left recorded rather than deleted: a ±1 delta that only
-  appears on a reused pair is worth recognising if it resurfaces, but
-  it is not a reproducible open bug today. Chasing it did surface the
-  become/sudo divergence fixed in 0.9.730 - see git log.
-- **`community.rabbitmq` warm deltas** (mrlesmithjr.rabbitmq re-run):
-  both engines now run the role rc=0 with the new native
-  rabbitmq_plugin/rabbitmq_user plugins, but crystal's warm pass reports
-  changed=2 where real reports changed=0 (one plugin enable + one user
-  item). The plugin-side detection was hardened twice (marker regex,
-  ANSI strip, stderr merge) - the remaining delta needs the literal
-  `rabbitmq-plugins list -e` / `rabbitmqctl list_users` output from a
-  live host to pin down.
-- **collection modules**: `community.general.redhat_subscription`
-  (linux-system-roles.rhc), `community.rabbitmq.rabbitmq_plugin/_user`
-  (mrlesmithjr.rabbitmq) - unimplemented, rc=4 "unavailable modules"
-  vs real ansible rc=0. Same class as the community.crypto notes below.
-
-
-
 Round 190 (60-role marathon, fresh Atlantic.net pair per role, cold+warm
 both engines) found and fixed six more engine bugs (all in 0.9.625):
 
@@ -1027,7 +917,116 @@ role, both phases). Two entries remain.
   more likely a genuine Crystal stdlib limitation than something to
   patch around in this codebase. Not fixed.
 
-## Explicit scope cuts (not gaps to fix - documented so they aren't re-litigated)
+## Deliberate limits (decided, not defects)
+
+Everything here is a decision someone already made, with the reasoning
+attached. Nothing here is waiting on anyone. Do not re-litigate without
+new evidence - and if new evidence turns up, move the entry to "Open
+gaps" rather than arguing with the note in place.
+
+### Init systems and package managers
+
+- **`service:` on an upstart host** - detection covers systemd, OpenRC
+  and SysV (0.9.727, real Ansible's own branches in its own precedence
+  order). Upstart is *detected*, so such a host is never silently driven
+  as SysV, but not implemented: its enable path writes an
+  `/etc/init/<name>.override` whose contents depend on the initctl
+  version, and no supported distro still ships it (Ubuntu 14.04, its
+  last home, EOL 2019). Fails with a clear "not supported" instead of
+  guessing at semantics that cannot be verified live. Revisit only if a
+  real round turns up an upstart host.
+- **`service_facts:` upstart / chkconfig / OpenRC scans** - systemd and
+  SysV (`service --status-all`) are implemented and merged real
+  Ansible's way (0.9.728); the other three branches are not. On such a
+  host the systemd scan still runs, and an empty result is correctly
+  reported *skipped* rather than as an empty `ansible_facts.services`
+  dict.
+- **`package:` backends beyond apt/dnf/yum** - detection uses the same
+  path table and priority as `ansible_pkg_mgr` (0.9.728), so the module
+  and the fact a role gates on cannot disagree, but only apt/dnf/yum
+  have backends. zypper/pacman/apk/pkgng fail by name ("package manager
+  'pacman' is not supported by this engine"). Confirmed live on Arch.
+  Same scope question as the zypper entry below.
+  - apk is doubly out of reach: Alpine is musl and this engine's plugin
+    binaries are glibc-linked, so they cannot execute there at all - the
+    upload fails before any module runs. A musl plugin build is the
+    prerequisite, not an apk backend.
+
+### Arbitrary Python
+
+- **Role-private custom modules** (a role's own `library/*.py`, outside the
+  `ansible.builtin`/`community.*`/etc. plugin set this engine ships as
+  native binaries) - there's no generic arbitrary-Python-module runner,
+  so these can't execute at all. The task is skipped with a
+  parse-time warning ("uses unimplemented plugin: <name>") rather than
+  crashing the run - deliberately, so a role leaning on its own
+  `library/*.py` stays benchmarkable for everything else it does - but
+  anything downstream depending on its result sees an undefined value,
+  which can cascade into broader task-status divergence for roles that
+  lean on this (seen repeatedly benchmarking `linux-system-roles`:
+  `sr_fingerprint`, `timesync_provider`, `kernel_settings_get_config`,
+  `blivet`). Since `0.9.558` such a run **exits 4**, real Ansible's own
+  code for refusing a playbook it can't resolve a module for, instead of
+  the previous 0 - which reported a green run to CI for a playbook real
+  `ansible-playbook` rejects outright. What remains divergent here is
+  only WHICH TASKS RUN (real Ansible refuses at parse time and runs
+  nothing; this engine runs the rest of the play), not the exit status a
+  caller sees. Seen live repeatedly, most recently linux-system-roles'
+  own `sr_fingerprint` tasks (crypto_policies, journald), where both
+  engines otherwise agree.
+- **Third-party COLLECTION modules and filters, same cut** (round 199,
+  the bodsch.* author's own `bodsch.core`/`bodsch.systemd` collections -
+  `bodsch.core.check_mode`, `.facts`, `.type` filter, `.upgrade` filter,
+  `bodsch.systemd.journalctl`): real Ansible runs these as ordinary
+  Python. A MODULE reference reports "unavailable modules" and skips the
+  task; a FILTER reference fails with real Ansible's own "No filter
+  named 'x'." (0.9.726) rather than silently passing the operand through
+  un-filtered. The cut is unchanged - these roles still diverge by
+  design, the failure is just named now. Confirmed against bodsch.
+  chrony/monitoring_plugins/redis/monit/logrotate/tomcat/forgejo on
+  Ubuntu 22.04; every one calls at least one of these for real logic, so
+  this author's roles will keep diverging. Not worth re-testing more of
+  them expecting a different outcome.
+- **Unimplemented collection modules**: `community.general.
+  redhat_subscription` (linux-system-roles.rhc),
+  `community.rabbitmq.rabbitmq_plugin/_user` (mrlesmithjr.rabbitmq) -
+  rc=4 "unavailable modules" vs real ansible rc=0. Same class as the
+  community.crypto notes below.
+
+### Fact caching
+
+- **Only the `jsonfile` backend** (0.9.696, `src/krikri/fact_cache.cr`)
+  - by far the most common real-world choice, and the only one worth a
+  from-scratch implementation without a client library to lean on.
+  `redis`/`memcached` would need real client libraries this project
+  doesn't carry; the built-in `memory` backend needs no support at all
+  (this engine's in-run `@facts` store already IS that). Revisit only if
+  a real role is found relying on a non-jsonfile backend.
+
+### Cosmetic differences (both engines fail; only the wording differs)
+
+These change no outcome and no recap. Listed so they aren't re-reported
+as bugs, not because anyone intends to fix them.
+
+- **`RemovedActionError`'s message text** is only approximate, and this
+  is permanent. Round 307 (`Stouts.django`): the wording was refreshed
+  in 0.9.694 to ansible-core 2.17.14's phrasing, but "correct" is a
+  moving target across minor releases (this project has hit both 2.17.14
+  and 2.19.4 on different hosts), there is no version-targeting concept
+  anywhere in this engine to hang a version-aware table off, and
+  rc=1/detection is identical either way.
+- **`include_vars:` with a failing templated path** (gantsign.oh-my-zsh,
+  harness-limited): when the path template can't resolve, this engine
+  reports `include_vars: file not found: undefined` where real ansible
+  fails a LATER task with "'users' is undefined". Both fail the role;
+  the failure point and message differ.
+- **`service: use=systemd` forced on a host where systemd is NOT PID 1**:
+  real Ansible reports "Service is in unknown state", this engine
+  surfaces systemctl's own "System has not been booted with systemd as
+  init system (PID 1)". Same outcome, same recap - and only reachable
+  via a deliberate `use:` override that contradicts the host.
+
+### Everything else
 
 - **`ansible-playbook`'s CLI flag surface is fully covered by name, and
   all but one flag is now behavioral.** `--help` lists every flag real
@@ -1114,7 +1113,7 @@ role, both phases). Two entries remain.
   differs" side of this same gap: real Ansible refuses at parse time
   with zero tasks run, this engine runs the whole play first, ~80s of
   real work, before reporting the same rc=4 - already covered by the
-  role-private-custom-modules entry below, not distinct).
+  role-private-custom-modules entry above, not distinct).
 - The legacy free-form `action: "<templated module name> key=val ..."`
   task syntax (module name and args packed into one string, with the
   module name itself resolved from a runtime variable like `{{
@@ -1124,24 +1123,6 @@ role, both phases). Two entries remain.
   `weareinteractive.users_oh_my_zsh` (round 178). Not implemented -
   real-world usage of this exact form is rare and every modern role
   uses `ansible.builtin.<module>:` directly instead.
-- Role-private custom modules (a role's own `library/*.py`, outside the
-  `ansible.builtin`/`community.*`/etc. plugin set this engine ships as
-  native binaries) - there's no generic arbitrary-Python-module runner,
-  so these can't execute at all. The task is skipped with a
-  parse-time warning ("uses unimplemented plugin: <name>") rather than
-  crashing the run - deliberately, so a role leaning on its own
-  `library/*.py` stays benchmarkable for everything else it does - but
-  anything downstream depending on its result sees an undefined value,
-  which can cascade into broader task-status divergence for roles that
-  lean on this (seen repeatedly benchmarking `linux-system-roles`:
-  `sr_fingerprint`, `timesync_provider`, `kernel_settings_get_config`,
-  `blivet`). Since `0.9.558` such a run **exits 4**, real Ansible's own
-  code for refusing a playbook it can't resolve a module for, instead of
-  the previous 0 - which reported a green run to CI for a playbook real
-  `ansible-playbook` rejects outright. What remains divergent here is
-  only WHICH TASKS RUN (real Ansible refuses at parse time and runs
-  nothing; this engine runs the rest of the play), not the exit status a
-  caller sees.
 - `docker_*`'s `api_version:` pin - not implemented, not planned. The
   underlying `docr` client uses unversioned endpoint URLs throughout,
   so pinning a version means touching every endpoint in a separate
