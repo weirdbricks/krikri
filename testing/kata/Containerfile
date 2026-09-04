@@ -1,0 +1,16 @@
+# Test host image for the Kata harness: real systemd, sshd, and the tools a
+# benchmark round needs. Debian trixie deliberately matches the machine that
+# builds krikri's plugin binaries - they are glibc-linked and dynamically
+# loaded, so a musl guest (Alpine) cannot run them at all.
+FROM docker.io/library/debian:trixie
+RUN apt-get update && apt-get install -y \
+        systemd systemd-sysv dbus \
+        openssh-server python3 \
+        iproute2 kmod procps \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /root/.ssh && chmod 700 /root/.ssh \
+    && systemctl enable ssh
+COPY key.pub /root/.ssh/authorized_keys
+RUN chmod 600 /root/.ssh/authorized_keys && \
+    sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+CMD ["/sbin/init"]

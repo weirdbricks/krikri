@@ -118,6 +118,24 @@ starting a round.
 7. Destroy all hosts in the batch (`terraform destroy`), clean up `known_hosts`, shred the
    staged credentials `.env`.
 
+## Local Kata test hosts (an alternative to provisioning for many rounds)
+
+`testing/kata/` boots real VMs locally - real guest kernel, real systemd -
+in ~6 seconds each, as an alternative to an Atlantic.net pair. `./build.sh`
+once, then `./kata-host.sh up <name> <octet>` per host; each gets
+`10.99.<octet>.2`, reachable directly. A pair (one host per engine) is the
+same shape as the provisioned workflow above.
+
+Use it when the round needs a real **kernel** - `sysctl:`/`os_hardening`,
+`modprobe`, netfilter below `--cap-add=NET_ADMIN`, filesystem modules -
+which is exactly what containers cannot do and what has left those roles
+unverified. For plain systemd, `podman run --systemd=always` is simpler and
+already sufficient (the 0.9.727-0.9.728 `service:`/`service_facts:` work was
+verified that way). Read that directory's `README.md` before using it: the
+setup has several non-obvious failure modes, all documented there with the
+reason, and one of them (recreating a netns under a live VM) hangs `ctr`
+in a way no timeout escapes.
+
 ## Credentials for the benchmark workflow
 
 See `CLAUDE.local.md` (gitignored, not part of this public repo) for where the
