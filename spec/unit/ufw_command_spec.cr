@@ -129,3 +129,52 @@ describe Krikri::PluginHelpers::UfwCommand do
     end
   end
 end
+
+describe Krikri::PluginHelpers::UfwCommand do
+  describe "truthiness-gated clauses (real Ansible's [value, template] filter)" do
+    it "skips an interface clause given as an empty string" do
+      # Oefenweb.ufw maps every optional key through `default('')`, so
+      # `interface: ""` arrives present-but-empty. Emitting a bare `on `
+      # for it made real ufw reject the whole command with "ERROR: Wrong
+      # number of arguments" - every rule in the role failed.
+      cmd = Krikri::PluginHelpers::UfwCommand.rule_command({
+        "rule" => "allow", "interface" => "", "direction" => "in",
+        "to_port" => "22", "proto" => "tcp",
+      })
+      cmd.should_not contain(" on ")
+      cmd.should eq("ufw allow in from any to any port 22 proto tcp")
+    end
+
+    it "emits all three interface forms independently, not as an if/elsif chain" do
+      cmd = Krikri::PluginHelpers::UfwCommand.rule_command({
+        "rule" => "allow", "interface_in" => "eth0", "interface_out" => "eth1",
+      })
+      cmd.should contain("in on eth0")
+      cmd.should contain("out on eth1")
+    end
+
+    it "skips a direction given as an empty string" do
+      Krikri::PluginHelpers::UfwCommand.rule_command({"rule" => "allow", "direction" => ""})
+        .should eq("ufw allow from any to any")
+    end
+  end
+
+  describe "from_ip/to_ip defaulting" do
+    it "emits `from any`/`to any` when the keys are absent" do
+      # The arg-spec default is 'any'; without these real ufw rejects a
+      # bare port rule with "Need 'to' or 'from' clause".
+      Krikri::PluginHelpers::UfwCommand.rule_command({"rule" => "allow", "to_port" => "22"})
+        .should eq("ufw allow from any to any port 22")
+    end
+
+    it "skips the clause when the key is present but empty" do
+      # Different case from absent: real Ansible gates on truthiness, so
+      # an explicit empty string drops the clause rather than defaulting.
+      cmd = Krikri::PluginHelpers::UfwCommand.rule_command({
+        "rule" => "allow", "from_ip" => "", "to_ip" => "10.0.0.1", "to_port" => "22",
+      })
+      cmd.should_not contain("from")
+      cmd.should eq("ufw allow to 10.0.0.1 port 22")
+    end
+  end
+end

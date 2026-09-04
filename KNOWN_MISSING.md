@@ -10,7 +10,7 @@ stale copy here. When an item below gets fixed, delete its bullet
 instead of leaving a "fixed in 0.9.x" note - the commit that fixes it
 is the record.
 
-**Currently at `0.9.728`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.729`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.23` (see `shard.yml`).
 
 ---
@@ -649,13 +649,6 @@ are recorded in `ROLES_TESTED.md`'s round-191 rows.
   ANSI strip, stderr merge) - the remaining delta needs the literal
   `rabbitmq-plugins list -e` / `rabbitmqctl list_users` output from a
   live host to pin down.
-- **`community.general.ufw` rule idempotency delta** (Oefenweb.ufw,
-  round 196 re-run): both engines now run the role rc=0, but on the warm
-  pass crystal reports changed=4 where real ansible reports changed=0 -
-  this engine's built `ufw` command differs enough from real
-  community.general's own construction that ufw treats the re-applied
-  rules as new. Real rule-tuple diffing (the module's actual
-  idempotency check) needs netfilter access to verify; deferred.
 - **collection modules**: `community.general.redhat_subscription`
   (linux-system-roles.rhc), `community.rabbitmq.rabbitmq_plugin/_user`
   (mrlesmithjr.rabbitmq) - unimplemented, rc=4 "unavailable modules"

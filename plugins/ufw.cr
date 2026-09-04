@@ -45,7 +45,49 @@ module Krikri
   # source-verified but not further behavior-verified end-to-end (see the
   # netfilter-access note above).
   class UfwPlugin < BasePlugin
+    # real community.general.ufw's own argument_spec aliases. Only
+    # `policy` (for `default`) was handled before, and the omission of
+    # the rest was not cosmetic: `port:` is the alias of `to_port`, and a
+    # dropped port turns `ufw: rule=allow port=22 proto=tcp` into `ufw
+    # allow from any to any proto tcp` - a rule opening EVERY tcp port
+    # instead of 22, installed silently with the task reporting changed.
+    # Confirmed live against real community.general on a NET_ADMIN
+    # container by diffing `### tuple` lines from /etc/ufw/user.rules:
+    # real Ansible writes `allow tcp 22 ...`, this engine wrote `allow
+    # tcp any ...`.
+    #
+    # It also explains the warm-run `changed` delta this was filed under
+    # (round 196, Oefenweb.ufw): every port rule collapsed onto the SAME
+    # any->any tuple, so each run's rules overwrote each other's action
+    # (allow, then limit, then allow...) and never converged.
+    PARAM_ALIASES = {
+      "policy"   => "default",
+      "if"       => "interface",
+      "if_in"    => "interface_in",
+      "if_out"   => "interface_out",
+      "from"     => "from_ip",
+      "src"      => "from_ip",
+      "dest"     => "to_ip",
+      "to"       => "to_ip",
+      "port"     => "to_port",
+      "protocol" => "proto",
+      "app"      => "name",
+    }
+
+    def initialize(config : JSON::Any)
+      super(config)
+      PARAM_ALIASES.each do |alias_name, canonical|
+        if (value = @params[alias_name]?) && !@params.has_key?(canonical)
+          @params[canonical] = value
+        end
+      end
+    end
+
     def execute : PluginResult
+      if error = validate_params
+        return PluginResult.new(changed: false, failed: true, msg: error)
+      end
+
       if state = @params["state"]?
         return run_state(state)
       end
@@ -54,9 +96,8 @@ module Krikri
         return run_simple(PluginHelpers::UfwCommand.logging_command(logging), ufw_state_key: "logging", ufw_state_value: logging)
       end
 
-      if default_value = @params["default"]? || @params["policy"]?
-        # `policy` is real community.general's ALIAS for `default`
-        # (argument_spec: default=dict(aliases=['policy'], ...)) - found
+      if default_value = @params["default"]?
+        # `policy` reaches this as `default` via PARAM_ALIASES - found
         # via Oefenweb.ufw (round 196), whose tasks use the newer
         # `policy:`/`direction:` pair; this plugin only knew `default:`
         # and rejected the task with "one of state, logging, default, or
@@ -71,6 +112,32 @@ module Krikri
       end
 
       PluginResult.new(changed: false, failed: true, msg: "one of state, logging, default, or rule is required")
+    end
+
+    # real community.general's own argument_spec constraints, which it
+    # enforces before running anything. Without these the task still
+    # fails, but with whatever ufw says about the malformed command it
+    # was handed ("ERROR: Invalid token 'on'" for a bare `interface:`),
+    # instead of naming the parameter that is actually missing. Verified
+    # live: real Ansible answers "missing parameter(s) required by
+    # 'interface': direction" for exactly that task.
+    private def validate_params : String?
+      if @params.has_key?("interface") && !@params.has_key?("direction")
+        return "missing parameter(s) required by 'interface': direction"
+      end
+
+      exclusive = {"name", "proto", "logging"}.select { |key| @params.has_key?(key) }
+      if exclusive.size > 1
+        return "parameters are mutually exclusive: #{exclusive.join(", ")}"
+      end
+
+      {"interface_in", "interface_out"}.each do |key|
+        if @params.has_key?("direction") && @params.has_key?(key)
+          return "parameters are mutually exclusive: direction|#{key}"
+        end
+      end
+
+      nil
     end
 
     private def run_state(state : String) : PluginResult
@@ -185,12 +252,42 @@ module Krikri
       ""
     end
 
+    # The rule files real community.general greps for its `### tuple`
+    # lines - the authoritative record of what ufw actually holds, and
+    # the only thing that distinguishes "re-applied an identical rule"
+    # from "changed one".
+    USER_RULES_FILES = %w[
+      /lib/ufw/user.rules /lib/ufw/user6.rules
+      /etc/ufw/user.rules /etc/ufw/user6.rules
+      /var/lib/ufw/user.rules /var/lib/ufw/user6.rules
+    ]
+
     private def run_rule : PluginResult
       check_mode = true?(@params["check_mode"]?)
       cmd = PluginHelpers::UfwCommand.rule_command(resolved_insert_params, dry_run: check_mode)
 
+      # Real community.general does NOT read `changed` out of the ufw
+      # command's own output for a rule: in normal mode it snapshots
+      # `ufw status verbose` AND the rule tuples before and after, and
+      # reports changed only if either actually moved
+      # (`changed = (pre_state != post_state) or (pre_rules !=
+      # post_rules)`). Parsing the command's stdout instead - which this
+      # did - makes `changed` depend on ufw's wording ("Rule added" vs
+      # "Skipping adding existing rule"), which is only equivalent while
+      # the rule text is byte-identical to what is already installed;
+      # any difference at all, including one this engine introduced, then
+      # reads as a real change forever.
+      pre_state = check_mode ? "" : remote_exec("ufw status verbose")[:stdout].to_s
+      pre_rules = check_mode ? "" : current_rule_tuples
+
       result = remote_exec(cmd)
-      changed = PluginHelpers::UfwCommand.changed_from_output?(result[:stdout])
+
+      changed = if check_mode
+                  PluginHelpers::UfwCommand.changed_from_output?(result[:stdout])
+                else
+                  post_state = remote_exec("ufw status verbose")[:stdout].to_s
+                  pre_state != post_state || pre_rules != current_rule_tuples
+                end
       # Surface stderr on failure - real Ansible shows the ufw binary's
       # stderr in the task failure, and dropping it (as this used to)
       # made rule failures undiagnosable (Oefenweb.ufw, round 196:
@@ -201,6 +298,14 @@ module Krikri
         msg = "#{msg}\n#{result[:stderr]}".strip
       end
       PluginResult.new(changed: changed, failed: result[:exit_code] != 0, msg: msg)
+    end
+
+    # `grep -h '^### tuple' <every user.rules file>` - real Ansible's own
+    # `get_current_rules()`, verbatim including the file list and the
+    # `-h` (no filename prefixes, so the comparison is over rule text
+    # alone).
+    private def current_rule_tuples : String
+      remote_exec("grep -h '^### tuple' #{USER_RULES_FILES.join(' ')} 2>/dev/null")[:stdout].to_s
     end
 
     # `insert_relative_to:` other than the default `zero` needs to query

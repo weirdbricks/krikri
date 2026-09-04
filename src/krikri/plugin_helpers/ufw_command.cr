@@ -47,7 +47,8 @@ module Krikri
         end
 
         parts << params["rule"].to_s
-        if direction = params["direction"]?
+        # Truthiness, not presence - see #append_interface.
+        if (direction = params["direction"]?) && !direction.empty?
           parts << direction
         end
         append_interface(parts, params)
@@ -90,20 +91,43 @@ module Krikri
         # truthiness-gated: empty strings coming from a role's
         # `default('')` mapping (Oefenweb.ufw, round 196) must not emit
         # a dangling "port " clause ("ERROR: Wrong number of arguments").
-        parts << "from #{params["from_ip"]? || "any"}"
-        parts << "port #{params["from_port"]}" if (v = params["from_port"]?) && !v.empty?
-        parts << "to #{params["to_ip"]? || "any"}"
-        parts << "port #{params["to_port"]}" if (v = params["to_port"]?) && !v.empty?
+        # from_ip/to_ip carry an arg-spec default of 'any', so an ABSENT
+        # key still emits "from any"/"to any" - without it real ufw
+        # rejects a bare port rule with "Need 'to' or 'from' clause"
+        # (konstruktoid-hardening's outgoing-ports task). A key that is
+        # PRESENT but empty is a different case and skips its clause,
+        # like every other one: real Ansible gates on the value's
+        # truthiness, and a role's own `default('')` mapping produces
+        # exactly that.
+        parts << "from #{params.has_key?("from_ip") ? params["from_ip"] : "any"}" if !params.has_key?("from_ip") || present?(params, "from_ip")
+        parts << "port #{params["from_port"]}" if present?(params, "from_port")
+        parts << "to #{params.has_key?("to_ip") ? params["to_ip"] : "any"}" if !params.has_key?("to_ip") || present?(params, "to_ip")
+        parts << "port #{params["to_port"]}" if present?(params, "to_port")
       end
 
+      # Real Ansible builds its command as a list of [value, template]
+      # pairs and keeps only the entries whose VALUE is truthy
+      # (`filter(itemgetter(0), cmd)`), so an empty string skips its
+      # clause entirely. Two things followed from getting this wrong
+      # here, both found running the real Oefenweb.ufw role, which maps
+      # every optional key through `default('')`:
+      #
+      #   - `interface: ""` is present-but-empty, and Crystal's `if`
+      #     treats "" as truthy, so this emitted a dangling `on ` and
+      #     real ufw rejected the whole command with "ERROR: Wrong
+      #     number of arguments" - every rule in the role failed.
+      #   - The three interface forms are INDEPENDENT appends in real
+      #     Ansible, not an if/elsif chain: a task setting both
+      #     interface_in and interface_out emits both clauses there and
+      #     only the first here.
       private def self.append_interface(parts : Array(String), params : Hash(String, String))
-        if interface = params["interface"]?
-          parts << "on #{interface}"
-        elsif interface_in = params["interface_in"]?
-          parts << "in on #{interface_in}"
-        elsif interface_out = params["interface_out"]?
-          parts << "out on #{interface_out}"
-        end
+        parts << "on #{params["interface"]}" if present?(params, "interface")
+        parts << "in on #{params["interface_in"]}" if present?(params, "interface_in")
+        parts << "out on #{params["interface_out"]}" if present?(params, "interface_out")
+      end
+
+      private def self.present?(params : Hash(String, String), key : String) : Bool
+        (value = params[key]?) ? !value.empty? : false
       end
 
       private def self.truthy?(value : String?) : Bool
