@@ -1,0 +1,43 @@
+# apache2_module's actual effect (a2enmod/a2dismod symlinks) lives in
+# /etc/apache2/mods-enabled, outside /work, so the harness can't diff it
+# directly - the last task captures the enabled-module set into /work so
+# the normal snapshot diff picks it up.
+- name: apache2_module
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: enable rewrite (not enabled by a fresh apache2 install)
+      community.general.apache2_module:
+        name: rewrite
+        state: present
+
+    - name: enabling rewrite again should not change anything
+      community.general.apache2_module:
+        name: rewrite
+        state: present
+
+    - name: disable status (enabled by a fresh apache2 install)
+      community.general.apache2_module:
+        name: status
+        state: absent
+
+    - name: disabling status again should not change anything
+      community.general.apache2_module:
+        name: status
+        state: absent
+
+    - name: re-enable status via its identifier
+      community.general.apache2_module:
+        name: status
+        identifier: status_module
+        state: present
+
+    - name: capture the enabled-module set for diffing
+      ansible.builtin.shell: apache2ctl -M | sort
+      register: modules
+      changed_when: false
+
+    - name: write the captured module set to /work
+      ansible.builtin.copy:
+        content: "{{ modules.stdout }}\n"
+        dest: /work/apache2-modules.txt

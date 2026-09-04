@@ -1090,40 +1090,17 @@ as bugs, not because anyone intends to fix them.
   its exact edge-case output). Other collection inventory plugins
   (azure, gcp, openstack, ...) are still not implemented and follow
   the same rule as the cloud modules above.
-- `community.general.apache2_module` (Debian/Suse `a2enmod`/`a2dismod`
-  wrapper) has no plugin binary at all. Found round175 benchmarking
-  `buluma.httpd` on Rocky 9.6: the role's own "locations | Enable
-  modules" task is gated `when: ansible_facts['os_family'] in
-  ["Debian", "Suse"]` and is correctly skipped by both engines on
-  RHEL-family, but this engine's own eager parse-time module-resolution
-  check (the same one that made a role-private custom module or a
-  genuinely misspelled module exit 4, see above) still counts the
-  reference against `unavailable_modules_found` regardless of whether
-  the gating `when:` will ever let it run - which matches real
-  Ansible's OWN behavior (verified live: `couldn't resolve module/
-  action` fires at parse time even behind `when: false`) given a bare
-  `ansible-core` with no `community.general` installed. The actual
-  divergence is that the local real-ansible comparison side has
-  `community.general` installed (`ansible-galaxy collection list`
-  shows 11.2.1/12.5.0), so it resolves the module and never reaches
-  this check at all. Not a logic bug - a genuinely unimplemented
-  plugin. Deferred rather than implemented blind: needs a real
-  Debian/Suse host (not exercised by this round's RHEL-only pair) to
-  verify `a2enmod`/`a2dismod` invocation and idempotency
-  (`apache2ctl -M` mtime-check semantics) against actual behavior
-  before shipping it.
 - More of the same "genuinely unimplemented plugin, referenced only in
   a task this platform never actually reaches" class as
-  `community.general.apache2_module` above, found sweeping 60 new
+  `community.general.apache2_module` (a genuine core-adjacent gap until
+  it was implemented in 0.9.733, verified live against a real
+  Debian-family host - see git log), found sweeping 60 new
   roles (rounds 177-179) - same root cause each time (this engine's
   eager parse-time module check counts a reference regardless of a
   gating `when:`, matching real Ansible's own behavior, but the local
   comparison side happens to have the collection installed and never
-  hits the check): `ansible.builtin.cronvar` (`weareinteractive.cron`
-  - a real core module, unlike the others here; worth implementing if
-  it recurs, modest scope, similar spirit to `lineinfile`/`cron.cr`),
-  `zypper` (`weareinteractive.docker` - SUSE-only, out of this
-  project's Ubuntu/RHEL scope, not planned),
+  hits the check): `zypper` (`weareinteractive.docker` - SUSE-only, out
+  of this project's Ubuntu/RHEL scope, not planned),
   `community.docker.docker_compose_v2` (`mrlesmithjr.blocky`),
   `community.general.clustering.consul.consul_acl`
   (`mrlesmithjr.consul` - also demonstrates the "WHICH TASKS RUN

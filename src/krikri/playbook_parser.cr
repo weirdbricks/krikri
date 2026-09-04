@@ -831,6 +831,7 @@ module Krikri
       "ansible.builtin.package_facts",
       "ansible.posix.selinux",
       "community.general.pam_limits",
+      "community.general.apache2_module",
       "community.general.capabilities",
       "community.general.make",
       "ansible.builtin.user",
@@ -850,6 +851,7 @@ module Krikri
       # travis" task (`community.general.gem: {name: travis, ...}`).
       "community.general.gem",
       "ansible.builtin.cron",
+      "ansible.builtin.cronvar",
       "ansible.posix.authorized_key",
       "ansible.builtin.stat",
       "ansible.builtin.find",

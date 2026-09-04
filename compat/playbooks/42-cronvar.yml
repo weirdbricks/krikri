@@ -1,0 +1,44 @@
+# cronvar's cron_file: behaves like cron's own: a relative path resolves
+# against /etc/cron.d, an absolute path is used as-is - so an absolute
+# path under /work keeps both tools writing to the exact same, diffable
+# place (same reasoning as 08-cron.yml).
+- name: cronvar
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: set a cron variable
+      ansible.builtin.cronvar:
+        name: TESTVAR
+        value: "hello"
+        cron_file: /work/cronvar-test
+
+    - name: setting the same variable again should not change anything
+      ansible.builtin.cronvar:
+        name: TESTVAR
+        value: "hello"
+        cron_file: /work/cronvar-test
+
+    - name: change the variable's value
+      ansible.builtin.cronvar:
+        name: TESTVAR
+        value: "goodbye"
+        cron_file: /work/cronvar-test
+
+    - name: insert a second variable after the first
+      ansible.builtin.cronvar:
+        name: SECONDVAR
+        value: "second"
+        insertafter: TESTVAR
+        cron_file: /work/cronvar-test
+
+    - name: remove the first variable
+      ansible.builtin.cronvar:
+        name: TESTVAR
+        state: absent
+        cron_file: /work/cronvar-test
+
+    - name: removing an already-absent variable should not change anything
+      ansible.builtin.cronvar:
+        name: TESTVAR
+        state: absent
+        cron_file: /work/cronvar-test

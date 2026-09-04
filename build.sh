@@ -378,6 +378,8 @@ PLUGINS=(
     "pip"
     "gem"
     "cron"
+    "cronvar"
+    "apache2_module"
     "authorized_key"
     "stat"
     "find"
