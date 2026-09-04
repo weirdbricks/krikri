@@ -1569,6 +1569,22 @@ module Krikri
       # exist yet to tell the two apart.
       return nil if expr == "None" || expr == "none"
 
+      # `omit` - real Ansible's magic bareword (a unique per-run sentinel
+      # object), same special-case VariableSubstitutor already carries for
+      # `{{ omit }}` template interpolation (see its own OMIT_SENTINEL) -
+      # but that carve-out never reached a bare `when:`/`assert:`
+      # comparison. Previously fell through to the plain variable lookup
+      # below, which found no real variable named "omit" and raised
+      # "'omit' is undefined" under raise_undefined - found via oasis_
+      # roles.rhsm's own `when: rhsm_username != omit or rhsm_
+      # activationkey != omit` (the standard "was this optional param
+      # actually given" idiom), which real Ansible evaluates fine since
+      # `omit` is always a defined global there. Reusing the same
+      # sentinel string as VariableSubstitutor's keeps `x != omit`
+      # correct regardless of which evaluator resolved `x`'s own
+      # omit-default.
+      return Krikri::OMIT_SENTINEL if expr == "omit"
+
       # Handle numbers
       if int_val = expr.to_i64?
         return int_val

@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.734`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.735`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.23` (see `shard.yml`).
 
 ---
@@ -88,6 +88,159 @@ not attempted.
 **This is the same rewrite the native-typing entry concluded was not
 worth doing on its own evidence** (1 genuine occurrence in a 611-role
 corpus, ~0.16%). If it is ever picked up, these are one job, not two.
+
+A third shape, found live via `PowerDNS.pdns` (Kata round, 0.9.735):
+`{% for backend in pdns_backends | sort() %}` - a SINGLE loop variable
+over a dict (not the `for key, val in ...` two-variable unpack the
+existing shapes above are about) should yield just the dict's keys
+(Jinja2/Python's own `for k in dict:` default), but the vendored crinja
+fork yields `(key, value)` tuples instead - `backend | replace(...)`
+then fails with "Cast from Crinja::Tuple to (Crinja::SafeString |
+String) failed". Fork-internal (`lib/crinja/src/runtime/value.cr`), not
+krikri's own templating code - same class of underlying gap as the two
+shapes above, not chased further here.
+
+### `command`/`shell` free-form `creates=`/`removes=`/etc. not stripped when the whole command is a `{% if %}...{% endif %}` block
+
+Found live via `kamaln7.swapfile` (Kata round, 0.9.735):
+
+```yaml
+command: >
+  {% if swapfile_use_dd %}
+  dd if=/dev/zero of={{ swapfile_location }} ... creates={{ swapfile_location }}
+  {% else %}
+  fallocate -l {{ swapfile_size }} {{ swapfile_location }} creates={{ swapfile_location }}
+  {% endif %}
+```
+
+`PlaybookParser.extract_command_special_params` strips a trailing
+`creates=`/`removes=`/`chdir=`/`executable=` token from the RAW,
+pre-render YAML text at PARSE time - but here the raw text's actual
+last token is the literal `{% endif %}` tag, not `creates=...` (that
+sits earlier, inside one of the two branches). The strip never fires,
+so `creates=...` reaches `fallocate` as a literal positional argument
+("fallocate: unexpected number of arguments") instead of being consumed
+as the module's own `creates:` param - where real Ansible renders the
+whole block FIRST (resolving to one flat command line with `creates=`
+genuinely last) and only then parses trailing key=value specials.
+Needs special-param extraction moved to after template rendering,
+which is a bigger reordering of the parse/render/execute pipeline than
+a single-file fix - not attempted here.
+
+### `json_query` filter entirely unimplemented
+
+Found live via `itigoag.packages` (Kata round, 0.9.735): `packages_var_lower
+| json_query(packages_var_query)` fails with "No filter named
+'json_query'". Real Ansible's `json_query` (from `community.general`,
+commonly reachable as a bare name too) is a full JMESPath query
+filter - projections, multi-select, pipe expressions, built-in
+functions. Implementing it properly means either vendoring a JMESPath
+library or writing a real subset parser; neither attempted here as
+part of a bug-fix pass.
+
+---
+
+## Round 300 (120-role Kata campaign, first full local-only round, 0.9.734 -> 0.9.735)
+
+First 120-role marathon run entirely on local Kata VMs instead of
+Atlantic.net - one fresh pair per role, up to 4 pairs (8 VMs) run in
+parallel on one 16-thread/16GB machine. Two infra-level findings before
+any engine bug hunting was possible:
+
+1. **The candidate-role exclusion list was built by scanning only lines
+   55-1135 of this file** (the old two-column "Per-role status" table),
+   missing every later round's table (round 191 onward, through line
+   1859) - top-download-count roles overwhelmingly overlap with what
+   prior rounds already tested via the same sourcing method, so 23 of
+   the first 24 roles run turned out to be exact duplicates already
+   marked clean/fixed. Caught mid-round from a batch of `arillso.*`
+   "divergences" that were actually already-known-and-explained
+   history; discarded that batch (rounds 2001-2024, one genuinely-new
+   role - `ansible-network.network-engine`, clean - kept) and rebuilt
+   the exclusion list from the WHOLE file before continuing.
+
+2. **Kata guest VMs had zero internet egress** - `testing/kata/kata-
+   host.sh`'s `net_up` gave each guest an address but no default route,
+   and there was no host-side NAT rule for the `10.99.0.0/16` range.
+   The base image's own apt cache (populated at build time, on the
+   host's network) made package *metadata* lookups look like they
+   worked, masking this for a while - but any task needing live network
+   (an actual package download beyond the image's snapshot, `curl`,
+   a GitHub API call) failed identically on both engines, just at
+   different points in each engine's own bootstrap order, which looked
+   exactly like a pile of real engine divergences until traced back to
+   the missing route. Fixed: `net_up` now adds the default route
+   BEFORE `ctr run` (kata-agent snapshots the netns's network state
+   into the guest once, at boot - a route added after boot is invisible
+   to the guest), paired with a host-side `iptables -t nat -A
+   POSTROUTING -s 10.99.0.0/16 -o <iface> -j MASQUERADE` rule (not
+   automated - `iptables` deliberately isn't in the harness's NOPASSWD
+   sudoers list). See `testing/kata/README.md`'s own gotcha #8 and
+   updated Prerequisites section.
+
+With both fixed, 31 of 120 roles showed a real divergence (confirmed by
+re-running all 31 fresh after the network fix - all 31 reproduced
+identically, ruling out network flakiness as the explanation for any of
+them). Triaged down to:
+
+- **4 real krikri bugs found and fixed** (0.9.735): `ansible_system_
+  vendor` fact entirely missing from `FactsGatherer` (DMI `sys_vendor`,
+  found via `sbaerlocher.qemu-guest-agent`/`.ovirt-guest-agent`'s own
+  `when: ansible_system_vendor == 'QEMU'`); the `environment` Jinja
+  global (real Ansible's Templar always exposes `os.environ` as this
+  name) was missing from BOTH independent template-rendering paths -
+  `CrinjaRenderer` (the `{{ }}` task-param path) and the entirely
+  separate `TemplateActionPlugin` (real `.j2` file rendering) - found
+  via `GROG.debug-variable`'s own `{{ environment | to_nice_json }}`
+  dump-everything idiom; `lookup('ansible.builtin.fileglob', ...,
+  wantlist=True)` (the FUNCTION-call form of a lookup only the FILTER
+  form - `map('fileglob')` - previously handled) was entirely
+  unimplemented, falling to the "undefined" string fallback, and
+  `"undefined" | length > 0` is true - found via `PowerDNS.pdns`'s own
+  per-loop-item `when:` guard meant to skip a nonexistent OS-specific
+  vars file, which always ran `include_vars:` anyway and failed instead
+  of skipping; bare `omit` inside a `when:`/`assert:` comparison
+  (`rhsm_username != omit`, the standard "was this optional param
+  actually given" idiom) raised "'omit' is undefined" instead of
+  resolving to the same `OMIT_SENTINEL` `{{ omit }}` template
+  interpolation already special-cased - found via `oasis_roles.rhsm`.
+  All four re-verified CLEAN on fresh Kata pairs after the fix
+  (`PowerDNS.pdns` improved substantially - 12 more tasks now run
+  correctly - but hits a separate, deeper vendored-crinja-fork bug
+  further into the same role; see the dict-templating open gap above).
+- **2 new open gaps documented** (not fixed - see "Open gaps" above):
+  the `command`/`shell` free-form `creates=` stripping breaks when the
+  whole command is a `{% if %}...{% endif %}` block (`kamaln7.
+  swapfile`); `json_query` (JMESPath) entirely unimplemented
+  (`itigoag.packages`).
+- **1 new shape of the existing "lazy dict-templating" gap** (see
+  above): a single-variable `{% for k in dict %}` yielding `(key,
+  value)` tuples instead of just keys, in the vendored crinja fork
+  itself (`PowerDNS.pdns`, past the fileglob fix).
+- **~24 confirmed NOT bugs**: `jborean93.win_openssh` (a Windows-only
+  role run on Linux - same class as `arillso.chocolatey`, both engines
+  correctly diverge because the role is inapplicable to this OS);
+  `krzysztof-magosa.docker`/`sbaerlocher.domain-join` (real Ansible
+  hard-fails at PARSE time on a module removed from a collection -
+  krikri doesn't do that upfront validation and proceeds instead, the
+  documented "strictness difference" class); `l3d.gitea`/`roles-
+  ansible.gitea`/`haxorof.docker_ce` (blocked by `python3-apt` genuinely
+  not being installable on this Debian trixie image snapshot -
+  independent of the network fix, confirmed by re-testing with real
+  internet - not a krikri defect); `stackhpc.drac`/`.os-ironic-state`
+  (a `local_action:` task needing passwordless sudo on the CONTROLLER
+  itself, which this harness's controller doesn't have - real Ansible
+  fails on "sudo: a password is required" locally while krikri
+  correctly reports the module unimplemented and skips); and the
+  remaining "extra `ok`+1"/"runs further before failing" cluster,
+  mostly explained by the two infra findings above once traced through
+  individually.
+
+Regression specs: `spec/unit/facts_gatherer_spec.cr` (system_vendor),
+`spec/unit/crinja_renderer_spec.cr` (environment global),
+`spec/unit/expression_evaluator_spec.cr` (fileglob lookup),
+`spec/unit/conditional_evaluator_spec.cr` (omit sentinel). Full suite:
+2458 examples, 0 failures.
 
 ---
 

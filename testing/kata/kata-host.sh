@@ -66,6 +66,13 @@ net_up() {
   sudo -n ip -n "$ns" addr add "$(ip_of "$name" "$octet")/24" dev "$gif" || return 1
   sudo -n ip -n "$ns" link set "$gif" up                          || return 1
   sudo -n ip -n "$ns" link set lo up                              || return 1
+  # Kata snapshots the netns's network state into the guest at boot time
+  # (kata-agent reads it once when the sandbox starts) - a route added
+  # after `ctr run` never reaches the guest. Must be here, before up()
+  # calls `ctr run`, or the guest gets an address but no default route
+  # and can't reach anything off its own /24 (no real internet access) -
+  # paired with the host-side MASQUERADE rule for the 10.99.0.0/16 range.
+  sudo -n ip -n "$ns" route add default via "$(gw_of "$name" "$octet")" dev "$gif" || return 1
 }
 
 up() {

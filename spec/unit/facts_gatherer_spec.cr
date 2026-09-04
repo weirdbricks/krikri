@@ -39,6 +39,16 @@ describe Krikri::FactsGatherer do
     facts["ansible_hostname"]?.should_not be_nil
   end
 
+  it "always sets ansible_system_vendor, even when DMI info isn't readable" do
+    # Real Ansible's DMI collector falls back to "NA" rather than leaving
+    # the fact undefined - a `when: ansible_system_vendor == 'QEMU'` guard
+    # (sbaerlocher.qemu-guest-agent/.ovirt-guest-agent's own idiom) must
+    # always have something to compare against, never raise "undefined".
+    facts = JSON.parse(Krikri::FactsGatherer.run(nil))["ansible_facts"].as_h
+    facts["ansible_system_vendor"]?.should_not be_nil
+    facts["ansible_system_vendor"].as_s.should_not be_empty
+  end
+
   it "honours gather_subset from the config it is handed" do
     # The daemon hands over an already-parsed JSON::Any rather than a
     # STDIN string, so this is the shape that matters now.

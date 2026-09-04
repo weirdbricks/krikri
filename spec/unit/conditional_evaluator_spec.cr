@@ -1285,4 +1285,22 @@ describe Krikri::ConditionalEvaluator do
       Krikri::ConditionalEvaluator.evaluate("_bts_install_full_python is not boolean", v).should be_false
     end
   end
+
+  it "resolves bare `omit` to VariableSubstitutor's OMIT_SENTINEL instead of raising 'undefined'" do
+    # Real bug found via oasis_roles.rhsm's own `when: rhsm_username !=
+    # omit or rhsm_activationkey != omit` (the standard "was this
+    # optional param actually given" idiom, both vars themselves
+    # defaulting to `"{{ omit }}"`) - real Ansible always has `omit`
+    # defined as a magic bareword; this evaluator had no case for it at
+    # all, raising "'omit' is undefined" and failing the whole task
+    # instead of just evaluating the comparison.
+    v = {} of String => JSON::Any
+    Krikri::ConditionalEvaluator.evaluate("omit == omit", v).should be_true
+
+    v["rhsm_username"] = JSON::Any.new(Krikri::OMIT_SENTINEL)
+    Krikri::ConditionalEvaluator.evaluate("rhsm_username != omit", v).should be_false
+
+    v["rhsm_username"] = JSON::Any.new("realvalue")
+    Krikri::ConditionalEvaluator.evaluate("rhsm_username != omit", v).should be_true
+  end
 end

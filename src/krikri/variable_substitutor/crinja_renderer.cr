@@ -113,6 +113,20 @@ module Krikri
         parent_context = (@template_context ||= build_lazy_context)
         child_context = Crinja::Context.new(parent_context)
 
+        # Real Ansible's Templar always exposes `environment` as a Jinja
+        # global mapped to the controller process's OS environment
+        # variables (`os.environ`) - not the task/play `environment:`
+        # keyword, a genuinely separate thing. Entirely missing before -
+        # GROG.debug-variable's own `{{ environment | to_nice_json }}`
+        # (a common "dump everything" debug template idiom) raised
+        # "'environment' is undefined" and failed the whole task instead
+        # of rendering. Set fresh per render (not baked into the
+        # process-wide `shared_env`, which is built once and cached) so
+        # it reflects the actual live ENV at render time, not whatever
+        # ENV happened to hold the first time any template was ever
+        # rendered in this process.
+        child_context["environment"] = ENV.to_h
+
         # Trim markers on OUTPUT tags (`{{- expr }}`/`{{ expr -}}`) used to
         # be worked around by pre-normalizing the source here (the removed
         # `normalize_expression_trim_markers`); the fork's lexer now

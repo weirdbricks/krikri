@@ -1179,4 +1179,17 @@ describe "CrinjaRenderer.rerender_nested_templates (round 170 - scalar-vs-contai
       "{% set merged = base_rules.copy() %}{% set _ = merged.update(overrides) %}{{ merged }}"
     ).should eq("{'a': 1, 'b': 99, 'c': 3}")
   end
+
+  it "exposes `environment` as a Jinja global mapped to the controller's OS env vars" do
+    # Found via GROG.debug-variable's own `{{ environment | to_nice_json
+    # }}` (a common "dump everything" debug template idiom) - real
+    # Ansible's Templar always exposes this global; krikri had no
+    # concept of it at all and raised "'environment' is undefined".
+    v = Hash(String, JSON::Any).new
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    ENV["KRIKRI_SPEC_ENV_PROBE"] = "probe-value"
+    renderer.render("{{ environment.KRIKRI_SPEC_ENV_PROBE }}").should eq("probe-value")
+  ensure
+    ENV.delete("KRIKRI_SPEC_ENV_PROBE")
+  end
 end
