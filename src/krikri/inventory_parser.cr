@@ -1,6 +1,7 @@
 require "yaml"
 require "./vault"
 require "./host"
+require "./inventory_plugins"
 
 module Krikri
   # Inventory - represents the complete inventory
@@ -263,13 +264,29 @@ module Krikri
     def self.parse_directory(path : String) : Inventory
       merged = Inventory.new
 
+      # `constructed` sources transform hosts contributed by the OTHER
+      # sources in the directory rather than contributing hosts of their
+      # own, so they are applied after everything else is merged - same
+      # order real Ansible processes inventory sources in.
+      deferred_constructed = [] of String
+
       sources = Dir.children(path).sort!.map { |child| File.join(path, child) }
       sources.each do |source|
         next unless File.file?(source)
         next if File.basename(source).starts_with?('.')
         next if IGNORED_INVENTORY_EXTENSIONS.any? { |extension| source.ends_with?(extension) }
 
+        if InventoryPlugins.constructed_source?(source)
+          deferred_constructed << source
+          next
+        end
+
         merge_inventory(merged, parse(source))
+      end
+
+      deferred_constructed.each do |source|
+        doc = YAML.parse(File.read(source))
+        InventoryPlugins.apply_constructed_options(merged, doc)
       end
 
       apply_group_vars(merged)
@@ -527,6 +544,14 @@ module Krikri
         yaml = YAML.parse(File.read(path))
       rescue ex : YAML::ParseException
         raise "Invalid YAML in inventory file: #{ex.message}"
+      end
+
+      # YAML-defined inventory plugin source (`plugin: <name>` at the top
+      # level) - dispatched to InventoryPlugins unless it is the `yaml`
+      # plugin, which IS the normal YAML inventory shape and just carries
+      # the plugin marker alongside it.
+      if (name = InventoryPlugins.plugin_name(yaml)) && name != "yaml"
+        return InventoryPlugins.parse_plugin(path, yaml, name)
       end
 
       # YAML inventory structure

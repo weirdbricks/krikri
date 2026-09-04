@@ -4,6 +4,10 @@ shards:
     git: https://github.com/crystal-ameba/ameba.git
     version: 1.6.4
 
+  awscr-signer:
+    git: https://github.com/weirdbricks/awscr-signer.git
+    version: 0.9.0+git.commit.2a8cc0980c9ba18ef22bf870e8be12783ee2b5ec
+
   bz2:
     git: https://github.com/weirdbricks/bz2.cr.git
     version: 0.1.0

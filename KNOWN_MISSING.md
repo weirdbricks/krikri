@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.730`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.731`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.23` (see `shard.yml`).
 
 ---
@@ -1065,14 +1065,31 @@ as bugs, not because anyone intends to fix them.
     (real Ansible has no `-d`, so it collides with nothing).
 
 - Cloud provider modules (`amazon.aws`/`community.aws` - `ec2_instance`,
-  `s3_object`, IAM, security groups, etc.), `azure_rm_*`, and dynamic
-  cloud inventory *plugins* (`aws_ec2.yml` et al.) - not implemented,
-  not planned. These are a fundamentally different kind of module (HTTP
-  calls to a cloud API from the controller, needing real request
-  signing/auth, not shell commands run on a managed target) - a real
-  API client built from scratch, not "another module that shells out to
-  a CLI tool" like everything implemented so far. Revisit only if a
-  specific real-world need justifies the investment.
+  `s3_object`, IAM, security groups, etc.) and `azure_rm_*` - not
+  implemented, not planned. These are a fundamentally different kind of
+  module (HTTP calls to a cloud API from the controller, needing real
+  request signing/auth, not shell commands run on a managed target) - a
+  real API client built from scratch, not "another module that shells out
+  to a CLI tool" like everything implemented so far. Revisit only if a
+  specific real-world need justifies the investment. (The inventory
+  half of this - YAML-defined cloud inventory *plugins* - landed in
+  0.9.731, see below.)
+- YAML-defined inventory plugins (`plugin:` sources): `host_list`,
+  `ini`, `yaml`, `constructed` and `amazon.aws.aws_ec2` are implemented
+  (0.9.731, via `src/krikri/inventory_plugins.cr`; aws_ec2 talks to the
+  real EC2 API with SigV4 through the vendored `awscr-signer` shard -
+  no `aws` CLI or boto3 needed, credentials from the standard
+  `AWS_*` environment variables). Deliberate approximations within
+  that: the default `hostnames` order is `ip-address`,
+  `private-ip-address`, `instance-id` (real Ansible's default is a
+  smarter public-DNS-aware chain); constructed `filters` are
+  AND-combined `key=value` / bare-key / `*` / `!`-negation entries,
+  not real Ansible's richer condition syntax; keyed_groups with a dict
+  value make one group per key; a non-empty group-name prefix defeats
+  `leading_separator: false` (matching the real plugin's intent, not
+  its exact edge-case output). Other collection inventory plugins
+  (azure, gcp, openstack, ...) are still not implemented and follow
+  the same rule as the cloud modules above.
 - `community.general.apache2_module` (Debian/Suse `a2enmod`/`a2dismod`
   wrapper) has no plugin binary at all. Found round175 benchmarking
   `buluma.httpd` on Rocky 9.6: the role's own "locations | Enable

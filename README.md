@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.730-blue)](https://github.com/weirdbricks/krikri)
+[![Version](https://img.shields.io/badge/version-0.9.731-blue)](https://github.com/weirdbricks/krikri)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/krikri)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 [![Homebrew](https://img.shields.io/badge/homebrew-tap-blue)](#install-via-homebrew-macoslinux-prebuilt-binaries)
@@ -54,10 +54,13 @@ in wall-clock time - see **Performance** below.
 ### What's structurally different (by design, not a gap)
 
 No arbitrary Python execution (a role's private `library/*.py` module
-can't run - there's no interpreter to run it in), cloud provider modules/
-inventory plugins (`amazon.aws`, `azure_rm_*`, ...), and a handful of
-narrower cuts (`docker_*`'s `api_version:` pin, a few `meta:` actions).
-See **What's missing** below.
+can't run - there's no interpreter to run it in), cloud provider
+*modules* (`amazon.aws`/`azure_rm_*` resource management - `ec2_instance`,
+`s3_object`, IAM, etc.), and a handful of narrower cuts (`docker_*`'s
+`api_version:` pin, a few `meta:` actions). Cloud *inventory* plugins are
+a partial exception: `aws_ec2` is implemented (real signed EC2 API calls),
+alongside `host_list`/`ini`/`yaml`/`constructed`; other providers (azure,
+gcp, openstack, ...) are not. See **What's missing** below.
 
 ---
 

@@ -25,6 +25,9 @@ dependencies:
     github: naqvis/xz.cr
   bz2:
     github: weirdbricks/bz2.cr
+  awscr-signer:
+    github: weirdbricks/awscr-signer
+    branch: master
 
 development_dependencies:
   ameba:
