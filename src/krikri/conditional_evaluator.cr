@@ -1213,14 +1213,14 @@ module Krikri
       when "falsy"
         # !truthy: null, false, 0, "", empty list/dict (P2.4)
         case raw = value.raw
-        when Nil         then true
-        when Bool        then !raw
-        when Int64       then raw == 0
-        when Float64     then raw == 0.0
-        when String      then raw.empty?
-        when Array       then raw.empty?
-        when Hash        then raw.empty?
-        else                  false
+        when Nil     then true
+        when Bool    then !raw
+        when Int64   then raw == 0
+        when Float64 then raw == 0.0
+        when String  then raw.empty?
+        when Array   then raw.empty?
+        when Hash    then raw.empty?
+        else              false
         end
       when "abs"
         # abs-as-test: the value is a number (P2.6)

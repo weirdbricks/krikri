@@ -421,31 +421,8 @@ module Krikri
       UPDATE_THEN_REREAD_RE = /\A\{\{\s*([A-Za-z_]\w*)\.update\(\s*([A-Za-z_]\w*)\s*\)\s*\}\}\{\{\s*\1\s*\}\}\z/
 
       private def self.rerender_string_value(raw : String, value : JSON::Any, substitutor : VarSubstitutor) : JSON::Any
-        if (m = UPDATE_THEN_REREAD_RE.match(raw.strip))
-          target_name, arg_name = m[1], m[2]
-          target = substitutor.vars[target_name]?
-          arg = substitutor.vars[arg_name]?
-          if target && target.raw.is_a?(Hash) && arg && arg.raw.is_a?(Hash)
-            # Each dict's OWN values need the same recursive re-render
-            # every other nested-template value in this codebase gets
-            # (see #rerender_nested_templates just below) - found live
-            # via jtyr.nsswitch's real `nsswitch__default` (round
-            # confirm-860s): every one of its values is itself a bare
-            # `{{ nsswitch_passwd }}`-style indirection to a real list.
-            # Merging the RAW dict (unrendered `{{ }}` text still in
-            # every value) silently corrupted the rendered
-            # /etc/nsswitch.conf - `{{ val | join(' ') }}` treated the
-            # literal template text as a string and iterated its
-            # CHARACTERS, one per line, which broke NSS `passwd:`
-            # resolution (and `sudo`, and the whole host) instead of
-            # raising anything - confirmed on a real host before this
-            # fix, not merely theorized.
-            merged = rerender_nested_templates(target, substitutor).as_h.dup
-            rerender_nested_templates(arg, substitutor).as_h.each { |key, val| merged[key] = val }
-            merged_json = JSON::Any.new(merged)
-            substitutor.vars[target_name] = merged_json
-            return merged_json
-          end
+        if merged = update_then_reread_merge(raw, substitutor)
+          return merged
         end
 
         # `{%`/`{#` need the same re-render as `{{`: a variable whose own
@@ -467,100 +444,127 @@ module Krikri
         rendered = substitutor.substitute(raw)
         stripped = raw.strip
         if stripped.starts_with?("{{") && stripped.ends_with?("}}")
-          # A nested-template variable whose ENTIRE value (no other
-          # literal characters around it) is a `{{ }}` expression
-          # can itself render to a real array/dict
-          # (`docker_pip_packages: "{{
-          # _docker_pip_packages[ansible_facts['os_family']] |
-          # default(...) }}"`, robertdebock.docker's own vars/main.
-          # yml) - substitutor.substitute always returns a formatted
-          # STRING, so without re-parsing back to JSON here every
-          # such variable silently became a String-typed Crinja
-          # value forever after (`docker_pip_packages | length`
-          # measured the STRING's character count instead of the
-          # list's element count, and the `| length > 0` when: guard
-          # on the role's own conditional "Install docker pip
-          # packages" task always passed even for the empty-list
-          # Debian case, then `ansible.builtin.pip: name: "[]"`
-          # tried to install a literal package named "[]"). Every
-          # other rerender call site in this codebase
-          # (VariableLookup#rerender_if_templated, ExpressionEvaluator's
-          # own bare-lookup/filter-chain-head fallback) already does
-          # this JSON.parse-back step; this one (feeding Crinja's
-          # own vars context) was the one gap.
-          #
-          # Restricted to a PURE `{{ }}` value (nothing else around
-          # it) rather than any string containing "{{" anywhere -
-          # geerlingguy.nginx's own `nginx_worker_processes: '"{{
-          # ansible_processor_vcpus | default(...) }}"'` has literal
-          # double-quote characters OUTSIDE the `{{ }}` span,
-          # deliberately, so its rendered value stays the literal
-          # 3-character string `"1"` in the .conf file - reparsing
-          # THAT as JSON would strip the quotes real Ansible keeps,
-          # a regression this same restriction (`raw.strip` must be
-          # entirely one `{{ }}` span) is what
-          # VariableLookup#rerender_if_templated already uses to
-          # draw the same line.
-          #
-          # Only attempt the parse-back when the rendered text is
-          # container-SHAPED (`[...]`/`{...}`) - real Ansible's
-          # default (non-jinja2_native) templating renders a `{{ }}`
-          # expression to plain text and does NOT re-infer a scalar
-          # type from it: a role default like `bind_python_version:
-          # "{{ bind_default_python_version }}"` where the referenced
-          # var is the quoted YAML STRING "3" stays the string "3"
-          # through any number of indirections in real Ansible - it
-          # never becomes the integer 3. Blindly JSON-parsing EVERY
-          # rendered scalar here silently reinterpreted any purely
-          # numeric-looking string ("3", "0700", a version string
-          # missing its middle segment...) as a real number, breaking
-          # `==`/`!=` string comparisons against a quoted literal
-          # elsewhere (`bind_python_version == '3'` went from True to
-          # False - the comparison operands ended up Int64(3) vs
-          # String("3"), which real Jinja/Python correctly refuses to
-          # treat as equal). Found via buluma.bind's own vars/Debian.
-          # yml: `(bind_python_version == '3') | ternary(...)` always
-          # picked the FALSE branch, installing the removed python2-
-          # era `python-netaddr`/`python-dnspython` package names
-          # instead of `python3-*` on every real Debian/Ubuntu target.
-          if rendered.strip.starts_with?('[') || rendered.strip.starts_with?('{')
-            # A container literal built from a Python-style dict/set
-            # expression (`{ 'Virtual': v } if cond else { 'X': y }`,
-            # jtyr.motd's own motd_info__default) finalizes to
-            # single-quoted Python-repr text ("{'Virtual': 'NO'}"),
-            # which is not valid JSON - JSON.parse fails, and used to
-            # fall all the way back to a plain STRING here, so a later
-            # `{% for key, value in item %}` over it crashed with
-            # "cannot unpack multiple values" instead of seeing the
-            # real dict (confirmed live against a real host running
-            # jtyr.motd). Falling back to a genuine STRUCTURAL Crinja
-            # evaluation (`evaluate_value!`, already used elsewhere for
-            # exactly this "get the real Crinja::Value, not a
-            # stringify-then-reparse round trip" need) instead of
-            # giving up to a plain string recovers the real
-            # array/dict without the JSON-text detour at all.
-            inner = stripped[2..-3].strip
-            (JSON.parse(rendered) rescue nil) ||
-              (CrinjaRenderer.new(substitutor.vars).evaluate_value!(inner) rescue nil) ||
-              JSON::Any.new(rendered)
-          else
-            JSON::Any.new(rendered)
-          end
+          render_pure_mustache_value(rendered, stripped, substitutor)
         else
           JSON::Any.new(rendered)
         end
       end
 
-      def self.rerender_nested_templates(value : JSON::Any, substitutor : VarSubstitutor) : JSON::Any
-        case raw = value.raw
-        when String
-          rerender_string_value(raw, value, substitutor)
-        when Array
-          JSON::Any.new(raw.map { |item| rerender_nested_templates(item, substitutor) })
-        when Hash
-          JSON::Any.new(raw.transform_values { |item| rerender_nested_templates(item, substitutor) })
+      # The `{{ dict.update(other) }}{{ dict }}` mutate-for-side-effect-
+      # then-reread idiom (both operands bare names): perform dict.update's
+      # own shallow-merge, top-level-key-overrides semantics, and persist
+      # the merge back onto the target variable (matching Python's real
+      # in-place mutation, visible to any LATER reference of it too - not
+      # just this one). Returns nil for anything that doesn't match this
+      # exact shape, so the caller falls through to the general
+      # string-rendering path.
+      private def self.update_then_reread_merge(raw : String, substitutor : VarSubstitutor) : JSON::Any?
+        m = UPDATE_THEN_REREAD_RE.match(raw.strip) || return nil
+        target_name, arg_name = m[1], m[2]
+        target = substitutor.vars[target_name]?
+        arg = substitutor.vars[arg_name]?
+        return nil unless target && target.raw.is_a?(Hash) && arg && arg.raw.is_a?(Hash)
+
+        # Each dict's OWN values need the same recursive re-render
+        # every other nested-template value in this codebase gets
+        # (see #rerender_nested_templates just below) - found live
+        # via jtyr.nsswitch's real `nsswitch__default` (round
+        # confirm-860s): every one of its values is itself a bare
+        # `{{ nsswitch_passwd }}`-style indirection to a real list.
+        # Merging the RAW dict (unrendered `{{ }}` text still in
+        # every value) silently corrupted the rendered
+        # /etc/nsswitch.conf - `{{ val | join(' ') }}` treated the
+        # literal template text as a string and iterated its
+        # CHARACTERS, one per line, which broke NSS `passwd:`
+        # resolution (and `sudo`, and the whole host) instead of
+        # raising anything - confirmed on a real host before this
+        # fix, not merely theorized.
+        merged = rerender_nested_templates(target, substitutor).as_h.dup
+        rerender_nested_templates(arg, substitutor).as_h.each { |key, val| merged[key] = val }
+        merged_json = JSON::Any.new(merged)
+        substitutor.vars[target_name] = merged_json
+        merged_json
+      end
+
+      # A nested-template variable whose ENTIRE value (no other
+      # literal characters around it) is a `{{ }}` expression
+      # can itself render to a real array/dict
+      # (`docker_pip_packages: "{{
+      # _docker_pip_packages[ansible_facts['os_family']] |
+      # default(...) }}", robertdebock.docker's own vars/main.
+      # yml) - substitutor.substitute always returns a formatted
+      # STRING, so without re-parsing back to JSON here every
+      # such variable silently became a String-typed Crinja
+      # value forever after (`docker_pip_packages | length`
+      # measured the STRING's character count instead of the
+      # list's element count, and the `| length > 0` when: guard
+      # on the role's own conditional "Install docker pip
+      # packages" task always passed even for the empty-list
+      # Debian case, then `ansible.builtin.pip: name: "[]"`
+      # tried to install a literal package named "[]"). Every
+      # other rerender call site in this codebase
+      # (VariableLookup#rerender_if_templated, ExpressionEvaluator's
+      # own bare-lookup/filter-chain-head fallback) already does
+      # this JSON.parse-back step; this one (feeding Crinja's
+      # own vars context) was the one gap.
+      #
+      # Restricted to a PURE `{{ }}` value (nothing else around
+      # it) rather than any string containing "{{" anywhere -
+      # geerlingguy.nginx's own `nginx_worker_processes: '"{{
+      # ansible_processor_vcpus | default(...) }}"'` has literal
+      # double-quote characters OUTSIDE the `{{ }}` span,
+      # deliberately, so its rendered value stays the literal
+      # 3-character string `"1"` in the .conf file - reparsing
+      # THAT as JSON would strip the quotes real Ansible keeps,
+      # a regression this same restriction (`raw.strip` must be
+      # entirely one `{{ }}` span) is what
+      # VariableLookup#rerender_if_templated already uses to
+      # draw the same line.
+      #
+      # Only attempt the parse-back when the rendered text is
+      # container-SHAPED (`[...]`/`{...}`) - real Ansible's
+      # default (non-jinja2_native) templating renders a `{{ }}`
+      # expression to plain text and does NOT re-infer a scalar
+      # type from it: a role default like `bind_python_version:
+      # "{{ bind_default_python_version }}"` where the referenced
+      # var is the quoted YAML STRING "3" stays the string "3"
+      # through any number of indirections in real Ansible - it
+      # never becomes the integer 3. Blindly JSON-parsing EVERY
+      # rendered scalar here silently reinterpreted any purely
+      # numeric-looking string ("3", "0700", a version string
+      # missing its middle segment...) as a real number, breaking
+      # `==`/`!=` string comparisons against a quoted literal
+      # elsewhere (`bind_python_version == '3'` went from True to
+      # False - the comparison operands ended up Int64(3) vs
+      # String("3"), which real Jinja/Python correctly refuses to
+      # treat as equal). Found via buluma.bind's own vars/Debian.
+      # yml: `(bind_python_version == '3') | ternary(...)` always
+      # picked the FALSE branch, installing the removed python2-
+      # era `python-netaddr`/`python-dnspython` package names
+      # instead of `python3-*` on every real Debian/Ubuntu target.
+      private def self.render_pure_mustache_value(rendered : String, stripped : String, substitutor : VarSubstitutor) : JSON::Any
+        if rendered.strip.starts_with?('[') || rendered.strip.starts_with?('{')
+          # A container literal built from a Python-style dict/set
+          # expression (`{ 'Virtual': v } if cond else { 'X': y }`,
+          # jtyr.motd's own motd_info__default) finalizes to
+          # single-quoted Python-repr text ("{'Virtual': 'NO'}"),
+          # which is not valid JSON - JSON.parse fails, and used to
+          # fall all the way back to a plain STRING here, so a later
+          # `{% for key, value in item %}` over it crashed with
+          # "cannot unpack multiple values" instead of seeing the
+          # real dict (confirmed live against a real host running
+          # jtyr.motd). Falling back to a genuine STRUCTURAL Crinja
+          # evaluation (`evaluate_value!`, already used elsewhere for
+          # exactly this "get the real Crinja::Value, not a
+          # stringify-then-reparse round trip" need) instead of
+          # giving up to a plain string recovers the real
+          # array/dict without the JSON-text detour at all.
+          inner = stripped[2..-3].strip
+          (JSON.parse(rendered) rescue nil) ||
+            (CrinjaRenderer.new(substitutor.vars).evaluate_value!(inner) rescue nil) ||
+            JSON::Any.new(rendered)
         else
-          value
+          JSON::Any.new(rendered)
         end
       end
 
@@ -601,6 +605,19 @@ module Krikri
           Crinja::Value.new(array)
         else
           Crinja::Value.new(json.to_s)
+        end
+      end
+
+      def self.rerender_nested_templates(value : JSON::Any, substitutor : VarSubstitutor) : JSON::Any
+        case raw = value.raw
+        when String
+          rerender_string_value(raw, value, substitutor)
+        when Array
+          JSON::Any.new(raw.map { |item| rerender_nested_templates(item, substitutor) })
+        when Hash
+          JSON::Any.new(raw.transform_values { |item| rerender_nested_templates(item, substitutor) })
+        else
+          value
         end
       end
     end

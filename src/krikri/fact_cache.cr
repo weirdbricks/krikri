@@ -47,7 +47,11 @@ module Krikri
     # the inventory host name) directly as the filename - no hashing or
     # sanitization beyond what the filesystem itself enforces.
     private def self.path_for(host_name : String) : String
-      File.join(connection_dir.not_nil!, host_name)
+      # callers gate on enabled?, which guarantees connection_dir - an
+      # explicit nil-check instead of not_nil! (ameba Lint/NotNil)
+      dir = connection_dir
+      raise "fact cache path requested with no connection dir" unless dir
+      File.join(dir, host_name)
     end
 
     # Returns the cached facts for *host_name* if the cache is enabled,
@@ -79,7 +83,8 @@ module Krikri
     # non-fatal.
     def self.write(host_name : String, facts : Hash(String, JSON::Any)) : Nil
       return unless enabled?
-      dir = connection_dir.not_nil!
+      dir = connection_dir
+      return unless dir
       Dir.mkdir_p(dir) unless Dir.exists?(dir)
       File.write(path_for(host_name), facts.to_json)
     rescue

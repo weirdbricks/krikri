@@ -112,57 +112,9 @@ module Krikri
           handler_triggered = false
 
           @hosts.each do |host|
-            next if halted_hosts.try(&.includes?(host.name))
-
-            rendered_name = name_resolver.try(&.call(handler, host)) || handler.name
-
-            if eligible_this_pass?(pass, handler, host, rendered_name,
-                 already_ran[host.name], second_pass[host.name])
-              already_ran[host.name].add(rendered_name)
-
-              unless handler_triggered
-                # Display-only role prefix (verified live against
-                # ansible-core 2.19.12: "RUNNING HANDLER [myrole : my
-                # handler]") - reads handler.role_name directly rather
-                # than folding into rendered_name, which
-                # should_run_handler?/eligible_this_pass? also use for
-                # notify: MATCHING; prefixing that shared value would
-                # make a plain `notify: my handler` stop matching a
-                # role handler's own bare notified name.
-                role_prefix = (rn = handler.role_name) ? "#{rn} : " : ""
-                puts "HANDLER [#{role_prefix}#{rendered_name}]".colorize(:cyan).bold
-                handler_triggered = true
-              end
-
-              # Execute handler using the callback
-              result = execute_callback.call(handler, host)
-
-              # Anything this handler notified that sits at or BEFORE its
-              # own position has already been passed, so it needs the
-              # second pass. Collected during pass one only - real
-              # Ansible drops notifications raised during the second.
-              if pass == 0 && (result["changed"]?.try(&.as_bool?) == true)
-                # Read from the handler's OWN notify: list rather than
-                # diffing @notified_handlers - that is a Set, so a
-                # handler re-notifying something already notified (most
-                # obviously itself) changes nothing there and the
-                # re-notification would be invisible.
-                handler.notify.try &.each do |raised|
-                  index = @handlers.index { |candidate| candidate.name == raised }
-                  second_pass[host.name].add(raised) if index && index <= handler_index
-                end
-              end
-
-              # A handler whose own `when:` evaluated false already
-              # printed its own "skipping: [host]" line inside
-              # execute_handler_internal (mirroring a regular task's
-              # when:-skip). ResultDisplay#display_result has no notion
-              # of "skipped" at all - it would otherwise print a second,
-              # contradictory "ok:" line right underneath, and
-              # #update_stats would count it toward "ok" instead of
-              # "skipped" in the recap.
-              record_handler_result(result, results[host.name], host, handler, diff_mode)
-            end
+            handler_triggered ||= run_handler_on_host(handler, handler_index, host, pass,
+              execute_callback, results, diff_mode, name_resolver, halted_hosts,
+              already_ran[host.name], second_pass[host.name])
           end
 
           puts "" if handler_triggered
@@ -175,6 +127,69 @@ module Krikri
       end
 
       clear_notified!
+    end
+
+    # Runs *handler* on *host* for *pass* if eligible; returns true when
+    # the handler actually triggered (for the blank-line display after a
+    # handler that ran on at least one host).
+    private def run_handler_on_host(handler : Task, handler_index : Int32, host : Host,
+                                    pass : Int32,
+                                    execute_callback : Proc(Task, Host, JSON::Any),
+                                    results : Hash(String, Hash(String, Int32)),
+                                    diff_mode : Bool,
+                                    name_resolver : Proc(Task, Host, String)?,
+                                    halted_hosts : Set(String)?,
+                                    already_ran : Set(String),
+                                    second_pass : Set(String)) : Bool
+      return false if halted_hosts.try(&.includes?(host.name))
+
+      rendered_name = name_resolver.try(&.call(handler, host)) || handler.name
+
+      return false unless eligible_this_pass?(pass, handler, host, rendered_name,
+                            already_ran, second_pass)
+      already_ran.add(rendered_name)
+
+      # Display-only role prefix (verified live against
+      # ansible-core 2.19.12: "RUNNING HANDLER [myrole : my
+      # handler]") - reads handler.role_name directly rather
+      # than folding into rendered_name, which
+      # should_run_handler?/eligible_this_pass? also use for
+      # notify: MATCHING; prefixing that shared value would
+      # make a plain `notify: my handler` stop matching a
+      # role handler's own bare notified name.
+      role_prefix = (rn = handler.role_name) ? "#{rn} : " : ""
+      puts "HANDLER [#{role_prefix}#{rendered_name}]".colorize(:cyan).bold
+
+      # Execute handler using the callback
+      result = execute_callback.call(handler, host)
+
+      # Anything this handler notified that sits at or BEFORE its
+      # own position has already been passed, so it needs the
+      # second pass. Collected during pass one only - real
+      # Ansible drops notifications raised during the second.
+      if pass == 0 && (result["changed"]?.try(&.as_bool?) == true)
+        # Read from the handler's OWN notify: list rather than
+        # diffing @notified_handlers - that is a Set, so a
+        # handler re-notifying something already notified (most
+        # obviously itself) changes nothing there and the
+        # re-notification would be invisible.
+        handler.notify.try &.each do |raised|
+          index = @handlers.index { |candidate| candidate.name == raised }
+          second_pass.add(raised) if index && index <= handler_index
+        end
+      end
+
+      # A handler whose own `when:` evaluated false already
+      # printed its own "skipping: [host]" line inside
+      # execute_handler_internal (mirroring a regular task's
+      # when:-skip). ResultDisplay#display_result has no notion
+      # of "skipped" at all - it would otherwise print a second,
+      # contradictory "ok:" line right underneath, and
+      # #update_stats would count it toward "ok" instead of
+      # "skipped" in the recap.
+      record_handler_result(result, results[host.name], host, handler, diff_mode)
+
+      true
     end
 
     # Whether *handler* runs for *host* on this pass. Pass one is the

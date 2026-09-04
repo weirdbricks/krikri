@@ -517,132 +517,147 @@ module Krikri
       end
 
       private def evaluate_expr_bare_call(expr : String) : String?
-        # `lookup('first_found', ffparams)` - real Ansible's lookup()
-        # function call syntax (distinct from a `|` filter chain), used
-        # pervasively across linux-system-roles to pick an OS-version-
-        # specific vars file: `include_vars: "{{ lookup('first_found',
-        # ffparams) }}"` where ffparams is `{files: [...], paths: [...]}`.
-        # Checked first (function-call syntax, not an operator) since
-        # nothing else in this dispatch chain understands `name(args)` at
-        # all - it fell through everywhere else to a plain variable
-        # lookup on the literal text "lookup('first_found', ffparams)",
-        # always undefined.
-        if bare_call?(expr, "lookup(")
-          return evaluate_lookup(expr[7..-2])
-        end
+        # Each `name(args)` shape gets its own predicate-and-evaluate
+        # method below; the first match wins, exactly as the original
+        # inline if-chain did. (Kept as separate methods rather than one
+        # big if/elsif to keep this dispatch readable - and under ameba's
+        # cyclomatic-complexity ceiling.)
+        evaluate_bare_lookup_call(expr) ||
+          evaluate_bare_lookup_chained_call(expr) ||
+          evaluate_bare_query_call(expr) ||
+          evaluate_bare_range_call(expr) ||
+          evaluate_bare_dict_call(expr)
+      end
 
-        # `lookup(...).method()` chained directly with no `|` filter at
-        # all (a bare `{{ }}` mustache, not a filter chain - the sibling
-        # bug to filter_chain_special_head's own lookup( branch, same
-        # root cause: bare_call? above requires lookup(...)'s own
-        # matching close paren to be expr's LAST character, which is
-        # false once a method call like `.splitlines()` follows it, so
-        # this bare-mustache shape fell through to a plain variable-name
-        # lookup on the whole literal text and always resolved
-        # "undefined" - round 199, bodsch.tomcat).
-        if expr.starts_with?("lookup(") && !top_level_pipe?(expr)
-          if close_idx = matching_close_paren_index(expr, 6)
-            suffix = expr[(close_idx + 1)..]
-            # Only a genuine `.method()` continuation, not a ` | filter`
-            # chain (that's a different expression shape entirely,
-            # already handled by top_level_pipe?/split_chain further
-            # down this dispatch - `lookup(...) | default(...)` and
-            # `lookup(...).splitlines() | length` (a method call
-            # FOLLOWED by a filter, top_level_pipe? is true for both)
-            # must fall through to it unchanged, not be swallowed here;
-            # filter_chain_special_head's own lookup( branch has the
-            # equivalent fix for the pipe case).
-            if suffix.lstrip.starts_with?('.')
-              lookup_rendered = evaluate_lookup(expr[7...close_idx])
-              result = (JSON.parse(lookup_rendered) rescue JSON::Any.new(lookup_rendered))
-              result = @lookup.apply_method_suffix(result, suffix) || result
-              return result.raw.is_a?(String) ? result.as_s : result.to_json
-            end
-          end
-        end
-
-        # `query('first_found', params)` - real Ansible's OTHER lookup-
-        # invocation syntax; unlike `lookup(...)` (which comma-joins a
-        # multi-result lookup into a scalar string unless `wantlist=True`
-        # is passed explicitly), `query(...)` is real Ansible's own
-        # `lookup(..., wantlist=True)` shorthand and ALWAYS returns a
-        # real list - the standard modern idiom for `loop: "{{
-        # query('first_found', params) }}"` (picking an OS-specific vars
-        # file to include, one candidate per iteration). Previously
-        # entirely unrecognized - `bare_call?` only ever matched
-        # "lookup(", so this fell through to a plain variable-name
-        # lookup on the literal text "query('first_found', _params)",
-        # always "undefined" - #resolve_loop_template's `loop:` then ran
-        # once with a bogus `_loop_var`, so `include_vars: "{{ _loop_var
-        # }}"` failed with "file not found: undefined" instead of the
-        # real per-OS vars file. Found live benchmarking buluma.confluence
-        # (round 165): real ansible-playbook resolved the loop to the
-        # real candidate (`ubuntu-22.04.yml`) and continued; crystal
-        # failed at the very first real task.
-        if bare_call?(expr, "query(")
-          return evaluate_query(expr[6..-2])
-        end
-
-        # `range(...)` - real Jinja2/Python's function-call range syntax,
-        # commonly used as a `loop:` source (`loop: "{{ range(1, 11) |
-        # list }}"`) rather than the engine's own `with_sequence:`
-        # keyword. Checked here (bare, no filter chain) for the no-filter
-        # case; the filter-chain case (`range(...) | list`) is handled in
-        # evaluate_with_filter's own base-value resolution, since a bare
-        # `range(` prefix check there would otherwise never be reached -
-        # top_level_pipe? routes any expression with a `|` straight past
-        # this method into evaluate_with_filter before this line runs.
-        if bare_call?(expr, "range(")
-          # Crinja-first delegation, general filter-chain-dispatch
-          # construct (continued): unlike `dict()` just below,
-          # `range()`'s raw-value output matches
-          # the hand-rolled path exactly (probed across positive/
-          # negative step, variable arguments) - safe via the same
-          # #render_via_crinja_value pattern as the literal array/dict
-          # cases above.
-          return begin
-            value = render_via_crinja_value(expr)
-            value ? @lookup.format_value(value) : "undefined"
-          rescue
-            @lookup.format_value(evaluate_range(expr[6..-2]))
-          end
-        end
-
-        # `dict(iterable)` - real Ansible's Templar exposes actual
-        # Python's `dict` builtin (not Jinja2's own `**kwargs`-only
-        # `dict` global), which also accepts a single positional
-        # argument: an iterable of [key, value] pairs. Real bug found
-        # live-verifying prometheus.prometheus.node_exporter: its own
-        # _common role builds a checksum-filename lookup with `dict(raw
-        # .splitlines() | map('regex_findall', ...) | map('flatten') |
-        # map('reverse'))` - a positional iterable, not keyword args -
-        # entirely unhandled here before (fell through to a plain
-        # variable lookup on the literal text "dict(...)", always
-        # undefined). Only the single-positional-arg form is
-        # implemented, the only one any real role seen so far uses;
-        # `dict(a=1, b=2)` keyword form is Crinja-only (jinja_filters.
-        # cr's own lib/function/dict.cr), reached only once escalated
-        # to the full Crinja renderer.
-        if bare_call?(expr, "dict(")
-          # Dual-evaluator convergence: converged 2026-08-14 (0.9.340). The blocker
-          # documented below (Crinja's own `dict()` reading only kwargs
-          # and silently producing an EMPTY dict for a positional arg)
-          # is fixed fork-side (`weirdbricks/crinja` `crystal-play-0.9.4`,
-          # `src/lib/function/dict.cr`): the single positional-iterable
-          # form (mapping, or list/tuple of 2-element pairs) now builds a
-          # real dict and raises a clean `Arguments::Error` for anything
-          # else - the same `render_via_crinja_value`/rescue pattern as
-          # `range()` above, `evaluate_dict_call` unchanged as the
-          # fallback.
-          return begin
-            value = render_via_crinja_value(expr)
-            value ? @lookup.format_value(value) : "undefined"
-          rescue
-            @lookup.format_value(evaluate_dict_call(expr[5..-2]))
-          end
-        end
-
+      # `lookup('first_found', ffparams)` - real Ansible's lookup()
+      # function call syntax (distinct from a `|` filter chain), used
+      # pervasively across linux-system-roles to pick an OS-version-
+      # specific vars file: `include_vars: "{{ lookup('first_found',
+      # ffparams) }}"` where ffparams is `{files: [...], paths: [...]}`.
+      # Checked first (function-call syntax, not an operator) since
+      # nothing else in this dispatch chain understands `name(args)` at
+      # all - it fell through everywhere else to a plain variable
+      # lookup on the literal text "lookup('first_found', ffparams)",
+      # always undefined.
+      private def evaluate_bare_lookup_call(expr : String) : String?
+        return evaluate_lookup(expr[7..-2]) if bare_call?(expr, "lookup(")
         nil
+      end
+
+      # `lookup(...).method()` chained directly with no `|` filter at
+      # all (a bare `{{ }}` mustache, not a filter chain - the sibling
+      # bug to filter_chain_special_head's own lookup( branch, same
+      # root cause: bare_call? above requires lookup(...)'s own
+      # matching close paren to be expr's LAST character, which is
+      # false once a method call like `.splitlines()` follows it, so
+      # this bare-mustache shape fell through to a plain variable-name
+      # lookup on the whole literal text and always resolved
+      # "undefined" - round 199, bodsch.tomcat).
+      private def evaluate_bare_lookup_chained_call(expr : String) : String?
+        return nil if !expr.starts_with?("lookup(") || top_level_pipe?(expr)
+        return nil unless close_idx = matching_close_paren_index(expr, 6)
+        suffix = expr[(close_idx + 1)..]
+        # Only a genuine `.method()` continuation, not a ` | filter`
+        # chain (that's a different expression shape entirely,
+        # already handled by top_level_pipe?/split_chain further
+        # down this dispatch - `lookup(...) | default(...)` and
+        # `lookup(...).splitlines() | length` (a method call
+        # FOLLOWED by a filter, top_level_pipe? is true for both)
+        # must fall through to it unchanged, not be swallowed here;
+        # filter_chain_special_head's own lookup( branch has the
+        # equivalent fix for the pipe case).
+        return nil unless suffix.lstrip.starts_with?('.')
+
+        lookup_rendered = evaluate_lookup(expr[7...close_idx])
+        result = (JSON.parse(lookup_rendered) rescue JSON::Any.new(lookup_rendered))
+        result = @lookup.apply_method_suffix(result, suffix) || result
+        result.raw.is_a?(String) ? result.as_s : result.to_json
+      end
+
+      # `query('first_found', params)` - real Ansible's OTHER lookup-
+      # invocation syntax; unlike `lookup(...)` (which comma-joins a
+      # multi-result lookup into a scalar string unless `wantlist=True`
+      # is passed explicitly), `query(...)` is real Ansible's own
+      # `lookup(..., wantlist=True)` shorthand and ALWAYS returns a
+      # real list - the standard modern idiom for `loop: "{{
+      # query('first_found', params) }}"` (picking an OS-specific vars
+      # file to include, one candidate per iteration). Previously
+      # entirely unrecognized - `bare_call?` only ever matched
+      # "lookup(", so this fell through to a plain variable-name
+      # lookup on the literal text "query('first_found', _params)",
+      # always "undefined" - #resolve_loop_template's `loop:` then ran
+      # once with a bogus `_loop_var`, so `include_vars: "{{ _loop_var
+      # }}"` failed with "file not found: undefined" instead of the
+      # real per-OS vars file. Found live benchmarking buluma.confluence
+      # (round 165): real ansible-playbook resolved the loop to the
+      # real candidate (`ubuntu-22.04.yml`) and continued; crystal
+      # failed at the very first real task.
+      private def evaluate_bare_query_call(expr : String) : String?
+        return evaluate_query(expr[6..-2]) if bare_call?(expr, "query(")
+        nil
+      end
+
+      # `range(...)` - real Jinja2/Python's function-call range syntax,
+      # commonly used as a `loop:` source (`loop: "{{ range(1, 11) |
+      # list }}"`) rather than the engine's own `with_sequence:`
+      # keyword. Checked here (bare, no filter chain) for the no-filter
+      # case; the filter-chain case (`range(...) | list`) is handled in
+      # evaluate_with_filter's own base-value resolution, since a bare
+      # `range(` prefix check there would otherwise never be reached -
+      # top_level_pipe? routes any expression with a `|` straight past
+      # this method into evaluate_with_filter before this line runs.
+      private def evaluate_bare_range_call(expr : String) : String?
+        return nil unless bare_call?(expr, "range(")
+
+        # Crinja-first delegation, general filter-chain-dispatch
+        # construct (continued): unlike `dict()` just below,
+        # `range()`'s raw-value output matches
+        # the hand-rolled path exactly (probed across positive/
+        # negative step, variable arguments) - safe via the same
+        # #render_via_crinja_value pattern as the literal array/dict
+        # cases above.
+        begin
+          value = render_via_crinja_value(expr)
+          value ? @lookup.format_value(value) : "undefined"
+        rescue
+          @lookup.format_value(evaluate_range(expr[6..-2]))
+        end
+      end
+
+      # `dict(iterable)` - real Ansible's Templar exposes actual
+      # Python's `dict` builtin (not Jinja2's own `**kwargs`-only
+      # `dict` global), which also accepts a single positional
+      # argument: an iterable of [key, value] pairs. Real bug found
+      # live-verifying prometheus.prometheus.node_exporter: its own
+      # _common role builds a checksum-filename lookup with `dict(raw
+      # .splitlines() | map('regex_findall', ...) | map('flatten') |
+      # map('reverse'))` - a positional iterable, not keyword args -
+      # entirely unhandled here before (fell through to a plain
+      # variable lookup on the literal text "dict(...)", always
+      # undefined). Only the single-positional-arg form is
+      # implemented, the only one any real role seen so far uses;
+      # `dict(a=1, b=2)` keyword form is Crinja-only (jinja_filters.
+      # cr's own lib/function/dict.cr), reached only once escalated
+      # to the full Crinja renderer.
+      private def evaluate_bare_dict_call(expr : String) : String?
+        return nil unless bare_call?(expr, "dict(")
+
+        # Dual-evaluator convergence: converged 2026-08-14 (0.9.340). The blocker
+        # documented below (Crinja's own `dict()` reading only kwargs
+        # and silently producing an EMPTY dict for a positional arg)
+        # is fixed fork-side (`weirdbricks/crinja` `crystal-play-0.9.4`,
+        # `src/lib/function/dict.cr`): the single positional-iterable
+        # form (mapping, or list/tuple of 2-element pairs) now builds a
+        # real dict and raises a clean `Arguments::Error` for anything
+        # else - the same `render_via_crinja_value`/rescue pattern as
+        # `range()` above, `evaluate_dict_call` unchanged as the
+        # fallback.
+        begin
+          value = render_via_crinja_value(expr)
+          value ? @lookup.format_value(value) : "undefined"
+        rescue
+          @lookup.format_value(evaluate_dict_call(expr[5..-2]))
+        end
       end
 
       # A bare identifier whose OWN stored raw value is a pure, single-
@@ -3006,72 +3021,79 @@ module Krikri
       # (slicing/indexing). nil when none match - the caller falls back
       # to a plain variable lookup.
       private def filter_chain_special_head(var_expr : String) : JSON::Any?
-        if var_expr.starts_with?('(') && var_expr.ends_with?(')')
-          # A parenthesized sub-expression as the chain's head -
-          # dev-sec os_hardening's sysctl merge nests filter chains
-          # this way: `((sysctl_config | combine(...)) |
-          # combine(...)) | combine(...)`. Recursing (stripping the
-          # outer pair) resolves each layer instead of treating the
-          # whole parenthesized text as a literal variable name -
-          # which always failed the lookup and silently collapsed
-          # the entire with_dict: source to nothing.
-          rendered = evaluate(var_expr[1..-2].strip)
-          return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
-        end
-        if var_expr.starts_with?("range(") && var_expr.ends_with?(')')
-          # `range(1, 11) | list` / `range(1, 11) | ...` - same
-          # function-call syntax as the no-filter case in
-          # evaluate_expr, just reached via a different path since
-          # top_level_pipe? routes anything with a `|` here first.
-          return evaluate_range(var_expr[6..-2])
-        end
-        if var_expr.starts_with?("lookup(") && var_expr.ends_with?(')')
-          # `lookup('env', 'VAULT_VERSION') | default('2.0.3',
-          # true)` - same function-call syntax as evaluate_expr's
-          # own bare (no-filter) `lookup(` case, just reached via
-          # a different path since top_level_pipe? routes
-          # anything with a `|` here first. split_chain already
-          # isolated var_expr to exactly this call (depth-aware,
-          # so the filter chain's own trailing `)` from
-          # default(...) was never part of it) - the actual bug
-          # this sits alongside was evaluate_expr's own top-level
-          # `starts_with("lookup(") && ends_with(')')` check
-          # wrongly matching the *whole* "lookup(...) |
-          # default(...)" text (any trailing filter call ending
-          # in its own `)` satisfies ends_with(')') too),
-          # swallowing the entire expression into evaluate_lookup
-          # with a garbled, unbalanced argument string before
-          # top_level_pipe? ever got a chance to run - fixed via
-          # #bare_call?, which confirms the matching close paren
-          # for `lookup(`'s own open paren is the expression's
-          # actual last character, not just checking whether the
-          # tail of the string happens to be some `)`.
-          #
-          # A bare trailing method call chained directly onto the
-          # lookup with no `|` in between (`lookup("file", "{{ a }}/
-          # {{ b }}").splitlines() | select(...) | list`, bodsch.
-          # tomcat round 199) also satisfies ends_with(')') - its own
-          # closing paren, not lookup(...)'s - so var_expr[7..-2]
-          # sliced a garbled, unbalanced argument string ("...".
-          # splitlines(" minus its last char). Locate lookup(...)'s
-          # OWN matching close paren depth-aware instead of assuming
-          # it is the expression's last character, then dispatch
-          # anything after it (".splitlines()") as a method-call
-          # suffix on the lookup's result via VariableLookup, the
-          # same dispatcher a plain variable's own dotted method
-          # chain already goes through (variable_lookup.cr's
-          # `string_method_call`/`apply_method_suffix`).
-          close_idx = matching_close_paren_index(var_expr, 6)
-          if close_idx
-            lookup_rendered = evaluate_lookup(var_expr[7...close_idx])
-            result = (JSON.parse(lookup_rendered) rescue JSON::Any.new(lookup_rendered))
-            suffix = var_expr[(close_idx + 1)..]
-            result = @lookup.apply_method_suffix(result, suffix) || result unless suffix.empty?
-            return result
-          end
-        end
+        filter_chain_paren_head(var_expr) || filter_chain_range_head(var_expr) ||
+          filter_chain_lookup_head(var_expr)
+      end
 
-        nil
+      # A parenthesized sub-expression as the chain's head -
+      # dev-sec os_hardening's sysctl merge nests filter chains
+      # this way: `((sysctl_config | combine(...)) |
+      # combine(...)) | combine(...)`. Recursing (stripping the
+      # outer pair) resolves each layer instead of treating the
+      # whole parenthesized text as a literal variable name -
+      # which always failed the lookup and silently collapsed
+      # the entire with_dict: source to nothing.
+      private def filter_chain_paren_head(var_expr : String) : JSON::Any?
+        return nil unless var_expr.starts_with?('(') && var_expr.ends_with?(')')
+
+        rendered = evaluate(var_expr[1..-2].strip)
+        (JSON.parse(rendered) rescue JSON::Any.new(rendered))
+      end
+
+      # `range(1, 11) | list` / `range(1, 11) | ...` - same
+      # function-call syntax as the no-filter case in
+      # evaluate_expr, just reached via a different path since
+      # top_level_pipe? routes anything with a `|` here first.
+      private def filter_chain_range_head(var_expr : String) : JSON::Any?
+        return nil unless var_expr.starts_with?("range(") && var_expr.ends_with?(')')
+
+        evaluate_range(var_expr[6..-2])
+      end
+
+      # `lookup('env', 'VAULT_VERSION') | default('2.0.3',
+      # true)` - same function-call syntax as evaluate_expr's
+      # own bare (no-filter) `lookup(` case, just reached via
+      # a different path since top_level_pipe? routes
+      # anything with a `|` here first. split_chain already
+      # isolated var_expr to exactly this call (depth-aware,
+      # so the filter chain's own trailing `)` from
+      # default(...) was never part of it) - the actual bug
+      # this sits alongside was evaluate_expr's own top-level
+      # `starts_with("lookup(") && ends_with(')')` check
+      # wrongly matching the *whole* "lookup(...) |
+      # default(...)" text (any trailing filter call ending
+      # in its own `)` satisfies ends_with(')') too),
+      # swallowing the entire expression into evaluate_lookup
+      # with a garbled, unbalanced argument string before
+      # top_level_pipe? ever got a chance to run - fixed via
+      # #bare_call?, which confirms the matching close paren
+      # for `lookup(`'s own open paren is the expression's
+      # actual last character, not just checking whether the
+      # tail of the string happens to be some `)`.
+      #
+      # A bare trailing method call chained directly onto the
+      # lookup with no `|` in between (`lookup("file", "{{ a }}/
+      # {{ b }}").splitlines() | select(...) | list`, bodsch.
+      # tomcat round 199) also satisfies ends_with(')') - its own
+      # closing paren, not lookup(...)'s - so var_expr[7..-2]
+      # sliced a garbled, unbalanced argument string ("...".
+      # splitlines(" minus its last char). Locate lookup(...)'s
+      # OWN matching close paren depth-aware instead of assuming
+      # it is the expression's last character, then dispatch
+      # anything after it (".splitlines()") as a method-call
+      # suffix on the lookup's result via VariableLookup, the
+      # same dispatcher a plain variable's own dotted method
+      # chain already goes through (variable_lookup.cr's
+      # `string_method_call`/`apply_method_suffix`).
+      private def filter_chain_lookup_head(var_expr : String) : JSON::Any?
+        return nil unless var_expr.starts_with?("lookup(") && var_expr.ends_with?(')')
+        return nil unless close_idx = matching_close_paren_index(var_expr, 6)
+
+        lookup_rendered = evaluate_lookup(var_expr[7...close_idx])
+        result = (JSON.parse(lookup_rendered) rescue JSON::Any.new(lookup_rendered))
+        suffix = var_expr[(close_idx + 1)..]
+        result = @lookup.apply_method_suffix(result, suffix) || result unless suffix.empty?
+        result
       end
 
       # Literal / bracket-bearing heads (`'foo' | upper`, `5.7 | int`,

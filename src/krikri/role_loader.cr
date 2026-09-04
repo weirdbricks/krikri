@@ -131,7 +131,7 @@ module Krikri
       # parse_role_entry nor load_role/load_meta_dependencies had any
       # notion of a `when:` on a role entry at all - it silently
       # dropped through as a role VAR named "when" instead of a gate.
-      role_when = hash["when"]?.try { |w| PlaybookParser.condition_to_string(w) }
+      role_when = hash["when"]?.try { |cond| PlaybookParser.condition_to_string(cond) }
 
       {name, vars, tags, role_when}
     end

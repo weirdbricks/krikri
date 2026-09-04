@@ -2481,7 +2481,7 @@ module Krikri
           if rendered.starts_with?("/")
             [rendered]
           else
-            [including_file_dir, task.role_path].compact.uniq.map { |anchor| File.join(anchor, rendered) }
+            [including_file_dir, task.role_path].compact.uniq!.map { |anchor| File.join(anchor, rendered) }
           end
         end
         return first_existing(roots, candidate)

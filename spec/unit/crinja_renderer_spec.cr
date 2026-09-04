@@ -566,7 +566,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     v["myapp_rule_two"] = JSON::Any.new("bar")
     renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     result = renderer.render(%({{ lookup('template', '#{path}', template_vars=dict(app_name='myapp')) }}))
-    JSON.parse(result).as_a.map(&.as_s).sort.should eq(["myapp_rule_one", "myapp_rule_two"])
+    JSON.parse(result).as_a.map(&.as_s).sort!.should eq(["myapp_rule_one", "myapp_rule_two"])
   end
 
   it "resolves the some_dict.update(other_dict) + re-reference idiom as a real dict, not a stringified fallback" do
