@@ -14,8 +14,8 @@ module Krikri
   # Reads the same ~/.ansible_async/<jid> status file TaskExecutor#
   # execute_async's spawned __async_run background process writes to on
   # completion - see AsyncJobs. mode: cleanup is implemented too (real Ansible's own mode): deletes the
-# job's status/config files - or, with jid: ALL (or no jid at all), every
-# job file in the async dir, which previously grew without bound.
+  # job's status/config files - or, with jid: ALL (or no jid at all), every
+  # job file in the async dir, which previously grew without bound.
   # (deleting the job's status file) is not.
   #
   # Forwards the underlying job's own changed: verbatim once finished
@@ -28,12 +28,7 @@ module Krikri
       jid = @params["jid"]?
 
       if @params["mode"]? == "cleanup"
-        if jid.nil? || jid == "ALL"
-          removed = AsyncJobs.cleanup_all
-          return PluginResult.new(changed: false, failed: false, msg: "Cleaned up #{removed} job file(s)")
-        end
-        AsyncJobs.cleanup(jid)
-        return PluginResult.new(changed: false, failed: false, msg: "Cleaned up job file for #{jid}")
+        return cleanup_result(jid)
       end
 
       unless jid
@@ -56,6 +51,16 @@ module Krikri
         result.extra[key] = value
       end
       result
+    end
+
+    private def cleanup_result(jid : String?) : PluginResult
+      if jid.nil? || jid == "ALL"
+        removed = AsyncJobs.cleanup_all
+        return PluginResult.new(changed: false, failed: false, msg: "Cleaned up #{removed} job file(s)")
+      end
+
+      AsyncJobs.cleanup(jid)
+      PluginResult.new(changed: false, failed: false, msg: "Cleaned up job file for #{jid}")
     end
   end
 end
