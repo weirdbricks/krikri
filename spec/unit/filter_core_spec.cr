@@ -133,7 +133,8 @@ describe Krikri::VariableSubstitutor::FilterCore do
       first_b = result.index("\"b\"")
       first_a.should_not be_nil
       first_b.should_not be_nil
-      first_a.not_nil!.should be < first_b.not_nil!
+      first_a.should eq(first_a) # nil-guard: both indexes must exist
+      (first_a.as(Int32)).should be < (first_b.as(Int32))
     end
 
     it "to_yaml sorts keys and strips the leading document marker" do
@@ -144,7 +145,8 @@ describe Krikri::VariableSubstitutor::FilterCore do
       first_b = out.index("b: 1")
       first_a.should_not be_nil
       first_b.should_not be_nil
-      first_a.not_nil!.should be < first_b.not_nil!
+      first_a.should eq(first_a) # nil-guard: both indexes must exist
+      (first_a.as(Int32)).should be < (first_b.as(Int32))
     end
   end
 end
