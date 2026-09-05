@@ -56,7 +56,7 @@ module Krikri
 
     private def keyring_flag : String
       keyring = @params["keyring"]?
-      keyring ? "--keyring #{keyring} " : ""
+      keyring ? "--keyring #{shell_single_quote(keyring)} " : ""
     end
 
     private def add_key : PluginResult
@@ -76,7 +76,7 @@ module Krikri
     private def add_from_keyserver(key_id : String?, keyserver : String) : PluginResult
       return PluginResult.new(changed: false, failed: true, msg: "Missing key_id, required with keyserver.") unless key_id
 
-      result = remote_exec("apt-key #{keyring_flag}adv --no-tty --keyserver #{keyserver} --recv #{key_id}")
+      result = remote_exec("apt-key #{keyring_flag}adv --no-tty --keyserver #{shell_single_quote(keyserver)} --recv #{shell_single_quote(key_id)}")
       unless result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true, msg: "Error fetching key #{key_id} from keyserver: #{result[:stderr]}")
       end

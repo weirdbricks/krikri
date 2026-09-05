@@ -6,6 +6,7 @@ require "system/user"
 require "system/group"
 require "openssl/digest"
 require "./host"
+require "./shell"
 require "./ssh_manager"
 require "./local_executor"
 require "./plugin_helpers/stat_fields"
@@ -238,12 +239,11 @@ module Krikri
       "#{exports}; #{command}"
     end
 
-    # Single-quotes *str* for shell embedding, escaping any embedded
-    # single quote - same convention as BatchScript/PluginManager's own
-    # copies of this helper (each kept separate rather than shared across
-    # unrelated classes).
+    # Single-quotes *str* for shell embedding - shared implementation in
+    # ./shell.cr (was its own copy, drift risk for a security-relevant
+    # primitive).
     private def shell_single_quote(str : String) : String
-      "'" + str.gsub("'", "'\\''") + "'"
+      Shell.single_quote(str)
     end
 
     protected def remote_upload(local_path : String, remote_path : String)
@@ -282,7 +282,7 @@ module Krikri
       if local_connection?
         LocalExecutor.file_exists?(path)
       else
-        result = remote_exec("test -f #{path}")
+        result = remote_exec("test -f #{shell_single_quote(path)}")
         result[:exit_code] == 0
       end
     end
@@ -291,7 +291,7 @@ module Krikri
       if local_connection?
         LocalExecutor.dir_exists?(path)
       else
-        result = remote_exec("test -d #{path}")
+        result = remote_exec("test -d #{shell_single_quote(path)}")
         result[:exit_code] == 0
       end
     end
@@ -454,7 +454,7 @@ module Krikri
         if numeric = mode.to_i?(8)
           File.chmod(path, numeric)
         else
-          remote_exec("chmod #{mode} #{path}")
+          remote_exec("chmod #{shell_single_quote(mode)} #{shell_single_quote(path)}")
         end
       end
     rescue

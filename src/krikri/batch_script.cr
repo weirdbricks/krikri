@@ -1,5 +1,7 @@
 require "base64"
 
+require "./shell"
+
 module Krikri
   # Wire protocol for task batching (on by default; --no-batching
   # disables it): builds the bash script
@@ -119,13 +121,11 @@ module Krikri
       BASH
     end
 
-    # Single-quotes *str* for shell embedding, escaping any embedded
-    # single quote - str here is always our own base64 output (alphabet
-    # `[A-Za-z0-9+/=]`, never contains a quote), so this is belt-and-
-    # suspenders, not load-bearing, but cheap enough to keep unconditional
-    # rather than assume the input shape forever.
+    # Single-quotes *str* for shell embedding - shared implementation in
+    # ./shell.cr (was its own copy, drift risk for a security-relevant
+    # primitive).
     private def self.shell_single_quote(str : String) : String
-      "'" + str.gsub("'", "'\\''") + "'"
+      Shell.single_quote(str)
     end
 
     # Parses a batch script's stdout (as captured from the single SSH

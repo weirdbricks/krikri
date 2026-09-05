@@ -1,6 +1,7 @@
 #!/usr/bin/env crystal
 
 require "json"
+require "base64"
 require "pg"
 require "compress/gzip"
 require "xz"
@@ -55,9 +56,12 @@ module Krikri
   #   to `pg_restore` instead of `psql` for exactly these three
   #   extensions, a genuinely different restore mechanism, not just
   #   another compression codec (matches real Ansible's own
-  #   `db_restore()` doing the same). Password passed via a `PGPASSWORD=`
-  #   environment-variable prefix in the shell command (matches real
-  #   Ansible - psql/pg_dump don't take a password CLI flag at all).
+  #   `db_restore()` doing the same). Password passed via a temporary
+  #   `.pgpass` file (libpq's own credential-file mechanism, mode 0600,
+  #   removed after the run) - psql/pg_dump don't take a password CLI
+  #   flag at all, and real Ansible's PGPASSWORD process-env approach
+  #   isn't available over a shell command string without leaking the
+  #   cleartext into argv.
   #   Command shape (`pg_dump dbname --host=H --port=P --username=U` /
   #   `psql --dbname=dbname --host=H --port=P --username=U
   #   --file=target`), `restore:`'s `msg:` being `psql`'s actual output
@@ -193,7 +197,7 @@ module Krikri
         return run_dump_via_pg_dump_format(name, target, ext, letter)
       end
 
-      cmd = "#{pgpassword_prefix}pg_dump #{quote(name)} #{login_flags}"
+      cmd = "#{pgpassword_prefix}pg_dump #{quote(name)} #{login_flags}#{pgpassword_cleanup}"
       result = remote_exec(cmd)
       return PluginResult.new(changed: false, failed: true, msg: result[:stderr], rc: result[:exit_code]) unless result[:exit_code] == 0
 
@@ -207,7 +211,7 @@ module Krikri
     # .tar/.pgc are single files, written via a plain `>` shell redirect -
     # same distinction real Ansible's own db_dump() makes.
     private def run_dump_via_pg_dump_format(name : String, target : String, ext : String, format_letter : String) : PluginResult
-      cmd = "#{pgpassword_prefix}pg_dump #{quote(name)} #{login_flags} --format=#{format_letter}"
+      cmd = "#{pgpassword_prefix}pg_dump #{quote(name)} #{login_flags} --format=#{format_letter}#{pgpassword_cleanup}"
       cmd += ext == ".dir" ? " -f #{quote(target)}" : " > #{quote(target)}"
 
       result = remote_exec(cmd)
@@ -224,7 +228,7 @@ module Krikri
       return PluginResult.new(changed: false, failed: true, msg: "target #{target} does not exist") unless remote_file_exists?(target)
 
       sql_path = read_target_as_sql_file(target)
-      cmd = "#{pgpassword_prefix}psql --dbname=#{quote(name)} #{login_flags} --file=#{quote(sql_path)}"
+      cmd = "#{pgpassword_prefix}psql --dbname=#{quote(name)} #{login_flags} --file=#{quote(sql_path)}#{pgpassword_cleanup}"
       result = remote_exec(cmd)
       File.delete?(sql_path) if sql_path != target
 
@@ -244,18 +248,55 @@ module Krikri
       exists = ext == ".dir" ? remote_dir_exists?(target) : remote_file_exists?(target)
       return PluginResult.new(changed: false, failed: true, msg: "target #{target} does not exist") unless exists
 
-      cmd = "#{pgpassword_prefix}pg_restore --dbname=#{quote(name)} #{login_flags} #{quote(target)}"
+      cmd = "#{pgpassword_prefix}pg_restore --dbname=#{quote(name)} #{login_flags} #{quote(target)}#{pgpassword_cleanup}"
       result = remote_exec(cmd)
 
       return PluginResult.new(changed: false, failed: true, msg: result[:stderr], rc: result[:exit_code]) unless result[:exit_code] == 0
       PluginResult.new(changed: true, failed: false, msg: result[:stdout], rc: result[:exit_code])
     end
 
-    # psql/pg_dump take no password CLI flag at all - real Ansible passes
-    # it via the PGPASSWORD environment variable too.
+    # psql/pg_dump/pg_restore take no password CLI flag at all - real
+    # Ansible passes the password via PGPASSWORD as a *process environment
+    # variable*, which never appears in any process's argv. Shelling out
+    # through remote_exec means a literal `PGPASSWORD=x ...` (or `export
+    # PGPASSWORD=x`) prefix would put the cleartext password in bash's own
+    # argv - readable from the target's /proc/<pid>/cmdline by any local
+    # user for the duration of the dump. So stage it into a temporary
+    # .pgpass file instead (mktemp is 0600 by default, removed after the
+    # run), with the pgpass line base64-encoded in the command string so
+    # the cleartext never appears in argv at all. Same tool-facing
+    # behavior as before (psql/pg_dump still see the password via libpq).
     private def pgpassword_prefix : String
       password = @params["login_password"]?
-      password ? "PGPASSWORD=#{quote(password)} " : ""
+      return "" unless password
+
+      line = pgpass_line(password)
+      encoded = Base64.strict_encode(line)
+      "__krikri_pgpass=$(mktemp); " \
+      "printf %s #{quote(encoded)} | base64 -d > \"$__krikri_pgpass\"; chmod 600 \"$__krikri_pgpass\"; " \
+      "PGPASSFILE=\"$__krikri_pgpass\" "
+    end
+
+    # Wraps *tool_cmd* (a bare `pg_dump ...`/`psql ...` command line) so
+    # it runs with the .pgpass file staged by pgpassword_prefix and that
+    # file is always removed afterwards, preserving the tool's own exit
+    # code. Every caller uses `remote_exec(#{pgpassword_prefix}...cmd...)`
+    # as the ENTIRE command string, so the trailing cleanup can safely
+    # exit with the captured status.
+    private def pgpassword_cleanup : String
+      return "" unless @params["login_password"]?
+      "; __krikri_rc=$?; rm -f \"$__krikri_pgpass\"; exit $__krikri_rc"
+    end
+
+    # libpq's .pgpass line format: host:port:database:user:password,
+    # backslash-escaping any embedded colon or backslash (libpq's own
+    # rule). The database field is `*` (any) - the tool is already told
+    # which database to talk to via --dbname/--host/--username flags.
+    private def pgpass_line(password : String) : String
+      escape = ->(field : String) { field.gsub(/\\|:/) { |char| "\\#{char}" } }
+      "#{escape.call(@params["login_host"]? || "localhost")}:" \
+      "#{@params["login_port"]? || "5432"}:*:" \
+      "#{escape.call(@params["login_user"]? || "postgres")}:#{escape.call(password)}"
     end
 
     private def login_flags : String

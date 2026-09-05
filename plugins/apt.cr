@@ -395,7 +395,7 @@ module Krikri
         if @check_mode
           messages << "Would download #{deb_source} to #{path}"
         else
-          download_result = remote_exec("curl -fsSL -o #{path} #{deb_source}")
+          download_result = remote_exec("curl -fsSL -o #{shell_single_quote(path)} #{shell_single_quote(deb_source)}")
           if download_result[:exit_code] != 0
             return PluginResult.new(
               changed: false,

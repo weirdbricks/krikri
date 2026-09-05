@@ -84,8 +84,12 @@ module Krikri
         value.split(',').each { |v| yield v.strip unless v.strip.empty? }
       end
 
+      # Shared shell-quoting implementation (this used to be its own copy
+      # with a double-backslash escape that produced a literal backslash
+      # - and an unterminated quote - for any comment containing an
+      # apostrophe; the shared one uses the correct `'\''` convention).
       def self.shell_single_quote(str : String) : String
-        "'" + str.gsub("'", "'\\\\''") + "'"
+        Shell.single_quote(str)
       end
     end
   end

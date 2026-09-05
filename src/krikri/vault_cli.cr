@@ -181,7 +181,12 @@ module Krikri
 
       files.each do |target_file|
         plaintext = Vault.decrypt(File.read(target_file), old_password)
-        File.write(target_file, Vault.encrypt(plaintext, new_password))
+        # Atomic (write-to-temp-then-rename): an interrupt mid-write used
+        # to leave the vault file truncated/destroyed - same pattern
+        # async_jobs.cr's write_status uses.
+        tmp = "#{target_file}.rekey.tmp"
+        File.write(tmp, Vault.encrypt(plaintext, new_password))
+        File.rename(tmp, target_file)
         puts "Rekey successful"
       end
     end

@@ -6,6 +6,7 @@ require "file_utils"
 require "./ssh_manager"
 require "./local_executor"
 require "./playbook_parser"
+require "./shell"
 require "./inventory_parser"
 require "./task_executor/output_routing"
 require "./action_plugin_manager"
@@ -390,7 +391,12 @@ module Krikri
       remote_hosts.each do |host|
         next unless ex = failures[host.name]?
         unreachable << host.name
-        puts %(fatal: [#{host.name}]: UNREACHABLE! => {"changed": false, "msg": "#{ex.message.to_s.lines.first?.to_s.gsub('"', "'")}", "unreachable": true}).colorize(:red)
+        # .to_json, not hand-built pseudo-JSON - a hand-escaped message
+        # (backslashes, control chars in an ssh error) could produce
+        # malformed output; the real ansible-playbook line this matches
+        # emits properly-encoded JSON too.
+        msg = {"changed" => false, "msg" => ex.message.to_s.lines.first?.to_s, "unreachable" => true}.to_json
+        puts %(fatal: [#{host.name}]: UNREACHABLE! => #{msg}).colorize(:red)
       end
 
       puts "" if @@verbose
@@ -1179,14 +1185,11 @@ module Krikri
       end
     end
 
-    # Single-quotes *str* for shell embedding, escaping any embedded
-    # single quote - str here is always our own base64 output (alphabet
-    # `[A-Za-z0-9+/=]`, never contains a quote), so this is belt-and-
-    # suspenders, not load-bearing, but cheap enough to keep unconditional.
-    # Same helper as BatchScript's own private copy (kept separate rather
-    # than shared - this class doesn't otherwise depend on BatchScript).
+    # Single-quotes *str* for shell embedding - shared implementation in
+    # ./shell.cr (was its own copy, drift risk for a security-relevant
+    # primitive).
     private def self.shell_single_quote(str : String) : String
-      "'" + str.gsub("'", "'\\''") + "'"
+      Shell.single_quote(str)
     end
 
     def self.remote_plugin_target(plugin_name : String, become : Bool, become_user : String?, remote_user : String? = nil) : String

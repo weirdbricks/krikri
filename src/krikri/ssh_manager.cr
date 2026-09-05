@@ -5,6 +5,7 @@ require "json"
 # SSH Manager - CLI-based implementation
 # Uses native SSH command with ControlMaster for connection pooling
 require "./cli_options"
+require "./shell"
 require "./timing_profile"
 
 module Krikri
@@ -905,10 +906,11 @@ module Krikri
       parts.join
     end
 
-    # Properly quote a string for shell execution
-    # Uses single quotes and escapes any single quotes in the string
+    # Properly quote a string for shell execution - shared implementation
+    # in ./shell.cr (was its own copy, drift risk for a security-relevant
+    # primitive).
     private def self.shell_quote(str : String) : String
-      "'#{str.gsub("'", "'\\''")}'"
+      Shell.single_quote(str)
     end
   end
 end

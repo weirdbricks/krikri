@@ -57,7 +57,7 @@ module Krikri
 
     private def delete_user(user : String, existing : Bool) : PluginResult
       return PluginResult.new(changed: false, failed: false, msg: "User #{user} does not exist") unless existing
-      r = remote_exec("rabbitmqctl delete_user #{user}")
+      r = remote_exec("rabbitmqctl delete_user #{shell_single_quote(user)}")
       return PluginResult.new(changed: false, failed: true,
         msg: "Failed to delete user #{user}: #{r[:stderr]}") if r[:exit_code] != 0
       PluginResult.new(changed: true, failed: false, msg: "User #{user} deleted")
@@ -84,7 +84,13 @@ module Krikri
       # (mrlesmithjr.rabbitmq round-196 re-run). Match the create-time-
       # only behavior until a hash comparison is added.
       password = @params["password"]?
-      r = remote_exec("rabbitmqctl add_user #{user} #{password ? "'#{password}'" : ""}".strip)
+      # shell_single_quote, not hand-rolled quoting - a password
+      # containing an apostrophe used to break out of the naive quotes
+      # here (both a quoting bug and a shell-injection vector), and the
+      # password still travels as argv either way (matching real
+      # Ansible's community.rabbitmq module, which passes it the same
+      # way) - tracked as a known upstream-shape limitation.
+      r = remote_exec("rabbitmqctl add_user #{shell_single_quote(user)} #{password ? shell_single_quote(password) : ""}".strip)
       raise CommandError.new("Failed to add user #{user}: #{r[:stderr]}") if r[:exit_code] != 0
       true
     end
@@ -100,7 +106,7 @@ module Krikri
       # real module: each tag as its own argv - `set_user_tags user
       # tag1 tag2` - NOT a JSON array, which rabbitmqctl stores as the
       # literal tag string ["tag1"] and so never converges
-      r = remote_exec("rabbitmqctl set_user_tags #{user} #{tags.join(" ")}")
+      r = remote_exec("rabbitmqctl set_user_tags #{shell_single_quote(user)} #{tags.map { |tag| shell_single_quote(tag) }.join(" ")}")
       return PluginResult.new(changed: false, failed: true,
         msg: "Failed to set tags for #{user}: #{r[:stderr]}") if r[:exit_code] != 0
       nil
@@ -116,7 +122,7 @@ module Krikri
       read_priv = @params["read_priv"]? || "^$"
       write_priv = @params["write_priv"]? || "^$"
 
-      perms_out = remote_exec("rabbitmqctl -q list_user_permissions #{user}")
+      perms_out = remote_exec("rabbitmqctl -q list_user_permissions #{shell_single_quote(user)}")
       raise CommandError.new("Failed to list permissions for #{user}: #{perms_out[:stderr]}") if perms_out[:exit_code] != 0
 
       # rows: "vhost\tconfigure\twrite\tread"; the header row is printed
@@ -133,7 +139,7 @@ module Krikri
       requested = {conf_priv, write_priv, read_priv}
       return false if existing == requested
 
-      r = remote_exec("rabbitmqctl set_permissions -p #{vhost} #{user} '#{conf_priv}' '#{read_priv}' '#{write_priv}'")
+      r = remote_exec("rabbitmqctl set_permissions -p #{shell_single_quote(vhost)} #{shell_single_quote(user)} #{shell_single_quote(conf_priv)} #{shell_single_quote(read_priv)} #{shell_single_quote(write_priv)}")
       raise CommandError.new("Failed to set permissions for #{user} on #{vhost}: #{r[:stderr]}") if r[:exit_code] != 0
 
       true

@@ -597,10 +597,10 @@ module Krikri
       # that role in round 158. Same bug class already independently
       # present in package.cr's handle_dnf and yum.cr's own copy of
       # this exact function.
-      result = remote_exec("rpm -q #{base_name} 2>/dev/null")
+      result = remote_exec("rpm -q #{shell_single_quote(base_name)} 2>/dev/null")
       return true if result[:exit_code] == 0
 
-      result = remote_exec("rpm -q --whatprovides #{base_name} 2>/dev/null")
+      result = remote_exec("rpm -q --whatprovides #{shell_single_quote(base_name)} 2>/dev/null")
       result[:exit_code] == 0
     end
 
