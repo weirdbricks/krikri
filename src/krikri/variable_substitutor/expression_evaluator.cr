@@ -2125,7 +2125,7 @@ module Krikri
       # cyclomatic complexity under the repo's threshold - purely a
       # split, no behavior change.
       private def evaluate_lookup_varnames(parts : Array(String)) : String
-        patterns = parts[1..].compact_map { |part| quoted_string_literal(part.strip).try(&.as_s?) }.compact_map { |pth| Regex.new(pth) rescue nil }
+        patterns = parts[1..].compact_map { |part| quoted_string_literal(part.strip).try(&.as_s?) }.compact_map { |pth| VariableSubstitutor::FilterEngine.cached_regex(pth) rescue nil }
         @vars.keys.select { |name| patterns.any?(&.matches?(name)) }.to_json
       end
 

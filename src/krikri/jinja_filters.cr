@@ -445,7 +445,7 @@ module Krikri
     Crinja.filter(:regex_replace) do
       pattern = arguments.varargs[0]?.try(&.to_s) || ""
       replacement = arguments.varargs[1]?.try(&.to_s) || ""
-      Crinja::Value.new(target.to_s.gsub(Regex.new(pattern), replacement))
+      Crinja::Value.new(target.to_s.gsub(VariableSubstitutor::FilterEngine.cached_regex(pattern), replacement))
     end
 
     # `hash(algorithm='sha1')` - real Ansible's own filter
@@ -1129,7 +1129,7 @@ module Krikri
       opts = Regex::Options::None
       opts |= Regex::Options::IGNORE_CASE if arguments.kwargs["ignorecase"]?.try(&.truthy?)
       opts |= Regex::Options::MULTILINE if arguments.kwargs["multiline"]?.try(&.truthy?)
-      !!(target.to_s =~ Regex.new(pattern, opts))
+      !!(target.to_s =~ VariableSubstitutor::FilterEngine.cached_regex(pattern, opts))
     end
 
     # `basename`/`dirname` - Python's `os.path.basename`/`os.path.dirname`,
@@ -1310,7 +1310,7 @@ module Krikri
     Crinja.filter({pattern: Crinja::UNDEFINED, group_ref: ""}, :regex_search) do
       pattern = arguments["pattern"].to_s
       group_ref = arguments["group_ref"].to_s
-      match = target.to_s.match(Regex.new(pattern))
+      match = target.to_s.match(VariableSubstitutor::FilterEngine.cached_regex(pattern))
       if match
         if group_ref.empty?
           match[0]
@@ -1352,7 +1352,7 @@ module Krikri
       options = Regex::Options::None
       options |= Regex::Options::MULTILINE if arguments["multiline"].truthy?
       options |= Regex::Options::IGNORE_CASE if arguments["ignorecase"].truthy?
-      regex = Regex.new(pattern, options)
+      regex = VariableSubstitutor::FilterEngine.cached_regex(pattern, options)
 
       target.to_s.scan(regex).map do |match|
         if match.size > 1
@@ -1376,12 +1376,12 @@ module Krikri
     # `select('match', ...)`/`reject('match', ...)` filter form for free).
     Crinja.test(:match) do
       pattern = arguments.varargs[0]?.try(&.to_s) || ""
-      !!(target.to_s =~ Regex.new("^(?:#{pattern})"))
+      !!(target.to_s =~ VariableSubstitutor::FilterEngine.cached_regex("^(?:#{pattern})"))
     end
 
     Crinja.test(:search) do
       pattern = arguments.varargs[0]?.try(&.to_s) || ""
-      !!(target.to_s =~ Regex.new(pattern))
+      !!(target.to_s =~ VariableSubstitutor::FilterEngine.cached_regex(pattern))
     end
 
     # `ne`/`truthy` - real Jinja2 core tests, not Ansible-specific - now
@@ -2016,7 +2016,7 @@ module Krikri
         result = arrays.reduce([[] of Crinja::Value]) { |acc, arr| acc.flat_map { |row| arr.map { |item| row + [item] } } }
         Crinja::Value.new(result.map { |row| Crinja::Value.new(row) })
       when "varnames"
-        patterns = variadic_terms.compact_map { |tval| Regex.new(tval.to_s) rescue nil }
+        patterns = variadic_terms.compact_map { |tval| VariableSubstitutor::FilterEngine.cached_regex(tval.to_s) rescue nil }
         names = env.context.keys.select { |nm_blk| patterns.any?(&.matches?(nm_blk)) }
         Crinja::Value.new(names.map { |nval| Crinja::Value.new(nval) })
       when "indexed_items"

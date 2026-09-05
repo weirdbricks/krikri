@@ -5123,6 +5123,16 @@ module Krikri
       any_failed = false
 
       executed_count = 0
+      # The base context (everything except the per-item bindings) is
+      # host- and task-level and cannot change between loop items - the
+      # tiered merge + hostvars/groups + magic vars this builds is the
+      # single most expensive call in the engine, so build it ONCE here
+      # and shallow-copy per item (key assignment on the copy), not once
+      # per item. Tradeoff, documented: a looped set_fact:'s mid-loop
+      # fact changes are not reflected in a LATER item's loop_control.
+      # label - display-only, and consistent with this file's established
+      # "first host" precedent for banner rendering.
+      label_base_context = build_vars_context(task, host)
       loop_items.each_with_index do |item, idx|
         result = item_results[idx]
         next unless result
@@ -5137,7 +5147,7 @@ module Krikri
 
         # loop_control.label renders against this item, so it needs a
         # context carrying it - this method is handed only the results.
-        label_context = build_vars_context(task, host)
+        label_context = label_base_context.dup
         label_context["item"] = item
         if loop_var = task.loop_var
           label_context[loop_var] = item

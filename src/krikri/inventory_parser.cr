@@ -9,6 +9,11 @@ module Krikri
     property hosts : Hash(String, Host)
     property groups : Hash(String, HostGroup)
 
+    # Memoized host_name -> group_names index for #groups_for, rebuilt
+    # only when a cheap structural fingerprint changes (see #groups_for).
+    @groups_by_host_cache : Hash(String, Array(String))?
+    @groups_index_fingerprint : UInt64? = nil
+
     def initialize
       @hosts = Hash(String, Host).new
       @groups = Hash(String, HostGroup).new
@@ -142,7 +147,8 @@ module Krikri
 
     # Translates an fnmatch-style wildcard pattern (`*`, `?`, `[seq]`)
     # into a regex source string with everything else escaped.
-    protected def self.fnmatch_to_regex(pattern : String) : String      String.build do |out_io|
+    protected def self.fnmatch_to_regex(pattern : String) : String
+      String.build do |out_io|
         i = 0
         while i < pattern.size
           char = pattern[i]
@@ -187,24 +193,63 @@ module Krikri
     # up for a host with no real group, since any grouped host is not in
     # "ungrouped" to begin with.
     def groups_for(host_name : String) : Array(String)
-      @groups.keys.select do |group_name|
-        next false if group_name == "all"
-        hosts_in_group(group_name).any? { |host| host.name == host_name }
-      end.sort!
+      # O(#groups) structural fingerprint - host count plus each group's
+      # direct-host and child counts - instead of walking every group's
+      # full transitive host tree (O(groups x hosts), with an O(n^2) dedup
+      # inside) on EVERY call. This is called once per (task, host) for
+      # the `group_names` magic var, i.e. the hottest inventory path
+      # there is; the fingerprint makes the transitive walk pay for
+      # itself once, then every subsequent call is a hash lookup. The
+      # fingerprint catches every membership mutation (add_host/
+      # add_group/get_or_create_group add or replace entries;
+      # HostGroup#add_host/add_child and reload_from! change the counted
+      # sizes; group VARS changes don't count, correctly - they don't
+      # affect membership).
+      fingerprint = groups_index_fingerprint
+      if (index = @groups_by_host_cache).nil? || @groups_index_fingerprint != fingerprint
+        index = Hash(String, Array(String)).new
+        @groups.each do |group_name, _|
+          next if group_name == "all"
+          hosts_in_group(group_name).each do |host|
+            groups = index[host.name] ||= [] of String
+            groups << group_name
+          end
+        end
+        @groups_by_host_cache = index
+        @groups_index_fingerprint = fingerprint
+      end
+
+      (index[host_name]? || [] of String).sort!
+    end
+
+    private def groups_index_fingerprint : UInt64
+      hash = @hosts.size.to_u64
+      @groups.each do |name, group|
+        hash = hash &* 31 &+ group.hosts.size.to_u64
+        hash = hash &* 31 &+ group.children.size.to_u64
+        hash = hash &* 31 &+ name.hash.to_u64
+        group.hosts.each_key do |host_name|
+          hash = hash &* 31 &+ host_name.hash.to_u64
+        end
+      end
+      hash
     end
 
     # Add a host
     def add_host(host : Host)
       @hosts[host.name] = host
+      @groups_by_host_cache = nil
     end
 
     # Add a group
     def add_group(group : HostGroup)
       @groups[group.name] = group
+      @groups_by_host_cache = nil
     end
 
     # Get or create group
     def get_or_create_group(name : String) : HostGroup
+      @groups_by_host_cache = nil unless @groups.has_key?(name)
       @groups[name] ||= HostGroup.new(name)
     end
 
@@ -223,6 +268,7 @@ module Krikri
     def reload_from!(fresh : Inventory)
       @hosts = fresh.hosts
       @groups = fresh.groups
+      @groups_by_host_cache = nil
     end
   end
 

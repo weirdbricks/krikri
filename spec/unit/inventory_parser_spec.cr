@@ -286,6 +286,31 @@ describe Krikri::InventoryParser do
     end
   end
 
+  describe "groups_for memoization" do
+    it "reflects membership changes made after a cached call" do
+      # Regression guard for the groups_for index: the memo must be
+      # invalidated when group membership changes (e.g. meta:
+      # refresh_inventory replacing hosts/groups in place), not served
+      # stale.
+      write(File.join(ROOT, "inventory.ini"), <<-INI)
+        [web]
+        web1
+        INI
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+
+      inventory.groups_for("web1").should eq(["web"])
+
+      fresh = Krikri::Inventory.new
+      web2 = Krikri::Host.new("web2")
+      fresh.add_host(web2)
+      fresh.get_or_create_group("web").add_host(web2)
+      inventory.reload_from!(fresh)
+
+      inventory.groups_for("web2").should eq(["web"])
+      inventory.groups_for("web1").should eq([] of String)
+    end
+  end
+
   describe "group_vars/host_vars directory loading" do
     it "applies group_vars/all.yml to every host" do
       write(File.join(ROOT, "inventory.ini"), <<-INI)
