@@ -243,6 +243,61 @@ module Krikri
     rendered == "undefined"
   end
 
+  # The ONE shared "recursive re-templating" helper: re-renders *value*
+  # when its raw form is still a String containing Jinja markers. This
+  # used to exist as four independently-maintained copies
+  # (FilterEngine's, ComparisonEvaluator's, ConditionalEvaluator's class
+  # methods, and VariableLookup's - the last deliberately NOT folded in
+  # here, see below). Every one of the folded-in copies had the same
+  # multi-span bug ("{{ a }}-{{ b }}" mangled by naive 2-char slicing)
+  # and the same "{%"/"{#" block-tag gap fixed independently, and each
+  # fix had to be re-applied to the others by hand - the comment trails
+  # in the originals documented that treadmill explicitly.
+  #
+  # Algorithm (identical to what the three folded copies did):
+  # - nil/untouched values pass through unchanged (also when *vars* is
+  #   nil - FilterEngine's optional-context case).
+  # - `{%`/`{#` block tags or comments go through the FULL Crinja
+  #   renderer (ExpressionEvaluator has no concept of block tags).
+  # - exactly one `{{ }}` span spanning the WHOLE string goes through
+  #   ExpressionEvaluator directly - the only path that preserves a
+  #   non-string result type.
+  # - anything else (multiple spans, literal text around a span) goes
+  #   through VarSubstitutor#substitute.
+  #
+  # VariableLookup keeps its own copy ON PURPOSE: it routes the mixed/
+  # multi-span case through CrinjaRenderer instead of VarSubstitutor,
+  # a deliberate behavioral difference fixed after real-host bugs - see
+  # its own comments before even thinking about unifying that one too.
+  module VariableSubstitutor
+    module Rerender
+      def self.if_templated(vars : Hash(String, JSON::Any)?, value : JSON::Any?) : JSON::Any?
+        return value unless value
+        return value unless vars
+        return value unless (raw = value.raw).is_a?(String) && (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#"))
+
+        if raw.includes?("{%") || raw.includes?("{#")
+          rendered = CrinjaRenderer.new(vars).render(raw)
+          return Krikri.parse_json_or_python_literal(rendered)
+        end
+
+        Krikri.parse_json_or_python_literal(render_raw(vars, raw))
+      end
+
+      # Renders *raw* (known to contain `{{`) back to its real value:
+      # one whole-string span -> ExpressionEvaluator (preserves result
+      # types); anything else -> full substitution.
+      def self.render_raw(vars : Hash(String, JSON::Any), raw : String) : String
+        inner = raw.strip
+        if (raw.split("{{").size - 1) == 1 && (raw.split("}}").size - 1) == 1 && inner.starts_with?("{{") && inner.ends_with?("}}")
+          ExpressionEvaluator.new(vars).evaluate(inner[2..-3].strip)
+        else
+          Krikri::VarSubstitutor.new(vars).substitute(raw)
+        end
+      end
+    end
+  end
+
   # VariableSubstitutor - Main class for variable substitution
   # Uses modular components from variable_substitutor/ directory
   class VarSubstitutor

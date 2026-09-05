@@ -54,35 +54,13 @@ module Krikri
       # grafana rounds finding 5 independent copies of this exact bug):
       # re-renders *value* if its raw form is still a String containing
       # `{{` - real Ansible's recursive re-templating applied to
-      # whatever a plain-lookup fallback already resolved, rather than
-      # duplicating the "strip one {{ }} layer and re-run through
-      # ExpressionEvaluator" logic at each call site in this class.
+      # whatever a plain-lookup fallback already resolved. Now a thin
+      # delegate to the ONE shared implementation
+      # (VariableSubstitutor::Rerender) - the multi-span and block-tag
+      # fixes this copy used to re-discover independently land there
+      # once for every caller.
       private def rerender_if_templated(value : JSON::Any) : JSON::Any
-        vars = @vars
-        return value unless vars
-        return value unless (raw = value.raw).is_a?(String) && (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#"))
-
-        if raw.includes?("{%") || raw.includes?("{#")
-          rendered = CrinjaRenderer.new(vars).render(raw)
-          return Krikri.parse_json_or_python_literal(rendered)
-        end
-
-        inner = raw.strip
-        rendered =
-          if (raw.split("{{").size - 1) == 1 && (raw.split("}}").size - 1) == 1 && inner.starts_with?("{{") && inner.ends_with?("}}")
-            ExpressionEvaluator.new(vars).evaluate(inner[2..-3].strip)
-          else
-            # Same multi-span gap as every other independent copy of
-            # this helper (VariableLookup, ConditionalEvaluator,
-            # ComparisonEvaluator) - a raw value starting with "{{" and
-            # ending with "}}" can still hold TWO (or more) separate
-            # spans with literal text between them
-            # (`"{{ enroot_version }}-{{ enroot_release }}"`), which
-            # naively slicing off just the first/last 2 characters
-            # mangles into an unparseable expression.
-            Krikri::VarSubstitutor.new(vars).substitute(raw)
-          end
-        Krikri.parse_json_or_python_literal(rendered)
+        Rerender.if_templated(@vars, value) || value
       end
 
       # Splits a `|`-joined filter chain into its individual filter

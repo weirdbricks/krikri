@@ -18,40 +18,16 @@ module Krikri
       # grafana rounds finding 5 independent copies of this exact bug):
       # re-renders *value* if it's still a String containing `{{` - real
       # Ansible's recursive re-templating applied to whatever a plain-
-      # lookup fallback already resolved, rather than duplicating the
-      # "strip one {{ }} layer and re-run through ExpressionEvaluator"
-      # logic at each call site in this class.
+      # lookup fallback already resolved. Now a thin delegate to the ONE
+      # shared implementation (VariableSubstitutor::Rerender) - the
+      # multi-span and block-tag fixes this copy used to re-discover
+      # independently land there once for every caller.
       private def rerender_if_templated(value : JSON::Any) : JSON::Any
-        return value unless (raw = value.raw).is_a?(String) && (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#"))
-
-        # Same "{%"/"{#" block-tag gap as every other independent copy of
-        # this helper (VariableLookup, ConditionalEvaluator) - see
-        # variable_lookup.cr for the full rationale.
-        if raw.includes?("{%") || raw.includes?("{#")
-          rendered = CrinjaRenderer.new(@vars).render(raw)
-          return Krikri.parse_json_or_python_literal(rendered)
-        end
-
-        Krikri.parse_json_or_python_literal(render_raw_template_string(raw))
+        Rerender.if_templated(@vars, value) || value
       end
 
-      # Same multi-span gap as every other independent copy of this
-      # helper (VariableLookup, ConditionalEvaluator) - a raw value
-      # starting with "{{" and ending with "}}" can still hold TWO (or
-      # more) separate spans with literal text between them
-      # (`"{{ enroot_version }}-{{ enroot_release }}"`), which naively
-      # slicing off just the first/last 2 characters mangles into an
-      # unparseable expression. Only a genuine single whole-string span
-      # goes through ExpressionEvaluator directly (preserves non-string
-      # result types); anything else goes through VarSubstitutor's full
-      # multi-segment substitution instead.
       private def render_raw_template_string(raw : String) : String
-        inner = raw.strip
-        if (raw.split("{{").size - 1) == 1 && (raw.split("}}").size - 1) == 1 && inner.starts_with?("{{") && inner.ends_with?("}}")
-          VariableSubstitutor::ExpressionEvaluator.new(@vars).evaluate(inner[2..-3].strip)
-        else
-          Krikri::VarSubstitutor.new(@vars).substitute(raw)
-        end
+        Rerender.render_raw(@vars, raw)
       end
 
       # Evaluate a comparison expression

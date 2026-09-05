@@ -947,56 +947,16 @@ module Krikri
     # grafana rounds finding 5 independent copies of this exact bug):
     # re-renders *value* if its raw form is still a String containing
     # `{{` - real Ansible's recursive re-templating applied to whatever
-    # a caller already resolved, rather than duplicating the "strip one
-    # {{ }} layer and re-run through ExpressionEvaluator" logic at every
-    # call site. Shared within this file only (ComparisonEvaluator and
-    # FilterEngine keep their own copies rather than a cross-class
-    # shared helper, matching how this bug class has always been fixed
-    # here - narrowly, per call site, not via a bigger refactor).
+    # a caller already resolved. Now a thin delegate to the ONE shared
+    # implementation (VariableSubstitutor::Rerender) - the multi-span
+    # and block-tag fixes this copy used to re-discover independently
+    # land there once for every caller.
     private def self.rerender_if_templated(vars : Hash(String, JSON::Any), value : JSON::Any?) : JSON::Any?
-      return value unless value
-      return value unless (raw = value.raw).is_a?(String) && (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#"))
-
-      # Same "{%"/"{#" block-tag gap as VariableLookup's own identical
-      # copy of this helper (variable_lookup.cr) - see there for the
-      # full rationale.
-      if raw.includes?("{%") || raw.includes?("{#")
-        rendered = VariableSubstitutor::CrinjaRenderer.new(vars).render(raw)
-        return Krikri.parse_json_or_python_literal(rendered)
-      end
-
-      Krikri.parse_json_or_python_literal(render_raw_template_string(vars, raw))
+      VariableSubstitutor::Rerender.if_templated(vars, value)
     end
 
-    # Renders *raw* (a String already known to contain "{{") back to its
-    # real value. A raw value holding exactly ONE {{ }} span and nothing
-    # else (`"{{ some_expr }}"`) goes through ExpressionEvaluator directly
-    # - the same evaluator {{ }} substitution uses, and the only path that
-    # preserves a non-string RESULT type (a real list/hash/int, not its
-    # string rendering). Anything else - multiple spans, or literal text
-    # mixed in around/between them (`"{{ enroot_version }}-{{
-    # enroot_release }}"`, ome.ice's own `enroot_version_string` default)
-    # - used to still take the single-span path: naively slicing off the
-    # first/last 2 characters (`raw[2..-3]`) on a MULTI-span string
-    # produces a malformed expression (" enroot_version }}-{{
-    # enroot_release ", the literal "-{{"/"}}-" left in place), which
-    # ExpressionEvaluator can't parse as a single expression at all - the
-    # comparison this feeds (`ansible_facts.packages['enroot'][0]
-    # ['version'] != enroot_version_string`) then always read as
-    # "not equal" regardless of the real values, since the right side
-    # never resolved to the intended "3.2.0-1" at all. Routed through
-    # VarSubstitutor#substitute instead for this general case - the same
-    # whole-string, multi-segment Jinja substitution real task params use
-    # - and always returns a String (matching real Ansible: a raw value
-    # with literal text around a {{ }} span can never BE anything but a
-    # string once rendered).
     private def self.render_raw_template_string(vars : Hash(String, JSON::Any), raw : String) : String
-      inner = raw.strip
-      if (raw.split("{{").size - 1) == 1 && (raw.split("}}").size - 1) == 1 && inner.starts_with?("{{") && inner.ends_with?("}}")
-        VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate(inner[2..-3].strip)
-      else
-        Krikri::VarSubstitutor.new(vars).substitute(raw)
-      end
+      VariableSubstitutor::Rerender.render_raw(vars, raw)
     end
 
     # Resolves *var_name* (a bare or dotted variable reference, the same
