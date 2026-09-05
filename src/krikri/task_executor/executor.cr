@@ -5,7 +5,6 @@ require "../playbook_parser"
 require "../variable_substitutor"
 require "../plugin_manager"
 require "../conditional_evaluator"
-require "./variable_context"
 require "./result_display"
 require "./handler_runner"
 require "./output_routing"
@@ -7062,96 +7061,21 @@ module Krikri
 
     # Execute a handler (internal - called via callback)
     private def execute_handler_internal(handler : Task, host : Host) : JSON::Any
-      # Build variable context
-      vars_context = VariableContext.build(
-        @play_vars,
-        host,
-        handler,
-        @registered_vars[host.name]
-      )
-
-      # Vars loaded at runtime via include_vars: (mirroring
-      # #build_vars_context, used for regular tasks) - dev-sec apache_
-      # hardening's own role loads its whole vars/Debian.yml (apache_
-      # daemon, apache_conf_file, ...) this way (`include_vars: "{{
-      # ansible_os_family }}.yml"`, not a static role vars/ file loaded
-      # at parse time), and its "restart apache" handler references
-      # apache_daemon exclusively. Without this, that var - along with
-      # every other dynamically include_vars:'d one - was invisible to
-      # every handler, resolving to the evaluator's undefined fallback
-      # text (literally the word "undefined") rather than "apache2":
-      # the handler tried to restart a service unit literally named
-      # "undefined.service".
-      @included_vars[host.name]?.try(&.each { |key, value| vars_context[key] = value })
-
-      # ansible_parent_role_names/ansible_collection_name/ansible_role_name
-      # (mirroring #build_vars_context, used for regular tasks) - a
-      # role-loaded handler's OWN name:/module params can reference these
-      # exactly like a regular task's can (`prometheus.prometheus`'s own
-      # `_common` role: `name: "Restart {{ _common_service_name }}"`,
-      # where `_common_service_name` derives from
-      # `ansible_parent_role_names | first`). Without this, any handler
-      # whose own vars ultimately depend on these magic vars resolved
-      # them as "undefined" - the handler could still be correctly
-      # MATCHED and triggered (a separate fix, notify_handlers/
-      # should_run_handler?'s role-qualified match), but its own body
-      # then acted on the wrong (undefined) value.
-      if role_name = handler.role_name
-        vars_context["ansible_role_name"] = JSON::Any.new(role_name)
-      end
-      if parent_names = handler.role_parent_names
-        vars_context["ansible_parent_role_names"] = JSON::Any.new(parent_names.map { |nval| JSON::Any.new(nval) })
-      end
-      if collection_name = handler.ansible_collection_name
-        vars_context["ansible_collection_name"] = JSON::Any.new(collection_name)
-      end
-
-      # Add facts to context, both under their flat `ansible_xxx` spelling
-      # and as one `ansible_facts` dict (mirroring #build_vars_context,
-      # used for regular tasks) - dev-sec os_hardening's own handlers gate
-      # on `ansible_facts.os_family == 'RedHat'` exclusively, never the
-      # flat spelling. Without the dict form, every dotted `ansible_facts.
-      # *` reference in a handler's `when:` resolved to undefined and the
-      # handler silently skipped regardless of the real fact value - e.g.
-      # "Restart auditd via service" skipped on every host, including
-      # RedHat-family ones it's meant to run on, even though a plain task
-      # in the same play correctly saw `ansible_facts.os_family` as
-      # "RedHat".
-      unless @facts[host.name].empty?
-        # Same set_fact-vs-ordinary-facts precedence split as
-        # #build_vars_context/base_context_a_for/base_context_b_for -
-        # only the set_fact subset overrides unconditionally; ordinary
-        # gathered facts (setup:/package_facts:/etc) only fill gaps a
-        # play var/registered var hasn't already claimed.
-        set_fact_keys = @set_facts[host.name]?
-        @facts[host.name].each do |key, value|
-          if set_fact_keys.try(&.has_key?(key))
-            vars_context[key] = value
-          else
-            vars_context[key] ||= value
-          end
-        end
-        vars_context["ansible_facts"] = JSON::Any.new(facts_dict_for(host.name))
-      end
-
-      vars_context["hostvars"] = JSON::Any.new(build_hostvars)
-      vars_context["groups"] = JSON::Any.new(build_groups)
-
-      # ansible_play_hosts_all/ansible_play_hosts - see #build_vars_context's
-      # own identical comment (the regular-task path) for the full story.
-      play_host_names = @hosts.map { |hval| JSON::Any.new(hval.name) }
-      vars_context["ansible_play_hosts_all"] = JSON::Any.new(play_host_names)
-      vars_context["ansible_play_hosts"] = JSON::Any.new(play_host_names)
-      vars_context["ansible_version"] = ANSIBLE_VERSION_MAGIC_VAR
-      vars_context["ansible_check_mode"] = JSON::Any.new(@check_mode)
-      vars_context["ansible_verbosity"] = JSON::Any.new(@verbosity.to_i64)
-      apply_path_magic_vars(vars_context)
-      # ansible_connection default - see #build_vars_context's identical
-      # comment for the full story (buluma.selinux's block-level `when:
-      # ansible_connection not in [...]` guard).
-      vars_context["ansible_connection"] ||= JSON::Any.new(
-        PluginManager.local_connection?(host, vars_context) ? "local" : "ssh"
-      )
+      # Build variable context. This used to hand-reassemble the ladder
+      # from VariableContext.build + patch-ins for included_vars/role
+      # magic vars/facts/hostvars/groups/play-host magic/connection -
+      # a second, drift-prone copy of #build_vars_context (every one of
+      # those patch-ins carried a "mirroring #build_vars_context" note
+      # as its only guarantee of staying in sync). Route handlers
+      # through the SAME builder regular tasks use: it is a strict
+      # superset of what was assembled here (it additionally provides
+      # inventory_hostname/group_names/role defaults+vars
+      # tiers/vars_files/extra_vars/remote_user/ansible_host and the
+      # "vars" self-view, which handlers never saw), preserves the
+      # identical set_fact-vs-ordinary-facts precedence (base_context_
+      # a_for's low tier + base_context_b_for's high tier), and benefits
+      # from the same per-host base caches.
+      vars_context = build_vars_context(handler, host)
 
       # The handler's own when: is now checked inside #execute_handler_
       # plugin_once instead of here - see that method's own comment for
