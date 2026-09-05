@@ -517,6 +517,32 @@ module Krikri
         # Ignore read failures; fall through to the sysfs/command probes.
       end
 
+      # PID 1's own `container=` environment variable - real Ansible's
+      # `LinuxVirtual#get_virtual_facts` checks this (module_utils/facts/
+      # virtual/linux.py) BEFORE falling back to `systemd-detect-virt`,
+      # and it is what actually makes podman detection reliable: podman
+      # (and systemd-nspawn, and older LXC) sets this unconditionally,
+      # with no dependency on the `systemd-detect-virt` binary being
+      # installed at all - found live confirming the round-303 dict-
+      # iteration fix via `jtyr.motd`: a minimal podman container with
+      # no systemd package installed has neither `systemd-detect-virt`
+      # nor `/run/systemd/container`, so the two checks below this one
+      # both fell through to "None" while real ansible-playbook (whose
+      # primary signal is this env var, not the external binary)
+      # correctly reported "podman"/"guest". `/proc/1/environ` is
+      # NUL-separated, not newline-separated, and reading it needs root
+      # (same requirement real Ansible's own comment notes).
+      begin
+        if File.exists?("/proc/1/environ")
+          if virt = parse_container_env(File.read("/proc/1/environ"))
+            return virt
+          end
+        end
+      rescue
+        # Permission denied (non-root) or unreadable - fall through to
+        # the systemd/DMI probes below, same as the cgroup check above.
+      end
+
       # systemd-detect-virt is authoritative for systemd hosts; the alternatives
       # below cover the non-systemd cases.
       sv = capture("systemd-detect-virt")
@@ -539,6 +565,24 @@ module Krikri
       end
 
       "None"
+    end
+
+    # Parses PID 1's `/proc/1/environ` content (NUL-separated key=value
+    # entries) for a `container=` marker, matching real Ansible's own
+    # `container=lxc`/`container=podman`/generic-`container=X` priority
+    # order (module_utils/facts/virtual/linux.py). Pulled out of
+    # #detect_virtualization as a pure function so it's testable without
+    # real `/proc` access. Returns nil when no `container=` entry is
+    # present at all (the plain-host case).
+    def parse_container_env(environ : String) : String?
+      entries = environ.split('\0')
+      return "lxc" if entries.any? { |e| e == "container=lxc" }
+      return "podman" if entries.any? { |e| e == "container=podman" }
+
+      entry = entries.find(&.starts_with?("container="))
+      return nil unless entry
+      value = entry.split('=', 2)[1]?
+      value.nil? || value.empty? ? nil : value
     end
 
     # The RAW text of whichever os-release file #parse_os_release used - real

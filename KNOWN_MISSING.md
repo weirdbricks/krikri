@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.738`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.739`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.23` (see `shard.yml`).
 
 ---
@@ -29,18 +29,33 @@ Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
-### Podman-guest virtualization facts not detected
+### ~~Podman-guest virtualization facts not detected~~ (closed, 0.9.739)
 
-Found live confirming the `.items()` dict-iteration fix (round 303) via
-`jtyr.motd` in a podman container: real Ansible's `setup:` correctly
-reports `ansible_facts.virtualization_role=guest` /
-`virtualization_type=podman`, while krikri's facts gatherer reports
-`NA`/none for both - the role's own `motd.j2` then renders `Virtual:
-NO` instead of real Ansible's `Virtual: YES`. Unrelated to the
-dict-iteration fix itself (confirmed by isolating a plain `debug:
-ansible_facts.virtualization_role` task - the divergence is purely in
-virtualization detection, not templating). Root cause and fix not
-investigated further here.
+Was: found live confirming the `.items()` dict-iteration fix (round
+303) via `jtyr.motd` in a podman container - real Ansible's `setup:`
+correctly reported `ansible_facts.virtualization_role=guest` /
+`virtualization_type=podman`, while krikri's facts gatherer reported
+`NA`/none for both.
+
+Root cause: `detect_virtualization` relied on the EXTERNAL
+`systemd-detect-virt` binary (which does list "podman" as a value) as
+its only container-runtime signal beyond a `/proc/1/cgroup` substring
+check that never covers podman - so on any minimal container image
+without the `systemd` package installed (no `systemd-detect-virt`, no
+`/run/systemd/container`), every check fell through to "None". Real
+Ansible's own `LinuxVirtual#get_virtual_facts` (module_utils/facts/
+virtual/linux.py) doesn't have this dependency: it reads PID 1's own
+`container=` environment variable from `/proc/1/environ` FIRST -
+podman (and systemd-nspawn, and older LXC) sets this unconditionally,
+with no external binary needed at all.
+
+Fixed by adding the same `/proc/1/environ` `container=` check (`lxc`/
+`podman`/generic-value priority, matching real Ansible's own order),
+via a new pure `parse_container_env` helper (testable without real
+`/proc` access - see `spec/unit/facts_gatherer_spec.cr`). Live-
+reverified in a podman container with `systemd-detect-virt` absent
+entirely: `ansible_virtualization_type=podman`/`role=guest`, matching
+real Ansible exactly.
 
 ### ~~`community.rabbitmq` warm-run `changed` delta~~ (closed, round 199)
 
@@ -106,6 +121,27 @@ then fails with "Cast from Crinja::Tuple to (Crinja::SafeString |
 String) failed". Fork-internal (`lib/crinja/src/runtime/value.cr`), not
 krikri's own templating code - same class of underlying gap as the two
 shapes above, not chased further here.
+
+---
+
+## Round 304 (podman virtualization-facts fix, 0.9.738 -> 0.9.739)
+
+Investigated the open gap round 303 left behind. `detect_virtualization`
+(`src/krikri/plugin_helpers/facts_gatherer.cr`) leaned on the external
+`systemd-detect-virt` binary as its only real container-runtime signal;
+a minimal podman image with no `systemd` package installed has neither
+that binary nor `/run/systemd/container`, so detection silently fell
+through to "None" - confirmed live by reproducing the exact function
+call in isolation inside such a container. Read real Ansible's own
+`LinuxVirtual#get_virtual_facts` (`module_utils/facts/virtual/linux.py`,
+available locally via the `ansible` apt package) to find the actual
+mechanism: PID 1's own `container=` entry in `/proc/1/environ`, which
+podman/systemd-nspawn/LXC set unconditionally regardless of what's
+installed. Added the same check (new pure `parse_container_env`
+helper, unit-tested directly). Live-reverified: `ansible_virtualization_
+type=podman`/`role=guest` now match real Ansible even with
+`systemd-detect-virt` completely absent. Full spec suite (2501
+examples) and full `ameba` (446 files) clean.
 
 ---
 

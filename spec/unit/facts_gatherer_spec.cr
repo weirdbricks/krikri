@@ -71,4 +71,50 @@ describe Krikri::FactsGatherer do
     result["failed"].as_bool.should be_false
     result["ansible_facts"].as_h.should_not be_empty
   end
+
+  describe "#parse_container_env" do
+    # Found live confirming the round-303 dict-iteration fix via
+    # `jtyr.motd`: a minimal podman container with no systemd package
+    # installed has neither `systemd-detect-virt` nor
+    # `/run/systemd/container`, so #detect_virtualization's only other
+    # checks (dockerenv/cgroup substring/systemd-detect-virt/DMI) all
+    # fell through to "None" while real ansible-playbook (whose primary
+    # signal is PID 1's own `container=` environment variable, per
+    # module_utils/facts/virtual/linux.py) correctly reported "podman".
+    # `/proc/1/environ` is NUL-separated, not newline-separated.
+    it "detects podman from a NUL-separated container=podman entry" do
+      environ = "PATH=/usr/bin\x00container=podman\x00HOME=/root\x00"
+      Krikri::FactsGatherer.parse_container_env(environ).should eq("podman")
+    end
+
+    it "detects lxc from container=lxc, taking priority over a later generic entry" do
+      environ = "container=lxc\x00SOME_VAR=1\x00"
+      Krikri::FactsGatherer.parse_container_env(environ).should eq("lxc")
+    end
+
+    it "falls back to the literal value for any other container= marker" do
+      environ = "container=systemd-nspawn\x00PATH=/usr/bin\x00"
+      Krikri::FactsGatherer.parse_container_env(environ).should eq("systemd-nspawn")
+    end
+
+    it "returns nil on a plain host with no container= entry at all" do
+      environ = "PATH=/usr/bin\x00HOME=/root\x00TERM=xterm\x00"
+      Krikri::FactsGatherer.parse_container_env(environ).should be_nil
+    end
+
+    it "returns nil rather than an empty string for a bare 'container=' with no value" do
+      environ = "container=\x00PATH=/usr/bin\x00"
+      Krikri::FactsGatherer.parse_container_env(environ).should be_nil
+    end
+  end
+
+  describe "#detect_virtualization" do
+    it "returns a non-empty string on this real host, matching real Ansible's always-populated virtualization_type" do
+      # Live-environment smoke test, not a controlled-input unit test -
+      # this repo's own convention for facts that read real /proc/DMI
+      # state (see #parse_container_env above for the actual regression
+      # coverage of the new logic).
+      Krikri::FactsGatherer.detect_virtualization.should_not be_empty
+    end
+  end
 end
