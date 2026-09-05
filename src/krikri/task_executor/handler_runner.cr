@@ -174,7 +174,17 @@ module Krikri
         # obviously itself) changes nothing there and the
         # re-notification would be invisible.
         handler.notify.try &.each do |raised|
-          index = @handlers.index { |candidate| candidate.name == raised }
+          # Match against each candidate's RENDERED name (same resolver
+          # everything else here matches with), not the raw handler.name:
+          # the whole reason name_resolver exists is that a role-loaded
+          # handler's name is frequently itself a template, so a handler
+          # notifying an earlier handler BY that rendered name (the exact
+          # case this backward-notification pass exists for) never found
+          # its target and silently didn't fire the second pass.
+          index = @handlers.index do |candidate|
+            rendered_candidate = name_resolver.try(&.call(candidate, host)) || candidate.name
+            rendered_candidate == raised || candidate.name == raised
+          end
           second_pass.add(raised) if index && index <= handler_index
         end
       end

@@ -101,4 +101,35 @@ describe Krikri::HandlerRunner do
 
     order.should eq(["first", "second"])
   end
+
+  it "second-pass backward notification matches the earlier handler's RENDERED name" do
+    # Regression: a handler re-notifying an EARLIER handler by the name
+    # that name_resolver renders it to (the entire reason the resolver
+    # exists - role handlers' names are frequently templates) used to be
+    # matched against the raw `candidate.name` instead, never found its
+    # target, and the second pass silently didn't fire.
+    host = make_host
+    early = make_handler("Restart {{ svc }}")
+    late = make_handler("late")
+    late.notify = ["Restart mysvc"]
+    runner = Krikri::HandlerRunner.new([early, late], [host])
+    runner.notify(host, "late")
+
+    counts = Hash(String, Int32).new(0)
+    callback = ->(handler : Krikri::Task, _host : Krikri::Host) {
+      counts[handler.name] += 1
+      JSON.parse({"changed" => true, "failed" => false}.to_json)
+    }
+    # Render "{{ svc }}" the way TaskExecutor's real resolver would.
+    resolver = ->(task : Krikri::Task, _host : Krikri::Host) {
+      task.name.gsub("{{ svc }}", "mysvc")
+    }
+    runner.run(callback, fresh_results(host), false, resolver)
+
+    # "late" ran once (notified); the backward notification it raised for
+    # "Restart mysvc" must resolve to `early` (defined before it) and run
+    # it exactly once in the second pass - not zero times.
+    counts["Restart {{ svc }}"].should eq(1)
+    counts["late"].should eq(1)
+  end
 end

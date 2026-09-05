@@ -976,6 +976,19 @@ module Krikri
     # either a disjoint pre-seeded hash key or a Set#add with no yield
     # point mid-operation - never actually racing.
     #
+    # Shared-Task field writes are safe too, audited for exactly that:
+    # the per-host-looking ones (execute_include_role's/item binding,
+    # run_include_tasks_once's name substitution and vars: injection)
+    # all hit Task objects parsed FRESH inside that same per-host call,
+    # and the writes onto SHARED block children (inherit_when_condition,
+    # propagate_role_context, execute_include_tasks_multi's include_vars
+    # injection) assign host-INDEPENDENT values idempotently (their own
+    # guards converge on one final value no matter how hosts interleave)
+    # with no yield point mid-write - and every one of those sites runs
+    # before this dispatch anyway. render_task_vars deliberately renders
+    # into the per-call vars_context copy, never back into task.vars,
+    # so no host's templated values can ever bake into a shared Task.
+    #
     # The one real hazard is stdout: each host's fiber redirects its own
     # output to a private buffer via OutputRouting (so concurrent hosts'
     # lines never interleave), then every buffer is flushed in *hosts*
