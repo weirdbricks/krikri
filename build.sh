@@ -121,26 +121,9 @@ echo ""
 # Check for required shards/dependencies
 echo -e "${YELLOW}🔍 Checking dependencies...${NC}"
 
-MISSING_DEPS=()
-
 # Check if lib directory exists (created by shards install)
 if [ ! -d "lib" ]; then
     echo -e "${RED}❌ Dependencies not installed!${NC}"
-    echo ""
-    echo -e "${BLUE}To install dependencies, run:${NC}"
-    echo -e "${GREEN}  shards install${NC}"
-    echo ""
-    echo -e "${YELLOW}Then run ./build.sh again${NC}"
-    exit 1
-fi
-
-if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
-    echo -e "${RED}❌ Missing dependencies!${NC}"
-    echo ""
-    echo -e "${YELLOW}The following Crystal shards are required but not installed:${NC}"
-    for dep in "${MISSING_DEPS[@]}"; do
-        echo -e "  ${RED}✗${NC} $dep"
-    done
     echo ""
     echo -e "${BLUE}To install dependencies, run:${NC}"
     echo -e "${GREEN}  shards install${NC}"
@@ -339,110 +322,19 @@ echo ""
 
 # Build plugins
 echo -e "${YELLOW}🔌 Building plugins...${NC}"
-PLUGINS=(
-    "make"
-    "copy"
-    "template"
-    "file"
-    "lineinfile"
-    "replace"
-    "service"
-    "systemd"
-    "shell"
-    "command"
-    "apt"
-    "dnf"
-    "yum"
-    "package"
-    "debug"
-    "facts"
-    "setup"
-    "package_facts"
-    "selinux"
-    "pam_limits"
-    "capabilities"
-    "set_fact"
-    "get_url"
-    "blockinfile"
-    "uri"
-    "assert"
-    "fail"
-    "wait_for"
-    "wait_for_connection"
-    "ping"
-    "fetch"
-    "pause"
-    "user"
-    "group"
-    "git"
-    "pip"
-    "gem"
-    "cron"
-    "cronvar"
-    "apache2_module"
-    "authorized_key"
-    "stat"
-    "find"
-    "getent"
-    "archive"
-    "unarchive"
-    "yum_repository"
-    "apt_repository"
-    "apt_key"
-    "rpm_key"
-    "seboolean"
-    "seport"
-    "deb822_repository"
-    "mount"
-    "sysctl"
-    "ufw"
-    "firewalld"
-    "iptables"
-    "debconf"
-    "async_status"
-    "docker_image"
-    "docker_network"
-    "docker_container"
-    "mysql_db"
-    "mysql_user"
-    "mysql_info"
-    "mysql_query"
-    "openssl_dhparam"
-    "openssl_privatekey"
-    "openssl_csr"
-    "x509_certificate"
-    "openssl_pkcs12"
-    "openssh_keypair"
-    "modprobe"
-    "pamd"
-    "htpasswd"
-    "ini_file"
-    "timezone"
-    "npm"
-    "alternatives"
-    "filesystem"
-    "service_facts"
-    "slurp"
-    "postgresql_db"
-    "postgresql_user"
-    "postgresql_privs"
-    "hostname"
-    "script"
-    "assemble"
-    "tempfile"
-    "known_hosts"
-    "dpkg_selections"
-    "subversion"
-    "expect"
-    "git_config"
-    "sudoers"
-    "dnf_versionlock"
-    "docker_image_build"
-    "ec2_metadata_facts"
-    "rabbitmq_plugin"
-    "rabbitmq_user"
-    "redhat_subscription"
-)
+# DISCOVERED from plugins/*.cr rather than hand-maintained: the old
+# 102-entry literal array silently drifted from the directory it
+# described (apt_key once had no entry despite a compiled binary
+# existing), and nothing failed the build when it did. Every plugin
+# source in plugins/ is built - there is no "listed but absent" state
+# to drift into anymore. Only STANDALONE_PLUGINS and FAT_EXTRA_MODULES
+# below stay hand-listed (they describe build SHAPES, not membership);
+# spec/unit/available_plugins_spec.cr cross-checks the third list
+# (playbook_parser.cr's AVAILABLE_PLUGINS) against this same directory.
+PLUGINS=()
+for plugin_source in plugins/*.cr; do
+    PLUGINS+=("$(basename "$plugin_source" .cr)")
+done
 
 # These 5 stay real, independent binaries instead of joining the fat
 # binary below (`facts` used to be a 6th - see FAT_EXTRA_MODULES below

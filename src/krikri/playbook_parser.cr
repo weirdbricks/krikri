@@ -828,6 +828,13 @@ module Krikri
       "ansible.builtin.debug",
       "ansible.builtin.command",
       "ansible.builtin.setup",
+      # facts: - the binary exists (plugins/facts.cr, built and uploaded
+      # by plugin_manager's own facts-gathering path) but had no entry
+      # here, so a role writing `facts:` directly was silently dropped
+      # as "Plugin not available" even though setup: worked (real
+      # Ansible treats facts as setup's alias). Found by the registry
+      # cross-check spec, not a live round.
+      "ansible.builtin.facts",
       "ansible.builtin.package_facts",
       "ansible.posix.selinux",
       "community.general.pam_limits",
