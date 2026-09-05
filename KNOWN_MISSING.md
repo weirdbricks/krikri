@@ -18,8 +18,8 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.740`.** Vendored `crinja` fork now at tag
-`crystal-play-0.9.24` (see `shard.yml`).
+**Currently at `0.9.741`.** Vendored `crinja` fork now at tag
+`crystal-play-0.9.27` (see `shard.yml`).
 
 ---
 
@@ -29,43 +29,88 @@ Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
-### Ansible's lazy dict-templating is not replicated in general
-
-Real Ansible's templar keeps a variable built from a `{{ }}` expression
-as a genuine dict/list-like object all the way through the vars pipeline
-(its private `_AnsibleLazyTemplateDict`), so `{% for key, val in
-some_var | sort %}` and `{% for key, value in item %}` work on the real
-object. This engine's substitution is string-based: the value coerces to
-a string and a later `{% for key, val in ... %}` fails with "cannot
-unpack multiple values of type Crinja::Value".
-
-Two shapes found live are special-cased and work (`jtyr.nsswitch`/
-`jtyr.motd`, 0.9.697-0.9.700 - see `git log` for the root-cause detail
-and `spec/unit/crinja_renderer_spec.cr` / `spec/unit/
-expression_evaluator_spec.cr` for the regression specs):
-
-- `some_var: "{{ some_dict.update(other_dict) }}{{ some_dict }}"` - the
-  mutate-for-side-effect-then-reread idiom, both operands bare names.
-- `motd_info: "{{ list_a + list_b }}"` - list concatenation where the
-  elements are dicts whose own values need recursive re-rendering,
-  including a `{{ {...} if cond else {...} }}` dict-literal element.
-
-Every OTHER shape still hits the old coercion. The general fix is
-deferred evaluation plus type preservation through the whole vars
-pipeline, touching BOTH evaluators - a major undertaking, deliberately
-not attempted.
-
-**This is the same rewrite the native-typing entry concluded was not
-worth doing on its own evidence** (1 genuine occurrence in a 611-role
-corpus, ~0.16%). If it is ever picked up, these are one job, not two.
-
-(The single-loop-variable shape found live via `PowerDNS.pdns` -
-`{% for backend in pdns_backends | sort() %}` yielding crinja-fork
-`(key, value)` tuples instead of just keys - is fixed as of
-`crystal-play-0.9.24` / 0.9.740 and no longer open; see Round 305
-below.)
+(None.)
 
 ---
+
+## Round 306 (general lazy dict-templating closed: fork keys-default flip + combine recursive/list_merge, 0.9.740 -> 0.9.741)
+
+Closed the general-case gap (`LAZY_DICT_TEMPLATING_INVESTIGATION.md`
+problem B) empirically rather than via the "deferred evaluation +
+type preservation" rewrite the gap's framing implied. A battery of
+computed-dict shapes was run through BOTH engines side by side against
+real `ansible-core` 2.19 (provisioned playbooks, output-diffed) to find
+what actually still diverged. The answer: the type-recovery machinery
+added piecemeal since 0.9.700 (render-then-parse-back, structural
+Crinja evaluation fallback) already handles the vars pipeline for
+every realistic computed-dict shape; what remained were two concrete
+divergence classes, both now fixed:
+
+1. **The crinja fork's bare-dict iteration default** (the
+   "known remaining divergence, deliberately left reactive" note in
+   Round 305): `Value#each`/`raw_each` yielded `(key, value)` tuples
+   for a `Hash`, so `dict | list`, `dict | join`, `dict | first`/
+   `last`/`min`/`max`/`unique`/`map`/`select`/`reverse` all saw
+   tuples where real Ansible sees KEYS (Python's `for k in dict:`
+   semantics). Fixed in fork release `crystal-play-0.9.25` (commit
+   `81085da8`): keys-only default everywhere, with the one
+   load-bearing consumer - the two-variable `{% for key, val in
+   dict %}` pairs form - built explicitly by the `for` tag itself
+   (real Ansible hard-fails that form; keeping it is the same
+   deliberate leniency as Round 305), and `dictsort`/`urlencode`/
+   `reverse` building their pairs/reversed-keys explicitly. Fork
+   suite: 675 examples, 0 failures.
+2. **`combine(recursive=True)` / `list_merge=` silently ignored** in
+   BOTH evaluators (FilterEngine's `combine_hash` and jinja_filters.cr's
+   Crinja-side `combine`): a recursive deep-merge silently DROPPED
+   nested-dict data (returned the override's subtree intact, losing the
+   base's sibling keys) and list collisions always replaced. Both now
+   implement real Ansible's full `recursive=` deep-merge and all six
+   `list_merge=` modes ('replace', 'keep', 'append', 'prepend',
+   'append_rp', 'prepend_rp'), verified against real ansible-core 2.19.
+   A third latent bug surfaced on the way: `FilterEngine`
+   #resolve_expression had no `[...]` array-literal branch, so a dict
+   literal with an array value (`combine({'l': [1, 2]})`) resolved the
+   value to JSON null - data silently dropped; now parsed recursively.
+
+Verified: full `crystal spec` (2515 examples) and `ameba` (447 files)
+clean; every battery shape output-identical to real `ansible-playbook`
+live on localhost, including single-var for (keys), `.items()` (pairs),
+`| sort` (keys), `dictsort` (pairs), two-var lenient pairs form, and
+all the keys-only filter shapes; the two special-cased
+`jtyr.nsswitch`/`jtyr.motd` regression specs (0.9.697-0.9.700) pass
+untouched. `spec/unit/lazy_dict_templating_spec.cr` pins all of it.
+
+Follow-up verification (independent re-check of the whole round) caught
+one formatting divergence the round's own spec had wrongly encoded as
+expected: real ansible-core 2.19 converts Python tuples to LISTS at
+every rendered-output position (its native-types finalization) -
+`{{ (1, 2) }}` renders `[1, 2]`, `{{ d1 | dictsort }}` interpolates as
+`[['a', 1], ...]`, not `[('a', 1), ...]`. Fixed at both boundaries:
+the fork's `Finalizer#stringify(Crinja::Tuple)` (released as
+`crystal-play-0.9.26`, governing raw .j2-text output) and krikri's own
+`crinja_value_to_json_any` (the JSON-world crossing the old `else`
+branch was stringifying tuples through). The round's dictsort spec
+expectation is corrected, plus a new every-output-position regression
+spec.
+
+A second follow-up caught the converse, in the one position the
+native-types conversion does NOT reach: an explicit `| string` applies
+Python's own `str()` BEFORE the tuple->list conversion, so
+`{{ d1 | dictsort | string }}` renders `[('a', 1), ('b', 2)]` (brackets
+outer, parens inner). Fixed in fork release `crystal-play-0.9.27`
+(`Finalizer` grows a python_str mode the `string` filter sets).
+Regression specs pin both the fixed inline form and the fork-side
+behavior. One residual case this round deliberately left alone - a
+tuple-bearing value stored in a var, then `| string`'d later - is
+recorded under "Deliberate limits" below (Templating) rather than
+here, since it's a decision, not an open defect.
+
+The investigation doc's section-6 sketch is now essentially what
+shipped (the `each`/`raw_each` semantic flip it deferred IS the 0.9.25
+change, with the pairs support moved into the `for` tag as it
+recommended); problem B is closed with no evidence the full rewrite
+would have bought anything further.
 
 ## Round 305 (PowerDNS.pdns dict-iteration fix, crinja fork release, 0.9.739 -> 0.9.740)
 
@@ -1350,6 +1395,25 @@ gaps" rather than arguing with the note in place.
   doesn't carry; the built-in `memory` backend needs no support at all
   (this engine's in-run `@facts` store already IS that). Revisit only if
   a real role is found relying on a non-jsonfile backend.
+
+### Templating
+
+- **A tuple-bearing value stored in a var, then `| string`'d later,
+  renders as a bracketed list instead of a parenthesized tuple**
+  (round 306, 0.9.741). Real Ansible's native-types finalization
+  converts a Python tuple to a list at every rendered-output position
+  EXCEPT when `| string` applies Python's own `str()` first - krikri's
+  crinja fork now replicates that exception for the inline case
+  (`{{ d1 | dictsort | string }}` correctly renders parens), but a
+  tuple crossing INTO a var first (`t1: "{{ (1, 2) }}"`) loses its
+  tuple-ness the moment it's stored, since krikri's vars world is JSON
+  (no tuple type) - so `{{ t1 | string }}` later gives `[1, 2]` where
+  real Ansible gives `(1, 2)`. Recovering that would mean carrying a
+  real tuple type through the whole vars pipeline - the same deferred-
+  evaluation architecture the general lazy-dict-templating gap's fix
+  deliberately avoided - for a shape nothing in the role corpus hits
+  (`| string` on a tuple-bearing var read back out of storage). Revisit
+  only if a real role is found relying on it.
 
 ### Cosmetic differences (both engines fail; only the wording differs)
 

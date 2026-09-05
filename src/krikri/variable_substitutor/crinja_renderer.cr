@@ -255,6 +255,17 @@ module Krikri
           JSON::Any.new(hash)
         when Array(Crinja::Value)
           JSON::Any.new(raw.map { |item| crinja_value_to_json_any(item) })
+        when Crinja::Tuple
+          # Real ansible-core's native-types finalization converts Python
+          # tuples to lists at every output position (verified 2.19.4:
+          # `{{ (1, 2) }}` -> `[1, 2]`, `zip`/`dictsort` results are
+          # bracketed lists) - so a tuple crossing from Crinja into this
+          # engine's JSON world becomes an array, never the paren-repr
+          # string the old `else` fallback produced (`["('a', 1)", ...]`
+          # for a `{{ d1 | dictsort }}` span; found via the round-306
+          # follow-up verification). The fork's own Finalizer got the
+          # matching fix for the raw-.j2-text path (crystal-play-0.9.26).
+          JSON::Any.new(raw.to_a.map { |item| crinja_value_to_json_any(item) })
         when Crinja::TimeDelta
           # A bare `to_datetime(...) - to_datetime(...)` timedelta
           # result (not followed by `.days`/.total_seconds() in the same

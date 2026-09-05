@@ -488,14 +488,45 @@ module Krikri
             JSON::Any.new(total)
           end
         when "combine"
-          # combine(other1, other2, ...) - shallow dict merge, later
-          # arguments win on key collisions. dev-sec os_hardening chains
-          # several of these (`sysctl_config | combine(sysctl_custom_config
-          # | default({})) | combine(...)`) to layer per-OS overrides on
-          # top of role defaults; was previously entirely unimplemented
-          # (fell through to the `else` passthrough below), silently
-          # discarding every merge-in argument.
-          split_top_level_args(filter_args).reduce(value) { |acc, arg_expr| combine_hash(acc, resolve_expression(arg_expr)) }
+          # combine(other1, other2, ..., recursive=False, list_merge='replace')
+          # - dict merge, later positional arguments win on key collisions.
+          # dev-sec os_hardening chains several of these (`sysctl_config |
+          # combine(sysctl_custom_config | default({})) | combine(...)`) to
+          # layer per-OS overrides on top of role defaults; was previously
+          # entirely unimplemented (fell through to the `else` passthrough
+          # below), silently discarding every merge-in argument.
+          #
+          # `recursive=True` deep-merges nested dict VALUES instead of
+          # replacing them wholesale, and `list_merge=` controls what
+          # happens to a key that is a list on both sides ('replace'
+          # default, 'keep', 'append', 'prepend', 'append_rp',
+          # 'prepend_rp'). Both kwargs were previously silently ignored -
+          # found via the round-306 lazy-dict-templating battery (real
+          # ansible-core 2.19 deep-merges and appends where this returned
+          # the losing side's value intact, silently DROPPING data).
+          # Dedicated kwarg parse (not #parse_kwarg, which only matches
+          # quoted values): real roles write `recursive=True` unquoted,
+          # and silently dropping the kwarg would restore exactly the
+          # data-loss bug this branch fixes.
+          recursive_arg = false
+          list_merge_arg = "replace"
+          positional_args = [] of String
+          split_top_level_args(filter_args).each do |arg|
+            part = arg.strip
+            m = part.match(/^recursive\s*=\s*(.+)$/)
+            if m
+              v = m[1].strip.downcase
+              recursive_arg = v == "true" || v == "1"
+            else
+              m = part.match(/^list_merge\s*=\s*(.+)$/)
+              if m
+                list_merge_arg = m[1].strip.delete("'\"")
+              else
+                positional_args << part
+              end
+            end
+          end
+          positional_args.reduce(value) { |acc, arg_expr| combine_hash(acc, resolve_expression(arg_expr), recursive_arg, list_merge_arg) }
         when "dict2items"
           # dict2items(key_name='key', value_name='value') - real Ansible's
           # own filter (NOT standard Jinja2; the Crinja corpus confirms
@@ -1456,19 +1487,55 @@ module Krikri
         end
       end
 
-      # Shallow dict merge for the `combine` filter: keys from *other* win
-      # over *base* on collision, keys present in only one side pass
-      # through unchanged. Non-Hash operands (a `combine` argument that
-      # didn't resolve to a dict) are ignored rather than raising, since a
-      # stray `default({})` fallback already guarantees an empty Hash in
-      # the common case.
-      private def combine_hash(base : JSON::Any, other : JSON::Any) : JSON::Any
+      # Dict merge for the `combine` filter: keys from *other* win over
+      # *base* on collision, keys present in only one side pass through
+      # unchanged. Non-Hash operands (a `combine` argument that didn't
+      # resolve to a dict) are ignored rather than raising, since a stray
+      # `default({})` fallback already guarantees an empty Hash in the
+      # common case.
+      #
+      # `recursive` deep-merges when BOTH sides hold a dict under the
+      # same key instead of letting *other* replace it wholesale (real
+      # Ansible's combine(recursive=True) - a recursive=true merge
+      # descends through every nesting level). `list_merge` governs the
+      # key-is-a-list-on-both-sides case: 'replace' (default) lets
+      # *other* win; 'keep' keeps *base*'s list and discards *other*'s;
+      # 'append'/'prepend' concatenate; 'append_rp'/'prepend_rp'
+      # concatenate and drop duplicates (the `_rp` = remove plaintext
+      # duplicates; comparison is by JSON text, which matches Ansible's
+      # own element-equality for these purposes). Verified shape-for-
+      # shape against real ansible-core 2.19 (`recursive` + every
+      # list_merge mode). Unknown modes fall back to 'replace'.
+      private def combine_hash(base : JSON::Any, other : JSON::Any, recursive : Bool = false, list_merge : String = "replace") : JSON::Any
         base_h = base.raw.is_a?(Hash) ? base.as_h : nil
         other_h = other.raw.is_a?(Hash) ? other.as_h : nil
         return base unless base_h
         return base unless other_h
         merged = base_h.dup
-        other_h.each { |key, val| merged[key] = val }
+        other_h.each do |key, val|
+          existing = merged[key]?
+          if recursive && existing && existing.raw.is_a?(Hash) && val.raw.is_a?(Hash)
+            merged[key] = combine_hash(existing, val, true, list_merge)
+          elsif list_merge != "replace" && existing && existing.raw.is_a?(Array) && val.raw.is_a?(Array)
+            base_list = existing.as_a
+            other_list = val.as_a
+            merged[key] = case list_merge
+                          when "keep" then existing
+                          when "append"
+                            JSON::Any.new(base_list + other_list)
+                          when "prepend"
+                            JSON::Any.new(other_list + base_list)
+                          when "append_rp"
+                            JSON::Any.new((base_list + other_list).uniq(&.to_json))
+                          when "prepend_rp"
+                            JSON::Any.new((other_list + base_list).uniq(&.to_json))
+                          else
+                            val
+                          end
+          else
+            merged[key] = val
+          end
+        end
         JSON::Any.new(merged)
       end
 
@@ -1543,6 +1610,7 @@ module Krikri
         return JSON::Any.new(true) if expr == "true" || expr == "True"
         return JSON::Any.new(false) if expr == "false" || expr == "False"
         return parse_dict_literal(expr) if expr.starts_with?('{') && expr.ends_with?('}')
+        return parse_array_literal(expr) if expr.starts_with?('[') && expr.ends_with?(']')
 
         if int_val = expr.to_i64?
           return JSON::Any.new(int_val)
@@ -1579,6 +1647,22 @@ module Krikri
       private def quoted_literal?(expr : String) : Bool
         (expr.starts_with?("'") && expr.ends_with?("'")) ||
           (expr.starts_with?('"') && expr.ends_with?('"'))
+      end
+
+      # Parses a `[...]` list literal - the array counterpart of
+      # #parse_dict_literal, which #resolve_expression recurses into for
+      # element values (so nested dicts/lists/scalars all resolve). A
+      # dict literal's VALUE being an array (`combine({'l': [1, 2]})`,
+      # `default(['a'])`) previously had no branch here at all - `[...]`
+      # fell through to a plain (always-undefined) variable lookup and
+      # every such value resolved to JSON null, silently DROPPING the
+      # data. Found via the round-306 lazy-dict-templating battery's
+      # combine(recursive=True, list_merge=...) shapes.
+      private def parse_array_literal(expr : String) : JSON::Any
+        inner = expr[1..-2].strip
+        return JSON::Any.new([] of JSON::Any) if inner.empty?
+
+        JSON::Any.new(split_top_level_args(inner).map { |element| resolve_expression(element.strip) })
       end
 
       # Strips a single layer of fully-wrapping parens, same rule as

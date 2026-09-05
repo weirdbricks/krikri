@@ -1,18 +1,21 @@
 # Lazy dict-templating: investigation notes (2026-09-05)
 
-**RESOLVED (same day, 0.9.740 / `crystal-play-0.9.24`)**: the
-`PowerDNS.pdns` shape (problem A below) is fixed - but NOT via this
-doc's section-6 sketch. The `each`/`raw_each` semantic flip was judged
-too risky (the two-variable pairs form is load-bearing for shipped
-roles); instead the two lossy paths got targeted key-yielding
-special cases in the fork itself (`for` tag single-variable + `sort`
-on a raw Hash). Fork commit `cde6938d`, tag `crystal-play-0.9.24`,
-PATCHES.md section "crystal-play-0.9.24"; krikri side: Round 305 in
-`KNOWN_MISSING.md`. Problem B below remains open, as does the
-sketch's unexecuted filter-audit question for the remaining
-`to_a`/`each` consumers (deliberately left reactive - see the fork's
-PATCHES.md "Known remaining divergence" note). The rest of this doc
-is kept as the root-cause record; section 6's sketch is historical.
+**FULLY RESOLVED (same day, krikri 0.9.741 / fork
+`crystal-play-0.9.25`)**: problem A below was fixed same-day in
+`crystal-play-0.9.24` (see the original RESOLVED note at the bottom of
+this section); problem B - the general case - was closed in Round 306
+(0.9.741, fork tag `crystal-play-0.9.25`, commit `81085da8`) via a
+battery comparison against real ansible-core 2.19 that found the
+remaining divergences were NOT the full rewrite this doc sketched, but
+the fork's bare-dict tuple-default consumers (`list`, `join`,
+`first`/`last`, `min`/`max`, `unique`, `map`, `select`, `reverse`,
+`urlencode`) plus `combine(recursive=True)`/`list_merge=` in both
+krikri evaluators. The section-6 sketch IS effectively what shipped:
+`each`/`raw_each` now yield keys by default, and the two-variable
+`for` pairs form is built explicitly by the `for` tag, exactly as the
+sketch recommended. See `KNOWN_MISSING.md` Round 306 and
+`spec/unit/lazy_dict_templating_spec.cr`. The rest of this doc is
+kept as the root-cause record.
 
 Handoff notes for whoever picks up `KNOWN_MISSING.md`'s open gap
 **"Ansible's lazy dict-templating is not replicated in general."** This

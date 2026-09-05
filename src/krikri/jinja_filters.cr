@@ -25,6 +25,47 @@ require "./vault"
 
 module Krikri
   module JinjaFilters
+    # Recursive-dict-merge helper for the Crinja-side `combine` filter,
+    # operating on Crinja::Value (FilterEngine#combine_hash does the same
+    # job for the hand-rolled evaluator on JSON::Any). Mirrors real
+    # Ansible's combine(recursive=True): when both sides hold a dict
+    # under the same key, merge them level by level; the `list_merge=`
+    # modes govern the key-is-a-list-on-both-sides case, with JSON-text
+    # equality for the `_rp` dedupe modes.
+    def self.combine_merge(base : Crinja::Value, other : Crinja::Value, list_merge : String) : Crinja::Value
+      base_h = base.raw.as?(Hash)
+      other_h = other.raw.as?(Hash)
+      return other unless base_h && other_h
+
+      merged = base_h.dup
+      other_h.each do |key, value|
+        existing = merged[key]?
+        if existing && existing.raw.is_a?(Hash) && value.raw.is_a?(Hash)
+          merged[key] = combine_merge(existing, value, list_merge)
+        elsif list_merge != "replace" && existing && existing.raw.is_a?(Array) && value.raw.is_a?(Array)
+          merged[key] = list_merge_values(existing, value, list_merge)
+        else
+          merged[key] = value
+        end
+      end
+      Crinja::Value.new(merged)
+    end
+
+    # list_merge= counterpart: existing/new lists concatenated per mode,
+    # deduped by JSON text for the `_rp` (remove duplicates) modes.
+    def self.list_merge_values(existing : Crinja::Value, new : Crinja::Value, mode : String) : Crinja::Value
+      base_list = existing.raw.as(Array(Crinja::Value))
+      other_list = new.raw.as(Array(Crinja::Value))
+      case mode
+      when "keep"       then existing
+      when "append"     then Crinja::Value.new(base_list + other_list)
+      when "prepend"    then Crinja::Value.new(other_list + base_list)
+      when "append_rp"  then Crinja::Value.new((base_list + other_list).uniq(&.to_json))
+      when "prepend_rp" then Crinja::Value.new((other_list + base_list).uniq(&.to_json))
+      else                   new
+      end
+    end
+
     # `comment` - real Ansible's own filter (ansible.plugins.filter.core),
     # NOT a Jinja2 template comment - it produces a *shell/config-file*
     # comment block meant to appear in the *rendered output* (dev-sec
@@ -1129,13 +1170,21 @@ module Krikri
     # map('ansible.builtin.realpath')`) - also entirely unregistered.
     Crinja.filter(:realpath) { File.realpath(target.to_s) }
 
-    # `combine(*others)` - shallow dict merge, later argument wins on key
-    # collisions. Real Ansible's own filter (not standard Jinja2).
-    # Ported from `FilterEngine#combine_hash` (same shallow, non-
-    # recursive semantics - `recursive=`/`list_merge=` kwargs real
-    # Ansible also supports are not implemented here, matching the
-    # hand-rolled version's own scope).
-    Crinja.filter(:combine) do
+    # `combine(*others, recursive=False, list_merge='replace')` - dict
+    # merge, later positional argument wins on key collisions. Real
+    # Ansible's own filter (not standard Jinja2).
+    # Ported from `FilterEngine#combine_hash`, including the
+    # `recursive=True` deep-merge and the `list_merge=` list-collision
+    # modes ('replace' default, 'keep', 'append', 'prepend',
+    # 'append_rp', 'prepend_rp') - both kwargs were previously silently
+    # ignored here exactly as in the hand-rolled FilterEngine version
+    # (found via the round-306 lazy-dict-templating battery; real
+    # ansible-core 2.19 deep-merges and appends). Mirrors
+    # FilterEngine#combine_hash's semantics mode-for-mode, including the
+    # JSON-text equality used for the `_rp` dedupe.
+    Crinja.filter({recursive: false, list_merge: "replace"}, :combine) do
+      recursive = arguments["recursive"].truthy?
+      list_merge = arguments["list_merge"].to_s
       varargs = arguments.varargs
       base = target.raw
 
@@ -1143,7 +1192,17 @@ module Krikri
         merged = base.dup
         varargs.each do |other|
           other_raw = other.raw
-          other_raw.each { |key, value| merged[key] = value } if other_raw.is_a?(Hash)
+          next unless other_raw.is_a?(Hash)
+          other_raw.each do |key, value|
+            existing = merged[key]?
+            if recursive && existing && existing.raw.is_a?(Hash) && value.raw.is_a?(Hash)
+              merged[key] = JinjaFilters.combine_merge(existing, value, list_merge)
+            elsif list_merge != "replace" && existing && existing.raw.is_a?(Array) && value.raw.is_a?(Array)
+              merged[key] = JinjaFilters.list_merge_values(existing, value, list_merge)
+            else
+              merged[key] = value
+            end
+          end
         end
         Crinja::Value.new(merged)
       else
