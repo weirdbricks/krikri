@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/rpm_package"
 
 module Krikri
   # DNF plugin - manages packages with the dnf package manager
@@ -36,6 +37,12 @@ module Krikri
   #     name: "@Development tools"
   #     state: present
   class DnfPlugin < BasePlugin
+    include PluginHelpers::RpmPackage
+
+    private def pkg_manager_binary : String
+      "dnf"
+    end
+
     def execute : PluginResult
       # Parse package name(s)
       # Can be a string, array (via list parameter), or comma-separated
@@ -211,76 +218,8 @@ module Krikri
     # installed successfully via whatever repos were already present).
     # Strip the offending --enablerepo=X flag(s) and retry rather than
     # failing the task, matching real Ansible's lenient behavior.
-    private def remote_exec_tolerating_unknown_repo(cmd : String) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
-      result = remote_exec(cmd)
-      if result[:exit_code] != 0 && (m = result[:stderr].match(/Unknown repo: '([^']+)'/))
-        stripped_cmd = cmd.gsub("--enablerepo=#{m[1]}", "").gsub(/  +/, " ")
-        return remote_exec_tolerating_unknown_repo(stripped_cmd) if stripped_cmd != cmd
-      end
-      result
-    end
 
     # Build DNF command line options
-    private def build_dnf_options : String
-      options = [] of String
-
-      # Always use -y for non-interactive
-      options << "-y"
-
-      # Enable/disable repos
-      if enablerepo = @params["enablerepo"]?
-        enablerepo.split(",").each do |repo|
-          options << "--enablerepo=#{repo.strip}"
-        end
-      end
-
-      if disablerepo = @params["disablerepo"]?
-        disablerepo.split(",").each do |repo|
-          options << "--disablerepo=#{repo.strip}"
-        end
-      end
-
-      # GPG check - see yum.cr's identical fix for the full story: real
-      # ansible's dnf module forces `conf.localpkg_gpgcheck = not
-      # disable_gpg_check`, overriding dnf's own actual default (gpgcheck
-      # OFF for local/URL package installs regardless of dnf.conf's repo
-      # gpgcheck=1). Without this, a URL-sourced RPM install silently
-      # skipped signature verification here too.
-      if true?(@params["disable_gpg_check"]?)
-        options << "--nogpgcheck"
-      else
-        options << "--setopt=localpkg_gpgcheck=1"
-      end
-
-      # Security/bugfix updates
-      if true?(@params["security"]?)
-        options << "--security"
-      end
-
-      if true?(@params["bugfix"]?)
-        options << "--bugfix"
-      end
-
-      # Weak dependencies
-      if false?(@params["install_weak_deps"]?)
-        options << "--setopt=install_weak_deps=False"
-      end
-
-      # Skip broken packages
-      if true?(@params["skip_broken"]?)
-        options << "--skip-broken"
-      end
-
-      # Allow downgrade
-      if true?(@params["allow_downgrade"]?)
-        options << "--allowerasing"
-      end
-
-      # Best (default in dnf, but explicit is good)
-      options << "--best" unless true?(@params["skip_broken"]?)
-
-      options.join(" ")
-    end
 
     # Install packages
     private def handle_install(names : Array(String), options : String) : PluginResult
@@ -502,130 +441,16 @@ module Krikri
     end
 
     # Upgrade all packages
-    private def handle_upgrade_all : PluginResult
-      options = build_dnf_options
-      cmd = "dnf upgrade #{options}"
-
-      result = remote_exec_tolerating_unknown_repo(cmd)
-
-      success = result[:exit_code] == 0
-
-      if success
-        changed = result[:stdout].includes?("Upgraded:") ||
-                  result[:stdout].includes?("Installed:")
-
-        msg = changed ? "System upgraded" : "All packages already up to date"
-
-        PluginResult.new(
-          changed: changed,
-          failed: false,
-          msg: msg,
-          stdout: result[:stdout],
-          exit_code: 0
-        )
-      else
-        PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Failed to upgrade system",
-          stdout: result[:stdout],
-          stderr: result[:stderr],
-          exit_code: result[:exit_code]
-        )
-      end
-    end
 
     # Handle autoremove operation
-    private def handle_autoremove : PluginResult
-      options = build_dnf_options
-      cmd = "dnf autoremove #{options}"
-
-      result = remote_exec_tolerating_unknown_repo(cmd)
-
-      success = result[:exit_code] == 0
-
-      if success
-        changed = result[:stdout].includes?("Removed:")
-
-        msg = changed ? "Removed unneeded packages" : "No unneeded packages to remove"
-
-        PluginResult.new(
-          changed: changed,
-          failed: false,
-          msg: msg,
-          stdout: result[:stdout],
-          exit_code: 0
-        )
-      else
-        PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Autoremove failed",
-          stdout: result[:stdout],
-          stderr: result[:stderr],
-          exit_code: result[:exit_code]
-        )
-      end
-    end
 
     # Check if a package is installed
-    private def package_installed?(name : String) : Bool
-      # Strip version specifiers for checking
-      base_name = name.split(/[<>=]/).first.strip
-
-      # Try a plain `rpm -q <name>` FIRST - this is the form that
-      # correctly matches a NEVRA-style "name-version" specifier (e.g.
-      # dj-wasabi.telegraf's own `telegraf-{{ telegraf_agent_version }}`
-      # pin), which real rpm resolves via partial-NEVRA matching. Only
-      # fall back to `--whatprovides` (a Provides:/capability lookup,
-      # NOT a name-version match - `rpm -q --whatprovides telegraf-1.18.2`
-      # fails outright even when that exact NEVRA is installed, verified
-      # live) for a VIRTUAL package name (a real RPM's `Provides:`, not
-      # a package of its own) - on RHEL 9's php 8.0 packaging, `php-json`
-      # is pure `Provides:` from `php-common` (JSON is bundled into PHP
-      # core as of 8.0) with no `php-json` RPM of its own at all, so
-      # `rpm -q php-json` alone reports "not installed" even immediately
-      # after a successful `dnf install php-json`. Trying both in this
-      # ORDER (plain name/NEVRA match first, capability match as
-      # fallback) is what avoids regressing one case while fixing the
-      # other - `--whatprovides` alone (this function's own prior fix)
-      # correctly solved buluma.mediawiki's php-json case but broke
-      # dj-wasabi.telegraf's version-pinned case, since NEVRA name-
-      # version strings essentially never match as a literal Provides:
-      # capability - every warm rerun re-"installed" it and reported
-      # changed: true forever, never converging, found benchmarking
-      # that role in round 158. Same bug class already independently
-      # present in package.cr's handle_dnf and yum.cr's own copy of
-      # this exact function.
-      result = remote_exec("rpm -q #{shell_single_quote(base_name)} 2>/dev/null")
-      return true if result[:exit_code] == 0
-
-      result = remote_exec("rpm -q --whatprovides #{shell_single_quote(base_name)} 2>/dev/null")
-      result[:exit_code] == 0
-    end
 
     # Check if name is a package group (starts with @)
-    private def package_group?(name : String) : Bool
-      name.starts_with?("@")
-    end
 
     # Check if name is a URL or file path
-    private def url_or_file?(name : String) : Bool
-      name.starts_with?("http://") ||
-        name.starts_with?("https://") ||
-        name.starts_with?("ftp://") ||
-        name.starts_with?("/")
-    end
 
     # Quote package name if it contains special characters
-    private def quote_package(name : String) : String
-      if name.includes?(" ") || name.includes?(">") || name.includes?("<")
-        "'#{name}'"
-      else
-        name
-      end
-    end
-
   end
 end
 
