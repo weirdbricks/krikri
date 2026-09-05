@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.741`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.742`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.27` (see `shard.yml`).
 
 ---
@@ -30,6 +30,42 @@ unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
 (None.)
+
+---
+
+## Round 307 (lookup('first_found') default search order, 0.9.741 -> 0.9.742)
+
+Found doing a stale-entries sweep of `ROLES_TESTED.md`'s `❌ DIVERGENT`
+rows: `ipr-cnrs.glpi_agent`'s `include_tasks: "{{ lookup('first_found',
+params) }}"` (no `paths:` at all) resolved against this engine's
+`files/templates/vars/.` default order and matched `vars/Debian.yml`
+(a same-named file that exists for an unrelated reason) instead of the
+role's own `tasks/Debian.yml`, then failed trying to run it as a tasks
+list ("Included tasks file must be a YAML list").
+
+Read real Ansible's own `DataLoader#path_dwim_relative_stack`
+(`ansible/parsing/dataloader.py`, available locally via the `ansible`
+apt package) to find the actual default: with no `paths:`, it searches
+`<role_root>/files/<name>` first, then - only because the calling task
+lives in a role's `tasks/` dir - the RAW `<role_root>/tasks/<name>`
+directly; `vars/`/`templates/` are not part of the no-`paths:` default
+at all (verified live against ansible-core 2.14.18, this project's
+benchmark baseline - a synthetic repro against the HOST's ansible-core
+2.19.4 showed a *different*, stricter default with no implicit search
+at all, so this is version-sensitive; 2.14.18 is what the corpus is
+actually benchmarked against). Fixed by inserting `tasks` into
+`default_first_found_paths` right after `files`
+(`expression_evaluator.cr`), leaving the existing `templates`/`vars`/
+`.` fallbacks in place for whatever already-tested scenarios rely on
+them beyond the literal no-`paths:` case.
+
+Verified: full spec suite (2518 examples) and `ameba` (447 files)
+clean; two new regression specs (files/ priority over tasks/, tasks/
+found before vars/); live-reverified the actual `ipr-cnrs.glpi_agent`
+role end to end (podman/Debian 12, ansible-core 2.14.18) - both
+engines now recap identically (`ok=6 changed=1 failed=1 skipped=0`),
+failing at the same later task on `glpi-agent` genuinely not being
+available in this repo (environmental, not an engine bug).
 
 ---
 

@@ -2571,8 +2571,27 @@ module Krikri
       # resolve_first_found_path already uses for the with_first_found:
       # keyword form, for the same result regardless of which of the two
       # real Ansible `first_found` spellings a role happens to use.
+      #
+      # `tasks` inserted right after `files`, matching real Ansible's own
+      # `DataLoader#path_dwim_relative_stack` (ansible/parsing/dataloader.py):
+      # with no explicit `paths:`, it searches `<role_root>/files/<name>`
+      # first, then - only when the calling task lives in a role's
+      # `tasks/` dir - the RAW `<role_root>/tasks/<name>` directly, with
+      # no `templates/`/`vars/` involved in the no-`paths:` case at all.
+      # Found live via `ipr-cnrs.glpi_agent`'s own `lookup('first_found',
+      # params)` (`params: {files: ['{{ ansible_distribution }}.yml']}`,
+      # no `paths:`) inside `tasks/main.yml`, resolving its own
+      # `tasks/Debian.yml` - real Ansible correctly found that file
+      # (confirmed live against ansible-core 2.14.18, this project's
+      # benchmark baseline); this engine's old files/templates/vars/.
+      # order reached `vars/Debian.yml` (a real file that happens to
+      # share the basename) before ever considering `tasks/`, and tried
+      # to run it as a tasks list, failing "Included tasks file must be
+      # a YAML list". `resolve_first_found_roots` already resolves a
+      # bare `tasks` candidate to `role_path/tasks` as its first base,
+      # exactly matching the real search-stack entry.
       private def default_first_found_paths : Array(JSON::Any)
-        [JSON::Any.new("files"), JSON::Any.new("templates"), JSON::Any.new("vars"), JSON::Any.new(".")]
+        [JSON::Any.new("files"), JSON::Any.new("tasks"), JSON::Any.new("templates"), JSON::Any.new("vars"), JSON::Any.new(".")]
       end
 
       # A relative first_found `paths:` entry can resolve against EITHER

@@ -120,6 +120,54 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("lookup('first_found', params)").should eq(File.join(role_dir, "vars", "Debian.yml"))
   end
 
+  it "defaults lookup('first_found', ...) with no paths: to the role's tasks/ dir before vars/" do
+    # Real bug found via ipr-cnrs.glpi_agent's own idiom:
+    # `include_tasks: "{{ lookup('first_found', params) }}"` with
+    # `vars: params: {files: ['{{ ansible_distribution }}.yml']}` and NO
+    # `paths:`, called from the role's own tasks/main.yml. Real Ansible
+    # (DataLoader#path_dwim_relative_stack, verified live against
+    # ansible-core 2.14.18) searches the role's files/ dir first, then -
+    # only because the calling task lives in a role's tasks/ dir - the
+    # RAW tasks/ dir directly; vars/ and templates/ are NOT part of the
+    # no-paths: default at all. This engine's old files/templates/vars/.
+    # order reached vars/Debian.yml (a same-named file that happens to
+    # exist for an unrelated reason) before ever trying tasks/, then
+    # tried to run it as a tasks list and failed "Included tasks file
+    # must be a YAML list".
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_tasks_default_spec")
+    `rm -rf #{role_dir}`
+    Dir.mkdir_p(File.join(role_dir, "tasks"))
+    Dir.mkdir_p(File.join(role_dir, "vars"))
+    File.write(File.join(role_dir, "tasks", "Debian.yml"), "- debug: {msg: correct}\n")
+    File.write(File.join(role_dir, "vars", "Debian.yml"), "wrong_marker: true\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    v["params"] = JSON.parse(%({"files": ["Debian.yml"]}))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("lookup('first_found', params)").should eq(File.join(role_dir, "tasks", "Debian.yml"))
+  end
+
+  it "still finds files/ before tasks/ when no paths: given (files/ has priority)" do
+    # Same DataLoader search order: role_root/files/<name> is tried
+    # BEFORE the tasks/ fallback - confirmed live (files/Debian.yml
+    # present alongside a real tasks/Debian.yml, real ansible-playbook
+    # picked files/Debian.yml, later failing on its own invalid content,
+    # not tasks/Debian.yml's valid one).
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_files_priority_spec")
+    `rm -rf #{role_dir}`
+    Dir.mkdir_p(File.join(role_dir, "tasks"))
+    Dir.mkdir_p(File.join(role_dir, "files"))
+    File.write(File.join(role_dir, "tasks", "Debian.yml"), "- debug: {msg: wrong}\n")
+    File.write(File.join(role_dir, "files", "Debian.yml"), "correct\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    v["params"] = JSON.parse(%({"files": ["Debian.yml"]}))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("lookup('first_found', params)").should eq(File.join(role_dir, "files", "Debian.yml"))
+  end
+
   it "accepts a fully-qualified lookup plugin name, not just the bare one" do
     # Real bug found benchmarking several juju4.* roles (bind, cribl,
     # ollama, opkssh, openwebui, ...), which all share this exact idiom:
