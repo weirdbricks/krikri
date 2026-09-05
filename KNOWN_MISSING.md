@@ -29,58 +29,6 @@ Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
-### ~~Podman-guest virtualization facts not detected~~ (closed, 0.9.739)
-
-Was: found live confirming the `.items()` dict-iteration fix (round
-303) via `jtyr.motd` in a podman container - real Ansible's `setup:`
-correctly reported `ansible_facts.virtualization_role=guest` /
-`virtualization_type=podman`, while krikri's facts gatherer reported
-`NA`/none for both.
-
-Root cause: `detect_virtualization` relied on the EXTERNAL
-`systemd-detect-virt` binary (which does list "podman" as a value) as
-its only container-runtime signal beyond a `/proc/1/cgroup` substring
-check that never covers podman - so on any minimal container image
-without the `systemd` package installed (no `systemd-detect-virt`, no
-`/run/systemd/container`), every check fell through to "None". Real
-Ansible's own `LinuxVirtual#get_virtual_facts` (module_utils/facts/
-virtual/linux.py) doesn't have this dependency: it reads PID 1's own
-`container=` environment variable from `/proc/1/environ` FIRST -
-podman (and systemd-nspawn, and older LXC) sets this unconditionally,
-with no external binary needed at all.
-
-Fixed by adding the same `/proc/1/environ` `container=` check (`lxc`/
-`podman`/generic-value priority, matching real Ansible's own order),
-via a new pure `parse_container_env` helper (testable without real
-`/proc` access - see `spec/unit/facts_gatherer_spec.cr`). Live-
-reverified in a podman container with `systemd-detect-virt` absent
-entirely: `ansible_virtualization_type=podman`/`role=guest`, matching
-real Ansible exactly.
-
-### ~~`community.rabbitmq` warm-run `changed` delta~~ (closed, round 199)
-
-Was: warm pass reported changed=2 where real reports 0. Live-host
-capture showed the detection had been fine since 0.9.631 - the residue
-was a hardcoded changed flag, a JSON-array tag write that never
-converged, and unconditional set_permissions. Fixed 0.9.734; details
-in the round 199 narrative below.
-
-### ~~`apt`/`package` doesn't retry an install on corrupt/unparseable lists~~ (closed, 0.9.737)
-
-Fixed: `apt_install_with_implicit_cache_retry` (in the shared
-`apt_lock_retry` helper) wraps every named-package install call site in
-`apt.cr`/`package.cr` - on a corrupt/unparseable on-disk package index
-(`E: The package lists or status file could not be parsed or opened.`)
-it runs one implicit `apt-get update` and retries the install exactly
-once, matching real Ansible's own `get_cache()` retry (which catches
-`apt.Cache()`'s `SystemError` on exactly this condition). Any other
-failure class (broken repo, held lock, or a plain locate-miss on an
-otherwise-valid cache) still fails fast.
-
-0.9.736 shipped this gated on the wrong signal (`E: Unable to locate
-package`, a plain "no candidate for this name" miss) - see the 0.9.737
-narrative below for how that was found and corrected.
-
 ### Ansible's lazy dict-templating is not replicated in general
 
 Real Ansible's templar keeps a variable built from a `{{ }}` expression
