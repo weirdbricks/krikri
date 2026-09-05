@@ -18,8 +18,8 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.739`.** Vendored `crinja` fork now at tag
-`crystal-play-0.9.23` (see `shard.yml`).
+**Currently at `0.9.740`.** Vendored `crinja` fork now at tag
+`crystal-play-0.9.24` (see `shard.yml`).
 
 ---
 
@@ -111,18 +111,52 @@ not attempted.
 worth doing on its own evidence** (1 genuine occurrence in a 611-role
 corpus, ~0.16%). If it is ever picked up, these are one job, not two.
 
-A third shape, found live via `PowerDNS.pdns` (Kata round, 0.9.735):
-`{% for backend in pdns_backends | sort() %}` - a SINGLE loop variable
-over a dict (not the `for key, val in ...` two-variable unpack the
-existing shapes above are about) should yield just the dict's keys
-(Jinja2/Python's own `for k in dict:` default), but the vendored crinja
-fork yields `(key, value)` tuples instead - `backend | replace(...)`
-then fails with "Cast from Crinja::Tuple to (Crinja::SafeString |
-String) failed". Fork-internal (`lib/crinja/src/runtime/value.cr`), not
-krikri's own templating code - same class of underlying gap as the two
-shapes above, not chased further here.
+(The single-loop-variable shape found live via `PowerDNS.pdns` -
+`{% for backend in pdns_backends | sort() %}` yielding crinja-fork
+`(key, value)` tuples instead of just keys - is fixed as of
+`crystal-play-0.9.24` / 0.9.740 and no longer open; see Round 305
+below.)
 
 ---
+
+## Round 305 (PowerDNS.pdns dict-iteration fix, crinja fork release, 0.9.739 -> 0.9.740)
+
+Closed the single-loop-variable dict-iteration shape of this gap
+(documented in `LAZY_DICT_TEMPLATING_INVESTIGATION.md` - read that
+first; it traces the root cause through the fork and records why a
+naive `for`-tag-only patch fails). Fix landed as a REAL release of the
+vendored crinja fork, not a `lib/` edit: `weirdbricks/crinja` tag
+`crystal-play-0.9.24` (commit `cde6938d`).
+
+Deliberately NOT the design sketch's `each`/`raw_each` semantic flip:
+that default (Dictionary yields `(key, value)` tuples) is load-bearing
+for the two-variable `{% for key, val in dict %}` pairs form that
+`jtyr.nsswitch`/`jtyr.motd` shipped and live-verified on. Instead the
+two lossy paths are special-cased in the fork itself:
+
+- `src/lib/tag/for.cr`: exactly ONE loop variable + a raw `Hash`
+  collection iterates the dict's KEYS (Python's `for k in dict:`).
+  Two-variable form unchanged - `Context#unpack` still splits pairs.
+- `src/lib/filter/sort.cr`: a raw `Hash` target sorts its KEYS
+  (Python's `sorted(dict)`). `dictsort` and `.items()`-shaped pair
+  arrays unaffected (both verified by new fork specs).
+
+This also fixes the previously-unfixable half of the investigation's
+section-5 attempt: the `sort()` path lost the "came from a dict" type
+information inside the filter before the `for` tag ever saw it, which
+is exactly why the earlier `for`-tag-only patch half-worked.
+
+Verified: fork's own suite 666 examples 0 failures; krikri full suite
+(2501 examples) and `ameba` (446 files) clean with the new pin;
+`jtyr.nsswitch`/`jtyr.motd` regression specs untouched and passing.
+Live end-to-end via `krikri-playbook` + `template:` against localhost,
+all three shapes matching real Ansible: single-var direct for (keys),
+single-var `| sort()` (sorted keys), two-var direct and
+`.items() | sort` (pairs). Known remaining fork divergence, recorded
+in the fork's PATCHES.md and left reactive: other `to_a`/`each`
+consumers (`list`, `map`, `select`/`reject`, `join`, membership) still
+see tuples for a bare dict - nothing in the role corpus hits those.
+The general lazy-dict-templating gap above stays open, unchanged.
 
 ## Round 304 (podman virtualization-facts fix, 0.9.738 -> 0.9.739)
 
