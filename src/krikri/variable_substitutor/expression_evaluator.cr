@@ -2086,14 +2086,7 @@ module Krikri
           # (itertools.chain, not a deep flatten).
           parts[1..].flat_map { |part| lookup_array(evaluate_lookup_term(part.strip)) }.to_json
         when "together"
-          # lookup('together', list1, list2, ...) - real Ansible's own
-          # together lookup: zips the given lists together (itertools.
-          # izip_longest, padding shorter lists with null), returning a
-          # list of lists - the classic with_together: parallel-
-          # iteration source.
-          lists = parts[1..].map { |part| lookup_array(evaluate_lookup_term(part.strip)) }
-          size = lists.max_of?(&.size) || 0
-          (0...size).map { |i| lists.map { |list| list[i]? || JSON::Any.new(nil) } }.to_json
+          evaluate_lookup_together(parts)
         when "nested"
           # lookup('nested', list1, list2, ...) - real Ansible's own
           # nested lookup: a nested-loop Cartesian product of the given
@@ -2106,30 +2099,56 @@ module Krikri
         when "lines"
           lookup_lines(parts)
         when "varnames"
-          # lookup('varnames', 'regex1', 'regex2', ...) - real Ansible's
-          # own varnames lookup: returns every variable NAME (not
-          # value) whose name matches ANY of the given regex patterns.
-          patterns = parts[1..].compact_map { |part| quoted_string_literal(part.strip).try(&.as_s?) }.compact_map { |pth| Regex.new(pth) rescue nil }
-          @vars.keys.select { |name| patterns.any?(&.matches?(name)) }.to_json
+          evaluate_lookup_varnames(parts)
         when "fileglob"
-          # lookup('ansible.builtin.fileglob', pattern, wantlist=True) -
-          # the FUNCTION-call form of the same lookup already handled as
-          # a FILTER in FilterEngine (`map('fileglob')`) - real Ansible
-          # returns the list of existing files matching the glob (empty
-          # list, not an error, when none match). Entirely unimplemented
-          # here before - fell through every case to the "undefined"
-          # fallback, and `"undefined" | length > 0` is true (a 9-char
-          # string), so a per-loop-item `when: lookup('ansible.builtin.
-          # fileglob', role_path ~ '/vars/' ~ item, wantlist=True) |
-          # length > 0` guard meant to skip a nonexistent vars file
-          # (PowerDNS.pdns's own "OS-specific variables, generic to
-          # specific" idiom) always evaluated true instead, running
-          # `include_vars:` on a file that doesn't exist and failing the
-          # whole task where real Ansible just skips it.
-          pattern = parts[1]?.try { |part| evaluate(part.strip) }
-          return "[]" unless pattern
-          Dir.glob(pattern).sort!.to_json
+          evaluate_lookup_fileglob(parts)
         end
+      end
+
+      # lookup('together', list1, list2, ...) - real Ansible's own
+      # together lookup: zips the given lists together (itertools.
+      # izip_longest, padding shorter lists with null), returning a list
+      # of lists - the classic with_together: parallel-iteration source.
+      # Pulled out of #evaluate_lookup_list's own case dispatch to keep
+      # that method's cyclomatic complexity under the repo's threshold -
+      # purely a split, no behavior change.
+      private def evaluate_lookup_together(parts : Array(String)) : String
+        lists = parts[1..].map { |part| lookup_array(evaluate_lookup_term(part.strip)) }
+        size = lists.max_of?(&.size) || 0
+        (0...size).map { |i| lists.map { |list| list[i]? || JSON::Any.new(nil) } }.to_json
+      end
+
+      # lookup('varnames', 'regex1', 'regex2', ...) - real Ansible's own
+      # varnames lookup: returns every variable NAME (not value) whose
+      # name matches ANY of the given regex patterns. Pulled out of
+      # #evaluate_lookup_list's own case dispatch to keep that method's
+      # cyclomatic complexity under the repo's threshold - purely a
+      # split, no behavior change.
+      private def evaluate_lookup_varnames(parts : Array(String)) : String
+        patterns = parts[1..].compact_map { |part| quoted_string_literal(part.strip).try(&.as_s?) }.compact_map { |pth| Regex.new(pth) rescue nil }
+        @vars.keys.select { |name| patterns.any?(&.matches?(name)) }.to_json
+      end
+
+      # lookup('ansible.builtin.fileglob', pattern, wantlist=True) - the
+      # FUNCTION-call form of the same lookup already handled as a
+      # FILTER in FilterEngine (`map('fileglob')`) - real Ansible
+      # returns the list of existing files matching the glob (empty
+      # list, not an error, when none match). Entirely unimplemented
+      # here before - fell through every case to the "undefined"
+      # fallback, and `"undefined" | length > 0` is true (a 9-char
+      # string), so a per-loop-item `when: lookup('ansible.builtin.
+      # fileglob', role_path ~ '/vars/' ~ item, wantlist=True) | length >
+      # 0` guard meant to skip a nonexistent vars file (PowerDNS.pdns's
+      # own "OS-specific variables, generic to specific" idiom) always
+      # evaluated true instead, running `include_vars:` on a file that
+      # doesn't exist and failing the whole task where real Ansible just
+      # skips it. Pulled out of #evaluate_lookup_list's own case dispatch
+      # to keep that method's cyclomatic complexity under the repo's
+      # threshold - purely a split, no behavior change.
+      private def evaluate_lookup_fileglob(parts : Array(String)) : String
+        pattern = parts[1]?.try { |part| evaluate(part.strip) }
+        return "[]" unless pattern
+        Dir.glob(pattern).sort!.to_json
       end
 
       private def evaluate_lookup_misc(lookup_type : String?, parts : Array(String)) : String?
