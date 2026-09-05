@@ -6,6 +6,7 @@ require "compress/gzip"
 require "xz"
 require "bz2"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/db_errors"
 require "../src/krikri/plugin_helpers/mysql_connection"
 require "../src/krikri/plugin_helpers/sql_quoting"
 
@@ -124,9 +125,9 @@ module Krikri
         end
       end
     rescue ex : DB::ConnectionRefused
-      PluginResult.new(changed: false, failed: true, msg: "Could not connect to the MySQL server: #{ex.message}")
+      PluginHelpers::DbErrors.connection_failed(ex, "MySQL")
     rescue ex : MySql::Connection::PacketError
-      PluginResult.new(changed: false, failed: true, msg: "MySQL error: #{ex.message}")
+      PluginHelpers::DbErrors.query_failed(ex, "MySQL")
     end
 
     private def ensure_present(db : DB::Database, name : String, exists : Bool, check_mode : Bool) : PluginResult

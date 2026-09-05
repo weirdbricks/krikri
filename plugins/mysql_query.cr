@@ -3,6 +3,7 @@
 require "json"
 require "mysql"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/db_errors"
 require "../src/krikri/plugin_helpers/mysql_connection"
 
 module Krikri
@@ -107,7 +108,7 @@ module Krikri
     rescue ex : DB::ConnectionRefused
       PluginResult.new(changed: false, failed: true, msg: "unable to connect to database, check login_user and login_password are correct or login_unix_socket password is empty: #{ex.message}")
     rescue ex : MySql::Connection::PacketError
-      PluginResult.new(changed: false, failed: true, msg: "MySQL error: #{ex.message}")
+      PluginHelpers::DbErrors.query_failed(ex, "MySQL")
     end
 
     private def parse_statements(raw : String) : Array(String)

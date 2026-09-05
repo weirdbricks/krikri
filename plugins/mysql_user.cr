@@ -3,6 +3,7 @@
 require "json"
 require "mysql"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/db_errors"
 require "../src/krikri/plugin_helpers/mysql_connection"
 require "../src/krikri/plugin_helpers/mysql_privileges"
 require "../src/krikri/plugin_helpers/sql_quoting"
@@ -104,9 +105,9 @@ module Krikri
       run_with_db(uri, name, host, state, password, update_password, priv, plugin,
         plugin_hash_string, plugin_auth_string, check_mode, host_all)
     rescue ex : DB::ConnectionRefused
-      PluginResult.new(changed: false, failed: true, msg: "Could not connect to the MySQL server: #{ex.message}")
+      PluginHelpers::DbErrors.connection_failed(ex, "MySQL")
     rescue ex : MySql::Connection::PacketError
-      PluginResult.new(changed: false, failed: true, msg: "MySQL error: #{ex.message}")
+      PluginHelpers::DbErrors.query_failed(ex, "MySQL")
     end
 
     private def validate_inputs(update_password : String, password : String?, plugin : String?,

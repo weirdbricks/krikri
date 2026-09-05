@@ -7,6 +7,7 @@ require "compress/gzip"
 require "xz"
 require "bz2"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/db_errors"
 require "../src/krikri/plugin_helpers/postgresql_connection"
 require "../src/krikri/plugin_helpers/sql_quoting"
 
@@ -102,9 +103,9 @@ module Krikri
         apply_state(state, dbcon, name, exists, true?(@params["check_mode"]?))
       end
     rescue ex : DB::ConnectionRefused
-      PluginResult.new(changed: false, failed: true, msg: "Could not connect to the PostgreSQL server: #{ex.message}")
+      PluginHelpers::DbErrors.connection_failed(ex, "PostgreSQL")
     rescue ex : PQ::PQError
-      PluginResult.new(changed: false, failed: true, msg: "PostgreSQL error: #{ex.message}")
+      PluginHelpers::DbErrors.query_failed(ex, "PostgreSQL")
     end
 
     private def build_maintenance_uri : String
