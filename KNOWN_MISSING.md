@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.742`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.761`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.27` (see `shard.yml`).
 
 ---
@@ -30,6 +30,22 @@ unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
 (None.)
+
+---
+
+## Round 6000-6007 (first krikri-role-tester round, 8 new-author roles, 0.9.761)
+
+No new krikri-playbook defects. First round driven by the new `krikri-role-tester`
+Crystal harness (`../krikri-role-tester`, replaces the old shell drivers) instead
+of by hand - the harness itself had two real bugs (a `Process#wait` race that
+crashed the first attempt outright, and Atlantic.net teardown silently failing to
+destroy - leaking every prior round's Atlantic.net pair, not just this one's),
+both fixed there with regression specs before this round's numbers were
+collected. Of the 8 roles: 2 clean, 4 hit ansible-core's removed `include:`
+action (real ansible-playbook fails identically, not a krikri bug), 1 hit a
+missing `ansible.mariadb` collection, 1 (`r_pufky.pihole`) hit `ansible.utils`'s
+`ipaddr` filter - both folded into the existing unimplemented-collection bullet
+under Deliberate limits above. See `ROLES_TESTED.md` for full per-role detail.
 
 ---
 
@@ -1418,9 +1434,13 @@ gaps" rather than arguing with the note in place.
   them expecting a different outcome.
 - **Unimplemented collection modules**: `community.general.
   redhat_subscription` (linux-system-roles.rhc),
-  `community.rabbitmq.rabbitmq_plugin/_user` (mrlesmithjr.rabbitmq) -
+  `community.rabbitmq.rabbitmq_plugin/_user` (mrlesmithjr.rabbitmq),
+  `ansible.mariadb.mariadb_db/_user` (fauust.mariadb, round6002) -
   rc=4 "unavailable modules" vs real ansible rc=0. Same class as the
-  community.crypto notes below.
+  community.crypto notes below. The FILTER-plugin shape of the same cut
+  also confirmed: `ansible.utils`'s `ipaddr` filter (r_pufky.pihole,
+  round6007) - bundled with the full `ansible` package on the py side,
+  not implemented here.
 
 ### Fact caching
 

@@ -1253,6 +1253,27 @@ its warm numbers drop so far below its own cold.
 | zaxos.tomcat-ansible-role | ⚠️ Both fail identically, no recap either side (round3113, 0.9.735, Kata/Debian trixie). rc cold py=1 cr=1, warm py=1 cr=1 identical. Times: cold py 0.74s vs cr 0.01s; warm py 0.87s vs cr 0.01s. |
 | zzet.rbenv | ✅ Clean (round4012, 0.9.735, Kata/Debian trixie). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 611.29s vs cr 610.11s; warm py 33.19s vs cr 7.43s. |
 
+## Round 6000-6007 (first krikri-role-tester round, 8 new-author roles, 0.9.761)
+
+First round driven by the new `krikri-role-tester` Crystal harness (`../krikri-role-tester`,
+replacing the shell drivers) instead of by hand. The round itself surfaced two real bugs in the
+new tool, not in krikri-playbook: `Cmd.run` raced `Process#wait` against its own output-reading
+fibers (crashed the very first attempt outright), and Atlantic.net teardown silently failed to
+pass its required `-var role=`/`-var round=` on destroy - leaking every Atlantic.net pair the tool
+had ever torn down normally, confirmed and manually cleaned up. Both fixed with regression specs
+before this table's numbers were collected on the re-run.
+
+| Role | Status |
+|---|---|
+| fauust.mariadb | ⚠️ Both fail before a real recap forms (round6002, 0.9.761, Kata/Debian trixie). rc cold py=4 cr=4, warm py=4 cr=4. Times: cold py 32.49s vs cr 21.23s; warm py 6.35s vs cr 1.30s. Role needs the `ansible.mariadb` collection (not installed in this harness); real ansible-playbook fatals with no PLAY RECAP at all, krikri completes a full recap (`ok=19 changed=4 skipped=16`) by skipping the unresolvable module - same collection-module scope-cut class as other rounds, not a new engine bug. |
+| influxdata.chrony | ⚠️ Both fail identically, no recap either side (round6000, 0.9.761, Kata/Debian trixie). rc cold py=1 cr=1, warm py=1 cr=1 identical. Times: cold py 0.67s vs cr 0.01s; warm py 0.68s vs cr 0.01s. Role's `tasks/main.yml` uses `include:`, removed from ansible-core after 2023-05-16 - real ansible-playbook fatals at parse time identically on both engines. |
+| inmotionhosting.redis | ✅ Clean (round6006, 0.9.761, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 42.21s vs cr 42.64s; warm py 10.20s vs cr 3.63s. |
+| kbrebanov.rsyslog | ⚠️ Both fail identically, no recap either side (round6001, 0.9.761, Kata/Debian trixie). rc cold py=1 cr=1, warm py=1 cr=1 identical. Times: cold py 0.70s vs cr 0.01s; warm py 0.63s vs cr 0.01s. Same removed `include:` class as influxdata.chrony above (`CentOS.yml`). |
+| nephelaiio.git | ✅ Clean (round6005, 0.9.761, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 5.15s vs cr 4.64s; warm py 3.57s vs cr 0.33s. |
+| paulfantom.restic | ⚠️ Both fail identically, no recap either side (round6003, 0.9.761, Kata/Debian trixie). rc cold py=1 cr=1, warm py=1 cr=1 identical. Times: cold py 0.69s vs cr 0.01s; warm py 0.71s vs cr 0.01s. Same removed `include:` class as influxdata.chrony above (`preflight.yml`). |
+| r_pufky.pihole | ❌ DIVERGENT (round6007, 0.9.761, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 58.55s vs cr 5.11s; warm py 9.73s vs cr 0.72s. cold: py[ok=9 changed=6 failed=1 skipped=12] vs cr[ok=2 changed=1 failed=1 skipped=10]; warm: py[ok=7 changed=3 failed=1 skipped=14] vs cr[ok=2 changed=0 failed=1 skipped=10]. Role's deployment-config task needs `ansible.utils`'s `ipaddr` filter - bundled with the full `ansible` package on the py host, not implemented by krikri-playbook. Same collection-filter scope-cut class as fauust.mariadb above, not chased further. |
+| thomas_maurice.ansible_role_gitea | ⚠️ Both fail identically, no recap either side (round6004, 0.9.761, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1 identical. Times: cold py 3.72s vs cr 0.01s; warm py 2.18s vs cr 0.10s. Same removed `include:` class as influxdata.chrony above (`create_user.yml`). |
+
 ## Round 194 (30-role marathon, fresh G3.2GB pair per role, cold+warm both engines, 0.9.629 → 0.9.630)
 
 30 roles run (10 round-194 + 20 from round-192 marathon). Every role ran on its own freshly-provisioned server pair (py vs crystal), each engine run twice (cold + warm). Full spec suite: 2033 examples, 3 pre-existing integration failures only.

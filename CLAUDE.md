@@ -64,34 +64,38 @@ This is the primary way bugs get found - unit specs alone (900+) have never been
 round against a production Ansible role finds more. Read `KNOWN_MISSING.md`'s own intro before
 starting a round.
 
+Rounds are driven by **`krikri-role-tester`** (sibling repo,
+`../krikri-role-tester`), a Crystal app that replaced the old shell drivers
+(`testing/kata/run_role.sh`, `run_batch.sh`, and the various
+`~/scratch/bench/run_role*.sh` scripts). Read its own `README.md` first - it
+covers the queue-file format, the scheduler model, results layout, and both
+backends in detail. The summary below is only what's specific to using it
+from this repo.
+
 1. **Check `ROLES_TESTED.md` first** for a role shortlist - avoids re-discovering Galaxy-404s
    (`geerlingguy.mongodb`/`.consul`/`.golang` don't exist anymore) or re-verifying already-clean
    roles as if new (unless deliberately re-checking after something made a host suspect).
 
-2. **Batch phase (parallel, up to 4 pairs / 8 hosts):** Atlantic.net allows up to 10 servers
-   total; 2 are permanently claimed by the Dirless project and must not be touched, leaving 8 -
-   i.e. up to 4 independent 2-node pairs. Provision one fresh pair per role (`G3.2GB`, Ubuntu
-   22.04, one host runs real `ansible-playbook`, the other the just-built `krikri-playbook`),
-   pick up to 4 different roles from the `ROLES_TESTED.md` shortlist, and run all 4 pairs'
-   rounds concurrently - each pair gets its own terraform workspace/state and its own
-   `known_hosts` entries so they can't collide. Use a fresh host pair for every role rather than
-   reusing one across rounds - accumulated state (stale apt lists, port contention from earlier
-   roles, occasional AppArmor/apt-key drift) starts producing environmental noise
-   indistinguishable from real bugs the longer a pair stays alive.
-   - Within each pair: run the SAME playbook against both hosts, then **test idempotency
-     explicitly** (run the role twice - a single successful run can hide a non-idempotency bug
-     that only shows up on rerun, e.g. `cron:`'s trailing-newline bug, `lineinfile`'s `!regexp`
-     gate, `get_url`'s `force: true` always-changed), then verify real service health
-     (`systemctl is-active`, an actual health-check curl/config-validate command), not just the
-     playbook's own exit code.
-   - Do **not** make any engine code changes during this phase - just collect each pair's
-     divergences (if any) into a round-summary. Any divergence needs to be reproduced with a
-     minimal repro and confirmed against real `ansible-playbook` (not assumed) before treating
-     it as a krikri-playbook bug - plenty of "bugs" turn out to be broken upstream repos, missing
-     Galaxy roles, or role-side gaps (e.g. `php-mysql`'s own repo ships no `vars/Debian.yml` at
-     all) that affect real Ansible identically.
+2. **Batch phase:** build a queue file (one role per line, optional `kata`/`atlantic` hint) from
+   the `ROLES_TESTED.md` shortlist, then run it:
 
-3. **Triage:** once all pairs in the batch finish, dedupe the collected divergences - if two or
+       bin/krikri-role-tester run roles.txt \
+         --kata-hosts 8 --atlantic-hosts 8 \
+         --results-dir ~/scratch/krt-results --round-start 1000
+
+   The tool runs both backends' worker pools concurrently (up to 4 pairs each), provisions a
+   fresh pair per role, runs cold + warm on both engines, and normalizes PLAY RECAP counters into
+   `SUMMARY|` lines under `<results-dir>/<round>_<backend>_<safe-role>/`. It also handles
+   idempotency (each phase already runs the role twice) and the known plugin-upload UNREACHABLE
+   race (same-host retry, up to 3, no reboot dance) itself - see its README's "Known divergences"
+   section. Do **not** make engine code changes during this phase.
+   - Any divergence still needs a minimal repro confirmed against real `ansible-playbook` (not
+     assumed) before treating it as a krikri-playbook bug - plenty of "bugs" turn out to be broken
+     upstream repos, missing Galaxy roles, or role-side gaps (e.g. `php-mysql`'s own repo ships no
+     `vars/Debian.yml` at all) that affect real Ansible identically.
+
+3. **Triage:** run `bin/krikri-role-tester report ~/scratch/krt-results --round-start 1000
+   --round-end <N>` once the batch finishes, then dedupe the collected divergences - if two or
    more roles hit the same root cause, that's one fix to make, not two.
 
 4. **Fix phase (serial):** apply fixes one at a time against the unit specs (concurrent edits to
@@ -101,9 +105,8 @@ starting a round.
    and say so in the commit message). Bump `VERSION` per logical fix or tightly-related group of
    fixes, run the full `crystal spec` suite, and `./build.sh`.
 
-5. **Confirm phase (parallel):** redeploy the fixed binary and re-run *only* the roles that
-   diverged in the batch phase, reusing still-warm pairs where available or provisioning fresh
-   ones otherwise, before considering any fix done.
+5. **Confirm phase:** re-run *only* the roles that diverged, via a fresh queue file against the
+   rebuilt binary, before considering any fix done.
 
 6. Update `KNOWN_MISSING.md` (the running per-round narrative) and `ROLES_TESTED.md` (the
    current-status table) together in one commit, covering the whole batch at once rather than
@@ -115,26 +118,25 @@ starting a round.
    timings live (see `ROLES_TESTED.md`'s own note at the top). Older rows predating this
    convention (bundled entries, missing timings) are left as-is, not backfilled.
 
-7. Destroy all hosts in the batch (`terraform destroy`), clean up `known_hosts`, shred the
-   staged credentials `.env`.
+7. If a run was SIGKILLed, `bin/krikri-role-tester sweep ~/scratch/krt-results` finds rounds
+   whose `run.log` never reached `DONE` and tears down their leftover terraform state directly.
 
-## Local Kata test hosts (an alternative to provisioning for many rounds)
+## Local Kata test hosts (a backend of krikri-role-tester)
 
-`testing/kata/` boots real VMs locally - real guest kernel, real systemd -
-in ~6 seconds each, as an alternative to an Atlantic.net pair. `./build.sh`
-once, then `./kata-host.sh up <name> <octet>` per host; each gets
-`10.99.<octet>.2`, reachable directly. A pair (one host per engine) is the
-same shape as the provisioned workflow above.
-
-Use it when the round needs a real **kernel** - `sysctl:`/`os_hardening`,
-`modprobe`, netfilter below `--cap-add=NET_ADMIN`, filesystem modules -
-which is exactly what containers cannot do and what has left those roles
-unverified. For plain systemd, `podman run --systemd=always` is simpler and
-already sufficient (the 0.9.727-0.9.728 `service:`/`service_facts:` work was
-verified that way). Read that directory's `README.md` before using it: the
+`testing/kata/` (this repo) boots real VMs locally - real guest kernel, real
+systemd - in ~6 seconds each; `krikri-role-tester`'s `kata` backend drives it
+directly (`kata-host.sh up|down` per slot, octets `10 + 2N`/`11 + 2N`,
+`10.99.<octet>.2`). Read `testing/kata/README.md` before relying on it: the
 setup has several non-obvious failure modes, all documented there with the
 reason, and one of them (recreating a netns under a live VM) hangs `ctr`
 in a way no timeout escapes.
+
+Use the Kata backend when the round needs a real **kernel** -
+`sysctl:`/`os_hardening`, `modprobe`, netfilter below `--cap-add=NET_ADMIN`,
+filesystem modules - which is exactly what containers cannot do and what has
+left those roles unverified. For plain systemd, `podman run --systemd=always`
+is simpler and already sufficient (the 0.9.727-0.9.728
+`service:`/`service_facts:` work was verified that way).
 
 ## Credentials for the benchmark workflow
 
