@@ -2336,18 +2336,25 @@ module Krikri
       play.become = resolve_become(task_hash, play)
       play.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
 
-      task.block_tasks = parse_tasks(block_yaml, play, "task in block '#{name}'", file_dir)
+      # ensure-restore, not fall-through-restore: if a child parse raises
+      # (a typed bypass like RemovedActionError rethrown through
+      # parse_tasks, or any parse error), the play's become must still be
+      # restored - a clobbered play.become would silently leak the
+      # block's escalation into every play section parsed AFTER it.
+      begin
+        task.block_tasks = parse_tasks(block_yaml, play, "task in block '#{name}'", file_dir)
 
-      if rescue_yaml = task_hash["rescue"]?.try(&.as_a?)
-        task.rescue_tasks = parse_tasks(rescue_yaml, play, "task in rescue of block '#{name}'", file_dir)
+        if rescue_yaml = task_hash["rescue"]?.try(&.as_a?)
+          task.rescue_tasks = parse_tasks(rescue_yaml, play, "task in rescue of block '#{name}'", file_dir)
+        end
+
+        if always_yaml = task_hash["always"]?.try(&.as_a?)
+          task.always_tasks = parse_tasks(always_yaml, play, "task in always of block '#{name}'", file_dir)
+        end
+      ensure
+        play.become = saved_become
+        play.become_user = saved_become_user
       end
-
-      if always_yaml = task_hash["always"]?.try(&.as_a?)
-        task.always_tasks = parse_tasks(always_yaml, play, "task in always of block '#{name}'", file_dir)
-      end
-
-      play.become = saved_become
-      play.become_user = saved_become_user
 
       # Block-level settings gate/apply to the block as a whole; each
       # nested task still evaluates its own when:/tags:/etc in addition.
