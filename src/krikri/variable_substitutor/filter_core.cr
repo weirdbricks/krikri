@@ -310,6 +310,34 @@ module Krikri
         end
       end
 
+      # Set operations over JSON arrays - real Ansible's own filters,
+      # set semantics preserving first-seen order and deduplicating
+      # within each source list (Ansible's own `_unique_dedupe` approach,
+      # not naive concatenation). Equality is by canonical JSON form so
+      # nested dicts/arrays compare structurally.
+      def self.union(a : Array(JSON::Any), b : Array(JSON::Any)) : Array(JSON::Any)
+        (a + b).uniq(&.to_json)
+      end
+
+      def self.intersect(a : Array(JSON::Any), b : Array(JSON::Any)) : Array(JSON::Any)
+        bset = b.to_set
+        a.uniq.select { |item| bset.includes?(item) }
+      end
+
+      def self.difference(a : Array(JSON::Any), b : Array(JSON::Any)) : Array(JSON::Any)
+        bset = b.to_set
+        a.uniq.reject { |item| bset.includes?(item) }
+      end
+
+      def self.symmetric_difference(a : Array(JSON::Any), b : Array(JSON::Any)) : Array(JSON::Any)
+        left = a.uniq(&.to_json)
+        right = b.uniq(&.to_json)
+        left_json = left.map(&.to_json).to_set
+        right_json = right.map(&.to_json).to_set
+        (left.reject { |i| right_json.includes?(i.to_json) } +
+          right.reject { |i| left_json.includes?(i.to_json) })
+      end
+
       # type_debug - Python's type name for the value (matching
       # `type(x).__name__`), used almost exclusively in role assert.yml
       # sanity checks (`my_list | type_debug == "list"`).

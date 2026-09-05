@@ -520,12 +520,10 @@ module Krikri
     end
 
     Crinja.filter(:difference) do
-      arg = arguments.varargs[0]?
-      target_vals = target.sequence? ? target.to_a : [] of Crinja::Value
-      arg_set = Array(Crinja::Value).new
-      a = arg
-      arg_set = a.to_a if a && a.sequence?
-      Crinja::Value.new(target_vals.reject { |item| arg_set.includes?(item) })
+      other = arguments.varargs[0]?
+      left = Krikri::VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(target).as_a? || [] of JSON::Any
+      right = other ? (Krikri::VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(other).as_a? || [] of JSON::Any) : [] of JSON::Any
+      Crinja::Value.new(VariableSubstitutor::FilterCore.difference(left, right).map { |item| json_any_to_value(item) })
     end
 
     # `to_nice_yaml(indent=N, sort_keys=True)` - real Ansible's own
@@ -642,10 +640,9 @@ module Krikri
     # cross-list duplicates).
     Crinja.filter(:union) do
       other = arguments.varargs[0]?
-      left = target.sequence? ? target.to_a : [] of Crinja::Value
-      right = (other && other.sequence?) ? other.to_a : [] of Crinja::Value
-      combined = (left + right).uniq(&.to_s)
-      Crinja::Value.new(combined)
+      left = Krikri::VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(target).as_a? || [] of JSON::Any
+      right = other ? (Krikri::VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(other).as_a? || [] of JSON::Any) : [] of JSON::Any
+      Crinja::Value.new(VariableSubstitutor::FilterCore.union(left, right).map { |item| json_any_to_value(item) })
     end
 
     # `path_join()` - real Ansible filter: joins a list of path
@@ -836,10 +833,9 @@ module Krikri
     # exactly one of target/other, not both.
     Crinja.filter(:symmetric_difference) do
       other = arguments.varargs[0]?
-      left = (target.sequence? ? target.to_a : [] of Crinja::Value).uniq(&.to_s)
-      right = (other && other.sequence? ? other.to_a : [] of Crinja::Value).uniq(&.to_s)
-      result = left.reject { |i| right.any? { |rval| rval.to_s == i.to_s } } + right.reject { |i| left.any? { |lval| lval.to_s == i.to_s } }
-      Crinja::Value.new(result)
+      left = Krikri::VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(target).as_a? || [] of JSON::Any
+      right = other ? (Krikri::VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(other).as_a? || [] of JSON::Any) : [] of JSON::Any
+      Crinja::Value.new(VariableSubstitutor::FilterCore.symmetric_difference(left, right).map { |item| json_any_to_value(item) })
     end
 
     # `combinations(n)`/`permutations(n=None)` - real Ansible filters,
@@ -1159,9 +1155,10 @@ module Krikri
     # see that file's own comment for the correctness+hang impact of
     # this filter silently no-op'ing).
     Crinja.filter(:intersect) do
-      other_set = (arguments.varargs[0]?.try(&.each.to_a) || [] of Crinja::Value).to_set
-      seen = Set(Crinja::Value).new
-      target.each.to_a.select { |item| other_set.includes?(item) && seen.add?(item) }
+      other = arguments.varargs[0]?
+      left = Krikri::VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(target).as_a? || [] of JSON::Any
+      right = other ? (Krikri::VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(other).as_a? || [] of JSON::Any) : [] of JSON::Any
+      Crinja::Value.new(VariableSubstitutor::FilterCore.intersect(left, right).map { |item| json_any_to_value(item) })
     end
 
     # `max`/`min` - real Jinja2 core filters, not Ansible-specific - now

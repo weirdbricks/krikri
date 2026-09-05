@@ -149,4 +149,36 @@ describe Krikri::VariableSubstitutor::FilterCore do
       (first_a.as(Int32)).should be < (first_b.as(Int32))
     end
   end
+
+  describe "family 3: set operations" do
+    core = Krikri::VariableSubstitutor::FilterCore
+    a = JSON.parse(%([1, 2, 3]))
+    b = JSON.parse(%([3, 4]))
+    list = JSON.parse(%([{"n": 1}, {"n": 2}]))
+
+    it "union dedupes across and within both lists, first-seen order" do
+      core.union(a.as_a, b.as_a).map(&.as_i).should eq([1, 2, 3, 4])
+      core.union(a.as_a, a.as_a).map(&.as_i).should eq([1, 2, 3])
+    end
+
+    it "intersect takes value-side order, deduplicated" do
+      core.intersect(a.as_a, b.as_a).map(&.as_i).should eq([3])
+      core.intersect(JSON.parse(%([2, 2, 3])).as_a, JSON.parse(%([2, 3])).as_a).map(&.as_i).should eq([2, 3])
+    end
+
+    it "difference removes other's elements from value" do
+      core.difference(a.as_a, b.as_a).map(&.as_i).should eq([1, 2])
+      core.difference(b.as_a, a.as_a).map(&.as_i).should eq([4])
+    end
+
+    it "symmetric_difference is elements in exactly one list" do
+      core.symmetric_difference(a.as_a, b.as_a).map(&.as_i).should eq([1, 2, 4])
+    end
+
+    it "set ops compare nested structures structurally" do
+      other = JSON.parse(%([{"n": 1}]))
+      core.intersect(list.as_a, other.as_a).map(&.to_json).should eq([JSON.parse(%({"n": 1})).to_json])
+      core.difference(list.as_a, other.as_a).map(&.to_json).should eq([JSON.parse(%({"n": 2})).to_json])
+    end
+  end
 end
