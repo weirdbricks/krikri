@@ -681,7 +681,6 @@ module Krikri
         name
       end
     end
-
   end
 end
 
