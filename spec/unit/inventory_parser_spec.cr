@@ -4,6 +4,19 @@ require "../../src/krikri/inventory_parser"
 
 private ROOT = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "inventory_parser_spec")
 
+private def build_pattern_inventory
+  write(File.join(ROOT, "inventory.ini"), <<-INI)
+    [web]
+    web1.example.com
+    web2.example.com
+    web10
+
+    [db]
+    db1
+    INI
+  Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+end
+
 private def write(path : String, content : String)
   Dir.mkdir_p(File.dirname(path))
   File.write(path, content)
@@ -241,6 +254,35 @@ describe Krikri::InventoryParser do
         host.user.should eq("deploy")
         host.port.should eq(2222)
       end
+    end
+  end
+
+  describe "host-pattern wildcard matching (fnmatch semantics)" do
+    it "matches a trailing * over literal dots" do
+      inventory = build_pattern_inventory
+      names = inventory.get_hosts("web*.example.com").map(&.name).sort
+      names.should eq(["web1.example.com", "web2.example.com"])
+    end
+
+    it "treats . and other regex metacharacters as literals (fnmatch)" do
+      inventory = build_pattern_inventory
+      inventory.get_hosts("web1.example.com").map(&.name).should eq(["web1.example.com"])
+      # fnmatch has no special chars here, so these are literal-name
+      # misses, not regex operators
+      inventory.get_hosts("web1+example.com").map(&.name).should eq([] of Krikri::Host)
+      inventory.get_hosts("web(x)").map(&.name).should eq([] of Krikri::Host)
+    end
+
+    it "matches ? as any single character" do
+      inventory = build_pattern_inventory
+      inventory.get_hosts("db?").map(&.name).should eq(["db1"])
+      inventory.get_hosts("web?0").map(&.name).sort.should eq(["web10"])
+    end
+
+    it "treats [seq] as a character class and an unclosed [ as a literal" do
+      inventory = build_pattern_inventory
+      inventory.get_hosts("web[12].example.com").map(&.name).sort.should eq(["web1.example.com", "web2.example.com"])
+      inventory.get_hosts("web[1").map(&.name).should eq([] of Krikri::Host)
     end
   end
 

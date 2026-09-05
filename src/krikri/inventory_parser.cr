@@ -119,14 +119,56 @@ module Krikri
         elsif host = @hosts[pattern]?
           [host]
           # Pattern matching (simple wildcards)
-        elsif pattern.includes?("*")
+        elsif pattern.includes?("*") || pattern.includes?("?") || pattern.includes?("[")
+          # fnmatch semantics, matching real Ansible's own pattern
+          # matcher (`Inventory._match` = fnmatch.fnmatch): ONLY `*`,
+          # `?`, and `[seq]` are special, every other regex metacharacter
+          # is LITERAL. The old `gsub("*", ".*")` left `.`, `(`, `+` etc
+          # live as regex operators (`db1.example.com*` matched
+          # `db1examplecom*`-shaped strings via any-char dots; `srv(1)*`
+          # raised RegexError outright) while `[01]` happened to work
+          # because fnmatch treats it as a character class too. Escape
+          # everything, then re-substitute the three fnmatch specials.
           # Crystal only caches non-interpolated regex literals - compile
           # once here rather than once per host inside the select block.
-          regex = /^#{pattern.gsub("*", ".*")}$/
+          regex = /^#{Inventory.fnmatch_to_regex(pattern)}$/
           @hosts.select { |name, _| name =~ regex }.values
         else
           # No match
           [] of Host
+        end
+      end
+    end
+
+    # Translates an fnmatch-style wildcard pattern (`*`, `?`, `[seq]`)
+    # into a regex source string with everything else escaped.
+    protected def self.fnmatch_to_regex(pattern : String) : String      String.build do |out_io|
+        i = 0
+        while i < pattern.size
+          char = pattern[i]
+          case char
+          when '*'
+            out_io << ".*"
+            i += 1
+          when '?'
+            out_io << "."
+            i += 1
+          when '['
+            # A bracket class passes through as-is (fnmatch semantics -
+            # `web[01]` matches web0/web1 as a class); an UNCLOSED `[`
+            # is a literal bracket, also matching fnmatch's rule.
+            close = pattern.index(']', i + 1)
+            if close
+              out_io << pattern[i..close]
+              i = close + 1
+            else
+              out_io << "\\["
+              i += 1
+            end
+          else
+            out_io << Regex.escape(char.to_s)
+            i += 1
+          end
         end
       end
     end
