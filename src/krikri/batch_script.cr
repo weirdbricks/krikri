@@ -61,7 +61,7 @@ module Krikri
             } else {
               # a quote closes the string only when the run of
               # immediately-preceding backslashes is even (an odd run
-              # escapes it: "x\" ends with an escaped backslash, so the
+              # escapes it: "x" ends with an escaped backslash, so the
               # quote is the real terminator)
               if (c == q && bs_run % 2 == 0) in_str = 0
               bs_run = 0

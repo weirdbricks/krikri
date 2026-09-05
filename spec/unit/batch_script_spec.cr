@@ -101,7 +101,7 @@ describe Krikri::BatchScript do
       # `echo "failed":true ran` - with the quotes escaped in the JSON
       # serialization, exactly the shape a shell command's captured
       # output produces.
-      Krikri::BatchScript::Step.new("/bin/cat", %({"changed":false,"stdout":"echo \"failed\":true ran"}), false),
+      Krikri::BatchScript::Step.new("/bin/cat", %({"changed":false,"stdout":"echo "failed":true ran"}), false),
       Krikri::BatchScript::Step.new("/bin/cat", %({"changed":false,"failed":false,"msg":"still runs"}), false),
     ]
 
