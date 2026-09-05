@@ -74,6 +74,43 @@ describe Krikri::BatchScript do
     results[1].stdout.should eq(%({"changed":false,"failed":false,"msg":"still runs"}))
   end
 
+  it "continues past a NESTED failed:true key inside a successful result (uri-style body)" do
+    # Regression for the grep-based fail check: uri: embeds a parsed JSON
+    # response body at result.json, so an API answering {"failed": true}
+    # with a 200 put the literal byte sequence `"failed":true` into a
+    # SUCCESSFUL step's stdout - the old whole-file grep treated that as
+    # a failure and aborted every remaining batch step. The generated
+    # script now runs a depth-aware scan that only trips on the TOP-LEVEL
+    # "failed" key.
+    steps = [
+      Krikri::BatchScript::Step.new("/bin/cat", %({"changed":false,"json":{"failed":true,"reason":"api says no"}}), false),
+      Krikri::BatchScript::Step.new("/bin/cat", %({"changed":false,"failed":false,"msg":"still runs"}), false),
+    ]
+
+    results = Krikri::BatchScript.parse(run_script(Krikri::BatchScript.build("t-nested-failed", steps)))
+
+    results[0]?.should_not be_nil
+    results[1]?.should_not be_nil
+    results[1].stdout.should eq(%({"changed":false,"failed":false,"msg":"still runs"}))
+  end
+
+  it "does not trip on an escaped failed:true copy inside a string value" do
+    steps = [
+      # /bin/cat echoes this config verbatim, so the step's stdout is a
+      # result whose string field carries the literal text
+      # `echo "failed":true ran` - with the quotes escaped in the JSON
+      # serialization, exactly the shape a shell command's captured
+      # output produces.
+      Krikri::BatchScript::Step.new("/bin/cat", %({"changed":false,"stdout":"echo \"failed\":true ran"}), false),
+      Krikri::BatchScript::Step.new("/bin/cat", %({"changed":false,"failed":false,"msg":"still runs"}), false),
+    ]
+
+    results = Krikri::BatchScript.parse(run_script(Krikri::BatchScript.build("t-escaped-failed", steps)))
+
+    results[0]?.should_not be_nil
+    results[1]?.should_not be_nil
+  end
+
   it "halts on a nonzero exit code even when the (nonexistent) plugin never produces JSON at all" do
     steps = [
       Krikri::BatchScript::Step.new("/bin/false", "", false),

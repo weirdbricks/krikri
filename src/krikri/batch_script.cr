@@ -34,6 +34,53 @@ module Krikri
     # output files out from under it).
     REMOTE_DIR_PREFIX = "/var/tmp/.krikri-playbook/batch-"
 
+    # awk program (POSIX awk, run against one step's stdout file) that
+    # answers "does this result JSON have a TOP-LEVEL \"failed\": true?"
+    # - exits 0 when it does. Tracks JSON string/escape state and brace
+    # depth so "failed" keys nested inside result values (uri:'s parsed
+    # response body, string-valued fields carrying escaped copies) never
+    # trip it. The result is always a single-line compact JSON object,
+    # so per-line state resets are harmless.
+    TOP_LEVEL_FAILED_AWK = <<-AWK
+      {
+        line = $0
+        depth = 0
+        in_str = 0
+        prev = ""
+        failed = 0
+        bs_run = 0
+        n = length(line)
+        q = sprintf("%c", 34)
+        bs = sprintf("%c", 92)
+        key = q "failed" q ":"
+        for (i = 1; i <= n; i++) {
+          c = substr(line, i, 1)
+          if (in_str) {
+            if (c == bs) {
+              bs_run++
+            } else {
+              # a quote closes the string only when the run of
+              # immediately-preceding backslashes is even (an odd run
+              # escapes it: "x\" ends with an escaped backslash, so the
+              # quote is the real terminator)
+              if (c == q && bs_run % 2 == 0) in_str = 0
+              bs_run = 0
+            }
+          } else if (depth == 1 && substr(line, i, 9) == key && substr(line, i + 9) ~ /^ *true/) {
+            failed = 1
+          } else if (c == q) {
+            in_str = 1
+          } else if (c == "{" || c == "[") {
+            depth++
+          } else if (c == "}" || c == "]") {
+            depth--
+          }
+          prev = c
+        }
+        exit (failed ? 0 : 1)
+      }
+      AWK
+
     # One step to run remotely as part of a batch.
     struct Step
       # Already resolved via PluginManager.remote_plugin_target - the
@@ -90,7 +137,21 @@ module Krikri
 
           unless step.ignore_errors?
             io << "rc=$(cat \"$D/#{idx}.rc\")\n"
-            io << "if [ \"$rc\" != \"0\" ] || grep -q '\"failed\":true' \"$D/#{idx}.out\" 2>/dev/null; then\n"
+            # Failed-detection: a depth-aware awk scan, not a naive grep.
+            # The old `grep -q '"failed":true'` matched the byte sequence
+            # ANYWHERE in the step's stdout - but a plugin's result JSON
+            # can legitimately CONTAIN that sequence without having
+            # failed: uri: embeds a parsed JSON response body at
+            # result.json (an API answering {"failed": true} with a 200
+            # is the canonical case), and any string-valued field can
+            # carry escaped copies. The awk tracks JSON string/escape
+            # state and brace depth and only trips on the TOP-LEVEL
+            # "failed" key - the same question the daemon transport's
+            # JSON parse answers, so both transports now agree on what
+            # "failed" means.
+            io << "if [ \"$rc\" != \"0\" ] || awk '"
+            io << TOP_LEVEL_FAILED_AWK
+            io << "' \"$D/#{idx}.out\" 2>/dev/null; then\n"
             io << "  dump\n"
             io << "  exit 0\n"
             io << "fi\n"
