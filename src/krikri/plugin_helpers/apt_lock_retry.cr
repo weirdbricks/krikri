@@ -88,5 +88,55 @@ module Krikri
 
       result
     end
+
+    # Detects the CLI-observable signature of a genuinely corrupt/
+    # unparseable on-disk package index - NOT a plain "package doesn't
+    # exist in an otherwise-valid cache" miss.
+    #
+    # Real Ansible's apt module (python-apt-backed) only retries when
+    # `apt.Cache()` itself raises a `SystemError` whose message mentions
+    # `/var/lib/apt/lists/` (`get_cache()` in ansible's `apt.py`) - that
+    # is specifically a cache *open/parse* failure (corrupt or
+    # unreadable index files), not "no candidate for this name". A
+    # simple locate-miss on a valid-but-empty or valid-but-outdated
+    # cache does NOT trigger it: `package_status()` fails straight to
+    # `fail_json("No package matching '%s' is available")` with no
+    # retry at all - confirmed live (0.9.737) against a genuinely empty
+    # `/var/lib/apt/lists/`, where real ansible-playbook failed outright
+    # on `package: {name: w3m, state: present}` with that exact message
+    # and krikri (this helper's previous, over-broad
+    # "Unable to locate package" gate) silently installed it instead - a
+    # real divergence the previous gate introduced rather than fixed.
+    #
+    # The corrupt-lists SystemError's apt-get-CLI equivalent was
+    # confirmed live by corrupting a downloaded index file (an
+    # unreadable `.lz4` list) and reproducing the exact python-apt
+    # exception text via both `apt.Cache()` directly and
+    # `apt-get install`: `E: The package lists or status file could not
+    # be parsed or opened.` - genuinely different from, and much
+    # narrower than, "Unable to locate package".
+    def apt_corrupt_lists?(stderr : String) : Bool
+      stderr.includes?("The package lists or status file could not be parsed or opened")
+    end
+
+    # Real Ansible's apt module silently recovers from an install
+    # failure caused by a corrupt/unparseable on-disk package index:
+    # `get_cache()` catches the `apt.Cache()` `SystemError` and retries
+    # `apt-get update` (up to twice) before re-opening the cache. Only
+    # retries ONCE here, and only on the corrupt-lists stderr pattern -
+    # any other failure (broken repo, signature mismatch, a plain
+    # locate-miss on a valid cache, a held lock that outlives
+    # `lock_timeout`) fails fast exactly as before. Returns the retry
+    # result when the refresh helped, else the original failure.
+    def apt_install_with_implicit_cache_retry(cmd : String, lock_timeout : Int32,
+                                              exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)))
+      result = apt_with_lock_retry(cmd, lock_timeout, exec_remote)
+      return result if result[:exit_code] == 0 || !apt_corrupt_lists?(result[:stderr])
+
+      update_result = exec_remote.call("apt-get update")
+      return result if update_result[:exit_code] != 0
+
+      exec_remote.call(cmd)
+    end
   end
 end

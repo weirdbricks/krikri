@@ -481,9 +481,14 @@ module Krikri
           # `apt` module behavior. The DEBIAN_FRONTEND=noninteractive +
           # force-confdef/force-confold flags carry over verbatim; the
           # retry layer only governs lock contention and leaves the
-          # actual install behavior untouched.
+          # actual install behavior untouched. Also wraps real Ansible's
+          # implicit recovery from a corrupt/unparseable on-disk package
+          # index: on that specific failure (not a plain locate-miss on
+          # a valid cache) the whole install is retried once behind an
+          # implicit `apt-get update` (see
+          # apt_install_with_implicit_cache_retry).
           install_cmd = "DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold #{pkg_list}"
-          install_result = apt_with_lock_retry(install_cmd, lock_timeout, ->remote_exec(String))
+          install_result = apt_install_with_implicit_cache_retry(install_cmd, lock_timeout, ->remote_exec(String))
           if install_result[:exit_code] == 0
             # A requested name can be a virtual package already satisfied
             # by something else installed (`rubygems` - not a real
@@ -620,8 +625,10 @@ module Krikri
         # reported "changed: Package grafana upgraded to latest" while
         # the package was never actually installed at all.
         # `state: latest` (apt-get install for upgrade-or-install)
-        # contends for the dpkg lock - wrap with lock_timeout retry.
-        upgrade_result = apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold #{pkg_list}", lock_timeout, ->remote_exec(String))
+        # contends for the dpkg lock - wrap with lock_timeout retry,
+        # plus the same implicit cache-update retry on corrupt/
+        # unparseable lists that handle_install above gets.
+        upgrade_result = apt_install_with_implicit_cache_retry("DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold #{pkg_list}", lock_timeout, ->remote_exec(String))
 
         # apt-get exits 100 when a package can't be located at all
         # ("E: Unable to locate package sensu" - e.g. a repo that carries

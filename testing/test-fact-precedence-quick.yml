@@ -1,0 +1,33 @@
+# Regression fixture: an ordinary fact-gathering module (package_facts,
+# service_facts, setup, etc) must NOT override a play var of the same
+# bare name - real Ansible's "host facts" precedence tier sits BELOW
+# play vars. Only set_fact's own high-precedence tier is allowed to
+# win unconditionally. Runs entirely on localhost.
+- name: fact precedence test
+  hosts: localhost
+  gather_facts: false
+  vars:
+    packages:
+      foo: 1
+
+  tasks:
+    - name: gather package facts (registers ansible_facts.packages, and
+        the bare top-level "packages" name too)
+      ansible.builtin.package_facts:
+
+    - name: the play var must still win over the bare-name gathered fact
+      ansible.builtin.debug:
+        msg: "packages is {{ packages }}"
+
+    - name: the dotted ansible_facts form must still show the real gathered data
+      ansible.builtin.debug:
+        msg: "gathered package count is {{ ansible_facts.packages | length }}"
+
+    - name: set_fact still wins unconditionally, even over a play var
+      ansible.builtin.set_fact:
+        packages:
+          bar: 2
+
+    - name: set_fact's own high precedence
+      ansible.builtin.debug:
+        msg: "packages is now {{ packages }}"

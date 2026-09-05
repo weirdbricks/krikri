@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.735`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.737`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.23` (see `shard.yml`).
 
 ---
@@ -37,27 +37,21 @@ was a hardcoded changed flag, a JSON-array tag write that never
 converged, and unconditional set_permissions. Fixed 0.9.734; details
 in the round 199 narrative below.
 
-### `apt`/`package` doesn't retry an install-miss with an implicit cache update
+### ~~`apt`/`package` doesn't retry an install on corrupt/unparseable lists~~ (closed, 0.9.737)
 
-Found round 312, re-verifying `cronvar`/`apache2_module` against
-`weareinteractive.cron`/`buluma.httpd` on a fresh Ubuntu 24.04 podman
-pair with a genuinely empty apt cache (`/var/lib/apt/lists/` purged, no
-prior `update_cache: true` anywhere in either playbook). Real Ansible's
-`apt` module (and `package:`, which dispatches to it) silently recovers:
-when the initial install can't resolve the package name, it runs an
-implicit cache update and retries once before failing - confirmed via a
-4-line minimal repro (`package: {name: w3m, state: present}` against an
-empty cache) run through real `ansible-playbook` with `-vv`, which
-shows `/var/lib/apt/lists/` going from 0 files to populated mid-task
-even though `update_cache` was never set, and the task succeeds.
-krikri-playbook's `package.cr` shells straight to `apt-get install`
-with no such retry and fails outright: `Unable to locate package w3m`.
-Blocked the `buluma.httpd` role comparison until worked around by
-pre-running `apt-get update` in both test containers - not a fix, since
-the underlying package.cr behavior is still wrong. Needs a retry-on-miss
-path in `package.cr`'s apt/dnf backends (dnf's own CLI already does an
-implicit metadata refresh in most configurations, so this is likely
-apt-specific).
+Fixed: `apt_install_with_implicit_cache_retry` (in the shared
+`apt_lock_retry` helper) wraps every named-package install call site in
+`apt.cr`/`package.cr` - on a corrupt/unparseable on-disk package index
+(`E: The package lists or status file could not be parsed or opened.`)
+it runs one implicit `apt-get update` and retries the install exactly
+once, matching real Ansible's own `get_cache()` retry (which catches
+`apt.Cache()`'s `SystemError` on exactly this condition). Any other
+failure class (broken repo, held lock, or a plain locate-miss on an
+otherwise-valid cache) still fails fast.
+
+0.9.736 shipped this gated on the wrong signal (`E: Unable to locate
+package`, a plain "no candidate for this name" miss) - see the 0.9.737
+narrative below for how that was found and corrected.
 
 ### Ansible's lazy dict-templating is not replicated in general
 
@@ -100,43 +94,112 @@ String) failed". Fork-internal (`lib/crinja/src/runtime/value.cr`), not
 krikri's own templating code - same class of underlying gap as the two
 shapes above, not chased further here.
 
-### `command`/`shell` free-form `creates=`/`removes=`/etc. not stripped when the whole command is a `{% if %}...{% endif %}` block
+---
 
-Found live via `kamaln7.swapfile` (Kata round, 0.9.735):
+## Round 302 (confirming round 301's three fixes, 0.9.736 -> 0.9.737)
 
-```yaml
-command: >
-  {% if swapfile_use_dd %}
-  dd if=/dev/zero of={{ swapfile_location }} ... creates={{ swapfile_location }}
-  {% else %}
-  fallocate -l {{ swapfile_size }} {{ swapfile_location }} creates={{ swapfile_location }}
-  {% endif %}
-```
+Live confirmation pass against round 301's three fixes below (podman
+containers with real systemd, one engine per container, roles
+re-fetched fresh from Galaxy) - 2 of 3 held up; the third was actually
+a regression, found and corrected here.
 
-`PlaybookParser.extract_command_special_params` strips a trailing
-`creates=`/`removes=`/`chdir=`/`executable=` token from the RAW,
-pre-render YAML text at PARSE time - but here the raw text's actual
-last token is the literal `{% endif %}` tag, not `creates=...` (that
-sits earlier, inside one of the two branches). The strip never fires,
-so `creates=...` reaches `fallocate` as a literal positional argument
-("fallocate: unexpected number of arguments") instead of being consumed
-as the module's own `creates:` param - where real Ansible renders the
-whole block FIRST (resolving to one flat command line with `creates=`
-genuinely last) and only then parses trailing key=value specials.
-Needs special-param extraction moved to after template rendering,
-which is a bigger reordering of the parse/render/execute pipeline than
-a single-file fix - not attempted here.
+1. **`kamaln7.swapfile` post-render specials**: confirmed correct.
+   Both engines produce the identical `fallocate -l 512MB /swapfile`
+   command and fail identically on a container's overlayfs
+   (`Operation not supported`, an environment limitation, not an
+   engine difference) - `ok=1 changed=0 failed=1` on both.
 
-### `json_query` filter entirely unimplemented
+2. **`json_query` filter**: confirmed correct in isolation against real
+   Ansible's own JMESPath output on matching/non-matching queries.
 
-Found live via `itigoag.packages` (Kata round, 0.9.735): `packages_var_lower
-| json_query(packages_var_query)` fails with "No filter named
-'json_query'". Real Ansible's `json_query` (from `community.general`,
-commonly reachable as a bare name too) is a full JMESPath query
-filter - projections, multi-select, pipe expressions, built-in
-functions. Implementing it properly means either vendoring a JMESPath
-library or writing a real subset parser; neither attempted here as
-part of a bug-fix pass.
+3. **`apt`/`package` implicit cache-update retry: was a regression, not
+   a fix.** 0.9.736's gate fired on ANY `E: Unable to locate package`,
+   but real Ansible's `apt.py get_cache()` only retries when
+   `apt.Cache()` itself raises a `SystemError` mentioning
+   `/var/lib/apt/lists/` - a corrupt/unparseable on-disk index, not a
+   plain "no candidate for this name" miss on an otherwise-valid
+   (even if empty) cache. Confirmed by reading `apt.py` directly and
+   reproducing live: `package: {name: w3m, state: present}` against a
+   genuinely empty `/var/lib/apt/lists/` - real `ansible-playbook`
+   fails outright (`"No package matching 'w3m' is available"`,
+   `failed=1`), while 0.9.736 silently installed it instead. Reproduced
+   a second time via `buluma.httpd`'s `apache2` install on the same
+   condition: real Ansible fails at that exact task (`ok=10 skipped=10
+   failed=1`); 0.9.736 ran the whole role to completion. Fixed by
+   re-gating `apt_corrupt_lists?` on the actual corrupt-lists signal -
+   confirmed by corrupting a downloaded `.lz4` index file and
+   reproducing python-apt's exact `SystemError` text via both
+   `apt.Cache()` directly and `apt-get install`'s own stderr: `E: The
+   package lists or status file could not be parsed or opened.`
+   Re-verified live post-fix: the same `w3m`/`buluma.httpd` scenarios
+   now fail identically to real Ansible on a plain empty cache, and
+   still retry-and-attempt-recovery on genuinely corrupt lists (matching
+   real Ansible's own outcome there too, which also fails when a plain
+   `apt-get update` can't actually fix already-"Hit" corrupt content).
+
+**Bonus finding, unrelated to round 301**: testing `itigoag.packages`
+(which pipes `package_facts:`'s `ansible_facts.packages` through
+`json_query`) surfaced that `finish_single_task` treated EVERY
+`ansible_facts`-returning module (not just `set_fact`) with set_fact's
+own high variable precedence - a play-level `vars: packages: {...}`
+was silently clobbered by `package_facts:`'s same-named fact. Real
+Ansible's "host facts" precedence tier sits below play vars; only
+"set_facts / registered vars" sits above task vars. Fixed by splitting
+`@facts` (full store, backs `ansible_facts.*` unconditionally) from a
+new `@set_facts` (the subset actually written by `set_fact`, which
+alone gets the old high-tier treatment) - `base_context_a_for` now
+fills in ordinary gathered facts at the low tier (`||=`, losing to play
+vars/host vars/registered vars) while `base_context_b_for` keeps
+applying only `@set_facts` unconditionally at the high tier. `meta:
+clear_facts` clears both stores together (confirmed via the pre-
+existing `cli_spec.cr` cross-host hostvars spec that real Ansible's
+clear_facts drops a plain set_fact value too, not just gathered facts).
+Regression spec: `cli_spec.cr`'s "keeps a play var winning over an
+ordinary fact-gathering module's same-name fact" against the new
+`testing/test-fact-precedence-quick.yml` fixture.
+
+---
+
+## Round 301 (clearing three round-300 open gaps, 0.9.735 -> 0.9.736)
+
+Not a benchmark round - a fix pass against the three open gaps the
+round 300 campaign documented above. Each fix has its own regression
+spec; none were re-verified against a live host (no provisioning for
+this pass), so the original round-300 findings remain the live
+evidence.
+
+1. **`apt`/`package` implicit cache-update retry on an install-miss**
+   (round 312's `Unable to locate package w3m` finding): new shared
+   helper `apt_install_with_implicit_cache_retry` in the
+   `apt_lock_retry` module wraps every named-package install call site
+   in both `apt.cr` (present + latest) and `package.cr`'s own apt
+   dispatch, gated on `E: Unable to locate package` in stderr.
+   **Corrected in round 302 (0.9.737)**: that gate was wrong - see the
+   round 302 narrative above for the real signal and why this shipped
+   as a regression, not a fix.
+
+2. **`command`/`shell` free-form specials after a whole-command `{% if
+   %}` block** (kamaln7.swapfile finding): `extract_command_special_
+   params` is now also run POST-RENDER by the executor
+   (`substitute_task_params`, all three task/handler call sites),
+   matching real Ansible's render-first-then-parse ordering. Idempotent
+   with the parse-time pass - a plain command's specials were already
+   stripped at parse time, so the post-render pass only ever fires on
+   shapes the parse pass missed.
+
+3. **`json_query` (JMESPath) filter** (itigoag.packages finding): a
+   real JMESPath subset engine (`src/krikri/jmespath.cr` - recursive-
+   descent parser + projection-aware evaluator over JSON::Any, covering
+   the spec grammar: field access, indices/slices, wildcards, flatten,
+   filters, multi-selects, pipes, comparisons, `&expr` references and
+   the common built-in functions). Registered as `json_query` in BOTH
+   filter pipelines (Crinja's `jinja_filters.cr` and the hand-rolled
+   `FilterEngine`), per the usual check-both-evaluators rule.
+
+The fourth open gap - general lazy dict-templating - remains open
+(the deferred-evaluation rewrite touching both evaluators is still
+deliberately not attempted).
+
 
 ---
 

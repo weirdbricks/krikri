@@ -2109,6 +2109,39 @@ describe Krikri::PlaybookParser do
       task.params["cmd"].should eq("touch somefile")
       task.params["creates"].should eq("/path with spaces/marker")
     end
+
+    it "leaves a creates= inside a whole-command {% if %} block alone at parse time, and strips it from the RENDERED text (kamaln7.swapfile shape)" do
+      # Found live via kamaln7.swapfile: the whole free-form string is a
+      # `{% if %}...{% endif %}` block, so the RAW text's last token is
+      # the literal `{% endif %}` tag and the parse-time strip (which
+      # only ever looks at the trailing end) never fires - `creates=...`
+      # legitimately stays inside cmd at parse time. Real Ansible strips
+      # it AFTER templating, from the rendered one-branch command line
+      # where `creates=` genuinely IS last - the executor now does the
+      # same post-render pass (see substitute_task_params), and this
+      # spec pins both halves of that behavior.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: >
+            {% if swapfile_use_dd %}
+            dd if=/dev/zero of={{ swapfile_location }} bs=1M count={{ swapfile_size }} creates={{ swapfile_location }}
+            {% else %}
+            fallocate -l {{ swapfile_size }} {{ swapfile_location }} creates={{ swapfile_location }}
+            {% endif %}
+        YAML
+
+      # Parse time: nothing stripped, cmd still carries the whole block.
+      task.params["cmd"].includes?("{% endif %}").should be_true
+      task.params.has_key?("creates").should be_false
+
+      # Render time: the {% if %} resolves to one flat command line whose
+      # last token IS `creates=...` - the post-render extraction now
+      # catches it (this is the exact call the executor makes).
+      rendered = "fallocate -l 1024 /swapfile creates=/swapfile"
+      cmd, special = Krikri::PlaybookParser.extract_command_special_params(rendered)
+      cmd.should eq("fallocate -l 1024 /swapfile")
+      special["creates"].should eq("/swapfile")
+    end
   end
 
   describe "nameless task fallback name" do

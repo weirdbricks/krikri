@@ -182,6 +182,11 @@ Metrics/CyclomaticComplexity:
   - src/krikri/facts_gatherer/date_time_facts.cr
   - src/krikri/facts_gatherer/hardware_facts.cr
   - src/krikri/playbook_parser.cr
+  # The JMESPath evaluator's branch count mirrors the spec's own AST
+  # node table (tokenizer, recursive-descent parser, evaluator, function
+  # dispatch) - splitting the eval_node case chain apart would scatter
+  # one grammar rule across a dozen methods for no gain.
+  - src/krikri/jmespath.cr
   Enabled: true
   Severity: Warning
 

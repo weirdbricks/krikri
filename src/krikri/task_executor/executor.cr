@@ -88,6 +88,24 @@ module Krikri
     @handler_runner : HandlerRunner
     # Facts per host
     @facts : Hash(String, Hash(String, JSON::Any))
+    # The subset of @facts[host.name] that came from `set_fact`/
+    # `register`-style high-precedence writes rather than an ordinary
+    # fact-gathering module (setup/package_facts/service_facts/etc).
+    # Real Ansible ranks these very differently - "host facts" (#11 in
+    # the documented precedence order) sit BELOW play vars (#12), while
+    # "set_facts / registered vars" (#19) sit near the very top, above
+    # task vars. merge_ansible_facts writes every key into @facts
+    # unconditionally (so `ansible_facts.*` always reflects the latest
+    # real value regardless of precedence), but only ALSO writes here
+    # when the producing task is set_fact - build_vars_context/
+    # base_context_b_for use this to apply just the set_fact subset at
+    # the high tier, while base_context_a_for fills the rest of @facts
+    # in at the low tier. Found live testing itigoag.packages: a plain
+    # `package_facts:` task's `ansible_facts.packages` was clobbering a
+    # play-level `vars: packages: {...}` of the same bare name, which
+    # real ansible-playbook never does (a play var always wins over
+    # ordinary gathered facts).
+    @set_facts : Hash(String, Hash(String, JSON::Any))
     # The "ansible_facts.*" dict form of @facts[host.name] (unprefixed
     # keys - `os_family` alongside the flat `ansible_os_family`), memoized
     # per host so build_vars_context doesn't re-walk every fact on every
@@ -352,6 +370,7 @@ module Krikri
       # in play 1 are still there in play 4. With no store passed (the
       # default), this is per-play exactly as before.
       @facts = fact_store || Hash(String, Hash(String, JSON::Any)).new
+      @set_facts = Hash(String, Hash(String, JSON::Any)).new
       @halted_hosts = Set(String).new
       @ended_hosts = Set(String).new
       @cleared_error_hosts = Set(String).new
@@ -376,6 +395,7 @@ module Krikri
         # host's facts from an earlier play, and pre-seeding must not
         # wipe them. Registered vars deliberately stay per-play.
         @facts[host.name] ||= {} of String => JSON::Any
+        @set_facts[host.name] = {} of String => JSON::Any
       end
 
       # See flatten_handler_blocks's own comment: a block:-wrapped
@@ -1968,6 +1988,20 @@ module Krikri
         result["ansible_port"] ||= ssh_port
       end
 
+      # Ordinary gathered facts (setup:/package_facts:/service_facts:/
+      # etc, i.e. everything in @facts that ISN'T also in @set_facts)
+      # fill in here LAST, via `||=` - real Ansible's "host facts" tier
+      # sits below play vars/inventory vars/registered vars, so any of
+      # those already present in `result` must win. A key present in
+      # BOTH @facts and @set_facts (the set_fact case) is skipped here
+      # entirely; base_context_b_for applies it unconditionally at the
+      # correct high tier instead.
+      set_fact_keys = @set_facts[host.name]?
+      @facts[host.name].each do |key, value|
+        next if set_fact_keys.try(&.has_key?(key))
+        result[key] ||= value
+      end
+
       @base_context_a_cache[host.name] = result
       @base_context_a_generation[host.name] = @hv_generation
       result
@@ -2001,7 +2035,11 @@ module Krikri
 
       result = Hash(String, JSON::Any).new(initial_capacity: 128)
       @included_vars[host.name]?.try(&.each { |key, value| result[key] = value })
-      @facts[host.name].each { |key, value| result[key] = value }
+      # Only the set_fact subset rides at this high tier - see the
+      # @set_facts ivar comment. Ordinary gathered facts (setup:/
+      # package_facts:/service_facts:/etc) are filled in at the LOW
+      # tier instead, inside base_context_a_for.
+      @set_facts[host.name]?.try(&.each { |key, value| result[key] = value })
 
       @base_context_b_cache[host.name] = result
       @base_context_b_generation[host.name] = @hv_generation
@@ -2352,14 +2390,20 @@ module Krikri
     # store, the same generic mechanism gather_facts_for_all_hosts already
     # uses for the "facts" plugin's result - set_fact (and anything else
     # that returns ansible_facts) rides this without any special-casing.
-    # build_vars_context applies @facts after every other tier, matching
-    # real Ansible's own high precedence for set_fact.
-    private def merge_ansible_facts(host : Host, result : JSON::Any)
+    # `high_precedence` (true only for set_fact - see the @set_facts
+    # ivar comment) additionally mirrors the write into @set_facts, the
+    # subset build_vars_context applies at the very top of the ladder;
+    # everything else in @facts is filled in at the low "host facts"
+    # tier instead, below play vars - matching real Ansible's own
+    # precedence for the two cases instead of treating every
+    # ansible_facts-returning module like set_fact.
+    private def merge_ansible_facts(host : Host, result : JSON::Any, high_precedence : Bool = false)
       return unless ansible_facts = result["ansible_facts"]?
       return unless facts_hash = ansible_facts.as_h?
 
       facts_hash.each do |key, value|
         @facts[host.name][key] = value
+        @set_facts[host.name][key] = value if high_precedence
       end
       @facts_dict_cache.delete(host.name)
       @hv_generation += 1
@@ -4078,7 +4122,7 @@ module Krikri
       substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
       begin
-        substituted_params = substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"))
+        substituted_params = substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"), module_name: task.module_name)
       rescue ex
         # Same "finalization of task args failed" handling as
         # execute_task_once's own identical rescue (see there) - this
@@ -4205,7 +4249,7 @@ module Krikri
       end
 
       begin
-        substituted_params = substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"))
+        substituted_params = substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"), module_name: task.module_name)
       rescue ex
         # A raised exception during param substitution (e.g. lookup('url',
         # ...) hitting a real HTTP error - see ExpressionEvaluator#
@@ -4759,7 +4803,7 @@ module Krikri
 
     private def finish_single_task(task : Task, host : Host, result : JSON::Any, fact_host : Host = host)
       result = debug_if_requested(task, host, result)
-      merge_ansible_facts(fact_host, result)
+      merge_ansible_facts(fact_host, result, task.module_name.ends_with?("set_fact"))
 
       if register_name = task.register
         register_result(host, register_name, result) unless register_name.empty?
@@ -5072,7 +5116,7 @@ module Krikri
         next unless result
 
         executed_count += 1
-        merge_ansible_facts(fact_hosts.try(&.[idx]) || host, result)
+        merge_ansible_facts(fact_hosts.try(&.[idx]) || host, result, task.module_name.ends_with?("set_fact"))
 
         changed = result["changed"]?.try(&.as_bool) || false
         failed = result["failed"]?.try(&.as_bool) || false
@@ -5923,8 +5967,16 @@ module Krikri
         # Only clear_facts/flush_handlers/end_host/end_play/
         # clear_host_errors/noop/refresh_inventory parse (see
         # PlaybookParser.parse_meta_task), so clear_facts is the only
-        # other action to dispatch on here.
+        # other action to dispatch on here. Confirmed via cli_spec.cr's
+        # own pre-existing "reflects a register:/set_fact:/meta:
+        # clear_facts... in another host's hostvars" spec: real
+        # ansible-playbook's clear_facts drops a plain (non-cacheable)
+        # set_fact value too, not just gathered facts - so @set_facts
+        # is cleared right alongside @facts to keep the two stores
+        # consistent (a ghost @set_facts entry would otherwise keep
+        # getting injected at the high tier after the clear).
         @facts[host.name].clear
+        @set_facts[host.name].clear
         @facts_dict_cache.delete(host.name)
         @hv_generation += 1
       end
@@ -6242,6 +6294,7 @@ module Krikri
       params : Hash(String, String),
       substitutor : VarSubstitutor,
       native_containers : Bool = false,
+      module_name : String? = nil,
     ) : Hash(String, String)
       result = Hash(String, String).new
 
@@ -6358,6 +6411,37 @@ module Krikri
         end
 
         result[substitutor.substitute(key)] = substituted_value
+      end
+
+      # Real Ansible parses a command:/shell:'s trailing `creates=`/
+      # `removes=`/`chdir=`/`executable=` specials from the module args
+      # AFTER templating, not before - this engine's parse-time pass
+      # (PlaybookParser.extract_command_special_params) runs on the RAW
+      # text, so it silently missed the shape where the whole command is
+      # a `{% if %}...{% endif %}` block (found live via kamaln7.
+      # swapfile): the raw text's last token there is the literal
+      # `{% endif %}` tag, the `creates=...` sits inside one branch, and
+      # the strip never fired - so `creates=...` reached `fallocate` as
+      # a literal positional argument ("unexpected number of arguments").
+      # Real Ansible renders the whole block FIRST (resolving to one
+      # flat command line where `creates=` genuinely IS last) and only
+      # then parses trailing specials - this post-render pass replicates
+      # that ordering. Idempotent with the parse-time pass: for a plain
+      # command the specials were already stripped and moved into named
+      # params at parse time, so there's nothing trailing left here to
+      # find a second time.
+      if module_name
+        resolved = PlaybookParser.resolve_module_name(module_name) || module_name
+        if PlaybookParser::RAW_COMMAND_MODULES.includes?(resolved)
+          cmd_key = result.has_key?("cmd") ? "cmd" : result.has_key?("_raw_params") ? "_raw_params" : nil
+          if cmd_key && (raw_cmd = result[cmd_key]?)
+            cmd, special = PlaybookParser.extract_command_special_params(raw_cmd)
+            result[cmd_key] = cmd
+            special.each do |special_key, special_value|
+              result[special_key] = special_value unless result.has_key?(special_key)
+            end
+          end
+        end
       end
 
       result
@@ -7034,8 +7118,18 @@ module Krikri
       # in the same play correctly saw `ansible_facts.os_family` as
       # "RedHat".
       unless @facts[host.name].empty?
+        # Same set_fact-vs-ordinary-facts precedence split as
+        # #build_vars_context/base_context_a_for/base_context_b_for -
+        # only the set_fact subset overrides unconditionally; ordinary
+        # gathered facts (setup:/package_facts:/etc) only fill gaps a
+        # play var/registered var hasn't already claimed.
+        set_fact_keys = @set_facts[host.name]?
         @facts[host.name].each do |key, value|
-          vars_context[key] = value
+          if set_fact_keys.try(&.has_key?(key))
+            vars_context[key] = value
+          else
+            vars_context[key] ||= value
+          end
         end
         vars_context["ansible_facts"] = JSON::Any.new(facts_dict_for(host.name))
       end
@@ -7334,7 +7428,7 @@ module Krikri
       # (see there) - a handler has no equivalent before this, so a
       # strict: UndefinedVariableError would have crashed the whole run.
       begin
-        substituted_params = substitute_task_params(handler.params, substitutor, native_containers: handler.module_name.ends_with?("set_fact"))
+        substituted_params = substitute_task_params(handler.params, substitutor, native_containers: handler.module_name.ends_with?("set_fact"), module_name: handler.module_name)
       rescue ex
         result = JSON.parse({
           "changed" => false,

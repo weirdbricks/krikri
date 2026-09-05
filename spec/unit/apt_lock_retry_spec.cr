@@ -18,6 +18,8 @@ DPKG_LOCK_HELD_STDERR = "E: Could not get lock /var/lib/dpkg/lock-frontend. It i
 DPKG_LOCK_SUCCESS     = {exit_code: 0, stdout: "Setting up nginx.\n", stderr: ""}
 DPKG_LOCK_STILL_HELD  = {exit_code: 100, stdout: "", stderr: DPKG_LOCK_HELD_STDERR}
 DPKG_BROKEN_REPO      = {exit_code: 100, stdout: "", stderr: "E: The repository 'http://example.com/debian broken Release' does not have a Release file.\n"}
+APT_LOCATE_MISS       = {exit_code: 100, stdout: "", stderr: "E: Unable to locate package w3m\n"}
+APT_CORRUPT_LISTS     = {exit_code: 100, stdout: "", stderr: "E: LZ4F: /var/lib/apt/lists/deb.debian.org_debian_dists_bookworm_main_binary-amd64_Packages.lz4 Read error (18446744073709551603: ERROR_frameType_unknown)\nE: The package lists or status file could not be parsed or opened.\n"}
 
 # Returns canned responses in order; if the list is exhausted, the
 # last response is returned repeatedly. Tracks how many times it was
@@ -159,6 +161,86 @@ describe "apt lock-contention retry helpers (round 153 follow-up, 0.9.502)" do
 
     it "DEFAULT_UPDATE_CACHE_RETRY_MAX_DELAY = 12" do
       Krikri::AptLockRetry::DEFAULT_UPDATE_CACHE_RETRY_MAX_DELAY.should eq(12)
+    end
+  end
+
+  describe "#apt_corrupt_lists?" do
+    it "returns true for the canonical corrupt-lists parse-error pattern" do
+      HostClass.new.apt_corrupt_lists?(APT_CORRUPT_LISTS[:stderr]).should be_true
+    end
+
+    it "returns false for a plain locate-miss on a valid (even if empty) cache" do
+      # Confirmed live (0.9.737): real ansible-playbook does NOT retry
+      # here - `package_status()` fails straight to fail_json with "No
+      # package matching '%s' is available", no implicit update at all.
+      HostClass.new.apt_corrupt_lists?(APT_LOCATE_MISS[:stderr]).should be_false
+    end
+
+    it "returns false for non-corruption failures (broken repo, lock held)" do
+      HostClass.new.apt_corrupt_lists?(DPKG_BROKEN_REPO[:stderr]).should be_false
+      HostClass.new.apt_corrupt_lists?(DPKG_LOCK_HELD_STDERR).should be_false
+      HostClass.new.apt_corrupt_lists?("").should be_false
+    end
+  end
+
+  describe "#apt_install_with_implicit_cache_retry" do
+    it "does not update the cache when the install succeeds" do
+      stub = StubExec.new([DPKG_LOCK_SUCCESS])
+      r = HostClass.new.apt_install_with_implicit_cache_retry("apt-get -y install w3m", 30, ->(c : String) { stub.call(c) })
+      r[:exit_code].should eq(0)
+      stub.exec_count.should eq(1)
+    end
+
+    it "does not retry on a non-corruption failure (broken repo)" do
+      stub = StubExec.new([DPKG_BROKEN_REPO])
+      r = HostClass.new.apt_install_with_implicit_cache_retry("apt-get -y install w3m", 30, ->(c : String) { stub.call(c) })
+      r[:exit_code].should eq(100)
+      stub.exec_count.should eq(1)
+    end
+
+    it "does NOT retry on a plain locate-miss - matches real Ansible's fail-fast on a valid cache" do
+      # This is the exact scenario the original (0.9.736) gate got
+      # wrong: it retried-and-succeeded here, while real ansible-playbook
+      # fails outright with "No package matching 'w3m' is available" -
+      # confirmed live against both `package: {name: w3m, state: present}`
+      # and the buluma.httpd role's `apache2` install, both on a
+      # genuinely empty (not corrupt) /var/lib/apt/lists/.
+      stub = StubExec.new([APT_LOCATE_MISS])
+      r = HostClass.new.apt_install_with_implicit_cache_retry("apt-get -y install w3m", 30, ->(c : String) { stub.call(c) })
+      r[:exit_code].should eq(100)
+      stub.exec_count.should eq(1)
+    end
+
+    it "retries once behind an implicit 'apt-get update' on corrupt lists and succeeds" do
+      # Confirmed live (0.9.737): corrupting a downloaded index file
+      # (an unreadable .lz4 list) reproduces python-apt's SystemError
+      # both directly and via `apt-get install`'s own stderr.
+      stub = StubExec.new([APT_CORRUPT_LISTS, {exit_code: 0, stdout: "", stderr: ""}, DPKG_LOCK_SUCCESS])
+      r = HostClass.new.apt_install_with_implicit_cache_retry("apt-get -y install w3m", 30, ->(c : String) { stub.call(c) })
+      r[:exit_code].should eq(0)
+      stub.exec_count.should eq(3)
+    end
+
+    it "fails with the ORIGINAL error when the implicit update itself fails" do
+      stub = StubExec.new([APT_CORRUPT_LISTS, DPKG_BROKEN_REPO])
+      r = HostClass.new.apt_install_with_implicit_cache_retry("apt-get -y install w3m", 30, ->(c : String) { stub.call(c) })
+      r[:exit_code].should eq(100)
+      r[:stderr].should eq(APT_CORRUPT_LISTS[:stderr])
+      stub.exec_count.should eq(2)
+    end
+
+    it "fails with the RETRY error when the refresh succeeded but the lists are still unreadable" do
+      stub = StubExec.new([APT_CORRUPT_LISTS, {exit_code: 0, stdout: "", stderr: ""}, APT_CORRUPT_LISTS])
+      r = HostClass.new.apt_install_with_implicit_cache_retry("apt-get -y install w3m", 30, ->(c : String) { stub.call(c) })
+      r[:exit_code].should eq(100)
+      stub.exec_count.should eq(3)
+    end
+
+    it "retries only ONCE - a second corrupt-lists failure is terminal" do
+      stub = StubExec.new([APT_CORRUPT_LISTS, {exit_code: 0, stdout: "", stderr: ""}, APT_CORRUPT_LISTS, APT_CORRUPT_LISTS])
+      r = HostClass.new.apt_install_with_implicit_cache_retry("apt-get -y install w3m", 30, ->(c : String) { stub.call(c) })
+      stub.exec_count.should eq(3)
+      r[:exit_code].should eq(100)
     end
   end
 end

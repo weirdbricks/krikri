@@ -485,7 +485,7 @@ module Krikri
             )
           end
 
-          install_result = apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive apt-get install -y #{shell_pkg}", lock_timeout, ->remote_exec(String))
+          install_result = apt_install_with_implicit_cache_retry("DEBIAN_FRONTEND=noninteractive apt-get install -y #{shell_pkg}", lock_timeout, ->remote_exec(String))
           if install_result[:exit_code] == 0
             # A requested name can be a virtual package already
             # satisfied by something else installed (`php-dom`/
@@ -581,7 +581,16 @@ module Krikri
         # }}", state: "{{ ... | ternary('latest', 'present') }}") -
         # reported "changed: Package grafana upgraded to latest" while
         # the package was never actually installed at all.
-        upgrade_result = apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive apt-get install -y #{shell_pkg}", lock_timeout, ->remote_exec(String))
+        # Wrapped with the same implicit cache-update retry on corrupt/
+        # unparseable lists that apt.cr's own install/latest paths get
+        # (real Ansible silently recovers a corrupt on-disk index this
+        # way - see apt_install_with_implicit_cache_retry; a plain
+        # locate-miss on an otherwise-valid cache, e.g. `package:
+        # {name: w3m, state: present}` against a merely-empty
+        # /var/lib/apt/lists/, is NOT retried by real ansible-playbook
+        # either - it fails outright with "No package matching 'w3m' is
+        # available").
+        upgrade_result = apt_install_with_implicit_cache_retry("DEBIAN_FRONTEND=noninteractive apt-get install -y #{shell_pkg}", lock_timeout, ->remote_exec(String))
 
         # "N upgraded, M newly installed, ..." is apt's own reliable,
         # locale-stable summary line - checking for the English phrase

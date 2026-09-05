@@ -6,6 +6,7 @@ require "uri"
 require "uuid"
 require "openssl/digest"
 require "../vault"
+require "../jmespath"
 require "./variable_lookup"
 require "./expression_evaluator"
 require "../variable_substitutor"
@@ -768,6 +769,24 @@ module Krikri
             JSON.parse(YAML.parse(as_string(value)).to_json)
           rescue
             raise "from_yaml: invalid YAML input"
+          end
+        when "json_query"
+          # json_query(expr) - real Ansible's own filter (from
+          # `community.general`, commonly reachable as a bare name), a
+          # full JMESPath query over the value. Backed by this engine's
+          # own JMESPath module (src/krikri/jmespath.cr) - the Crinja
+          # side registers the same name (jinja_filters.cr) since a
+          # `.j2`-template filter chain routes through Crinja, not this
+          # evaluator. Found unimplemented via itigoag.packages' own
+          # `packages_var_lower | json_query(packages_var_query)` task.
+          expr = parse_filter_arg(filter_args)
+          raise "json_query: missing JMESPath expression" if expr.empty?
+          begin
+            Krikri::JMESPath.evaluate(expr, value)
+          rescue ex : Krikri::JMESPath::Error
+            raise ex
+          rescue ex
+            raise "json_query: invalid JMESPath expression '#{expr}': #{ex.message}"
           end
         when "to_yaml"
           # to_yaml(**kwargs) - real Ansible's own filter, a YAML dump

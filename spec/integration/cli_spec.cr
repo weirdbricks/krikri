@@ -428,6 +428,23 @@ describe "krikri-playbook CLI (--check mode)" do
     output.should contain("delegate_to templated on loop item smoke test complete!")
   end
 
+  it "keeps a play var winning over an ordinary fact-gathering module's same-name fact, while set_fact still overrides it" do
+    # Found live testing itigoag.packages (round 301's json_query fix):
+    # a play-level `vars: packages: {...}` was being silently clobbered
+    # by `package_facts:`'s own `ansible_facts.packages` (registered
+    # under the bare name "packages" too) - real ansible-playbook's
+    # "host facts" precedence tier sits BELOW play vars, so the play
+    # var must win; only set_fact's own much higher tier is allowed to
+    # override it unconditionally.
+    status, output = run_playbook("test-fact-precedence-quick.yml")
+
+    status.success?.should be_true
+    output.should contain("packages is {'foo': 1}")
+    output.should contain("gathered package count is")
+    output.should_not contain("gathered package count is 0")
+    output.should contain("packages is now {'bar': 2}")
+  end
+
   describe "include_vars: / with_first_found:" do
     testservers = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-testservers-local.ini")
 

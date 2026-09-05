@@ -2995,7 +2995,16 @@ module Krikri
     # *outside* any `{{ }}`/`{% %}` span, so each `key=value` token's
     # boundary is exactly right regardless of how many template blocks
     # appear anywhere else in the string.
-    private def self.extract_command_special_params(raw : String) : {String, Hash(String, String)}
+    # Public (not private): the task executor ALSO needs this, at
+    # RUNTIME - real Ansible parses a command:/shell:'s trailing
+    # key=value specials from the module args AFTER templating, not
+    # before. This parse-time pass alone misses the shape where the
+    # whole command is a `{% if %}...{% endif %}` block (found live via
+    # kamaln7.swapfile): the raw text's last token is then the literal
+    # `{% endif %}` tag, so a `creates=...` sitting inside one of the
+    # branches never gets stripped here - but it IS last in the RENDERED
+    # text, where the executor's post-render pass correctly catches it.
+    def self.extract_command_special_params(raw : String) : {String, Hash(String, String)}
       special = Hash(String, String).new
       tokens = split_shell_like(raw)
       # End offset (exclusive) of the last token still kept as part of
