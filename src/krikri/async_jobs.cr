@@ -45,5 +45,40 @@ module Krikri
     def self.finished?(status : JSON::Any) : Bool
       status["finished"]?.try(&.as_i?) == 1
     end
+
+    # Deletes one job's status + config files (real Ansible's own
+    # async_status mode=cleanup for a single jid). Returns true when
+    # anything was removed.
+    def self.cleanup(jid : String) : Bool
+      removed = false
+      [status_path(jid), config_path(jid)].each do |path|
+        next unless File.exists?(path)
+        begin
+          File.delete(path)
+          removed = true
+        rescue ex : File::Error
+          # Vanished between the exists? check and the delete - counts
+          # as cleaned up either way.
+        end
+      end
+      removed
+    end
+
+    # Removes every job file in the async dir - real Ansible's
+    # async_status mode=cleanup with jid: ALL. ~/.ansible_async
+    # previously grew without bound for the lifetime of the account.
+    # Stray .tmp leftovers from a crashed write are swept too. Returns
+    # the number of files removed.
+    def self.cleanup_all : Int32
+      return 0 unless Dir.exists?(DIR)
+      removed = 0
+      Dir.each_child(DIR) do |name|
+        File.delete(File.join(DIR, name))
+        removed += 1
+      rescue ex : File::Error
+        # A concurrent job's transient file - leave it.
+      end
+      removed
+    end
   end
 end

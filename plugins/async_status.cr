@@ -13,7 +13,9 @@ module Krikri
   #
   # Reads the same ~/.ansible_async/<jid> status file TaskExecutor#
   # execute_async's spawned __async_run background process writes to on
-  # completion - see AsyncJobs. Only "status" mode is implemented; "cleanup"
+  # completion - see AsyncJobs. mode: cleanup is implemented too (real Ansible's own mode): deletes the
+# job's status/config files - or, with jid: ALL (or no jid at all), every
+# job file in the async dir, which previously grew without bound.
   # (deleting the job's status file) is not.
   #
   # Forwards the underlying job's own changed: verbatim once finished
@@ -24,6 +26,16 @@ module Krikri
   class AsyncStatusPlugin < BasePlugin
     def execute : PluginResult
       jid = @params["jid"]?
+
+      if @params["mode"]? == "cleanup"
+        if jid.nil? || jid == "ALL"
+          removed = AsyncJobs.cleanup_all
+          return PluginResult.new(changed: false, failed: false, msg: "Cleaned up #{removed} job file(s)")
+        end
+        AsyncJobs.cleanup(jid)
+        return PluginResult.new(changed: false, failed: false, msg: "Cleaned up job file for #{jid}")
+      end
+
       unless jid
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: jid")
       end
