@@ -445,7 +445,7 @@ module Krikri
     Crinja.filter(:regex_replace) do
       pattern = arguments.varargs[0]?.try(&.to_s) || ""
       replacement = arguments.varargs[1]?.try(&.to_s) || ""
-      Crinja::Value.new(target.to_s.gsub(VariableSubstitutor::FilterEngine.cached_regex(pattern), replacement))
+      Crinja::Value.new(VariableSubstitutor::FilterCore.regex_replace(target.to_s, pattern, replacement))
     end
 
     # `hash(algorithm='sha1')` - real Ansible's own filter
@@ -728,22 +728,19 @@ module Krikri
     # resets the accumulated path).
     Crinja.filter(:path_join) do
       parts = target.sequence? ? target.to_a.map(&.to_s) : [] of String
-      joined = parts.reduce("") { |acc, part| part.starts_with?('/') ? part : File.join(acc, part) }
-      Crinja::Value.new(joined)
+      Crinja::Value.new(VariableSubstitutor::FilterCore.path_join(parts))
     end
 
     # `splitext()` - real Ansible filter, mirrors Python's
     # os.path.splitext: [root, ext].
     Crinja.filter(:splitext) do
-      str = target.to_s
-      ext = File.extname(str)
-      root = ext.empty? ? str : str[0, str.size - ext.size]
+      root, ext = VariableSubstitutor::FilterCore.splitext(target.to_s)
       Crinja::Value.new([root, ext])
     end
 
     # `urldecode()` - real Ansible filter, percent-decodes a URL-encoded
     # string.
-    Crinja.filter(:urldecode) { Crinja::Value.new(URI.decode(target.to_s)) }
+    Crinja.filter(:urldecode) { Crinja::Value.new(VariableSubstitutor::FilterCore.urldecode(target.to_s)) }
 
     # `urlsplit(query='')` - real Ansible filter: with no argument,
     # returns the full breakdown dict; with a component name argument,
@@ -805,7 +802,7 @@ module Krikri
 
     # `regex_escape(re_type='python')` - real Ansible filter, escapes
     # regex special characters.
-    Crinja.filter(:regex_escape) { Crinja::Value.new(Regex.escape(target.to_s)) }
+    Crinja.filter(:regex_escape) { Crinja::Value.new(VariableSubstitutor::FilterCore.regex_escape(target.to_s)) }
 
     # `to_nice_json(indent=4, sort_keys=True)` - real Ansible filter, a
     # pretty-printed JSON dump (mirrors to_nice_yaml above). Converts via
@@ -888,59 +885,21 @@ module Krikri
     # `$VAR`/`${VAR}` -> the controller's own environment, unset left
     # as-is).
     Crinja.filter(:expanduser) do
-      str = target.to_s
-      home = ENV["HOME"]? || ""
-      Crinja::Value.new(str.starts_with?("~/") ? File.join(home, str[2..]) : (str == "~" ? home : str))
+      Crinja::Value.new(VariableSubstitutor::FilterCore.expanduser(target.to_s))
     end
     Crinja.filter(:expandvars) do
-      expanded = target.to_s.gsub(/\$\{(\w+)\}|\$(\w+)/) do |match|
-        name = $1? || $2?
-        name ? (ENV[name]? || match) : match
-      end
-      Crinja::Value.new(expanded)
+      Crinja::Value.new(VariableSubstitutor::FilterCore.expandvars(target.to_s))
     end
 
     # `normpath()`/`relpath(start='.')`/`commonpath()` - real Ansible
     # filters, mirror Python's os.path.normpath/relpath/commonpath.
-    def self.normalize_path(path : String) : String
-      return "." if path.empty?
-      absolute = path.starts_with?('/')
-      result = normalize_path_parts(path.split('/').reject { |pth| pth.empty? || pth == "." }, absolute)
-
-      joined = result.join("/")
-      absolute ? "/#{joined}" : (joined.empty? ? "." : joined)
-    end
-
-    private def self.normalize_path_parts(parts : Array(String), absolute : Bool) : Array(String)
-      result = [] of String
-      parts.each do |part|
-        if part == ".." && !result.empty? && result.last != ".."
-          result.pop
-        elsif part == ".." && !absolute
-          result << part
-        elsif part != ".."
-          result << part
-        end
-      end
-      result
-    end
-
-    def self.common_path(paths : Array(String)) : String
-      return "" if paths.empty?
-      segments = paths.map { |pth| pth.split('/').reject(&.empty?) }
-      first = segments.first
-      common = first.each_with_index.take_while { |seg, i| segments.all? { |str| str[i]? == seg } }.map(&.[0])
-      prefix = paths.first.starts_with?('/') ? "/" : ""
-      "#{prefix}#{common.join("/")}"
-    end
-
-    Crinja.filter(:normpath) { Crinja::Value.new(JinjaFilters.normalize_path(target.to_s)) }
+    Crinja.filter(:normpath) { Crinja::Value.new(VariableSubstitutor::FilterCore.normpath(target.to_s)) }
     Crinja.filter({start: "."}, :relpath) do
       Crinja::Value.new(Path[target.to_s].relative_to(Path[arguments["start"].to_s]).to_s)
     end
     Crinja.filter(:commonpath) do
       paths = target.sequence? ? target.to_a.map(&.to_s) : [] of String
-      Crinja::Value.new(JinjaFilters.common_path(paths))
+      Crinja::Value.new(VariableSubstitutor::FilterCore.commonpath(paths))
     end
 
     # `log(base=math.e)`/`pow(x)` - real Ansible filters.
@@ -1139,8 +1098,8 @@ module Krikri
     # own comment for the exact failure mode) to close the same gap in
     # Crinja, as prep for the dual-evaluator convergence work -
     # Crinja had neither registered at all.
-    Crinja.filter(:basename) { File.basename(target.to_s) }
-    Crinja.filter(:dirname) { File.dirname(target.to_s) }
+    Crinja.filter(:basename) { Crinja::Value.new(VariableSubstitutor::FilterCore.basename(target.to_s)) }
+    Crinja.filter(:dirname) { Crinja::Value.new(VariableSubstitutor::FilterCore.dirname(target.to_s)) }
 
     # `fileglob` - real Ansible's ansible.builtin.fileglob LOOKUP plugin,
     # usable as a filter via `map('ansible.builtin.fileglob')` (as

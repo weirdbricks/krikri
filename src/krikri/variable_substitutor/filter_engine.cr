@@ -1,4 +1,5 @@
 require "json"
+require "./filter_core"
 require "time"
 require "yaml"
 require "base64"
@@ -33,13 +34,13 @@ module Krikri
       class UnknownFilterError < Exception
       end
 
-      # Precompiled regexes and process-wide dynamic regex cache.
       REGEX_FILTER_CALL = /^(\w+)\s*\((.*)\)$/m
-      @@compiled_regex_cache = Hash(Tuple(String, Regex::Options), Regex).new
 
+      # The compiled-regex cache itself lives in FilterCore (both
+      # evaluators share it); this delegates so every existing
+      # FilterEngine.cached_regex call site keeps working.
       def self.cached_regex(pattern : String, options : Regex::Options = Regex::Options::None) : Regex
-        key = {pattern, options}
-        @@compiled_regex_cache[key] ||= Regex.new(pattern, options)
+        FilterCore.cached_regex(pattern, options)
       end
 
       # Optional variable context, needed only to resolve a `default(...)`
@@ -187,9 +188,9 @@ module Krikri
           # mysql.err") rather than its parent ("/var/log/mysql"), so
           # mysqld's own attempt to open its error log at that same path
           # found a directory instead of a file and failed to start.
-          transform_string(value, &->File.dirname(String))
+          JSON::Any.new(FilterCore.dirname(as_string(value)))
         when "basename"
-          transform_string(value, &->File.basename(String))
+          JSON::Any.new(FilterCore.basename(as_string(value)))
         when "length", "count"
           JSON::Any.new(length_of(value).to_i64)
         when "replace"
@@ -651,10 +652,7 @@ module Krikri
           pattern = args[0]?.try { |arg| as_string(resolve_expression(arg)) } || ""
           replacement = args[1]?.try { |arg| as_string(resolve_expression(arg)) } || ""
 
-          result = as_string(value).gsub(self.class.cached_regex(pattern)) do |_, mat|
-            replacement.gsub(/\\(\d)/) { mat[$1.to_i]? || "" }
-          end
-          JSON::Any.new(result)
+          JSON::Any.new(FilterCore.regex_replace(as_string(value), pattern, replacement))
         when "hash"
           # hash(algorithm='sha1') - real Ansible's own filter
           # (ansible.plugins.filter.core), wrapping Python's
@@ -721,17 +719,7 @@ module Krikri
           # instead of a type name, so every one of these asserts failed
           # outright regardless of the actual (correct) variable type.
           # Found via robertdebock.httpd's own assert.yml (round 19).
-          type_name = case value.raw
-                      when Array   then "list"
-                      when Hash    then "dict"
-                      when String  then "str"
-                      when Int64   then "int"
-                      when Float64 then "float"
-                      when Bool    then "bool"
-                      when Nil     then "NoneType"
-                      else              "str"
-                      end
-          JSON::Any.new(type_name)
+          JSON::Any.new(FilterCore.type_debug(value))
         when "to_json"
           # to_json(**kwargs) - real Ansible's own filter, wraps Python's
           # json.dumps() (default ", "/": " item/key separators, not
@@ -843,20 +831,17 @@ module Krikri
           # component resets the accumulated path rather than appending
           # to it - Crystal's own File.join has no such reset).
           parts = as_array(value).compact_map(&.as_s?)
-          joined = parts.reduce("") { |acc, part| part.starts_with?('/') ? part : File.join(acc, part) }
-          JSON::Any.new(joined)
+          JSON::Any.new(FilterCore.path_join(parts))
         when "splitext"
           # splitext() - real Ansible filter, mirrors Python's
           # os.path.splitext: [root, ext] (ext includes the leading '.',
           # empty string if there's no extension).
-          str = as_string(value)
-          ext = File.extname(str)
-          root = ext.empty? ? str : str[0, str.size - ext.size]
+          root, ext = FilterCore.splitext(as_string(value))
           JSON::Any.new([JSON::Any.new(root), JSON::Any.new(ext)])
         when "urldecode"
           # urldecode() - real Ansible filter, percent-decodes a URL-
           # encoded string.
-          JSON::Any.new(URI.decode(as_string(value)))
+          JSON::Any.new(FilterCore.urldecode(as_string(value)))
         when "urlsplit"
           # urlsplit(query='') - real Ansible filter: parses value as a
           # URL. With no argument, returns the full breakdown dict; with
@@ -909,7 +894,7 @@ module Krikri
           # regex_escape(re_type='python') - real Ansible filter, escapes
           # regex special characters so the value can be embedded
           # literally into a larger pattern.
-          JSON::Any.new(Regex.escape(as_string(value)))
+          JSON::Any.new(FilterCore.regex_escape(as_string(value)))
         when "to_nice_json"
           # to_nice_json(indent=4, sort_keys=True) - real Ansible filter,
           # a pretty-printed JSON dump (the mirror of to_nice_yaml).
@@ -945,25 +930,18 @@ module Krikri
           # os.path.expanduser: a leading `~` (or `~user`, not
           # supported here - only the current-user shorthand) expands
           # to $HOME.
-          str = as_string(value)
-          home = ENV["HOME"]? || ""
-          JSON::Any.new(str.starts_with?("~/") ? File.join(home, str[2..]) : (str == "~" ? home : str))
+          JSON::Any.new(FilterCore.expanduser(as_string(value)))
         when "expandvars"
           # expandvars() - real Ansible filter, mirrors Python's
           # os.path.expandvars: `$VAR`/`${VAR}` references replaced from
           # the CONTROLLER's own environment (unset -> left as-is,
           # matching Python's own behavior).
-          str = as_string(value)
-          expanded = str.gsub(/\$\{(\w+)\}|\$(\w+)/) do |mat|
-            name = $1? || $2?
-            name ? (ENV[name]? || mat) : mat
-          end
-          JSON::Any.new(expanded)
+          JSON::Any.new(FilterCore.expandvars(as_string(value)))
         when "normpath"
           # normpath() - real Ansible filter, mirrors Python's
           # os.path.normpath: collapses `.`/`..`/redundant `/` without
           # making the path absolute (relative stays relative).
-          JSON::Any.new(normalize_path(as_string(value)))
+          JSON::Any.new(FilterCore.normpath(as_string(value)))
         when "relpath"
           # relpath(start='.') - real Ansible filter, mirrors Python's
           # os.path.relpath: value expressed relative to *start*.
@@ -975,7 +953,7 @@ module Krikri
           # os.path.commonpath: the longest common directory prefix of
           # value (a list of paths).
           paths = as_array(value).compact_map(&.as_s?)
-          JSON::Any.new(common_path(paths))
+          JSON::Any.new(FilterCore.commonpath(paths))
         when "log"
           # log(base=math.e) - real Ansible filter: natural log with no
           # argument, log base *base* otherwise.
@@ -2109,38 +2087,6 @@ module Krikri
 
       # Mirrors Python's os.path.normpath: collapses `.`/`..`/redundant
       # `/` segments without ever making a relative path absolute.
-      private def normalize_path(path : String) : String
-        return "." if path.empty?
-        absolute = path.starts_with?('/')
-        parts = path.split('/').reject { |pth| pth.empty? || pth == "." }
-
-        result = [] of String
-        parts.each do |part|
-          if part == ".." && !result.empty? && result.last != ".."
-            result.pop
-          elsif part == ".." && !absolute
-            result << part
-          elsif part != ".."
-            result << part
-          end
-        end
-
-        joined = result.join("/")
-        absolute ? "/#{joined}" : (joined.empty? ? "." : joined)
-      end
-
-      # Mirrors Python's os.path.commonpath: the longest shared leading
-      # sequence of path SEGMENTS (not a naive character prefix) across
-      # every path in *paths*.
-      private def common_path(paths : Array(String)) : String
-        return "" if paths.empty?
-        segments = paths.map { |pth| pth.split('/').reject(&.empty?) }
-        first = segments.first
-        common = first.each_with_index.take_while { |seg, i| segments.all? { |str| str[i]? == seg } }.map(&.[0])
-        prefix = paths.first.starts_with?('/') ? "/" : ""
-        "#{prefix}#{common.join("/")}"
-      end
-
       # itertools.combinations(array, n) - every n-length combination,
       # order-independent, no element reused within one combination.
       private def combinations(array : Array(JSON::Any), n : Int32) : Array(Array(JSON::Any))
