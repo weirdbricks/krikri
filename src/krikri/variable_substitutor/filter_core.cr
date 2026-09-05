@@ -338,6 +338,49 @@ module Krikri
           right.reject { |i| left_json.includes?(i.to_json) })
       end
 
+      HUMAN_READABLE_SUFFIXES     = {"Bytes", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"}
+      HUMAN_READABLE_BIT_SUFFIXES = {"bits", "Kb", "Mb", "Gb", "Tb", "Pb", "Eb", "Zb", "Yb"}
+
+      # human_readable(isbits=False) - formats a byte count as e.g.
+      # "1.00 KB" (1024-based). Mirrors real Ansible's own
+      # bytes_to_human: `isbits:` selects the bit-count suffix table
+      # (and multiplies by 8 first) rather than a base-1000 divisor
+      # (a common misconception is that "bits" implies SI units - it
+      # doesn't, here).
+      def self.format_human_readable(bytes : Int64, isbits : Bool) : String
+        value = isbits ? bytes.to_f * 8 : bytes.to_f
+        suffixes = isbits ? HUMAN_READABLE_BIT_SUFFIXES : HUMAN_READABLE_SUFFIXES
+        suffixes.each_with_index do |suffix, i|
+          unit = 1024.0 ** i
+          next_unit = 1024.0 ** (i + 1)
+          if value < next_unit || i == suffixes.size - 1
+            return i == 0 ? "#{value.to_i} #{suffix}" : "%.2f %s" % [value / unit, suffix]
+          end
+        end
+        "#{bytes} Bytes"
+      end
+
+      # human_to_bytes(default_unit=None, isbits=False) - the inverse
+      # of human_readable: parses "10GB"/"1.5 MB" back into a raw byte
+      # count.
+      def self.parse_human_to_bytes(s : String) : Int64
+        match = s.strip.match(/^([\d.]+)\s*([A-Za-z]*)$/)
+        return s.to_i64? || 0_i64 unless match
+
+        number = match[1].to_f
+        unit = match[2].downcase
+        multiplier = case unit
+                     when "", "b", "bytes" then 1_i64
+                     when "kb"             then 1024_i64
+                     when "mb"             then 1024_i64 ** 2
+                     when "gb"             then 1024_i64 ** 3
+                     when "tb"             then 1024_i64 ** 4
+                     when "pb"             then 1024_i64 ** 5
+                     else                       1_i64
+                     end
+        (number * multiplier).to_i64
+      end
+
       # type_debug - Python's type name for the value (matching
       # `type(x).__name__`), used almost exclusively in role assert.yml
       # sanity checks (`my_list | type_debug == "list"`).

@@ -745,46 +745,12 @@ module Krikri
     # count <-> "1.00 KB"-style string), both base-1024 (isbits: selects
     # the bit-suffix table and multiplies by 8 first, real Ansible does
     # NOT switch to base-1000 for bits).
-    HUMAN_READABLE_SUFFIXES     = {"Bytes", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"}
-    HUMAN_READABLE_BIT_SUFFIXES = {"bits", "Kb", "Mb", "Gb", "Tb", "Pb", "Eb", "Zb", "Yb"}
-
-    def self.format_human_readable(bytes : Int64, isbits : Bool) : String
-      value = isbits ? bytes.to_f * 8 : bytes.to_f
-      suffixes = isbits ? HUMAN_READABLE_BIT_SUFFIXES : HUMAN_READABLE_SUFFIXES
-      suffixes.each_with_index do |suffix, i|
-        unit = 1024.0 ** i
-        next_unit = 1024.0 ** (i + 1)
-        if value < next_unit || i == suffixes.size - 1
-          return i == 0 ? "#{value.to_i} #{suffix}" : "%.2f %s" % [value / unit, suffix]
-        end
-      end
-      "#{bytes} Bytes"
-    end
-
-    def self.parse_human_to_bytes(str : String) : Int64
-      match = str.strip.match(/^([\d.]+)\s*([A-Za-z]*)$/)
-      return str.to_i64? || 0_i64 unless match
-
-      number = match[1].to_f
-      unit = match[2].downcase
-      multiplier = case unit
-                   when "", "b", "bytes" then 1_i64
-                   when "kb"             then 1024_i64
-                   when "mb"             then 1024_i64 ** 2
-                   when "gb"             then 1024_i64 ** 3
-                   when "tb"             then 1024_i64 ** 4
-                   when "pb"             then 1024_i64 ** 5
-                   else                       1_i64
-                   end
-      (number * multiplier).to_i64
-    end
-
     Crinja.filter(:human_readable) do
       isbits = arguments.kwargs["isbits"]?.try { |v| JinjaFilters.real_truthy?(v) } || false
       bytes = target.to_s.to_i64? || 0_i64
-      Crinja::Value.new(JinjaFilters.format_human_readable(bytes, isbits))
+      Crinja::Value.new(VariableSubstitutor::FilterCore.format_human_readable(bytes, isbits))
     end
-    Crinja.filter(:human_to_bytes) { Crinja::Value.new(JinjaFilters.parse_human_to_bytes(target.to_s)) }
+    Crinja.filter(:human_to_bytes) { Crinja::Value.new(VariableSubstitutor::FilterCore.parse_human_to_bytes(target.to_s)) }
 
     # `md5()`/`sha1()` - real Ansible filters, standalone hex digests
     # (distinct from the general `hash(algorithm=)` filter above).

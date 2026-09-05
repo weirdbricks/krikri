@@ -181,4 +181,33 @@ describe Krikri::VariableSubstitutor::FilterCore do
       core.difference(list.as_a, other.as_a).map(&.to_json).should eq([JSON.parse(%({"n": 2})).to_json])
     end
   end
+
+  describe "family 4: byte formatting" do
+    core = Krikri::VariableSubstitutor::FilterCore
+
+    it "human_readable formats 1024-based sizes" do
+      core.format_human_readable(1_i64, false).should eq("1 Bytes")
+      core.format_human_readable(1024_i64, false).should eq("1.00 KB")
+      core.format_human_readable(1_i64 * 1024 * 1024 * 1024, false).should eq("1.00 GB")
+      core.format_human_readable(1536_i64, false).should eq("1.50 KB")
+    end
+
+    it "human_readable isbits multiplies by 8 and uses bit suffixes" do
+      core.format_human_readable(1_i64, true).should eq("8 bits")
+      core.format_human_readable(1024_i64, true).should eq("8.00 Kb")
+    end
+
+    it "human_to_bytes parses unit suffixes case-insensitively" do
+      core.parse_human_to_bytes("1").should eq(1)
+      core.parse_human_to_bytes("10GB").should eq(10_i64 * 1024 ** 3)
+      core.parse_human_to_bytes("1.5 MB").should eq(1572864)
+      core.parse_human_to_bytes("1KB").should eq(1024)
+      # unparseable input falls back to a bare to_i64
+      core.parse_human_to_bytes("abc").should eq(0)
+    end
+
+    it "human_to_bytes is the inverse of human_readable" do
+      core.parse_human_to_bytes(core.format_human_readable(1536_i64, false)).should eq(1536)
+    end
+  end
 end
