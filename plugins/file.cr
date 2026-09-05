@@ -1051,12 +1051,6 @@ module Krikri
       System::Group.find_by?(id: gid.to_s).try(&.name) || gid.to_s
     end
 
-    # Helper: Check if parameter is truthy
-    private def true?(value : String?, default : Bool = false) : Bool
-      return default unless value
-      ["true", "yes", "1", "on"].includes?(value.downcase)
-    end
-
     # Generate attribute diff for file
     private def get_attribute_diff(path : String) : JSON::Any?
       return nil unless @diff_mode

@@ -700,12 +700,6 @@ module Krikri
     end
 
     # Helper to convert string/bool to boolean
-    private def true?(value) : Bool
-      return false if value.nil?
-      value_str = value.to_s.downcase
-      value_str == "true" || value_str == "yes" || value_str == "1"
-    end
-
     # The lock-contention retry helpers (apt_with_lock_retry,
     # apt_get_update_with_retry, apt_lock_held?) live in
     # `src/krikri/plugin_helpers/apt_lock_retry.cr` and are

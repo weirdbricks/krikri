@@ -615,11 +615,6 @@ module Krikri
     end
 
     # Helper to convert string/bool to boolean
-    private def true?(value) : Bool
-      return false if value.nil?
-      value_str = value.to_s.downcase
-      value_str == "true" || value_str == "yes" || value_str == "1"
-    end
   end
 end
 

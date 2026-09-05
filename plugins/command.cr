@@ -381,11 +381,6 @@ module Krikri
       parts
     end
 
-    # Helper: Check if parameter is truthy
-    private def true?(value : String?, default : Bool = false) : Bool
-      return default unless value
-      ["true", "yes", "1", "on"].includes?(value.downcase)
-    end
   end
 end
 

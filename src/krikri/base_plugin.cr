@@ -421,6 +421,17 @@ module Krikri
       ["true", "yes", "1", "on"].includes?(value.downcase)
     end
 
+    # Helper to check if a parameter is explicitly falsy - the mirror of
+    # #true? for plugins that need to distinguish "not given" from "given
+    # as false" (a nil param is neither). Same list real Ansible's own
+    # boolean coercion accepts for false. Kept next to #true? so the two
+    # lists can never drift apart (they used to live only in yum/dnf's
+    # private copies).
+    protected def false?(value : String?) : Bool
+      return false unless value
+      ["false", "no", "0", "off"].includes?(value.downcase)
+    end
+
     # Applies owner/group/numeric mode to a single path natively
     # (`File.chown`/`File.chmod`) instead of shelling to
     # `chown`/`chgrp`/`chmod` - shared by plugins (`apt_repository`,

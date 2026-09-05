@@ -682,17 +682,6 @@ module Krikri
       end
     end
 
-    # Helper: Check if parameter is truthy
-    private def true?(value : String?) : Bool
-      return false unless value
-      ["true", "yes", "1", "on"].includes?(value.downcase)
-    end
-
-    # Helper: Check if parameter is falsy
-    private def false?(value : String?) : Bool
-      return false unless value
-      ["false", "no", "0", "off"].includes?(value.downcase)
-    end
   end
 end
 
