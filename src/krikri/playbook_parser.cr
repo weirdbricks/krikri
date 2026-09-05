@@ -1890,33 +1890,14 @@ module Krikri
       end
 
       # Parse task-level settings - FIXED to handle boolean values safely
-      task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
+      parse_common_task_attributes(task, task_hash)
       task.register = task_hash["register"]?.try { |v| safe_yaml_to_string(v) }
-      task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
-      task.no_log = parse_become_value(task_hash["no_log"]?) || false
-      task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
-      task.throttle = task_hash["throttle"]?.try { |tv_blk| safe_yaml_to_string(tv_blk).to_i? } || 0
-      task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
-      task.debugger = task_hash["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
-      task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
       task.check_mode = parse_optional_bool_or_template(task_hash["check_mode"]?)
       task.check_mode_expr = template_expression(task_hash["check_mode"]?)
       task.diff_mode = parse_optional_bool_or_template(task_hash["diff"]?)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
-
-      # Parse task-level vars: - a real, previously-shipped gap: nothing
-      # here ever read this key into task.vars for a plain task (only
-      # import_tasks:'s own vars: - a separate mechanism, see
-      # parse_import_tasks above - was ever wired up), so a task-level
-      # var was silently invisible everywhere that reads task.vars
-      # (VariableContext#build folds it in at highest priority), not
-      # just in when:/assert: that: - {{ }} substitution was equally
-      # broken, since it draws from the exact same vars_context.
-      if vars_yaml = task_hash["vars"]?.try(&.as_h?)
-        vars_yaml.each { |key, value| task.vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
-      end
 
       # Parse environment: - real Ansible's per-task env-var-setting
       # keyword, used throughout konstruktoid-hardening (PATH overrides
@@ -1948,10 +1929,6 @@ module Krikri
       task.listen = task_hash["listen"]?.try { |v| safe_yaml_to_string(v) }
 
       # Parse tags
-      if tags_yaml = task_hash["tags"]?.try(&.as_a?)
-        task.tags = tags_yaml.map(&.as_s)
-      end
-
       # Parse loop / with_* (checked in this priority order; first match wins,
       # matching how Ansible only honors one loop source per task)
       #
@@ -2003,10 +1980,10 @@ module Krikri
                              end
       elsif with_file = task_hash["with_file"]?
         task.loop_file = if with_file.as_a?
-                          with_file.as_a.map(&.as_s)
-                        else
-                          [with_file.as_s]
-                        end
+                           with_file.as_a.map(&.as_s)
+                         else
+                           [with_file.as_s]
+                         end
       elsif with_flattened = (task_hash["with_flattened"]? || task_hash["with_community.general.flattened"]?)
         # `with_flattened:` (the short lookup-plugin-name alias real
         # playbooks actually write - confirmed via dev-sec.os-hardening's
@@ -2157,6 +2134,39 @@ module Krikri
     # variable context, so there is no plugin binary and nothing runs on
     # the target. Accepts the bare-string form (`include_vars: x.yml`) and
     # the dict form with `file:`/`name:`.
+    # The task-attribute subset EVERY task-parsing branch shares - used
+    # to be an identical ~10-line block copy-pasted into five separate
+    # parsers (parse_task, parse_include_vars_task, parse_block_task,
+    # parse_include_tasks, parse_include_role), and each branch's copy
+    # accumulated its own silent-failure bugs over the rounds: a fix
+    # landed in one branch's block had to be re-discovered in the others
+    # (several of those re-discoveries are still visible as "same gap
+    # <branch> had" comments on the branches' own module-specific
+    # parsing below). One shared implementation now; each caller adds
+    # only its own module-specific parsing on top. tags: accepts a bare
+    # string as well as a list (real Ansible's own parser does; only
+    # include_vars's copy of this block used to honor that).
+    private def self.parse_common_task_attributes(task : Task, task_hash : Hash(YAML::Any, YAML::Any)) : Nil
+      task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
+      task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
+      task.no_log = parse_become_value(task_hash["no_log"]?) || false
+      task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
+      task.throttle = task_hash["throttle"]?.try { |tv| safe_yaml_to_string(tv).to_i? } || 0
+      task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
+      task.debugger = task_hash["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
+      task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
+
+      if tags_yaml = task_hash["tags"]?
+        task.tags = tags_yaml.as_a?.try(&.map(&.as_s)) || [safe_yaml_to_string(tags_yaml)]
+      end
+
+      if vars_yaml = task_hash["vars"]?.try(&.as_h?)
+        vars = Hash(String, JSON::Any).new
+        vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
+        task.vars = vars
+      end
+    end
+
     private def self.parse_include_vars_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), value : YAML::Any) : Task
       task = Task.new(name, "_include_vars")
 
@@ -2169,29 +2179,10 @@ module Krikri
         task.include_vars_file = value.as_s
       end
 
-      task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
-      task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
-      task.no_log = parse_become_value(task_hash["no_log"]?) || false
-      task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
-      task.throttle = task_hash["throttle"]?.try { |tv_blk| safe_yaml_to_string(tv_blk).to_i? } || 0
-      task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
-      task.debugger = task_hash["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
-      task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
+      parse_common_task_attributes(task, task_hash)
 
       if tags_yaml = task_hash["tags"]?
         task.tags = tags_yaml.as_a?.try(&.map(&.as_s)) || [tags_yaml.as_s]
-      end
-
-      # A task's own vars: was never parsed here at all (same gap
-      # parse_block_task had before it was fixed) - linux-system-roles/
-      # timesync's own `include_vars: "{{ lookup('first_found', ffparams)
-      # }}" vars: ffparams: {files: [...], paths: [...]}` needs ffparams
-      # visible when the file: expression is rendered; without this it
-      # resolved undefined.
-      if vars_yaml = task_hash["vars"]?.try(&.as_h?)
-        vars = Hash(String, JSON::Any).new
-        vars_yaml.each { |key, var_value| vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(var_value.to_json)) }
-        task.vars = vars
       end
 
       # with_first_found: is the loop form this module is almost always
@@ -2358,21 +2349,10 @@ module Krikri
 
       # Block-level settings gate/apply to the block as a whole; each
       # nested task still evaluates its own when:/tags:/etc in addition.
-      task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
-      task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
-      task.no_log = parse_become_value(task_hash["no_log"]?) || false
-      task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
-      task.throttle = task_hash["throttle"]?.try { |tv_blk| safe_yaml_to_string(tv_blk).to_i? } || 0
-      task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
-      task.debugger = task_hash["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
-      task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
+      parse_common_task_attributes(task, task_hash)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
-
-      if tags_yaml = task_hash["tags"]?.try(&.as_a?)
-        task.tags = tags_yaml.map(&.as_s)
-      end
 
       # A block's own `vars:` is inherited by every task nested inside it
       # (real Ansible scoping) - was never parsed at all here, so it
@@ -2382,11 +2362,11 @@ module Krikri
       # linux-system-roles/logging's `Check logging inputs` block, which
       # computes `__logging_input_names` at block level for a nested
       # looped task's `when:` to reference.
-      if vars_yaml = task_hash["vars"]?.try(&.as_h?)
-        vars = Hash(String, JSON::Any).new
-        vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
-        task.vars = vars
-      end
+      # (A block's own `vars:` - inherited by every task nested inside
+      # it, real Ansible scoping; was never parsed at all here before,
+      # found via linux-system-roles/logging's `Check logging inputs`
+      # block - is parsed by parse_common_task_attributes above, shared
+      # with every other branch.)
 
       # A block's own `notify:` fires once if any task nested inside it
       # (block/rescue/always) changes, even when none of those nested
@@ -2551,21 +2531,10 @@ module Krikri
       task.include_file = file_rel
       task.include_file_dir = file_dir
 
-      task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
-      task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
-      task.no_log = parse_become_value(task_hash["no_log"]?) || false
-      task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
-      task.throttle = task_hash["throttle"]?.try { |tv_blk| safe_yaml_to_string(tv_blk).to_i? } || 0
-      task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
-      task.debugger = task_hash["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
-      task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
+      parse_common_task_attributes(task, task_hash)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
-
-      if tags_yaml = task_hash["tags"]?.try(&.as_a?)
-        task.tags = tags_yaml.map(&.as_s)
-      end
 
       if vars_yaml = task_hash["vars"]?.try(&.as_h?)
         vars = Hash(String, JSON::Any).new
@@ -2668,21 +2637,10 @@ module Krikri
         task.include_role_vars = vars
       end
 
-      task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
-      task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
-      task.no_log = parse_become_value(task_hash["no_log"]?) || false
-      task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
-      task.throttle = task_hash["throttle"]?.try { |tv_blk| safe_yaml_to_string(tv_blk).to_i? } || 0
-      task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
-      task.debugger = task_hash["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
-      task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
+      parse_common_task_attributes(task, task_hash)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
-
-      if tags_yaml = task_hash["tags"]?.try(&.as_a?)
-        task.tags = tags_yaml.map(&.as_s)
-      end
 
       if template_loop = find_loop_template(task_hash)
         task.loop_template_kind = template_loop[0]
