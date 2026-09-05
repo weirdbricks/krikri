@@ -1,5 +1,9 @@
 require "json"
 require "uri"
+require "openssl/digest"
+require "uuid"
+require "yaml"
+require "base64"
 
 module Krikri
   module VariableSubstitutor
@@ -136,6 +140,173 @@ module Krikri
         s.gsub(/\$\{(\w+)\}|\$(\w+)/) do |match|
           name = $1? || $2?
           name ? (ENV[name]? || match) : match
+        end
+      end
+
+      # hash(algorithm='sha1') - wraps Python's hashlib.new(). Defaults
+      # to sha1; raises on unsupported algorithms (real Ansible does too).
+      def self.hash(s : String, algorithm : String) : String
+        openssl_name = case algorithm.downcase
+                       when "md5"    then "MD5"
+                       when "sha1"   then "SHA1"
+                       when "sha224" then "SHA224"
+                       when "sha256" then "SHA256"
+                       when "sha384" then "SHA384"
+                       when "sha512" then "SHA512"
+                       else
+                         raise "hash: unsupported algorithm '#{algorithm}'"
+                       end
+        digest(s, openssl_name)
+      end
+
+      # checksum() - always sha1 (Ansible's own hard-coded
+      # hashlib.sha1), distinct from the general-purpose hash filter.
+      def self.checksum(s : String) : String
+        digest(s, "SHA1")
+      end
+
+      def self.md5(s : String) : String
+        digest(s, "MD5")
+      end
+
+      def self.sha1(s : String) : String
+        digest(s, "SHA1")
+      end
+
+      private def self.digest(s : String, openssl_name : String) : String
+        d = OpenSSL::Digest.new(openssl_name)
+        d.update(s)
+        d.final.hexstring
+      end
+
+      # password_hash(hashtype='sha512', salt=None, rounds=None) - a
+      # salted crypt(3) hash suitable for /etc/shadow (NOT a plain
+      # digest). Covers the three crypt(3) schemes `openssl passwd`
+      # supports (sha512/sha256/md5 = $6$/$5$/$1$); passlib-only schemes
+      # like bcrypt aren't available without a real passlib port.
+      def self.password_hash(s : String, hashtype : String, salt : String? = nil) : String
+        openssl_flag = case hashtype.downcase
+                       when "md5"    then "-1"
+                       when "sha256" then "-5"
+                       when "sha512" then "-6"
+                       else
+                         raise "password_hash: unsupported hashtype '#{hashtype}' (supported: md5, sha256, sha512)"
+                       end
+        salt = salt.presence || Random::Secure.hex(8)
+
+        output = IO::Memory.new
+        status = Process.run("openssl", ["passwd", openssl_flag, "-salt", salt, "-stdin"],
+          input: IO::Memory.new(s), output: output)
+        raise "password_hash: openssl passwd failed" unless status.success?
+        output.to_s.strip
+      end
+
+      # to_uuid(namespace=ANSIBLE_NAMESPACE) - deterministic UUID5
+      # (SHA1-based) using Ansible's own default namespace.
+      def self.to_uuid(s : String) : String
+        UUID.v5(s, UUID.new("361E6D51-FAEC-444A-9079-341386DA8E2E")).to_s
+      end
+
+      # b64encode/b64decode - standard base64 (not urlsafe). b64decode
+      # raises on invalid input (real Ansible does too).
+      def self.b64encode(s : String) : String
+        Base64.strict_encode(s)
+      end
+
+      def self.b64decode(s : String) : String
+        Base64.decode_string(s)
+      rescue
+        raise "b64decode: invalid base64 input"
+      end
+
+      # from_json() - parses a JSON string into a real structure;
+      # raises on invalid input (real Ansible does too).
+      def self.from_json(s : String) : JSON::Any
+        JSON.parse(s)
+      rescue
+        raise "from_json: invalid JSON input"
+      end
+
+      # from_yaml() - real Ansible only calls yaml.safe_load when the
+      # input IS a string; any other type returns as-is unchanged (the
+      # non-string passthrough here is REAL behavior, verified live -
+      # the stringify-then-parse shape used to fail whole templates on
+      # already-structured input).
+      def self.from_yaml(value : JSON::Any) : JSON::Any
+        return value unless value.raw.is_a?(String)
+        JSON.parse(YAML.parse(value.raw.as(String)).to_json)
+      rescue
+        raise "from_yaml: invalid YAML input"
+      end
+
+      # to_json(**kwargs) - Python json.dumps() shape: default ", "/
+      # ": " item/key separators, not Crystal's compact JSON::Builder.
+      def self.to_json(value : JSON::Any) : String
+        String.build { |io| python_json_dump(value, io) }
+      end
+
+      def self.python_json_dump(value : JSON::Any, io : IO) : Nil
+        case raw = value.raw
+        when Nil
+          io << "null"
+        when Bool
+          io << raw
+        when String
+          raw.to_json(io)
+        when Int64, Int32, Float64
+          io << raw
+        when Array
+          io << '['
+          raw.each_with_index do |item, index|
+            io << ", " if index > 0
+            python_json_dump(item, io)
+          end
+          io << ']'
+        when Hash
+          io << '{'
+          first = true
+          raw.each do |key, item|
+            io << ", " unless first
+            first = false
+            key.to_s.to_json(io)
+            io << ": "
+            python_json_dump(item, io)
+          end
+          io << '}'
+        else
+          raw.to_s.to_json(io)
+        end
+      end
+
+      # to_nice_json(indent=4, sort_keys=True) - a pretty-printed JSON
+      # dump. Crystal's own JSON::Any#to_pretty_json (2-space indent) is
+      # used rather than hand-rolling a 4-space emitter - narrower than
+      # real Ansible's exact byte output but structurally correct.
+      def self.to_nice_json(value : JSON::Any, sort_keys : Bool = true) : String
+        sorted = sort_keys ? sort_json_keys(value) : value
+        sorted.to_pretty_json
+      end
+
+      # to_yaml() - a YAML dump (real PyYAML default: block style, keys
+      # sorted). Converts via value.to_json -> YAML.parse -> to_yaml
+      # (JSON is a valid YAML flow-syntax subset, round-trips cleanly
+      # through Crystal's own YAML formatter), strips the leading
+      # document marker PyYAML's own output never has.
+      def self.to_yaml(value : JSON::Any) : String
+        YAML.parse(sort_json_keys(value).to_json).to_yaml.sub(/\A---[ \t]*\n?/, "").rstrip
+      end
+
+      # Recursively sorts dict keys - used by to_nice_json/to_yaml
+      # (real Ansible's sort_keys=True defaults).
+      def self.sort_json_keys(value : JSON::Any) : JSON::Any
+        case raw = value.raw
+        when Hash
+          sorted = raw.to_a.sort_by { |(k, _)| k }
+          JSON::Any.new(sorted.to_h { |(k, v)| {k, sort_json_keys(v)} })
+        when Array
+          JSON::Any.new(raw.map { |v| sort_json_keys(v) })
+        else
+          value
         end
       end
 

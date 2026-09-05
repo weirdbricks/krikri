@@ -73,4 +73,78 @@ describe Krikri::VariableSubstitutor::FilterCore do
     core.type_debug(JSON.parse("null")).should eq("NoneType")
     core.type_debug(JSON.parse(%("s"))).should eq("str")
   end
+
+  describe "family 2: data/hash/encoding" do
+    core = Krikri::VariableSubstitutor::FilterCore
+
+    it "hash defaults to sha1 and supports the hashlib algorithm set" do
+      core.hash("abc", "sha1").should eq("a9993e364706816aba3e25717850c26c9cd0d89d")
+      core.hash("abc", "sha256").should eq("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+      core.hash("abc", "SHA512").should eq(core.hash("abc", "sha512"))
+      expect_raises(Exception, "unsupported algorithm") { core.hash("abc", "nope") }
+    end
+
+    it "checksum/md5/sha1 produce known hex digests" do
+      core.checksum("abc").should eq("a9993e364706816aba3e25717850c26c9cd0d89d")
+      core.md5("abc").should eq("900150983cd24fb0d6963f7d28e17f72")
+      core.sha1("abc").should eq("a9993e364706816aba3e25717850c26c9cd0d89d")
+    end
+
+    it "password_hash produces a salted crypt(3) hash of the right scheme" do
+      result = core.password_hash("s3cret", "sha512", "salt1234")
+      result.should start_with("$6$salt1234$")
+      expect_raises(Exception, "unsupported hashtype") { core.password_hash("x", "bcrypt") }
+    end
+
+    it "to_uuid is deterministic (Ansible's own namespace)" do
+      core.to_uuid("app1").should eq(core.to_uuid("app1"))
+      core.to_uuid("app1").should_not eq(core.to_uuid("app2"))
+    end
+
+    it "b64 round-trips and b64decode raises on invalid input" do
+      encoded = core.b64encode("hello there")
+      core.b64decode(encoded).should eq("hello there")
+      expect_raises(Exception, "invalid base64") { core.b64decode("!!!not-base64!!!") }
+    end
+
+    it "from_json raises on invalid input" do
+      core.from_json(%({"a": 1}))["a"].as_i.should eq(1)
+      expect_raises(Exception, "invalid JSON") { core.from_json("{nope}") }
+    end
+
+    it "from_yaml passes non-string values through unchanged (real Ansible behavior)" do
+      list_value = JSON.parse("[1,2]")
+      core.from_yaml(list_value).should eq(list_value)
+      str_value = JSON.parse("\"a: 1\\nb: 2\"")
+      result = core.from_yaml(str_value)
+      result["b"].as_i.should eq(2)
+      expect_raises(Exception, "invalid YAML") { core.from_yaml(JSON.parse("\"%nope: [\"")) }
+    end
+
+    it "to_json uses Python json.dumps separators" do
+      value = JSON.parse(%({"a": 1, "b": [1, 2]}))
+      core.to_json(value).should eq(%({"a": 1, "b": [1, 2]}))
+    end
+
+    it "to_nice_json sorts keys by default" do
+      value = JSON.parse(%({"b": 1, "a": {"d": 2, "c": 3}}))
+      result = core.to_nice_json(value)
+      first_a = result.index("\"a\"")
+      first_b = result.index("\"b\"")
+      first_a.should_not be_nil
+      first_b.should_not be_nil
+      first_a.not_nil!.should be < first_b.not_nil!
+    end
+
+    it "to_yaml sorts keys and strips the leading document marker" do
+      value = JSON.parse(%({"b": 1, "a": 2}))
+      out = core.to_yaml(value)
+      out.should_not start_with("---")
+      first_a = out.index("a: 2")
+      first_b = out.index("b: 1")
+      first_a.should_not be_nil
+      first_b.should_not be_nil
+      first_a.not_nil!.should be < first_b.not_nil!
+    end
+  end
 end

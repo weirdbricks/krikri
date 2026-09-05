@@ -469,19 +469,7 @@ module Krikri
 
     Crinja.filter(:hash) do
       algorithm = (arguments.varargs[0]?.try(&.to_s) || "sha1").downcase
-      openssl_name = case algorithm
-                     when "md5"    then "MD5"
-                     when "sha1"   then "SHA1"
-                     when "sha224" then "SHA224"
-                     when "sha256" then "SHA256"
-                     when "sha384" then "SHA384"
-                     when "sha512" then "SHA512"
-                     else
-                       raise "hash: unsupported algorithm '#{algorithm}'"
-                     end
-      digest = OpenSSL::Digest.new(openssl_name)
-      digest.update(target.to_s)
-      Crinja::Value.new(digest.final.hexstring)
+      Crinja::Value.new(VariableSubstitutor::FilterCore.hash(target.to_s, algorithm))
     end
 
     # `password_hash(hashtype='sha512', salt=None)` - real Ansible's own
@@ -492,21 +480,8 @@ module Krikri
     # too (real ansible-vault/user-management templates commonly do).
     Crinja.filter(:password_hash) do
       hashtype = (arguments.varargs[0]?.try(&.to_s) || "sha512").downcase
-      openssl_flag = case hashtype
-                     when "md5"    then "-1"
-                     when "sha256" then "-5"
-                     when "sha512" then "-6"
-                     else
-                       raise "password_hash: unsupported hashtype '#{hashtype}' (supported: md5, sha256, sha512)"
-                     end
       explicit_salt = arguments.varargs[1]?.try(&.to_s)
-      salt = explicit_salt.presence || Random::Secure.hex(8)
-
-      output = IO::Memory.new
-      status = Process.run("openssl", ["passwd", openssl_flag, "-salt", salt, "-stdin"],
-        input: IO::Memory.new(target.to_s), output: output)
-      raise "password_hash: openssl passwd failed" unless status.success?
-      Crinja::Value.new(output.to_s.strip)
+      Crinja::Value.new(VariableSubstitutor::FilterCore.password_hash(target.to_s, hashtype, explicit_salt))
     end
 
     # `type_debug` - real Ansible/Jinja2's own filter, Python's type
@@ -541,42 +516,7 @@ module Krikri
     # byte-identical diff against real ansible-playbook's rendered file
     # holds even for the common single/few-element list/dict case.
     Crinja.filter(:to_json) do
-      String.build { |io| Krikri::JinjaFilters.python_json_dump(target, io) }
-    end
-
-    def self.python_json_dump(value : Crinja::Value, io : IO)
-      case raw = value.raw
-      when Nil
-        io << "null"
-      when Bool
-        io << raw
-      when Crinja::SafeString
-        raw.to_s.to_json(io)
-      when String
-        raw.to_json(io)
-      when Number
-        io << raw
-      when Array(Crinja::Value)
-        io << '['
-        raw.each_with_index do |item, index|
-          io << ", " if index > 0
-          python_json_dump(item, io)
-        end
-        io << ']'
-      when Crinja::Dictionary
-        io << '{'
-        first = true
-        raw.each do |key, item|
-          io << ", " unless first
-          first = false
-          key.to_s.to_json(io)
-          io << ": "
-          python_json_dump(item, io)
-        end
-        io << '}'
-      else
-        raw.to_s.to_json(io)
-      end
+      Crinja::Value.new(VariableSubstitutor::FilterCore.to_json(Krikri::VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(target)))
     end
 
     Crinja.filter(:difference) do
@@ -624,8 +564,7 @@ module Krikri
     # indent width either way, so the two produce identical output),
     # kept as a separate registration since real Ansible does too.
     Crinja.filter(:to_yaml) do
-      any = JinjaFilters.sort_yaml_keys(JinjaFilters.crinja_value_to_yaml_any(target))
-      Crinja::Value.new(any.to_yaml.sub(/\A---[ \t]*\n?/, "").rstrip)
+      Crinja::Value.new(VariableSubstitutor::FilterCore.to_yaml(Krikri::VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(target)))
     end
 
     # `b64encode(encoding='utf-8')`/`b64decode()` - real Ansible's own
@@ -633,14 +572,8 @@ module Krikri
     # before - "no filter with name \"b64encode\" registered", failing
     # the whole template render, same failure class as to_nice_yaml
     # before it was added.
-    Crinja.filter(:b64encode) { Crinja::Value.new(Base64.strict_encode(target.to_s)) }
-    Crinja.filter(:b64decode) do
-      begin
-        Crinja::Value.new(Base64.decode_string(target.to_s))
-      rescue
-        raise "b64decode: invalid base64 input"
-      end
-    end
+    Crinja.filter(:b64encode) { Crinja::Value.new(VariableSubstitutor::FilterCore.b64encode(target.to_s)) }
+    Crinja.filter(:b64decode) { Crinja::Value.new(VariableSubstitutor::FilterCore.b64decode(target.to_s)) }
 
     # `from_json()`/`from_yaml()` - real Ansible's own filters, parse a
     # JSON/YAML string into a real Crinja value (dict/list/scalar) -
@@ -649,11 +582,7 @@ module Krikri
     # Crinja::Value converter #prepare_crinja_vars already uses for
     # every ordinary variable) rather than a second hand-rolled one.
     Crinja.filter(:from_json) do
-      begin
-        Krikri::VariableSubstitutor::CrinjaRenderer.json_any_to_crinja_value(JSON.parse(target.to_s))
-      rescue
-        raise "from_json: invalid JSON input"
-      end
+      Krikri::VariableSubstitutor::CrinjaRenderer.json_any_to_crinja_value(VariableSubstitutor::FilterCore.from_json(target.to_s))
     end
     Crinja.filter(:from_yaml) do
       # Real Ansible's own `from_yaml` filter (unlike `from_json`,
@@ -705,11 +634,7 @@ module Krikri
 
     # `checksum()` - real Ansible's own filter, always sha1 (distinct
     # from the general-purpose `hash(algorithm=...)` filter above).
-    Crinja.filter(:checksum) do
-      digest = OpenSSL::Digest.new("SHA1")
-      digest.update(target.to_s)
-      Crinja::Value.new(digest.final.hexstring)
-    end
+    Crinja.filter(:checksum) { Crinja::Value.new(VariableSubstitutor::FilterCore.checksum(target.to_s)) }
 
     # `union(other)` - real Ansible's own filter, set union preserving
     # first-seen order (matches Ansible's own dedup approach - a
@@ -815,10 +740,7 @@ module Krikri
     Crinja.filter(:to_nice_json) do
       sort_keys = arguments.kwargs["sort_keys"]?.try { |v| JinjaFilters.real_truthy?(v) }
       sort_keys = true if sort_keys.nil?
-
-      any = JinjaFilters.crinja_value_to_yaml_any(target)
-      any = JinjaFilters.sort_yaml_keys(any) if sort_keys
-      Crinja::Value.new(JSON.parse(any.to_json).to_pretty_json)
+      Crinja::Value.new(JSON.parse(VariableSubstitutor::FilterCore.to_nice_json(Krikri::VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(target), sort_keys)).to_pretty_json)
     end
 
     # `human_readable(isbits=False, unit=None)`/`human_to_bytes(
@@ -869,16 +791,8 @@ module Krikri
 
     # `md5()`/`sha1()` - real Ansible filters, standalone hex digests
     # (distinct from the general `hash(algorithm=)` filter above).
-    Crinja.filter(:md5) do
-      digest = OpenSSL::Digest.new("MD5")
-      digest.update(target.to_s)
-      Crinja::Value.new(digest.final.hexstring)
-    end
-    Crinja.filter(:sha1) do
-      digest = OpenSSL::Digest.new("SHA1")
-      digest.update(target.to_s)
-      Crinja::Value.new(digest.final.hexstring)
-    end
+    Crinja.filter(:md5) { Crinja::Value.new(VariableSubstitutor::FilterCore.md5(target.to_s)) }
+    Crinja.filter(:sha1) { Crinja::Value.new(VariableSubstitutor::FilterCore.sha1(target.to_s)) }
 
     # `expanduser()`/`expandvars()` - real Ansible filters, mirror
     # Python's os.path.expanduser/expandvars (a leading `~` -> $HOME;
@@ -916,9 +830,7 @@ module Krikri
     # `to_uuid(namespace=ANSIBLE_NAMESPACE)` - real Ansible filter, a
     # deterministic UUID5 using Ansible's own default namespace (not the
     # standard DNS namespace).
-    Crinja.filter(:to_uuid) do
-      Crinja::Value.new(UUID.v5(target.to_s, UUID.new("361E6D51-FAEC-444A-9079-341386DA8E2E")).to_s)
-    end
+    Crinja.filter(:to_uuid) { Crinja::Value.new(VariableSubstitutor::FilterCore.to_uuid(target.to_s)) }
 
     # `symmetric_difference(other)` - real Ansible filter: elements in
     # exactly one of target/other, not both.
