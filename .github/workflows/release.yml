@@ -7,6 +7,15 @@ name: Release
 # Builds a release (optimized +
 # stripped, fully static via Alpine/musl) binary set per architecture
 # and attaches them to the matching GitHub Release.
+#
+# The SAME anti-recursion rule bites this workflow's own "Commit and
+# push" step below (Formula/krikri.rb + README bump): that push also
+# rides the default GITHUB_TOKEN, so brew-test.yml's `push: paths:
+# Formula/krikri.rb` trigger silently never fires after a real release -
+# found live confirming the v0.9.738 release (0.9.738), the same class
+# of gap auto-tag.yml's own comment already documents for this
+# workflow. Worked around the same way: dispatch brew-test.yml
+# explicitly right after the formula push succeeds.
 
 on:
   push:
@@ -16,6 +25,7 @@ on:
 
 permissions:
   contents: write
+  actions: write # dispatching brew-test.yml below
 
 jobs:
   build:
@@ -269,3 +279,14 @@ jobs:
             git commit -m "Update Formula/krikri.rb and README version badge for ${GITHUB_REF_NAME}"
             git push origin HEAD:main
           fi
+
+      # This push rides the default GITHUB_TOKEN, so it does NOT trigger
+      # brew-test.yml's own `push: paths: Formula/krikri.rb` filter -
+      # same GitHub anti-recursion rule this file's own top comment
+      # documents for auto-tag.yml's tag push. Dispatch it explicitly so
+      # every real release still gets the formula verified on all 4
+      # platforms, not just on a manual run someone remembers to kick off.
+      - name: Dispatch brew-test.yml (push-triggered dispatch doesn't fire for a GITHUB_TOKEN push)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run brew-test.yml --ref main
