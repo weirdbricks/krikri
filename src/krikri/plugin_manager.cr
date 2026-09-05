@@ -1163,7 +1163,7 @@ module Krikri
     # case, since pre-upload got it), and costs the upload round trips
     # only the first time an unforeseen module is actually needed.
     def self.ensure_uploaded(host : Host, plugin_name : String, vars : Hash(String, JSON::Any))
-      simple_name = plugin_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community.(general|docker|mysql|postgresql|crypto|rabbitmq)|amazon\.aws)\./, "")
+      simple_name = simple_plugin_name(plugin_name)
       connection_host = get_connection_host(host, vars)
       host_key = "#{host.user}@#{connection_host}:#{host.port}"
 
@@ -1193,7 +1193,7 @@ module Krikri
     end
 
     def self.remote_plugin_target(plugin_name : String, become : Bool, become_user : String?, remote_user : String? = nil) : String
-      simple_name = plugin_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community.(general|docker|mysql|postgresql|crypto|rabbitmq)|amazon\.aws)\./, "")
+      simple_name = simple_plugin_name(plugin_name)
       remote_plugin_path = "#{REMOTE_PLUGIN_DIR}/#{simple_name}"
       become_needed?(become, become_user, remote_user) ? "sudo -n -u #{become_user} -- #{remote_plugin_path}" : remote_plugin_path
     end
@@ -1317,7 +1317,7 @@ module Krikri
     # Get local plugin path (compiled binary)
     private def self.get_local_plugin_path(plugin_name : String) : String
       # Strip FQCN to get simple plugin filename
-      simple_name = plugin_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community.(general|docker|mysql|postgresql|crypto|rabbitmq)|amazon\.aws)\./, "")
+      simple_name = simple_plugin_name(plugin_name)
 
       # Resolve plugins/ next to the running binary itself, not relative to
       # the current working directory - otherwise krikri-playbook could
