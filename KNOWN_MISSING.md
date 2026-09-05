@@ -158,6 +158,15 @@ consumers (`list`, `map`, `select`/`reject`, `join`, membership) still
 see tuples for a bare dict - nothing in the role corpus hits those.
 The general lazy-dict-templating gap above stays open, unchanged.
 
+**Addendum**: subsequently re-verified against the actual
+`PowerDNS.pdns` role itself (not just the synthetic repro above), live
+in a podman systemd container with a real PowerDNS install - `ok=17
+changed=7 failed=0 skipped=13` cold and `ok=15 changed=0 failed=0
+skipped=13` warm, both an EXACT match to real `ansible-playbook`;
+`/etc/powerdns/pdns.conf` byte-identical between engines;
+`systemctl is-active pdns` reports `active` on both. See
+`ROLES_TESTED.md`'s own row for full timings.
+
 ## Round 304 (podman virtualization-facts fix, 0.9.738 -> 0.9.739)
 
 Investigated the open gap round 303 left behind. `detect_virtualization`
