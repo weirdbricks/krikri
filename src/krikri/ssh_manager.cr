@@ -92,7 +92,21 @@ module Krikri
     # hard bound of its own, in case even the kill signal doesn't
     # unblock the fiber - e.g. if it's wedged in kernel-level uninter-
     # ruptible I/O, vanishingly rare but not impossible).
-    private def self.run_with_timeout(
+    #
+    # Fiber lifecycle on the timeout path (audited, not assumed): the
+    # SIGKILL guarantees the child dies, which unblocks the spawned
+    # fiber's `#wait` (or errors its stdin pipe write with EPIPE), so
+    # the fiber completes and its result lands in the capacity-1
+    # channel - either received within the 5s grace (the killed
+    # process's real exit status is then returned, e.g. 137) or, if
+    # even that doesn't arrive in time, discarded when this method
+    # returns and the channel is garbage. Either way the fiber
+    # terminates on its own; nothing leaks permanently.
+    #
+    # Public (not private) so the timeout semantics can be spec'd
+    # directly against a real local process - see
+    # spec/unit/ssh_manager_timeout_spec.cr.
+    def self.run_with_timeout(
       process : Process,
       timeout_seconds : Int32,
       &block : Process -> NamedTuple(exit_code: Int32, stdout: String, stderr: String)

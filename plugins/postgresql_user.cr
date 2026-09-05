@@ -5,6 +5,7 @@ require "pg"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/postgresql_connection"
 require "../src/krikri/plugin_helpers/postgresql_role_flags"
+require "../src/krikri/plugin_helpers/sql_quoting"
 
 module Krikri
   # PostgreSQL user (role) plugin - creates/removes a role and manages
@@ -193,11 +194,11 @@ module Krikri
     end
 
     private def quote_ident(s : String) : String
-      "\"" + s.gsub("\"", "\"\"") + "\""
+      PluginHelpers::SqlQuoting.pg_quote_ident(s)
     end
 
     private def quote_str(s : String) : String
-      "'" + s.gsub("'", "''") + "'"
+      PluginHelpers::SqlQuoting.quote_str(s)
     end
   end
 end

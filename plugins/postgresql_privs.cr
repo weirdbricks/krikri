@@ -5,6 +5,7 @@ require "pg"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/postgresql_connection"
 require "../src/krikri/plugin_helpers/postgresql_acl"
+require "../src/krikri/plugin_helpers/sql_quoting"
 
 module Krikri
   # PostgreSQL privileges plugin - grants/revokes GRANT/REVOKE-style
@@ -934,7 +935,7 @@ module Krikri
     end
 
     private def quote_ident(s : String) : String
-      "\"" + s.gsub("\"", "\"\"") + "\""
+      PluginHelpers::SqlQuoting.pg_quote_ident(s)
     end
   end
 end

@@ -8,6 +8,7 @@ require "xz"
 require "bz2"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/postgresql_connection"
+require "../src/krikri/plugin_helpers/sql_quoting"
 
 module Krikri
   # PostgreSQL database plugin - creates/removes a database.
@@ -357,11 +358,11 @@ module Krikri
     end
 
     private def quote_ident(s : String) : String
-      "\"" + s.gsub("\"", "\"\"") + "\""
+      PluginHelpers::SqlQuoting.pg_quote_ident(s)
     end
 
     private def quote_str(s : String) : String
-      "'" + s.gsub("'", "''") + "'"
+      PluginHelpers::SqlQuoting.quote_str(s)
     end
   end
 end

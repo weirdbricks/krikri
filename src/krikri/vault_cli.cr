@@ -85,6 +85,16 @@ module Krikri
         exit 1
       end
 
+      # --output with multiple input files would write EVERY file's
+      # ciphertext to the ONE output path (last writer wins), leaving
+      # all the earlier input files unencrypted in place while reporting
+      # "Encryption successful" for each - exactly the silent multi-file
+      # overwrite this guard prevents.
+      if output_path && files.size > 1
+        STDERR.puts "Error: --output can only be used with a single FILE (got #{files.size}); omit --output to encrypt files in place."
+        exit 1
+      end
+
       password = resolve_password(vault_password_file)
 
       files.each do |file|
@@ -104,6 +114,11 @@ module Krikri
 
       if files.empty?
         STDERR.puts "Usage: krikri-playbook vault decrypt [--vault-password-file FILE] [--output FILE] FILE ..."
+        exit 1
+      end
+
+      if output_path && files.size > 1
+        STDERR.puts "Error: --output can only be used with a single FILE (got #{files.size}); omit --output to decrypt files in place."
         exit 1
       end
 

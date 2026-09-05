@@ -5,6 +5,7 @@ require "mysql"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/mysql_connection"
 require "../src/krikri/plugin_helpers/mysql_privileges"
+require "../src/krikri/plugin_helpers/sql_quoting"
 
 module Krikri
   # MySQL user plugin - creates/removes a user and manages its
@@ -451,11 +452,11 @@ module Krikri
     end
 
     private def quote_str(s : String) : String
-      "'" + s.gsub("'", "''") + "'"
+      PluginHelpers::SqlQuoting.quote_str(s)
     end
 
     private def quote_ident(s : String) : String
-      "`" + s.gsub("`", "``") + "`"
+      PluginHelpers::SqlQuoting.mysql_quote_ident(s)
     end
 
     # "db.table" -> "`db`.`table`"; "*" components (db.* / *.*) are left
