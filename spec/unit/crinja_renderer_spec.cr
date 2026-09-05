@@ -577,11 +577,13 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # Real Ansible's templar preserves this as a genuine dict
     # (_AnsibleLazyTemplateDict); this engine's plain string-based
     # substitution used to coerce it to unparseable Python-repr text
-    # instead, so a later `{% for key, val in some_var | sort %}` failed
-    # with "cannot unpack multiple values of type Crinja::Value". See
-    # CrinjaRenderer's own UPDATE_THEN_REREAD_RE for the narrow,
-    # documented-shape-only fix (not the full lazy-dict-templating
-    # architecture - see KNOWN_MISSING.md).
+    # instead, so a later `{% for key, val in some_var %}` (the
+    # jtyr.motd/jtyr.nsswitch actual template shape, which iterates a
+    # real dict with `.items()`) failed with "cannot unpack multiple
+    # values of type Crinja::Value". See CrinjaRenderer's own
+    # UPDATE_THEN_REREAD_RE for the narrow, documented-shape-only fix
+    # (not the full lazy-dict-templating architecture - see
+    # KNOWN_MISSING.md).
     v = Hash(String, JSON::Any).new
     v["some_dict"] = JSON::Any.new({"a" => JSON::Any.new(1_i64), "b" => JSON::Any.new(2_i64)})
     v["other_dict"] = JSON::Any.new({"b" => JSON::Any.new(99_i64), "c" => JSON::Any.new(3_i64)})
@@ -590,8 +592,12 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
       Krikri::VarSubstitutor.new(vars: v)
     )
 
+    # The shape real roles use (jtyr.motd's own templates/motd.j2:
+    # `{% for key, value in item.items() %}`). Asserts the rendered
+    # value is a real Crinja Dictionary (not a stringified fallback)
+    # by iterating its pairs and producing the expected output.
     renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
-    result = renderer.render("{% for key, val in some_var | sort %}{{ key }}={{ val }} {% endfor %}")
+    result = renderer.render("{% for key, val in some_var.items() %}{{ key }}={{ val }} {% endfor %}")
     result.strip.should eq("a=1 b=99 c=3")
 
     # The mutation is real and persists onto some_dict itself too,

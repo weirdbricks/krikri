@@ -304,17 +304,23 @@ module Krikri
 
     # `{% for (key, value) in dict.items() %}` - the idiomatic real-
     # Jinja2 way to iterate a dict's key/value pairs (mysql_hardening's
-    # own hardening.cnf.j2 writes it exactly this way) - two things
-    # Crinja can't parse: parens around the loop variables, and dicts
-    # having no `.items()` method at all. Neither needs real rewriting
-    # logic, since Crinja's own bare `{% for k, v in dict %}` (no
-    # parens, no `.items()`) already yields (key, value) pairs directly
-    # - a real deviation from Python/Jinja2 (where a bare dict for-loop
-    # iterates keys only, not pairs), but exactly the behavior needed
-    # here, so both problem pieces are simply stripped rather than
-    # implemented from scratch.
+    # own hardening.cnf.j2 writes it exactly this way). Only the parens
+    # around the loop variables need stripping - the vendored crinja
+    # fork's `.items()` is a real method on Hash values (see
+    # `lib/crinja/src/runtime/python_hash_methods.cr`), so `.items()`
+    # itself is left alone and evaluated for real rather than textually
+    # stripped. Was NOT always true: an earlier FOR_ITEMS_METHOD regex
+    # used to strip `.items()` out entirely and rely on Crinja's bare
+    # `{% for k, v in dict %}` already yielding (key, value) pairs - a
+    # real deviation from Python/Jinja2 (where a bare dict for-loop
+    # iterates keys only) that happened to produce the right pairs, but
+    # silently broke `.items() | sort` (jtyr.nsswitch's own nsswitch.
+    # conf.j2: `{% for key, val in nsswitch_config.items() | sort %}`)
+    # by sorting the raw dict instead of its item tuples. Removed once
+    # `.items()` support landed in the fork - verified live against
+    # both jtyr.nsswitch (`.items() | sort`) and jtyr.motd (`.items()`
+    # alone, item.motd.j2), byte-for-byte identical to real Ansible.
     FOR_TUPLE_PARENS = /(\{%-?\s*for\s+)\(([^)]+)\)(\s+in\s+)/
-    FOR_ITEMS_METHOD = /(\{%-?\s*for\s+.+?\s+in\s+[A-Za-z_][\w.]*)\.items\(\)/
 
     # Parses a leading `#jinja2: key:value, key2:value2` directive line
     # (only recognized on the template's literal first line, matching
@@ -414,10 +420,10 @@ module Krikri
             "{%#{$1} #{$2} (#{rewrite_in_expr(condition)}) | pytruthy #{$4}%}"
           end
         end
-        # `{% for (k, v) in dict.items() %}` -> `{% for k, v in dict %}`
-        # (see FOR_TUPLE_PARENS/FOR_ITEMS_METHOD above).
+        # `{% for (k, v) in dict.items() %}` -> `{% for k, v in dict.items() %}`
+        # (see FOR_TUPLE_PARENS above - `.items()` itself is real
+        # Crinja syntax now, left untouched).
         once = once.gsub(FOR_TUPLE_PARENS) { "#{$1}#{$2}#{$3}" }
-        once = once.gsub(FOR_ITEMS_METHOD) { $1 }
         break if once == template
         template = once
       end

@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.737`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.738`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.23` (see `shard.yml`).
 
 ---
@@ -28,6 +28,19 @@ narrative, newest first.
 Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
+
+### Podman-guest virtualization facts not detected
+
+Found live confirming the `.items()` dict-iteration fix (round 303) via
+`jtyr.motd` in a podman container: real Ansible's `setup:` correctly
+reports `ansible_facts.virtualization_role=guest` /
+`virtualization_type=podman`, while krikri's facts gatherer reports
+`NA`/none for both - the role's own `motd.j2` then renders `Virtual:
+NO` instead of real Ansible's `Virtual: YES`. Unrelated to the
+dict-iteration fix itself (confirmed by isolating a plain `debug:
+ansible_facts.virtualization_role` task - the divergence is purely in
+virtualization detection, not templating). Root cause and fix not
+investigated further here.
 
 ### ~~`community.rabbitmq` warm-run `changed` delta~~ (closed, round 199)
 
@@ -93,6 +106,38 @@ then fails with "Cast from Crinja::Tuple to (Crinja::SafeString |
 String) failed". Fork-internal (`lib/crinja/src/runtime/value.cr`), not
 krikri's own templating code - same class of underlying gap as the two
 shapes above, not chased further here.
+
+---
+
+## Round 303 (dict-iteration `.items()` fix, from a parallel worktree, 0.9.737 -> 0.9.738)
+
+Found and fixed in a separate worktree (`fix-dict-iteration` branch),
+merged here after confirmation. `template_action_plugin.cr`'s old
+`FOR_ITEMS_METHOD` regex textually stripped `.items()` out of every
+`{% for %}` tag and relied on Crinja's own bare `{% for k, v in dict %}`
+already yielding (key, value) pairs - a workaround from before the
+vendored crinja fork had a real `.items()` method on Hash values. That
+stripping was silently WRONG for `.items() | sort` (`jtyr.nsswitch`'s
+own `nsswitch.conf.j2`: `{% for key, val in nsswitch_config.items() |
+sort %}`) - it sorted the raw dict instead of its item tuples. Fixed by
+simply leaving `.items()` alone (removing the regex and its `.gsub`
+call) since the fork now evaluates it for real
+(`lib/crinja/src/runtime/python_hash_methods.cr`).
+
+Confirmed live (podman/Debian 12) against both roles named in the
+"Ansible's lazy dict-templating" open gap below as the original
+motivating cases:
+
+- `jtyr.nsswitch` (`.items() | sort`, the shape the old stripping
+  workaround got wrong): rendered `/etc/nsswitch.conf` byte-for-byte
+  identical to real `ansible-playbook`.
+- `jtyr.motd` (`.items()` alone, no `| sort`): rendered `/etc/motd`
+  structurally identical (same lines, spacing, ordering) - the one
+  difference (`Virtual: YES` vs `Virtual: NO`) traced to an unrelated,
+  pre-existing gap, now tracked separately above ("Podman-guest
+  virtualization facts not detected").
+
+Full spec suite (2495 examples) and `ameba` clean.
 
 ---
 
