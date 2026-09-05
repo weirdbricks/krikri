@@ -30,6 +30,27 @@ module Krikri
     # of the role's OWN tasks first and only failed later at the runtime
     # `_include_role` dispatch, instead of refusing the whole playbook
     # up front the way real Ansible does (rc=1, zero tasks run).
+    # Process-wide parsed-YAML memo for role files. include_role: re-reads
+    # and re-parses the SAME tasks/main.yml, handlers/main.yml, defaults/,
+    # vars/ and meta/main.yml on EVERY invocation - once per loop item,
+    # once per serial batch, once per repeated include - and YAML parsing
+    # dominates that cost by far. The cache stores the parsed YAML::Any
+    # tree; the per-invocation Task objects are still built FRESH by
+    # parse_tasks on every call (the executor mutates tasks per
+    # invocation - tags merge, role-context stamping, item binding - so
+    # sharing Task objects would be the cross-invocation mutation hazard
+    # the parallel-dispatch safety argument depends on NOT having).
+    # Role files are static for the lifetime of a run, so there is no
+    # invalidation; the cache is safe under cooperative scheduling (plain
+    # hash insert, no yield point).
+    @@parsed_yaml_cache = Hash(String, YAML::Any).new
+
+    private def self.cached_yaml(path : String) : YAML::Any
+      @@parsed_yaml_cache.fetch(path) do
+        @@parsed_yaml_cache[path] = YAML.parse(Vault.maybe_decrypt(File.read(path)))
+      end
+    end
+
     def self.role_exists?(name : String, playbook_dir : String) : Bool
       !resolve_role_dir(name, playbook_dir).nil?
     end
@@ -343,7 +364,7 @@ module Krikri
       meta_path = find_main_file(File.join(role_dir, "meta")) || File.join(role_dir, "meta", "main.yml")
       return collected unless File.exists?(meta_path)
 
-      meta_yaml = YAML.parse(Vault.maybe_decrypt(File.read(meta_path)))
+      meta_yaml = cached_yaml(meta_path)
       deps = meta_yaml["dependencies"]?.try(&.as_a?)
       return collected unless deps
 
@@ -518,7 +539,7 @@ module Krikri
       result = Hash(String, JSON::Any).new
       return result unless File.exists?(path)
 
-      yaml = YAML.parse(Vault.maybe_decrypt(File.read(path)))
+      yaml = cached_yaml(path)
       if hash = yaml.as_h?
         hash.each { |key, value| result[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value)) }
       end
@@ -584,7 +605,7 @@ module Krikri
       spec_path = File.join(role_dir, "meta", "argument_specs.yml")
       return nil unless File.exists?(spec_path)
 
-      yaml = YAML.parse(Vault.maybe_decrypt(File.read(spec_path)))
+      yaml = cached_yaml(spec_path)
       main_spec = yaml["argument_specs"]?.try(&.["main"]?)
       return nil unless main_spec
 
@@ -605,7 +626,7 @@ module Krikri
     private def self.load_tasks_file(path : String, play : Play, known_vars : Hash(String, JSON::Any)? = nil) : Array(Task)
       return [] of Task unless File.exists?(path)
 
-      yaml = YAML.parse(Vault.maybe_decrypt(File.read(path)))
+      yaml = cached_yaml(path)
       return [] of Task unless yaml.as_a?
 
       PlaybookParser.parse_tasks(yaml.as_a, play, "task in #{path}", File.dirname(path), known_vars)
