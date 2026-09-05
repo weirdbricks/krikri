@@ -646,30 +646,26 @@ module Krikri
           host.vars[key] = parse_value(value)
         end
 
+        # Special handling for ansible_host: don't modify host.name, but
+        # the connection will use ansible_host from host vars directly.
+
+        # Special handling for ansible_user
+        if ansible_user = host.vars["ansible_user"]?.try(&.as_s?)
+          host.user = ansible_user
+        end
+
+        # Special handling for ansible_port
+        if ansible_port = host.vars["ansible_port"]?
+          if port = ansible_port.as_i?
+            host.port = port
+          elsif port = ansible_port.as_s?.try(&.to_i?)
+            host.port = port
+          end
+        end
+
         # Add host to group
         group = inventory.get_or_create_group(group_name)
         group.add_host(host)
-      end
-
-      hostname = parts[0]
-      host = inventory.hosts[hostname]?
-      return unless host
-
-      # Special handling for ansible_host: don't modify host.name, but
-      # the connection will use ansible_host from host vars directly.
-
-      # Special handling for ansible_user
-      if ansible_user = host.vars["ansible_user"]?.try(&.as_s?)
-        host.user = ansible_user
-      end
-
-      # Special handling for ansible_port
-      if ansible_port = host.vars["ansible_port"]?
-        if port = ansible_port.as_i?
-          host.port = port
-        elsif port = ansible_port.as_s?.try(&.to_i?)
-          host.port = port
-        end
       end
     end
 

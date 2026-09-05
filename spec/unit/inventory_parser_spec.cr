@@ -227,6 +227,21 @@ describe Krikri::InventoryParser do
       host.port.should eq(2222)
       inventory.groups["web"].hosts.has_key?("web1").should be_true
     end
+
+    it "applies ansible_user/ansible_port to every host of a range entry" do
+      write(File.join(ROOT, "inventory.ini"), <<-INI)
+        [web]
+        web[01:03] ansible_user=deploy ansible_port=2222
+        INI
+
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+
+      ["web01", "web02", "web03"].each do |name|
+        host = inventory.hosts[name]
+        host.user.should eq("deploy")
+        host.port.should eq(2222)
+      end
+    end
   end
 
   describe "group_vars/host_vars directory loading" do
