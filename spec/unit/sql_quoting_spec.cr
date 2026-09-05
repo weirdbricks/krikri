@@ -37,6 +37,5 @@ describe Krikri::PluginHelpers::SqlQuoting do
       Krikri::PluginHelpers::SqlQuoting.quote_str("it's").should eq("'it''s'")
       Krikri::PluginHelpers::SqlQuoting.quote_str("'; DROP TABLE users; --").should eq("'''; DROP TABLE users; --'")
     end
-
   end
 end
