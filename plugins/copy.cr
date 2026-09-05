@@ -319,7 +319,7 @@ module Krikri
             # Files are identical
             changed = false
           end
-        rescue
+        rescue ex : File::Error
           # Ignore, continue with copy
         end
       end
@@ -551,7 +551,7 @@ module Krikri
 
       begin
         File.copy(path, backup_path)
-      rescue
+      rescue ex : File::Error
         # Backup failed, continue anyway
       end
 
@@ -582,7 +582,7 @@ module Krikri
           else
             Process.run("chmod", [mode, path], output: Process::Redirect::Close, error: Process::Redirect::Close)
           end
-        rescue
+        rescue ex : File::Error
           # Mode setting failed, continue anyway
         end
       end
@@ -612,7 +612,7 @@ module Krikri
       end
 
       File.chown(path, uid: uid, gid: gid) if uid != -1 || gid != -1
-    rescue
+    rescue ex : File::Error
       # A chown/chmod failure (e.g. not running as root/owner) shouldn't
       # fail the whole task - matches file.cr's own identical rescue.
     end

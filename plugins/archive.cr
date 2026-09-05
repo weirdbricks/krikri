@@ -217,7 +217,7 @@ module Krikri
         info = info_for(child_path)
         walk(child_path, members) if info.directory? && !info.symlink?
       end
-    rescue
+    rescue ex : File::Error
       # Permission denied, etc. - skip this directory rather than failing
       # the whole archive.
     end
@@ -553,7 +553,7 @@ module Krikri
           File.chmod(dest, permissions)
         end
       end
-    rescue
+    rescue ex : File::Error
       # A chmod/chown failure (e.g. not running as root/owner) shouldn't
       # fail the whole task - matches the previous shell implementation's
       # behavior of not checking these commands' exit codes either.

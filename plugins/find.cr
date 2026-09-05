@@ -266,7 +266,7 @@ module Krikri
           walk(child_path, current_depth + 1, max_depth, entries)
         end
       end
-    rescue
+    rescue ex : File::Error
       # Permission denied, etc. - skip this directory, same as the
       # previous shell implementation's `2>/dev/null`.
     end
@@ -384,7 +384,7 @@ module Krikri
         anchored = Regex.new("\\A(?:#{contains})")
         content.each_line.any?(&.matches?(anchored))
       end
-    rescue
+    rescue ex : File::Error | Regex::Error
       false
     end
 
@@ -402,7 +402,7 @@ module Krikri
 
     private def add_checksum(stat_hash : Hash(String, JSON::Any), path : String, algorithm : String)
       stat_hash["checksum"] = JSON::Any.new(native_checksum(path, algorithm))
-    rescue
+    rescue ex : File::Error
       # A checksum failure (e.g. permission denied) just omits the field
       # rather than dropping the whole match.
     end
