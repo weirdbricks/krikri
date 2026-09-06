@@ -167,7 +167,7 @@ module Krikri
     private def create(name : String, check_mode : Bool) : PluginResult
       return PluginResult.new(changed: true, failed: false, msg: "Would create user (check mode)") if check_mode
 
-      create_home = @params["create_home"]?.nil? || true?(@params["create_home"]?)
+      create_home = wants_create_home?
       locked = @params["password_lock"]?.try { |v| true?(v) }
       args = PluginHelpers::UserState.useradd_args(
         name,
@@ -218,6 +218,58 @@ module Krikri
         @params["comment"]?
       )
 
+      flags += password_and_expiry_flags(name)
+
+      # `usermod -d <newhome>` (already in flags above when home: changes)
+      # only rewrites the passwd entry - real GNU usermod's own `-m`
+      # (move the OLD home's contents to the new location) requires the
+      # OLD home to actually exist, so it does nothing for an account
+      # whose real prior home is elsewhere (caddy_ansible.caddy_ansible's
+      # own default caddy_user: www-data, modified with `home: /home/
+      # caddy` - www-data's actual home is /var/www, which exists, so
+      # `-m` would move the WRONG directory's contents rather than
+      # create a fresh one at the new path). Real Ansible's own
+      # modify_user_usermod() does this as an independent, explicit step
+      # (create the target dir + chown it) rather than relying on
+      # usermod -m at all - found via that role's own subsequent
+      # `get_url: dest: "{{ caddy_home }}/releases.txt"` failing "No such
+      # file or directory" because /home/caddy was never created.
+      new_home = home_needing_creation(current)
+
+      return PluginResult.new(changed: false, failed: false, msg: "User already up to date") if flags.empty? && !new_home
+
+      return PluginResult.new(changed: true, failed: false, msg: "Would modify user (check mode)") if check_mode
+
+      unless flags.empty?
+        result = remote_exec("usermod #{flags.join(" ")} #{name}")
+        return command_failure("modify user", result) unless result[:exit_code] == 0
+      end
+
+      if new_home
+        gid = resolve_gid(@params["group"]?) || current.gid
+        home_result = create_home_directory(new_home, name, gid)
+        return home_result if home_result.failed?
+      end
+
+      PluginResult.new(changed: true, failed: false, msg: "User modified")
+    end
+
+    # `create_home:` is real Ansible's canonical param name; `createhome:`
+    # (no underscore) is its documented alias - the more commonly seen
+    # spelling in real playbooks (caddy_ansible.caddy_ansible's own
+    # `createhome: true`). Neither this codebase's params hash nor the
+    # playbook parser normalizes module-arg aliases, so a role using only
+    # the alias silently fell through to the default (harmlessly, since
+    # the default already matches) - checked here so an explicit
+    # `createhome: false` is honored too, not just the default case.
+    private def wants_create_home? : Bool
+      raw = @params["create_home"]? || @params["createhome"]?
+      raw.nil? || true?(raw)
+    end
+
+    private def password_and_expiry_flags(name : String) : Array(String)
+      flags = [] of String
+
       password = @params["password"]?
       locked = @params["password_lock"]?.try { |v| true?(v) }
       if password || !locked.nil?
@@ -233,14 +285,41 @@ module Krikri
         end
       end
 
-      return PluginResult.new(changed: false, failed: false, msg: "User already up to date") if flags.empty?
+      flags
+    end
 
-      return PluginResult.new(changed: true, failed: false, msg: "Would modify user (check mode)") if check_mode
+    # The new home: dir modify() needs to create, or nil when create_home:
+    # is off, home: isn't changing, or the target already exists.
+    private def home_needing_creation(current : PluginHelpers::UserState::User) : String?
+      return nil unless wants_create_home?
+      new_home = @params["home"]?
+      return nil unless new_home && new_home != current.home
+      return nil if remote_dir_exists?(new_home)
 
-      result = remote_exec("usermod #{flags.join(" ")} #{name}")
-      return command_failure("modify user", result) unless result[:exit_code] == 0
+      new_home
+    end
 
-      PluginResult.new(changed: true, failed: false, msg: "User modified")
+    private def remote_dir_exists?(path : String) : Bool
+      remote_exec("test -d #{path}")[:exit_code] == 0
+    end
+
+    # Mirrors what real ansible-core's user module does for a MODIFY-path
+    # home directory creation (a plain mkdir + skeleton copy + chown, not
+    # useradd's own -m machinery, which only applies at account-creation
+    # time) - close enough for the common case (a role writing its own
+    # files into a freshly-relocated home right after this task), not a
+    # byte-for-byte port of every corner of CreateHomeDir/chown_homedir.
+    private def create_home_directory(home : String, name : String, gid : String) : PluginResult
+      mkdir = remote_exec("mkdir -p #{home}")
+      return command_failure("create home directory", mkdir) unless mkdir[:exit_code] == 0
+
+      remote_exec("cp -a /etc/skel/. #{home}/ 2>/dev/null")
+
+      chown = remote_exec("chown -R #{name}:#{gid} #{home}")
+      return command_failure("set home directory ownership", chown) unless chown[:exit_code] == 0
+
+      remote_exec("chmod 0700 #{home}")
+      PluginResult.new(changed: true, failed: false, msg: "Home directory created")
     end
 
     # `getent passwd`'s own primary-group field is always a raw GID
