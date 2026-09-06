@@ -274,6 +274,28 @@ describe Krikri::VariableSubstitutor::VariableLookup do
     (lookup.resolve("mydict[binary_basename]") || raise "unexpected nil").as_s.should eq("checksum1")
   end
 
+  it "resolves an INDEX KEY that is itself bracket-indexed (dict[other[key]])" do
+    # Real bug found via xanmanning.k3s's own vars/main.yml + pre_checks.yml
+    # (`k3s_service_handler[ansible_facts['service_mgr']] == 'service'`,
+    # k3s_service_handler being a plain {systemd: systemd, openrc: service}
+    # lookup table). `walk`'s bracket-suffix handling found the matching
+    # `]` for an indexed suffix via a plain `suffix.index(']', pos)`, which
+    # for a key that is itself indexed stops at the INNER close bracket -
+    # `dict[other['key']]` extracted the malformed `other['key'` (missing
+    # its own closing bracket) as the key text instead of the intended
+    # `other['key']` sub-expression, so the whole lookup silently missed
+    # and every use of it in a `when:` raised "... is undefined" where
+    # real Ansible resolves it and just evaluates the comparison. Fixed
+    # with a depth-aware `matching_bracket_close` (mirrors the existing
+    # `top_level_char_index` depth tracking) instead of the plain
+    # `String#index`.
+    v = Hash(String, JSON::Any).new
+    v["my_handler"] = JSON.parse(%({"systemd": "systemd", "openrc": "service"}))
+    v["ansible_facts"] = JSON.parse(%({"service_mgr": "systemd"}))
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
+    (lookup.resolve("my_handler[ansible_facts['service_mgr']]") || raise "unexpected nil").as_s.should eq("systemd")
+  end
+
   it "re-renders a dotted-access BASE variable that is itself still-unrendered {{ }} text before walking .method()/.attr off of it" do
     # Real Ansible's recursive re-templating - one more independent copy
     # of this bug class (already fixed at several OTHER call sites: the

@@ -380,6 +380,32 @@ describe Krikri::ConditionalEvaluator do
     end
   end
 
+  describe "bracket-indexed variable access with a nested bracket-indexed key" do
+    # Real bug found via xanmanning.k3s's own pre_checks.yml:
+    # `k3s_service_handler[ansible_facts['service_mgr']] == 'service'`
+    # (k3s_service_handler a plain {systemd: systemd, openrc: service}
+    # role var). VariableLookup#walk's bracket-suffix handling found the
+    # closing `]` via a plain, non-depth-aware `String#index`, so for a
+    # key that is itself indexed (`dict[other['key']]`) it stopped at the
+    # INNER close bracket and extracted the malformed `other['key'` as
+    # the key text - the whole expression then raised "... is undefined"
+    # where real Ansible resolves it and evaluates the comparison
+    # normally. See variable_lookup_spec.cr for the VariableLookup-level
+    # regression test; this pins the same shape through the bare when:
+    # evaluator that the role actually hits.
+    it "resolves dict[other['key']] in a when: comparison" do
+      v = Hash(String, JSON::Any).new
+      v["k3s_service_handler"] = JSON.parse(%({"systemd": "systemd", "openrc": "service"}))
+      v["ansible_facts"] = JSON.parse(%({"service_mgr": "systemd"}))
+      Krikri::ConditionalEvaluator.evaluate(
+        "k3s_service_handler[ansible_facts['service_mgr']] == 'service'", v
+      ).should be_false
+      Krikri::ConditionalEvaluator.evaluate(
+        "k3s_service_handler[ansible_facts['service_mgr']] == 'systemd'", v
+      ).should be_true
+    end
+  end
+
   describe "filter chains" do
     # Real, previously-shipped bug: this module had no concept of `|` at
     # all, so any condition combining a filter with a comparison (or used

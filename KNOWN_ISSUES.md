@@ -97,6 +97,8 @@ Logs: `testing/kata/round_new_authors/results/riemers.gitlab-runner/`
 above was ruled out).
 
 ### `xanmanning.k3s` — real divergence (re-verified solo)
+
+**FIXED (0.9.772)**: `VariableLookup#walk`'s bracket-suffix handling found the closing `]` for an indexed suffix via a plain, non-depth-aware `String#index`, so a key that is itself bracket-indexed (`k3s_service_handler[ansible_facts['service_mgr']]`, this role's own service-manager lookup table) stopped at the INNER close bracket and extracted the malformed `ansible_facts['service_mgr'` (missing its own closing bracket) as the key text, instead of resolving the nested `ansible_facts['service_mgr']` sub-expression first. Real Ansible resolves the whole thing to `systemd` and evaluates the `when:` normally; krikri raised "... is undefined" on the very first task using this idiom, short-circuiting the rest of the role. Fixed with a depth-aware `matching_bracket_close` (mirrors the existing `top_level_char_index` depth tracking). Regression specs: `variable_lookup_spec.cr` (VariableLookup level) and `conditional_evaluator_spec.cr` (the bare `when:` path the role actually hits). Live-reverified on a fresh Kata pair: `ok=8 failed=1 skipped=2` identical on both engines, cold and warm (the one `failed=1` is an unrelated pre-existing environment gap, not re-diagnosed here).
 Warm run: ansible `ok=58` vs krikri `ok=5`, both `failed=1`. Cold run:
 ansible timed out at 900s (genuinely slow role, real network/download
 bound - not itself a bug), krikri failed with `ok=5`. Needs a closer task-

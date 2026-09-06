@@ -109,6 +109,35 @@ module Krikri
         nil
       end
 
+      # Finds the `]` matching the `[` at *open_pos*, respecting nested
+      # `([{`/`)]}` and quoted strings - a plain `suffix.index(']', pos)`
+      # (the previous implementation) stops at the FIRST `]`, which for a
+      # bracket key that is itself indexed (`k3s_service_handler[ansible_
+      # facts['service_mgr']]`, xanmanning.k3s's own service-manager
+      # lookup) is the INNER close bracket, truncating the extracted key
+      # to the malformed `ansible_facts['service_mgr'` (missing its own
+      # closing bracket) and silently missing the whole lookup.
+      private def matching_bracket_close(suffix : String, open_pos : Int32) : Int32?
+        depth = 0
+        quote : Char? = nil
+
+        (open_pos...suffix.size).each do |i|
+          itm = suffix[i]
+          if q = quote
+            quote = nil if itm == q
+          elsif itm == '\'' || itm == '"'
+            quote = itm
+          elsif "([{".includes?(itm)
+            depth += 1
+          elsif ")]}".includes?(itm)
+            depth -= 1
+            return i if depth == 0 && itm == ']'
+          end
+        end
+
+        nil
+      end
+
       # Walks a dotted/indexed suffix (`.stat.exists`, "[0].name",
       # ".days") against an already-resolved value, for a caller that
       # computed the base value itself (ExpressionEvaluator's
@@ -134,7 +163,7 @@ module Krikri
             part = suffix[dot_start...pos]
             current = hash_method_call(current, part) || (current.raw.is_a?(Hash) ? current[part]? : nil)
           when '['
-            close = suffix.index(']', pos)
+            close = matching_bracket_close(suffix, pos)
             return nil unless close
             current = index_into(current, resolve_index_key(suffix[(pos + 1)...close]))
             pos = close + 1
@@ -702,6 +731,25 @@ module Krikri
       # returning the whole unindexed base value instead - delegates to a
       # fresh ExpressionEvaluator the same way ComparisonEvaluator's own
       # evaluate_simple_value already does for a comparison operand.
+      # Routes an INDEX KEY that is itself bracket-indexed
+      # (`ansible_facts['service_mgr']` as the key in
+      # `k3s_service_handler[ansible_facts['service_mgr']]`) through the
+      # full `resolve` entry point, which already dispatches indexed/
+      # nested/simple correctly based on what *index_expr* contains -
+      # `resolve_simple`/`resolve_nested` have no notion of `[...]` at all.
+      private def resolve_bracket_index_key(index_expr : String) : String | Int32 | Nil
+        return nil unless top_level_char_index(index_expr, '[')
+
+        resolved = resolve(index_expr).try { |value| rerender_if_templated(value) }
+        return nil unless resolved
+
+        case raw = resolved.raw
+        when String       then raw
+        when Int64, Int32 then raw.to_i
+        else                   nil
+        end
+      end
+
       private def resolve_index_key(index_expr : String) : String | Int32
         if quoted = quoted_index_literal(index_expr)
           return quoted
@@ -711,6 +759,18 @@ module Krikri
         if index_expr.includes?('|')
           rendered = ExpressionEvaluator.new(@vars).evaluate(index_expr)
           return rendered.to_i? || rendered
+        end
+
+        # The index itself can be bracket-indexed
+        # (`k3s_service_handler[ansible_facts['service_mgr']]`, xanmanning.
+        # k3s's own service-manager lookup table) - `resolve_simple`/
+        # `resolve_nested` below have no notion of `[...]`, so a nested
+        # index expression like this always missed both and fell through
+        # to the `else index_expr` branch, using the literal text
+        # "ansible_facts['service_mgr']" as the dict key instead of its
+        # resolved value ("systemd").
+        if bracket_key = resolve_bracket_index_key(index_expr)
+          return bracket_key
         end
 
         # A bare-identifier index key (`dict[some_var]`) needs the same
