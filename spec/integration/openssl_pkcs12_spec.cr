@@ -104,11 +104,61 @@ describe "openssl_pkcs12 plugin" do
       {"path" => path_for("c.p12"), "state" => "absent"})["changed"].as_bool.should be_false
   end
 
-  it "rejects action: parse rather than silently doing nothing" do
+  it "action: parse converts the archive to a PEM bundle (key first, then certs)" do
+    # The real module's parse is a converter: reads `src:`, writes the
+    # private key followed by the certificates as PEM to `path:`.
+    src = path_for("parse.p12")
+    dest = path_for("parsed.pem")
+    PluginSpecHelper.run("openssl_pkcs12", export_params("myname").merge({"path" => src}))
+
     result = PluginSpecHelper.run("openssl_pkcs12",
-      {"action" => "parse", "path" => path_for("a.p12"), "privatekey_path" => path_for("a.key")})
+      {"action" => "parse", "src" => src, "path" => dest})
+
+    result["changed"].as_bool.should be_true
+    result["filename"].as_s.should eq(dest)
+    content = File.read(dest)
+    content.should contain("PRIVATE KEY")
+    content.should contain("CERTIFICATE")
+    # Key block comes before the certificate block.
+    key_at = content.index!("PRIVATE KEY")
+    cert_at = content.index!("CERTIFICATE")
+    key_at.should be < cert_at
+    # Parse writes an ordinary PEM bundle - not export's 0400 default.
+    File.info(dest).permissions.value.should_not eq(0o400)
+  end
+
+  it "action: parse is idempotent for an unchanged archive" do
+    src = path_for("parse.p12")
+    dest = path_for("parsed.pem")
+
+    result = PluginSpecHelper.run("openssl_pkcs12",
+      {"action" => "parse", "src" => src, "path" => dest})
+
+    result["changed"].as_bool.should be_false
+  end
+
+  it "action: parse rewrites when the archive changes" do
+    src = path_for("parse.p12")
+    dest = path_for("parsed.pem")
+    # Regenerate the certificate (force: true) - the friendly name is
+    # deliberately NOT used here, since it never reaches the PEM dump
+    # and the real module's idempotency comparison doesn't see it either.
+    PluginSpecHelper.run("x509_certificate",
+      {"path" => path_for("a.crt"), "privatekey_path" => path_for("a.key"),
+       "csr_path" => path_for("a.csr"), "provider" => "selfsigned", "force" => "true"})
+    PluginSpecHelper.run("openssl_pkcs12", export_params("myname").merge({"path" => src}))
+
+    result = PluginSpecHelper.run("openssl_pkcs12",
+      {"action" => "parse", "src" => src, "path" => dest})
+
+    result["changed"].as_bool.should be_true
+  end
+
+  it "action: parse fails for a missing src" do
+    result = PluginSpecHelper.run("openssl_pkcs12",
+      {"action" => "parse", "path" => path_for("never.pem")})
 
     result["failed"].as_bool.should be_true
-    result["msg"].as_s.should contain("not supported")
+    result["msg"].as_s.should contain("src")
   end
 end

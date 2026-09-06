@@ -887,16 +887,88 @@ describe "krikri-playbook CLI (--check mode)" do
       output.should contain("reached after noop")
     end
 
+    it "meta: end_role skips the calling role's remaining tasks but not the play's" do
+      # ansible-core 2.18+ (verified live against 2.19.4: identical task
+      # flow and recap - the ended role's remaining tasks are consumed
+      # silently, with no banner and no skipped= counter bump, while the
+      # play's own tasks after the role keep running).
+      status, output = run_playbook("test-meta-end-role-quick.yml", [] of String)
+
+      status.success?.should be_true
+      output.should contain("role task one ran")
+      # The post-end_role role task: silently consumed - no banner, no
+      # result, no recap counter.
+      output.should_not contain("role task three should be skipped")
+      output.should_not contain("role task three")
+      # The play's own task after the role still runs.
+      output.should contain("play task after role")
+      output.should contain("ok=2")
+    end
+
+    it "meta: end_role outside a role aborts the run with real Ansible's parse error" do
+      # Real Ansible rejects end_role at parse time wherever the role
+      # context is absent (helpers.py's load_list_of_tasks), rc=4 -
+      # verified live against ansible-core 2.19.4, including that a
+      # when: false guard does NOT save it.
+      tmp = File.tempname("meta-end-role-outside", ".yml")
+      File.write(tmp, <<-YAML)
+        - name: end_role outside a role
+          hosts: localhost
+          gather_facts: false
+          tasks:
+            - name: end the role
+              ansible.builtin.meta: end_role
+        YAML
+      begin
+        captured = IO::Memory.new
+        status = Process.run(BINARY, ["-i", "localhost,", tmp], output: captured, error: captured)
+        status.exit_code.should eq(4)
+        captured.to_s.should contain("Cannot execute 'end_role' from outside of a role")
+      ensure
+        File.delete(tmp) rescue nil
+      end
+    end
+
+    it "meta: reset_connection lets execution continue and counts in no recap bucket" do
+      # Real Ansible's result is a META: vv line only (msg "reset
+      # connection", changed: False) - no recap bucket, execution
+      # continues. Connection dropping itself is exercised live (it needs
+      # real daemons); the task-flow contract is what a spec can pin.
+      tmp = File.tempname("meta-reset-connection", ".yml")
+      File.write(tmp, <<-YAML)
+        - name: reset connection smoke test
+          hosts: localhost
+          connection: local
+          gather_facts: false
+          tasks:
+            - name: reset the connection
+              ansible.builtin.meta: reset_connection
+
+            - name: after the reset
+              ansible.builtin.debug:
+                msg: "reached after reset_connection"
+        YAML
+      begin
+        captured = IO::Memory.new
+        status = Process.run(BINARY, ["-i", "localhost,", tmp], output: captured, error: captured)
+        status.success?.should be_true
+        captured.to_s.should contain("reached after reset_connection")
+        captured.to_s.should contain("ok=1")
+      ensure
+        File.delete(tmp) rescue nil
+      end
+    end
+
     it "reports an unsupported meta action instead of treating it as a no-op" do
       # A meta action this engine does not model is rejected at parse time
       # with a named error, rather than being accepted and silently doing
-      # nothing - a `meta: reset_connection` that quietly did nothing
+      # nothing - a `meta: frobnicate` that quietly did nothing
       # would change what the playbook means. (end_play/end_host/
-      # clear_host_errors/noop/refresh_inventory are all real, supported
-      # actions now - see PlaybookParser::SUPPORTED_META_ACTIONS and
+      # clear_host_errors/noop/refresh_inventory/end_batch/end_role/
+      # reset_connection are all real, supported actions now - see
+      # PlaybookParser::SUPPORTED_META_ACTIONS and
       # TaskExecutor#execute_meta, each verified against real
-      # ansible-playbook; reset_connection - persistent-connection
-      # control - remains a documented scope cut.)
+      # ansible-playbook.)
       #
       # It surfaces as a warning and the task is dropped, which is how the
       # parser handles *every* parse error (see PlaybookParser.parse_tasks'
@@ -911,15 +983,15 @@ describe "krikri-playbook CLI (--check mode)" do
           hosts: testservers
           gather_facts: false
           tasks:
-            - name: reset the connection
-              ansible.builtin.meta: reset_connection
+            - name: frobnicate
+              ansible.builtin.meta: frobnicate
         YAML
       begin
         captured = IO::Memory.new
         Process.run(BINARY, ["-i", testservers, tmp], output: captured, error: captured)
-        captured.to_s.should contain("meta: reset_connection is not supported")
+        captured.to_s.should contain("meta: frobnicate is not supported")
         # and the task genuinely did not run
-        captured.to_s.should_not contain("reset the connection")
+        captured.to_s.should_not contain("frobnicate the florb")
       ensure
         File.delete(tmp) rescue nil
       end

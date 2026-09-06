@@ -744,6 +744,11 @@ module Krikri
         nested_task.role_vars_dir = enclosing.role_vars_dir
         nested_task.role_path = enclosing.role_path
         nested_task.role_name = enclosing.role_name
+        # An include_tasks: inside a dynamically include_role:'d role
+        # belongs to the SAME invocation - meta: end_role in the included
+        # file must end that same invocation, not fall back to the
+        # role-path key (which a second include of the same role shares).
+        nested_task.role_invocation_id = enclosing.role_invocation_id
         # RECURSE into nested block/rescue/always children: a when:-false
         # BLOCK is skipped in execute_task before execute_block's own
         # propagation ever runs, and its children's banners print via
@@ -1263,6 +1268,14 @@ module Krikri
       # "pushgateway" via the exact same vars_context machinery, proving
       # the value was never actually unavailable - only this eager,
       # narrower pre-render had gotten there first and gotten it wrong.
+
+      # One fresh invocation identity per run_include_role_once call -
+      # per host, per loop item - what meta: end_role keys its per-host
+      # flag on (see Task#role_invocation_id).
+      invocation_id = Random::Secure.hex(8)
+      (included_tasks + included_handlers).each do |included_task|
+        included_task.role_invocation_id = invocation_id
+      end
 
       if item = vars_context["item"]?
         (included_tasks + included_handlers).each do |included_task|

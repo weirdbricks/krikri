@@ -290,6 +290,20 @@ module Krikri
       item.raw.is_a?(String) ? item.as_s : item.to_json
     end
 
+    # Whether *host*'s `meta: end_role` already ended the role *task*
+    # belongs to. Identity: the role invocation - a dynamic include_role
+    # run stamps its freshly-loaded tasks with a per-invocation token
+    # (Task#role_invocation_id), so two invocations of the same role are
+    # independent; a statically loaded role (roles:/import_role:) keys on
+    # its filesystem root (task.role_path), which is unique per play
+    # there. Tasks outside any role are never affected.
+    private def role_ended_for_host?(task : Task, host : Host) : Bool
+      key = task.role_invocation_id || task.role_path
+      return false unless key
+      ended = @role_ended_hosts[key]?
+      ended ? ended.includes?(host.name) : false
+    end
+
     # Run a task repeatedly (up to task.retries times, sleeping task.delay
     # seconds between attempts) until task.until_condition evaluates true
     # against the registered result, matching Ansible's until:/retries:/delay:.
@@ -359,6 +373,57 @@ module Krikri
         @hosts.each do |other|
           @cleared_error_hosts.add(other.name) if @halted_hosts.includes?(other.name)
         end
+      when "end_batch"
+        # Real Ansible's end_batch ends the current `serial:` batch (all
+        # its hosts, like end_play but without the end_play flag). This
+        # engine doesn't model serial batching - one batch per play - so
+        # end_batch IS end_play here (verified against ansible-core
+        # 2.19.4's own strategy code: both call iterator.end_host for
+        # every host in the play; only end_play additionally raises
+        # AnsibleEndPlay, which the playbook executor handles by ending
+        # THIS play only - so the observable behavior matches).
+        @hosts.each do |other|
+          next if @halted_hosts.includes?(other.name)
+          @halted_hosts.add(other.name)
+          @ended_hosts.add(other.name)
+        end
+      when "end_role"
+        # Per-host role-scoped early return (ansible-core 2.18+). Real
+        # Ansible consumes the role's remaining tasks for this host
+        # silently in the iterator - no banners, no recap counters - and
+        # stops at the role's implicit `role_complete` boundary, so
+        # parent roles and role dependencies are unaffected. Keyed on
+        # the role INVOCATION (Task#role_invocation_id for a dynamic
+        # include_role, the role path for a static one): verified against
+        # ansible-core 2.19.4 that a looped include_role whose first
+        # item ends the role still runs the second item in full.
+        if key = task.role_invocation_id || task.role_path
+          ended = (@role_ended_hosts[key] ||= Set(String).new)
+          ended.add(host.name)
+        else
+          # Real Ansible rejects end_role outside a role at PARSE time
+          # ("Cannot execute 'end_role' from outside of a role") - a
+          # play-level one is caught before any play runs
+          # (krikri-playbook.cr's own flattened-list check); this branch
+          # only covers one reached through a dynamic include_tasks:
+          # body, where the file is loaded too late for that check.
+          # Fails the task for this host instead of aborting the run -
+          # the same "which tasks ran" divergence the role-private
+          # custom-module scope cut already documents.
+          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+          puts "failed: [#{connection_host}]".colorize(:red)
+          puts "  Cannot execute 'end_role' from outside of a role".colorize(:red)
+          @results[host.name]["failed"] += 1
+          @halted_hosts.add(host.name)
+        end
+      when "reset_connection"
+        # Drop the host's persistent connection state (resident plugin
+        # daemons + ssh ControlMaster sockets); the next task reopens
+        # fresh connections. Real Ansible's result carries msg
+        # "reset connection" (or "no connection, nothing to reset") and
+        # counts in no recap bucket - a META: vv line only - so nothing
+        # is printed or counted here either.
+        SSHManager.reset_connection(host.name)
       when "noop"
         # Real Ansible's own doc: "this literally does 'nothing'."
       when "refresh_inventory"

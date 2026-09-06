@@ -518,6 +518,12 @@ rescue ex : Krikri::StaticImportRoleUndefinedError
   # it uses for an import_tasks: PATH.
   puts "[ERROR]: #{ex.message}".colorize(:red)
   exit 1
+rescue ex : Krikri::EndRoleOutsideRoleError
+  # meta: end_role outside any role is real Ansible's own parse-time
+  # rejection - parser-error exit code 4 (helpers.py's
+  # load_list_of_tasks, verified against ansible-core 2.19.4).
+  puts "[ERROR]: #{ex.message}".colorize(:red)
+  exit 4
 rescue ex : Krikri::RemovedActionError
   # A removed action plugin (`include:`) is real Ansible's own rc=1
   # (verified against ansible-core 2.19.4: same "[ERROR]: The 'ansible.
@@ -775,6 +781,20 @@ playbook.plays.each_with_index do |play, _play_index|
 
   # Get tasks for this play
   tasks_to_run = play.tasks
+
+  # meta: end_role outside any role is real Ansible's own parse-time
+  # rejection (helpers.py's load_list_of_tasks, where the role context
+  # is known) - "[ERROR]: Cannot execute 'end_role' from outside of a
+  # role", parser-error exit code 4. This engine attaches role
+  # attributes to a role's tasks only after parsing (RoleLoader#load_role
+  # task.role_name =), so the check runs here on the fully-flattened
+  # list: every play-level end_role task has role_name nil.
+  tasks_to_run.each do |task|
+    if task.meta? && task.meta_action == "end_role" && task.role_name.nil?
+      puts "[ERROR]: Cannot execute 'end_role' from outside of a role".colorize(:red)
+      exit 4
+    end
+  end
 
   # Tag selection: --tags/--skip-tags plus the special tag names and the
   # magic `always`/`never` task tags. Note this runs even with NEITHER

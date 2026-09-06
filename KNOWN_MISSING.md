@@ -18,8 +18,78 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.788`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.789`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## Round 50000: the "partial" scope cuts closed - community.crypto info modules, meta: end_batch/end_role/reset_connection, the service use=systemd message (0.9.789)
+
+Worked through the items KNOWN_MISSING itself called cheap or
+message-level, leaving only the ones with real architectural reasons to
+stay:
+
+- **`openssl_privatekey_info`, `x509_certificate_info`,
+  `openssl_publickey`, `get_certificate` implemented; `openssl_pkcs12`
+  grew `action: parse`** (new plugins under `plugins/`, sharing the new
+  `src/krikri/plugin_helpers/x509_cert_info.cr` parser - both info
+  modules need the same field set, so it lives once, driven by the
+  `openssl` CLI like every other crypto plugin here). Field shapes were
+  matched against the real modules' own sources (community.crypto
+  3.1.1, installed locally): the sorted list extensions, the OpenSSL LN
+  name vocabulary, ASN.1 TIME validity spelling, all-algorithms
+  colon-hex fingerprints, `can_load_key`/`can_parse_key`/
+  `key_is_consistent` trio, and `action: parse`'s converter semantics
+  (private key first, then certificates). One deliberate divergence:
+  `extensions_by_oid` (x509_certificate_info) is omitted - it needs an
+  ASN.1 decoder this tree does not carry. Values wider than Int64 (RSA
+  moduli, ECC coordinates, big serials) render as exact decimal strings
+  instead of JSON numbers - this engine's result world is JSON::Any
+  (Int64 at widest), and truncating digits would be worse than a
+  string. 26 new integration specs; every return field differentialed
+  against real Ansible output on generated key/cert material.
+- **`meta: end_batch`, `end_role`, `reset_connection` implemented**
+  (previously rejected at parse time as "execution-flow machinery this
+  engine models differently"). `end_batch` is exactly end_play here -
+  its one distinguishing behavior, ending only the current `serial:`
+  batch, is meaningless while serial batching isn't modeled (verified
+  against ansible-core 2.19.4's own strategy code: both call
+  iterator.end_host for every play host; only end_play additionally
+  raises AnsibleEndPlay, whose handling ends THIS play only).
+  `end_role` (ansible-core 2.18+) skips the calling role's remaining
+  tasks silently for the executing host - no banners, no recap
+  counters, play tasks after the role keep running - keyed on the role
+  INVOCATION (a fresh token per dynamic include_role: run; a looped
+  include_role whose first item ends the role still runs the second
+  item in full - verified live against 2.19.4, byte-identical task
+  flow). end_role outside any role aborts the run with real Ansible's
+  own parse-time error and rc=4 ("Cannot execute 'end_role' from
+  outside of a role" - helpers.py's load_list_of_tasks; the check sits
+  in krikri-playbook.cr's flattened-task walk, since this engine
+  attaches role attributes only after parsing). `reset_connection`
+  drops the host's persistent connection state (resident plugin daemons
+  via the new `SSHManager.reset_connection`, plus the ssh
+  ControlMaster socket underneath each) and, like real Ansible's META:
+  vv-only result, counts in no recap bucket. Regression specs in
+  `spec/integration/cli_spec.cr` (the old "reset_connection is not
+  supported" assertion now pins frobnicate instead).
+- **`service: use=systemd` forced on a non-systemd host now fails with
+  real Ansible's "Service is in unknown state"** (systemd_service.py's
+  own degenerate-status branch; verified byte-identical against
+  ansible-core 2.19.4 inside a systemd-installed-but-not-PID-1
+  podman container) instead of surfacing systemctl's own runtime
+  error - the last of the three cosmetic-differences entries, now
+  deleted from that list.
+- **Left alone, deliberately:** `-M/--module-path` (honoring it means
+  an arbitrary-Python-module runner - the long-standing scope cut),
+  `RemovedActionError`'s wording (a moving target across
+  ansible-core releases, no version-targeting concept exists), the
+  firewalld D-Bus `immediate:` path (needs a real D-Bus client), and
+  the remaining community.crypto modules (`luks_device` - needs
+  cryptsetup state modeling; `acme`/`entrust` providers - real CA
+  protocols; `openssl_pkcs12` export's `encryption_level:
+  compatibility2022`; the `*_csr_info`/`crl` family - nothing in the
+  corpus or docs above asked for them).
 
 ---
 
@@ -1724,11 +1794,6 @@ as bugs, not because anyone intends to fix them.
   reports `include_vars: file not found: undefined` where real ansible
   fails a LATER task with "'users' is undefined". Both fail the role;
   the failure point and message differ.
-- **`service: use=systemd` forced on a host where systemd is NOT PID 1**:
-  real Ansible reports "Service is in unknown state", this engine
-  surfaces systemctl's own "System has not been booted with systemd as
-  init system (PID 1)". Same outcome, same recap - and only reachable
-  via a deliberate `use:` override that contradicts the host.
 
 ### Everything else
 
@@ -1846,12 +1911,13 @@ as bugs, not because anyone intends to fix them.
   latent bug: `when:` on any `meta:` task (including the pre-existing
   `clear_facts`/`flush_handlers`) was never evaluated at all - parsed
   and silently dropped - so a when:-gated meta task always ran
-  unconditionally regardless of the condition. What's left
-  unimplemented: `reset_connection`/`end_batch`/`end_role` still act on
-  execution-flow machinery this engine models differently (persistent-
-  connection control, `serial:` batching, and role-scoped early-return
-  respectively), and are rejected at parse time rather than silently
-  accepted and ignored.
+  unconditionally regardless of the condition. 0.9.789 added the last
+  three (see round 50000 above): `end_batch` behaves exactly like
+  `end_play` while `serial:` batching isn't modeled, `end_role` does
+  role-scoped early return keyed on the role invocation, and
+  `reset_connection` drops the host's daemons + ssh ControlMaster
+  socket. Every action in real Ansible's `meta` module's choices list
+  is now supported.
 - `config`/`inventory_hostnames` lookups - architecturally out of scope
   (would require modeling Ansible's own config-resolution/inventory
   internals, not just a data lookup).
@@ -1868,15 +1934,19 @@ as bugs, not because anyone intends to fix them.
   CSR-based issuance, while the CLI reproduces the real modules' file
   formats, extensions and idempotency rules directly (all four were
   differentialed against real community.crypto 3.1.1, both directions -
-  neither engine regenerates the other's artifacts).
+  neither engine regenerates the other's artifacts). The info/read-only
+  half joined in 0.9.789 (see round 50000 above): `openssl_privatekey_info`,
+  `x509_certificate_info`, `openssl_publickey`, `get_certificate`, and
+  `openssl_pkcs12` `action: parse`.
 
-  Still unimplemented, none of them seen in a role yet: `openssl_publickey`,
-  `openssl_privatekey_info`, `x509_certificate_info`, `get_certificate`,
-  `luks_device`, and the `acme`/`entrust` certificate providers plus
-  `openssl_pkcs12`'s `action: parse` (all of which fail with a clear
-  "not supported" message rather than silently doing something else).
-  The `*_info` ones are read-only and cheap if a role ever needs them;
-  `acme` means speaking ACME to a real CA, which stays out of scope.
+  Still unimplemented, none of them seen in a role yet: `openssl_publickey_info`,
+  `openssl_csr_info`, `luks_device`, the `acme`/`entrust` certificate
+  providers, `openssl_pkcs12` export's `encryption_level:
+  compatibility2022`, and the CRL/revocation family
+  (all of which fail with a clear "not supported" message rather than
+  silently doing something else). The `*_info` ones are read-only and
+  cheap if a role ever needs them; `acme` means speaking ACME to a real
+  CA, which stays out of scope.
 - `community.general.vdo` - unimplemented; untestable so far, no real
   role sets a non-empty `vdo_devices`.
 - `gluster.gluster.gluster_volume` - unimplemented; causes a cosmetic

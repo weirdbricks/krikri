@@ -185,7 +185,11 @@ module Krikri
         # result, and an ignore_unreachable: host stays un-halted on
         # purpose - without this it would fall through to a real SSH
         # attempt and hang on the connection it is already known to fail.
-        active_hosts = hosts.reject do |host|
+        # meta: end_role rejections are applied SEPARATELY (below), not
+        # folded into this set: a role-ended host recovers for every task
+        # outside that role, so it must never trip the all-hosts-done
+        # break that a genuinely halted play legitimately ends on.
+        halt_rejected = hosts.reject do |host|
           @halted_hosts.includes?(host.name) || @unreachable_hosts.includes?(host.name)
         end
 
@@ -197,7 +201,13 @@ module Krikri
         # run_task_batch call). Found via geerlingguy.raspberry-pi: a
         # single-host play kept printing banners for every task after its
         # one host failed and halted.
-        break if active_hosts.empty?
+        break if halt_rejected.empty?
+
+        active_hosts = halt_rejected.reject { |host| role_ended_for_host?(task, host) }
+        # Every active host had this role ended for it - a fully consumed
+        # task prints nothing at all (real Ansible's silent iterator
+        # consume), but later tasks outside the role still run.
+        next if active_hosts.empty?
 
         if task.block?
           execute_block_multi(task, active_hosts)
@@ -365,6 +375,15 @@ module Krikri
     # per-task host loop itself via `--forks`, landed separately in
     # `0.9.77`. See git log for both.
     private def execute_task(task : Task, host : Host) : Nil
+      # A `meta: end_role` for this host consumes every remaining task of
+      # the calling role silently - no banner, no result, no recap
+      # counter (real Ansible's iterator peek/consume behavior). The
+      # check sits here, the single funnel every task path (top-level
+      # loop, blocks, nested include_role/include_tasks lists) goes
+      # through, so the run loop's own active_hosts rejection above only
+      # exists to keep the banner from printing for fully-consumed tasks.
+      return if role_ended_for_host?(task, host)
+
       return execute_block(task, host) if task.block?
       return execute_include_tasks(task, host) if task.include_tasks?
       return execute_include_role(task, host) if task.include_role?
@@ -1466,6 +1485,10 @@ module Krikri
 
       tasks.each do |nested_task|
         break if @halted_hosts.includes?(host.name)
+        # end_role: skip the ended role's remaining tasks silently (no
+        # banner - execute_task's own check would skip the body but the
+        # banner below would still print).
+        next if role_ended_for_host?(nested_task, host)
 
         # A nested block: is transparent - like real Ansible, a named
         # block gets no "TASK [...]" banner of its own, only its members

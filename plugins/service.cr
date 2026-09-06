@@ -470,6 +470,19 @@ module Krikri
     # ------------------------------------------------------------------
 
     private def set_state(name : String, state : String) : NamedTuple(changed: Bool, message: String, failure: PluginResult?)
+      # Real Ansible's systemd module reads the unit's ActiveState once
+      # via `systemctl show`; on a host where systemd is NOT PID 1 that
+      # command fails and produces no ActiveState at all, and the
+      # module's own "this should not happen?" branch fails with
+      # "Service is in unknown state" - NOT systemctl's runtime error,
+      # which is what this engine used to surface here. Only reachable
+      # through a deliberate `use: systemd` override contradicting the
+      # host (or a dead systemctl binary), since auto-detection would
+      # have picked another manager.
+      if @manager == Manager::Systemd && @systemd_active_state.empty?
+        return failure("Service is in unknown state")
+      end
+
       is_running = service_running?(name)
 
       case state

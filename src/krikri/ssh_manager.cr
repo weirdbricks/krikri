@@ -583,6 +583,23 @@ module Krikri
       end
     end
 
+    # meta: reset_connection - drops this host's persistent connection
+    # state so the next task opens fresh connections. Two layers exist
+    # here: the resident plugin daemons (one ssh process per
+    # host/user/port/become_user) and ssh's own ControlMaster socket
+    # underneath them. Both are dropped for every key matching the host;
+    # the `ssh -O exit` is best-effort (no master socket = no-op).
+    def self.reset_connection(host_name : String) : Nil
+      matching = @@daemon_processes.keys.select { |(h, _, _, _)| h == host_name }
+      matching.each do |key|
+        kill_daemon(*key)
+        host, user, port, _ = key
+        control_path = get_control_path(host, user, port)
+        Process.run("ssh", ["-O", "exit", "-o", "ControlPath=#{control_path}", "#{user}@#{host}"],
+          output: Process::Redirect::Close, error: Process::Redirect::Close)
+      end
+    end
+
     # Graceful shutdown for every still-open daemon connection, called
     # once at the end of a run. Closes every daemon's stdin first (each
     # one sees EOF and exits cleanly via `plugin_daemon.cr`'s own

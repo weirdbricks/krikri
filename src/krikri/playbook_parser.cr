@@ -255,6 +255,17 @@ module Krikri
     # name: "{{ role_path }}/roles/rsyslog"`, a common pattern for a role to
     # reference one of its own private subroles by absolute path).
     property role_path : String?
+    # Identity of ONE dynamic include_role: execution (a fresh random
+    # token per run_include_role_once - per host, per loop item). What
+    # `meta: end_role` keys its per-host "role ended" flag on: two
+    # invocations of the same role in one play are independent for
+    # end_role purposes (verified against ansible-core 2.19.4 - a looped
+    # include_role whose first item ends the role still runs the second
+    # item in full). Statically loaded role tasks (roles:/import_role:)
+    # leave this nil and key on role_path instead - a static role body
+    # executes exactly once per play, so the path is already a unique
+    # invocation identity there.
+    property role_invocation_id : String?
     # The chain of ancestor role names (root-first, NOT including this
     # role's own name) that led to this role being invoked via
     # include_role: from within another role's own tasks - exposed as
@@ -679,6 +690,12 @@ module Krikri
   class InvalidStrategyError < Exception
   end
 
+  # `meta: end_role` written outside any role. Real Ansible rejects it
+  # at parse time (helpers.py's load_list_of_tasks) with its
+  # parser-error exit code 4.
+  class EndRoleOutsideRoleError < Exception
+  end
+
   class Playbook
     property plays : Array(Play)
     property path : String
@@ -905,6 +922,14 @@ module Krikri
       "community.crypto.x509_certificate",
       "community.crypto.openssl_pkcs12",
       "community.crypto.openssh_keypair",
+      # The read-only/generator half of the collection - the *_info
+      # modules and get_certificate were called out as "cheap if a role
+      # ever needs them" in KNOWN_MISSING.md; openssl_publickey is the
+      # one generator module that completes the key-generation family.
+      "community.crypto.openssl_privatekey_info",
+      "community.crypto.x509_certificate_info",
+      "community.crypto.openssl_publickey",
+      "community.crypto.get_certificate",
       "community.general.modprobe",
       "community.general.pamd",
       "community.general.htpasswd",
@@ -2277,7 +2302,9 @@ module Krikri
     # target.
     #
     # `clear_facts`/`flush_handlers`/`end_host`/`end_play`/
-    # `clear_host_errors`/`noop`/`refresh_inventory` are supported.
+    # `clear_host_errors`/`noop`/`refresh_inventory` are supported, as of
+    # 0.9.789 also `end_batch`/`end_role`/`reset_connection` (see
+    # TaskExecutor#execute_meta).
     # `flush_handlers` added in round 18 - found via robertdebock's own
     # roles, several of which (mysql, selinux, zabbix_repository,
     # zabbix_server, core_dependencies) use `ansible.builtin.meta:
@@ -2297,15 +2324,15 @@ module Krikri
     # in the current play, only exempts the host from the next one;
     # refresh_inventory does NOT add hosts to the CURRENT play's own
     # host loop either, only to a LATER play's - real Ansible's own
-    # documented caveat). `reset_connection`/`end_batch`/`end_role`
-    # still act on execution-flow machinery this engine models
-    # differently (persistent-connection control, `serial:` batching,
-    # and role-scoped early-return respectively), so they're rejected
-    # outright rather than silently accepted and ignored - a playbook
-    # whose `meta: end_play` quietly did nothing would be far worse than
-    # one that fails to parse. A documented scope cut: `meta:` was
-    # previously not supported at all, so this is strictly additive.
-    SUPPORTED_META_ACTIONS = Set{"clear_facts", "flush_handlers", "end_host", "end_play", "clear_host_errors", "noop", "refresh_inventory"}
+    # documented caveat). `end_batch` behaves exactly like end_play
+    # here - its one distinguishing behavior, ending only the current
+    # `serial:` batch, is meaningless while this engine doesn't model
+    # serial batching (one batch per play). `end_role` skips every
+    # remaining task of the CALLING role for the host that executes it
+    # (real Ansible consumes them silently - no banners, no recap
+    # counters). `reset_connection` drops the host's persistent
+    # connection state (daemons + ssh ControlMaster sockets).
+    SUPPORTED_META_ACTIONS = Set{"clear_facts", "flush_handlers", "end_host", "end_play", "clear_host_errors", "noop", "refresh_inventory", "end_batch", "end_role", "reset_connection"}
 
     private def self.parse_meta_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), meta_yaml : YAML::Any) : Task
       action = meta_yaml.as_s?.try(&.strip)

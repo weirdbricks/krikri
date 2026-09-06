@@ -187,6 +187,14 @@ module Krikri
     # current play still stops for them) but are excluded from
     # krikri-playbook.cr's cross-play carry-forward the same way.
     getter cleared_error_hosts : Set(String)
+    # Hosts a `meta: end_role` ended the calling role for, keyed by the
+    # role's own filesystem root (task.role_path - the identity two tasks
+    # of the same role invocation share). Every remaining task of that
+    # role is silently skipped for such a host - real Ansible consumes
+    # them in the iterator without banners or recap counters, and does
+    # NOT touch the parent role, depended-on roles or later
+    # include_role: calls of the same role.
+    @role_ended_hosts : Hash(String, Set(String))
     # Full inventory, used to resolve delegate_to: targets that aren't
     # necessarily in this play's own host list (e.g. "localhost" when the
     # play targets a remote group). Optional - a caller that doesn't pass
@@ -373,6 +381,7 @@ module Krikri
       @halted_hosts = Set(String).new
       @ended_hosts = Set(String).new
       @cleared_error_hosts = Set(String).new
+      @role_ended_hosts = Hash(String, Set(String)).new
       @task_group = Hash(Task, Array(Task)).new
       @grouped_lists = Set(UInt64).new
       @batch_cache = Hash(String, Hash(Task, {JSON::Any?, Hash(String, JSON::Any)})).new

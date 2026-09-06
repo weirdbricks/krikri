@@ -1,0 +1,14 @@
+# meta: end_role - role-scoped early return (ansible-core 2.18+). Every
+# task of the calling role AFTER this point is skipped silently for the
+# host that executes it (no banner, no recap counter), the play's own
+# tasks keep running, and parent roles/dependencies are unaffected.
+- name: meta end_role smoke test
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - role: meta_end_role_testrole
+  tasks:
+    - name: after the role
+      ansible.builtin.debug:
+        msg: "play task after role"

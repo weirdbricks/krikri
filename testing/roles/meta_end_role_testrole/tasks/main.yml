@@ -1,0 +1,10 @@
+- name: role task one
+  ansible.builtin.debug:
+    msg: "role task one ran"
+
+- name: end the role early
+  ansible.builtin.meta: end_role
+
+- name: role task three
+  ansible.builtin.debug:
+    msg: "role task three should be skipped"

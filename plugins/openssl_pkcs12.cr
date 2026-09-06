@@ -5,12 +5,14 @@ require "../src/krikri/base_plugin"
 
 module Krikri
   # openssl_pkcs12 plugin (community.crypto.openssl_pkcs12) - bundles a
-  # private key and its certificate into a PKCS#12 archive.
+  # private key and its certificate into a PKCS#12 archive (`action:
+  # export`), and converts one back into a PEM bundle (`action: parse`).
   #
-  # `action: export` only, which is what the corpus uses
-  # (robertdebock.openssl / buluma.openssl both export a `.p12` next to
-  # the key and cert they just generated); `action: parse` fails with a
-  # clear message rather than silently doing nothing.
+  # Export is what the corpus uses (robertdebock.openssl / buluma.openssl
+  # both export a `.p12` next to the key and cert they just generated).
+  # Parse requires `src:` (the archive to read) and writes the private
+  # key followed by the certificates as PEM to `path:` - the real
+  # module's parse is a converter, not an info-only read.
   #
   # Differentialed against the real module (community.crypto 3.1.1):
   #
@@ -37,8 +39,15 @@ module Krikri
 
       return remove(path, check_mode) if state == "absent"
 
+      if action == "parse"
+        src = @params["src"]?.try { |value| expand_tilde(value) }
+        return failure("state is present but all of the following are missing: src") unless src
+        return failure("The PKCS#12 file #{src} does not exist") unless File.exists?(src)
+        return parse_action(path, src, check_mode)
+      end
+
       unless action == "export"
-        return failure("The action '#{action}' is not supported by this implementation; only 'export' is.")
+        return failure("The action '#{action}' is not supported by this implementation; only 'export' and 'parse' are.")
       end
 
       privatekey_path = @params["privatekey_path"]?.try { |value| expand_tilde(value) }
@@ -60,6 +69,76 @@ module Krikri
       base_dir = File.dirname(path)
       return failure("The directory #{base_dir} does not exist or the file is not a directory") unless Dir.exists?(base_dir)
       nil
+    end
+
+    # action: parse - read the archive from `src`, write its private key
+    # followed by its certificates as PEM to `path` (the real module's
+    # parse is a converter, not an info-only read: it produces a file).
+    # Idempotency compares the desired bundle against the file's current
+    # content PEM-normalized (the real module compares its own
+    # re-serialized PEM dump against the file's bytes, so both engines
+    # settle on the same second-run "ok" and the same src-change rewrite).
+    private def parse_action(path : String, src : String, check_mode : Bool) : PluginResult
+      base_dir = File.dirname(path)
+      return failure("The directory #{base_dir} does not exist or the file is not a directory") unless Dir.exists?(base_dir)
+
+      desired = key_first_bundle(dump_pkcs12(src))
+      return failure("openssl pkcs12 failed: unable to read #{src} (wrong passphrase?)") unless desired
+
+      changed = true?(@params["force"]?) || !File.exists?(path) ||
+                normalize_pem(File.read(path)) != normalize_pem(desired)
+
+      return result_parse(true, path, src) if changed && check_mode
+
+      if changed && !check_mode
+        backup_file = backup(path)
+        File.write(path, desired)
+        apply_owner_group_mode(path, @params["owner"]?, @params["group"]?, @params["mode"]?)
+        return result_parse(true, path, src, backup_file)
+      end
+
+      attrs_changed = parse_attrs(path)
+      result_parse(attrs_changed, path, src)
+    end
+
+    # The real module's parse concatenates [privatekey, certificate,
+    # other certificates] in that order; openssl's own dump puts the
+    # certificates first - so the blocks are reordered here, and the
+    # same ordering applies on the idempotency comparison (both sides
+    # of it go through this).
+    private def key_first_bundle(dump : String?) : String?
+      return nil unless dump
+      blocks = [] of Tuple(Bool, String)
+      scanner = dump
+      while start = scanner.index("-----BEGIN ")
+        stop = scanner.index("-----END ", start)
+        break unless stop
+        line_end = scanner.index('\n', stop)
+        block = scanner[start...(line_end || scanner.size)]
+        blocks << {block.includes?("KEY"), block}
+        scanner = scanner[(line_end || scanner.size)..]
+      end
+      return nil if blocks.empty?
+      blocks.sort_by { |is_key, _| is_key ? 0 : 1 }.map(&.[1]).join
+    end
+
+    private def result_parse(changed : Bool, path : String, src : String, backup_file : String? = nil) : PluginResult
+      res = PluginResult.new(changed: changed, failed: false, msg: "")
+      res.extra["filename"] = JSON::Any.new(path)
+      res.extra["backup_file"] = JSON::Any.new(backup_file) if backup_file
+      res
+    end
+
+    # Unlike export (whose archive is 0400 by default), parse writes a
+    # plain PEM bundle with the ordinary file-common default - no forced
+    # mode unless one was asked for.
+    private def parse_attrs(path : String) : Bool
+      return false unless File.exists?(path)
+      before = File.info(path).permissions.value
+      apply_owner_group_mode(path, @params["owner"]?, @params["group"]?, @params["mode"]?)
+      File.info(path).permissions.value != before
+    rescue
+      false
     end
 
     private def export_or_attrs(path : String, privatekey_path : String, certificate_path : String?, check_mode : Bool) : PluginResult
