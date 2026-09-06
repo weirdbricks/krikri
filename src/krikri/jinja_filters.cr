@@ -1190,10 +1190,21 @@ module Krikri
       regex = VariableSubstitutor::FilterEngine.cached_regex(pattern, options)
 
       target.to_s.scan(regex).map do |match|
-        if match.size > 1
-          (1...match.size).map { |i| match[i]? || "" }
-        else
-          match[0]
+        # Crystal's MatchData#size counts group 0 (the whole match) too,
+        # so a pattern with exactly ONE real capture group already has
+        # size == 2 - the old `match.size > 1` check wrongly took the
+        # "multiple groups" branch there, wrapping the single group in
+        # a one-element array (`[match[1]]`) instead of returning it as
+        # the bare scalar real Python re.findall gives for exactly one
+        # group. Found via lean_delivery.java's own `regex_findall(
+        # 'Ready for use:.*>JDK ([\d]+)<') | first`: java_major_version
+        # became the array `[26]` instead of the scalar `26`/`"26"`,
+        # rendering into a URL as `[26]` and 404ing every subsequent
+        # fetch.
+        case match.size
+        when 1 then match[0]
+        when 2 then match[1]? || ""
+        else        (1...match.size).map { |i| match[i]? || "" }
         end
       end
     end

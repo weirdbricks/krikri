@@ -625,11 +625,18 @@ module Krikri
           options |= Regex::Options::IGNORE_CASE if args[2]?.try { |arg| truthy?(resolve_expression(arg)) }
           regex = self.class.cached_regex(pattern, options)
 
+          # MatchData#size counts group 0 (the whole match) too, so a
+          # pattern with exactly ONE real capture group already has
+          # size == 2 - `mat.size > 1` wrongly took the "multiple
+          # groups" branch there, same bug as jinja_filters.cr's own
+          # copy of this filter (see its comment for the live repro:
+          # lean_delivery.java's java_major_version becoming the array
+          # `[26]` instead of the scalar `26`).
           matches = as_string(value).scan(regex).map do |mat|
-            if mat.size > 1
-              JSON::Any.new((1...mat.size).map { |i| JSON::Any.new(mat[i]? || "") })
-            else
-              JSON::Any.new(mat[0])
+            case mat.size
+            when 1 then JSON::Any.new(mat[0])
+            when 2 then JSON::Any.new(mat[1]? || "")
+            else        JSON::Any.new((1...mat.size).map { |i| JSON::Any.new(mat[i]? || "") })
             end
           end
           JSON::Any.new(matches)

@@ -62,6 +62,15 @@ describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
       crinja_render("{{ 'hello world' | regex_search('w(or)ld') }}").should eq("world")
       crinja_render("{{ 'a1b2' | regex_findall('[0-9]') }}").should eq("['1', '2']")
     end
+
+    it "regex_findall with exactly ONE capture group returns a flat list of scalars, not one-element arrays" do
+      # Same MatchData#size-off-by-one bug as filter_engine_spec.cr's
+      # own copy of this fix (see there for the full lean_delivery.java
+      # repro) - this pins the Crinja-side `Crinja.filter(:regex_findall)`
+      # in jinja_filters.cr, the SEPARATE implementation a real `{{ }}`
+      # filter chain actually goes through.
+      crinja_render("{{ ('Ready for use: >JDK 26<' | regex_findall('Ready for use:.*>JDK ([\\d]+)<') | first) }}").should eq("26")
+    end
   end
 
   describe "strftime (P2.10)" do

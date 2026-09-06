@@ -507,6 +507,23 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     result[0].as_a.map(&.as_s).should eq(["abc123", "file1.tar.gz"])
   end
 
+  it "regex_findall with exactly ONE capture group returns a flat list of scalars, not one-element arrays" do
+    # Real bug found in a 150-role overnight round (lean_delivery.java):
+    # MatchData#size counts group 0 (the whole match) too, so a pattern
+    # with exactly one real capture group already has size == 2 - the
+    # old `mat.size > 1` check wrongly took the "multiple groups"
+    # branch there, wrapping the single group in a one-element array.
+    # `regex_findall('Ready for use:.*>JDK ([\d]+)<') | first` turned
+    # java_major_version into the array `[26]` instead of the scalar
+    # `26`, which then rendered into a download URL as the literal text
+    # "[26]" and 404'd every subsequent fetch. Real Python re.findall
+    # with exactly one group returns a flat list of strings, matching
+    # the fix here.
+    engine = Krikri::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
+    result = engine.apply(s("Ready for use: >JDK 26<"), %(regex_findall('Ready for use:.*>JDK ([\\d]+)<'))).as_a
+    result.map(&.as_s).should eq(["26"])
+  end
+
   it "flatten collapses nested lists by default, skipping nulls" do
     v = JSON::Any.new([JSON.parse(%([1, [2, 3]])), JSON::Any.new(nil), JSON.parse("4")])
     engine = Krikri::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
