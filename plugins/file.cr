@@ -90,8 +90,8 @@ module Krikri
       end
       path = expand_tilde(path)
 
-      # Get state (default: file)
-      state = @params["state"]? || "file"
+      recurse = true?(@params["recurse"]?)
+      state = resolve_state(path, recurse)
 
       # Validate state
       valid_states = ["file", "directory", "link", "hard", "touch", "absent"]
@@ -100,6 +100,22 @@ module Krikri
           changed: false,
           failed: true,
           msg: "Invalid state: #{state}. Must be one of: #{valid_states.join(", ")}"
+        )
+      end
+
+      # Real Ansible checks this UNCONDITIONALLY after state resolution,
+      # whether state: was explicit or defaulted - `recurse: yes` against
+      # anything that isn't (or wouldn't become) a directory is a hard
+      # failure, not silently ignored (live-verified against ansible-core
+      # 2.19.4: an existing FILE with `recurse: yes` and no state: fails
+      # "recurse option requires state to be 'directory'", even though
+      # the same task against an existing DIRECTORY, or a genuinely
+      # absent path, succeeds).
+      if recurse && state != "directory"
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "recurse option requires state to be 'directory'"
         )
       end
 
@@ -113,6 +129,25 @@ module Krikri
       # need to know their own state value to do their actual job.
       result.extra["state"] = JSON::Any.new(state) unless result.failed? || result.extra.has_key?("state")
       result
+    end
+
+    # Real Ansible does NOT default to "file" unconditionally
+    # (additional_parameter_handling in its file module): with no state:
+    # given, the default is the path's CURRENT type (file/directory/
+    # link) when it exists at all, or - only when the path is genuinely
+    # absent (lstat misses, so a dangling symlink still isn't "absent")
+    # - "directory" if recurse: yes else "file". Found on dev-sec.
+    # nginx-hardening: `file: {path: /etc/nginx, mode: o-rw, recurse:
+    # yes}` against a host without nginx installed must create
+    # /etc/nginx, not fail.
+    private def resolve_state(path : String, recurse : Bool) : String
+      explicit_state = @params["state"]?
+      return explicit_state unless explicit_state.nil? || explicit_state.empty?
+
+      return "link" if File.symlink?(path)
+      return "directory" if Dir.exists?(path)
+      return "file" if File.exists?(path)
+      recurse ? "directory" : "file"
     end
 
     private def dispatch_state(state : String, path : String) : PluginResult

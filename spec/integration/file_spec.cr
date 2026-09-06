@@ -138,6 +138,77 @@ describe "file plugin" do
     end
   end
 
+  describe "default state resolution (no state:)" do
+    it "creates the directory tree when the path is absent and recurse: yes (real Ansible's absent-path + recurse defaulting)" do
+      # Real Ansible's file module defaults state to the path's *current*
+      # state; when the path doesn't exist at all and recurse: yes is set,
+      # that default resolves to state=directory and the module creates
+      # the tree. dev-sec nginx-hardening's `file: {path: /etc/nginx,
+      # mode: o-rw, recurse: yes}` against a host without nginx relies
+      # on this instead of failing.
+      path = tmp_path("missing/recurse-default-dir")
+      result = PluginSpecHelper.run("file", {"path" => path, "mode" => "0750", "recurse" => "yes"})
+
+      result["failed"].as_bool.should be_false
+      result["changed"].as_bool.should be_true
+      Dir.exists?(path).should be_true
+      result["state"].as_s.should eq("directory")
+    end
+
+    it "stays a state=file failure for an absent path without recurse" do
+      result = PluginSpecHelper.run("file", {"path" => tmp_path("missing-norecurse.txt")})
+
+      result["failed"].as_bool.should be_true
+    end
+
+    it "defaults to file semantics when the path exists and recurse isn't set" do
+      path = tmp_path("exists-default.txt")
+      File.write(path, "x")
+      File.chmod(path, 0o644)
+
+      result = PluginSpecHelper.run("file", {"path" => path, "mode" => "0600"})
+
+      result["failed"].as_bool.should be_false
+      (File.info(path, follow_symlinks: false).permissions.value & 0o777).should eq(0o600)
+    end
+
+    it "fails an existing FILE with recurse: yes and no state (real Ansible: 'recurse option requires state to be directory')" do
+      # Live-verified against ansible-core 2.19.4: `recurse` is checked
+      # UNCONDITIONALLY after state resolution - an existing file (state
+      # defaults to "file", its own current type) with recurse: yes
+      # fails outright, it does not silently apply attributes.
+      path = tmp_path("exists-recurse-file.txt")
+      File.write(path, "x")
+
+      result = PluginSpecHelper.run("file", {"path" => path, "mode" => "0600", "recurse" => "yes"})
+
+      result["failed"].as_bool.should be_true
+      result["msg"].as_s.should contain("recurse option requires state to be 'directory'")
+    end
+
+    it "fails an explicit state: file with recurse: yes the same way" do
+      path = tmp_path("exists-recurse-explicit-file.txt")
+      File.write(path, "x")
+
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "file", "recurse" => "yes"})
+
+      result["failed"].as_bool.should be_true
+      result["msg"].as_s.should contain("recurse option requires state to be 'directory'")
+    end
+
+    it "succeeds recursing an existing directory with no state given" do
+      path = tmp_path("exists-recurse-dir")
+      Dir.mkdir_p(path)
+      File.chmod(path, 0o755)
+
+      result = PluginSpecHelper.run("file", {"path" => path, "mode" => "0750", "recurse" => "yes"})
+
+      result["failed"].as_bool.should be_false
+      result["changed"].as_bool.should be_true
+      result["state"].as_s.should eq("directory")
+    end
+  end
+
   describe "state=link" do
     it "creates a symbolic link" do
       target = tmp_path("linktarget.txt")

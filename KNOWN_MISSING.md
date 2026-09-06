@@ -18,8 +18,36 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.786`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.787`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## Round 44000: `file:` module's `recurse:`/default-`state:` semantics fixed (0.9.787)
+
+Closed the last remaining `dev-sec.nginx-hardening` open gap. Real Ansible's
+`file` module (`additional_parameter_handling` in `file.py`) does not default
+`state:` to `"file"` unconditionally: with no `state:` given, the default is
+the path's CURRENT type (file/directory/link) when it exists at all, or -
+only when the path is genuinely absent - `"directory"` if `recurse: yes` else
+`"file"`. Separately and unconditionally, real Ansible then hard-fails
+`recurse: yes` against anything that doesn't resolve to `"directory"` -
+"recurse option requires state to be 'directory'" - live-verified this
+applies whether `state:` was explicit or defaulted, and regardless of the
+path's existing type. This engine previously defaulted unconditionally to
+`"file"` for any existing path, never checked the recurse/directory
+requirement at all, and failed outright when the path was missing (breaking
+`dev-sec.nginx-hardening`'s own `file: {path: /etc/nginx, mode: o-rw,
+recurse: yes}` against a host without nginx installed). Fixed by resolving
+`state:` from the path's real on-disk type (`resolve_state`), and adding the
+missing recurse/directory validation. Live-reverified: an existing file with
+`recurse: yes` and no `state:` now fails with the identical message on both
+engines; an existing directory or a genuinely missing path still succeeds
+identically. Re-ran the actual reporting role on a fresh Kata pair:
+byte-identical recaps both engines, cold (`ok=2 changed=1 failed=1`) and warm
+(`ok=2 failed=1`) - the originally-failing task now creates `/etc/nginx`
+correctly on both, and both fail identically at the same later, unrelated
+task.
 
 ---
 
@@ -84,15 +112,6 @@ looped-task flow is strict with real-Ansible when:-before-loop ordering.
 Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
-
-- **`file:` module fails a missing-path `recurse:` target that real Ansible
-  accepts** (`dev-sec.nginx-hardening`, round6017): `file: path=/etc/nginx
-  mode=o-rw recurse=yes` with no explicit `state:` and `/etc/nginx` genuinely
-  absent (nginx not installed). Real ansible-playbook reports the task
-  `changed=true` and moves on; krikri fails it outright ("File does not
-  exist: /etc/nginx. Use state=touch to create it."). Not root-caused yet -
-  needs a look at real Ansible's own `file` module semantics for a missing
-  path combined with `recurse:` and no `state:`.
 
 - **Hand-rolled `when:`/`ConditionalEvaluator` doesn't validate filter names
   across a short-circuited `and`/`or` chain the way real Jinja does**
