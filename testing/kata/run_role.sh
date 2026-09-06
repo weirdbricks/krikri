@@ -91,8 +91,10 @@ run_krikri() {
   # batch - this harness AND the Atlantic.net 4-pairs-parallel workflow),
   # uploading the same local plugin binary to different remote hosts races
   # and intermittently corrupts the transfer ("Failed to upload .../plugins/X
-  # to IP: @@@@..." then UNREACHABLE). See KNOWN_ISSUES.md. Retrying against
-  # the SAME host does NOT reliably recover - whatever the race corrupts
+  # to IP: @@@@..." then UNREACHABLE). Fixed at the root (per-process SSH
+  # control-socket directory, commit 80a4b6ce/0.9.770) - the retry loop
+  # below is now just a stopgap for anything that slips through. Retrying
+  # against the SAME host does NOT reliably recover - whatever the race corrupts
   # (an SSH control socket? a half-written remote file?) seems to stick to
   # that host/connection. For "cold" this is harmless to fix: reboot host B
   # at a fresh octet and retry there instead. For "warm" a reboot would
@@ -102,7 +104,7 @@ run_krikri() {
   local attempt=1
   while [ "$attempt" -le 3 ] && grep -q "UNREACHABLE" "$out/krikri_$label.log" 2>/dev/null; do
     attempt=$((attempt+1))
-    log "krikri $label hit UNREACHABLE (plugin-upload race, see KNOWN_ISSUES.md), retry $attempt/3"
+    log "krikri $label hit UNREACHABLE (plugin-upload race, fixed at the root in 0.9.770, this is the stopgap), retry $attempt/3"
     sleep "0.$((RANDOM % 9 + 1))"
     if [ "$label" = "cold" ]; then
       local retry_octet=$((octet_b + 100 * attempt))
