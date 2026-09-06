@@ -143,7 +143,7 @@ module Krikri
     # FIRST (`disconnect_all_containers()`, verified against its actual
     # source), since Docker's own network-remove API itself refuses to
     # delete a network with any container still attached.
-    private def disconnect_all!(api : Docr::API, network_id : String)
+    private def disconnect_all!(api : Docr::API, network_id : String) : Nil
       current = api.networks.inspect(network_id).containers || Hash(String, Docr::Types::NetworkContainer).new
       current.values.each do |container|
         docker_raw_call(api.client, "POST", "/networks/#{network_id}/disconnect", {"Container" => container.name})

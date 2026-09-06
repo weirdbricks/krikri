@@ -156,7 +156,7 @@ module Krikri
     # Emits real Ansible's UNREACHABLE! line for *host* and books it as
     # either ignored (ignore_unreachable:) or unreachable, halting the
     # host in the latter case.
-    private def run_task_batch(tasks : Array(Task), hosts : Array(Host))
+    private def run_task_batch(tasks : Array(Task), hosts : Array(Host)) : Nil
       ensure_grouped(tasks)
 
       tasks.each do |task|
@@ -284,7 +284,7 @@ module Krikri
     # time. Per-host bookkeeping (failed/rescued counts, @halted_hosts)
     # mirrors execute_block's own single-host logic exactly, just driven
     # off host sets instead of one host.
-    private def run_task_for_hosts_in_parallel(task : Task, hosts : Array(Host))
+    private def run_task_for_hosts_in_parallel(task : Task, hosts : Array(Host)) : Nil
       # throttle: caps concurrency for this task BELOW --forks - real
       # Ansible's own semantics (it never raises the limit, only lowers
       # it). A throttle of 1 makes the task effectively serial.
@@ -364,7 +364,7 @@ module Krikri
     # cross-host parallelism work (`0.9.75`); Stage B, parallelizing the
     # per-task host loop itself via `--forks`, landed separately in
     # `0.9.77`. See git log for both.
-    private def execute_task(task : Task, host : Host)
+    private def execute_task(task : Task, host : Host) : Nil
       return execute_block(task, host) if task.block?
       return execute_include_tasks(task, host) if task.include_tasks?
       return execute_include_role(task, host) if task.include_role?
@@ -528,7 +528,7 @@ module Krikri
     # run_once: on every host after the first, skip execution outright but
     # still copy over whatever the first host's run registered, so a later
     # task on this host referencing it doesn't see an undefined variable.
-    private def copy_run_once_register(task : Task, host : Host)
+    private def copy_run_once_register(task : Task, host : Host) : Nil
       register_name = task.register
       return if register_name.nil? || register_name.empty?
 
@@ -1356,7 +1356,7 @@ module Krikri
     # stay attributed to `host` regardless.
     # Whether *task* on *host* should drop into the debugger, and the
     # loop that does. Returns the (possibly re-run) result.
-    private def halt_if_failed(task : Task, host : Host, failed : Bool)
+    private def halt_if_failed(task : Task, host : Host, failed : Bool) : Nil
       @halted_hosts.add(host.name) if failed && !task.ignore_errors?
     end
 
@@ -1449,7 +1449,7 @@ module Krikri
     # supported") - this recurses through such a case instead of
     # replicating that error, a deliberately more lenient (never a worse
     # divergence) simplification.
-    private def run_task_list(tasks : Array(Task), host : Host)
+    private def run_task_list(tasks : Array(Task), host : Host) : Nil
       ensure_grouped(tasks)
 
       tasks.each do |nested_task|

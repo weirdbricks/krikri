@@ -437,7 +437,7 @@ module Krikri
       PluginHelpers::MysqlPrivileges.current_grants(rows)
     end
 
-    private def apply_grants(db : DB::Database, name : String, host : String, desired : Hash(String, Set(String)))
+    private def apply_grants(db : DB::Database, name : String, host : String, desired : Hash(String, Set(String))) : Nil
       account = "#{quote_str(name)}@#{quote_str(host)}"
 
       db.exec "REVOKE ALL PRIVILEGES, GRANT OPTION FROM #{account}"

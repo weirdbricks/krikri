@@ -339,7 +339,7 @@ module Krikri
       end
     end
 
-    private def enable_via_systemctl(name : String, should_enable : Bool)
+    private def enable_via_systemctl(name : String, should_enable : Bool) : NamedTuple(changed: Bool, message: String, failure: PluginResult?)
       is_enabled = remote_exec("systemctl is-enabled #{name} 2>/dev/null")[:exit_code] == 0
       return unchanged if should_enable == is_enabled
 
@@ -359,7 +359,7 @@ module Krikri
     # enabled. A service with no K?? links at all has never been
     # registered, so `defaults` has to run before `enable` can do
     # anything.
-    private def enable_via_update_rc_d(name : String, should_enable : Bool, cmd : String)
+    private def enable_via_update_rc_d(name : String, should_enable : Bool, cmd : String) : NamedTuple(changed: Bool, message: String, failure: PluginResult?)
       is_enabled = @rc_start_links > 0
       return unchanged if should_enable == is_enabled
 
@@ -381,7 +381,7 @@ module Krikri
       end
     end
 
-    private def enable_via_chkconfig(name : String, should_enable : Bool, cmd : String)
+    private def enable_via_chkconfig(name : String, should_enable : Bool, cmd : String) : NamedTuple(changed: Bool, message: String, failure: PluginResult?)
       action = should_enable ? "on" : "off"
 
       listing = remote_exec("#{cmd} --list #{name}")
@@ -409,7 +409,7 @@ module Krikri
       end
     end
 
-    private def enable_via_rc_update(name : String, should_enable : Bool, cmd : String)
+    private def enable_via_rc_update(name : String, should_enable : Bool, cmd : String) : NamedTuple(changed: Bool, message: String, failure: PluginResult?)
       runlevel = @params["runlevel"]? || "default"
       action = should_enable ? "add" : "delete"
 
@@ -441,7 +441,7 @@ module Krikri
     # insserv has no query mode either, but it does have a dry run
     # (`-n -v`) that reports on stderr what it WOULD do - which is how
     # real Ansible decides whether anything needs changing.
-    private def enable_via_insserv(name : String, should_enable : Bool, cmd : String)
+    private def enable_via_insserv(name : String, should_enable : Bool, cmd : String) : NamedTuple(changed: Bool, message: String, failure: PluginResult?)
       dry_run = should_enable ? "#{cmd} -n -v #{name}" : "#{cmd} -n -r -v #{name}"
       marker = should_enable ? "enable service" : "remove service"
       needs_change = remote_exec(dry_run)[:stderr].to_s.each_line.any?(&.includes?(marker))
@@ -552,7 +552,7 @@ module Krikri
       false
     end
 
-    private def run_action(name : String, action : String, success_message : String)
+    private def run_action(name : String, action : String, success_message : String) : NamedTuple(changed: Bool, message: String, failure: PluginResult?)
       result =
         case @manager
         when Manager::Systemd
@@ -589,7 +589,7 @@ module Krikri
 
     # `service <name> <action>`, or the init script directly when no
     # `service` binary exists - real Ansible's own two SysV command forms.
-    private def run_sysv(name : String, action : String)
+    private def run_sysv(name : String, action : String) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       if svc_cmd = @svc_cmd
         remote_exec("#{svc_cmd} #{name} #{action}")
       else
@@ -602,19 +602,19 @@ module Krikri
     # these so #execute can stay a straight accumulation.
     # ------------------------------------------------------------------
 
-    private def unchanged
+    private def unchanged : NamedTuple(changed: Bool, message: String, failure: PluginResult?)
       {changed: false, message: "", failure: nil.as(PluginResult?)}
     end
 
-    private def changed(message : String)
+    private def changed(message : String) : NamedTuple(changed: Bool, message: String, failure: PluginResult?)
       {changed: true, message: message, failure: nil.as(PluginResult?)}
     end
 
-    private def would(description : String)
+    private def would(description : String) : NamedTuple(changed: Bool, message: String, failure: PluginResult?)
       {changed: true, message: "Would #{description}", failure: nil.as(PluginResult?)}
     end
 
-    private def failure(msg : String)
+    private def failure(msg : String) : NamedTuple(changed: Bool, message: String, failure: PluginResult?)
       {changed: false, message: "",
        failure: PluginResult.new(changed: false, failed: true, msg: msg).as(PluginResult?)}
     end

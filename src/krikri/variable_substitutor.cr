@@ -431,7 +431,7 @@ module Krikri
     # the aliasing-safety contract #18 documents - if anything ever
     # needs to write to @vars, this runs first and dups before
     # mutating. Subsequent calls are a no-op.
-    private def ensure_owned!
+    private def ensure_owned! : Nil
       return if @vars_owned
       @vars = @vars.dup
       @vars_owned = true
@@ -476,7 +476,7 @@ module Krikri
     # Lazy: only fires when first needed (evaluator/renderer build).
     # #ensure_owned! runs first, so this can safely mutate @vars
     # without aliasing back to the caller.
-    private def ensure_magic_vars!
+    private def ensure_magic_vars! : Nil
       return if @magic_vars_added
       ensure_owned!
       @vars["inventory_hostname"] = JSON::Any.new(@host_name)
@@ -1277,7 +1277,7 @@ module Krikri
       array.map { |item| substitute(item) }
     end
 
-    def set_variable(name : String, value : String | JSON::Any)
+    def set_variable(name : String, value : String | JSON::Any) : Nil
       ensure_owned!
       @vars[name] = value.is_a?(JSON::Any) ? value : JSON::Any.new(value)
       # Invalidate rather than eagerly rebuild - same semantics, and the

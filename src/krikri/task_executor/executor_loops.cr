@@ -736,7 +736,7 @@ module Krikri
     # both the batched and one-at-a-time paths) so register:/notify:/
     # stats/halt bookkeeping stays byte-identical regardless of which
     # transport produced the results.
-    private def finish_looped_task(task : Task, host : Host, loop_items : Array(JSON::Any), item_results : Array(JSON::Any?), fact_hosts : Array(Host)? = nil)
+    private def finish_looped_task(task : Task, host : Host, loop_items : Array(JSON::Any), item_results : Array(JSON::Any?), fact_hosts : Array(Host)? = nil) : Nil
       results = [] of JSON::Any
       any_changed = false
       any_failed = false

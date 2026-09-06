@@ -261,7 +261,7 @@ module Krikri
     # codebase deliberately went native for since bindings already
     # existed), so this is arguably more faithful to real Ansible's own
     # implementation than the other three, not less.
-    private def write_target(target : String, content : String)
+    private def write_target(target : String, content : String) : Nil
       return write_zst(target, content) if target.ends_with?(".zst")
 
       File.open(target, "w") do |file|
@@ -278,7 +278,7 @@ module Krikri
       end
     end
 
-    private def write_zst(target : String, content : String)
+    private def write_zst(target : String, content : String) : Nil
       status = Process.run("zstd", ["-q", "-f", "-o", target, "-"], input: IO::Memory.new(content))
       raise "zstd compression failed (exit #{status.exit_code}) - is the zstd binary installed?" unless status.success?
     end

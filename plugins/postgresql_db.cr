@@ -315,7 +315,7 @@ module Krikri
 
     # Writes dump content to target, compressing natively (no `gzip`/
     # `bzip2`/`xz` subprocess) when target ends in .gz/.bz2/.xz.
-    private def write_target(target : String, content : String)
+    private def write_target(target : String, content : String) : Nil
       File.open(target, "w") do |file|
         case
         when target.ends_with?(".gz")

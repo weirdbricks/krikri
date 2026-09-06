@@ -147,7 +147,7 @@ module Krikri
     # is NOT echoed back into the captured output - turn off the pty's
     # canonical-mode local echo unless the task explicitly asked for it
     # (echo: true), matching pexpect's own `setecho()` behavior.
-    private def setup_slave_echo(aslave : LibC::Int, echo : Bool)
+    private def setup_slave_echo(aslave : LibC::Int, echo : Bool) : Nil
       slave_io = IO::FileDescriptor.new(aslave, blocking: true)
       echo ? slave_io.echo! : slave_io.noecho!
     end
@@ -164,7 +164,7 @@ module Krikri
     # `Process.new`'s own spawn (used before this fix) has no hook to
     # arrange between fork and exec. Never returns (always execs or
     # _exits), so the parent's code below never runs in the child.
-    private def child_exec(aslave : LibC::Int, amaster : LibC::Int, full_command : String)
+    private def child_exec(aslave : LibC::Int, amaster : LibC::Int, full_command : String) : Nil
       LibC.setsid
       LibC.ioctl(aslave, TIOCSCTTY, 0)
       LibC.dup2(aslave, 0)

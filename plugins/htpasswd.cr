@@ -143,7 +143,7 @@ module Krikri
       entries
     end
 
-    private def write_entries(path : String, entries : Hash(String, String))
+    private def write_entries(path : String, entries : Hash(String, String)) : Nil
       File.write(path, entries.map { |name, hash| "#{name}:#{hash}" }.join('\n') + '\n')
     end
 

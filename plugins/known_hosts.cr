@@ -119,7 +119,7 @@ module Krikri
       {parts[1], parts[2]}
     end
 
-    private def ensure_parent_dir(path : String)
+    private def ensure_parent_dir(path : String) : Nil
       dir = File.dirname(path)
       remote_exec("mkdir -p #{shell_quote(dir)} && chmod 700 #{shell_quote(dir)}")
     end

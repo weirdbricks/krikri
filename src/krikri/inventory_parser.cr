@@ -236,13 +236,13 @@ module Krikri
     end
 
     # Add a host
-    def add_host(host : Host)
+    def add_host(host : Host) : Nil
       @hosts[host.name] = host
       @groups_by_host_cache = nil
     end
 
     # Add a group
-    def add_group(group : HostGroup)
+    def add_group(group : HostGroup) : Nil
       @groups[group.name] = group
       @groups_by_host_cache = nil
     end
@@ -265,7 +265,7 @@ module Krikri
     # which hosts the CURRENT play iterates over (already fixed before
     # this runs), only what a LATER play's own `hosts:` pattern match
     # sees.
-    def reload_from!(fresh : Inventory)
+    def reload_from!(fresh : Inventory) : Nil
       @hosts = fresh.hosts
       @groups = fresh.groups
       @groups_by_host_cache = nil
@@ -286,12 +286,12 @@ module Krikri
     end
 
     # Add host to group
-    def add_host(host : Host)
+    def add_host(host : Host) : Nil
       @hosts[host.name] = host
     end
 
     # Add child group
-    def add_child(group_name : String)
+    def add_child(group_name : String) : Nil
       @children << group_name unless @children.includes?(group_name)
     end
   end
@@ -492,7 +492,7 @@ module Krikri
     # Apply one top-level group entry from a dynamic inventory's --list
     # output - either the shorthand bare-array form or the full
     # {hosts:, vars:, children:} hash form.
-    private def self.apply_dynamic_group(inventory : Inventory, group_name : String, group_data : JSON::Any)
+    private def self.apply_dynamic_group(inventory : Inventory, group_name : String, group_data : JSON::Any) : Nil
       group = inventory.get_or_create_group(group_name)
 
       if hosts_array = group_data.as_a?
@@ -530,7 +530,7 @@ module Krikri
     # Apply a hostvars hash (from _meta.hostvars or a --host call) to a
     # host, handling ansible_user/ansible_port the same way inline
     # inventory vars already do.
-    private def self.apply_host_vars_json(host : Host, vars_json : JSON::Any)
+    private def self.apply_host_vars_json(host : Host, vars_json : JSON::Any) : Nil
       hash = vars_json.as_h?
       return unless hash
 
@@ -550,7 +550,7 @@ module Krikri
 
     # Older/simpler dynamic inventory scripts (no _meta) expect one
     # `--host <name>` call per host instead.
-    private def self.fetch_dynamic_host_vars(path : String, host : Host)
+    private def self.fetch_dynamic_host_vars(path : String, host : Host) : Nil
       output = IO::Memory.new
       status = Process.run(path, ["--host", host.name], output: output, error: Process::Redirect::Close)
       return unless status.success?
@@ -697,7 +697,7 @@ module Krikri
     end
 
     # Parse host line from INI
-    private def self.parse_host_line(line : String, group_name : String, inventory : Inventory)
+    private def self.parse_host_line(line : String, group_name : String, inventory : Inventory) : Nil
       # Format: hostname key=value key=value
       #
       # Split the way real Ansible does - `shlex.split`, not a plain
@@ -758,7 +758,7 @@ module Krikri
     end
 
     # Parse variable line from INI
-    private def self.parse_var_line(line : String, group_name : String, inventory : Inventory)
+    private def self.parse_var_line(line : String, group_name : String, inventory : Inventory) : Nil
       return unless line.includes?("=")
 
       key, value = line.split("=", 2)
@@ -767,7 +767,7 @@ module Krikri
     end
 
     # Parse child group line from INI
-    private def self.parse_child_line(line : String, group_name : String, inventory : Inventory)
+    private def self.parse_child_line(line : String, group_name : String, inventory : Inventory) : Nil
       child_group_name = line.strip
       group = inventory.get_or_create_group(group_name)
       group.add_child(child_group_name)
@@ -777,7 +777,7 @@ module Krikri
     end
 
     # Parse YAML group
-    private def self.parse_yaml_group(group_name : String, yaml : YAML::Any, inventory : Inventory)
+    private def self.parse_yaml_group(group_name : String, yaml : YAML::Any, inventory : Inventory) : Nil
       group = inventory.get_or_create_group(group_name)
 
       # Parse hosts
@@ -840,7 +840,7 @@ module Krikri
     # very same key is a rare enough combination that this simpler,
     # documented approximation is a reasonable trade rather than
     # threading a second "was this explicitly inline" flag through Host.
-    private def self.load_group_and_host_vars(inventory : Inventory, inventory_dir : String)
+    private def self.load_group_and_host_vars(inventory : Inventory, inventory_dir : String) : Nil
       group_vars_dir = File.join(inventory_dir, "group_vars")
       host_vars_dir = File.join(inventory_dir, "host_vars")
 
@@ -862,7 +862,7 @@ module Krikri
     # Load base_path.yml (or .yaml) if it exists and apply its top-level
     # keys to every given host, skipping any key the host already has -
     # see load_group_and_host_vars for the precedence this establishes.
-    private def self.apply_vars_file(hosts : Array(Host), base_path : String)
+    private def self.apply_vars_file(hosts : Array(Host), base_path : String) : Nil
       path = {"#{base_path}.yml", "#{base_path}.yaml"}.find { |pth| File.exists?(pth) }
       return unless path
 
@@ -892,7 +892,7 @@ module Krikri
     end
 
     # Apply group variables to hosts
-    private def self.apply_group_vars(inventory : Inventory)
+    private def self.apply_group_vars(inventory : Inventory) : Nil
       inventory.groups.each do |group_name, group|
         # `[all:vars]` applies to EVERY host in the inventory, not just
         # to hosts explicitly listed under an `[all]` section - which no

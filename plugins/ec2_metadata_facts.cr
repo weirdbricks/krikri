@@ -77,7 +77,7 @@ module Krikri
       facts
     end
 
-    private def apply_instance_tags(facts : Hash(String, JSON::Any), token : String)
+    private def apply_instance_tags(facts : Hash(String, JSON::Any), token : String) : Nil
       raw = fetch_raw(TAGS_URI, token)
       tag_keys = raw == "None" ? [] of String : raw.split('\n').reject(&.empty?)
       facts["ansible_ec2_instance_tags_keys"] = JSON::Any.new(tag_keys.map { |key| JSON::Any.new(key) })
@@ -129,7 +129,7 @@ module Krikri
     # newline-separated listing of child names (subdirectories end in
     # "/"); each leaf gets fetched and stored, with a JSON-object leaf
     # ALSO exploded into "<leaf>:<lowercased key>" sub-entries.
-    private def fetch_tree(uri : String, base : String, token : String, data : Hash(String, JSON::Any))
+    private def fetch_tree(uri : String, base : String, token : String, data : Hash(String, JSON::Any)) : Nil
       raw = fetch_raw(uri, token)
       return if raw.empty? || raw == "None"
 
@@ -144,7 +144,7 @@ module Krikri
       end
     end
 
-    private def store_leaf(data : Hash(String, JSON::Any), new_uri : String, field : String, content : String)
+    private def store_leaf(data : Hash(String, JSON::Any), new_uri : String, field : String, content : String) : Nil
       if field == "security-groups" || field == "security-group-ids"
         data[new_uri] = JSON::Any.new(content.split('\n').join(","))
         return

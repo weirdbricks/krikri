@@ -303,7 +303,7 @@ module Krikri
     end
 
     # Apply file attributes (owner, group, mode)
-    private def apply_file_attributes(path : String)
+    private def apply_file_attributes(path : String) : Nil
       # Set mode (permissions) using native Crystal
       if mode = @params["mode"]?
         begin

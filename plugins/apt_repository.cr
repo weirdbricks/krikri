@@ -267,7 +267,7 @@ module Krikri
     # post-write cache update failing) leaves the filesystem exactly as
     # it was found, matching real Ansible's own rollback-on-failure
     # behavior for this case.
-    private def rollback_line(target : String, normalized : String)
+    private def rollback_line(target : String, normalized : String) : Nil
       return unless File.exists?(target)
 
       remaining_lines = File.read_lines(target).reject { |line| line == normalized }
@@ -301,7 +301,7 @@ module Krikri
     # ("Unable to locate package nomad") - a real divergence from real
     # Ansible, which recovers via the rescue: at the point it's supposed
     # to. Found benchmarking robertdebock.nomad.
-    private def run_update_cache
+    private def run_update_cache : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       remote_exec("apt-get update")
     end
 

@@ -68,7 +68,7 @@ module Krikri
       end
     end
 
-    def to_json(io : IO)
+    def to_json(io : IO) : Nil
       result = Hash(String, JSON::Any::Type).new
       result["changed"] = @changed
       result["failed"] = @failed
@@ -123,7 +123,7 @@ module Krikri
     abstract def execute : PluginResult
 
     # Run the plugin and output JSON result
-    def run
+    def run : Nil
       puts run_and_capture
     end
 
@@ -139,7 +139,7 @@ module Krikri
     # own driver trailer) is unaffected.
     def run_and_capture : String
       execute.to_json
-    rescue ex
+    rescue ex : Exception
       error_result = PluginResult.new(
         changed: false,
         failed: true,
@@ -246,7 +246,7 @@ module Krikri
       Shell.single_quote(str)
     end
 
-    protected def remote_upload(local_path : String, remote_path : String)
+    protected def remote_upload(local_path : String, remote_path : String) : Nil
       if local_connection?
         # Just copy locally
         FileUtils.cp(local_path, remote_path)
@@ -262,7 +262,7 @@ module Krikri
       end
     end
 
-    protected def remote_download(remote_path : String, local_path : String)
+    protected def remote_download(remote_path : String, local_path : String) : Nil
       if local_connection?
         # Just copy locally
         FileUtils.cp(remote_path, local_path)
@@ -443,7 +443,7 @@ module Krikri
     # Failures (unknown owner/group name, EPERM) are swallowed, matching
     # every prior shell-based version of this logic: none of them checked
     # chown/chgrp/chmod's exit code either.
-    protected def apply_owner_group_mode(path : String, owner : String?, group : String?, mode : String?)
+    protected def apply_owner_group_mode(path : String, owner : String?, group : String?, mode : String?) : Nil
       uid = -1
       gid = -1
 

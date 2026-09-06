@@ -70,7 +70,7 @@ module Krikri
     # guarded by a flag rather than re-run every time.
     @@control_dir_ready = false
 
-    def self.init
+    def self.init : Nil
       return if @@control_dir_ready
       Dir.mkdir_p(@@control_path_dir) unless Dir.exists?(@@control_path_dir)
       @@control_dir_ready = true
@@ -154,7 +154,7 @@ module Krikri
     end
 
     # Reset statistics
-    def self.reset_stats
+    def self.reset_stats : Nil
       @@stats.each_key do |key|
         @@stats[key] = 0
       end
@@ -846,7 +846,7 @@ module Krikri
     end
 
     # Close specific connection
-    def self.close_connection(host : String, user : String, port : Int32 = 22)
+    def self.close_connection(host : String, user : String, port : Int32 = 22) : Nil
       control_path = get_control_path(host, user, port)
 
       # Send exit command to close the master connection
@@ -864,7 +864,7 @@ module Krikri
     end
 
     # Close all connections
-    def self.close_all
+    def self.close_all : Nil
       return unless Dir.exists?(@@control_path_dir)
 
       # Remove all control sockets

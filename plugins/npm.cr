@@ -150,7 +150,7 @@ module Krikri
       end
     end
 
-    private def run_npm(subcommand : Array(String), name_version : String?, global : Bool, path : String?, mutating : Bool = true)
+    private def run_npm(subcommand : Array(String), name_version : String?, global : Bool, path : String?, mutating : Bool = true) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       args = subcommand.dup
       args << "--global" if global
       append_npm_args(args, mutating, name_version)

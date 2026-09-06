@@ -1840,7 +1840,7 @@ module Krikri
         end
       end
 
-      private def python_json_dump(value : JSON::Any, io : IO)
+      private def python_json_dump(value : JSON::Any, io : IO) : Nil
         case raw = value.raw
         when Nil
           io << "null"

@@ -24,7 +24,7 @@ module Krikri
 
     # Notify a handler (by name or listen topic)
     # Handlers can be notified multiple times but only run once
-    def notify(host : Host, handler_name : String)
+    def notify(host : Host, handler_name : String) : Nil
       @notified_handlers[host.name].add(handler_name)
     end
 
@@ -40,7 +40,7 @@ module Krikri
     # same "only runs what's still pending" semantics - a handler
     # already flushed once doesn't run a second time just because the
     # end-of-play flush also fires.
-    def clear_notified!
+    def clear_notified! : Nil
       @hosts.each { |host| @notified_handlers[host.name].clear }
     end
 

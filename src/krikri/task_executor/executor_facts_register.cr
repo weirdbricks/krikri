@@ -2,7 +2,7 @@ require "./executor"
 
 module Krikri
   class TaskExecutor
-    private def gather_facts_for_all_hosts
+    private def gather_facts_for_all_hosts : Nil
       # --gathering smart: a host whose facts this run already collected
       # (in an earlier play, via the shared run-scoped store) is not
       # queried again. Under the default `implicit` mode every play
@@ -164,7 +164,7 @@ module Krikri
     end
 
     # Show execution recap
-    private def merge_ansible_facts(host : Host, result : JSON::Any, high_precedence : Bool = false)
+    private def merge_ansible_facts(host : Host, result : JSON::Any, high_precedence : Bool = false) : Nil
       return unless ansible_facts = result["ansible_facts"]?
       return unless facts_hash = ansible_facts.as_h?
 

@@ -93,7 +93,7 @@ module Krikri
       args
     end
 
-    private def each_list_param(key : String, &)
+    private def each_list_param(key : String, &) : Nil
       raw = @params[key]?
       return unless raw
 
@@ -110,7 +110,7 @@ module Krikri
       values.each { |v| yield v }
     end
 
-    private def each_dict_param(key : String, &)
+    private def each_dict_param(key : String, &) : Nil
       raw = @params[key]?
       return unless raw
 

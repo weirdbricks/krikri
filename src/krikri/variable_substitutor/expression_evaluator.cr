@@ -1260,7 +1260,7 @@ module Krikri
         property? found = false
       end
 
-      private def split_top_level_plus_step(state : PlusSplitState, char : Char)
+      private def split_top_level_plus_step(state : PlusSplitState, char : Char) : Nil
         if quote = state.quote
           state.current << char
           state.quote = nil if char == quote
@@ -1278,7 +1278,7 @@ module Krikri
         end
       end
 
-      private def split_top_level_plus_delimiter(state : PlusSplitState, char : Char)
+      private def split_top_level_plus_delimiter(state : PlusSplitState, char : Char) : Nil
         case char
         when '\'', '"'
           state.quote = char
@@ -1334,7 +1334,7 @@ module Krikri
         i + 1
       end
 
-      private def split_mult_div_delimiter(state : MultDivSplitState, char : Char)
+      private def split_mult_div_delimiter(state : MultDivSplitState, char : Char) : Nil
         case char
         when '\'', '"'
           state.quote = char
@@ -2817,7 +2817,7 @@ module Krikri
         state.parts
       end
 
-      private def split_top_level_commas_step(state : PlusSplitState, char : Char)
+      private def split_top_level_commas_step(state : PlusSplitState, char : Char) : Nil
         if quote = state.quote
           state.current << char
           state.quote = nil if char == quote
@@ -2857,7 +2857,7 @@ module Krikri
         property depth = 0
         property quote : Char? = nil
 
-        def advance(char : Char)
+        def advance(char : Char) : Nil
           if q = quote
             self.quote = nil if char == q
             return
@@ -2865,7 +2865,7 @@ module Krikri
           advance_unquoted(char)
         end
 
-        private def advance_unquoted(char : Char)
+        private def advance_unquoted(char : Char) : Nil
           case char
           when '\'', '"'     then self.quote = char
           when '(', '[', '{' then self.depth += 1

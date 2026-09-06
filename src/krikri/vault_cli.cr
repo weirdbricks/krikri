@@ -6,7 +6,7 @@ module Krikri
   # `ansible-vault`'s CLI shape for the common, non-interactive
   # subcommands. `create`/`edit` (which launch $EDITOR) aren't implemented.
   module VaultCli
-    def self.run(args : Array(String))
+    def self.run(args : Array(String)) : Nil
       subcommand = args[0]?
       unless subcommand
         usage
@@ -36,7 +36,7 @@ module Krikri
       exit 1
     end
 
-    private def self.usage
+    private def self.usage : Nil
       puts "Usage: krikri-playbook vault {encrypt|decrypt|view|encrypt_string|rekey} [options] [file ...]"
       puts ""
       puts "Examples:"
@@ -77,7 +77,7 @@ module Krikri
       vault_password_file ? read_password_file(vault_password_file) : prompt_password
     end
 
-    private def self.encrypt_command(args : Array(String))
+    private def self.encrypt_command(args : Array(String)) : Nil
       vault_password_file, output_path, files = parse_file_args(args)
 
       if files.empty?
@@ -109,7 +109,7 @@ module Krikri
       end
     end
 
-    private def self.decrypt_command(args : Array(String))
+    private def self.decrypt_command(args : Array(String)) : Nil
       vault_password_file, output_path, files = parse_file_args(args)
 
       if files.empty?
@@ -131,7 +131,7 @@ module Krikri
       end
     end
 
-    private def self.view_command(args : Array(String))
+    private def self.view_command(args : Array(String)) : Nil
       vault_password_file, _output_path, files = parse_file_args(args)
 
       if files.size != 1
@@ -143,7 +143,7 @@ module Krikri
       puts Vault.decrypt(File.read(files[0]), password)
     end
 
-    private def self.encrypt_string_command(args : Array(String))
+    private def self.encrypt_string_command(args : Array(String)) : Nil
       vault_password_file = nil
       name = nil
       strings = [] of String
@@ -171,7 +171,7 @@ module Krikri
       encrypted.each_line { |line| puts "          #{line}" unless line.empty? }
     end
 
-    private def self.rekey_command(args : Array(String))
+    private def self.rekey_command(args : Array(String)) : Nil
       vault_password_file = nil
       new_vault_password_file = nil
       files = [] of String

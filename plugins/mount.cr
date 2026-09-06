@@ -251,7 +251,7 @@ module Krikri
       end
     end
 
-    private def write_fstab(fstab : String, lines : Array(String))
+    private def write_fstab(fstab : String, lines : Array(String)) : Nil
       content = lines.join
       if local_connection?
         File.write(fstab, content)

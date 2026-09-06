@@ -70,7 +70,7 @@ module Krikri
       true
     end
 
-    private def apply_response_extras(result : PluginResult, headers : HTTP::Headers, body : String, redirected : Bool)
+    private def apply_response_extras(result : PluginResult, headers : HTTP::Headers, body : String, redirected : Bool) : Nil
       content_type = headers["Content-Type"]?.try(&.split(";").first.strip) || ""
       result.extra["content_type"] = JSON::Any.new(content_type)
       result.extra["redirected"] = JSON::Any.new(redirected)

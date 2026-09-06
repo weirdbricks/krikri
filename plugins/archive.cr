@@ -210,7 +210,7 @@ module Krikri
       end
     end
 
-    private def walk(dir : String, members : Array(String))
+    private def walk(dir : String, members : Array(String)) : Nil
       Dir.each_child(dir) do |child|
         child_path = File.join(dir, child)
         members << child_path
@@ -353,7 +353,7 @@ module Krikri
       false
     end
 
-    private def write_tar_entries(io : IO, root : String, members : Array(String), relative_members : Array(String))
+    private def write_tar_entries(io : IO, root : String, members : Array(String), relative_members : Array(String)) : Nil
       Crystar::Writer.open(io) do |tar|
         members.each_with_index do |member, i|
           info = info_for(member)
@@ -524,7 +524,7 @@ module Krikri
       "#{names.sort!.join("\n")}|#{digest.final.hexstring}"
     end
 
-    private def read_tar_signature(io : IO, names : Array(String), digest : OpenSSL::Digest)
+    private def read_tar_signature(io : IO, names : Array(String), digest : OpenSSL::Digest) : Nil
       Crystar::Reader.open(io) do |tar|
         tar.each_entry do |entry|
           names << entry.name
@@ -533,11 +533,11 @@ module Krikri
       end
     end
 
-    private def remove_sources(found_paths : Array(String))
+    private def remove_sources(found_paths : Array(String)) : Nil
       found_paths.each { |path| FileUtils.rm_rf(path) }
     end
 
-    private def apply_dest_attributes(dest : String)
+    private def apply_dest_attributes(dest : String) : Nil
       if owner = @params["owner"]?
         if user = System::User.find_by?(name: owner)
           File.chown(dest, uid: user.id.to_i, gid: -1)

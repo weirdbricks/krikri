@@ -73,7 +73,7 @@ module Krikri
       end
     end
 
-    private def apply_flush(bin : String, chain : String?, check_mode : Bool, msgs : Array(String))
+    private def apply_flush(bin : String, chain : String?, check_mode : Bool, msgs : Array(String)) : Nil
       remote_exec("#{bin} -t #{table} -F #{chain}") unless check_mode
       msgs << "flushed #{chain}"
     end

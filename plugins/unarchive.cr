@@ -155,7 +155,7 @@ module Krikri
       nil
     end
 
-    private def cleanup_after_unarchive(tmp_download_path : String?, src : String)
+    private def cleanup_after_unarchive(tmp_download_path : String?, src : String) : Nil
       File.delete(tmp_download_path) if tmp_download_path && File.exists?(tmp_download_path)
       # __cleanup_after_unarchive - set by TaskExecutor#stage_unarchive_
       # remote_src when src: named a controller-side path (unarchive's
@@ -172,7 +172,7 @@ module Krikri
     # data, and GitHub's own release-asset URLs are themselves a 302
     # redirect to a signed S3/Azure blob URL, so following redirects
     # isn't optional here).
-    private def download(url : String, tmp_path : String, redirects_left : Int32 = MAX_REDIRECTS)
+    private def download(url : String, tmp_path : String, redirects_left : Int32 = MAX_REDIRECTS) : Nil
       raise "too many redirects" if redirects_left < 0
 
       uri = URI.parse(url)

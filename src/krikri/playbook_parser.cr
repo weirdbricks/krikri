@@ -434,7 +434,7 @@ module Krikri
       @module_name == "_validate_argument_spec"
     end
 
-    def to_s(io : IO)
+    def to_s(io : IO) : Nil
       io << "Task(#{@name}, #{@module_name})"
     end
   end
@@ -536,7 +536,7 @@ module Krikri
       @handlers = [] of Task
     end
 
-    def to_s(io : IO)
+    def to_s(io : IO) : Nil
       io << "Play(#{@name}, hosts: #{@hosts}, #{@tasks.size} tasks)"
     end
   end
@@ -687,7 +687,7 @@ module Krikri
       @plays = [] of Play
     end
 
-    def to_s(io : IO)
+    def to_s(io : IO) : Nil
       io << "Playbook(#{@path}, #{@plays.size} plays)"
     end
   end
@@ -2502,7 +2502,7 @@ module Krikri
     # half-failure: previously crystal would parse the include
     # cleanly, run it, then hit a downstream task error with
     # different (often more confusing) symptoms.
-    private def self.validate_include_keys(task_hash : Hash(YAML::Any, YAML::Any), kind : String, directive_key : String)
+    private def self.validate_include_keys(task_hash : Hash(YAML::Any, YAML::Any), kind : String, directive_key : String) : Nil
       task_hash.each_key do |key|
         key_str = key.to_s
         # The include directive key itself ("include_tasks",

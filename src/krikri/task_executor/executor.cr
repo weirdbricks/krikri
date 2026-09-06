@@ -410,7 +410,7 @@ module Krikri
     end
 
     # Main execution loop
-    def run
+    def run : Nil
       # Gather facts if enabled
       if @gather_facts
         gather_facts_for_all_hosts

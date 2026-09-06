@@ -560,7 +560,7 @@ module Krikri
     # empty (and thus skipped) loop into one bogus iteration whose `item`
     # was the whole unparsed template string, sent straight into `copy:
     # src: "{{ item }}"` and failing there instead.
-    private def render_task_vars(task : Task, vars_context : Hash(String, JSON::Any), host_name : String)
+    private def render_task_vars(task : Task, vars_context : Hash(String, JSON::Any), host_name : String) : Nil
       task.vars.each_key do |key|
         raw = vars_context[key]?
         next unless raw

@@ -10,7 +10,7 @@ module Krikri
     @@global = Hash(String, JSON::Any).new
     @@per_host = Hash(String, Hash(String, JSON::Any)).new
 
-    def self.set(key : String, value : JSON::Any, aggregate : Bool, host_name : String?, per_host : Bool)
+    def self.set(key : String, value : JSON::Any, aggregate : Bool, host_name : String?, per_host : Bool) : Nil
       if per_host && host_name
         bucket = (@@per_host[host_name] ||= Hash(String, JSON::Any).new)
         merge_into(bucket, key, value, aggregate)
@@ -40,7 +40,7 @@ module Krikri
     # multiple set_stats: calls (e.g. a loop incrementing a counter);
     # any non-numeric value (or aggregate: false) just overwrites, same
     # as real Ansible.
-    private def self.merge_into(bucket : Hash(String, JSON::Any), key : String, value : JSON::Any, aggregate : Bool)
+    private def self.merge_into(bucket : Hash(String, JSON::Any), key : String, value : JSON::Any, aggregate : Bool) : Nil
       existing = bucket[key]?
       if aggregate && existing && numeric?(existing) && numeric?(value)
         if existing.raw.is_a?(Int64) && value.raw.is_a?(Int64)

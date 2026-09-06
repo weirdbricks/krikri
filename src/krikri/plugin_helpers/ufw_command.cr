@@ -65,7 +65,7 @@ module Krikri
         parts.join(" ")
       end
 
-      private def self.append_trailing_clauses(parts : Array(String), params : Hash(String, String))
+      private def self.append_trailing_clauses(parts : Array(String), params : Hash(String, String)) : Nil
         parts << "proto #{params["proto"]}" if (v = params["proto"]?) && !v.empty?
         parts << "app '#{params["name"]}'" if (v = params["name"]?) && !v.empty?
         parts << "comment '#{params["comment"]}'" if (v = params["comment"]?) && !v.empty?
@@ -83,7 +83,7 @@ module Krikri
       # port 22 ...` that real `ufw` itself rejects with "ERROR: Need
       # 'to' or 'from' clause" - found running konstruktoid-hardening's
       # "Allow outgoing specified ports" task, which does exactly this.
-      private def self.append_endpoints(parts : Array(String), params : Hash(String, String))
+      private def self.append_endpoints(parts : Array(String), params : Hash(String, String)) : Nil
         # from_ip/to_ip are ALWAYS emitted (real Ansible's own argument
         # defaults are 'any', so "from any"/"to any" appear even for a
         # bare port rule - omitting them makes real ufw reject the
@@ -120,7 +120,7 @@ module Krikri
       #     Ansible, not an if/elsif chain: a task setting both
       #     interface_in and interface_out emits both clauses there and
       #     only the first here.
-      private def self.append_interface(parts : Array(String), params : Hash(String, String))
+      private def self.append_interface(parts : Array(String), params : Hash(String, String)) : Nil
         parts << "on #{params["interface"]}" if present?(params, "interface")
         parts << "in on #{params["interface_in"]}" if present?(params, "interface_in")
         parts << "out on #{params["interface_out"]}" if present?(params, "interface_out")

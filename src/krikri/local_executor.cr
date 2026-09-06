@@ -140,7 +140,7 @@ module Krikri
     # rather than leaking a fiber blocked on a pipe that will never see
     # EOF, then waits for it to actually finish now that its read has been
     # interrupted.
-    private def self.await(pipe : IO::FileDescriptor, done : Channel(Nil))
+    private def self.await(pipe : IO::FileDescriptor, done : Channel(Nil)) : Nil
       select
       when done.receive
       when timeout(DRAIN_GRACE_PERIOD)
@@ -150,7 +150,7 @@ module Krikri
     end
 
     # Copy file locally
-    def self.copy_file(src : String, dest : String)
+    def self.copy_file(src : String, dest : String) : Nil
       FileUtils.cp(src, dest)
     end
 

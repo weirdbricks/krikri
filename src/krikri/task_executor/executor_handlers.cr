@@ -2,7 +2,7 @@ require "./executor"
 
 module Krikri
   class TaskExecutor
-    private def notify_handlers(task : Task, host : Host, notify_list : Array(String))
+    private def notify_handlers(task : Task, host : Host, notify_list : Array(String)) : Nil
       return if notify_list.empty?
 
       unless notify_list.any?(&.includes?("{{"))
@@ -173,7 +173,7 @@ module Krikri
       end
     end
 
-    private def run_handlers
+    private def run_handlers : Nil
       # Create callback for handler execution
       # This allows HandlerRunner to execute handlers without duplicating logic
       execute_callback = ->(handler : Task, host : Host) : JSON::Any {

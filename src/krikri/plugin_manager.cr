@@ -418,7 +418,7 @@ module Krikri
     # templated), so plugins used exclusively inside one aren't
     # pre-uploaded; a known, narrower limitation, not a regression from
     # this fix.
-    private def self.collect_required_plugins(tasks : Array(Task), required : Set(String))
+    private def self.collect_required_plugins(tasks : Array(Task), required : Set(String)) : Nil
       tasks.each do |task|
         if task.block?
           collect_required_plugins(task.block_tasks || [] of Task, required)
@@ -552,7 +552,7 @@ module Krikri
     # Collapsed to 3 SSH round trips total (was 2N+1): one to mkdir +
     # dump every existing remote .md5 in one pass, one rsync/scp transfer
     # for whatever needs uploading, one to write all the new .md5 files.
-    private def self.upload_plugins_to_host(host : Host, plugin_names : Array(String))
+    private def self.upload_plugins_to_host(host : Host, plugin_names : Array(String)) : Nil
       connection_host = get_connection_host(host, host.vars)
       host_key = "#{host.user}@#{connection_host}:#{host.port}"
       user = host.user || "root"
@@ -1162,7 +1162,7 @@ module Krikri
     # lookup when the plugin is already there (the overwhelmingly common
     # case, since pre-upload got it), and costs the upload round trips
     # only the first time an unforeseen module is actually needed.
-    def self.ensure_uploaded(host : Host, plugin_name : String, vars : Hash(String, JSON::Any))
+    def self.ensure_uploaded(host : Host, plugin_name : String, vars : Hash(String, JSON::Any)) : Nil
       simple_name = simple_plugin_name(plugin_name)
       connection_host = get_connection_host(host, vars)
       host_key = "#{host.user}@#{connection_host}:#{host.port}"
@@ -1437,7 +1437,7 @@ module Krikri
     end
 
     # Clear uploaded plugins cache (for testing)
-    def self.clear_cache
+    def self.clear_cache : Nil
       @@uploaded_plugins.clear
       @@local_md5_cache.clear
       @@local_md5_representatives.clear

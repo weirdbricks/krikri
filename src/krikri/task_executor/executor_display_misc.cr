@@ -18,7 +18,7 @@ module Krikri
       end
     end
 
-    def show_recap
+    def show_recap : Nil
       ResultDisplay.show_recap(@hosts, @results)
     end
 
@@ -296,7 +296,7 @@ module Krikri
     # Skipped entirely in check mode: most modules refuse to act in check
     # mode anyway, which would otherwise turn every retry loop into a slow,
     # guaranteed-to-fail wait for no reason.
-    private def execute_meta(task : Task, host : Host)
+    private def execute_meta(task : Task, host : Host) : Nil
       case task.meta_action
       when "flush_handlers"
         # Called once per host by the outer per-task host loop in #run,

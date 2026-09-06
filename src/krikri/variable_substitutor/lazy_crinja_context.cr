@@ -78,7 +78,7 @@ module Krikri
       # per-key conversion - so `varnames` stays correct without
       # reintroducing the eager-conversion cost this whole class exists
       # to avoid.
-      def keys
+      def keys : Array(String)
         all = @raw_vars.keys
         all << "vars" unless all.includes?("vars")
         all << "omit" unless all.includes?("omit")

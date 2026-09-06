@@ -2,7 +2,7 @@ require "./executor"
 
 module Krikri
   class TaskExecutor
-    private def execute_block_multi(task : Task, hosts : Array(Host))
+    private def execute_block_multi(task : Task, hosts : Array(Host)) : Nil
       run_hosts, skip_hosts = partition_by_when(task, hosts, inherit_on_error: true)
 
       skip_hosts.each do |host|
@@ -68,7 +68,7 @@ module Krikri
       end
     end
 
-    private def execute_include_tasks_multi(task : Task, hosts : Array(Host))
+    private def execute_include_tasks_multi(task : Task, hosts : Array(Host)) : Nil
       puts "TASK [#{task_role_prefix(task)}#{render_task_name_for_display(task, hosts.first)}]".colorize(:white).bold
       puts "*" * 70
 
@@ -322,7 +322,7 @@ module Krikri
       first_existing(roots, candidate)
     end
 
-    private def execute_include_vars(task : Task, host : Host)
+    private def execute_include_vars(task : Task, host : Host) : Nil
       vars_context = build_vars_context(task, host)
 
       # A real `loop:` (as opposed to with_first_found, handled below)
@@ -552,7 +552,7 @@ module Krikri
       @results[host.name]["ok"] += 1
     end
 
-    private def finish_include_vars_failure(task : Task, host : Host, message : String)
+    private def finish_include_vars_failure(task : Task, host : Host, message : String) : Nil
       puts "failed: [#{host.name}]".colorize(:red)
       puts "  Message: #{message}".colorize(:red)
       # ignore_errors: on a failed include_vars: - matching real
@@ -579,7 +579,7 @@ module Krikri
     # in vars_context via role_defaults/role_vars, same as any other role
     # task) against each declared option's `required:`/`type:`, matching
     # real ansible-core's own role argument validation.
-    private def execute_block(task : Task, host : Host)
+    private def execute_block(task : Task, host : Host) : Nil
       # Propagate role context BEFORE the when: check - the when-false
       # early-exit path prints each child's own "TASK [role : name]"
       # banner via print_skipped_tasks, which needs the child's
@@ -757,7 +757,7 @@ module Krikri
     # TASK header per task since these live inside a block rather than the
     # play's top-level task list, so `run` never prints one for them. Stops
     # early once the host halts (a task failed without ignore_errors).
-    private def execute_include_tasks(task : Task, host : Host)
+    private def execute_include_tasks(task : Task, host : Host) : Nil
       base_vars_context = build_vars_context(task, host)
       # Must mirror the general task path's fallback chain (see the
       # equivalent block above execute_looped_task) - a bare `loop: "{{
@@ -865,7 +865,7 @@ module Krikri
       end
     end
 
-    private def run_include_tasks_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?)
+    private def run_include_tasks_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?) : Nil
       if when_condition = task.when_condition
         begin
           when_result = evaluate_when(when_condition, vars_context, host)
@@ -975,7 +975,7 @@ module Krikri
       fail_include(task, host, "Failed to load included tasks: #{ex.message}")
     end
 
-    private def fail_include(task : Task, host : Host, message : String)
+    private def fail_include(task : Task, host : Host, message : String) : Nil
       connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
       puts "failed: [#{connection_host}]".colorize(:red)
       puts "  #{message}".colorize(:red)
@@ -1011,7 +1011,7 @@ module Krikri
     # recap, matching ansible-core 2.19.4: its `TASK [clear]` banner
     # prints with no `ok:` beneath it, and the meta task is absent from
     # the play recap's ok= total.
-    private def execute_include_role(task : Task, host : Host)
+    private def execute_include_role(task : Task, host : Host) : Nil
       base_vars_context = build_vars_context(task, host)
       # Same scalar-template loop gap as execute_include_tasks above.
       #
@@ -1051,7 +1051,7 @@ module Krikri
       end
     end
 
-    private def run_include_role_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?)
+    private def run_include_role_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?) : Nil
       # A static import_role: (Task#is_static_import) is resolved at
       # parse time in real Ansible - the import line itself produces NO
       # task result at all, ever (see the "ok" comment below), and a

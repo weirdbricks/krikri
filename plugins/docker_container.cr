@@ -783,7 +783,7 @@ module Krikri
     # (TODO, empty body) - calls the Docker Engine API endpoint directly
     # instead, the same raw-HTTP-escape-hatch pattern image_exists? below
     # already uses for an endpoint docr's typed wrapper doesn't cover.
-    private def connect_network(client : Docr::Client, net : RequestedNetwork, container_id : String)
+    private def connect_network(client : Docr::Client, net : RequestedNetwork, container_id : String) : Nil
       endpoint_config = {
         "Aliases"    => net.aliases,
         "Links"      => net.links,
@@ -798,7 +798,7 @@ module Krikri
       client.call("POST", "/networks/#{net.name}/connect", headers, body) { |response| response.consume_body_io }
     end
 
-    private def disconnect_network(client : Docr::Client, network_name : String, container_id : String)
+    private def disconnect_network(client : Docr::Client, network_name : String, container_id : String) : Nil
       body = {"Container" => container_id}.to_json
       headers = HTTP::Headers{"Content-Type" => "application/json"}
 
@@ -812,7 +812,7 @@ module Krikri
       parts.empty? ? "" : " (#{parts.join("; ")})"
     end
 
-    private def ensure_image_pulled(api : Docr::API, image_ref : String)
+    private def ensure_image_pulled(api : Docr::API, image_ref : String) : Nil
       ref_name, ref_tag = PluginHelpers::DockerRef.split(image_ref)
       full_ref = PluginHelpers::DockerRef.join(ref_name, ref_tag)
       return if image_exists?(api.client, full_ref)

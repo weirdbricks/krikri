@@ -199,7 +199,7 @@ module Krikri
       end
     end
 
-    private def write(path : String, lines : Array(PamdRuleLine))
+    private def write(path : String, lines : Array(PamdRuleLine)) : Nil
       rendered = lines.map(&.to_s)
       marker = "# Updated by Ansible - #{Time.local}"
       if rendered.size <= 1
@@ -352,7 +352,7 @@ module Krikri
       found.size
     end
 
-    private def backup(path : String)
+    private def backup(path : String) : Nil
       return unless true?(@params["backup"]?)
       timestamp = Time.local.to_s("%Y%m%d-%H%M%S")
       File.copy(path, "#{path}.#{timestamp}.bak")

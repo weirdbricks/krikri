@@ -9,13 +9,13 @@ module Krikri
     # Display task result with appropriate formatting.
     # item_label is set for looped tasks, rendering `ok: [host] => (item=x)`
     # to match how Ansible annotates per-iteration output.
-    def self.display_result(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false)
+    def self.display_result(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false) : Nil
       TimingProfile.measure("display.result", "display") do
         display_result_measured(host, result, diff_mode, item_label, ignore_errors, no_log)
       end
     end
 
-    private def self.display_result_measured(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false)
+    private def self.display_result_measured(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false) : Nil
       changed = result["changed"]?.try(&.as_bool) || false
       failed = result["failed"]?.try(&.as_bool) || false
       msg = result["msg"]?.try(&.as_s) || ""
@@ -119,7 +119,7 @@ module Krikri
     # ResultDisplay.display_result - that one renders ansible-playbook's
     # own "ok: [host]" TASK-recap style, a different output convention
     # ansible's ad-hoc CLI has never used.
-    def self.display_adhoc_result(host : Host, result : JSON::Any)
+    def self.display_adhoc_result(host : Host, result : JSON::Any) : Nil
       changed = result["changed"]?.try(&.as_bool) || false
       failed = result["failed"]?.try(&.as_bool) || false
       unreachable = result["unreachable"]?.try(&.as_bool) || false
@@ -150,7 +150,7 @@ module Krikri
     end
 
     # Display diff (delegates to specific diff types)
-    def self.display_diff(diff : JSON::Any)
+    def self.display_diff(diff : JSON::Any) : Nil
       puts ""
 
       # Content diff (copy, template)
@@ -163,7 +163,7 @@ module Krikri
     end
 
     # Display content diff (for file content changes)
-    def self.display_content_diff(diff : JSON::Any)
+    def self.display_content_diff(diff : JSON::Any) : Nil
       before = diff["before"].as_s
       after = diff["after"].as_s
       before_header = diff["before_header"]?.try(&.as_s) || "before"
@@ -177,7 +177,7 @@ module Krikri
     end
 
     # Display attribute diff (for file attributes like mode, owner)
-    def self.display_attribute_diff(diff : JSON::Any)
+    def self.display_attribute_diff(diff : JSON::Any) : Nil
       before = diff["before"].as_h
       after = diff["after"].as_h
 
@@ -203,7 +203,7 @@ module Krikri
     end
 
     # Show unified diff using system diff command
-    def self.show_unified_diff(before : String, after : String)
+    def self.show_unified_diff(before : String, after : String) : Nil
       # Create temp files for diff
       before_file = "/tmp/krikri-playbook-before-#{Random::Secure.hex(4)}"
       after_file = "/tmp/krikri-playbook-after-#{Random::Secure.hex(4)}"
@@ -242,7 +242,7 @@ module Krikri
     # still displays as failed (see display_result) but doesn't count
     # toward the host's failure tally - matching Ansible, where an
     # ignored failure doesn't fail the play or the process exit code.
-    def self.update_stats(stats : Hash(String, Int32), result : JSON::Any, ignore_errors : Bool = false)
+    def self.update_stats(stats : Hash(String, Int32), result : JSON::Any, ignore_errors : Bool = false) : Nil
       changed = result["changed"]?.try(&.as_bool) || false
       failed = result["failed"]?.try(&.as_bool) || false
 
@@ -269,7 +269,7 @@ module Krikri
     end
 
     # Show recap of all host results
-    def self.show_recap(hosts : Array(Host), results : Hash(String, Hash(String, Int32)))
+    def self.show_recap(hosts : Array(Host), results : Hash(String, Hash(String, Int32))) : Nil
       # Sorted by host name, matching real ansible-playbook - this used
       # to print in inventory order, so a recap for db1/web1/web2 came
       # out web1, web2, db1 and could not be diffed against a real run.

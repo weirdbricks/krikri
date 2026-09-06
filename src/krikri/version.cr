@@ -1,7 +1,7 @@
 module Krikri
-  VERSION = "0.9.770"
+  VERSION = "0.9.771"
 
-  def self.version_info
+  def self.version_info : String
     String.build do |str|
       str << "krikri #{VERSION}\n"
       str << "Fast, Ansible-compatible automation tool written in Crystal\n"
@@ -10,7 +10,7 @@ module Krikri
     end
   end
 
-  def self.banner
+  def self.banner : String
     String.build do |str|
       str << "KRIKRI v#{VERSION}"
     end

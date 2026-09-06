@@ -88,7 +88,7 @@ module Krikri
       messages << "Remove alternative '#{path}' from '#{name}'."
     end
 
-    private def parse_display(name : String)
+    private def parse_display(name : String) : {String?, String?, String?, Hash(String, NamedTuple(priority: Int32))}
       result = remote_exec("update-alternatives --display #{shell_quote(name)}")
       current_alternatives = {} of String => NamedTuple(priority: Int32)
       return {nil, nil, nil, current_alternatives} unless result[:exit_code] == 0

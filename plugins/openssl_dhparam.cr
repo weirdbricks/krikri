@@ -100,7 +100,7 @@ module Krikri
       false
     end
 
-    private def backup(path : String)
+    private def backup(path : String) : Nil
       return unless true?(@params["backup"]?)
       return unless File.exists?(path)
       timestamp = Time.local.to_s("%Y-%m-%d@%H:%M~")

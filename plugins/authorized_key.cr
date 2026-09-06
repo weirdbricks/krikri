@@ -89,7 +89,7 @@ module Krikri
       user == "root" ? "/root" : "/home/#{user}"
     end
 
-    private def ensure_dir(dir : String)
+    private def ensure_dir(dir : String) : Nil
       unless Dir.exists?(dir)
         Dir.mkdir_p(dir)
         File.chmod(dir, 0o700)

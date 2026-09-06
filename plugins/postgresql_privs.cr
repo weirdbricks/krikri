@@ -441,7 +441,7 @@ module Krikri
     # #resolve_routine - which is stricter than this check, not weaker,
     # since a reference that does not resolve to a real routine fails
     # outright. schema:/roles: are still checked here for them.
-    private def validate_identifiers!(schema : String, objs : Array(String), roles : Array(String))
+    private def validate_identifiers!(schema : String, objs : Array(String), roles : Array(String)) : Nil
       valid = identifier_safe?(schema) &&
               objs.all? { |obj| identifier_safe?(obj) } &&
               roles.all? { |role| role == "PUBLIC" || identifier_safe?(role) }

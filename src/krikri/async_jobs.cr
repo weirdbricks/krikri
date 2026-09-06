@@ -22,7 +22,7 @@ module Krikri
 
     # Atomic (write-then-rename) so a concurrent reader never sees a
     # half-written file.
-    def self.write_status(jid : String, data : JSON::Any)
+    def self.write_status(jid : String, data : JSON::Any) : Nil
       Dir.mkdir_p(DIR)
       path = status_path(jid)
       tmp = "#{path}.tmp"

@@ -104,7 +104,7 @@ module Krikri
       end
     end
 
-    private def write_new_content(path : String, new_content : String)
+    private def write_new_content(path : String, new_content : String) : Nil
       dir = File.dirname(path)
       Dir.mkdir_p(dir) unless Dir.exists?(dir)
       File.write(path, new_content)
@@ -244,7 +244,7 @@ module Krikri
       backup_file
     end
 
-    private def apply_mode(path : String)
+    private def apply_mode(path : String) : Nil
       if mode = @params["mode"]?
         begin
           # Real Ansible parses ANY all-digit mode string as octal,

@@ -167,7 +167,7 @@ module Krikri
       first
     end
 
-    private def ctl_m
+    private def ctl_m : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       remote_exec("export LANGUAGE=C LC_ALL=C; #{ctl_binary} -M")
     end
 

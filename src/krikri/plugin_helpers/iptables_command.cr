@@ -47,7 +47,7 @@ module Krikri
         rule
       end
 
-      private def self.append_syn(rule : Array(String), syn : String?)
+      private def self.append_syn(rule : Array(String), syn : String?) : Nil
         if syn == "match"
           rule << "--syn"
         elsif syn == "negate"
@@ -55,7 +55,7 @@ module Krikri
         end
       end
 
-      private def self.append_ctstate(rule : Array(String), ctstate : String, matches : String)
+      private def self.append_ctstate(rule : Array(String), ctstate : String, matches : String) : Nil
         if matches.includes?("conntrack")
           rule.concat(["--ctstate", ctstate])
         elsif matches.includes?("state")
@@ -65,12 +65,12 @@ module Krikri
         end
       end
 
-      private def self.append_jump(rule : Array(String), value : String?, jump : String)
+      private def self.append_jump(rule : Array(String), value : String?, jump : String) : Nil
         return unless value
         rule.concat(["-j", jump])
       end
 
-      private def self.append_param(rule : Array(String), value : String?, flag : String)
+      private def self.append_param(rule : Array(String), value : String?, flag : String) : Nil
         return unless value
         if value.starts_with?('!')
           rule.concat(["!", flag, value[1..]])
@@ -79,7 +79,7 @@ module Krikri
         end
       end
 
-      private def self.each_csv(value : String?, &)
+      private def self.each_csv(value : String?, &) : Nil
         return unless value
         value.split(',').each { |v| yield v.strip unless v.strip.empty? }
       end

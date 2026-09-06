@@ -255,7 +255,7 @@ module Krikri
       entries
     end
 
-    private def walk(dir : String, current_depth : Int32, max_depth : Int32, entries : Array(String))
+    private def walk(dir : String, current_depth : Int32, max_depth : Int32, entries : Array(String)) : Nil
       return if current_depth > max_depth
 
       Dir.each_child(dir) do |child|
@@ -388,7 +388,7 @@ module Krikri
       false
     end
 
-    private def add_symlink_fields(stat_hash : Hash(String, JSON::Any), path : String)
+    private def add_symlink_fields(stat_hash : Hash(String, JSON::Any), path : String) : Nil
       raw_target = File.readlink(path)
       resolved_target = begin
         File.realpath(path)
@@ -400,7 +400,7 @@ module Krikri
       stat_hash["lnk_source"] = JSON::Any.new(resolved_target)
     end
 
-    private def add_checksum(stat_hash : Hash(String, JSON::Any), path : String, algorithm : String)
+    private def add_checksum(stat_hash : Hash(String, JSON::Any), path : String, algorithm : String) : Nil
       stat_hash["checksum"] = JSON::Any.new(native_checksum(path, algorithm))
     rescue ex : File::Error
       # A checksum failure (e.g. permission denied) just omits the field

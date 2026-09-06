@@ -127,7 +127,7 @@ module Krikri
       ageing && ageing.changed? ? ageing.msg : base.msg
     end
 
-    private def attach_user_facts(result : PluginResult, facts : PluginHelpers::UserState::User)
+    private def attach_user_facts(result : PluginResult, facts : PluginHelpers::UserState::User) : Nil
       result.extra["name"] = JSON::Any.new(facts.name)
       result.extra["uid"] = JSON::Any.new(facts.uid.to_i64? || 0_i64)
       result.extra["group"] = JSON::Any.new(facts.gid.to_i64? || 0_i64)

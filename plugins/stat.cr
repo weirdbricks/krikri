@@ -75,7 +75,7 @@ module Krikri
       PluginResult.new(changed: false, failed: false, msg: "", stat: stat_hash)
     end
 
-    private def add_symlink_fields(stat_hash : Hash(String, JSON::Any), path : String)
+    private def add_symlink_fields(stat_hash : Hash(String, JSON::Any), path : String) : Nil
       raw_target = File.readlink(path)
       resolved_target = begin
         File.realpath(path)
@@ -90,7 +90,7 @@ module Krikri
       stat_hash["lnk_source"] = JSON::Any.new(resolved_target)
     end
 
-    private def add_checksum(stat_hash : Hash(String, JSON::Any), path : String, algorithm : String)
+    private def add_checksum(stat_hash : Hash(String, JSON::Any), path : String, algorithm : String) : Nil
       stat_hash["checksum"] = JSON::Any.new(native_checksum(path, algorithm))
     rescue
       # Matches the previous shell implementation's behavior: a checksum
@@ -98,14 +98,14 @@ module Krikri
       # rather than failing the whole task.
     end
 
-    private def add_mime(stat_hash : Hash(String, JSON::Any), path : String)
+    private def add_mime(stat_hash : Hash(String, JSON::Any), path : String) : Nil
       result = remote_exec("file --mime-type --mime-encoding '#{path}'")
       mimetype, charset = result[:exit_code] == 0 ? PluginHelpers::FileAttributes.parse_mime(result[:stdout]) : {"unknown", "unknown"}
       stat_hash["mimetype"] = JSON::Any.new(mimetype)
       stat_hash["charset"] = JSON::Any.new(charset)
     end
 
-    private def add_attributes(stat_hash : Hash(String, JSON::Any), path : String)
+    private def add_attributes(stat_hash : Hash(String, JSON::Any), path : String) : Nil
       result = remote_exec("lsattr -vd '#{path}'")
       version, attr_flags, attributes = result[:exit_code] == 0 ? PluginHelpers::FileAttributes.parse_lsattr(result[:stdout]) : {nil, "", [] of String}
       stat_hash["version"] = version ? JSON::Any.new(version) : JSON::Any.new(nil)

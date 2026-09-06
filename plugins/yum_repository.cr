@@ -213,7 +213,7 @@ module Krikri
       end
     end
 
-    private def write_file(path : String, content : String)
+    private def write_file(path : String, content : String) : Nil
       if local_connection?
         File.write(path, content)
       else

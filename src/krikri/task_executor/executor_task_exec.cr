@@ -2,7 +2,7 @@ require "./executor"
 
 module Krikri
   class TaskExecutor
-    private def notify_hosts_if_changed(task : Task, hosts : Array(Host), changed_before : Hash(String, Int32))
+    private def notify_hosts_if_changed(task : Task, hosts : Array(Host), changed_before : Hash(String, Int32)) : Nil
       notify_list = task.notify
       return if notify_list.nil? || notify_list.empty?
 
@@ -82,7 +82,7 @@ module Krikri
     # name (`os_vars`), which is how roles stage OS-specific values before
     # applying them selectively; without it the file's keys are merged
     # individually.
-    private def execute_validate_argument_spec(task : Task, host : Host)
+    private def execute_validate_argument_spec(task : Task, host : Host) : Nil
       vars_context = build_vars_context(task, host)
       options = task.validate_argument_spec_options || Hash(String, JSON::Any).new
 
@@ -172,7 +172,7 @@ module Krikri
 
     # Resolve with_fileglob patterns (if any) against the control host's
     # filesystem, after substituting any {{ vars }} in the pattern.
-    private def expression_evaluator_for(vars_context : Hash(String, JSON::Any))
+    private def expression_evaluator_for(vars_context : Hash(String, JSON::Any)) : VariableSubstitutor::ExpressionEvaluator
       VariableSubstitutor::ExpressionEvaluator.new(vars_context)
     end
 
@@ -209,7 +209,7 @@ module Krikri
     # registered `{{ var.results }}`) to a list of dicts, then yield
     # [parent_dict, subelement] pairs for each element of each dict's `key`
     # sub-list. Returns nil when the task has no with_subelements source.
-    private def register_skip_result(task : Task, host : Host)
+    private def register_skip_result(task : Task, host : Host) : Nil
       register_name = task.register
       return if register_name.nil? || register_name.empty?
 
@@ -225,7 +225,7 @@ module Krikri
     # the group's skips don't all appear during batch-build; this emits
     # them here, as execute_task consumes each member in task order. Mirrors
     # what when_passes? does for the solo path.
-    private def ensure_grouped(tasks : Array(Task))
+    private def ensure_grouped(tasks : Array(Task)) : Nil
       return unless @batching_enabled
 
       key = tasks.object_id
@@ -358,7 +358,7 @@ module Krikri
     # a bare literal like "false" needs no register: at all; referencing a
     # result field like "result.rc" does). Same substitute-then-evaluate
     # pipeline as when_condition/until_condition.
-    private def finish_single_task(task : Task, host : Host, result : JSON::Any, fact_host : Host = host)
+    private def finish_single_task(task : Task, host : Host, result : JSON::Any, fact_host : Host = host) : Nil
       result = debug_if_requested(task, host, result)
       merge_ansible_facts(fact_host, result, task.module_name.ends_with?("set_fact"))
 
@@ -404,7 +404,7 @@ module Krikri
 
     # Marks `host` as halted (no further tasks in this play run for it)
     # when `failed` and the task didn't opt out via ignore_errors:.
-    private def print_skipped_tasks(tasks : Array(Task), host : Host)
+    private def print_skipped_tasks(tasks : Array(Task), host : Host) : Nil
       tasks.each do |nested_task|
         # A nested block is transparent - like real Ansible, it gets no
         # "TASK [...]" banner of its own, only its members do.
@@ -985,7 +985,7 @@ module Krikri
     end
 
     # Register task result as a variable
-    private def register_result(host : Host, register_name : String, result : JSON::Any)
+    private def register_result(host : Host, register_name : String, result : JSON::Any) : Nil
       # Create a mutable copy of the result to add stdout_lines/stderr_lines
       result_hash = result.as_h.dup
 

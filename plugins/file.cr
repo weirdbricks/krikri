@@ -762,13 +762,13 @@ module Krikri
     end
 
     # Apply file attributes
-    private def apply_file_attributes(path : String, recursive : Bool = false)
+    private def apply_file_attributes(path : String, recursive : Bool = false) : Nil
       apply_single_file_attributes(path)
       return unless recursive
       walk_apply_attributes(path)
     end
 
-    private def walk_apply_attributes(dir : String)
+    private def walk_apply_attributes(dir : String) : Nil
       Dir.each_child(dir) do |child|
         child_path = File.join(dir, child)
         apply_single_file_attributes(child_path)
@@ -781,7 +781,7 @@ module Krikri
       # not checking chown -R/chmod -R's exit code either).
     end
 
-    private def apply_single_file_attributes(path : String)
+    private def apply_single_file_attributes(path : String) : Nil
       follow = true?(@params["follow"]?)
       uid = -1
       gid = -1
@@ -877,7 +877,7 @@ module Krikri
       end
     end
 
-    private def apply_mode(path : String, mode : String)
+    private def apply_mode(path : String, mode : String) : Nil
       if numeric = parse_numeric_mode(mode)
         File.chmod(path, numeric)
       else
@@ -892,7 +892,7 @@ module Krikri
     end
 
     # Update access and modification times
-    private def update_times(path : String)
+    private def update_times(path : String) : Nil
       # Handle modification_time
       if mod_time = @params["modification_time"]?
         case mod_time.downcase
@@ -961,7 +961,7 @@ module Krikri
     # it entirely, a true no-op rather than merely "don't pass a new
     # value" (set_time's normal contract for state=file/link callers,
     # where the other axis is genuinely never touched at all).
-    private def touch_apply_times(path : String)
+    private def touch_apply_times(path : String) : Nil
       new_mtime = touch_target_time(@params["modification_time"]?)
       new_atime = touch_target_time(@params["access_time"]?)
       set_time(path, atime: new_atime, mtime: new_mtime)
@@ -983,7 +983,7 @@ module Krikri
     # means reading the other one's current value first. `File::Info`
     # only exposes `modification_time`, not `access_time`, so a raw
     # (following) `stat` is used instead - same as `native_stat`.
-    private def set_time(path : String, atime : Time? = nil, mtime : Time? = nil)
+    private def set_time(path : String, atime : Time? = nil, mtime : Time? = nil) : Nil
       current = stat(path)
       return unless current
       new_atime = atime || Time.unix(Krikri.stat_atime_sec(current))

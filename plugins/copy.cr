@@ -559,7 +559,7 @@ module Krikri
     end
 
     # Apply file attributes (owner, group, mode)
-    private def apply_file_attributes(path : String, recursive : Bool = false)
+    private def apply_file_attributes(path : String, recursive : Bool = false) : Nil
       # Set mode (permissions)
       if mode = @params["mode"]?
         begin

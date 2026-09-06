@@ -156,7 +156,7 @@ module Krikri
       end
     end
 
-    private def write_lines(sysctl_file : String, lines : Array(String))
+    private def write_lines(sysctl_file : String, lines : Array(String)) : Nil
       content = lines.join("\n")
       content += "\n" unless content.empty? || content.ends_with?("\n")
 
@@ -170,12 +170,12 @@ module Krikri
       end
     end
 
-    private def apply_kernel_value(name : String, value : String?)
+    private def apply_kernel_value(name : String, value : String?) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)?
       ignore_flag = true?(@params["ignoreerrors"]?) ? "-e " : ""
       remote_exec("sysctl #{ignore_flag}-w #{name}=#{value}")
     end
 
-    private def reload_sysctl(sysctl_file : String)
+    private def reload_sysctl(sysctl_file : String) : Nil
       ignore_flag = true?(@params["ignoreerrors"]?) ? "-e " : ""
       remote_exec("sysctl #{ignore_flag}-p #{sysctl_file}")
     end
