@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.782`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.783`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
@@ -38,14 +38,57 @@ below - keep the two apart, or this list stops meaning anything.
   needs a look at real Ansible's own `file` module semantics for a missing
   path combined with `recurse:` and no `state:`.
 
+- **Hand-rolled `when:`/`ConditionalEvaluator` doesn't validate filter names
+  across a short-circuited `and`/`or` chain the way real Jinja does**
+  (`jriguera.configdrive`, round 20014): `when: X is defined and not X is
+  none and Y|success and ...` where `X` is undefined - real
+  ansible-playbook hard-fails with "No filter named 'success'" because
+  Jinja resolves every filter referenced in the WHOLE expression at
+  compile time, before any short-circuit evaluation happens; krikri's
+  evaluator short-circuits on the first `False` clause and never touches
+  the invalid `|success` filter, so it silently skips instead. Fixing this
+  properly needs a pre-pass that scans the entire condition string for
+  `|filtername` references and validates them against `FilterEngine`
+  before short-circuit evaluation starts - a compile-vs-evaluate ordering
+  change with real blast-radius risk to the existing short-circuit
+  optimization (`evaluate_short_circuit_operator` in
+  `conditional_evaluator.cr`), not attempted yet. `|success`/`|failed`
+  themselves are Ansible 1.x filters removed from modern ansible-core, so
+  the role itself is stale; that's why real Ansible errors here at all.
+
 ---
 
-## Round 20000-20037 confirm batch (re-run of the 38 round-10000 divergences against the fully-fixed build, 0.9.782)
+## Round 20000-20037 confirm batch (re-run of the 38 round-10000 divergences against the fully-fixed build, 0.9.782 -> 0.9.783)
 
 Triaged the remaining items from the confirm batch. `deekayen.chocolatey` (Windows-only, same
 class as `jborean93.win_openssh`) and `gekmihesg.openwrt` (real `ansible-playbook` itself crashes
 with an internal Python unpacking error on this role - upstream role/ansible-core incompatibility,
-krikri gets further than real Ansible does) are not krikri bugs.
+krikri gets further than real Ansible does) are not krikri bugs. Also not krikri bugs:
+`AerisCloud.disk` (both engines ultimately hit the same "Conditional result (False) was derived
+from value of type 'list'" role bug - krikri's divergent recap counters are purely a side effect of
+`disk_config` being an unimplemented custom module, already a known/deliberate gap) and
+`brianshumate.consul` (real Ansible fails on the CONTROLLER's own PEP-668 externally-managed-
+Python-environment lockout trying `pip install --user netaddr` - a dev-machine environment issue,
+not a role or engine bug; krikri has no equivalent pip-into-controller step in that code path so it
+gets further, then fails later for an unrelated, genuine role-config reason:
+`consul_group_name must be included in groups`).
+
+- **`ansible_facts['virtualization_type']` reported the raw `container=X` env value instead of
+  the generic literal "container"** (`juju4.auditd`, round 20015): a Kata VM's guest environ
+  happened to carry `container=docker` (a leftover of the base rootfs having been built via
+  `podman build`/Containerfile, even though Kata boots a real, non-containerized guest kernel) -
+  krikri reported `virtualization_type=docker`, matching the role's `when: ... virtualization_type
+  == "docker" ...` guard and skipping its entire "Not in container" block outright (recap
+  `ok=14 changed=6 skipped=41` vs py's `ok=17 changed=4 failed=1 skipped=4` - a huge swing from one
+  bad fact). Real Ansible's own `LinuxVirtual#get_virtual_facts` (`module_utils/facts/virtual/
+  linux.py`) only gives `container=lxc`/`container=podman` their own specific virtualization_type;
+  every other non-empty `container=` value normalizes to the generic literal string `"container"` -
+  it is never captured or reused verbatim. `FactsGatherer#parse_container_env` was doing exactly
+  that verbatim reuse. Fixed by returning the literal `"container"` for any container= value other
+  than lxc/podman. Regression spec updated in `spec/unit/facts_gatherer_spec.cr` (the old test
+  actually encoded the bug, asserting `"systemd-nspawn"` back verbatim). Live-verified against the
+  same Kata image with a standalone repro playbook: krikri now matches real ansible-playbook's
+  `virt_type=container` exactly and enters the block the same way.
 
 - **`apt: update_cache: true` (no `name:`/`upgrade:`/`deb:`) always reported `changed: true`,
   even when the cache was already fresh** (`claranet.users`'s own "Update APT cache" task,

@@ -591,8 +591,22 @@ module Krikri
 
     # Parses PID 1's `/proc/1/environ` content (NUL-separated key=value
     # entries) for a `container=` marker, matching real Ansible's own
-    # `container=lxc`/`container=podman`/generic-`container=X` priority
-    # order (module_utils/facts/virtual/linux.py). Pulled out of
+    # `container=lxc`/`container=podman`/generic-`container=.` priority
+    # order (module_utils/facts/virtual/linux.py). Only `lxc` and
+    # `podman` get their own specific virtualization_type - EVERY other
+    # non-empty value (docker, oci, systemd-nspawn, ...) normalizes to
+    # the literal string "container", never the raw env value itself
+    # (`if re.search('^container=.', line): virtual_facts
+    # ['virtualization_type'] = 'container'` - it does not capture or
+    # reuse the matched value). Previously this returned the raw value
+    # verbatim, so a Kata VM whose guest happened to carry `container=
+    # docker` in PID 1's environ (a leftover from the base rootfs image
+    # having been built via `podman build`/Containerfile, even though
+    # Kata boots a real guest kernel with no actual container runtime
+    # inside it) reported "docker" - matching a role's `virtualization_
+    # type == "docker"` when: check that real Ansible (which reports
+    # the generic "container") correctly left false. Found benchmarking
+    # juju4.auditd's own "Not in container" block guard. Pulled out of
     # #detect_virtualization as a pure function so it's testable without
     # real `/proc` access. Returns nil when no `container=` entry is
     # present at all (the plain-host case).
@@ -604,7 +618,7 @@ module Krikri
       entry = entries.find(&.starts_with?("container="))
       return nil unless entry
       value = entry.split('=', 2)[1]?
-      value.nil? || value.empty? ? nil : value
+      value.nil? || value.empty? ? nil : "container"
     end
 
     # The RAW text of whichever os-release file #parse_os_release used - real

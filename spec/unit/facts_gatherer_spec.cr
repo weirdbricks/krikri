@@ -92,9 +92,23 @@ describe Krikri::FactsGatherer do
       Krikri::FactsGatherer.parse_container_env(environ).should eq("lxc")
     end
 
-    it "falls back to the literal value for any other container= marker" do
+    it "normalizes any other non-empty container= marker to the generic literal 'container', not the raw value" do
+      # Real Ansible's `^container=.` branch (linux.py) only special-
+      # cases lxc/podman above; every other value - docker, systemd-
+      # nspawn, oci, ... - sets virtualization_type to the literal
+      # string "container", never the matched value itself. Previously
+      # this returned the raw value verbatim, so a Kata VM whose guest
+      # environ happened to carry `container=docker` (a leftover from
+      # the base rootfs having been built via `podman build`/
+      # Containerfile, even though Kata boots a real, non-containerized
+      # guest kernel) reported "docker" - matching a role's `== "docker"`
+      # when: check that real Ansible correctly left false. Found
+      # benchmarking juju4.auditd's "Not in container" block guard.
       environ = "container=systemd-nspawn\x00PATH=/usr/bin\x00"
-      Krikri::FactsGatherer.parse_container_env(environ).should eq("systemd-nspawn")
+      Krikri::FactsGatherer.parse_container_env(environ).should eq("container")
+
+      environ2 = "container=docker\x00PATH=/usr/bin\x00"
+      Krikri::FactsGatherer.parse_container_env(environ2).should eq("container")
     end
 
     it "returns nil on a plain host with no container= entry at all" do
