@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.783`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.784`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
@@ -58,7 +58,7 @@ below - keep the two apart, or this list stops meaning anything.
 
 ---
 
-## Round 20000-20037 confirm batch (re-run of the 38 round-10000 divergences against the fully-fixed build, 0.9.782 -> 0.9.783)
+## Round 20000-20037 confirm batch (re-run of the 38 round-10000 divergences against the fully-fixed build, 0.9.782 -> 0.9.784)
 
 Triaged the remaining items from the confirm batch. `deekayen.chocolatey` (Windows-only, same
 class as `jborean93.win_openssh`) and `gekmihesg.openwrt` (real `ansible-playbook` itself crashes
@@ -89,6 +89,20 @@ gets further, then fails later for an unrelated, genuine role-config reason:
   actually encoded the bug, asserting `"systemd-nspawn"` back verbatim). Live-verified against the
   same Kata image with a standalone repro playbook: krikri now matches real ansible-playbook's
   `virt_type=container` exactly and enters the block the same way.
+
+- **`ansible_facts['lsb']` was only ever set when `/etc/lsb-release` existed, instead of always
+  being a (possibly empty) dict** (`githubixx.ansible_role_wireguard`, round 20012): a Debian host
+  with neither `lsb_release` nor `/etc/lsb-release` installed left `ansible_facts['lsb']` entirely
+  undefined for krikri, so `when: ansible_facts['lsb'] is defined and ansible_facts['lsb']['id'] ==
+  "Raspbian"` short-circuited to skip; real Ansible's `LSBFactCollector.collect()`
+  (`facts/system/lsb.py`) unconditionally does `facts_dict['lsb'] = lsb_facts` even when
+  `lsb_facts` stayed `{}`, so `is defined` is True there and it hard-fails evaluating the second
+  clause instead (`'dict' object has no attribute 'id'`). Fixed by always setting
+  `ansible_facts["lsb"]`, defaulting to an empty hash. No unit spec - real /etc/lsb-release reads
+  have no controlled-input entry point yet (same "live smoke test only" exception as
+  `detect_virtualization`'s own spec); live-verified with a standalone repro against a fresh Kata
+  VM - krikri now fails the same task real Ansible does (recap `failed=1` either way), closing the
+  divergence even though the exact error text differs.
 
 - **`apt: update_cache: true` (no `name:`/`upgrade:`/`deb:`) always reported `changed: true`,
   even when the cache was already fresh** (`claranet.users`'s own "Update APT cache" task,

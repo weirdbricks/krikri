@@ -298,20 +298,36 @@ module Krikri
       # left a malformed sources.list entry ("Malformed entry ... (Component)"),
       # crashing `apt-get update` outright on a role real Ansible installs
       # cleanly.
+      # Real Ansible's LSBFactCollector unconditionally sets
+      # `facts_dict['lsb'] = lsb_facts` at the end of `collect()`
+      # (facts/system/lsb.py) even when lsb_facts stayed `{}` (no
+      # `lsb_release` binary AND no /etc/lsb-release) - `ansible_facts
+      # ['lsb']` is always a defined (possibly empty) dict, never an
+      # absent key. This previously only set the fact when /etc/lsb-
+      # release existed, so `ansible_facts['lsb'] is defined` was False
+      # on distros without it (Debian without lsb-release installed) -
+      # real Ansible evaluates the same `is defined` as True there and
+      # moves on to the next `when:` clause. Found benchmarking
+      # githubixx.ansible_role_wireguard's own "Setup for Raspbian" task
+      # (`when: ansible_facts['lsb'] is defined and ansible_facts['lsb']
+      # ['id'] == "Raspbian"`) - real ansible-playbook actually hard-
+      # fails evaluating the second clause ('dict' object has no
+      # attribute 'id', since lsb_facts has no 'id' key at all on
+      # Debian), krikri silently skipped instead.
+      lsb_info = {} of String => String
       if File.exists?("/etc/lsb-release")
-        lsb_info = {} of String => String
         File.each_line("/etc/lsb-release") do |line|
           key, sep, value = line.partition('=')
           next if sep.empty?
           lsb_info[key.strip] = value.strip.strip('"')
         end
-        lsb_facts = {} of String => String
-        lsb_facts["id"] = lsb_info["DISTRIB_ID"]? || ""
-        lsb_facts["description"] = lsb_info["DISTRIB_DESCRIPTION"]? || ""
-        lsb_facts["release"] = lsb_info["DISTRIB_RELEASE"]? || ""
-        lsb_facts["codename"] = lsb_info["DISTRIB_CODENAME"]? || ""
-        facts["ansible_lsb"] = lsb_facts
       end
+      lsb_facts = {} of String => String
+      lsb_facts["id"] = lsb_info["DISTRIB_ID"] if lsb_info["DISTRIB_ID"]?
+      lsb_facts["description"] = lsb_info["DISTRIB_DESCRIPTION"] if lsb_info["DISTRIB_DESCRIPTION"]?
+      lsb_facts["release"] = lsb_info["DISTRIB_RELEASE"] if lsb_info["DISTRIB_RELEASE"]?
+      lsb_facts["codename"] = lsb_info["DISTRIB_CODENAME"] if lsb_info["DISTRIB_CODENAME"]?
+      facts["ansible_lsb"] = lsb_facts
 
       facts["ansible_pkg_mgr"] = detect_pkg_mgr
 
