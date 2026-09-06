@@ -14,6 +14,8 @@ Shortlist, per-role logs, and running notes: `testing/kata/round_new_authors/`
 
 ## HIGH PRIORITY: concurrent plugin-upload race corrupts transfers (harness-wide impact)
 
+**FIXED (0.9.770)**: the control-socket directory is now per-process (pid-suffixed), so concurrent processes never race on `ControlMaster=auto` handshakes. See `git log` - the per-host muxing within one process is unchanged.
+
 **This affects every prior and future round that runs krikri-playbook
 concurrently against multiple hosts from the same control machine** -
 including the existing Atlantic.net "4 pairs in parallel" workflow in
@@ -68,6 +70,8 @@ properly, not urgent to re-verify old rounds retroactively.
 ## Real / candidate krikri bugs
 
 ### `riemers.gitlab-runner` — `apt: cache_valid_time:` alone (no `name`) wrongly requires `name`
+
+**FIXED (0.9.770)**: a bare `cache_valid_time: N` now runs the freshness-checked cache pass and early-exits ok, matching apt.py. Verify live on the next round.
 Real, reproducible, confirmed solo (clean host, no concurrency). Task:
 ```yaml
 - name: "(Debian) Refresh package cache"
@@ -107,6 +111,8 @@ pass without a task-level diff yet.
 `testing/kata/round_new_authors/results/igor_nikiforov.journald/`.
 
 ### `kyl191.openvpn` — missing role-name prefix on `|`-named tasks (again) + earlier real failure
+
+**PREFIX PART FIXED (0.9.770)** - same root cause as 0x0i.systemd's missing prefix (recursive role-context propagation). The earlier real failure ("Missing required parameter: cmd" upstream of the firewall check) remains undiagnosed.
 Same cosmetic bug as `0x0i.systemd` above: tasks named
 `validate | Assert CA CN length (strict mode)` etc. lose their
 `kyl191.openvpn :` prefix in krikri's TASK header. Separately, and more
@@ -137,6 +143,8 @@ fix pass. Logs: `testing/kata/round_new_authors/results/evrardjp.keepalived/`
 (solo re-run, octets 110/111).
 
 ### `0x0i.systemd` — meta-task recap-counting + missing role-name prefix
+
+**FIXED (0.9.770)**: propagate_role_context now recurses into block/rescue/always children (skipped-block banners keep their `role : ` prefix), and a skipped meta: task prints its `skipping:` line but is no longer counted in the PLAY RECAP. Regression spec: `test-block-skip-prefix.yml`.
 Cold AND warm: krikri recap `skipped=9` vs ansible `skipped=8` (all else equal:
 `ok=4 changed=0 failed=0`). Diff of task-level output shows krikri's TASK
 header for "Broadcast uninstall signal" / "Flush handlers to ensure uninstall
@@ -147,6 +155,8 @@ likely ansible does not count a skipped meta task in PLAY RECAP, and krikri
 does. Logs: `testing/kata/round_new_authors/results/0x0i.systemd/`.
 
 ### `wezhai.minio` — `unarchive` can't resolve a bare relative `src:`
+
+**FIXED (0.9.770)**: the executor's unarchive staging resolves a bare relative src against the role's `files/` dir (reusing resolve_script_path) and stages it for remote targets / hands local connections the absolute path. End-to-end regression spec with a real tarball: `test-unarchive-role-files.yml`. Verify live on the next round.
 Task `unarchive: src: "{{ package_name }}"` (no `remote_src`, no explicit
 `files/` prefix) — real Ansible finds and transfers the role's local
 `files/minio.tar.gz` fine (`changed`, then unpacks). krikri fails: "Source
@@ -159,6 +169,8 @@ directory the same way Ansible's default `unarchive` action-plugin does for a
 bare relative `src:`. Logs: `testing/kata/round_new_authors/results/wezhai.minio/`.
 
 ### `nginxinc.nginx` — `service: state=reloaded` fails when service isn't already active
+
+**FIXED (0.9.770)**: `state: reloaded` now starts an inactive service and reloads a running one, matching real Ansible's service module. Verify live on the next round.
 Cold run only (warm matches exactly). Handler `(Handler) Start/reload NGINX`
 (`ansible.builtin.service: name=nginx state=reloaded enabled=true`) fails on
 krikri: "nginx.service is not active, cannot reload." Real Ansible's `service`
@@ -171,6 +183,8 @@ before) is what exposes it; Rocky's run must have had nginx already active by
 that point in the play. Logs: `testing/kata/round_new_authors/results/nginxinc.nginx/`.
 
 ### `igor_nikiforov.etcd` — `item.data-dir` silently becomes `undefined` instead of raising
+
+**DIAGNOSED (0.9.770), not fixed - design decision**: the logs show the failing expression is actually `etcd_config['data-dir']` (bracket access on a dict MISSING that key) inside the `loop:` - not hyphen parsing. Real Ansible raises (module-arg/loop templating is strict-undefined); krikri renders the "undefined" sentinel and continues - the deliberate, pervasive leniency documented at the top of `variable_substitutor.cr`. Matching real Ansible here means tightening strict-undefined for loop items and module args, a wide-blast-radius behavior change that needs its own decision + real-host validation, not a drive-by fix.
 Real, reproducible correctness bug, both cold and warm. Task "Create etcd
 directory structure" loops over dicts and does `item.data-dir`. Real Jinja2
 parses `.data-dir` as `item.data - dir` (attribute access binds tighter than
