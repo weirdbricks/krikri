@@ -158,6 +158,16 @@ module Krikri
       template_vars["template_path"] = Crinja::Value.new(template_path)
       template_vars["template_fullpath"] = Crinja::Value.new(File.expand_path(template_path))
       template_vars["template_run_date"] = Crinja::Value.new(Time.utc.to_s("%Y-%m-%d %H:%M:%S UTC"))
+      # Real Ansible's template action plugin also exposes template_destpath
+      # (the task's own `dest:`, unrendered - real Ansible doesn't
+      # template it before injecting this var either) - a common
+      # convention for a template's own first line to record its
+      # destination as a comment for auditability. Found via
+      # inmotionhosting.monit's own templates/etc/systemd/restart.conf.j2
+      # (`# {{ template_destpath }}`).
+      if dest = @params["dest"]?
+        template_vars["template_destpath"] = Crinja::Value.new(dest)
+      end
 
       # Real Ansible's Templar always exposes `environment` as a Jinja
       # global mapped to the controller process's OS environment

@@ -2205,5 +2205,29 @@ describe Krikri::PlaybookParser do
     ensure
       FileUtils.rm_rf(role_root) if role_root
     end
+
+    it "falls back to the role's tasks/ root when a nested include's relative path doubles a directory segment" do
+      # Real bug found in a 150-role overnight round (inmotionhosting.
+      # apache): tasks/configure/main.yml's own `include_tasks:
+      # "configure/{{ ansible_os_family | lower }}.yml"` is written
+      # relative to the role's tasks/ ROOT (a role convention: every
+      # include_tasks: path inside <role>/tasks/**, however deeply
+      # nested, is anchored at tasks/ itself, not at the including
+      # file's own directory) - real Ansible finds <role>/tasks/
+      # configure/debian.yml this way. Resolving relative to file_dir
+      # (tasks/configure/) doubled it into tasks/configure/configure/
+      # debian.yml, which doesn't exist, and this engine raised
+      # "Included tasks file not found" - a different, closer-to-caller
+      # fallback than the role-ROOT case above (that one is a SIBLING of
+      # tasks/, not nested under it).
+      role_root = File.tempname("role-root-tasks-fallback")
+      Dir.mkdir_p(File.join(role_root, "tasks", "configure"))
+      File.write(File.join(role_root, "tasks", "configure", "debian.yml"), "- name: noop\n  ansible.builtin.debug: {msg: hi}\n")
+
+      resolved = Krikri::PlaybookParser.resolve_include_path("configure/debian.yml", File.join(role_root, "tasks", "configure"))
+      resolved.should eq(File.join(role_root, "tasks", "configure", "debian.yml"))
+    ensure
+      FileUtils.rm_rf(role_root) if role_root
+    end
   end
 end

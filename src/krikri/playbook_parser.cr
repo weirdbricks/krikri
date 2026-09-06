@@ -1507,6 +1507,21 @@ module Krikri
       # crashed the whole run outright instead of just failing this one
       # task.
       if role_root = role_root_from_tasks_dir(file_dir)
+        # The role's own tasks/ ROOT specifically - not file_dir (a
+        # subdirectory under tasks/) and not role_root (one level above
+        # tasks/ entirely). Real Ansible's own relative-include search
+        # for a role task file always considers the top of the tasks/
+        # tree as one of its roots, regardless of how deeply nested the
+        # INCLUDING file itself is. Found via inmotionhosting.apache:
+        # tasks/configure/main.yml's own `include_tasks: "configure/
+        # {{ ansible_os_family | lower }}.yml"` - relative to file_dir
+        # (tasks/configure/) that doubles into tasks/configure/configure/
+        # debian.yml, which doesn't exist; the real target is tasks/
+        # configure/debian.yml, one level up from file_dir but still
+        # inside tasks/, not all the way up at the role root.
+        via_tasks_root = File.expand_path(file_rel, File.join(role_root, "tasks"))
+        return via_tasks_root if File.exists?(via_tasks_root)
+
         via_role_root = File.expand_path(file_rel, role_root)
         return via_role_root if File.exists?(via_role_root)
       end
