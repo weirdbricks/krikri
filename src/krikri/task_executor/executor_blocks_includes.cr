@@ -148,6 +148,7 @@ module Krikri
             included_task.name = name_substitutor.substitute(included_task.name)
           end
 
+          STDERR.puts "MULTI-PROPAGATE included_tasks=" + included_tasks.size.to_s + " block_children=" + (included_tasks[0].block_tasks || [] of Task).size.to_s
           propagate_role_context(task, included_tasks)
 
           connection_names = group_hosts.map { |host| host.vars["ansible_host"]?.try(&.as_s?) || host.name }
@@ -579,6 +580,15 @@ module Krikri
     # task) against each declared option's `required:`/`type:`, matching
     # real ansible-core's own role argument validation.
     private def execute_block(task : Task, host : Host)
+      # Propagate role context BEFORE the when: check - the when-false
+      # early-exit path prints each child's own "TASK [role : name]"
+      # banner via print_skipped_tasks, which needs the child's
+      # role_name to be set already (a skipped block's banners used to
+      # lose their "role : " prefix because propagate ran only on the
+      # executed path - 0x0i.systemd's "Broadcast uninstall signal" /
+      # "Flush handlers" skipped-banner shape).
+      propagate_role_context(task, task.block_tasks || [] of Task)
+
       if when_condition = task.when_condition
         vars_context = build_vars_context(task, host)
         when_result = false
@@ -628,7 +638,6 @@ module Krikri
       # "Make a swap file"/"Make swap file system"/"Mount swap", none
       # of which have their own notify:) - "Run swapon" never fired.
       changed_before = @results[host.name]["changed"]
-      propagate_role_context(task, task.block_tasks || [] of Task)
       run_task_list(task.block_tasks || [] of Task, host)
       block_failed = @halted_hosts.includes?(host.name)
 
@@ -689,6 +698,16 @@ module Krikri
         nested_task.role_vars_dir = enclosing.role_vars_dir
         nested_task.role_path = enclosing.role_path
         nested_task.role_name = enclosing.role_name
+        # RECURSE into nested block/rescue/always children: a when:-false
+        # BLOCK is skipped in execute_task before execute_block's own
+        # propagation ever runs, and its children's banners print via
+        # print_skipped_tasks - without recursion they had no role_name
+        # and lost their "role : " prefix (0x0i.systemd's "Broadcast
+        # uninstall signal" / "Flush handlers" skipped banners; same
+        # shape in kyl191.openvpn).
+        propagate_role_context(nested_task, nested_task.block_tasks || [] of Task)
+        propagate_role_context(nested_task, nested_task.rescue_tasks || [] of Task)
+        propagate_role_context(nested_task, nested_task.always_tasks || [] of Task)
         # Same reasoning as role_loader.cr's own include_role_dir fix -
         # a nested include_role: reached via this include_tasks: must
         # still search from the playbook root, not this included file's
@@ -892,6 +911,18 @@ module Krikri
       inherited.become = task.become?
       inherited.become_user = task.become_user
       included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path))
+
+      # Role context (role_name/defaults/vars/dirs) must reach the
+      # included tasks on THIS path too: an include_tasks: inside a role
+      # executed for a single host (or --forks 1) never ran
+      # propagate_role_context, so the included tasks - and everything
+      # nested inside them, e.g. a block's children - had no role_name,
+      # and their banners lost the "role : " prefix (0x0i.systemd's
+      # skipped "Broadcast uninstall signal"/"Flush handlers"; same
+      # shape in kyl191.openvpn). The multi-host include path
+      # (execute_include_tasks_multi) already propagates - this mirrors
+      # it.
+      propagate_role_context(task, included_tasks)
 
       # Propagate this iteration's loop `item` and the include statement's
       # own vars: into each included task's own scope: run_task_list ->

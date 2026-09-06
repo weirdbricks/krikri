@@ -429,8 +429,15 @@ module Krikri
         puts "TASK [#{task_role_prefix(nested_task)}#{render_task_name_for_display(nested_task, host)}]".colorize(:white).bold
         puts "*" * 70
         puts "skipping: [#{connection_host}]".colorize(:cyan)
-        @results[host.name]["skipped"] += 1
-        register_skip_result(nested_task, host)
+        # A skipped meta: task (e.g. a named meta: flush_handlers inside
+        # a when:-false block) prints its "skipping:" line but is NOT
+        # counted in the PLAY RECAP - real ansible-core ignores meta
+        # tasks in stats entirely (0x0i.systemd: krikri skipped=9 vs
+        # ansible skipped=8, the extra one being exactly this shape).
+        unless nested_task.module_name == "_meta"
+          @results[host.name]["skipped"] += 1
+          register_skip_result(nested_task, host)
+        end
         puts ""
       end
     end

@@ -1817,4 +1817,20 @@ describe "a halted host after a task failure" do
     output.should_not contain("TASK [should never be reached]")
     output.should_not contain("should never be reached")
   end
+
+  # Regression (0x0i.systemd / kyl191.openvpn, 120-author kata round):
+  # tasks inside a when:-false BLOCK of an include_tasks'd role file
+  # used to lose their "role : " banner prefix (the skip path printed
+  # before role context reached the block's children), and a skipped
+  # NAMED meta: task was counted into the PLAY RECAP's skipped where
+  # real ansible-core ignores meta tasks in stats entirely.
+  it "keeps the role prefix on skipped block children and keeps skipped meta out of the recap" do
+    status, output = run_playbook("test-block-skip-prefix.yml")
+
+    status.success?.should be_true
+    output.should contain("TASK [block_skip_prefix : Broadcast uninstall signal]")
+    output.should contain("TASK [block_skip_prefix : Flush handlers]")
+    # only the command task is counted; the skipped meta is not
+    output.should match(/skipped=1/)
+  end
 end

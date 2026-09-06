@@ -1,0 +1,9 @@
+---
+- name: Check for uninstall signal
+  when: perform_uninstall | default(false) | bool
+  block:
+    - name: Broadcast uninstall signal
+      ansible.builtin.command: /bin/true
+  always:
+    - name: Flush handlers
+      ansible.builtin.meta: flush_handlers

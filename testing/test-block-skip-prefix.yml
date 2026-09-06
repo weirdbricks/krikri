@@ -1,0 +1,7 @@
+---
+- name: Block-skip role prefix and meta recap counting
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - block_skip_prefix
