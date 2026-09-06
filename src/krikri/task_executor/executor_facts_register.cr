@@ -168,6 +168,17 @@ module Krikri
       return unless ansible_facts = result["ansible_facts"]?
       return unless facts_hash = ansible_facts.as_h?
 
+      # host here can be a `delegate_to:` + `delegate_facts: true` target
+      # (xe0nic.ansible_vprotect_server's own `delegate_to: localhost` /
+      # `delegate_facts: true` idiom for stashing a computed FQDN onto
+      # "localhost") rather than one of the play's own hosts - those only
+      # get pre-seeded into @facts/@set_facts for the play's ACTUAL hosts
+      # (executor.cr's own per-host init loop), so an arbitrary delegate
+      # target crashed the whole process with "Missing hash key" the
+      # first time anything delegated a fact to it.
+      @facts[host.name] ||= {} of String => JSON::Any
+      @set_facts[host.name] ||= {} of String => JSON::Any
+
       facts_hash.each do |key, value|
         @facts[host.name][key] = value
         @set_facts[host.name][key] = value if high_precedence

@@ -1,0 +1,13 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: loop over a source that references a filter this engine does not implement
+      debug:
+        msg: "item={{ item }}"
+      loop: "{{ ['a', 'b'] | totally_unimplemented_filter_xyz }}"
+      ignore_errors: true
+
+    - debug:
+        msg: "survived changed=False failed=False"

@@ -452,6 +452,18 @@ module Krikri
 
     private def resolve_loop_items_or_raise(task : Task, host : Host, vars_context : Hash(String, JSON::Any), & : -> Array(JSON::Any)?) : Array(JSON::Any)?
       yield
+    rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
+      # Same degrade-to-failed-task treatment as the UndefinedVariableError
+      # case below - a loop: source referencing a filter this engine
+      # doesn't implement (oasis_roles.system_repositories's own
+      # role-local filter_plugins/exclude.py, which krikri can't execute
+      # at all - a real, understood scope limit) previously propagated
+      # as an unrescued exception all the way out of #run and crashed the
+      # ENTIRE krikri-playbook process instead of just failing this one
+      # task, losing every other host/task the run would otherwise have
+      # completed. Real Ansible's own AnsibleFilterError for an unknown
+      # filter fails only the task.
+      raise WhenEvaluationError.new(ex.message)
     rescue ex : UndefinedVariableError
       if when_condition = task.when_condition
         # Lenient evaluation on purpose: `item.backup is defined` with

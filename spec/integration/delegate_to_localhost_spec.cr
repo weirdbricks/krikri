@@ -92,4 +92,38 @@ describe "delegate_to: localhost" do
   # present here - a future round (round 189+ after the fix lands)
   # can add it back, gated on `sshd_listening?` with a runtime skip,
   # or run it against the existing Atlantic.net harness.
+
+  # Real crash found in a 150-role overnight round
+  # (xe0nic.ansible_vprotect_server): `set_fact` + `delegate_to:
+  # <some host>` + `delegate_facts: true` crashed the ENTIRE
+  # krikri-playbook process with an unhandled "Missing hash key"
+  # KeyError - @facts/@set_facts are only pre-seeded for the play's
+  # own hosts (executor.cr's per-host init loop), not for an
+  # arbitrary delegate_facts: true target, so the very first fact
+  # delegated to a never-before-seen host name crashed
+  # merge_ansible_facts outright, losing the entire run (not just
+  # failing the one task). Fixed with `||=` lazy init in
+  # merge_ansible_facts.
+  it "does not crash when delegate_facts: true targets a host never seen before (not one of the play's own hosts)" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          computed_fqdn: "example.com"
+        tasks:
+          - name: delegate a fact to a brand-new host name
+            ansible.builtin.set_fact:
+              computed_fqdn: "{{ computed_fqdn }}"
+            delegate_to: a_never_before_seen_delegate_host
+            delegate_facts: true
+          - debug:
+              msg: survived
+      YAML
+    status.exit_code.should eq(0)
+    output.should_not contain("Unhandled exception")
+    output.should_not contain("Missing hash key")
+    output.should contain("survived")
+    output.should contain("PLAY RECAP")
+  end
 end

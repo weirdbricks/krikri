@@ -1873,3 +1873,25 @@ describe "command: with argv: instead of cmd:/free-form" do
     output.should contain("changed=True failed=False stdout=hello world with spaces")
   end
 end
+
+describe "a loop: source referencing an unimplemented filter" do
+  # Real crash found in a 150-role overnight round
+  # (oasis_roles.system_repositories, which ships its own role-local
+  # filter_plugins/exclude.py - a real, understood scope limit, krikri
+  # can't execute arbitrary Python filter plugins). The task's `loop:`
+  # value referenced that filter; resolve_loop_items_or_raise only
+  # rescued UndefinedVariableError, so the FilterEngine's
+  # UnknownFilterError propagated all the way out of Executor#run
+  # unrescued and crashed the ENTIRE krikri-playbook process -
+  # "Unhandled exception: No filter named '...'." - losing every other
+  # host/task the run would otherwise have completed, not just failing
+  # this one task the way real Ansible's own AnsibleFilterError would.
+  it "fails only the task, not the whole process" do
+    status, output = run_playbook("test-loop-unknown-filter.yml", [] of String)
+
+    status.success?.should be_true
+    output.should_not contain("Unhandled exception")
+    output.should contain("No filter named 'totally_unimplemented_filter_xyz'")
+    output.should contain("survived changed=False failed=False")
+  end
+end

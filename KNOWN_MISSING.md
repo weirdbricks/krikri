@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.773`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.774`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.27` (see `shard.yml`).
 
 ---
@@ -37,6 +37,24 @@ below - keep the two apart, or this list stops meaning anything.
   exist: /etc/nginx. Use state=touch to create it."). Not root-caused yet -
   needs a look at real Ansible's own `file` module semantics for a missing
   path combined with `recurse:` and no `state:`.
+
+---
+
+## Round 10000-10149 (150-role overnight krikri-role-tester round, 0.9.772 -> 0.9.774)
+
+First round run overnight, unattended, via `krikri-role-tester` with both backends concurrently (4 Kata pairs + 4 Atlantic.net pairs). 86 roles continued the existing `testing/kata/round_new_authors/shortlist120.txt` (picking up where round 6008-6019 left off); 64 more were freshly sourced from the Galaxy API (`order_by=-download_count`), filtered against every role already in `ROLES_TESTED.md`. Final tally: 92 CLEAN, 35 DIVERGENT, 19 BLOCKED, 4 GALAXY_MISSING.
+
+**Two harness-level findings before any engine bugs, same "false divergence" class as the plugin-upload race documented above:**
+
+1. **The Kata test image shipped with a completely empty apt cache** - its `Containerfile` ran `rm -rf /var/lib/apt/lists/*` after its own build-time install step (the usual Docker image-size practice), so every fresh VM needed an explicit `update_cache: true` to find ANY package at all; a plain `apt-get install` failed identically to krikri on a fresh VM, confirmed live. Since most roles' first install task doesn't set `update_cache:`, whichever of the two per-role VMs happened to install successfully first (a coin flip, not a real engine difference) determined whether the pair showed CLEAN or DIVERGENT. **Fixed**: kept the cache populated (`testing/kata/Containerfile`), rebuilt the image mid-round. Everything before this fix (roughly rounds 10000-10080) should be re-verified before trusting an apt-related DIVERGENT from that range.
+2. **16 of the 19 "BLOCKED missing engine run" results are not real** - both engines correctly reject a role using ansible-core's removed `ansible.builtin.include` action at PARSE time (same class as the pre-existing "removed `include:` action" note in round 6000-6007 below), but `krikri-role-tester`'s own SUMMARY-parsing can't extract PLAY RECAP counters when neither engine ever reaches a play, so it defaults to BLOCKED instead of CLEAN. A `krikri-role-tester` tooling gap, not a krikri-playbook gap - worth fixing in that project, not here.
+
+**Two real engine bugs found and fixed (0.9.774):**
+
+- **`delegate_to: <host>` + `delegate_facts: true` targeting a host never seen before crashed the ENTIRE process** (`xe0nic.ansible_vprotect_server`): `@facts`/`@set_facts` are only pre-seeded for the play's own hosts; the first fact ever delegated to an arbitrary host name (not necessarily in inventory) raised an unrescued `Missing hash key` `KeyError` in `merge_ansible_facts`, losing every other host/task the run would otherwise have completed - not just failing the one task, the way real Ansible's own delegate-facts handling does. Fixed with lazy `||=` init. Regression spec: `delegate_to_localhost_spec.cr`.
+- **A `loop:` source referencing an unimplemented filter crashed the ENTIRE process** (`oasis_roles.system_repositories`, whose role ships its own `filter_plugins/exclude.py` - real Ansible loads role-local Python filter plugins automatically, a genuine, understood scope limit this engine doesn't attempt to close): `resolve_loop_items_or_raise` only rescued `UndefinedVariableError`, so `FilterEngine::UnknownFilterError` propagated unrescued out of `Executor#run` - "Unhandled exception: No filter named '...'." The identical shape in a NON-loop task param already failed gracefully (task-level `failed:`, not a crash) - only the `loop:` resolution path was missing the rescue. Fixed by also converting `UnknownFilterError` to the same `WhenEvaluationError` degrade-to-failed-task path. Regression spec: `cli_spec.cr` + `testing/test-loop-unknown-filter.yml`.
+
+The remaining 33 divergences and the `lablabs.rke2`/`xanmanning.k3s`/`kyl191.openvpn`/`igor_nikiforov.journald`/`evrardjp.keepalived` items already resolved separately this round are NOT yet fully triaged by root cause here - see `git log` for what's been fixed so far; a full dedup pass (one fix per shared root cause, per this file's own workflow) is still pending.
 
 ---
 
