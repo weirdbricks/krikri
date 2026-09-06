@@ -369,6 +369,23 @@ module Krikri
       if loop_items
         executed = false
         failed = false
+        # `register:` on a looped include_vars: (pacifica.ansible_pacifica's
+        # own `register: vars_result` + `loop: "{{
+        # pacifica_enabled_services }}"`, then `vars_result.results |
+        # items2dict(key_name='item', value_name='ansible_facts')`) was
+        # never populated at all - this whole loop body had no register
+        # handling, so `vars_result` stayed entirely unset and any later
+        # reference raised "'vars_result.results' is undefined". Each
+        # entry mirrors real Ansible's own include_vars module result
+        # shape (`ansible_facts:` holding the loaded vars, `changed:
+        # false` - include_vars never mutates remote state) plus `item:`,
+        # matching the generic looped-task register shape in
+        # executor_loops.cr. Scoped to the success/file-not-found/parse-
+        # error paths below (the three a real playbook's register:
+        # + items2dict/selectattr idiom actually reads); a when:-skipped
+        # item isn't appended, a narrower gap than the fully generic
+        # looped-module path.
+        item_results = [] of JSON::Any
         rendered_items = loop_items.map { |item| deep_render_item(item, vars_context, host.name) }
         rendered_items = flatten_with_items_one_level(rendered_items) if task.loop_items_needs_flatten?
         rendered_items.each_with_index do |item, loop_index|
@@ -419,6 +436,7 @@ module Krikri
             puts "failed: [#{host.connection_host}] => (item=#{item_label})".colorize(:red)
             puts "  Message: include_vars: file not found: #{candidate}".colorize(:red)
             failed = true
+            item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => JSON::Any.new({} of String => JSON::Any)} of String => JSON::Any)
             next
           end
 
@@ -428,6 +446,7 @@ module Krikri
             puts "failed: [#{host.connection_host}] => (item=#{item_label})".colorize(:red)
             puts "  Message: include_vars: could not parse #{path}: #{ex.message}".colorize(:red)
             failed = true
+            item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => JSON::Any.new({} of String => JSON::Any)} of String => JSON::Any)
             next
           end
 
@@ -442,6 +461,18 @@ module Krikri
 
           puts "ok: [#{host.connection_host}] => (item=#{item_label})".colorize(:green)
           executed = true
+          item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(false), "ansible_facts" => JSON::Any.new(loaded)} of String => JSON::Any)
+        end
+
+        if register_name = task.register
+          unless register_name.empty?
+            @registered_vars[host.name][register_name] = JSON::Any.new({
+              "changed" => JSON::Any.new(false),
+              "failed"  => JSON::Any.new(failed),
+              "results" => JSON::Any.new(item_results),
+            } of String => JSON::Any)
+            @hv_generation += 1
+          end
         end
 
         if failed
@@ -547,6 +578,21 @@ module Krikri
         loaded.each { |key, value| store[key] = value }
       end
       @hv_generation += 1
+
+      # A non-looped `include_vars: ... register: some_var` - same
+      # register: gap as the looped branch above, just the plain
+      # (non-`.results`) shape real Ansible's own include_vars module
+      # returns: `{ansible_facts: {...loaded...}, changed: false}`.
+      if register_name = task.register
+        unless register_name.empty?
+          @registered_vars[host.name][register_name] = JSON::Any.new({
+            "changed"       => JSON::Any.new(false),
+            "failed"        => JSON::Any.new(false),
+            "ansible_facts" => JSON::Any.new(loaded),
+          } of String => JSON::Any)
+          @hv_generation += 1
+        end
+      end
 
       puts "ok: [#{host.name}]".colorize(:green)
       @results[host.name]["ok"] += 1

@@ -1,0 +1,24 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    services: [web, db]
+  tasks:
+    - name: include per-service vars in a loop
+      include_vars: "{{ playbook_dir }}/fixtures/include_vars_register/{{ item }}.yml"
+      register: vars_result
+      loop: "{{ services }}"
+
+    - set_fact:
+        merged: "{{ vars_result.results | items2dict(key_name='item', value_name='ansible_facts') }}"
+
+    - debug:
+        msg: "web_port={{ merged.web.port }} db_port={{ merged.db.port }}"
+
+    - name: include a single (non-looped) vars file
+      include_vars: "{{ playbook_dir }}/fixtures/include_vars_register/web.yml"
+      register: single_result
+
+    - debug:
+        msg: "single_ansible_facts_port={{ single_result.ansible_facts.port }}"

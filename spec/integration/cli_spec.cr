@@ -1895,3 +1895,27 @@ describe "a loop: source referencing an unimplemented filter" do
     output.should contain("survived changed=False failed=False")
   end
 end
+
+describe "include_vars: with register:" do
+  # Real bug found in a 150-role overnight round (pacifica.
+  # ansible_pacifica): `include_vars: "defaults/{{ item }}.yml"
+  # register: vars_result loop: "{{ pacifica_enabled_services }}"`,
+  # then a later task reads `vars_result.results |
+  # items2dict(key_name='item', value_name='ansible_facts')`.
+  # parse_include_vars_task - a dedicated parser separate from the
+  # generic #parse_task every other module goes through - never called
+  # the line that sets task.register at all, so include_vars: silently
+  # dropped `register:` regardless of whether the task was looped;
+  # `vars_result` stayed entirely unbound and any later reference
+  # raised "'vars_result.results' is undefined". Fixed for both the
+  # looped (`.results` array, matching the generic looped-task register
+  # shape) and non-looped (`ansible_facts:`, matching real Ansible's own
+  # include_vars module result) cases.
+  it "populates register: for both a looped and a non-looped include_vars:" do
+    status, output = run_playbook("test-include-vars-register.yml", [] of String)
+
+    status.success?.should be_true
+    output.should contain("web_port=80 db_port=5432")
+    output.should contain("single_ansible_facts_port=80")
+  end
+end

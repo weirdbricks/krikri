@@ -2203,6 +2203,18 @@ module Krikri
 
       parse_common_task_attributes(task, task_hash)
 
+      # `register:` was never parsed here at all - unlike the generic
+      # #parse_task path (which sets task.register for every OTHER
+      # module), this dedicated include_vars: parser only calls
+      # #parse_common_task_attributes, which doesn't cover it. A looped
+      # `include_vars: ... register: vars_result` (pacifica.
+      # ansible_pacifica's own `vars_result.results |
+      # items2dict(key_name='item', value_name='ansible_facts')`
+      # idiom) silently dropped the register entirely - task.register
+      # stayed nil, so vars_result was never bound and any later
+      # reference raised "'vars_result.results' is undefined".
+      task.register = task_hash["register"]?.try { |v| safe_yaml_to_string(v) }
+
       if tags_yaml = task_hash["tags"]?
         task.tags = tags_yaml.as_a?.try(&.map(&.as_s)) || [tags_yaml.as_s]
       end
