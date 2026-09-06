@@ -396,6 +396,37 @@ module Krikri
         else              "str"
         end
       end
+
+      # community.general's netmask_to_cidr filter: a dotted-decimal
+      # subnet mask ("255.255.255.0") to its CIDR prefix length (24).
+      # Real Ansible's own implementation builds
+      # `ipaddress.IPv4Network(f"0.0.0.0/{value}")` and reads its
+      # `.prefixlen` - equivalent to counting the netmask's leading set
+      # bits, which is what this does directly rather than pulling in a
+      # full IP-address library for one filter. Raises (matching real
+      # Ansible's `AnsibleFilterError` on an invalid mask) rather than
+      # silently returning a wrong prefix length for a non-contiguous
+      # mask (e.g. "255.0.255.0") or a malformed string - found via
+      # kyl191.openvpn's own `openvpn_server_netmask_cidr: "{{
+      # openvpn_server_netmask | netmask_to_cidr }}"`.
+      def self.netmask_to_cidr(s : String) : Int32
+        octets = s.strip.split('.')
+        raise "netmask_to_cidr: not a valid netmask: #{s}" unless octets.size == 4
+
+        bits = octets.reduce(0_u32) do |acc, octet|
+          value = octet.to_u8? || raise "netmask_to_cidr: not a valid netmask: #{s}"
+          (acc << 8) | value
+        end
+
+        ones = bits.popcount
+        # A valid netmask's set bits are contiguous from the MSB - the
+        # popcount-derived prefix, shifted back into a mask, must
+        # reproduce the original bits exactly (rules out "255.0.255.0").
+        expected = ones.zero? ? 0_u32 : (0xFFFFFFFF_u32 << (32 - ones))
+        raise "netmask_to_cidr: not a valid netmask: #{s}" unless bits == expected
+
+        ones.to_i32
+      end
     end
   end
 end

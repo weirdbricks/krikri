@@ -2750,6 +2750,18 @@ module Krikri
             # back into an Array(String) on the plugin side.
             statements = value.as_a.map { |item| stringify_value(item) }
             params[key.to_s] = statements.to_json
+          elsif RAW_COMMAND_MODULES.includes?(module_name) && key.to_s == "argv" && value.as_a?
+            # `argv:` (command:'s list form, real Ansible's own way to
+            # avoid shell quoting entirely) has the identical comma-
+            # joining hazard "assert.that"/mysql_query's own `query:`
+            # already work around - an argv element containing a comma,
+            # or a space (`-subj /CN=my common name/`, kyl191.openvpn's
+            # own CA-cert generation), would be indistinguishable from
+            # an argument boundary once comma-joined by the generic
+            # Array branch below. JSON-encoded here; command.cr's own
+            # #parse_argv_list decodes it back into an Array(String).
+            argv_items = value.as_a.map { |item| stringify_value(item) }
+            params[key.to_s] = argv_items.to_json
           elsif key.to_s.in?({"mode", "directory_mode"}) && (raw = value.raw).is_a?(Int64 | Int32)
             # `mode: 0770` (unquoted, no string quotes - the way most
             # real playbooks write it) is genuinely ambiguous YAML: 1.1's

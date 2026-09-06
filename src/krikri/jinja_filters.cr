@@ -751,6 +751,7 @@ module Krikri
       Crinja::Value.new(VariableSubstitutor::FilterCore.format_human_readable(bytes, isbits))
     end
     Crinja.filter(:human_to_bytes) { Crinja::Value.new(VariableSubstitutor::FilterCore.parse_human_to_bytes(target.to_s)) }
+    Crinja.filter(:netmask_to_cidr) { Crinja::Value.new(VariableSubstitutor::FilterCore.netmask_to_cidr(target.to_s)) }
 
     # `md5()`/`sha1()` - real Ansible filters, standalone hex digests
     # (distinct from the general `hash(algorithm=)` filter above).

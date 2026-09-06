@@ -170,4 +170,26 @@ describe "command plugin" do
   ensure
     FileUtils.rm_rf(dir) if dir
   end
+
+  # Regression (kyl191.openvpn, 120-author kata round): `argv:` is real
+  # Ansible's own alternative to `cmd:`/free-form for avoiding shell
+  # quoting entirely - the plugin never recognized it at all, so every
+  # argv:-only task failed "Missing required parameter: cmd" before this
+  # fix. The JSON-array wire format here matches what
+  # playbook_parser.cr's own argv special case now encodes it as (see
+  # that file's RAW_COMMAND_MODULES branch) - PluginSpecHelper bypasses
+  # the parser and hands the plugin binary its wire params directly.
+  it "accepts argv: as an alternative to cmd:, with no shell splitting on its elements" do
+    result = PluginSpecHelper.run("command", {"argv" => ["echo", "hello world with spaces"].to_json})
+
+    result["failed"].as_bool.should be_false
+    result["stdout"].as_s.should eq("hello world with spaces")
+  end
+
+  it "still requires cmd/_raw_params/argv - one of the three - to be present" do
+    result = PluginSpecHelper.run("command", {} of String => String)
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("Missing required parameter: cmd")
+  end
 end

@@ -210,4 +210,35 @@ describe Krikri::VariableSubstitutor::FilterCore do
       core.parse_human_to_bytes(core.format_human_readable(1536_i64, false)).should eq(1536)
     end
   end
+
+  describe "netmask_to_cidr" do
+    core = Krikri::VariableSubstitutor::FilterCore
+
+    # Regression (kyl191.openvpn, 120-author kata round):
+    # community.general's netmask_to_cidr filter was entirely
+    # unimplemented ("No filter named 'netmask_to_cidr'"), reached via
+    # the role's own openvpn_server_netmask_cidr default.
+    it "converts a contiguous dotted-decimal netmask to its CIDR prefix length" do
+      core.netmask_to_cidr("255.255.255.0").should eq(24)
+      core.netmask_to_cidr("255.255.0.0").should eq(16)
+      core.netmask_to_cidr("255.255.255.255").should eq(32)
+      core.netmask_to_cidr("0.0.0.0").should eq(0)
+      core.netmask_to_cidr("255.255.255.128").should eq(25)
+    end
+
+    it "raises on a non-contiguous mask" do
+      expect_raises(Exception, /not a valid netmask/) do
+        core.netmask_to_cidr("255.0.255.0")
+      end
+    end
+
+    it "raises on a malformed string" do
+      expect_raises(Exception, /not a valid netmask/) do
+        core.netmask_to_cidr("not.an.ip.address")
+      end
+      expect_raises(Exception, /not a valid netmask/) do
+        core.netmask_to_cidr("255.255.255")
+      end
+    end
+  end
 end

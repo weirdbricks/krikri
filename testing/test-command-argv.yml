@@ -1,0 +1,14 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: "run a command via argv: with a space inside one element"
+      ansible.builtin.command:
+        argv:
+          - echo
+          - "hello world with spaces"
+      register: result
+
+    - debug:
+        msg: "changed={{ result.changed }} failed={{ result.failed }} stdout={{ result.stdout }}"

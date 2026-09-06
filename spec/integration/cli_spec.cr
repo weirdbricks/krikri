@@ -1856,3 +1856,20 @@ describe "an unarchive with a bare relative src" do
     output.should contain("changed=True failed=False")
   end
 end
+
+describe "command: with argv: instead of cmd:/free-form" do
+  # Regression (kyl191.openvpn, 120-author kata round): `argv:` (command's
+  # list form, real Ansible's own way to avoid shell quoting) fell all
+  # the way through to "Missing required parameter: cmd" - the plugin
+  # never recognized it as an alternative to cmd:/_raw_params at all, and
+  # even once it did, playbook_parser.cr's generic Array param handling
+  # comma-joins list values, which would have merged this fixture's own
+  # multi-word argv element back into several arguments. Runs WITHOUT
+  # --check (command doesn't support check mode).
+  it "runs argv:'s exact argument list, preserving a space inside one element as a single arg" do
+    status, output = run_playbook("test-command-argv.yml", [] of String)
+
+    status.success?.should be_true
+    output.should contain("changed=True failed=False stdout=hello world with spaces")
+  end
+end

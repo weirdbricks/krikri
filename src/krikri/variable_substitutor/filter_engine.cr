@@ -874,6 +874,11 @@ module Krikri
           # Ansible filter, the inverse of human_readable: parses
           # "10GB"/"1.5 MB" etc back into a raw byte count.
           JSON::Any.new(FilterCore.parse_human_to_bytes(as_string(value)))
+        when "netmask_to_cidr"
+          # community.general filter: dotted-decimal subnet mask ->
+          # CIDR prefix length int (e.g. "255.255.255.0" -> 24). Found
+          # via kyl191.openvpn's own openvpn_server_netmask_cidr default.
+          JSON::Any.new(FilterCore.netmask_to_cidr(as_string(value)).to_i64)
         when "md5"
           JSON::Any.new(FilterCore.md5(as_string(value)))
         when "sha1"

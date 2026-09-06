@@ -59,16 +59,33 @@ module Krikri
         )
       end
 
-      # Get command (supports both 'cmd' and free-form)
+      # Get command (supports 'cmd', free-form, or 'argv')
       cmd = @params["cmd"]? || @params["_raw_params"]?
+      argv = @params["argv"]?
 
-      unless cmd
+      unless cmd || argv
         return PluginResult.new(
           changed: false,
           failed: true,
           msg: "Missing required parameter: cmd"
         )
       end
+
+      # `argv:` gives the exact argument list literally - no shell
+      # quoting/splitting at all, real ansible-core's own command.py runs
+      # it via `run_command(argv, ...)` (a list) rather than shlex-
+      # splitting a string. Kept as its own cmd_parts source rather than
+      # joining into a `cmd` string and reusing #parse_command below,
+      # which would re-introduce exactly the quoting argv exists to
+      # avoid (kyl191.openvpn's own `-subj /CN={{ openvpn_ca_cn[:64]
+      # }}/` argv element, containing spaces from a CN value, must reach
+      # openssl as ONE argument). `cmd` is left nil (not the joined
+      # argv) for `changed_when:`/display purposes - real Ansible's own
+      # `result['cmd']` is the argv LIST itself in this shape, but this
+      # plugin's PluginResult#cmd is typed String; the argv path skips
+      # the `unless cmd` check above via the OR, so this is unreachable
+      # with cmd nil only via that path.
+      argv_parts = argv.try { |raw| parse_argv_list(raw) }
 
       # Check creates parameter (idempotency). Real Ansible reports this
       # as an ORDINARY "ok" result (changed: false), never a task-level
@@ -168,7 +185,7 @@ module Krikri
         # Parse command into array (simple split on spaces)
         # Note: This doesn't handle quoted arguments perfectly
         # but works for most cases
-        cmd_parts = parse_command(cmd)
+        cmd_parts = argv_parts || (cmd ? parse_command(cmd) : [] of String)
         command_name = cmd_parts.first
         args = cmd_parts[1..]
 
@@ -270,6 +287,21 @@ module Krikri
 
       env = Hash(String, String).from_json(env_json)
       env.empty? ? nil : env.transform_values { |v| v.as(String?) }
+    end
+
+    # Parses `argv:`'s JSON-array text into its literal argument list - no
+    # shell splitting/quoting at all (that's the whole point of argv: over
+    # cmd:/free-form). A templated Jinja list var renders as Python's repr
+    # (single-quoted strings) rather than JSON when it comes through a
+    # `{% if %}...{{ [list] }}...{% endif %}` idiom - same fallback as
+    # rpm_package.cr's/apt.cr's own copies of this pattern.
+    private def parse_argv_list(raw : String) : Array(String)
+      trimmed = raw.strip
+      begin
+        Array(String).from_json(trimmed)
+      rescue
+        Array(String).from_json(trimmed.gsub('\'', '"'))
+      end
     end
 
     # First executable file named *name* under the colon-separated
