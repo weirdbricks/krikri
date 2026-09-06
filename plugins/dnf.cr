@@ -44,63 +44,14 @@ module Krikri
     end
 
     def execute : PluginResult
-      # Parse package name(s)
-      # Can be a string, array (via list parameter), or comma-separated
       names = parse_package_names
 
-      # `name:` isn't required when `update_cache: true` is given with
-      # nothing else - real Ansible's own dnf: module allows a cache-
-      # refresh-only invocation (robertdebock.rpmfusion's own "Yum
-      # update cache" handler: `ansible.builtin.yum: {update_cache:
-      # yes}`, no name: at all). Matches package.cr's own identical
-      # exception for the generic package: module - never ported here
-      # until this task's own "Missing required parameter: name"
-      # failure surfaced it live on a Rocky 9.6 target.
-      if names.empty?
-        if true?(@params["update_cache"]?)
-          result = remote_exec("dnf makecache")
-          # changed: false even on success - real ansible-core's dnf.py
-          # `update_cache_only` reports `changed=result.get('changed',
-          # False)` from its libdnf5-backed helper, which never actually
-          # sets a `changed` key in practice (verified live on Rocky 9.6:
-          # ansible-core's own recap for this exact handler shape -
-          # `dnf: {update_cache: true}`, no name: - shows `ok:`, never
-          # `changed:`). Not visible from `dnf makecache`'s own CLI
-          # stdout, which prints the same repo-listing whether the cache
-          # was actually stale or not - see package.cr's own
-          # update_cache_only, which already got this right; this
-          # module's separate cache-only branch (reached only when a
-          # role calls dnf:/ansible.builtin.dnf directly, not the
-          # generic package:) never got the same fix. Found via round172's
-          # buluma.rpmfusion.
-          return PluginResult.new(
-            changed: false,
-            failed: result[:exit_code] != 0,
-            msg: result[:exit_code] == 0 ? "Package cache updated" : "Failed to update package cache: #{result[:stderr]}"
-          )
-        end
-
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Missing required parameter: name"
-        )
+      if early = early_result_for_empty_names(names)
+        return early
       end
 
-      # Get state (default: present)
-      state = @params["state"]? || "present"
+      state = normalized_state
 
-      # Normalize state aliases
-      state = case state
-              when "installed"
-                "present"
-              when "removed"
-                "absent"
-              else
-                state
-              end
-
-      # Validate state
       unless ["present", "absent", "latest"].includes?(state)
         return PluginResult.new(
           changed: false,
@@ -109,20 +60,12 @@ module Krikri
         )
       end
 
-      # Handle special case: autoremove without package name
-      if true?(@params["autoremove"]?) && names == ["*"]
-        return handle_autoremove
+      if special = special_case_result(names, state)
+        return special
       end
 
-      # Handle special case: upgrade all packages
-      if names == ["*"] && state == "latest"
-        return handle_upgrade_all
-      end
-
-      # Build DNF command options
       dnf_options = build_dnf_options
 
-      # Process based on state
       case state
       when "present"
         handle_install(names, dnf_options)
@@ -140,71 +83,6 @@ module Krikri
     end
 
     # Parse package names from various parameter formats
-    private def parse_package_names : Array(String)
-      names = [] of String
-
-      # Try 'name' parameter (can be string or list) - `pkg:` is a
-      # documented alias of `name:` for real Ansible's dnf module (see
-      # its own argument_spec: `aliases: [pkg]`).
-      if name_param = @params["name"]? || @params["pkg"]?
-        trimmed = name_param.strip
-        # `name: "{{ some_list_var }}"` templates a *list* var through a
-        # plain `{{ }}` substitution - since @params values are always
-        # String, that renders as the var's JSON form
-        # (`["foo","bar"]`), not a bare comma-joined string. Parsed as
-        # real JSON here rather than falling into the comma-split below,
-        # which would otherwise leave the brackets/quotes stuck to the
-        # first/last entries (see apt.cr's own parse_package_names for
-        # the same bug, found via konstruktoid-hardening's package
-        # installation task).
-        parsed_json = if trimmed.starts_with?('[') && trimmed.ends_with?(']')
-                        begin
-                          Array(String).from_json(trimmed)
-                        rescue
-                          # A Python-repr list (single-quoted strings) isn't
-                          # valid JSON - same fallback as apt.cr's/package.cr's
-                          # own copies of this logic (see there for the full
-                          # rationale: a Jinja `{% if %}...{{ [list] }}...
-                          # {% endif %}` template idiom renders as Python's
-                          # `str(list)` form, not JSON). Proactive fix - not
-                          # yet caught live for dnf specifically, but the
-                          # exact same bug class already found independently
-                          # in two other plugins this way.
-                          begin
-                            Array(String).from_json(trimmed.gsub('\'', '"'))
-                          rescue
-                            nil
-                          end
-                        end
-                      end
-
-        names = if parsed_json
-                  parsed_json
-                elsif name_param.includes?(",")
-                  name_param.split(",").map(&.strip)
-                else
-                  [name_param]
-                end
-      end
-
-      # Try 'list' parameter (array of packages)
-      if list_param = @params["list"]?
-        begin
-          list_names = JSON.parse(list_param).as_a.map(&.as_s)
-          names.concat(list_names)
-        rescue
-          # If parsing fails, treat as single package
-          names << list_param
-        end
-      end
-
-      # Try free-form parameter
-      if names.empty? && (raw_param = @params["_raw_params"]?)
-        names = raw_param.split.reject(&.empty?)
-      end
-
-      names.uniq
-    end
 
     # Real ansible.builtin.dnf's module code goes through dnf's Python API
     # directly, which treats an `enablerepo:` naming a repo ID that isn't
@@ -222,223 +100,10 @@ module Krikri
     # Build DNF command line options
 
     # Install packages
-    private def handle_install(names : Array(String), options : String) : PluginResult
-      # Check if update_only is set
-      update_only = true?(@params["update_only"]?)
-
-      to_install = [] of String
-      to_update = [] of String
-      already_installed = [] of String
-
-      # Check each package's status
-      names.each do |pkg|
-        if package_group?(pkg)
-          # For groups, always try to install (dnf handles idempotency)
-          to_install << pkg
-        elsif url_or_file?(pkg)
-          # For URLs/files, always try to install
-          to_install << pkg
-        else
-          # Check if package is installed
-          if package_installed?(pkg)
-            if update_only
-              to_update << pkg
-            else
-              already_installed << pkg
-            end
-          else
-            if update_only
-              # Don't install new packages in update_only mode
-              already_installed << pkg
-            else
-              to_install << pkg
-            end
-          end
-        end
-      end
-
-      changed = false
-      messages = [] of String
-      all_output = [] of String
-
-      # Install new packages
-      unless to_install.empty?
-        pkg_list = to_install.map { |pth| quote_package(pth) }.join(" ")
-        cmd = "dnf install #{options} #{pkg_list}"
-
-        result = remote_exec_tolerating_unknown_repo(cmd)
-        all_output << result[:stdout]
-
-        if result[:exit_code] == 0
-          # A requested name can be a virtual package already satisfied
-          # by something else installed - `package_installed?`'s own
-          # `dnf list installed <name>` pre-check only ever looks up the
-          # literal requested name, which a purely virtual/Provides:-
-          # satisfied name never has its own `dnf list installed` entry
-          # for, so it always fell through to "needs install" here. dnf
-          # itself prints a literal "Nothing to do." and still exits 0
-          # for that case (a genuine no-op), so trusting exit_code alone
-          # always reported changed: true even when nothing happened -
-          # same bug class already fixed in apt.cr/package.cr's own
-          # apt-get install handling (apt_summary_had_no_effect?), which
-          # this handler never got ported to since it's a separate
-          # RPM-based code path.
-          if result[:stdout].includes?("Nothing to do")
-            messages << "Package#{to_install.size > 1 ? "s" : ""} #{to_install.join(", ")} already satisfied"
-          else
-            changed = true
-            messages << "Installed: #{to_install.join(", ")}"
-          end
-        else
-          return PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "Failed to install packages",
-            stdout: result[:stdout],
-            stderr: result[:stderr],
-            exit_code: result[:exit_code]
-          )
-        end
-      end
-
-      # Update packages (if update_only mode)
-      unless to_update.empty?
-        pkg_list = to_update.map { |pth| quote_package(pth) }.join(" ")
-        cmd = "dnf update #{options} #{pkg_list}"
-
-        result = remote_exec_tolerating_unknown_repo(cmd)
-        all_output << result[:stdout]
-
-        if result[:exit_code] == 0
-          # Check if anything was actually updated
-          if result[:stdout].includes?("Upgraded:") || result[:stdout].includes?("Installed:")
-            changed = true
-            messages << "Updated: #{to_update.join(", ")}"
-          end
-        else
-          return PluginResult.new(
-            changed: changed,
-            failed: true,
-            msg: "Failed to update packages",
-            stdout: result[:stdout],
-            stderr: result[:stderr],
-            exit_code: result[:exit_code]
-          )
-        end
-      end
-
-      # Report already installed
-      unless already_installed.empty?
-        messages << "Already installed: #{already_installed.join(", ")}"
-      end
-
-      msg = messages.empty? ? "No changes needed" : messages.join("; ")
-
-      PluginResult.new(
-        changed: changed,
-        failed: false,
-        msg: msg,
-        stdout: all_output.join("\n"),
-        exit_code: 0
-      )
-    end
 
     # Remove packages
-    private def handle_remove(names : Array(String), options : String) : PluginResult
-      to_remove = [] of String
-      already_absent = [] of String
-
-      # Check which packages need to be removed
-      names.each do |pkg|
-        if package_group?(pkg)
-          # For groups, always try to remove (dnf handles if not installed)
-          to_remove << pkg
-        else
-          if package_installed?(pkg)
-            to_remove << pkg
-          else
-            already_absent << pkg
-          end
-        end
-      end
-
-      # Nothing to do
-      if to_remove.empty?
-        return PluginResult.new(
-          changed: false,
-          failed: false,
-          msg: "All packages already absent",
-          exit_code: 0
-        )
-      end
-
-      # Build remove command
-      autoremove_flag = true?(@params["autoremove"]?) ? "" : "--setopt=clean_requirements_on_remove=False"
-      pkg_list = to_remove.map { |pth| quote_package(pth) }.join(" ")
-      cmd = "dnf remove #{options} #{autoremove_flag} #{pkg_list}"
-
-      result = remote_exec_tolerating_unknown_repo(cmd)
-
-      success = result[:exit_code] == 0
-
-      if success
-        msg_parts = ["Removed: #{to_remove.join(", ")}"]
-        msg_parts << "Already absent: #{already_absent.join(", ")}" unless already_absent.empty?
-
-        PluginResult.new(
-          changed: true,
-          failed: false,
-          msg: msg_parts.join("; "),
-          stdout: result[:stdout],
-          exit_code: 0
-        )
-      else
-        PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Failed to remove packages",
-          stdout: result[:stdout],
-          stderr: result[:stderr],
-          exit_code: result[:exit_code]
-        )
-      end
-    end
 
     # Update packages to latest version
-    private def handle_update(names : Array(String), options : String) : PluginResult
-      pkg_list = names.map { |pth| quote_package(pth) }.join(" ")
-      cmd = "dnf update #{options} #{pkg_list}"
-
-      result = remote_exec_tolerating_unknown_repo(cmd)
-
-      success = result[:exit_code] == 0
-
-      if success
-        # Check if anything was actually updated
-        changed = result[:stdout].includes?("Upgraded:") ||
-                  result[:stdout].includes?("Installed:") ||
-                  result[:stdout].includes?("Obsoleted:")
-
-        msg = changed ? "Packages updated to latest version" : "Packages already at latest version"
-
-        PluginResult.new(
-          changed: changed,
-          failed: false,
-          msg: msg,
-          stdout: result[:stdout],
-          exit_code: 0
-        )
-      else
-        PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Failed to update packages",
-          stdout: result[:stdout],
-          stderr: result[:stderr],
-          exit_code: result[:exit_code]
-        )
-      end
-    end
 
     # Upgrade all packages
 

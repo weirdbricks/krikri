@@ -1817,4 +1817,42 @@ describe "a halted host after a task failure" do
     output.should_not contain("TASK [should never be reached]")
     output.should_not contain("should never be reached")
   end
+
+  # Regression (0x0i.systemd / kyl191.openvpn, 120-author kata round):
+  # tasks inside a when:-false BLOCK of an include_tasks'd role file
+  # used to lose their "role : " banner prefix (the skip path printed
+  # before role context reached the block's children), and a skipped
+  # NAMED meta: task was counted into the PLAY RECAP's skipped where
+  # real ansible-core ignores meta tasks in stats entirely.
+  it "keeps the role prefix on skipped block children and keeps skipped meta out of the recap" do
+    status, output = run_playbook("test-block-skip-prefix.yml")
+
+    status.success?.should be_true
+    output.should contain("TASK [block_skip_prefix : Broadcast uninstall signal]")
+    output.should contain("TASK [block_skip_prefix : Flush handlers]")
+    # only the command task is counted; the skipped meta is not
+    output.should match(/skipped=1/)
+  end
+end
+
+describe "an unarchive with a bare relative src" do
+  # Regression (wezhai.minio, 120-author kata round): a bare relative
+  # `unarchive: src:` (no remote_src, no files/ prefix) must resolve
+  # against the role's own files/ dir - real Ansible's unarchive action
+  # plugin searches there via _find_needle - and be transferred to the
+  # target. Only an ABSOLUTE controller path was staged before, so the
+  # plugin got the bare name and failed "Source 'minio.tar.gz' failed
+  # to transfer". Runs WITHOUT --check (unarchive can't run in check
+  # mode) and needs local tar; the unpacked payload proves the transfer
+  # carried the right file.
+  it "resolves a bare relative unarchive src against the role's files/ dir" do
+    # fresh dest per run: unarchive is idempotent, a second run would
+    # report changed=False
+    FileUtils.rm_rf("/tmp/krikri-unarchive-test")
+
+    status, output = run_playbook("test-unarchive-role-files.yml", [] of String)
+
+    status.success?.should be_true
+    output.should contain("changed=True failed=False")
+  end
 end

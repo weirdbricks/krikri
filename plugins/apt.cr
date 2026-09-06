@@ -62,6 +62,16 @@ module Krikri
       state = @params["state"]? || "present"
       update_cache = true?(@params["update_cache"]?)
       cache_valid_time = @params["cache_valid_time"]?.try(&.to_i) || 0
+      # Real Ansible treats a bare `cache_valid_time: N` with NO name/
+      # upgrade/deb as a cache-refresh-only invocation (apt.py's own
+      # `if p['cache_valid_time']:` branch runs the update pass and
+      # early-exits ok) - a common "keep the apt cache fresh" idiom
+      # (riemers.gitlab-runner's "(Debian) Refresh package cache" task).
+      # This plugin only recognized an explicit update_cache: true, so
+      # the name-less form failed outright with "Missing required
+      # parameter: name". cache_valid_time=0 is Python-falsy = absent,
+      # matching apt.py exactly.
+      has_cache_valid_time = cache_valid_time > 0
       # Real Ansible's apt module exposes `lock_timeout` (default 60s) for
       # install/remove/upgrade operations and `update_cache_retries`
       # (default 5) + `update_cache_retry_max_delay` (default 12s) for
@@ -97,7 +107,7 @@ module Krikri
       cache_update_is_sole_operation = !name_or_pkg_param? && !@params["upgrade"]? && !@params["deb"]?
 
       # Handle cache update
-      if update_cache
+      if update_cache || has_cache_valid_time
         if should_update_cache?(cache_valid_time)
           if @check_mode
             messages << "Would update apt cache"
@@ -241,7 +251,7 @@ module Krikri
 
       # If no package name provided, just return cache update result
       unless name_param
-        if update_cache || autoremove || autoclean || clean || upgrade
+        if update_cache || has_cache_valid_time || autoremove || autoclean || clean || upgrade
           msg = messages.empty? ? "Cache up to date" : messages.join(", ")
           return PluginResult.new(
             changed: changed,

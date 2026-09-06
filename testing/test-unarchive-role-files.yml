@@ -1,0 +1,7 @@
+---
+- name: unarchive resolves bare relative src from the role's files/
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - unarchive_role_files

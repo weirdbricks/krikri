@@ -468,7 +468,9 @@ module Krikri
           remote_exec("chmod #{shell_single_quote(mode)} #{shell_single_quote(path)}")
         end
       end
-    rescue
+    rescue ex : File::Error
+      # EPERM and friends - the documented swallow (unknown owner/group
+      # names are already nil-checked above; only the syscalls raise).
     end
 
     # Generate unified diff

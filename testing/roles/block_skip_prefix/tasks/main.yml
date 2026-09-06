@@ -1,0 +1,3 @@
+---
+- name: Include preflight
+  ansible.builtin.include_tasks: preflight.yml

@@ -485,7 +485,15 @@ module Krikri
         return would("restart #{name}") if @check_mode
         run_action(name, "restart", "Service restarted")
       else # "reloaded" - validated by the caller
+        # real Ansible's service module: `state: reloaded` reloads a
+        # RUNNING service but STARTS an inactive one (systemctl reload
+        # of an inactive unit fails "not active, cannot reload") -
+        # nginxinc.nginx's "(Handler) Start/reload NGINX" handler on a
+        # fresh-boot Debian target, where nginx had never started,
+        # exposed it: real Ansible started the service, krikri failed.
+        return would("start #{name}") if @check_mode && !is_running
         return would("reload #{name}") if @check_mode
+        return run_action(name, "start", "Service started") unless is_running
         run_action(name, "reload", "Service reloaded")
       end
     end
