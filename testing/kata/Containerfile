@@ -3,12 +3,19 @@
 # builds krikri's plugin binaries - they are glibc-linked and dynamically
 # loaded, so a musl guest (Alpine) cannot run them at all.
 FROM docker.io/library/debian:trixie
+# Deliberately does NOT rm -rf /var/lib/apt/lists/* afterwards (the usual
+# Docker image-size best practice) - a role's very first plain package
+# install (no update_cache: true) needs a real, non-empty apt cache to find
+# anything at all, and an empty cache makes that install fail identically
+# for BOTH engines regardless of which one is actually being tested. Found
+# via a cluster of divergences in a 150-role round where the two per-role
+# VMs' install order made this a coin flip rather than a real engine
+# difference.
 RUN apt-get update && apt-get install -y \
         systemd systemd-sysv dbus \
         openssh-server python3 \
         iproute2 kmod procps \
         curl gnupg2 unzip ca-certificates sudo \
-    && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /root/.ssh && chmod 700 /root/.ssh \
     && systemctl enable ssh
 COPY key.pub /root/.ssh/authorized_keys
