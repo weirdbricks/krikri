@@ -18,8 +18,39 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.787`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.788`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## Round 45000: `ConditionalEvaluator` compile-time filter-name validation (0.9.788)
+
+Closed the last open gap: `jriguera.configdrive` (round 20014). Real Jinja
+resolves every filter name referenced ANYWHERE in a `when:` expression when
+it compiles the template - before any `and`/`or` short-circuiting happens -
+so `when: X is defined and not X is none and Y|success and ...` with `X`
+undefined hard-fails on the unknown `|success` filter (an Ansible 1.x filter
+removed from modern ansible-core) even though the first clause is already
+`False` and a lazy evaluator would never reach it. `ConditionalEvaluator`
+previously discovered filters lazily while evaluating operands, so this
+silently skipped instead. Fixed with a quote-aware byte-level pre-pass
+(`ConditionalEvaluator.validate_filter_names`) that scans the whole
+condition string for `| filtername` references up front and validates each
+against a name registry covering both engines that can resolve one -
+`FilterEngine::KNOWN_FILTER_NAMES` (kept in sync with its `#apply` dispatch
+by a spec that runs every listed name through it) and Crinja's own filter
+library (`CrinjaRenderer.known_filter?`) - raising the same
+`UnknownFilterError` a reached clause already raises. Deliberately does NOT
+validate `map()`/`select()`'s own inner filter-name arguments, since real
+Jinja resolves those at runtime, not compile time - an unreachable one is
+genuinely never an error there (regression-tested). 10 new specs cover the
+buried-vs-reached cases, quoted-string/regex-literal false-positive
+avoidance, `ansible.builtin.`-prefixed names, and Crinja-only filter names.
+Live-reverified the actual role on a fresh Kata pair: byte-identical
+recaps both engines, cold and warm (`ok=7 changed=3 failed=1 skipped=3`
+cold, `ok=7 failed=1 skipped=3` warm) - `skipped` was 6 vs 3 before this
+fix - and the identical underlying error text ("No filter named
+'success'.") on both.
 
 ---
 
@@ -112,24 +143,6 @@ looped-task flow is strict with real-Ansible when:-before-loop ordering.
 Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
-
-- **Hand-rolled `when:`/`ConditionalEvaluator` doesn't validate filter names
-  across a short-circuited `and`/`or` chain the way real Jinja does**
-  (`jriguera.configdrive`, round 20014): `when: X is defined and not X is
-  none and Y|success and ...` where `X` is undefined - real
-  ansible-playbook hard-fails with "No filter named 'success'" because
-  Jinja resolves every filter referenced in the WHOLE expression at
-  compile time, before any short-circuit evaluation happens; krikri's
-  evaluator short-circuits on the first `False` clause and never touches
-  the invalid `|success` filter, so it silently skips instead. Fixing this
-  properly needs a pre-pass that scans the entire condition string for
-  `|filtername` references and validates them against `FilterEngine`
-  before short-circuit evaluation starts - a compile-vs-evaluate ordering
-  change with real blast-radius risk to the existing short-circuit
-  optimization (`evaluate_short_circuit_operator` in
-  `conditional_evaluator.cr`), not attempted yet. `|success`/`|failed`
-  themselves are Ansible 1.x filters removed from modern ansible-core, so
-  the role itself is stale; that's why real Ansible errors here at all.
 
 ---
 

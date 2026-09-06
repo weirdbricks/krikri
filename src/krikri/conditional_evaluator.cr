@@ -141,6 +141,34 @@ module Krikri
         condition = unwrapped
       end
 
+      # Compile-time filter-name validation - real Jinja resolves every
+      # filter name referenced ANYWHERE in the expression when it
+      # COMPILES the template, before any and/or short-circuiting
+      # happens (`jinja2`'s compiler raises "no filter named 'x'" as a
+      # TemplateAssertionError for the whole source up front). This
+      # evaluator instead discovers filters lazily while evaluating
+      # operands, so an invalid name inside a clause that short-circuit
+      # evaluation never reaches was silently skipped where real
+      # ansible-playbook hard-fails the task. jriguera.configdrive
+      # (round 20014): `when: X is defined and not X is none and
+      # Y|success and ...` with X undefined - the `|success` filter is
+      # Ansible 1.x-only (removed from modern ansible-core), real
+      # Ansible fails with "Syntax error in expression: No filter named
+      # 'success'.", here the first clause was already False so the
+      # invalid filter was never touched and the task silently skipped.
+      # The scan is quote-aware (a `|` inside a string literal - a
+      # match() regex, a replace() argument - is not a filter) and
+      # checks each extracted name against BOTH engines that can
+      # actually resolve one (FilterEngine's dispatch and Crinja's own
+      # filter library), raising the same UnknownFilterError a reached
+      # clause already raises - so the only behavior change is for
+      # names that would fail the task anyway the moment they were
+      # evaluated. Deliberately does NOT validate `map('name')` /
+      # select('name') inner arguments: real Jinja resolves those at
+      # RUNTIME, not compile time, so an unreachable one is genuinely
+      # never an error there.
+      validate_filter_names(condition)
+
       # Handle the Python/Jinja2 conditional (ternary) expression `X if
       # COND else Y` - grammatically the LOWEST-precedence construct
       # (lower even than `or`/`and`: `conditional_expression ::= or_test
@@ -1062,6 +1090,77 @@ module Krikri
       when Int64 then raw != 0
       else            false
       end
+    end
+
+    # Quote-aware compile-time scan for `| filtername` references - see
+    # the call site in #evaluate_measured for the full motivation. Runs
+    # over the condition's BYTES rather than chars: every byte this
+    # scanner keys on ('|', quotes, identifier characters) is ASCII, and
+    # the continuation bytes of any multi-byte UTF-8 sequence are all
+    # >= 0x80, so they can never collide with an ASCII key - a
+    # non-ASCII condition (a comparison against a UTF-8 literal) scans
+    # correctly without any char/byte-index juggling.
+    private def self.validate_filter_names(condition : String) : Nil
+      return unless condition.includes?("|")
+
+      bytes = condition.to_slice
+      in_quote : UInt8? = nil
+      i = 0
+      while i < bytes.size
+        byte = bytes[i]
+        if quote = in_quote
+          if byte == '\\'.ord
+            i += 2
+            next
+          end
+          in_quote = nil if byte == quote
+        elsif byte == '\''.ord || byte == '"'.ord
+          in_quote = byte
+        elsif byte == '|'.ord
+          if matched = filter_name_at(bytes, i + 1)
+            name, after = matched
+            unless VariableSubstitutor::FilterEngine.known_filter_name?(name) || VariableSubstitutor::CrinjaRenderer.known_filter?(name)
+              raise VariableSubstitutor::FilterEngine::UnknownFilterError.new("No filter named '#{name}'.")
+            end
+            i = after
+          end
+        end
+        i += 1
+      end
+    end
+
+    # Reads the filter name starting at byte offset *start* (just past a
+    # `|`): optional whitespace, one optional `ansible.builtin.` FQCN
+    # prefix (mirroring FilterEngine#apply's own lchop), then a Jinja
+    # identifier. Returns {name, index-past-the-name} for the caller to
+    # resume from, or nil when what follows the `|` is not a filter name
+    # at all (end of string, another `|`, an operator character).
+    private def self.filter_name_at(bytes : Bytes, start : Int32) : {String, Int32}?
+      i = start
+      while i < bytes.size && (bytes[i] == 32 || bytes[i] == 9)
+        i += 1
+      end
+      return nil if i >= bytes.size
+
+      fqcn = "ansible.builtin.".to_slice
+      if i + fqcn.size <= bytes.size && bytes[i, fqcn.size] == fqcn
+        i += fqcn.size
+        return nil if i >= bytes.size
+      end
+
+      first = bytes[i]
+      is_letter = (first >= 65 && first <= 90) || (first >= 97 && first <= 122) || first == 95
+      return nil unless is_letter
+
+      j = i + 1
+      while j < bytes.size
+        b = bytes[j]
+        is_word = (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95
+        break unless is_word
+        j += 1
+      end
+
+      {String.new(bytes[i, j - i]), j}
     end
 
     # Quote-aware whitespace normalization for condition strings - see

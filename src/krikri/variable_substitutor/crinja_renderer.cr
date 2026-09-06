@@ -36,6 +36,16 @@ module Krikri
       @@env : Crinja?
 
       private def shared_env : Crinja
+        self.class.shared_environment
+      end
+
+      # Class-level twin of #shared_env so callers without a renderer
+      # instance can consult this environment's own feature libraries -
+      # ConditionalEvaluator's compile-time filter-name pre-pass asks it
+      # whether a `| name` in a `when:` is one Crinja itself implements
+      # (including aliases), since FilterEngine.apply is only ever the
+      # fallback path behind Crinja-native filters.
+      def self.shared_environment : Crinja
         if existing = @@env
           return existing
         end
@@ -44,6 +54,16 @@ module Krikri
         env.config.trim_blocks = true
         env.config.lstrip_blocks = false
         @@env = env
+      end
+
+      # True if *name* resolves in the shared environment's filter
+      # library - a registered filter or a registered alias for one
+      # (FeatureLibrary#[] downcases lookups and resolves aliases the
+      # same way, so this mirrors exactly what a render would find).
+      def self.known_filter?(name : String) : Bool
+        lookup = name.downcase
+        library = shared_environment.filters
+        library.keys.includes?(lookup) || library.aliases.has_key?(lookup)
       end
 
       # Crinja parses eagerly in `Template.new` (see `Crinja#from_string`

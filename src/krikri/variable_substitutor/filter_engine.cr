@@ -36,6 +36,48 @@ module Krikri
 
       REGEX_FILTER_CALL = /^(\w+)\s*\((.*)\)$/m
 
+      # Every filter name the `case filter_name` dispatch inside #apply
+      # below implements. Lives alongside that dispatch as the one list
+      # ConditionalEvaluator's compile-time filter-name pre-pass checks
+      # against (a `when:` must hard-fail an unknown filter even when
+      # short-circuiting never reaches the clause that uses it - real
+      # Jinja resolves every filter name in the whole expression at
+      # compile time, before any and/or evaluation). Kept in sync with
+      # the dispatch by spec/unit/conditional_filter_prepass_spec.cr, which
+      # applies every name here to a nil value and fails if any of them
+      # raises UnknownFilterError (i.e. the dispatch stopped knowing a
+      # name the list still advertises). Deliberately EXCLUDES names the
+      # dispatch doesn't actually implement (rejectattr, to_nice_yaml,
+      # the select()-style test names like equalto/match/truthy that
+      # #item_matches_test? handles for select/reject arguments but that
+      # are not themselves top-level filters) - advertising one of those
+      # here would make the pre-pass silently pass a `when:` that still
+      # hard-fails the moment its clause is actually evaluated, the
+      # exact inconsistency the pre-pass exists to eliminate.
+      KNOWN_FILTER_NAMES = Set.new(%w[
+        fileglob realpath default d upper lower capitalize title trim
+        strip dirname basename length count replace split sort unique
+        flatten reverse join list first last min max int float string
+        bool abs map select reject selectattr to_datetime sum combine
+        dict2items items2dict regex_search regex_findall regex_replace
+        hash password_hash type_debug to_json b64encode b64decode
+        from_json from_yaml json_query to_yaml checksum union path_join
+        splitext urldecode urlsplit zip zip_longest product regex_escape
+        to_nice_json human_readable human_to_bytes netmask_to_cidr md5
+        sha1 expanduser expandvars normpath relpath commonpath log pow
+        to_uuid symmetric_difference combinations permutations
+        rekey_on_member extract from_yaml_all vault unvault ternary
+        intersect difference
+      ])
+
+      # The pre-pass's name check: true for a name this engine's own
+      # dispatch implements. The caller (ConditionalEvaluator) ORs this
+      # with Crinja's own filter library, since #apply is only ever the
+      # fallback path after Crinja-native filters have had their chance.
+      def self.known_filter_name?(name : String) : Bool
+        KNOWN_FILTER_NAMES.includes?(name)
+      end
+
       # The compiled-regex cache itself lives in FilterCore (both
       # evaluators share it); this delegates so every existing
       # FilterEngine.cached_regex call site keeps working.
