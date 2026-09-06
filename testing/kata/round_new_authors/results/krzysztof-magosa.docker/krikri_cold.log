@@ -1,0 +1,45 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.yF0VtwGdCX/play.yml
+======================================================================
+
+Warnings:
+  ⚠️  Task 'Configure logins' uses unimplemented plugin: docker_login
+  ⚠️  Task 'Configure docker services' uses unimplemented plugin: docker_service
+
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+ok: [10.99.13.2]
+
+TASK [krzysztof-magosa.docker : Load system specific variables]
+**********************************************************************
+ok: [target]
+
+TASK [krzysztof-magosa.docker : include_tasks]
+**********************************************************************
+
+included: /tmp/tmp.yF0VtwGdCX/roles/krzysztof-magosa.docker/tasks/install/Debian.yml for 10.99.13.2
+
+TASK [krzysztof-magosa.docker : Install https method]
+**********************************************************************
+ok: [10.99.13.2]
+  Package apt-transport-https already satisfied
+
+TASK [krzysztof-magosa.docker : Add APT key]
+**********************************************************************
+failed: [10.99.13.2]
+  Message: Failed to fetch key from https://download.docker.com/linux/debian/gpg: Local execution failed: Error executing process: 'curl': No such file or directory
+
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=4  changed=0  unreachable=0  failed=1  skipped=0  rescued=0  ignored=0
+
+✗ Playbook execution completed with failures
+

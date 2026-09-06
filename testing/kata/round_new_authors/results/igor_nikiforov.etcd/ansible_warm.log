@@ -1,0 +1,43 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [igor_nikiforov.etcd : Create etcd group] *********************************
+ok: [target]
+
+TASK [igor_nikiforov.etcd : Create etcd user] **********************************
+ok: [target]
+
+TASK [igor_nikiforov.etcd : Download and install etcd 3.4.13] ******************
+ok: [target]
+
+TASK [igor_nikiforov.etcd : Create etcd directory structure] *******************
+[ERROR]: Task failed: object of type 'dict' has no attribute 'data-dir'
+
+Task failed.
+Origin: /tmp/tmp.GpMTHKbP2j/roles/igor_nikiforov.etcd/tasks/main.yml:26:3
+
+24   notify: restart etcd
+25
+26 - name: Create etcd directory structure
+     ^ column 3
+
+<<< caused by >>>
+
+object of type 'dict' has no attribute 'data-dir'
+Origin: /tmp/tmp.GpMTHKbP2j/roles/igor_nikiforov.etcd/tasks/main.yml:35:7
+
+33   loop:
+34     - "{{ etcd_conf_dir }}/certs"
+35     - "{{ etcd_config['data-dir'] }}"
+         ^ column 7
+
+fatal: [target]: FAILED! => {"changed": false, "msg": "Task failed: object of type 'dict' has no attribute 'data-dir'"}
+
+PLAY RECAP *********************************************************************
+target                     : ok=4    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

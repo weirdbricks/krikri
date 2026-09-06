@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'minio', owned by wezhai
+- downloading role from https://github.com/wezhai/ansible-minio/archive/master.tar.gz
+- extracting wezhai.minio to /tmp/tmp.wtbR1VTi6u/roles/wezhai.minio
+- wezhai.minio (master) was installed successfully

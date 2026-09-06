@@ -1,0 +1,28 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.4TZOHJ7Xwr/play.yml
+======================================================================
+
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+failed: [10.99.11.2]
+  Error gathering facts: Plugin execution failed on remote
+
+TASK [igor_nikiforov.journald : Configure journald parameters]
+**********************************************************************
+failed: [10.99.11.2]
+  Message: Failed to render template: 'journald_config' is undefined
+
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=0  changed=0  unreachable=0  failed=2  skipped=0  rescued=0  ignored=0
+
+✗ Playbook execution completed with failures
+

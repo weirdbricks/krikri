@@ -1,0 +1,9 @@
+[WARNING]: A non-empty plugin name is required.
+[ERROR]: The 'ansible.builtin.include' action plugin has been removed. Use include_tasks or import_tasks instead. This feature was removed from ansible-core in a release after 2023-05-16.
+Origin: /tmp/tmp.f7pBzyHpay/roles/ansiblebit.oracle-java/tasks/main.yml:19:3
+
+17 ## run
+18
+19 - name: check host environment
+     ^ column 3
+

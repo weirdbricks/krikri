@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'sysctl', owned by igor_nikiforov
+- downloading role from https://github.com/igor-nikiforov/ansible-role-sysctl/archive/v1.0.0.tar.gz
+- extracting igor_nikiforov.sysctl to /tmp/tmp.vzDWvXwFHP/roles/igor_nikiforov.sysctl
+- igor_nikiforov.sysctl (v1.0.0) was installed successfully

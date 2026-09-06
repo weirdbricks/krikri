@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'keepalived', owned by evrardjp
+- downloading role from https://github.com/evrardjp/ansible-keepalived/archive/8.2.0.tar.gz
+- extracting evrardjp.keepalived to /tmp/tmp.xTMnr9ICEH/roles/evrardjp.keepalived
+- evrardjp.keepalived (8.2.0) was installed successfully

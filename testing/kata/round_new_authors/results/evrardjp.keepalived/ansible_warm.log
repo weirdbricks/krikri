@@ -1,0 +1,124 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [evrardjp.keepalived : Debug role vars (instances)] ***********************
+skipping: [target]
+
+TASK [evrardjp.keepalived : Debug role vars (sync_groups)] *********************
+skipping: [target]
+
+TASK [evrardjp.keepalived : Debug role vars (virtual_servers)] *****************
+skipping: [target]
+
+TASK [evrardjp.keepalived : Debug role vars (scripts)] *************************
+skipping: [target]
+
+TASK [evrardjp.keepalived : Gather variables for each operating system] ********
+ok: [target]
+
+TASK [evrardjp.keepalived : Configure SELinux] *********************************
+skipping: [target]
+
+TASK [evrardjp.keepalived : Install keepalived package(s)] *********************
+ok: [target]
+
+TASK [evrardjp.keepalived : Output keepalived version] *************************
+ok: [target]
+
+TASK [evrardjp.keepalived : Set testability flag] ******************************
+ok: [target]
+
+TASK [evrardjp.keepalived : Ensure no new "samples" folder appeared] ***********
+ok: [target]
+
+TASK [evrardjp.keepalived : Get IPv6 enabled state] ****************************
+ok: [target]
+
+TASK [evrardjp.keepalived : Check if IPv6 is enabled] **************************
+ok: [target]
+
+TASK [evrardjp.keepalived : Allow consuming apps to bind on non local addresses for IPv4] ***
+skipping: [target] => (item={'name': 'net.ipv4.ip_nonlocal_bind', 'value': 1}) 
+skipping: [target] => (item={'name': 'net.ipv4.tcp_retries2', 'value': 8}) 
+skipping: [target]
+
+TASK [evrardjp.keepalived : Allow consuming apps to bind on non local addresses for IPv6] ***
+skipping: [target] => (item={'name': 'net.ipv6.ip_nonlocal_bind', 'value': 1}) 
+skipping: [target]
+
+TASK [evrardjp.keepalived : Check that daemon options file exists] *************
+ok: [target]
+
+TASK [evrardjp.keepalived : Configure keepalived extra params] *****************
+skipping: [target]
+
+TASK [evrardjp.keepalived : Dropping the tracking scripts] *********************
+skipping: [target]
+
+TASK [evrardjp.keepalived : Dropping the general notification scripts] *********
+skipping: [target]
+
+TASK [evrardjp.keepalived : Dropping the notification scripts for switching to master] ***
+skipping: [target]
+
+TASK [evrardjp.keepalived : Dropping the notification scripts for switching to backup] ***
+skipping: [target]
+
+TASK [evrardjp.keepalived : Dropping the notification scripts for failures] ****
+skipping: [target]
+
+TASK [evrardjp.keepalived : Dropping the general notification scripts (instances)] ***
+skipping: [target]
+
+TASK [evrardjp.keepalived : Dropping the notification scripts for switching to master (instances)] ***
+skipping: [target]
+
+TASK [evrardjp.keepalived : Dropping the notification scripts for lower priority master case (instances)] ***
+skipping: [target]
+
+TASK [evrardjp.keepalived : Dropping the notification scripts for switching to backup (instances)] ***
+skipping: [target]
+
+TASK [evrardjp.keepalived : Dropping the notification scripts for stopping vrrp (instances)] ***
+skipping: [target]
+
+TASK [evrardjp.keepalived : Dropping the notification scripts for failures (instances)] ***
+skipping: [target]
+
+TASK [evrardjp.keepalived : Configure keepalived] ******************************
+ok: [target]
+
+TASK [evrardjp.keepalived : Make directory for keepalived's systemd overrides] ***
+ok: [target]
+
+TASK [evrardjp.keepalived : Apply keepalived override to start after network is up] ***
+ok: [target] => (item=Wants)
+ok: [target] => (item=After)
+
+TASK [evrardjp.keepalived : Apply keepalived override to restart service always] ***
+skipping: [target]
+
+TASK [evrardjp.keepalived : Remove keepalived overrides] ***********************
+skipping: [target]
+
+TASK [evrardjp.keepalived : Ensuring keepalived is enabled and started] ********
+[ERROR]: Task failed: Module failed: Unable to start service keepalived: Job for keepalived.service failed because a timeout was exceeded.
+See "systemctl status keepalived.service" and "journalctl -xeu keepalived.service" for details.
+
+Origin: /tmp/tmp.xTMnr9ICEH/roles/evrardjp.keepalived/tasks/main.yml:363:3
+
+361     - keepalived-install
+362
+363 - name: Ensuring keepalived is enabled and started
+      ^ column 3
+
+fatal: [target]: FAILED! => {"changed": false, "msg": "Unable to start service keepalived: Job for keepalived.service failed because a timeout was exceeded.\nSee \"systemctl status keepalived.service\" and \"journalctl -xeu keepalived.service\" for details.\n"}
+
+PLAY RECAP *********************************************************************
+target                     : ok=12   changed=0    unreachable=0    failed=1    skipped=21   rescued=0    ignored=0   
+

@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'rollback', owned by ansistrano
+- downloading role from https://github.com/ansistrano/rollback/archive/4.0.1.tar.gz
+- extracting ansistrano.rollback to /tmp/tmp.uXs7tslc1n/roles/ansistrano.rollback
+- ansistrano.rollback (4.0.1) was installed successfully

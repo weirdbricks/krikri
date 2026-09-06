@@ -1,0 +1,4 @@
+[WARNING]: - elastic.beats was NOT installed successfully: Unable to compare role versions (7.0.0, 7.4.0, 7.4.1, 7.5.0, 7.5.1, 7.5.2, 7.6.0, 7.6.1, 7.6.2, 7.7.0, 7.7.1, 7.8.0, 7.8.1, 7.9.0, 7.9.1, 7.9.2, 7.9.3, 7.10.0, v7.10.1, v7.10.2, v7.11.1, v7.11.2, v7.12.0, v7.12.1, v7.13.0, v7.13.1, v7.13.2, v7.13.3, v7.13.4, v7.14.0, v7.15.0, v7.15.1, v7.16.0, v7.16.1, v7.16.2, v7.16.3, v7.17.0) to determine the most recent version due to incompatible version formats. Please contact the role author to resolve versioning conflicts, or specify an explicit role version to install.
+[ERROR]: - you can use --ignore-errors to skip failed roles and finish processing the list.
+Starting galaxy role install process
+- downloading role 'beats', owned by elastic

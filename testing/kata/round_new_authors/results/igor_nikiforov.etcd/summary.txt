@@ -1,0 +1,5 @@
+role=igor_nikiforov.etcd
+ansible_cold_rc=2 recap: target                     : ok=4    changed=3    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+krikri_cold_rc=2 recap: target               : ok=8  changed=7  unreachable=0  failed=1  skipped=0  rescued=0  ignored=0
+ansible_warm_rc=2 recap: target                     : ok=4    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+krikri_warm_rc=0 recap: target               : ok=9  changed=0  unreachable=0  failed=0  skipped=0  rescued=0  ignored=0

@@ -1,0 +1,443 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [xanmanning.k3s : Check that k3s_state is a supported value] **************
+ok: [target] => {
+    "changed": false,
+    "msg": "k3s_state is valid."
+}
+
+TASK [xanmanning.k3s : Check that Ansible v2.19.4 is supported by this role] ***
+ok: [target -> localhost] => {
+    "changed": false,
+    "msg": "Ansible v2.19.4 is supported."
+}
+
+TASK [xanmanning.k3s : Check that Python v3.13.5 is supported by this role] ****
+ok: [target -> localhost] => {
+    "changed": false,
+    "msg": "Python v3.13.5 is supported."
+}
+
+TASK [xanmanning.k3s : Check that the target init system is supported by this role] ***
+ok: [target] => {
+    "changed": false,
+    "msg": "systemd is supported"
+}
+
+TASK [xanmanning.k3s : Determining if systemd is actually openrc] **************
+skipping: [target]
+
+TASK [xanmanning.k3s : Check that systemd is actually openrc] ******************
+skipping: [target]
+
+TASK [xanmanning.k3s : Run version pre-checks] *********************************
+included: /tmp/tmp.xxYYBnNoWt/roles/xanmanning.k3s/tasks/pre_checks_version.yml for target
+
+TASK [xanmanning.k3s : Ensure k3s_release_version is set to default if false] ***
+ok: [target]
+
+TASK [xanmanning.k3s : Ensure the default release channel is set] **************
+ok: [target]
+
+TASK [xanmanning.k3s : Get the latest release version from https://update.k3s.io/v1-release/channels] ***
+ok: [target]
+
+TASK [xanmanning.k3s : Ensure the release version is set as a fact] ************
+ok: [target] => (item={'id': 'stable', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/stable'}, 'name': 'stable', 'latest': 'v1.36.4+k3s1'})
+skipping: [target] => (item={'id': 'latest', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/latest'}, 'name': 'latest', 'latest': 'v1.36.4+k3s1', 'latestRegexp': '.*', 'excludeRegexp': '(^[^+]+-|v1\\.25\\.5\\+k3s1|v1\\.26\\.0\\+k3s1)'}) 
+skipping: [target] => (item={'id': 'testing', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/testing'}, 'name': 'testing', 'latest': 'v1.18.2-rc3+k3s1', 'latestRegexp': '-(alpha|beta|rc)'}) 
+skipping: [target] => (item={'id': 'v1.16', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/v1.16'}, 'name': 'v1.16', 'latest': 'v1.16.15+k3s1', 'latestRegexp': 'v1\\.16\\..*', 'excludeRegexp': '^[^+]+-'}) 
+skipping: [target] => (item={'id': 'v1.16-testing', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/v1.16-testing'}, 'name': 'v1.16-testing', 'latestRegexp': 'v1\\.16\\.[0-9]*-(alpha|beta|rc)'}) 
+skipping: [target] => (item={'id': 'v1.17', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/v1.17'}, 'name': 'v1.17', 'latest': 'v1.17.17+k3s1', 'latestRegexp': 'v1\\.17\\..*', 'excludeRegexp': '^[^+]+-'}) 
+skipping: [target] => (item={'id': 'v1.17-testing', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/v1.17-testing'}, 'name': 'v1.17-testing', 'latestRegexp': 'v1\\.17\\.[0-9]*-(alpha|beta|rc)'}) 
+skipping: [target] => (item={'id': 'v1.18', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/v1.18'}, 'name': 'v1.18', 'latest': 'v1.18.20+k3s1', 'latestRegexp': 'v1\\.18\\..*', 'excludeRegexp': '^[^+]+-'}) 
+skipping: [target] => (item={'id': 'v1.18-testing', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/v1.18-testing'}, 'name': 'v1.18-testing', 'latest': 'v1.18.2-rc3+k3s1', 'latestRegexp': 'v1\\.18\\.[0-9]*-(alpha|beta|rc)'}) 
+skipping: [target] => (item={'id': 'v1.19', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/v1.19'}, 'name': 'v1.19', 'latest': 'v1.19.16+k3s1', 'latestRegexp': 'v1\\.19\\..*', 'excludeRegexp': '^[^+]+-'}) 
+skipping: [target] => (item={'id': 'v1.20', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/v1.20'}, 'name': 'v1.20', 'latest': 'v1.20.15+k3s1', 'latestRegexp': 'v1\\.20\\..*', 'excludeRegexp': '^[^+]+-'}) 
+skipping: [target] => (item={'id': 'v1.21', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/v1.21'}, 'name': 'v1.21', 'latest': 'v1.21.14+k3s1', 'latestRegexp': 'v1\\.21\\..*', 'excludeRegexp': '^[^+]+-'}) 
+skipping: [target] => (item={'id': 'v1.22', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/v1.22'}, 'name': 'v1.22', 'latest': 'v1.22.17+k3s1', 'latestRegexp': 'v1\\.22\\..*', 'excludeRegexp': '^[^+]+-'}) 
+skipping: [target] => (item={'id': 'v1.23', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/v1.23'}, 'name': 'v1.23', 'latest': 'v1.23.17+k3s1', 'latestRegexp': 'v1\\.23\\..*', 'excludeRegexp': '^[^+]+-'}) 
+skipping: [target] => (item={'id': 'v1.24', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/v1.24'}, 'name': 'v1.24', 'latest': 'v1.24.17+k3s1', 'latestRegexp': 'v1\\.24\\..*', 'excludeRegexp': '(^[^+]+-|v1\\.24\\.9\\+k3s1)'}) 
+skipping: [target] => (item={'id': 'v1.25', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/v1.25'}, 'name': 'v1.25', 'latest': 'v1.25.16+k3s4', 'latestRegexp': 'v1\\.25\\..*', 'excludeRegexp': '(^[^+]+-|v1\\.25\\.5\\+k3s1)'}) 
+skipping: [target] => (item={'id': 'v1.26', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/v1.26'}, 'name': 'v1.26', 'latest': 'v1.26.15+k3s1', 'latestRegexp': 'v1\\.26\\..*', 'excludeRegexp': '(^[^+]+-|v1\\.26\\.0\\+k3s1)'}) 
+skipping: [target] => (item={'id': 'v1.27', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/v1.27'}, 'name': 'v1.27', 'latest': 'v1.27.16+k3s1', 'latestRegexp': 'v1\\.27\\..*', 'excludeRegexp': '^[^+]+-'}) 
+skipping: [target] => (item={'id': 'v1.28', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/v1.28'}, 'name': 'v1.28', 'latest': 'v1.28.15+k3s1', 'latestRegexp': 'v1\\.28\\..*', 'excludeRegexp': '^[^+]+-'}) 
+skipping: [target] => (item={'id': 'v1.29', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/v1.29'}, 'name': 'v1.29', 'latest': 'v1.29.15+k3s1', 'latestRegexp': 'v1\\.29\\..*', 'excludeRegexp': '^[^+]+-'}) 
+skipping: [target] => (item={'id': 'v1.30', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/v1.30'}, 'name': 'v1.30', 'latest': 'v1.30.14+k3s2', 'latestRegexp': 'v1\\.30\\..*', 'excludeRegexp': '^[^+]+-'}) 
+skipping: [target] => (item={'id': 'v1.31', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/v1.31'}, 'name': 'v1.31', 'latest': 'v1.31.14+k3s1', 'latestRegexp': 'v1\\.31\\..*', 'excludeRegexp': '^[^+]+-'}) 
+skipping: [target] => (item={'id': 'v1.32', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/v1.32'}, 'name': 'v1.32', 'latest': 'v1.32.13+k3s1', 'latestRegexp': 'v1\\.32\\..*', 'excludeRegexp': '^[^+]+-'}) 
+skipping: [target] => (item={'id': 'v1.33', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/v1.33'}, 'name': 'v1.33', 'latest': 'v1.33.13+k3s2', 'latestRegexp': 'v1\\.33\\..*', 'excludeRegexp': '^[^+]+-'}) 
+skipping: [target] => (item={'id': 'v1.34', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/v1.34'}, 'name': 'v1.34', 'latest': 'v1.34.11+k3s1', 'latestRegexp': 'v1\\.34\\..*', 'excludeRegexp': '^[^+]+-'}) 
+skipping: [target] => (item={'id': 'v1.35', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/v1.35'}, 'name': 'v1.35', 'latest': 'v1.35.8+k3s1', 'latestRegexp': 'v1\\.35\\..*', 'excludeRegexp': '^[^+]+-'}) 
+skipping: [target] => (item={'id': 'v1.36', 'type': 'channel', 'links': {'self': 'https://update.k3s.io/v1-release/channels/v1.36'}, 'name': 'v1.36', 'latest': 'v1.36.4+k3s1', 'latestRegexp': 'v1\\.36\\..*', 'excludeRegexp': '^[^+]+-'}) 
+
+TASK [xanmanning.k3s : Run cgroups pre-checks] *********************************
+included: /tmp/tmp.xxYYBnNoWt/roles/xanmanning.k3s/tasks/pre_checks_cgroups.yml for target => (item={'name': 'memory', 'documentation': 'If you are running on a Raspberry Pi, see:\nhttps://rancher.com/docs/k3s/latest/en/advanced/#enabling-cgroups-for-raspbian-buster\n'})
+included: /tmp/tmp.xxYYBnNoWt/roles/xanmanning.k3s/tasks/pre_checks_cgroups.yml for target => (item={'name': 'cpuset', 'documentation': 'If you are running Alpine Linux, see:\nhttps://rancher.com/docs/k3s/latest/en/advanced/#additional-preparation-for-alpine-linux-setup\n'})
+
+TASK [xanmanning.k3s : Check if memory cgroup is enabled] **********************
+ok: [target]
+
+TASK [xanmanning.k3s : Fail if memory cgroup is not enabled] *******************
+ok: [target] => {
+    "changed": false,
+    "msg": "memory cgroup enabled."
+}
+
+TASK [xanmanning.k3s : Check if cpuset cgroup is enabled] **********************
+ok: [target]
+
+TASK [xanmanning.k3s : Fail if cpuset cgroup is not enabled] *******************
+ok: [target] => {
+    "changed": false,
+    "msg": "cpuset cgroup enabled."
+}
+
+TASK [xanmanning.k3s : Run packages pre-checks] ********************************
+skipping: [target]
+
+TASK [xanmanning.k3s : Run issue data pre-checks] ******************************
+skipping: [target]
+
+TASK [xanmanning.k3s : Check that k3s_release_version >= 1.19.3] ***************
+ok: [target] => {
+    "changed": false,
+    "msg": "v1.36.4+k3s1 is supported by this role."
+}
+
+TASK [xanmanning.k3s : Check configuration in k3s_server and k3s_agent that needs alternate configuration] ***
+ok: [target] => (item={'setting': 'server', 'correction': 'k3s_registration_address'}) => {
+    "ansible_loop_var": "item",
+    "changed": false,
+    "item": {
+        "correction": "k3s_registration_address",
+        "setting": "server"
+    },
+    "msg": "server not found in server/agent config"
+}
+ok: [target] => (item={'setting': 'cluster-init', 'correction': 'k3s_etcd_datastore'}) => {
+    "ansible_loop_var": "item",
+    "changed": false,
+    "item": {
+        "correction": "k3s_etcd_datastore",
+        "setting": "cluster-init"
+    },
+    "msg": "cluster-init not found in server/agent config"
+}
+ok: [target] => (item={'setting': 'token', 'correction': 'k3s_control_token'}) => {
+    "ansible_loop_var": "item",
+    "changed": false,
+    "item": {
+        "correction": "k3s_control_token",
+        "setting": "token"
+    },
+    "msg": "token not found in server/agent config"
+}
+ok: [target] => (item={'setting': 'token-file', 'correction': 'k3s_token_location'}) => {
+    "ansible_loop_var": "item",
+    "changed": false,
+    "item": {
+        "correction": "k3s_token_location",
+        "setting": "token-file"
+    },
+    "msg": "token-file not found in server/agent config"
+}
+
+TASK [xanmanning.k3s : Check configuration in k3s_server and k3s_agent for deprecated configuration] ***
+ok: [target] => (item={'setting': 'no-flannel', 'correction': "flannel-backend: 'none'"}) => {
+    "ansible_loop_var": "item",
+    "changed": false,
+    "item": {
+        "correction": "flannel-backend: 'none'",
+        "setting": "no-flannel"
+    },
+    "msg": "no-flannel not found in server/agent config"
+}
+ok: [target] => (item={'setting': 'cluster-secret', 'correction': 'token'}) => {
+    "ansible_loop_var": "item",
+    "changed": false,
+    "item": {
+        "correction": "token",
+        "setting": "cluster-secret"
+    },
+    "msg": "cluster-secret not found in server/agent config"
+}
+ok: [target] => (item={'setting': 'no-deploy', 'correction': 'disable: VALUE'}) => {
+    "ansible_loop_var": "item",
+    "changed": false,
+    "item": {
+        "correction": "disable: VALUE",
+        "setting": "no-deploy"
+    },
+    "msg": "no-deploy not found in server/agent config"
+}
+ok: [target] => (item={'setting': 'docker', 'correction': 'docker: false', 'when': '1.20.0'}) => {
+    "ansible_loop_var": "item",
+    "changed": false,
+    "item": {
+        "correction": "docker: false",
+        "setting": "docker",
+        "when": "1.20.0"
+    },
+    "msg": "docker not found in server/agent config"
+}
+
+TASK [xanmanning.k3s : Check configuration in k3s_server and k3s_agent against release version] ***
+skipping: [target] => (item={'setting': 'etcd-s3-bucket', 'version': '1.20.6'}) 
+skipping: [target]
+
+TASK [xanmanning.k3s : Check if embedded etcd datastore is enabled and marked as experimental] ***
+skipping: [target]
+
+TASK [xanmanning.k3s : Check if any experimental variables are configure and if they are enabled with k3s_use_experimental] ***
+skipping: [target] => (item={'setting': 'selinux', 'until': '1.19.4'}) 
+skipping: [target] => (item={'setting': 'rootless'}) 
+skipping: [target] => (item={'setting': 'secrets-encryption', 'until': '1.23.15'}) 
+skipping: [target] => (item={'setting': 'agent-token'}) 
+skipping: [target] => (item={'setting': 'agent-token-file'}) 
+skipping: [target] => (item={'setting': 'cluster-reset', 'until': '1.19.5'}) 
+skipping: [target] => (item={'setting': 'prefer-bundled-bin'}) 
+skipping: [target]
+
+TASK [xanmanning.k3s : Check if newuidmap is available] ************************
+skipping: [target]
+
+TASK [xanmanning.k3s : Check if /proc/sys/kernel/unprivileged_userns_clone exists] ***
+skipping: [target]
+
+TASK [xanmanning.k3s : Get the value of /proc/sys/kernel/unprivileged_userns_clone] ***
+skipping: [target]
+
+TASK [xanmanning.k3s : Set the value of k3s_get_unprivileged_userns_clone] *****
+skipping: [target]
+
+TASK [xanmanning.k3s : Get the value of /proc/sys/user/max_user_namespaces] ****
+skipping: [target]
+
+TASK [xanmanning.k3s : Get the contents of /etc/subuid] ************************
+skipping: [target]
+
+TASK [xanmanning.k3s : Get the contents of /etc/subgid] ************************
+skipping: [target]
+
+TASK [xanmanning.k3s : Get current user subuid and subgid values] **************
+skipping: [target]
+
+TASK [xanmanning.k3s : Check user namespaces kernel parameters are adequate] ***
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure k3s_build_cluster is false if running against a single node.] ***
+ok: [target]
+
+TASK [xanmanning.k3s : Ensure k3s control node fact is set] ********************
+ok: [target]
+
+TASK [xanmanning.k3s : Ensure k3s primary control node fact is set] ************
+ok: [target]
+
+TASK [xanmanning.k3s : Ensure k3s control plane port is captured] **************
+ok: [target -> k3s_primary_control_node]
+
+TASK [xanmanning.k3s : Ensure k3s node IP is configured when node-ip is defined] ***
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure a count of control nodes is generated from ansible_play_hosts] ***
+ok: [target] => (item=target)
+
+TASK [xanmanning.k3s : Set the control host] ***********************************
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure a count of control nodes is generated] ***********
+skipping: [target] => (item=target) 
+skipping: [target]
+
+TASK [xanmanning.k3s : Test if control plane is running] ***********************
+skipping: [target]
+
+TASK [xanmanning.k3s : List running control planes] ****************************
+skipping: [target] => (item=target) 
+skipping: [target]
+
+TASK [xanmanning.k3s : Choose first running node as delegate] ******************
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure k3s_primary_control_node is set on the delegate] ***
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure a primary k3s control node is defined if multiple are found in ansible_play_hosts] ***
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure ansible_facts['host'] is mapped to inventory_hostname] ***
+changed: [target]
+
+TASK [xanmanning.k3s : Lookup control node from file] **************************
+ok: [target]
+
+TASK [xanmanning.k3s : Ensure control node is delegated for obtaining a cluster token] ***
+ok: [target]
+
+TASK [xanmanning.k3s : Ensure the node registration address is defined from k3s_control_node_address] ***
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure the node registration address is defined from node-ip] ***
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure the node registration address is defined] ********
+ok: [target]
+
+TASK [xanmanning.k3s : Check the conditions when a single controller is defined] ***
+skipping: [target]
+
+TASK [xanmanning.k3s : Check the conditions when multiple controllers are defined] ***
+skipping: [target]
+
+TASK [xanmanning.k3s : Check the conditions when embedded etcd is defined] *****
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure state installed] *********************************
+included: /tmp/tmp.xxYYBnNoWt/roles/xanmanning.k3s/tasks/state_installed.yml for target
+
+TASK [xanmanning.k3s : Check if kubectl exists] ********************************
+ok: [target]
+
+TASK [xanmanning.k3s : Gather a list of nodes] *********************************
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure uninstalled nodes are drained] *******************
+skipping: [target] => (item=target) 
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure uninstalled nodes are removed] *******************
+skipping: [target] => (item=target) 
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure systemd context is correct if we are running k3s rootless] ***
+skipping: [target]
+
+TASK [xanmanning.k3s : Flush Handlers] *****************************************
+
+TASK [xanmanning.k3s : Ensure target host architecture information is set as a fact] ***
+ok: [target]
+
+TASK [xanmanning.k3s : Ensure URLs are set as facts for downloading binaries] ***
+ok: [target]
+
+TASK [xanmanning.k3s : Override k3s_binary_url and k3s_hash_url facts for testing specific commit] ***
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure the k3s hashsum is downloaded] *******************
+ok: [target]
+
+TASK [xanmanning.k3s : Ensure sha256sum is set from hashsum variable] **********
+ok: [target]
+
+TASK [xanmanning.k3s : Ensure installation directory exists] *******************
+ok: [target]
+
+TASK [xanmanning.k3s : Ensure k3s binary is downloaded] ************************
+changed: [target]
+
+TASK [xanmanning.k3s : Ensure installation directory exists] *******************
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure k3s binary is copied from controller to target host] ***
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure that the manifests directory exists] *************
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure that the pod-manifests directory exists] *********
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure auto-deploying manifests are copied to the primary controller] ***
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure auto-deploying manifests are downloaded to the primary controller] ***
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure static pod manifests are copied to controllers] ***
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure auto-deploying manifests are downloaded to the primary controller] ***
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure that the config.yaml.d directory exists] *********
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure configuration files are copied to controllers] ***
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure configuration files are copied to agents] ********
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure directories exist] *******************************
+included: /tmp/tmp.xxYYBnNoWt/roles/xanmanning.k3s/tasks/ensure_directories.yml for target => (item={'name': 'Config directory', 'path': '/etc/rancher/k3s'})
+included: /tmp/tmp.xxYYBnNoWt/roles/xanmanning.k3s/tasks/ensure_directories.yml for target => (item={'name': 'Config.yaml.d directory', 'path': '/etc/rancher/k3s/config.yaml.d'})
+included: /tmp/tmp.xxYYBnNoWt/roles/xanmanning.k3s/tasks/ensure_directories.yml for target => (item={'name': 'Systemd unit file directory', 'path': '/etc/systemd/system'})
+included: /tmp/tmp.xxYYBnNoWt/roles/xanmanning.k3s/tasks/ensure_directories.yml for target => (item={'name': 'Data directory', 'path': '/var/lib/rancher/k3s'})
+included: /tmp/tmp.xxYYBnNoWt/roles/xanmanning.k3s/tasks/ensure_directories.yml for target => (item={'name': 'Default local storage path'})
+included: /tmp/tmp.xxYYBnNoWt/roles/xanmanning.k3s/tasks/ensure_directories.yml for target => (item={'name': 'Private registry config file'})
+
+TASK [xanmanning.k3s : Ensure Config directory exists] *************************
+changed: [target]
+
+TASK [xanmanning.k3s : Ensure Config.yaml.d directory exists] ******************
+changed: [target]
+
+TASK [xanmanning.k3s : Ensure Systemd unit file directory exists] **************
+ok: [target]
+
+TASK [xanmanning.k3s : Ensure Data directory exists] ***************************
+changed: [target]
+
+TASK [xanmanning.k3s : Ensure Default local storage path exists] ***************
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure Private registry config file exists] *************
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure installed node] **********************************
+included: /tmp/tmp.xxYYBnNoWt/roles/xanmanning.k3s/tasks/ensure_installed_node.yml for target
+
+TASK [xanmanning.k3s : Ensure k3s is linked into the installation destination] ***
+changed: [target] => (item=k3s)
+changed: [target] => (item=kubectl)
+changed: [target] => (item=crictl)
+changed: [target] => (item=ctr)
+
+TASK [xanmanning.k3s : Ensure k3s config file exists] **************************
+changed: [target]
+
+TASK [xanmanning.k3s : Ensure the cluster token file location exists] **********
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure k3s cluster token file is present] ***************
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure k3s service unit file is present] ****************
+changed: [target]
+
+TASK [xanmanning.k3s : Ensure k3s service file is present] *********************
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure k3s logrotate file is present] *******************
+skipping: [target]
+
+TASK [xanmanning.k3s : Ensure k3s killall script is present] *******************
+changed: [target]
+
+TASK [xanmanning.k3s : Ensure k3s uninstall script is present] *****************
+changed: [target]
+
+TASK [xanmanning.k3s : Flush Handlers] *****************************************
+
+RUNNING HANDLER [xanmanning.k3s : Reload systemd] ******************************
+ok: [target]
+
+RUNNING HANDLER [xanmanning.k3s : Restart k3s systemd] *************************

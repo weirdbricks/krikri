@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'tmpfs', owned by mbocquet
+- downloading role from https://github.com/mbocquet/tmpfs/archive/master.tar.gz
+- extracting mbocquet.tmpfs to /tmp/tmp.e2UuMsz6h5/roles/mbocquet.tmpfs
+- mbocquet.tmpfs (master) was installed successfully

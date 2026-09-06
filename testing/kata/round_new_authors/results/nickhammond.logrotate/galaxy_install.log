@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'logrotate', owned by nickhammond
+- downloading role from https://github.com/nickhammond/ansible-logrotate/archive/master.tar.gz
+- extracting nickhammond.logrotate to /tmp/tmp.aAtutR3xIG/roles/nickhammond.logrotate
+- nickhammond.logrotate (master) was installed successfully

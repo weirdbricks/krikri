@@ -1,0 +1,5 @@
+role=kyl191.openvpn
+ansible_cold_rc=2 recap: target                     : ok=21   changed=14   unreachable=0    failed=1    skipped=29   rescued=0    ignored=1   
+krikri_cold_rc=2 recap: target               : ok=9  changed=4  unreachable=0  failed=1  skipped=24  rescued=0  ignored=0
+ansible_warm_rc=2 recap: target                     : ok=19   changed=0    unreachable=0    failed=1    skipped=31   rescued=0    ignored=0   
+krikri_warm_rc=2 recap: target               : ok=8  changed=0  unreachable=0  failed=1  skipped=25  rescued=0  ignored=0

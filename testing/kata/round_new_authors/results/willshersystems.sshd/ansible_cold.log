@@ -1,0 +1,155 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [willshersystems.sshd : Print that the sshd variable is deprecated] *******
+skipping: [target]
+
+TASK [willshersystems.sshd : Invoke the role, if enabled] **********************
+included: /tmp/tmp.dCc5cTdhFw/roles/willshersystems.sshd/tasks/sshd.yml for target
+
+TASK [willshersystems.sshd : Set platform/version specific variables] **********
+included: /tmp/tmp.dCc5cTdhFw/roles/willshersystems.sshd/tasks/variables.yml for target
+
+TASK [willshersystems.sshd : Ensure ansible_facts used by role] ****************
+ok: [target]
+
+TASK [willshersystems.sshd : Check if system is ostree] ************************
+ok: [target]
+
+TASK [willshersystems.sshd : Set flag to indicate system is ostree] ************
+ok: [target]
+
+TASK [willshersystems.sshd : Set OS dependent variables] ***********************
+ok: [target] => (item=/tmp/tmp.dCc5cTdhFw/roles/willshersystems.sshd/vars/Debian_13.yml)
+
+TASK [willshersystems.sshd : Execute the actual role tasks] ********************
+included: /tmp/tmp.dCc5cTdhFw/roles/willshersystems.sshd/tasks/install.yml for target
+
+TASK [willshersystems.sshd : OS is supported] **********************************
+skipping: [target]
+
+TASK [willshersystems.sshd : Check variables are safe for use for shell expansions and word splitting] ***
+included: /tmp/tmp.dCc5cTdhFw/roles/willshersystems.sshd/tasks/check_vars.yml for target
+
+TASK [willshersystems.sshd : Ensure sshd_sysconfig_use_strong_rng is safe to use in shell/command] ***
+ok: [target] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [willshersystems.sshd : Ensure sshd_binary is safe to use in shell/command] ***
+ok: [target] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [willshersystems.sshd : Ensure sshd_config_file is safe to use in shell/command] ***
+ok: [target] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [willshersystems.sshd : Install ssh packages] *****************************
+ok: [target]
+
+TASK [willshersystems.sshd : Sysconfig configuration] **************************
+skipping: [target]
+
+TASK [willshersystems.sshd : Check FIPS mode] **********************************
+skipping: [target]
+
+TASK [willshersystems.sshd : Make sure hostkeys are available] *****************
+skipping: [target]
+
+TASK [willshersystems.sshd : Make sure private hostkeys have expected permissions] ***
+skipping: [target]
+
+TASK [willshersystems.sshd : Create a temporary hostkey for syntax verification if needed] ***
+ok: [target]
+
+TASK [willshersystems.sshd : Generate temporary hostkey] ***********************
+ok: [target]
+
+TASK [willshersystems.sshd : Make sure sshd runtime directory is present] ******
+ok: [target]
+
+TASK [willshersystems.sshd : Find SSHD ports] **********************************
+included: /tmp/tmp.dCc5cTdhFw/roles/willshersystems.sshd/tasks/find_ports.yml for target
+
+TASK [willshersystems.sshd : Find the port the ssh service is going to use] ****
+ok: [target]
+
+TASK [willshersystems.sshd : Find SSHD bind addresses] *************************
+included: /tmp/tmp.dCc5cTdhFw/roles/willshersystems.sshd/tasks/find_bind_addresses.yml for target
+
+TASK [willshersystems.sshd : Find the bind addresses the ssh service is going to use] ***
+ok: [target]
+
+TASK [willshersystems.sshd : Configure firewall] *******************************
+skipping: [target]
+
+TASK [willshersystems.sshd : Configure selinux] ********************************
+skipping: [target]
+
+TASK [willshersystems.sshd : Create the complete configuration file] ***********
+included: /tmp/tmp.dCc5cTdhFw/roles/willshersystems.sshd/tasks/install_config.yml for target
+
+TASK [willshersystems.sshd : Create a directory for drop-in configuration snippets] ***
+skipping: [target]
+
+TASK [willshersystems.sshd : Create the complete configuration file] ***********
+changed: [target]
+
+TASK [willshersystems.sshd : Notify systemd to reload daemon and restart the service] ***
+skipping: [target]
+
+TASK [willshersystems.sshd : Make sure the include path is present in the main sshd_config] ***
+skipping: [target]
+
+TASK [willshersystems.sshd : Update configuration file snippet] ****************
+skipping: [target]
+
+TASK [willshersystems.sshd : Configure sshd to use SSH certificates] ***********
+skipping: [target]
+
+TASK [willshersystems.sshd : Remove temporary host keys] ***********************
+ok: [target]
+
+TASK [willshersystems.sshd : Install and start systemd service] ****************
+included: /tmp/tmp.dCc5cTdhFw/roles/willshersystems.sshd/tasks/install_service.yml for target
+
+TASK [willshersystems.sshd : Install service unit file] ************************
+skipping: [target]
+
+TASK [willshersystems.sshd : Install instanced service unit file] **************
+skipping: [target]
+
+TASK [willshersystems.sshd : Install socket unit file] *************************
+skipping: [target]
+
+TASK [willshersystems.sshd : Service enabled and running] **********************
+skipping: [target]
+
+TASK [willshersystems.sshd : Enable service in chroot] *************************
+skipping: [target]
+
+TASK [willshersystems.sshd : Register that this role has run] ******************
+ok: [target]
+
+RUNNING HANDLER [willshersystems.sshd : Reload the SSH service] ****************
+skipping: [target]
+
+RUNNING HANDLER [willshersystems.sshd : Reload sshd Service (AIX)] *************
+skipping: [target]
+
+RUNNING HANDLER [willshersystems.sshd : Reload the SSH service (OpenWrt)] ******
+skipping: [target]
+
+PLAY RECAP *********************************************************************
+target                     : ok=25   changed=1    unreachable=0    failed=0    skipped=20   rescued=0    ignored=0   
+

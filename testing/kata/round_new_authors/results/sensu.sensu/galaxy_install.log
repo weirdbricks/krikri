@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'sensu', owned by sensu
+- downloading role from https://github.com/sensu/sensu-ansible/archive/6.0.0.tar.gz
+- extracting sensu.sensu to /tmp/tmp.g4XbA9io2F/roles/sensu.sensu
+- sensu.sensu (6.0.0) was installed successfully

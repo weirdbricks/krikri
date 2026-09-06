@@ -1,0 +1,59 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.YqvuIz6zr2/play.yml
+======================================================================
+
+Warnings:
+  ⚠️  Task 'initialize the deploy root and gather facts' uses unimplemented plugin: deploy_helper
+  ⚠️  Task 'finalize the deploy, removing the unfinished file and switching the symlink' uses unimplemented plugin: deploy_helper
+
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+ok: [10.99.15.2]
+
+TASK [mbaran0v.ansible_role_prometheus_nginxlog_exporter : Naive assertion for ansible_service_mgr (fail on unsupported init systems)]
+**********************************************************************
+ok: [10.99.15.2]
+  All assertions passed
+
+TASK [mbaran0v.ansible_role_prometheus_nginxlog_exporter : Create the nginxlog_exporter group]
+**********************************************************************
+ok: [10.99.15.2]
+  Group already up to date
+
+TASK [mbaran0v.ansible_role_prometheus_nginxlog_exporter : Create the nginxlog_exporter user]
+**********************************************************************
+ok: [10.99.15.2]
+  User already up to date
+
+TASK [mbaran0v.ansible_role_prometheus_nginxlog_exporter : create nginxlog_exporter directories]
+**********************************************************************
+ok: [10.99.15.2]
+  Directory attributes updated
+
+TASK [mbaran0v.ansible_role_prometheus_nginxlog_exporter : check if installed]
+**********************************************************************
+ok: [10.99.15.2]
+
+TASK [mbaran0v.ansible_role_prometheus_nginxlog_exporter : initialize the deploy root and gather facts]
+**********************************************************************
+skipping: [10.99.15.2]
+
+TASK [mbaran0v.ansible_role_prometheus_nginxlog_exporter : create release directory]
+**********************************************************************
+failed: [10.99.15.2]
+  Message: 'deploy_helper.new_release_path' is undefined
+
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=6  changed=0  unreachable=0  failed=1  skipped=1  rescued=0  ignored=0
+
+✗ Playbook execution completed with unavailable modules: deploy_helper
+

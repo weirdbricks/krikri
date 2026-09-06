@@ -1,0 +1,44 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.uXs7tslc1n/play.yml
+======================================================================
+
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+ok: [10.99.15.2]
+
+TASK [ansistrano.rollback : include_tasks]
+**********************************************************************
+
+TASK [ansistrano.rollback : include_tasks]
+**********************************************************************
+
+included: /tmp/tmp.uXs7tslc1n/roles/ansistrano.rollback/tasks/setup.yml for 10.99.15.2
+
+TASK [ansistrano.rollback : ANSISTRANO | Get releases path]
+**********************************************************************
+ok: [10.99.15.2]
+
+TASK [ansistrano.rollback : ANSISTRANO | Gather releases]
+**********************************************************************
+ok: [10.99.15.2]
+  All paths examined
+
+TASK [ansistrano.rollback : ANSISTRANO | Check if there is more than one release]
+**********************************************************************
+failed: [10.99.15.2]
+  Message: Could not roll back the code because there is no prior release
+
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=5  changed=0  unreachable=0  failed=1  skipped=0  rescued=0  ignored=0
+
+✗ Playbook execution completed with failures
+

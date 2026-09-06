@@ -1,0 +1,96 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.Di3CVIR7ly/play.yml
+======================================================================
+
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+ok: [10.99.213.2]
+
+TASK [rvm.ruby : Detect rvm binary]
+**********************************************************************
+ok: [10.99.213.2]
+
+TASK [rvm.ruby : Detect rvm installer]
+**********************************************************************
+ok: [10.99.213.2]
+
+TASK [rvm.ruby : Detect current rvm version]
+**********************************************************************
+skipping: [10.99.213.2]
+
+TASK [rvm.ruby : Install rvm installer]
+**********************************************************************
+changed: [10.99.213.2]
+  OK
+
+TASK [rvm.ruby : Import GPG keys from keyservers]
+**********************************************************************
+failed: [10.99.213.2] => (item=hkp://pool.sks-keyservers.net)
+  Message: Command failed
+  Error output:
+    gpg: directory '/root/.gnupg' created
+    gpg: keybox '/root/.gnupg/pubring.kbx' created
+    gpg: keyserver receive failed: Server indicated a failure
+  Exit code: 2
+...ignoring
+failed: [10.99.213.2] => (item=hkp://ipv4.pool.sks-keyservers.net)
+  Message: Command failed
+  Error output:
+    gpg: keyserver receive failed: Server indicated a failure
+  Exit code: 2
+...ignoring
+failed: [10.99.213.2] => (item=hkp://pgp.mit.edu)
+  Message: Command failed
+  Error output:
+    gpg: keyserver receive failed: No keyserver available
+  Exit code: 2
+...ignoring
+failed: [10.99.213.2] => (item=hkp://keyserver.pgp.com)
+  Message: Command failed
+  Error output:
+    gpg: keyserver receive failed: Connection timed out
+  Exit code: 2
+...ignoring
+
+TASK [rvm.ruby : Was GPG import from keyservers succesfull?]
+**********************************************************************
+skipping: [10.99.213.2] => (item={"changed":false,"failed":true,"msg":"Command failed","stdout":"","stderr":"gpg: directory '/root/.gnupg' created\ngpg: keybox '/root/.gnupg/pubring.kbx' created\ngpg: keyserver receive failed: Server indicated a failure","exit_code":2,"rc":2,"item":"hkp://pool.sks-keyservers.net"})
+skipping: [10.99.213.2] => (item={"changed":false,"failed":true,"msg":"Command failed","stdout":"","stderr":"gpg: keyserver receive failed: Server indicated a failure","exit_code":2,"rc":2,"item":"hkp://ipv4.pool.sks-keyservers.net"})
+skipping: [10.99.213.2] => (item={"changed":false,"failed":true,"msg":"Command failed","stdout":"","stderr":"gpg: keyserver receive failed: No keyserver available","exit_code":2,"rc":2,"item":"hkp://pgp.mit.edu"})
+skipping: [10.99.213.2] => (item={"changed":false,"failed":true,"msg":"Command failed","stdout":"","stderr":"gpg: keyserver receive failed: Connection timed out","exit_code":2,"rc":2,"item":"hkp://keyserver.pgp.com"})
+
+TASK [rvm.ruby : Import GPG keys from rvm.io, if keyservers failed]
+**********************************************************************
+changed: [10.99.213.2] => (item=mpapis.asc)
+changed: [10.99.213.2] => (item=pkuczynski.asc)
+
+TASK [rvm.ruby : Install rvm]
+**********************************************************************
+changed: [10.99.213.2]
+
+TASK [rvm.ruby : Update rvm]
+**********************************************************************
+skipping: [10.99.213.2]
+
+TASK [rvm.ruby : Configure rvm]
+**********************************************************************
+failed: [10.99.213.2]
+  Message: Failed to execute command: Error executing process: '~/.rvm/bin/rvm': No such file or directory
+  Error output:
+    Error executing process: '~/.rvm/bin/rvm': No such file or directory
+  Exit code: 2
+
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=7  changed=3  unreachable=0  failed=1  skipped=3  rescued=0  ignored=1
+
+✗ Playbook execution completed with failures
+

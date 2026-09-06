@@ -1,0 +1,56 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [wezhai.minio : Create group if not exists] *******************************
+changed: [target]
+
+TASK [wezhai.minio : Create user if not exists] ********************************
+changed: [target]
+
+TASK [wezhai.minio : Create dirs.] *********************************************
+changed: [target] => (item=/data/minio/bin)
+changed: [target] => (item=/data/minio/cfg)
+changed: [target] => (item=/data/minio/data)
+changed: [target] => (item=/data/minio/log)
+changed: [target] => (item=/opt/minio)
+
+TASK [wezhai.minio : Unpack minio.tar.gz] **************************************
+changed: [target]
+
+TASK [wezhai.minio : Add environment file] *************************************
+[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.
+[DEPRECATION WARNING]: The `play_hosts` magic variable is deprecated. This feature will be removed from ansible-core version 2.23.
+Origin: /tmp/tmp.wtbR1VTi6u/roles/wezhai.minio/templates/minio_env.j2
+
+Use `ansible_play_batch` instead.
+
+changed: [target]
+
+TASK [wezhai.minio : Add systemd file] *****************************************
+changed: [target]
+
+TASK [wezhai.minio : Start minio service] **************************************
+changed: [target]
+
+RUNNING HANDLER [wezhai.minio : Restart minio service] *************************
+changed: [target]
+
+RUNNING HANDLER [wezhai.minio : Waiting for minio console port 9001] ***********
+[ERROR]: Task failed: Module failed: Timeout when waiting for 127.0.0.1:9001
+Origin: /tmp/tmp.wtbR1VTi6u/roles/wezhai.minio/handlers/main.yml:11:3
+
+ 9
+10 # 等待服务端口启动端口在主机上开放，10秒后检查
+11 - name: Waiting for minio console port {{ minio_console_port }}
+     ^ column 3
+
+fatal: [target]: FAILED! => {"changed": false, "elapsed": 60, "msg": "Timeout when waiting for 127.0.0.1:9001"}
+
+PLAY RECAP *********************************************************************
+target                     : ok=9    changed=8    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

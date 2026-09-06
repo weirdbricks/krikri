@@ -1,0 +1,26 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.U4SNzPf7G1/play.yml
+======================================================================
+
+Warning: Skipping task in /tmp/tmp.U4SNzPf7G1/roles/artis3n.tailscale/tasks/main.yml 12: meta: end_role is not supported (only clear_facts/flush_handlers/end_host/end_play/clear_host_errors/noop/refresh_inventory are)
+fatal: [target]: UNREACHABLE! => {"changed": false, "msg": "Failed to upload /home/labros/git_work/krikri/bin/plugins/package to 10.99.211.2:/var/tmp/.krikri-playbook/plugins/package: ssh: connect to host 10.99.211.2 port 22: Connection timed out", "unreachable": true}
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+failed: [10.99.211.2]
+  Error gathering facts: Plugin execution failed on remote
+
+fatal: [target]: UNREACHABLE! => {"changed": false, "msg": "Failed to connect to the host via ssh: 10.99.211.2", "unreachable": true}
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=0  changed=0  unreachable=1  failed=1  skipped=0  rescued=0  ignored=0
+
+✗ Playbook execution completed with unreachable hosts: target
+

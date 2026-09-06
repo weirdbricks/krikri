@@ -1,0 +1,88 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [nickjj.docker : Disable pinned Docker version] ***************************
+ok: [target]
+
+TASK [nickjj.docker : Disable pinned Docker Compose v2 version] ****************
+ok: [target]
+
+TASK [nickjj.docker : Enable pinned Docker version] ****************************
+skipping: [target]
+
+TASK [nickjj.docker : Enable pinned Docker Compose v2 version] *****************
+skipping: [target]
+
+TASK [nickjj.docker : Install Docker's dependencies] ***************************
+changed: [target]
+
+TASK [nickjj.docker : Create /etc/apt/keyrings directory] **********************
+ok: [target]
+
+TASK [nickjj.docker : Add Docker's APT repository key] *************************
+[WARNING]: Module remote_tmp /root/.ansible/tmp did not exist and was created with a mode of 0700, this may cause issues when running as another user. To avoid this, create the remote_tmp dir with the correct permissions manually
+changed: [target]
+
+TASK [nickjj.docker : Configure Docker's upstream APT repository] **************
+changed: [target]
+
+TASK [nickjj.docker : Create Docker configuration directories] *****************
+changed: [target] => (item=/etc/docker)
+changed: [target] => (item=/etc/systemd/system/docker.service.d)
+
+TASK [nickjj.docker : Configure Docker daemon options (json)] ******************
+changed: [target]
+
+TASK [nickjj.docker : Install Docker and Docker Compose v2] ********************
+changed: [target]
+
+TASK [nickjj.docker : Install Python packages] *********************************
+changed: [target] => (item={'name': 'docker', 'state': 'present'})
+ok: [target] => (item={'name': 'docker-compose', 'version': '', 'path': '/usr/local/bin/docker-compose', 'src': '/usr/local/lib/docker/virtualenv/bin/docker-compose', 'state': 'absent'})
+
+TASK [nickjj.docker : Create python3-docker proxy script to access Virtualenv's interpreter] ***
+changed: [target]
+
+TASK [nickjj.docker : Symlink selected Python package binaries to /usr/local/bin] ***
+skipping: [target] => (item={'name': 'docker', 'state': 'present'}) 
+skipping: [target] => (item={'name': 'docker-compose', 'version': '', 'path': '/usr/local/bin/docker-compose', 'src': '/usr/local/lib/docker/virtualenv/bin/docker-compose', 'state': 'absent'}) 
+skipping: [target]
+
+TASK [nickjj.docker : Add user(s) to "docker" group] ***************************
+changed: [target] => (item=root)
+
+TASK [nickjj.docker : Configure Docker daemon options (flags)] *****************
+changed: [target]
+
+TASK [nickjj.docker : Configure Docker daemon environment variables] ***********
+changed: [target]
+
+TASK [nickjj.docker : Configure custom systemd unit file override] *************
+changed: [target]
+
+TASK [nickjj.docker : Restart Docker now to make sure `docker login` works] ****
+
+RUNNING HANDLER [nickjj.docker : Reload systemd daemon] ************************
+ok: [target]
+
+RUNNING HANDLER [nickjj.docker : Restart Docker] *******************************
+changed: [target]
+
+TASK [nickjj.docker : Manage Docker registry login credentials] ****************
+skipping: [target]
+
+TASK [nickjj.docker : Remove Docker related cron jobs] *************************
+skipping: [target] => (item={'name': 'Docker disk clean up', 'job': 'docker system prune -af > /dev/null 2>&1', 'schedule': ['0', '0', '*', '*', '0'], 'cron_file': 'docker-disk-clean-up', 'user': 'root'}) 
+skipping: [target]
+
+TASK [nickjj.docker : Create Docker related cron jobs] *************************
+changed: [target] => (item={'name': 'Docker disk clean up', 'job': 'docker system prune -af > /dev/null 2>&1', 'schedule': ['0', '0', '*', '*', '0'], 'cron_file': 'docker-disk-clean-up', 'user': 'root'})
+
+PLAY RECAP *********************************************************************
+target                     : ok=19   changed=14   unreachable=0    failed=0    skipped=5    rescued=0    ignored=0   
+

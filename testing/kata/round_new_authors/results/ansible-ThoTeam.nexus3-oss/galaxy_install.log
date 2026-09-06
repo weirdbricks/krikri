@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'nexus3-oss', owned by ansible-ThoTeam
+- downloading role from https://github.com/ansible-ThoTeam/nexus3-oss/archive/v2.5.2.tar.gz
+- extracting ansible-ThoTeam.nexus3-oss to /tmp/tmp.xgAgq2XOKo/roles/ansible-ThoTeam.nexus3-oss
+- ansible-ThoTeam.nexus3-oss (v2.5.2) was installed successfully

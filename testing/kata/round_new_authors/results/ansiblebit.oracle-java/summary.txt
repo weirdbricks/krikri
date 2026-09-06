@@ -1,0 +1,5 @@
+role=ansiblebit.oracle-java
+ansible_cold_rc=1 recap: 
+krikri_cold_rc=1 recap: 
+ansible_warm_rc=1 recap: 
+krikri_warm_rc=1 recap: 

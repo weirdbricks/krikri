@@ -1,0 +1,242 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.LWPPq7fv9m/play.yml
+======================================================================
+
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+ok: [10.99.11.2]
+
+TASK [nginxinc.nginx : Validate Ansible/Jinja2 version, Ansible collections, role variables, and supported distributions]
+**********************************************************************
+
+included: /tmp/tmp.LWPPq7fv9m/roles/nginxinc.nginx/tasks/validate/validate.yml for 10.99.11.2
+
+TASK [nginxinc.nginx : Verify you are using a supported Ansible version on your Ansible host]
+**********************************************************************
+ok: [10.99.11.2]
+  Ansible 2.19.4 is supported.
+
+TASK [nginxinc.nginx : Extract the version of Jinja2 installed on your Ansible host]
+**********************************************************************
+ok: [10.99.11.2]
+
+TASK [nginxinc.nginx : Verify that you are using a supported Jinja2 version on your Ansible host]
+**********************************************************************
+ok: [10.99.11.2]
+  Jinja2 3.1.6 is supported.
+
+TASK [nginxinc.nginx : Extract the list of Ansible collections installed on your Ansible host]
+**********************************************************************
+ok: [10.99.11.2]
+
+TASK [nginxinc.nginx : Verify that the 'community.general' Ansible collection is installed on your Ansible host]
+**********************************************************************
+ok: [10.99.11.2]
+  The 'community.general' Ansible collection is installed.
+
+TASK [nginxinc.nginx : Verify that the 'ansible.posix' Ansible collection is installed on your Ansible host]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [nginxinc.nginx : Verify that the 'community.crypto' Ansible collection is installed on your Ansible host]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [nginxinc.nginx : Verify that 'nginx_setup' parameter is a valid value]
+**********************************************************************
+ok: [10.99.11.2]
+  The value you used for 'nginx_setup', install, is valid.
+
+TASK [nginxinc.nginx : Verify that 'nginx_branch' parameter is a valid value]
+**********************************************************************
+ok: [10.99.11.2]
+  The value you used for 'nginx_branch', mainline, is valid.
+
+TASK [nginxinc.nginx : Verify that 'nginx_install_from' parameter is a valid value]
+**********************************************************************
+ok: [10.99.11.2]
+  The value you used for 'nginx_install_from', nginx_repository is valid.
+
+TASK [nginxinc.nginx : Verify whether you are using a supported NGINX distribution]
+**********************************************************************
+ok: [10.99.11.2]
+  Your distribution, Debian 13 (x86_64), is supported by NGINX Open Source.
+
+TASK [nginxinc.nginx : Verify that you are installing a supported NGINX dynamic module]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [nginxinc.nginx : Set up prerequisites]
+**********************************************************************
+
+included: /tmp/tmp.LWPPq7fv9m/roles/nginxinc.nginx/tasks/prerequisites/prerequisites.yml for 10.99.11.2
+
+TASK [nginxinc.nginx : Install dependencies]
+**********************************************************************
+
+included: /tmp/tmp.LWPPq7fv9m/roles/nginxinc.nginx/tasks/prerequisites/install-dependencies.yml for 10.99.11.2
+
+TASK [nginxinc.nginx : (Alpine Linux) Install dependencies]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [nginxinc.nginx : (Debian/Ubuntu) Install dependencies]
+**********************************************************************
+ok: [10.99.11.2]
+  APT cache updated, Packages apt-transport-https, ca-certificates, gnupg, gpg-agent already at latest version
+
+TASK [nginxinc.nginx : Amazon Linux Install dependencies]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [nginxinc.nginx : (Oracle Linux/RHEL) Install dependencies]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [nginxinc.nginx : (SLES) Install dependencies]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [(FreeBSD) Install dependencies using package(s)]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [(FreeBSD) Install dependencies using port(s)]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [Check if SELinux is enabled]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [Configure SELinux]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [nginxinc.nginx : Set up signing keys]
+**********************************************************************
+
+included: /tmp/tmp.LWPPq7fv9m/roles/nginxinc.nginx/tasks/keys/setup-keys.yml for 10.99.11.2
+
+TASK [(Alpine Linux) Set up NGINX signing key URL]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [(Alpine Linux) Download NGINX signing key]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [nginxinc.nginx : (Debian/Red Hat/SLES OSs) Set up NGINX signing key URL]
+**********************************************************************
+ok: [10.99.11.2]
+
+TASK [nginxinc.nginx : (Debian/Ubuntu) Add NGINX signing key]
+**********************************************************************
+ok: [10.99.11.2]
+  file already exists and checksum matches
+
+TASK [nginxinc.nginx : (Red Hat/SLES OSs) Check if NGINX signing key is already imported]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [nginxinc.nginx : (Red Hat/SLES OSs) Download NGINX signing key]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [nginxinc.nginx : (Red Hat/SLES OSs) Add NGINX signing key]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [nginxinc.nginx : Cleanup downloads]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [nginxinc.nginx : Install NGINX Open Source]
+**********************************************************************
+
+included: /tmp/tmp.LWPPq7fv9m/roles/nginxinc.nginx/tasks/opensource/install-oss.yml for 10.99.11.2
+
+TASK [nginxinc.nginx : Install NGINX from the official package repository]
+**********************************************************************
+
+included: /tmp/tmp.LWPPq7fv9m/roles/nginxinc.nginx/tasks/opensource/install-debian.yml for 10.99.11.2
+
+TASK [nginxinc.nginx : (Debian/Ubuntu) Configure NGINX repository]
+**********************************************************************
+ok: [10.99.11.2] => (item=deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg.asc] https://nginx.org/packages/mainline/debian/ trixie nginx)
+ok: [10.99.11.2] => (item=deb-src [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg.asc] https://nginx.org/packages/mainline/debian/ trixie nginx)
+
+TASK [nginxinc.nginx : (Debian/Ubuntu) Pin NGINX repository]
+**********************************************************************
+ok: [10.99.11.2]
+
+TASK [nginxinc.nginx : (Debian/Ubuntu) Install NGINX]
+**********************************************************************
+ok: [10.99.11.2]
+  APT cache updated, Package nginx already installed
+
+TASK [nginxinc.nginx : Install NGINX from the distribution's package repository]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [nginxinc.nginx : Install NGINX from source]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [nginxinc.nginx : Install NGINX in Unix systems]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [nginxinc.nginx : Set up NGINX Plus license]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [nginxinc.nginx : Install NGINX Plus]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [nginxinc.nginx : Install NGINX dynamic modules]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [nginxinc.nginx : Remove NGINX Plus license]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [nginxinc.nginx : Modify systemd parameters]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [nginxinc.nginx : Trigger handlers if necessary]
+**********************************************************************
+
+TASK [nginxinc.nginx : Debug NGINX output]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [nginxinc.nginx : Configure logrotate for NGINX]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [nginxinc.nginx : Install and configure NGINX Plus keepalived HA]
+**********************************************************************
+skipping: [10.99.11.2]
+
+TASK [nginxinc.nginx : Install NGINX Agent]
+**********************************************************************
+skipping: [10.99.11.2]
+
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=22  changed=0  unreachable=0  failed=0  skipped=29  rescued=0  ignored=0
+
+✓ Playbook execution complete
+

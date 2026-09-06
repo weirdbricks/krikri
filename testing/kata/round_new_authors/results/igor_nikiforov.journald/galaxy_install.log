@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'journald', owned by igor_nikiforov
+- downloading role from https://github.com/igor-nikiforov/ansible-role-journald/archive/v1.0.0.tar.gz
+- extracting igor_nikiforov.journald to /tmp/tmp.4TZOHJ7Xwr/roles/igor_nikiforov.journald
+- igor_nikiforov.journald (v1.0.0) was installed successfully

@@ -1,0 +1,50 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [hifis.unattended_upgrades : Add distribution-specific variables] *********
+ok: [target]
+
+TASK [hifis.unattended_upgrades : Install powermgmt-base] **********************
+skipping: [target]
+
+TASK [hifis.unattended_upgrades : Install unattended-upgrades] *****************
+ok: [target]
+
+TASK [hifis.unattended_upgrades : Install update-notifier-common] **************
+skipping: [target]
+
+TASK [hifis.unattended_upgrades : Create Apt auto-upgrades & unattended-upgrades configuration] ***
+ok: [target]
+
+TASK [hifis.unattended_upgrades : Test apt-daily timer expression] *************
+skipping: [target]
+
+TASK [hifis.unattended_upgrades : Test apt-daily-upgrade timer expression] *****
+skipping: [target]
+
+TASK [hifis.unattended_upgrades : Ensure directory apt-daily.timer.d exists] ***
+skipping: [target]
+
+TASK [hifis.unattended_upgrades : Ensure directory apt-daily-upgrade.timer.d exists] ***
+skipping: [target]
+
+TASK [hifis.unattended_upgrades : Deploy apt-daily timer] **********************
+skipping: [target]
+
+TASK [hifis.unattended_upgrades : Deploy apt-daily-upgrade timer] **************
+skipping: [target]
+
+TASK [hifis.unattended_upgrades : Remove apt-daily timer override] *************
+ok: [target]
+
+TASK [hifis.unattended_upgrades : Remove apt-daily-upgrade timer override] *****
+ok: [target]
+
+PLAY RECAP *********************************************************************
+target                     : ok=6    changed=0    unreachable=0    failed=0    skipped=8    rescued=0    ignored=0   
+

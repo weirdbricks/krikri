@@ -1,0 +1,89 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [ansistrano.deploy : ANSISTRANO | Mark release as not activated] **********
+ok: [target]
+
+TASK [ansistrano.deploy : include_tasks] ***************************************
+included: /tmp/tmp.3vTM5C9MYe/roles/ansistrano.deploy/tasks/empty.yml for target
+
+TASK [ansistrano.deploy : include_tasks] ***************************************
+included: /tmp/tmp.3vTM5C9MYe/roles/ansistrano.deploy/tasks/setup.yml for target
+
+TASK [ansistrano.deploy : ANSISTRANO | Ensure deployment base path exists] *****
+ok: [target]
+
+TASK [ansistrano.deploy : ANSISTRANO | Ensure releases folder exists] **********
+ok: [target]
+
+TASK [ansistrano.deploy : ANSISTRANO | Ensure shared elements folder exists] ***
+ok: [target]
+
+TASK [ansistrano.deploy : ANSISTRANO | Ensure shared paths exists] *************
+skipping: [target]
+
+TASK [ansistrano.deploy : ANSISTRANO | Ensure basedir shared files exists] *****
+skipping: [target]
+
+TASK [ansistrano.deploy : include_tasks] ***************************************
+included: /tmp/tmp.3vTM5C9MYe/roles/ansistrano.deploy/tasks/empty.yml for target
+
+TASK [ansistrano.deploy : include_tasks] ***************************************
+included: /tmp/tmp.3vTM5C9MYe/roles/ansistrano.deploy/tasks/empty.yml for target
+
+TASK [ansistrano.deploy : include_tasks] ***************************************
+included: /tmp/tmp.3vTM5C9MYe/roles/ansistrano.deploy/tasks/update-code.yml for target
+
+TASK [ansistrano.deploy : ANSISTRANO | Get release version] ********************
+ok: [target -> 127.0.0.1]
+
+TASK [ansistrano.deploy : ANSISTRANO | Get release path] ***********************
+ok: [target]
+
+TASK [ansistrano.deploy : include_tasks] ***************************************
+included: /tmp/tmp.3vTM5C9MYe/roles/ansistrano.deploy/tasks/update-code/rsync.yml for target
+
+TASK [ansistrano.deploy : ANSISTRANO | RSYNC | Get shared path (in rsync case)] ***
+ok: [target]
+
+TASK [ansistrano.deploy : ANSISTRANO | RSYNC | Rsync application files to remote shared copy] ***
+[ERROR]: Task failed: Module failed: Warning: Permanently added '10.99.12.2' (ED25519) to the list of known hosts.
+bash: line 1: sudo: command not found
+rsync: connection unexpectedly closed (0 bytes received so far) [sender]
+rsync error: error in rsync protocol data stream (code 12) at io.c(232) [sender=3.4.1]
+
+Origin: /tmp/tmp.3vTM5C9MYe/roles/ansistrano.deploy/tasks/update-code/rsync.yml:6:3
+
+4     ansistrano_shared_rsync_copy_path: "{{ ansistrano_shared_path }}/.shared-copy"
+5
+6 - name: ANSISTRANO | RSYNC | Rsync application files to remote shared copy
+    ^ column 3
+
+fatal: [target]: FAILED! => {"changed": false, "cmd": "/usr/bin/rsync --delay-updates -F --compress --delete-after --archive --rsh='/usr/bin/ssh -S none -i /home/labros/git_work/krikri/testing/kata/key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' --rsync-path='sudo -u root rsync' --out-format='<<CHANGED>>%i %n%L' /tmp/tmp.3vTM5C9MYe/ root@10.99.12.2:/var/www/my-app/shared/.shared-copy", "msg": "Warning: Permanently added '10.99.12.2' (ED25519) to the list of known hosts.\r\nbash: line 1: sudo: command not found\nrsync: connection unexpectedly closed (0 bytes received so far) [sender]\nrsync error: error in rsync protocol data stream (code 12) at io.c(232) [sender=3.4.1]\n", "rc": 12}
+
+TASK [ansistrano.deploy : ANSISTRANO | Remove failed release] ******************
+ok: [target]
+
+TASK [ansistrano.deploy : fail] ************************************************
+[ERROR]: Task failed: Action failed: Deployment failed in task ANSISTRANO | RSYNC | Rsync application files to remote shared copy: Warning: Permanently added '10.99.12.2' (ED25519) to the list of known hosts.
+bash: line 1: sudo: command not found
+rsync: connection unexpectedly closed (0 bytes received so far) [sender]
+rsync error: error in rsync protocol data stream (code 12) at io.c(232) [sender=3.4.1]
+
+Origin: /tmp/tmp.3vTM5C9MYe/roles/ansistrano.deploy/tasks/main.yml:57:7
+
+55         - not ansistrano_release_activated
+56
+57     - fail:
+         ^ column 7
+
+fatal: [target]: FAILED! => {"changed": false, "msg": "Deployment failed in task ANSISTRANO | RSYNC | Rsync application files to remote shared copy: Warning: Permanently added '10.99.12.2' (ED25519) to the list of known hosts.\r\nbash: line 1: sudo: command not found\nrsync: connection unexpectedly closed (0 bytes received so far) [sender]\nrsync error: error in rsync protocol data stream (code 12) at io.c(232) [sender=3.4.1]\n"}
+
+PLAY RECAP *********************************************************************
+target                     : ok=15   changed=0    unreachable=0    failed=1    skipped=2    rescued=1    ignored=0   
+

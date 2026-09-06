@@ -1,0 +1,47 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.xxYYBnNoWt/play.yml
+======================================================================
+
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+ok: [10.99.121.2]
+
+TASK [xanmanning.k3s : Check that k3s_state is a supported value]
+**********************************************************************
+ok: [10.99.121.2]
+  k3s_state is valid.
+
+TASK [xanmanning.k3s : Check that Ansible v2.19.4 is supported by this role]
+**********************************************************************
+ok: [10.99.121.2]
+  Ansible v2.19.4 is supported.
+
+TASK [xanmanning.k3s : Check that Python v3.13.5 is supported by this role]
+**********************************************************************
+ok: [10.99.121.2]
+  Python v3.13.5 is supported.
+
+TASK [xanmanning.k3s : Check that the target init system is supported by this role]
+**********************************************************************
+ok: [10.99.121.2]
+  systemd is supported
+
+TASK [xanmanning.k3s : Determining if systemd is actually openrc]
+**********************************************************************
+failed: [10.99.121.2]
+  Message: Error while evaluating conditional: 'k3s_service_handler[ansible_facts['service_mgr']]' is undefined
+
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=5  changed=0  unreachable=0  failed=1  skipped=0  rescued=0  ignored=0
+
+✗ Playbook execution completed with failures
+

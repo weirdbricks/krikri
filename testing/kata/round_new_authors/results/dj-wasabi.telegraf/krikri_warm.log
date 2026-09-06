@@ -1,0 +1,96 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.NzkZBZzRJ9/play.yml
+======================================================================
+
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+ok: [10.99.215.2]
+
+TASK [dj-wasabi.telegraf : Install on RedHat]
+**********************************************************************
+skipping: [10.99.215.2]
+
+TASK [dj-wasabi.telegraf : Install on Debian]
+**********************************************************************
+
+included: /tmp/tmp.NzkZBZzRJ9/roles/dj-wasabi.telegraf/tasks/Debian.yml for 10.99.215.2
+
+TASK [dj-wasabi.telegraf : Debian | Set name if state != latest]
+**********************************************************************
+ok: [10.99.215.2]
+
+TASK [dj-wasabi.telegraf : Debian | Set telegraf_agent_package_arch]
+**********************************************************************
+ok: [10.99.215.2]
+
+TASK [dj-wasabi.telegraf : Debian | Set telegraf_agent_package_arch specific for x86_64]
+**********************************************************************
+ok: [10.99.215.2]
+
+TASK [dj-wasabi.telegraf : Debian | Set telegraf_agent_package_arch specific for arm64]
+**********************************************************************
+skipping: [10.99.215.2]
+
+TASK [dj-wasabi.telegraf : Debian | Ensure the system can use the HTTPS transport for APT]
+**********************************************************************
+ok: [10.99.215.2]
+
+TASK [dj-wasabi.telegraf : Debian | Install APT HTTPS transport]
+**********************************************************************
+skipping: [10.99.215.2]
+
+TASK [dj-wasabi.telegraf : Debian | Download Telegraf apt key]
+**********************************************************************
+skipping: [10.99.215.2]
+
+TASK [dj-wasabi.telegraf : Debian | Ensure the shared keyrings directory exists]
+**********************************************************************
+ok: [10.99.215.2]
+
+TASK [dj-wasabi.telegraf : Debian | Create shared keyrings directory]
+**********************************************************************
+skipping: [10.99.215.2]
+
+TASK [dj-wasabi.telegraf : Debian | Install Telegraf apt key]
+**********************************************************************
+ok: [10.99.215.2]
+  file already exists (use force=yes to overwrite)
+
+TASK [dj-wasabi.telegraf : Debian | Set Telegraf apt repository parameters]
+**********************************************************************
+ok: [10.99.215.2]
+
+TASK [dj-wasabi.telegraf : Debian | Add Telegraf repository]
+**********************************************************************
+ok: [10.99.215.2]
+
+TASK [dj-wasabi.telegraf : Debian | Install Telegraf package (repo)]
+**********************************************************************
+failed: [10.99.215.2]
+  Message: Failed to install telegraf=1.18.2-1: E: Version '1.18.2-1' for 'telegraf' was not found
+
+  Error output:
+    E: Version '1.18.2-1' for 'telegraf' was not found
+  Output:
+    Reading package lists...
+    Building dependency tree...
+    Reading state information...
+    Package telegraf is not available, but is referred to by another package.
+    This may mean that the package is missing, has been obsoleted, or
+    is only available from another source
+    
+
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=10  changed=0  unreachable=0  failed=1  skipped=5  rescued=0  ignored=0
+
+✗ Playbook execution completed with failures
+

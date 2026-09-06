@@ -1,0 +1,17 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [nickhammond.logrotate : nickhammond.logrotate | Install logrotate] *******
+skipping: [target]
+
+TASK [nickhammond.logrotate : nickhammond.logrotate | Setup logrotate.d scripts] ***
+skipping: [target]
+
+PLAY RECAP *********************************************************************
+target                     : ok=1    changed=0    unreachable=0    failed=0    skipped=2    rescued=0    ignored=0   
+

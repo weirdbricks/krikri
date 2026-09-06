@@ -1,0 +1,192 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [riemers.gitlab-runner : Load platform-specific variables] ****************
+ok: [target]
+
+TASK [riemers.gitlab-runner : Validate GitLab Runner configurations] ***********
+included: /tmp/tmp.ss8YI34b7m/roles/riemers.gitlab-runner/tasks/validate-runner-config.yml for target => (item=debuerreotype)
+
+TASK [riemers.gitlab-runner : Check for deprecated settings: debuerreotype] ****
+ok: [target] => (item=pre_clone_script)
+
+TASK [riemers.gitlab-runner : Install Gitlab Runner (Container)] ***************
+skipping: [target]
+
+TASK [riemers.gitlab-runner : Install GitLab Runner (Unix)] ********************
+included: /tmp/tmp.ss8YI34b7m/roles/riemers.gitlab-runner/tasks/main-unix.yml for target
+
+TASK [riemers.gitlab-runner : Install GitLab Runner (Debian)] ******************
+included: /tmp/tmp.ss8YI34b7m/roles/riemers.gitlab-runner/tasks/install-debian.yml for target
+
+TASK [riemers.gitlab-runner : (Debian) Refresh package cache] ******************
+ok: [target]
+
+TASK [riemers.gitlab-runner : (Debian) Get Gitlab repository installation script] ***
+ok: [target]
+
+TASK [riemers.gitlab-runner : (Debian) Install Gitlab repository] **************
+ok: [target]
+
+TASK [riemers.gitlab-runner : (Debian) Find GitLab runner repository GPG keyring] ***
+ok: [target]
+
+TASK [riemers.gitlab-runner : (Debian) Ensure GitLab runner repository GPG key is readable by everyone] ***
+ok: [target]
+
+TASK [riemers.gitlab-runner : (Debian) Update gitlab_runner_package_name and gitlab_runner_helper_package_name] ***
+skipping: [target]
+
+TASK [riemers.gitlab-runner : (Debian) Set gitlab_runner_package_name] *********
+ok: [target]
+
+TASK [riemers.gitlab-runner : Gather the package facts] ************************
+ok: [target]
+
+TASK [riemers.gitlab-runner : (Debian) Unhold GitLab Runner version] ***********
+ok: [target]
+
+TASK [riemers.gitlab-runner : (Debian) Unhold GitLab Runner Helper version] ****
+ok: [target]
+
+TASK [riemers.gitlab-runner : (Debian) Install GitLab Runner Helpers] **********
+ok: [target]
+
+TASK [riemers.gitlab-runner : (Debian) Install GitLab Runner] ******************
+ok: [target]
+
+TASK [riemers.gitlab-runner : (Debian) Hold GitLab Runner version] *************
+skipping: [target]
+
+TASK [riemers.gitlab-runner : (Debian) Hold GitLab Runner Helpers version] *****
+ok: [target]
+
+TASK [riemers.gitlab-runner : (Debian) Remove ~/gitlab-runner/.bash_logout] ****
+skipping: [target]
+
+TASK [riemers.gitlab-runner : Ensure /etc/systemd/system/gitlab-runner.service.d/ exists] ***
+ok: [target]
+
+TASK [riemers.gitlab-runner : Add reload command to GitLab Runner system service] ***
+ok: [target]
+
+TASK [riemers.gitlab-runner : Configure graceful stop for GitLab Runner system service] ***
+ok: [target]
+
+TASK [riemers.gitlab-runner : Force systemd to reread configs] *****************
+skipping: [target]
+
+TASK [riemers.gitlab-runner : Install GitLab Runner (RedHat)] ******************
+skipping: [target]
+
+TASK [riemers.gitlab-runner : Install GitLab Runner (macOS)] *******************
+skipping: [target]
+
+TASK [riemers.gitlab-runner : Install GitLab Runner (Arch)] ********************
+skipping: [target]
+
+TASK [riemers.gitlab-runner : (Unix) Delete runners which were removed in GitLab] ***
+ok: [target]
+
+TASK [riemers.gitlab-runner : List configured runners as json] *****************
+ok: [target]
+
+TASK [riemers.gitlab-runner : Initialze runner list] ***************************
+ok: [target]
+
+TASK [riemers.gitlab-runner : Create list of configured runners] ***************
+skipping: [target] => (item={"arch":"amd64","level":"info","msg":"Runtime platform","os":"linux","pid":1132,"revision":"a16f5092","time":"2026-09-05T21:13:51.000677431Z","version":"19.3.1"}) 
+skipping: [target] => (item={"ConfigFile":"/etc/gitlab-runner/config.toml","level":"info","msg":"Listing configured runners","time":"2026-09-05T21:13:51.002191686Z"}) 
+skipping: [target]
+
+TASK [riemers.gitlab-runner : Print registered runners] ************************
+ok: [target] => {
+    "registered_gitlab_runner_names": []
+}
+
+TASK [riemers.gitlab-runner : (Unix) Register GitLab Runner] *******************
+skipping: [target] => (item={'name': 'debuerreotype', 'state': 'present', 'executor': 'shell', 'output_limit': 4096, 'concurrent_specific': '0', 'docker_image': '', 'tags': [], 'run_untagged': True, 'protected': False, 'docker_privileged': False, 'locked': 'false', 'docker_network_mode': 'bridge', 'env_vars': []}) 
+skipping: [target]
+
+TASK [riemers.gitlab-runner : Unregister runners which are not longer configured] ***
+skipping: [target]
+
+TASK [riemers.gitlab-runner : Create .gitlab-runner dir] ***********************
+ok: [target]
+
+TASK [riemers.gitlab-runner : Ensure config.toml exists] ***********************
+ok: [target]
+
+TASK [riemers.gitlab-runner : Set concurrent option] ***************************
+ok: [target]
+
+TASK [riemers.gitlab-runner : Set check_interval option] ***********************
+ok: [target]
+
+TASK [riemers.gitlab-runner : Add listen_address to config] ********************
+skipping: [target]
+
+TASK [riemers.gitlab-runner : Add log_format to config] ************************
+skipping: [target]
+
+TASK [riemers.gitlab-runner : Add log_level to config] *************************
+skipping: [target]
+
+TASK [riemers.gitlab-runner : Add sentry dsn to config] ************************
+skipping: [target]
+
+TASK [riemers.gitlab-runner : Add session server listen_address to config] *****
+ok: [target]
+
+TASK [riemers.gitlab-runner : Add session server advertise_address to config] ***
+ok: [target]
+
+TASK [riemers.gitlab-runner : Add session server session_timeout to config] ****
+ok: [target]
+
+TASK [riemers.gitlab-runner : (Unix) Configure GitLab Runner] ******************
+included: /tmp/tmp.ss8YI34b7m/roles/riemers.gitlab-runner/tasks/config-runners.yml for target
+
+TASK [riemers.gitlab-runner : Get existing config.toml] ************************
+ok: [target]
+
+TASK [riemers.gitlab-runner : Get pre-existing runner configs] *****************
+ok: [target]
+
+TASK [riemers.gitlab-runner : Create temporary directory] **********************
+ok: [target]
+
+TASK [riemers.gitlab-runner : Write config section for each runner] ************
+included: /tmp/tmp.ss8YI34b7m/roles/riemers.gitlab-runner/tasks/config-runner.yml for target => (item=(censored due to no_log))
+
+TASK [riemers.gitlab-runner : Create temporary file conf[1/1]:] ****************
+ok: [target]
+
+TASK [riemers.gitlab-runner : Isolate runner configuration conf[1/1]:] *********
+ok: [target]
+
+TASK [riemers.gitlab-runner : Update config] ***********************************
+skipping: [target] => (item={'name': 'debuerreotype', 'state': 'present', 'executor': 'shell', 'output_limit': 4096, 'concurrent_specific': '0', 'docker_image': '', 'tags': [], 'run_untagged': True, 'protected': False, 'docker_privileged': False, 'locked': 'false', 'docker_network_mode': 'bridge', 'env_vars': []}) 
+skipping: [target]
+
+TASK [riemers.gitlab-runner : Remove runner config conf[1/1]:] *****************
+skipping: [target] => (item={'name': 'debuerreotype', 'state': 'present', 'executor': 'shell', 'output_limit': 4096, 'concurrent_specific': '0', 'docker_image': '', 'tags': [], 'run_untagged': True, 'protected': False, 'docker_privileged': False, 'locked': 'false', 'docker_network_mode': 'bridge', 'env_vars': []}) 
+skipping: [target]
+
+TASK [riemers.gitlab-runner : Assemble new config.toml] ************************
+ok: [target]
+
+TASK [riemers.gitlab-runner : (Unix) Load main tasks] **************************
+skipping: [target]
+
+TASK [riemers.gitlab-runner : Install GitLab Runner (Windows)] *****************
+skipping: [target]
+
+PLAY RECAP *********************************************************************
+target                     : ok=40   changed=0    unreachable=0    failed=0    skipped=19   rescued=0    ignored=0   
+

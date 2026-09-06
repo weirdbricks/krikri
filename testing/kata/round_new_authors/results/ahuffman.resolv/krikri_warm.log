@@ -1,0 +1,39 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.uKuILwbEia/play.yml
+======================================================================
+
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+ok: [10.99.19.2]
+
+TASK [ahuffman.resolv : Configure resolv.conf]
+**********************************************************************
+failed: [10.99.19.2]
+  Message: Failed to render template: can't iterate over undefined
+template: <string>:9:1 .. 12:0
+
+  7 | domain {{ resolv_domain }}
+  8 | {% endif %}
+  9 | {% for ns in resolv_nameservers %}
+  X | ^
+ 10 | nameserver {{ ns }}
+ 11 | {% endfor %}
+ 12 | {% if (resolv_sortlist is defined and resolv_sortlist | length > 0) | pytruthy %}
+ 13 | {% for sl in resolv_sortlist %}
+ 14 | sortlist {{ sl }}
+
+
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=1  changed=0  unreachable=0  failed=1  skipped=0  rescued=0  ignored=0
+
+✗ Playbook execution completed with failures
+

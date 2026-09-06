@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'docker', owned by krzysztof-magosa
+- downloading role from https://github.com/krzysztof-magosa/ansible-role-docker/archive/0.7.0.tar.gz
+- extracting krzysztof-magosa.docker to /tmp/tmp.yF0VtwGdCX/roles/krzysztof-magosa.docker
+- krzysztof-magosa.docker (0.7.0) was installed successfully

@@ -1,0 +1,29 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [ajsalminen.hosts : Include OS-specific variables.] ***********************
+skipping: [target]
+
+TASK [ajsalminen.hosts : include_tasks] ****************************************
+included: /tmp/tmp.v1RTj2Hbwn/roles/ajsalminen.hosts/tasks/hostname.yml for target
+
+TASK [ajsalminen.hosts : Set up /etc/hostname.] ********************************
+changed: [target] => (item=/tmp/tmp.v1RTj2Hbwn/roles/ajsalminen.hosts/templates/hostname.j2)
+
+TASK [ajsalminen.hosts : include_tasks] ****************************************
+included: /tmp/tmp.v1RTj2Hbwn/roles/ajsalminen.hosts/tasks/hosts.yml for target
+
+TASK [ajsalminen.hosts : Set up /etc/hosts.] ***********************************
+changed: [target] => (item=/tmp/tmp.v1RTj2Hbwn/roles/ajsalminen.hosts/templates/hosts.j2)
+
+TASK [ajsalminen.hosts : Set up /etc/hosts (override).] ************************
+skipping: [target]
+
+PLAY RECAP *********************************************************************
+target                     : ok=5    changed=2    unreachable=0    failed=0    skipped=2    rescued=0    ignored=0   
+

@@ -1,0 +1,5 @@
+role=nginxinc.nginx
+ansible_cold_rc=0 recap: target                     : ok=24   changed=6    unreachable=0    failed=0    skipped=30   rescued=0    ignored=0   
+krikri_cold_rc=2 recap: target               : ok=22  changed=5  unreachable=0  failed=1  skipped=25  rescued=0  ignored=0
+ansible_warm_rc=0 recap: target                     : ok=22   changed=0    unreachable=0    failed=0    skipped=29   rescued=0    ignored=0   
+krikri_warm_rc=0 recap: target               : ok=22  changed=0  unreachable=0  failed=0  skipped=29  rescued=0  ignored=0

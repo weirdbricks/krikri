@@ -1,0 +1,35 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [ansistrano.rollback : include_tasks] *************************************
+included: /tmp/tmp.uXs7tslc1n/roles/ansistrano.rollback/tasks/empty.yml for target
+
+TASK [ansistrano.rollback : include_tasks] *************************************
+included: /tmp/tmp.uXs7tslc1n/roles/ansistrano.rollback/tasks/setup.yml for target
+
+TASK [ansistrano.rollback : ANSISTRANO | Get releases path] ********************
+ok: [target]
+
+TASK [ansistrano.rollback : ANSISTRANO | Gather releases] **********************
+[WARNING]: Skipped '/var/www/my-app/releases' path due to this access issue: '/var/www/my-app/releases' is not a directory
+ok: [target]
+
+TASK [ansistrano.rollback : ANSISTRANO | Check if there is more than one release] ***
+[ERROR]: Task failed: Action failed: Could not roll back the code because there is no prior release
+Origin: /tmp/tmp.uXs7tslc1n/roles/ansistrano.rollback/tasks/setup.yml:13:3
+
+11   register: ansistrano_releases
+12
+13 - name: ANSISTRANO | Check if there is more than one release
+     ^ column 3
+
+fatal: [target]: FAILED! => {"changed": false, "msg": "Could not roll back the code because there is no prior release"}
+
+PLAY RECAP *********************************************************************
+target                     : ok=5    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

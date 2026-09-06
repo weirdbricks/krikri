@@ -1,0 +1,28 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [ahuffman.resolv : Configure resolv.conf] *********************************
+[ERROR]: Task failed: 'resolv_nameservers' is undefined
+
+Task failed.
+Origin: /tmp/tmp.uKuILwbEia/roles/ahuffman.resolv/tasks/main.yml:2:3
+
+1 ---
+2 - name: "Configure resolv.conf"
+    ^ column 3
+
+<<< caused by >>>
+
+'resolv_nameservers' is undefined
+Origin: /tmp/tmp.uKuILwbEia/roles/ahuffman.resolv/templates/resolv.conf.j2
+
+fatal: [target]: FAILED! => {"changed": false, "msg": "Task failed: 'resolv_nameservers' is undefined"}
+
+PLAY RECAP *********************************************************************
+target                     : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

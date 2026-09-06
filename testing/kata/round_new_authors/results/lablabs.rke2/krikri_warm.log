@@ -1,0 +1,30 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.ikgIvA2a22/play.yml
+======================================================================
+
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+ok: [10.99.211.2]
+
+TASK [lablabs.rke2 : Validating arguments against arg spec 'main' - This is the main entrypoint for the lablabs.rke2 role.]
+**********************************************************************
+ok: [target]
+
+TASK [lablabs.rke2 : Install Keepalived when HA mode is enabled]
+**********************************************************************
+fatal: [10.99.211.2]: FAILED! => Error while evaluating conditional: 'groups[rke2_servers_group_name]' is undefined
+
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=2  changed=0  unreachable=0  failed=1  skipped=0  rescued=0  ignored=0
+
+✗ Playbook execution completed with failures
+

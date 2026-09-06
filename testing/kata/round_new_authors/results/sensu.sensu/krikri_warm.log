@@ -1,0 +1,55 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.g4XbA9io2F/play.yml
+======================================================================
+
+Warnings:
+  ⚠️  Task 'Ensure Sensu RabbitMQ vhost exists' uses unimplemented plugin: rabbitmq_vhost
+  ⚠️  Task 'Ensure Sensu RabbitMQ user has access to the Sensu vhost' uses unimplemented plugin: rabbitmq_user
+
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+ok: [10.99.131.2]
+
+TASK [sensu.sensu : Include distribution specific variables]
+**********************************************************************
+ok: [target]
+
+TASK [sensu.sensu : include_tasks]
+**********************************************************************
+
+included: /tmp/tmp.g4XbA9io2F/roles/sensu.sensu/tasks/Debian/main.yml for 10.99.131.2
+
+TASK [sensu.sensu : Include ansible_distribution vars]
+**********************************************************************
+ok: [target]
+
+TASK [sensu.sensu : Ensure apt-transport-https is installed]
+**********************************************************************
+ok: [10.99.131.2]
+  Package apt-transport-https already installed
+
+TASK [sensu.sensu : Ensure that gnupg is installed for apt_key]
+**********************************************************************
+ok: [10.99.131.2]
+  Package gnupg already installed
+
+TASK [sensu.sensu : Ensure the Sensu APT repo GPG key is present]
+**********************************************************************
+failed: [10.99.131.2]
+  Message: Failed to fetch key from https://eol-repositories.sensuapp.org/apt/pubkey.gpg: curl: (6) Could not resolve host: eol-repositories.sensuapp.org
+
+
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=6  changed=0  unreachable=0  failed=1  skipped=0  rescued=0  ignored=0
+
+✗ Playbook execution completed with failures
+

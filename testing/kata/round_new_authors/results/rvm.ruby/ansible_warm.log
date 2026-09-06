@@ -1,0 +1,28 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [rvm.ruby : Detect rvm binary] ********************************************
+[ERROR]: Task failed: Action failed: Module result deserialization failed: No start of json char found
+
+Task failed: Action failed.
+Origin: /tmp/tmp.Di3CVIR7ly/roles/rvm.ruby/tasks/rvm.yml:3:3
+
+1 ---
+2
+3 - name: Detect rvm binary
+    ^ column 3
+
+<<< caused by >>>
+
+Module result deserialization failed: No start of json char found See stdout/stderr for the returned output.
+
+fatal: [target]: FAILED! => {"changed": false, "module_stderr": "/bin/sh: 1: sudo: not found\n", "module_stdout": "", "msg": "Module result deserialization failed: No start of json char found", "rc": 127}
+
+PLAY RECAP *********************************************************************
+target                     : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

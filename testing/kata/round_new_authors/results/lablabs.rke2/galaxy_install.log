@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'rke2', owned by lablabs
+- downloading role from https://github.com/lablabs/ansible-role-rke2/archive/1.53.1.tar.gz
+- extracting lablabs.rke2 to /tmp/tmp.ikgIvA2a22/roles/lablabs.rke2
+- lablabs.rke2 (1.53.1) was installed successfully

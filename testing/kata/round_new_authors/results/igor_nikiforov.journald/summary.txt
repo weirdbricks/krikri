@@ -1,0 +1,5 @@
+role=igor_nikiforov.journald
+ansible_cold_rc=2 recap: target                     : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+krikri_cold_rc=2 recap: target               : ok=0  changed=0  unreachable=0  failed=2  skipped=0  rescued=0  ignored=0
+ansible_warm_rc=2 recap: target                     : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+krikri_warm_rc=2 recap: target               : ok=0  changed=0  unreachable=0  failed=2  skipped=0  rescued=0  ignored=0

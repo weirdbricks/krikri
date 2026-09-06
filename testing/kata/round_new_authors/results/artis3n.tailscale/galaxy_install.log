@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'tailscale', owned by artis3n
+- downloading role from https://github.com/artis3n/tailscale/archive/v5.0.1.tar.gz
+- extracting artis3n.tailscale to /tmp/tmp.U4SNzPf7G1/roles/artis3n.tailscale
+- artis3n.tailscale (v5.0.1) was installed successfully

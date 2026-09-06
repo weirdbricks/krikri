@@ -1,0 +1,104 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.3vTM5C9MYe/play.yml
+======================================================================
+
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+ok: [10.99.13.2]
+
+TASK [ansistrano.deploy : ANSISTRANO | Mark release as not activated]
+**********************************************************************
+ok: [10.99.13.2]
+
+TASK [ansistrano.deploy : include_tasks]
+**********************************************************************
+
+TASK [ansistrano.deploy : include_tasks]
+**********************************************************************
+
+included: /tmp/tmp.3vTM5C9MYe/roles/ansistrano.deploy/tasks/setup.yml for 10.99.13.2
+
+TASK [ansistrano.deploy : ANSISTRANO | Ensure deployment base path exists]
+**********************************************************************
+ok: [10.99.13.2]
+  Directory attributes updated
+
+TASK [ansistrano.deploy : ANSISTRANO | Ensure releases folder exists]
+**********************************************************************
+ok: [10.99.13.2]
+  Directory attributes updated
+
+TASK [ansistrano.deploy : ANSISTRANO | Ensure shared elements folder exists]
+**********************************************************************
+ok: [10.99.13.2]
+  Directory attributes updated
+
+TASK [ansistrano.deploy : ANSISTRANO | Ensure shared paths exists]
+**********************************************************************
+skipping: [10.99.13.2]
+
+TASK [ansistrano.deploy : ANSISTRANO | Ensure basedir shared files exists]
+**********************************************************************
+skipping: [10.99.13.2]
+
+TASK [ansistrano.deploy : include_tasks]
+**********************************************************************
+
+TASK [ansistrano.deploy : include_tasks]
+**********************************************************************
+
+TASK [ansistrano.deploy : include_tasks]
+**********************************************************************
+
+included: /tmp/tmp.3vTM5C9MYe/roles/ansistrano.deploy/tasks/update-code.yml for 10.99.13.2
+
+TASK [ansistrano.deploy : ANSISTRANO | Get release version]
+**********************************************************************
+ok: [10.99.13.2]
+
+TASK [ansistrano.deploy : ANSISTRANO | Get release path]
+**********************************************************************
+ok: [10.99.13.2]
+
+TASK [ansistrano.deploy : include_tasks]
+**********************************************************************
+
+included: /tmp/tmp.3vTM5C9MYe/roles/ansistrano.deploy/tasks/update-code/rsync.yml for 10.99.13.2
+
+TASK [ansistrano.deploy : ANSISTRANO | RSYNC | Get shared path (in rsync case)]
+**********************************************************************
+ok: [10.99.13.2]
+
+TASK [ansistrano.deploy : ANSISTRANO | RSYNC | Rsync application files to remote shared copy]
+**********************************************************************
+skipping: [10.99.13.2]
+
+TASK [ansistrano.deploy : ANSISTRANO | RSYNC | Deploy existing code to servers]
+**********************************************************************
+failed: [10.99.13.2]
+  Message: Missing required parameter: cmd
+
+TASK [ansistrano.deploy : ANSISTRANO | Remove failed release]
+**********************************************************************
+ok: [10.99.13.2]
+  Path already absent
+
+TASK [ansistrano.deploy : fail]
+**********************************************************************
+failed: [10.99.13.2]
+  Message: Deployment failed in task unknown task: 
+
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=15  changed=0  unreachable=0  failed=1  skipped=3  rescued=1  ignored=0
+
+✗ Playbook execution completed with unavailable modules: synchronize
+

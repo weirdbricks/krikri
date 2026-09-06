@@ -29,7 +29,28 @@ Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
-(None.)
+- **`file:` module fails a missing-path `recurse:` target that real Ansible
+  accepts** (`dev-sec.nginx-hardening`, round6017): `file: path=/etc/nginx
+  mode=o-rw recurse=yes` with no explicit `state:` and `/etc/nginx` genuinely
+  absent (nginx not installed). Real ansible-playbook reports the task
+  `changed=true` and moves on; krikri fails it outright ("File does not
+  exist: /etc/nginx. Use state=touch to create it."). Not root-caused yet -
+  needs a look at real Ansible's own `file` module semantics for a missing
+  path combined with `recurse:` and no `state:`.
+
+---
+
+## Round 6008-6019 (second krikri-role-tester round / stability check, 8 new-author roles, 0.9.761)
+
+One new open gap (`file:` on a missing `recurse:` target, above) plus a third real bug found in
+the `krikri-role-tester` harness itself: `Cmd.run` passed its env to `Process.new` without
+`clear_env: true`, so Crystal's default merge-onto-parent-env behavior let this control machine's
+own ambient `ANSIBLE_CACHE_PLUGIN`/`ANSIBLE_CACHE_PLUGIN_CONNECTION` leak into every engine
+subprocess regardless of `Cmd.engine_env`'s stripping - poisoning real ansible-playbook's fact
+cache (keyed by the harness's generic, round-independent `pyhost` alias) with a stale interpreter
+path from an unrelated earlier host, false-failing 4 of the round's 8 Kata roles identically on
+both engines. Fixed with a regression spec; those 4 roles re-run clean after clearing the poisoned
+cache. See `ROLES_TESTED.md` for full per-role detail.
 
 ---
 

@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'resolv', owned by ahuffman
+- downloading role from https://github.com/ahuffman/ansible-resolv/archive/1.3.2.tar.gz
+- extracting ahuffman.resolv to /tmp/tmp.uKuILwbEia/roles/ahuffman.resolv
+- ahuffman.resolv (1.3.2) was installed successfully

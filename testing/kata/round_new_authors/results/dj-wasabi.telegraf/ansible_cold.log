@@ -1,0 +1,68 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [dj-wasabi.telegraf : Install on RedHat] **********************************
+skipping: [target]
+
+TASK [dj-wasabi.telegraf : Install on Debian] **********************************
+included: /tmp/tmp.NzkZBZzRJ9/roles/dj-wasabi.telegraf/tasks/Debian.yml for target
+
+TASK [dj-wasabi.telegraf : Debian | Set name if state != latest] ***************
+ok: [target]
+
+TASK [dj-wasabi.telegraf : Debian | Set telegraf_agent_package_arch] ***********
+ok: [target]
+
+TASK [dj-wasabi.telegraf : Debian | Set telegraf_agent_package_arch specific for x86_64] ***
+ok: [target]
+
+TASK [dj-wasabi.telegraf : Debian | Set telegraf_agent_package_arch specific for arm64] ***
+skipping: [target]
+
+TASK [dj-wasabi.telegraf : Debian | Ensure the system can use the HTTPS transport for APT] ***
+ok: [target]
+
+TASK [dj-wasabi.telegraf : Debian | Install APT HTTPS transport] ***************
+skipping: [target]
+
+TASK [dj-wasabi.telegraf : Debian | Download Telegraf apt key] *****************
+skipping: [target]
+
+TASK [dj-wasabi.telegraf : Debian | Ensure the shared keyrings directory exists] ***
+ok: [target]
+
+TASK [dj-wasabi.telegraf : Debian | Create shared keyrings directory] **********
+skipping: [target]
+
+TASK [dj-wasabi.telegraf : Debian | Install Telegraf apt key] ******************
+[WARNING]: Module remote_tmp /root/.ansible/tmp did not exist and was created with a mode of 0700, this may cause issues when running as another user. To avoid this, create the remote_tmp dir with the correct permissions manually
+changed: [target]
+
+TASK [dj-wasabi.telegraf : Debian | Set Telegraf apt repository parameters] ****
+ok: [target]
+
+TASK [dj-wasabi.telegraf : Debian | Add Telegraf repository] *******************
+changed: [target]
+
+TASK [dj-wasabi.telegraf : Debian | Install Telegraf package (repo)] ***********
+FAILED - RETRYING: [target]: Debian | Install Telegraf package (repo) (3 retries left).
+FAILED - RETRYING: [target]: Debian | Install Telegraf package (repo) (2 retries left).
+FAILED - RETRYING: [target]: Debian | Install Telegraf package (repo) (1 retries left).
+[ERROR]: Task failed: Module failed: no available installation candidate for telegraf=1.18.2-1
+Origin: /tmp/tmp.NzkZBZzRJ9/roles/dj-wasabi.telegraf/tasks/Debian.yml:89:7
+
+87       become: yes
+88     
+89     - name: "Debian | Install Telegraf package (repo)"
+         ^ column 7
+
+fatal: [target]: FAILED! => {"attempts": 3, "cache_update_time": 1788643267, "cache_updated": false, "changed": false, "msg": "no available installation candidate for telegraf=1.18.2-1"}
+
+PLAY RECAP *********************************************************************
+target                     : ok=10   changed=2    unreachable=0    failed=1    skipped=5    rescued=0    ignored=0   
+

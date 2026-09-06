@@ -1,0 +1,53 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.ss8YI34b7m/play.yml
+======================================================================
+
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+ok: [10.99.141.2]
+
+TASK [riemers.gitlab-runner : Load platform-specific variables]
+**********************************************************************
+ok: [target]
+
+TASK [riemers.gitlab-runner : Validate GitLab Runner configurations]
+**********************************************************************
+TASK [riemers.gitlab-runner : Check for deprecated settings: debuerreotype-]
+**********************************************************************
+ok: [10.99.141.2] => (item=pre_clone_script)
+  All assertions passed
+
+
+TASK [riemers.gitlab-runner : Install Gitlab Runner (Container)]
+**********************************************************************
+skipping: [10.99.141.2]
+
+TASK [riemers.gitlab-runner : Install GitLab Runner (Unix)]
+**********************************************************************
+
+included: /tmp/tmp.ss8YI34b7m/roles/riemers.gitlab-runner/tasks/main-unix.yml for 10.99.141.2
+
+TASK [riemers.gitlab-runner : Install GitLab Runner (Debian)]
+**********************************************************************
+
+included: /tmp/tmp.ss8YI34b7m/roles/riemers.gitlab-runner/tasks/install-debian.yml for 10.99.141.2
+
+TASK [riemers.gitlab-runner : (Debian) Refresh package cache]
+**********************************************************************
+failed: [10.99.141.2]
+  Message: Missing required parameter: name (unless using update_cache)
+
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=6  changed=0  unreachable=0  failed=1  skipped=1  rescued=0  ignored=0
+
+✗ Playbook execution completed with failures
+

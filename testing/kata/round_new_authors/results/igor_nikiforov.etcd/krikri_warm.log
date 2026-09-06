@@ -1,0 +1,62 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.GpMTHKbP2j/play.yml
+======================================================================
+
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+ok: [10.99.17.2]
+
+TASK [igor_nikiforov.etcd : Create etcd group]
+**********************************************************************
+ok: [10.99.17.2]
+  Group already up to date
+
+TASK [igor_nikiforov.etcd : Create etcd user]
+**********************************************************************
+ok: [10.99.17.2]
+  User already up to date
+
+TASK [igor_nikiforov.etcd : Download and install etcd 3.4.13]
+**********************************************************************
+ok: [10.99.17.2]
+
+TASK [igor_nikiforov.etcd : Create etcd directory structure]
+**********************************************************************
+ok: [10.99.17.2] => (item=/etc/etcd/certs)
+  Directory attributes updated
+ok: [10.99.17.2] => (item=undefined)
+  Directory attributes updated
+ok: [10.99.17.2] => (item=undefined)
+  Directory attributes updated
+
+TASK [igor_nikiforov.etcd : Create etcd systemd service]
+**********************************************************************
+ok: [10.99.17.2]
+
+TASK [igor_nikiforov.etcd : Create etcd configuration file]
+**********************************************************************
+ok: [10.99.17.2]
+
+TASK [igor_nikiforov.etcd : Configure etcdctl connection properties]
+**********************************************************************
+ok: [10.99.17.2]
+
+TASK [igor_nikiforov.etcd : Start etcd]
+**********************************************************************
+ok: [10.99.17.2]
+  No changes needed
+
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=9  changed=0  unreachable=0  failed=0  skipped=0  rescued=0  ignored=0
+
+✓ Playbook execution complete
+

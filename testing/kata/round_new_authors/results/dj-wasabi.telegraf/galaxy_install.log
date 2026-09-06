@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'telegraf', owned by dj-wasabi
+- downloading role from https://github.com/dj-wasabi/ansible-telegraf/archive/0.14.1.tar.gz
+- extracting dj-wasabi.telegraf to /tmp/tmp.NzkZBZzRJ9/roles/dj-wasabi.telegraf
+- dj-wasabi.telegraf (0.14.1) was installed successfully

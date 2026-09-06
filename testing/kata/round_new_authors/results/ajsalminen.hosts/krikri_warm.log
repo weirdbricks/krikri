@@ -1,0 +1,48 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.v1RTj2Hbwn/play.yml
+======================================================================
+
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+ok: [10.99.13.2]
+
+TASK [ajsalminen.hosts : Include OS-specific variables.]
+**********************************************************************
+skipping: [10.99.13.2]
+
+TASK [ajsalminen.hosts : include_tasks]
+**********************************************************************
+
+included: /tmp/tmp.v1RTj2Hbwn/roles/ajsalminen.hosts/tasks/hostname.yml for 10.99.13.2
+
+TASK [ajsalminen.hosts : Set up /etc/hostname.]
+**********************************************************************
+ok: [10.99.13.2] => (item=/tmp/tmp.v1RTj2Hbwn/roles/ajsalminen.hosts/tasks/../templates/hostname.j2)
+
+TASK [ajsalminen.hosts : include_tasks]
+**********************************************************************
+
+included: /tmp/tmp.v1RTj2Hbwn/roles/ajsalminen.hosts/tasks/hosts.yml for 10.99.13.2
+
+TASK [ajsalminen.hosts : Set up /etc/hosts.]
+**********************************************************************
+ok: [10.99.13.2] => (item=/tmp/tmp.v1RTj2Hbwn/roles/ajsalminen.hosts/tasks/../templates/hosts.j2)
+
+TASK [ajsalminen.hosts : Set up /etc/hosts (override).]
+**********************************************************************
+skipping: [10.99.13.2]
+
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=5  changed=0  unreachable=0  failed=0  skipped=2  rescued=0  ignored=0
+
+✓ Playbook execution complete
+

@@ -1,0 +1,103 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.xgAgq2XOKo/play.yml
+======================================================================
+
+Warnings:
+  ⚠️  Task 'Create context for nexus binary on selinux systems.' uses unimplemented plugin: community.general.sefcontext
+
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+ok: [10.99.25.2]
+
+TASK [ansible-ThoTeam.nexus3-oss : Try to use jmespath on a test var]
+**********************************************************************
+ok: [10.99.25.2]
+
+TASK [ansible-ThoTeam.nexus3-oss : Broken compatibility => nexus_package is now dynamically calculated]
+**********************************************************************
+skipping: [10.99.25.2]
+
+TASK [ansible-ThoTeam.nexus3-oss : Broken compatibility => purge var moved to nexus_purge]
+**********************************************************************
+skipping: [10.99.25.2]
+
+TASK [ansible-ThoTeam.nexus3-oss : Variable refactoring - public_hostname is now nexus_public_hostname]
+**********************************************************************
+skipping: [10.99.25.2]
+
+TASK [ansible-ThoTeam.nexus3-oss : Coding standard: proxy_url is not supported anymore for docker proxy repos]
+**********************************************************************
+skipping: [10.99.25.2]
+
+TASK [Print debug message about our internal var]
+**********************************************************************
+skipping: [10.99.25.2]
+
+TASK [Fail as we cannot run correctly with internal var set]
+**********************************************************************
+skipping: [10.99.25.2]
+
+TASK [ansible-ThoTeam.nexus3-oss : Make sure nexus_custom_jvm_settings follow our contraints]
+**********************************************************************
+ok: [10.99.25.2]
+  All assertions passed
+
+TASK [ansible-ThoTeam.nexus3-oss : Include OS specific variables.]
+**********************************************************************
+ok: [target]
+
+TASK [ansible-ThoTeam.nexus3-oss : Include OS specific selinux libs and utils if needed]
+**********************************************************************
+skipping: [10.99.25.2]
+
+TASK [ansible-ThoTeam.nexus3-oss : Check if SystemD service is installed]
+**********************************************************************
+ok: [10.99.25.2]
+
+TASK [ansible-ThoTeam.nexus3-oss : Check if sysv service is installed]
+**********************************************************************
+ok: [10.99.25.2]
+
+TASK [ansible-ThoTeam.nexus3-oss : Purge nexus if asked (i.e. delete all data)]
+**********************************************************************
+skipping: [10.99.25.2]
+
+TASK [ansible-ThoTeam.nexus3-oss : Digest splited blob list var]
+**********************************************************************
+skipping: [10.99.25.2]
+
+TASK [ansible-ThoTeam.nexus3-oss : Set detection method to fixed if we have a var]
+**********************************************************************
+skipping: [10.99.25.2]
+
+TASK [ansible-ThoTeam.nexus3-oss : Check nexus-latest link stat in /opt]
+**********************************************************************
+ok: [10.99.25.2]
+
+TASK [ansible-ThoTeam.nexus3-oss : Register current running version if any]
+**********************************************************************
+skipping: [10.99.25.2]
+
+TASK [ansible-ThoTeam.nexus3-oss : Register nexus_version from currently installed]
+**********************************************************************
+skipping: [10.99.25.2]
+
+TASK [ansible-ThoTeam.nexus3-oss : Call latest nexus uri to get redirection]
+**********************************************************************
+failed: [10.99.25.2]
+  Message: Status code was 400 and not [302]
+
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=7  changed=0  unreachable=0  failed=1  skipped=12  rescued=0  ignored=0
+
+✗ Playbook execution completed with failures
+

@@ -1,0 +1,48 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [lablabs.rke2 : Validating arguments against arg spec 'main' - This is the main entrypoint for the lablabs.rke2 role.] ***
+[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.validate_argument_spec' failed: Error while resolving value for 'argument_spec': object of type 'dict' has no attribute 'masters'
+
+Task failed.
+Origin: <unknown>
+
+{'action': 'ansible.builtin.validate_argument_spec', 'args': {'argument_spec': {'rke2_allow_downgrade': {'type': [...]
+
+<<< caused by >>>
+
+Finalization of task args for 'ansible.builtin.validate_argument_spec' failed.
+Origin: <unknown>
+
+ansible.builtin.validate_argument_spec
+
+<<< caused by >>>
+
+Error while resolving value for 'argument_spec'.
+Origin: /tmp/tmp.ikgIvA2a22/roles/lablabs.rke2/meta/argument_specs.yml:14:7
+
+12       - Michal Muransky
+13     options:
+14       rke2_allow_downgrade:
+         ^ column 7
+
+<<< caused by >>>
+
+object of type 'dict' has no attribute 'masters'
+Origin: /tmp/tmp.ikgIvA2a22/roles/lablabs.rke2/meta/argument_specs.yml:22:18
+
+20         type: str
+21         choices: ["server", "agent"]
+22         default: "{{ 'server' if inventory_hostname in groups[rke2_servers_group_name] else 'agent' if inventory_h...
+                    ^ column 18
+
+fatal: [target]: FAILED! => {"changed": false, "msg": "Task failed: Finalization of task args for 'ansible.builtin.validate_argument_spec' failed: Error while resolving value for 'argument_spec': object of type 'dict' has no attribute 'masters'"}
+
+PLAY RECAP *********************************************************************
+target                     : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

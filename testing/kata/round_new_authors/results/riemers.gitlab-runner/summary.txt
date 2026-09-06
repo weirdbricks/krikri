@@ -1,0 +1,5 @@
+role=riemers.gitlab-runner
+ansible_cold_rc=0 recap: target                     : ok=39   changed=7    unreachable=0    failed=0    skipped=20   rescued=0    ignored=0   
+krikri_cold_rc=2 recap: target               : ok=6  changed=0  unreachable=0  failed=1  skipped=1  rescued=0  ignored=0
+ansible_warm_rc=0 recap: target                     : ok=40   changed=0    unreachable=0    failed=0    skipped=19   rescued=0    ignored=0   
+krikri_warm_rc=2 recap: target               : ok=6  changed=0  unreachable=0  failed=1  skipped=1  rescued=0  ignored=0

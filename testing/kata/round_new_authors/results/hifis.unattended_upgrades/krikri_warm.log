@@ -1,0 +1,77 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.z8gjYjpuT6/play.yml
+======================================================================
+
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+ok: [10.99.217.2]
+
+TASK [hifis.unattended_upgrades : Add distribution-specific variables]
+**********************************************************************
+ok: [target]
+
+TASK [hifis.unattended_upgrades : Install powermgmt-base]
+**********************************************************************
+skipping: [10.99.217.2]
+
+TASK [hifis.unattended_upgrades : Install unattended-upgrades]
+**********************************************************************
+ok: [10.99.217.2]
+  Package unattended-upgrades already installed
+
+TASK [hifis.unattended_upgrades : Install update-notifier-common]
+**********************************************************************
+skipping: [10.99.217.2]
+
+TASK [hifis.unattended_upgrades : Create Apt auto-upgrades & unattended-upgrades configuration]
+**********************************************************************
+ok: [10.99.217.2]
+
+TASK [hifis.unattended_upgrades : Test apt-daily timer expression]
+**********************************************************************
+skipping: [10.99.217.2]
+
+TASK [hifis.unattended_upgrades : Test apt-daily-upgrade timer expression]
+**********************************************************************
+skipping: [10.99.217.2]
+
+TASK [hifis.unattended_upgrades : Ensure directory apt-daily.timer.d exists]
+**********************************************************************
+skipping: [10.99.217.2]
+
+TASK [hifis.unattended_upgrades : Ensure directory apt-daily-upgrade.timer.d exists]
+**********************************************************************
+skipping: [10.99.217.2]
+
+TASK [hifis.unattended_upgrades : Deploy apt-daily timer]
+**********************************************************************
+skipping: [10.99.217.2]
+
+TASK [hifis.unattended_upgrades : Deploy apt-daily-upgrade timer]
+**********************************************************************
+skipping: [10.99.217.2]
+
+TASK [hifis.unattended_upgrades : Remove apt-daily timer override]
+**********************************************************************
+ok: [10.99.217.2]
+  Path already absent
+
+TASK [hifis.unattended_upgrades : Remove apt-daily-upgrade timer override]
+**********************************************************************
+ok: [10.99.217.2]
+  Path already absent
+
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=6  changed=0  unreachable=0  failed=0  skipped=8  rescued=0  ignored=0
+
+✓ Playbook execution complete
+

@@ -1,0 +1,8 @@
+[WARNING]: A non-empty plugin name is required.
+[WARNING]: file /tmp/tmp.yF0VtwGdCX/roles/krzysztof-magosa.docker/tasks/config.yml is empty and had no tasks to include
+[ERROR]: The 'community.general.docker_service' module has been removed. Use community.docker.docker_compose instead. This feature was removed from collection 'community.general' version 2.0.0.
+Origin: /tmp/tmp.yF0VtwGdCX/roles/krzysztof-magosa.docker/tasks/services.yml:1:3
+
+1 - name: Configure docker services
+    ^ column 3
+

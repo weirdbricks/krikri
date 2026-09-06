@@ -1,0 +1,66 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.phlgmrt0ch/play.yml
+======================================================================
+
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+ok: [10.99.17.2]
+
+TASK [igor_nikiforov.docker : Detect architecture.]
+**********************************************************************
+
+included: /tmp/tmp.phlgmrt0ch/roles/igor_nikiforov.docker/tasks/detect-architecture.yml for 10.99.17.2
+
+TASK [igor_nikiforov.docker : Check if architecture is supported.]
+**********************************************************************
+skipping: [10.99.17.2]
+
+TASK [igor_nikiforov.docker : Set system architecture for x86_64/AMD64.]
+**********************************************************************
+ok: [10.99.17.2]
+
+TASK [igor_nikiforov.docker : Set system architecture for ARM64.]
+**********************************************************************
+skipping: [10.99.17.2]
+
+TASK [igor_nikiforov.docker : Set system architecture for armhf.]
+**********************************************************************
+skipping: [10.99.17.2]
+
+TASK [igor_nikiforov.docker : Set system architecture for s390x]
+**********************************************************************
+skipping: [10.99.17.2]
+
+TASK [igor_nikiforov.docker : Install Docker (RHEL).]
+**********************************************************************
+skipping: [10.99.17.2]
+
+TASK [igor_nikiforov.docker : Install Docker (Debian).]
+**********************************************************************
+
+included: /tmp/tmp.phlgmrt0ch/roles/igor_nikiforov.docker/tasks/install-docker-Debian.yml for 10.99.17.2
+
+TASK [igor_nikiforov.docker : Ensure old versions of Docker are not installed.]
+**********************************************************************
+ok: [10.99.17.2]
+  Packages docker, docker-engine, docker.io, containerd, runc not installed
+
+TASK [igor_nikiforov.docker : Add Docker apt key.]
+**********************************************************************
+failed: [10.99.17.2]
+  Message: Failed to fetch key from https://download.docker.com/linux/debian/gpg: Local execution failed: Error executing process: 'curl': No such file or directory
+
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=5  changed=0  unreachable=0  failed=1  skipped=5  rescued=0  ignored=0
+
+✗ Playbook execution completed with failures
+

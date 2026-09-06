@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'unattended_upgrades', owned by hifis
+- downloading role from https://github.com/hifis-net/ansible-role-unattended-upgrades/archive/v3.2.1.tar.gz
+- extracting hifis.unattended_upgrades to /tmp/tmp.z8gjYjpuT6/roles/hifis.unattended_upgrades
+- hifis.unattended_upgrades (v3.2.1) was installed successfully

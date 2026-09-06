@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'zabbix-agent', owned by dj-wasabi
+- downloading role from https://github.com/dj-wasabi/ansible-zabbix-agent/archive/2.3.0.tar.gz
+- extracting dj-wasabi.zabbix-agent to /tmp/tmp.wZtQpRg2Lr/roles/dj-wasabi.zabbix-agent
+- dj-wasabi.zabbix-agent (2.3.0) was installed successfully

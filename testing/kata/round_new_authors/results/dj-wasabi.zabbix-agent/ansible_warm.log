@@ -1,0 +1,65 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [dj-wasabi.zabbix-agent : Fix facts for linuxmint - distribution release] ***
+skipping: [target]
+
+TASK [dj-wasabi.zabbix-agent : Fix facts for linuxmint - family] ***************
+skipping: [target]
+
+TASK [dj-wasabi.zabbix-agent : Fix facts for XCP-ng - family] ******************
+skipping: [target]
+
+TASK [dj-wasabi.zabbix-agent : Include OS-specific variables] ******************
+ok: [target]
+
+TASK [dj-wasabi.zabbix-agent : Install the correct repository] *****************
+included: /tmp/tmp.wZtQpRg2Lr/roles/dj-wasabi.zabbix-agent/tasks/Debian.yml for target
+
+TASK [dj-wasabi.zabbix-agent : Include Zabbix gpg ids] *************************
+ok: [target]
+
+TASK [dj-wasabi.zabbix-agent : Set short version name] *************************
+ok: [target]
+
+TASK [dj-wasabi.zabbix-agent : Debian | Install gpg key] ***********************
+[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.apt_key' failed: Error while resolving value for 'id': object of type 'dict' has no attribute 'trixie'
+
+Task failed.
+Origin: /tmp/tmp.wZtQpRg2Lr/roles/dj-wasabi.zabbix-agent/tasks/Debian.yml:12:3
+
+10     zabbix_underscore_version: "{{ zabbix_version | regex_replace('\\.', '_') }}"
+11
+12 - name: "Debian | Install gpg key"
+     ^ column 3
+
+<<< caused by >>>
+
+Finalization of task args for 'ansible.builtin.apt_key' failed.
+Origin: /tmp/tmp.wZtQpRg2Lr/roles/dj-wasabi.zabbix-agent/tasks/Debian.yml:13:3
+
+11
+12 - name: "Debian | Install gpg key"
+13   apt_key:
+     ^ column 3
+
+<<< caused by >>>
+
+Error while resolving value for 'id': object of type 'dict' has no attribute 'trixie'
+Origin: /tmp/tmp.wZtQpRg2Lr/roles/dj-wasabi.zabbix-agent/tasks/Debian.yml:14:9
+
+12 - name: "Debian | Install gpg key"
+13   apt_key:
+14     id: "{{ sign_keys[zabbix_short_version][zabbix_agent_distribution_release]['sign_key'] }}"
+           ^ column 9
+
+fatal: [target]: FAILED! => {"changed": false, "msg": "Task failed: Finalization of task args for 'ansible.builtin.apt_key' failed: Error while resolving value for 'id': object of type 'dict' has no attribute 'trixie'"}
+
+PLAY RECAP *********************************************************************
+target                     : ok=5    changed=0    unreachable=0    failed=1    skipped=3    rescued=0    ignored=0   
+

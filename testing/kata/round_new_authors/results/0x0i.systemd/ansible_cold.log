@@ -1,0 +1,49 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [0x0i.systemd : Include common preflight tasks] ***************************
+included: /tmp/tmp.EdB0Q90oEI/roles/0x0i.systemd/tasks/common/preflight.yml for target
+
+TASK [0x0i.systemd : Resolve passwd entries for unit file owners] **************
+skipping: [target]
+
+TASK [0x0i.systemd : Ensure unit file owners exist in passwd] ******************
+skipping: [target]
+
+TASK [0x0i.systemd : Reject scope=user on PID 1 unit load paths] ***************
+skipping: [target]
+
+TASK [0x0i.systemd : Broadcast uninstall signal] *******************************
+skipping: [target]
+
+TASK [0x0i.systemd : Flush handlers to ensure uninstall is completed] **********
+skipping: [target]
+
+TASK [0x0i.systemd : Include common config tasks] ******************************
+included: /tmp/tmp.EdB0Q90oEI/roles/0x0i.systemd/tasks/common/config.yml for target
+
+TASK [0x0i.systemd : Create unit configuration path] ***************************
+skipping: [target]
+
+TASK [0x0i.systemd : Render systemd unit files] ********************************
+skipping: [target]
+
+TASK [0x0i.systemd : Render systemd drop-in files] *****************************
+skipping: [target]
+
+TASK [0x0i.systemd : Include common launch tasks] ******************************
+included: /tmp/tmp.EdB0Q90oEI/roles/0x0i.systemd/tasks/common/launch.yml for target
+
+TASK [0x0i.systemd : Force the reload of the modified systemd units] ***********
+
+TASK [0x0i.systemd : Activate configured Systemd units] ************************
+skipping: [target]
+
+PLAY RECAP *********************************************************************
+target                     : ok=4    changed=0    unreachable=0    failed=0    skipped=8    rescued=0    ignored=0   
+

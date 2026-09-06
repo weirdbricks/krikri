@@ -1,0 +1,50 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.wtbR1VTi6u/play.yml
+======================================================================
+
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+ok: [10.99.15.2]
+
+TASK [wezhai.minio : Create group if not exists]
+**********************************************************************
+changed: [10.99.15.2]
+  Group created
+
+TASK [wezhai.minio : Create user if not exists]
+**********************************************************************
+changed: [10.99.15.2]
+  User created
+
+TASK [wezhai.minio : Create dirs.]
+**********************************************************************
+changed: [10.99.15.2] => (item=/data/minio/bin)
+  Directory created
+changed: [10.99.15.2] => (item=/data/minio/cfg)
+  Directory created
+changed: [10.99.15.2] => (item=/data/minio/data)
+  Directory created
+changed: [10.99.15.2] => (item=/data/minio/log)
+  Directory created
+changed: [10.99.15.2] => (item=/opt/minio)
+  Directory created
+
+TASK [wezhai.minio : Unpack minio.tar.gz]
+**********************************************************************
+failed: [10.99.15.2]
+  Message: Source 'minio.tar.gz' failed to transfer
+
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=4  changed=3  unreachable=0  failed=1  skipped=0  rescued=0  ignored=0
+
+✗ Playbook execution completed with failures
+

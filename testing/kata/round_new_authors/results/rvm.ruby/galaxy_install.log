@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'ruby', owned by rvm
+- downloading role from https://github.com/rvm/rvm1-ansible/archive/v2.1.2.tar.gz
+- extracting rvm.ruby to /tmp/tmp.Di3CVIR7ly/roles/rvm.ruby
+- rvm.ruby (v2.1.2) was installed successfully

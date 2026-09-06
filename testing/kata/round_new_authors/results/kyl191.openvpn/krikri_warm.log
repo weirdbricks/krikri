@@ -1,0 +1,166 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.c7o2qHtt7R/play.yml
+======================================================================
+
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+ok: [10.99.161.2]
+
+TASK [kyl191.openvpn : validate | Warn about deprecated openvpn_ci_build usage]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [kyl191.openvpn : validate | Fail if both IPv4 and IPv6 tunnel networks are disabled]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [kyl191.openvpn : validate | Initialize long client CNs list]
+**********************************************************************
+ok: [10.99.161.2]
+
+TASK [kyl191.openvpn : validate | Collect clients with CN exceeding 64 characters]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [validate | Assert CA CN length (strict mode)]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [validate | Assert server CN length (strict mode)]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [validate | Fail if any client CN too long (strict mode)]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [kyl191.openvpn : validate | Warn if CA CN exceeds 64 chars (warning mode)]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [kyl191.openvpn : validate | Warn if server CN exceeds 64 chars (warning mode)]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [kyl191.openvpn : validate | Warn about long client CNs (warning mode)]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [kyl191.openvpn : Include vars for OpenVPN installation]
+**********************************************************************
+ok: [target]
+
+TASK [kyl191.openvpn : uninstall | Disable openvpn auto-start & start]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [kyl191.openvpn : uninstall | Wipe out config directory]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [kyl191.openvpn : uninstall | Remove openvpn logrotate config file]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [kyl191.openvpn : uninstall | Uninstall OpenVPN]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [kyl191.openvpn : uninstall | Uninstall LDAP plugin]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [kyl191.openvpn : uninstall | Terminate playbook]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [kyl191.openvpn : install | Install EPEL for CentOS-like distros]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [kyl191.openvpn : install | Install EPEL for RHEL]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [kyl191.openvpn : install | Gather the installed packages]
+**********************************************************************
+ok: [10.99.161.2]
+  Gathered 223 package facts
+
+TASK [kyl191.openvpn : install | Ensure packages fact exists]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [kyl191.openvpn : install | Refresh apt cache]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [kyl191.openvpn : install | Install openvpn]
+**********************************************************************
+ok: [10.99.161.2] => (item=openvpn)
+  Package openvpn already installed
+ok: [10.99.161.2] => (item=openssl)
+  Package openssl already installed
+
+TASK [kyl191.openvpn : install | Install LDAP plugin]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [kyl191.openvpn : install | Install selinux dependencies (RedHat)]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [kyl191.openvpn : install | Install selinux dependencies (Debian/Ubuntu)]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [install | Check if CRB repository is enabled]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [install | Enable CRB repository for CentOS 10-like distros]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [kyl191.openvpn : install | Ensure group 'nogroup' is present]
+**********************************************************************
+ok: [10.99.161.2]
+  Group already up to date
+
+TASK [kyl191.openvpn : server_keys | Create openvpn key directory]
+**********************************************************************
+ok: [10.99.161.2]
+  Directory attributes updated
+
+TASK [kyl191.openvpn : server_keys | Copy openssl server/ca extensions]
+**********************************************************************
+ok: [10.99.161.2] => (item=openssl-server.ext)
+ok: [10.99.161.2] => (item=openssl-ca.ext)
+
+TASK [kyl191.openvpn : server_keys | Copy CA key]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [kyl191.openvpn : server_keys | Copy CA cert]
+**********************************************************************
+skipping: [10.99.161.2]
+
+TASK [kyl191.openvpn : server_keys | Generate CA key]
+**********************************************************************
+failed: [10.99.161.2]
+  Message: Missing required parameter: cmd
+
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=8  changed=0  unreachable=0  failed=1  skipped=25  rescued=0  ignored=0
+
+✗ Playbook execution completed with failures
+

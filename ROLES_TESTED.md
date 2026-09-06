@@ -1274,6 +1274,37 @@ before this table's numbers were collected on the re-run.
 | r_pufky.pihole | ❌ DIVERGENT (round6007, 0.9.761, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 58.55s vs cr 5.11s; warm py 9.73s vs cr 0.72s. cold: py[ok=9 changed=6 failed=1 skipped=12] vs cr[ok=2 changed=1 failed=1 skipped=10]; warm: py[ok=7 changed=3 failed=1 skipped=14] vs cr[ok=2 changed=0 failed=1 skipped=10]. Role's deployment-config task needs `ansible.utils`'s `ipaddr` filter - bundled with the full `ansible` package on the py host, not implemented by krikri-playbook. Same collection-filter scope-cut class as fauust.mariadb above, not chased further. |
 | thomas_maurice.ansible_role_gitea | ⚠️ Both fail identically, no recap either side (round6004, 0.9.761, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1 identical. Times: cold py 3.72s vs cr 0.01s; warm py 2.18s vs cr 0.10s. Same removed `include:` class as influxdata.chrony above (`create_user.yml`). |
 
+## Round 6008-6019 (second krikri-role-tester round / stability check, 8 new-author roles, 0.9.761)
+
+A third real krikri-role-tester bug surfaced here: `Cmd.run` passed its carefully-stripped
+`Cmd.engine_env` to `Process.new` without `clear_env: true` - Crystal's `Process.new` MERGES a
+given `env:` onto the parent's full environment by default rather than replacing it, so every
+engine subprocess kept inheriting this control machine's own ambient `ANSIBLE_CACHE_PLUGIN=
+community.general.pickle`/`ANSIBLE_CACHE_PLUGIN_CONNECTION=/tmp/ansible_facts_cache` regardless.
+Confirmed live: real ansible-playbook wrote/read a fact-cache entry keyed by the harness's generic
+`pyhost` inventory alias, which is identical every round even though the underlying VM is torn
+down and rebuilt each time - poisoning `dev-sec.mysql`/`dev-sec.nginx-hardening`/
+`galaxyproject.postgresql_objects`/`ansible-lockdown.ubuntu22_cis`'s first real Kata round with a
+stale `/usr/bin/python3.10` interpreter path from some earlier, unrelated host. Fixed by passing
+`clear_env: true` for engine runs (regression spec added); those 4 roles were then re-run clean
+(round6016-6019) after clearing the poisoned cache files. The 4 Atlantic.net roles in the same
+batch (round6012-6015) are recorded as originally run - Atlantic.net always provisions a fresh
+real IP per pair, so there was no matching evidence of poisoning there, though the same
+`pyhost`/`crhost` alias reuse means it isn't ruled out either. No leaked Atlantic.net
+infrastructure this round - all 4 terraform destroys verified rc=0 with 0 resources remaining in
+state afterward.
+
+| Role | Status |
+|---|---|
+| ansible-lockdown.ubuntu22_cis | ✅ Clean (round6019, 0.9.761, Kata/Debian trixie, re-run after cache-poisoning fix). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 4.52s vs cr 1.39s; warm py 3.77s vs cr 0.52s. |
+| bertvv.hosts | ✅ Clean (round6014, 0.9.761, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 6.75s vs cr 4.64s; warm py 3.77s vs cr 0.52s. |
+| dev-sec.mysql | ❌ DIVERGENT (round6016, 0.9.761, Kata/Debian trixie, re-run after cache-poisoning fix). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 17.73s vs cr 7.65s; warm py 7.97s vs cr 2.31s. cold: py[ok=17 changed=1 failed=1 skipped=1] vs cr[ok=17 changed=2 failed=1 skipped=1]; warm: py[ok=17 changed=0 failed=1 skipped=1] vs cr[ok=17 changed=1 failed=1 skipped=1]. Off-by-one `changed` on "Update apt cache if MySQL is not yet installed" - krikri reports it changed where py doesn't; not chased further this round. |
+| dev-sec.nginx-hardening | ❌ DIVERGENT (round6017, 0.9.761, Kata/Debian trixie, re-run after cache-poisoning fix). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 3.49s vs cr 0.96s; warm py 2.88s vs cr 0.28s. cold: py[ok=2 changed=1 failed=1 skipped=0] vs cr[ok=1 changed=0 failed=1 skipped=0]; warm: py[ok=2 changed=0 failed=1 skipped=0] vs cr[ok=1 changed=0 failed=1 skipped=0]. `file: path=/etc/nginx mode=o-rw recurse=yes` on a host with nginx not installed (`/etc/nginx` genuinely absent, confirmed against the Kata image's own Containerfile): real ansible-playbook reports this task changed=true anyway, krikri fails it outright ("File does not exist: /etc/nginx. Use state=touch to create it."). Root cause not chased this round - worth a closer look at real Ansible's `file` module semantics for a missing path with `recurse:` and no explicit `state:`. |
+| galaxyproject.postgresql_objects | ✅ Clean (round6018, 0.9.761, Kata/Debian trixie, re-run after cache-poisoning fix). Recap identical both engines (`ok=1 changed=0 failed=0 skipped=9`), though rc itself differs (py=0, cr=4 - no PostgreSQL server present so the role's own tasks all skip; not chased further since the recap already matches). Times: cold py 1.77s vs cr 0.63s; warm py 1.79s vs cr 0.26s. |
+| jdauphant.unbound | ✅ Clean (round6012, 0.9.761, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 23.18s vs cr 12.64s; warm py 11.16s vs cr 1.16s. |
+| sansible.logstash | ⚠️ Both fail identically, no recap either side (round6013, 0.9.761, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1 identical. Times: cold py 0.54s vs cr 0.01s; warm py 0.54s vs cr 0.01s. Pulls in `sansible.java` as a role dependency, which hits the same removed `include:` action class as round6000-6007's roles above. |
+| stephdewit.nvm | ✅ Clean (round6015, 0.9.761, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 53.72s vs cr 86.57s; warm py 8.30s vs cr 2.65s. |
+
 ## Round 194 (30-role marathon, fresh G3.2GB pair per role, cold+warm both engines, 0.9.629 → 0.9.630)
 
 30 roles run (10 round-194 + 20 from round-192 marathon). Every role ran on its own freshly-provisioned server pair (py vs crystal), each engine run twice (cold + warm). Full spec suite: 2033 examples, 3 pre-existing integration failures only.

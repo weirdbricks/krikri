@@ -1,0 +1,7 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.UUrEqM85HO/play.yml
+======================================================================
+
+[ERROR]: [DEPRECATED]: ansible.builtin.include has been removed. Use include_tasks or import_tasks instead. This feature was removed from ansible-core in a release after 2023-05-16.

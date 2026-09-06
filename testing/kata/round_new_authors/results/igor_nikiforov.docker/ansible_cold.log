@@ -1,0 +1,49 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [igor_nikiforov.docker : Detect architecture.] ****************************
+included: /tmp/tmp.phlgmrt0ch/roles/igor_nikiforov.docker/tasks/detect-architecture.yml for target
+
+TASK [igor_nikiforov.docker : Check if architecture is supported.] *************
+skipping: [target]
+
+TASK [igor_nikiforov.docker : Set system architecture for x86_64/AMD64.] *******
+ok: [target]
+
+TASK [igor_nikiforov.docker : Set system architecture for ARM64.] **************
+skipping: [target]
+
+TASK [igor_nikiforov.docker : Set system architecture for armhf.] **************
+skipping: [target]
+
+TASK [igor_nikiforov.docker : Set system architecture for s390x] ***************
+skipping: [target]
+
+TASK [igor_nikiforov.docker : Install Docker (RHEL).] **************************
+skipping: [target]
+
+TASK [igor_nikiforov.docker : Install Docker (Debian).] ************************
+included: /tmp/tmp.phlgmrt0ch/roles/igor_nikiforov.docker/tasks/install-docker-Debian.yml for target
+
+TASK [igor_nikiforov.docker : Ensure old versions of Docker are not installed.] ***
+ok: [target]
+
+TASK [igor_nikiforov.docker : Add Docker apt key.] *****************************
+[ERROR]: Task failed: Module failed: Failed to find required executable "apt-key" in paths: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Origin: /tmp/tmp.phlgmrt0ch/roles/igor_nikiforov.docker/tasks/install-docker-Debian.yml:12:3
+
+10     state: absent
+11
+12 - name: Add Docker apt key.
+     ^ column 3
+
+fatal: [target]: FAILED! => {"changed": false, "msg": "Failed to find required executable \"apt-key\" in paths: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
+
+PLAY RECAP *********************************************************************
+target                     : ok=5    changed=0    unreachable=0    failed=1    skipped=5    rescued=0    ignored=0   
+

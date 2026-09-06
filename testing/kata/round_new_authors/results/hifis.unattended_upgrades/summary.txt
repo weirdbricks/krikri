@@ -1,0 +1,5 @@
+role=hifis.unattended_upgrades
+ansible_cold_rc=0 recap: target                     : ok=6    changed=2    unreachable=0    failed=0    skipped=8    rescued=0    ignored=0   
+krikri_cold_rc=0 recap: target               : ok=6  changed=2  unreachable=0  failed=0  skipped=8  rescued=0  ignored=0
+ansible_warm_rc=0 recap: target                     : ok=6    changed=0    unreachable=0    failed=0    skipped=8    rescued=0    ignored=0   
+krikri_warm_rc=0 recap: target               : ok=6  changed=0  unreachable=0  failed=0  skipped=8  rescued=0  ignored=0

@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'etcd', owned by igor_nikiforov
+- downloading role from https://github.com/igor-nikiforov/ansible-role-etcd/archive/v1.0.0.tar.gz
+- extracting igor_nikiforov.etcd to /tmp/tmp.GpMTHKbP2j/roles/igor_nikiforov.etcd
+- igor_nikiforov.etcd (v1.0.0) was installed successfully

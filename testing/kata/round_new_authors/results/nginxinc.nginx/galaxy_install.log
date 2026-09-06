@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'nginx', owned by nginxinc
+- downloading role from https://github.com/nginxinc/ansible-role-nginx/archive/0.26.0.tar.gz
+- extracting nginxinc.nginx to /tmp/tmp.LWPPq7fv9m/roles/nginxinc.nginx
+- nginxinc.nginx (0.26.0) was installed successfully

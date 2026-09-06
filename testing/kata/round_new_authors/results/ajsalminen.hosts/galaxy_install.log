@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'hosts', owned by ajsalminen
+- downloading role from https://github.com/ajsalminen/ansible-role-hosts/archive/master.tar.gz
+- extracting ajsalminen.hosts to /tmp/tmp.v1RTj2Hbwn/roles/ajsalminen.hosts
+- ajsalminen.hosts (master) was installed successfully

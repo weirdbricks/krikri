@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'unattended-upgrades', owned by jnv
+- downloading role from https://github.com/jnv/ansible-role-unattended-upgrades/archive/v1.12.2.tar.gz
+- extracting jnv.unattended-upgrades to /tmp/tmp.7gsn2SK9Kg/roles/jnv.unattended-upgrades
+- jnv.unattended-upgrades (v1.12.2) was installed successfully

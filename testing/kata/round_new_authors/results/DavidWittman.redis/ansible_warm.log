@@ -1,0 +1,8 @@
+[WARNING]: A non-empty plugin name is required.
+[ERROR]: The 'ansible.builtin.include' action plugin has been removed. Use include_tasks or import_tasks instead. This feature was removed from ansible-core in a release after 2023-05-16.
+Origin: /tmp/tmp.UUrEqM85HO/roles/DavidWittman.redis/tasks/main.yml:2:3
+
+1 ---
+2 - include: check_vars.yml
+    ^ column 3
+

@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'systemd', owned by 0x0i
+- downloading role from https://github.com/0x0I/ansible-role-systemd/archive/v0.3.11.tar.gz
+- extracting 0x0i.systemd to /tmp/tmp.EdB0Q90oEI/roles/0x0i.systemd
+- 0x0i.systemd (v0.3.11) was installed successfully

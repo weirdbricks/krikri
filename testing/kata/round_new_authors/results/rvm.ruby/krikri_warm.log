@@ -1,0 +1,38 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.Di3CVIR7ly/play.yml
+======================================================================
+
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+ok: [10.99.213.2]
+
+TASK [rvm.ruby : Detect rvm binary]
+**********************************************************************
+ok: [10.99.213.2]
+
+TASK [rvm.ruby : Detect rvm installer]
+**********************************************************************
+ok: [10.99.213.2]
+
+TASK [rvm.ruby : Detect current rvm version]
+**********************************************************************
+failed: [10.99.213.2]
+  Message: Failed to execute command: Error executing process: '~/.rvm/bin/rvm': No such file or directory
+  Error output:
+    Error executing process: '~/.rvm/bin/rvm': No such file or directory
+  Exit code: 2
+
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=3  changed=0  unreachable=0  failed=1  skipped=0  rescued=0  ignored=0
+
+✗ Playbook execution completed with failures
+

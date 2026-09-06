@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'deploy', owned by ansistrano
+- downloading role from https://github.com/ansistrano/deploy/archive/4.4.0.tar.gz
+- extracting ansistrano.deploy to /tmp/tmp.3vTM5C9MYe/roles/ansistrano.deploy
+- ansistrano.deploy (4.4.0) was installed successfully

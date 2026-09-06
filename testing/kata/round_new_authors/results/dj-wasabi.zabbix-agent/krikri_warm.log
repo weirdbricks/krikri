@@ -1,0 +1,61 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.wZtQpRg2Lr/play.yml
+======================================================================
+
+Warnings:
+  ⚠️  Task 'Create hostgroups' uses unimplemented plugin: zabbix_group
+  ⚠️  Task 'Create a new host or update an existing host's info' uses unimplemented plugin: zabbix_host
+  ⚠️  Task 'Updating host configuration with macros' uses unimplemented plugin: zabbix_hostmacro
+
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+ok: [10.99.17.2]
+
+TASK [dj-wasabi.zabbix-agent : Fix facts for linuxmint - distribution release]
+**********************************************************************
+skipping: [10.99.17.2]
+
+TASK [dj-wasabi.zabbix-agent : Fix facts for linuxmint - family]
+**********************************************************************
+skipping: [10.99.17.2]
+
+TASK [dj-wasabi.zabbix-agent : Fix facts for XCP-ng - family]
+**********************************************************************
+skipping: [10.99.17.2]
+
+TASK [dj-wasabi.zabbix-agent : Include OS-specific variables]
+**********************************************************************
+ok: [target]
+
+TASK [dj-wasabi.zabbix-agent : Install the correct repository]
+**********************************************************************
+
+included: /tmp/tmp.wZtQpRg2Lr/roles/dj-wasabi.zabbix-agent/tasks/Debian.yml for 10.99.17.2
+
+TASK [dj-wasabi.zabbix-agent : Include Zabbix gpg ids]
+**********************************************************************
+ok: [target]
+
+TASK [dj-wasabi.zabbix-agent : Set short version name]
+**********************************************************************
+ok: [10.99.17.2]
+
+TASK [dj-wasabi.zabbix-agent : Debian | Install gpg key]
+**********************************************************************
+failed: [10.99.17.2]
+  Message: 'sign_keys[zabbix_short_version][zabbix_agent_distribution_release]['sign_key']' is undefined
+
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=5  changed=0  unreachable=0  failed=1  skipped=3  rescued=0  ignored=0
+
+✗ Playbook execution completed with failures
+

@@ -1,0 +1,69 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.GpMTHKbP2j/play.yml
+======================================================================
+
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+ok: [10.99.17.2]
+
+TASK [igor_nikiforov.etcd : Create etcd group]
+**********************************************************************
+changed: [10.99.17.2]
+  Group created
+
+TASK [igor_nikiforov.etcd : Create etcd user]
+**********************************************************************
+changed: [10.99.17.2]
+  User created
+
+TASK [igor_nikiforov.etcd : Download and install etcd 3.4.13]
+**********************************************************************
+changed: [10.99.17.2]
+
+TASK [igor_nikiforov.etcd : Create etcd directory structure]
+**********************************************************************
+changed: [10.99.17.2] => (item=/etc/etcd/certs)
+  Directory created
+changed: [10.99.17.2] => (item=undefined)
+  Directory created
+ok: [10.99.17.2] => (item=undefined)
+  Directory attributes updated
+
+TASK [igor_nikiforov.etcd : Create etcd systemd service]
+**********************************************************************
+changed: [10.99.17.2]
+  Template rendered successfully
+
+TASK [igor_nikiforov.etcd : Create etcd configuration file]
+**********************************************************************
+changed: [10.99.17.2]
+  Template rendered successfully
+
+TASK [igor_nikiforov.etcd : Configure etcdctl connection properties]
+**********************************************************************
+changed: [10.99.17.2]
+  Template rendered successfully
+
+TASK [igor_nikiforov.etcd : Start etcd]
+**********************************************************************
+failed: [10.99.17.2]
+  Message: Failed to start service: Job for etcd.service failed because the control process exited with error code.
+See "systemctl status etcd.service" and "journalctl -xeu etcd.service" for details.
+
+
+RUNNING HANDLER
+**********************************************************************
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=8  changed=7  unreachable=0  failed=1  skipped=0  rescued=0  ignored=0
+
+✗ Playbook execution completed with failures
+

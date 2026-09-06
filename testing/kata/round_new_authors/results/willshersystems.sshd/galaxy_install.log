@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'sshd', owned by willshersystems
+- downloading role from https://github.com/willshersystems/ansible-sshd/archive/v0.31.0.tar.gz
+- extracting willshersystems.sshd to /tmp/tmp.dCc5cTdhFw/roles/willshersystems.sshd
+- willshersystems.sshd (v0.31.0) was installed successfully

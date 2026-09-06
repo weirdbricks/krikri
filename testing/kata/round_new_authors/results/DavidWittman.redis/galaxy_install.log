@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'redis', owned by DavidWittman
+- downloading role from https://github.com/DavidWittman/ansible-redis/archive/1.2.9.tar.gz
+- extracting DavidWittman.redis to /tmp/tmp.UUrEqM85HO/roles/DavidWittman.redis
+- DavidWittman.redis (1.2.9) was installed successfully

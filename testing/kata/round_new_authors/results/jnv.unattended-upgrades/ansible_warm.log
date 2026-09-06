@@ -1,0 +1,7 @@
+[WARNING]: A non-empty plugin name is required.
+[ERROR]: The 'ansible.builtin.include' action plugin has been removed. Use include_tasks or import_tasks instead. This feature was removed from ansible-core in a release after 2023-05-16.
+Origin: /tmp/tmp.7gsn2SK9Kg/roles/jnv.unattended-upgrades/tasks/main.yml:1:4
+
+1  - include: unattended-upgrades.yml
+     ^ column 4
+

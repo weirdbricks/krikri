@@ -1,0 +1,26 @@
+
+KRIKRI v0.9.742
+======================================================================
+Playbook: /tmp/tmp.dCc5cTdhFw/play.yml
+======================================================================
+
+fatal: [target]: UNREACHABLE! => {"changed": false, "msg": "Failed to upload /home/labros/git_work/krikri/bin/plugins/command to 10.99.215.2:/var/tmp/.krikri-playbook/plugins/command: ssh: connect to host 10.99.215.2 port 22: Connection timed out", "unreachable": true}
+
+PLAY [all]
+======================================================================
+
+TASK [Gathering Facts]
+**********************************************************************
+failed: [10.99.215.2]
+  Error gathering facts: Failed to upload /home/labros/git_work/krikri/bin/plugins/facts to 10.99.215.2:/var/tmp/.krikri-playbook/plugins/facts: ssh: connect to host 10.99.215.2 port 22: Connection timed out
+scp: Connection closed
+
+fatal: [target]: UNREACHABLE! => {"changed": false, "msg": "Failed to connect to the host via ssh: 10.99.215.2", "unreachable": true}
+
+======================================================================
+PLAY RECAP
+======================================================================
+target               : ok=0  changed=0  unreachable=1  failed=1  skipped=0  rescued=0  ignored=0
+
+✗ Playbook execution completed with unreachable hosts: target
+

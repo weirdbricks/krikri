@@ -1,0 +1,37 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [sensu.sensu : Include distribution specific variables] *******************
+ok: [target]
+
+TASK [sensu.sensu : include_tasks] *********************************************
+included: /tmp/tmp.g4XbA9io2F/roles/sensu.sensu/tasks/Debian/main.yml for target
+
+TASK [sensu.sensu : Include ansible_distribution vars] *************************
+ok: [target]
+
+TASK [sensu.sensu : Ensure apt-transport-https is installed] *******************
+ok: [target]
+
+TASK [sensu.sensu : Ensure that gnupg is installed for apt_key] ****************
+ok: [target]
+
+TASK [sensu.sensu : Ensure the Sensu APT repo GPG key is present] **************
+[ERROR]: Task failed: Module failed: Failed to find required executable "apt-key" in paths: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Origin: /tmp/tmp.g4XbA9io2F/roles/sensu.sensu/tasks/Debian/main.yml:24:3
+
+22     state: present
+23
+24 - name: Ensure the Sensu APT repo GPG key is present
+     ^ column 3
+
+fatal: [target]: FAILED! => {"changed": false, "msg": "Failed to find required executable \"apt-key\" in paths: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
+
+PLAY RECAP *********************************************************************
+target                     : ok=6    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

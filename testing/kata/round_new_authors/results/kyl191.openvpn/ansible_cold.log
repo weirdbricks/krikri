@@ -1,0 +1,183 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [kyl191.openvpn : validate | Warn about deprecated openvpn_ci_build usage] ***
+skipping: [target]
+
+TASK [kyl191.openvpn : validate | Fail if both IPv4 and IPv6 tunnel networks are disabled] ***
+skipping: [target]
+
+TASK [kyl191.openvpn : validate | Initialize long client CNs list] *************
+ok: [target]
+
+TASK [kyl191.openvpn : validate | Collect clients with CN exceeding 64 characters] ***
+skipping: [target]
+
+TASK [kyl191.openvpn : validate | Assert CA CN length (strict mode)] ***********
+skipping: [target]
+
+TASK [kyl191.openvpn : validate | Assert server CN length (strict mode)] *******
+skipping: [target]
+
+TASK [kyl191.openvpn : validate | Fail if any client CN too long (strict mode)] ***
+skipping: [target]
+
+TASK [kyl191.openvpn : validate | Warn if CA CN exceeds 64 chars (warning mode)] ***
+skipping: [target]
+
+TASK [kyl191.openvpn : validate | Warn if server CN exceeds 64 chars (warning mode)] ***
+skipping: [target]
+
+TASK [kyl191.openvpn : validate | Warn about long client CNs (warning mode)] ***
+skipping: [target]
+
+TASK [kyl191.openvpn : Include vars for OpenVPN installation] ******************
+ok: [target] => (item=/tmp/tmp.c7o2qHtt7R/roles/kyl191.openvpn/vars/os/Debian.yml)
+
+TASK [kyl191.openvpn : uninstall | Disable openvpn auto-start & start] *********
+skipping: [target]
+
+TASK [kyl191.openvpn : uninstall | Wipe out config directory] ******************
+skipping: [target]
+
+TASK [kyl191.openvpn : uninstall | Remove openvpn logrotate config file] *******
+skipping: [target]
+
+TASK [kyl191.openvpn : uninstall | Uninstall OpenVPN] **************************
+skipping: [target]
+
+TASK [kyl191.openvpn : uninstall | Uninstall LDAP plugin] **********************
+skipping: [target]
+
+TASK [kyl191.openvpn : uninstall | Terminate playbook] *************************
+skipping: [target]
+
+TASK [kyl191.openvpn : install | Install EPEL for CentOS-like distros] *********
+skipping: [target]
+
+TASK [kyl191.openvpn : install | Install EPEL for RHEL] ************************
+skipping: [target]
+
+TASK [kyl191.openvpn : install | Gather the installed packages] ****************
+[ERROR]: Task failed: Module failed: Could not detect a supported package manager from the following list: ['apk', 'apt', 'pacman', 'pkg', 'pkg_info', 'portage', 'rpm', 'dnf', 'dnf5', 'yum', 'zypper', 'pkg5', 'pkgng', 'openbsd_pkg'], or the required Python library is not installed. Check warnings for details.
+Origin: /tmp/tmp.c7o2qHtt7R/roles/kyl191.openvpn/tasks/install.yml:21:3
+
+19   when: ansible_facts['distribution'] == "RedHat"
+20
+21 - name: install | Gather the installed packages
+     ^ column 3
+
+fatal: [target]: FAILED! => {"changed": false, "msg": "Could not detect a supported package manager from the following list: ['apk', 'apt', 'pacman', 'pkg', 'pkg_info', 'portage', 'rpm', 'dnf', 'dnf5', 'yum', 'zypper', 'pkg5', 'pkgng', 'openbsd_pkg'], or the required Python library is not installed. Check warnings for details."}
+...ignoring
+
+TASK [kyl191.openvpn : install | Ensure packages fact exists] ******************
+ok: [target]
+
+TASK [kyl191.openvpn : install | Refresh apt cache] ****************************
+ok: [target]
+
+TASK [kyl191.openvpn : install | Install openvpn] ******************************
+changed: [target] => (item=openvpn)
+ok: [target] => (item=openssl)
+
+TASK [kyl191.openvpn : install | Install LDAP plugin] **************************
+skipping: [target]
+
+TASK [kyl191.openvpn : install | Install selinux dependencies (RedHat)] ********
+skipping: [target]
+
+TASK [kyl191.openvpn : install | Install selinux dependencies (Debian/Ubuntu)] ***
+skipping: [target]
+
+TASK [kyl191.openvpn : install | Check if CRB repository is enabled] ***********
+skipping: [target]
+
+TASK [kyl191.openvpn : install | Enable CRB repository for CentOS 10-like distros] ***
+skipping: [target]
+
+TASK [kyl191.openvpn : install | Ensure group 'nogroup' is present] ************
+ok: [target]
+
+TASK [kyl191.openvpn : server_keys | Create openvpn key directory] *************
+changed: [target]
+
+TASK [kyl191.openvpn : server_keys | Copy openssl server/ca extensions] ********
+changed: [target] => (item=openssl-server.ext)
+changed: [target] => (item=openssl-ca.ext)
+
+TASK [kyl191.openvpn : server_keys | Copy CA key] ******************************
+skipping: [target]
+
+TASK [kyl191.openvpn : server_keys | Copy CA cert] *****************************
+skipping: [target]
+
+TASK [kyl191.openvpn : server_keys | Generate CA key] **************************
+changed: [target]
+
+TASK [kyl191.openvpn : server_keys | Protect CA key] ***************************
+changed: [target]
+
+TASK [kyl191.openvpn : server_keys | Sign CA key] ******************************
+changed: [target]
+
+TASK [kyl191.openvpn : server_keys | Generate server key] **********************
+changed: [target]
+
+TASK [kyl191.openvpn : server_keys | Protect server key] ***********************
+changed: [target]
+
+TASK [kyl191.openvpn : server_keys | Sign server key] **************************
+changed: [target]
+
+TASK [kyl191.openvpn : server_keys | Copy tls-auth key] ************************
+skipping: [target]
+
+TASK [kyl191.openvpn : server_keys | Generate tls-auth key] ********************
+skipping: [target]
+
+TASK [kyl191.openvpn : server_keys | Copy tls-crypt key] ***********************
+skipping: [target]
+
+TASK [kyl191.openvpn : server_keys | Generate tls-crypt key] *******************
+changed: [target]
+
+TASK [kyl191.openvpn : server_keys | Copy pre-generated DH params] *************
+skipping: [target]
+
+TASK [kyl191.openvpn : server_keys | Generate dh params] ***********************
+changed: [target]
+
+TASK [kyl191.openvpn : server_keys | Install ca.conf config file] **************
+changed: [target]
+
+TASK [kyl191.openvpn : server_keys | Setup Certificate Revocation List] ********
+skipping: [target]
+
+TASK [kyl191.openvpn : Enable ipv4 forwarding] *********************************
+changed: [target]
+
+TASK [kyl191.openvpn : Enable ipv6 forwarding] *********************************
+changed: [target]
+
+TASK [kyl191.openvpn : firewall | firewall | Fail on both firewalld & ufw] *****
+skipping: [target]
+
+TASK [kyl191.openvpn : firewall | firewall | Fail on no firewall detected] *****
+[ERROR]: Task failed: Action failed: No firewall detected, install one before proceeding (firewalld||ufw||iptables)
+Origin: /tmp/tmp.c7o2qHtt7R/roles/kyl191.openvpn/tasks/firewall/firewall.yml:10:3
+
+ 8     - "'ufw' in ansible_facts['packages']"
+ 9
+10 - name: firewall | firewall | Fail on no firewall detected
+     ^ column 3
+
+fatal: [target]: FAILED! => {"changed": false, "msg": "No firewall detected, install one before proceeding (firewalld||ufw||iptables)"}
+
+PLAY RECAP *********************************************************************
+target                     : ok=21   changed=14   unreachable=0    failed=1    skipped=29   rescued=0    ignored=1   
+

@@ -1,0 +1,60 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [mbaran0v.ansible_role_prometheus_nginxlog_exporter : Naive assertion for ansible_service_mgr (fail on unsupported init systems)] ***
+ok: [target] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [mbaran0v.ansible_role_prometheus_nginxlog_exporter : Create the nginxlog_exporter group] ***
+changed: [target]
+
+TASK [mbaran0v.ansible_role_prometheus_nginxlog_exporter : Create the nginxlog_exporter user] ***
+changed: [target]
+
+TASK [mbaran0v.ansible_role_prometheus_nginxlog_exporter : create nginxlog_exporter directories] ***
+changed: [target]
+
+TASK [mbaran0v.ansible_role_prometheus_nginxlog_exporter : check if installed] ***
+ok: [target]
+
+TASK [mbaran0v.ansible_role_prometheus_nginxlog_exporter : initialize the deploy root and gather facts] ***
+changed: [target]
+
+TASK [mbaran0v.ansible_role_prometheus_nginxlog_exporter : create release directory] ***
+changed: [target]
+
+TASK [mbaran0v.ansible_role_prometheus_nginxlog_exporter : create temporary deploy dir] ***
+changed: [target]
+
+TASK [mbaran0v.ansible_role_prometheus_nginxlog_exporter : download release] ***
+[WARNING]: Module remote_tmp /root/.ansible/tmp did not exist and was created with a mode of 0700, this may cause issues when running as another user. To avoid this, create the remote_tmp dir with the correct permissions manually
+changed: [target]
+
+TASK [mbaran0v.ansible_role_prometheus_nginxlog_exporter : unpack archive] *****
+changed: [target]
+
+TASK [mbaran0v.ansible_role_prometheus_nginxlog_exporter : create config] ******
+changed: [target]
+
+TASK [mbaran0v.ansible_role_prometheus_nginxlog_exporter : create systemd service unit] ***
+changed: [target]
+
+TASK [mbaran0v.ansible_role_prometheus_nginxlog_exporter : finalize the deploy, removing the unfinished file and switching the symlink] ***
+changed: [target]
+
+TASK [mbaran0v.ansible_role_prometheus_nginxlog_exporter : Ensure Nginxlog Exporter is enabled on boot] ***
+changed: [target]
+
+RUNNING HANDLER [mbaran0v.ansible_role_prometheus_nginxlog_exporter : restart nginxlog_exporter] ***
+changed: [target]
+
+PLAY RECAP *********************************************************************
+target                     : ok=16   changed=13   unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

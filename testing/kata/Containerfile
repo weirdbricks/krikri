@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
         systemd systemd-sysv dbus \
         openssh-server python3 \
         iproute2 kmod procps \
+        curl gnupg2 unzip ca-certificates sudo \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /root/.ssh && chmod 700 /root/.ssh \
     && systemctl enable ssh

@@ -1,0 +1,6 @@
+[ERROR]: failed to download the file: HTTP Error 404: Not Found
+[WARNING]: - wpninfra.fluent_bit was NOT installed successfully.
+[ERROR]: - you can use --ignore-errors to skip failed roles and finish processing the list.
+Starting galaxy role install process
+- downloading role 'fluent_bit', owned by wpninfra
+- downloading role from https://github.com/wpnops/ansible-role-fluent-bit/archive/2.1.0.tar.gz

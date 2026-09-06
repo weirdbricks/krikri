@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'gitlab-runner', owned by riemers
+- downloading role from https://github.com/riemers/ansible-gitlab-runner/archive/v2.1.2.tar.gz
+- extracting riemers.gitlab-runner to /tmp/tmp.ss8YI34b7m/roles/riemers.gitlab-runner
+- riemers.gitlab-runner (v2.1.2) was installed successfully

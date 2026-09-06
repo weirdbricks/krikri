@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'openvpn', owned by kyl191
+- downloading role from https://github.com/kyl191/ansible-role-openvpn/archive/v3.2.0.tar.gz
+- extracting kyl191.openvpn to /tmp/tmp.c7o2qHtt7R/roles/kyl191.openvpn
+- kyl191.openvpn (v3.2.0) was installed successfully

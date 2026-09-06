@@ -1,0 +1,5 @@
+role=nickjj.docker
+ansible_cold_rc=0 recap: target                     : ok=19   changed=14   unreachable=0    failed=0    skipped=5    rescued=0    ignored=0   
+krikri_cold_rc=4 recap: target               : ok=0  changed=0  unreachable=1  failed=1  skipped=0  rescued=0  ignored=0
+ansible_warm_rc=0 recap: target                     : ok=17   changed=0    unreachable=0    failed=0    skipped=5    rescued=0    ignored=0   
+krikri_warm_rc=4 recap: target               : ok=0  changed=0  unreachable=1  failed=1  skipped=0  rescued=0  ignored=0

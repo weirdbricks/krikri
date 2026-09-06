@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'oracle-java', owned by ansiblebit
+- downloading role from https://github.com/ansiblebit/oracle-java/archive/6.22.16.tar.gz
+- extracting ansiblebit.oracle-java to /tmp/tmp.f7pBzyHpay/roles/ansiblebit.oracle-java
+- ansiblebit.oracle-java (6.22.16) was installed successfully

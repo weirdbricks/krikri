@@ -1,0 +1,34 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [mbocquet.tmpfs : Mount] **************************************************
+[ERROR]: Task failed: 'tmpfs_fs' is undefined
+
+Task failed.
+Origin: /tmp/tmp.e2UuMsz6h5/roles/mbocquet.tmpfs/tasks/main.yml:3:3
+
+1 ---
+2 # tasks file for tmpfs
+3 - name: Mount
+    ^ column 3
+
+<<< caused by >>>
+
+'tmpfs_fs' is undefined
+Origin: /tmp/tmp.e2UuMsz6h5/roles/mbocquet.tmpfs/tasks/main.yml:14:9
+
+12   notify:
+13     - Remount
+14   loop: "{{ tmpfs_fs }}"
+           ^ column 9
+
+fatal: [target]: FAILED! => {"changed": false, "msg": "Task failed: 'tmpfs_fs' is undefined"}
+
+PLAY RECAP *********************************************************************
+target                     : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

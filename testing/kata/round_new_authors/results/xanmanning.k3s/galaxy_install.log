@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'k3s', owned by xanmanning
+- downloading role from https://github.com/PyratLabs/ansible-role-k3s/archive/v3.6.4.tar.gz
+- extracting xanmanning.k3s to /tmp/tmp.xxYYBnNoWt/roles/xanmanning.k3s
+- xanmanning.k3s (v3.6.4) was installed successfully

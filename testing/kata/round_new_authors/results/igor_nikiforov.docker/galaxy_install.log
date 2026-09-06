@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'docker', owned by igor_nikiforov
+- downloading role from https://github.com/igor-nikiforov/ansible-role-docker/archive/v1.3.0.tar.gz
+- extracting igor_nikiforov.docker to /tmp/tmp.phlgmrt0ch/roles/igor_nikiforov.docker
+- igor_nikiforov.docker (v1.3.0) was installed successfully

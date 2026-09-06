@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'ansible_role_prometheus_nginxlog_exporter', owned by mbaran0v
+- downloading role from https://github.com/mbaran0v/ansible-role-prometheus-nginxlog-exporter/archive/master.tar.gz
+- extracting mbaran0v.ansible_role_prometheus_nginxlog_exporter to /tmp/tmp.YqvuIz6zr2/roles/mbaran0v.ansible_role_prometheus_nginxlog_exporter
+- mbaran0v.ansible_role_prometheus_nginxlog_exporter (master) was installed successfully

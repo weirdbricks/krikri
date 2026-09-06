@@ -1,0 +1,26 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [artis3n.tailscale : State Validation] ************************************
+skipping: [target]
+
+TASK [artis3n.tailscale : Tailscale Auth Key Required] *************************
+[ERROR]: Task failed: Action failed: You must include a Node Authorization auth key. Set a `tailscale_authkey` variable. You can create this key from: https://login.tailscale.com/admin/settings/keys .
+
+Origin: /tmp/tmp.U4SNzPf7G1/roles/artis3n.tailscale/tasks/main.yml:10:3
+
+ 8     - state != "absent"
+ 9
+10 - name: Tailscale Auth Key Required
+     ^ column 3
+
+fatal: [target]: FAILED! => {"changed": false, "msg": "You must include a Node Authorization auth key. Set a `tailscale_authkey` variable. You can create this key from: https://login.tailscale.com/admin/settings/keys .\n"}
+
+PLAY RECAP *********************************************************************
+target                     : ok=1    changed=0    unreachable=0    failed=1    skipped=1    rescued=0    ignored=0   
+

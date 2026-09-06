@@ -1,0 +1,5 @@
+role=ansistrano.deploy
+ansible_cold_rc=2 recap: target                     : ok=15   changed=3    unreachable=0    failed=1    skipped=2    rescued=1    ignored=0   
+krikri_cold_rc=4 recap: target               : ok=15  changed=3  unreachable=0  failed=1  skipped=3  rescued=1  ignored=0
+ansible_warm_rc=2 recap: target                     : ok=15   changed=0    unreachable=0    failed=1    skipped=2    rescued=1    ignored=0   
+krikri_warm_rc=4 recap: target               : ok=15  changed=0  unreachable=0  failed=1  skipped=3  rescued=1  ignored=0

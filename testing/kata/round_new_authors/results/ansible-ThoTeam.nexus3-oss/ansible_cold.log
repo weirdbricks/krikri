@@ -1,0 +1,76 @@
+[WARNING]: A non-empty plugin name is required.
+
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'target' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [target]
+
+TASK [ansible-ThoTeam.nexus3-oss : Try to use jmespath on a test var] **********
+ok: [target]
+
+TASK [ansible-ThoTeam.nexus3-oss : Broken compatibility => nexus_package is now dynamically calculated] ***
+skipping: [target]
+
+TASK [ansible-ThoTeam.nexus3-oss : Broken compatibility => purge var moved to nexus_purge] ***
+skipping: [target]
+
+TASK [ansible-ThoTeam.nexus3-oss : Variable refactoring - public_hostname is now nexus_public_hostname] ***
+skipping: [target]
+
+TASK [ansible-ThoTeam.nexus3-oss : Coding standard: proxy_url is not supported anymore for docker proxy repos] ***
+skipping: [target]
+
+TASK [ansible-ThoTeam.nexus3-oss : Print debug message about our internal var] ***
+skipping: [target]
+
+TASK [ansible-ThoTeam.nexus3-oss : Fail as we cannot run correctly with internal var set] ***
+skipping: [target]
+
+TASK [ansible-ThoTeam.nexus3-oss : Make sure nexus_custom_jvm_settings follow our contraints] ***
+ok: [target]
+
+TASK [ansible-ThoTeam.nexus3-oss : Include OS specific variables.] *************
+ok: [target]
+
+TASK [ansible-ThoTeam.nexus3-oss : Include OS specific selinux libs and utils if needed] ***
+skipping: [target]
+
+TASK [ansible-ThoTeam.nexus3-oss : Check if SystemD service is installed] ******
+ok: [target]
+
+TASK [ansible-ThoTeam.nexus3-oss : Check if sysv service is installed] *********
+ok: [target]
+
+TASK [ansible-ThoTeam.nexus3-oss : Purge nexus if asked (i.e. delete all data)] ***
+skipping: [target]
+
+TASK [ansible-ThoTeam.nexus3-oss : Digest splited blob list var] ***************
+skipping: [target]
+
+TASK [ansible-ThoTeam.nexus3-oss : Set detection method to fixed if we have a var] ***
+skipping: [target]
+
+TASK [ansible-ThoTeam.nexus3-oss : Check nexus-latest link stat in /opt] *******
+ok: [target]
+
+TASK [ansible-ThoTeam.nexus3-oss : Register current running version if any] ****
+skipping: [target]
+
+TASK [ansible-ThoTeam.nexus3-oss : Register nexus_version from currently installed] ***
+skipping: [target]
+
+TASK [ansible-ThoTeam.nexus3-oss : Call latest nexus uri to get redirection] ***
+[ERROR]: Task failed: Module failed: Status code was 400 and not [302]: HTTP Error 400: Bad Request
+Origin: /tmp/tmp.xgAgq2XOKo/roles/ansible-ThoTeam.nexus3-oss/tasks/nexus_install.yml:36:7
+
+34         - not (nexus_upgrade | default(false) | bool)
+35
+36     - name: Call latest nexus uri to get redirection
+         ^ column 7
+
+fatal: [target]: FAILED! => {"cache_control": "private, max-age=0, no-store, no-cache, must-revalidate, post-check=0, pre-check=0", "cf_ray": "a367af8d5ccda53c-MIA", "changed": false, "connection": "close", "content_length": "17", "content_type": "text/plain; charset=UTF-8", "date": "Sat, 05 Sep 2026 19:36:57 GMT", "elapsed": 0, "expires": "Thu, 01 Jan 1970 00:00:01 GMT", "msg": "Status code was 400 and not [302]: HTTP Error 400: Bad Request", "redirected": false, "referrer_policy": "same-origin", "server": "cloudflare", "status": 400, "url": "https://download.sonatype.com/nexus/3/latest-unix.tar.gz", "x_frame_options": "SAMEORIGIN"}
+
+PLAY RECAP *********************************************************************
+target                     : ok=7    changed=0    unreachable=0    failed=1    skipped=12   rescued=0    ignored=0   
+

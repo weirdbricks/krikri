@@ -1,0 +1,5 @@
+Starting galaxy role install process
+- downloading role 'docker', owned by nickjj
+- downloading role from https://github.com/nickjj/ansible-docker/archive/v2.5.3.tar.gz
+- extracting nickjj.docker to /tmp/tmp.xJzy6Ce3Xl/roles/nickjj.docker
+- nickjj.docker (v2.5.3) was installed successfully
