@@ -148,13 +148,35 @@ module Krikri
       facts["ansible_hostname"] = hostname
       facts["ansible_nodename"] = hostname
 
+      # `hostname -f` fails outright ("Name or service not known", empty
+      # stdout) on a host with no real FQDN/domain configured - common
+      # on a minimal Kata/container image with no DNS setup at all.
+      # Real Ansible gathers this via Python's `socket.getfqdn()`,
+      # which NEVER fails/returns empty - with no resolvable FQDN it
+      # falls back to plain `gethostname()`'s own result instead,
+      # matching the same fallback `hostname -f`'s own shell manpage
+      # documents but this engine wasn't replicating. Without it,
+      # `ansible_fqdn` was silently never set at all on such hosts -
+      # found via imntreal.smallstep_ca's own `Initialize CA` task,
+      # which references `{{ ansible_fqdn }}` directly and failed
+      # "'ansible_fqdn' is undefined" outright instead of getting the
+      # same plain-hostname fallback real Ansible gives it.
       fqdn = capture("hostname", ["-f"])
+      fqdn = hostname if fqdn.empty?
       facts["ansible_fqdn"] = fqdn unless fqdn.empty?
 
-      if !fqdn.empty? && fqdn.includes?(".")
-        domain = fqdn.sub(/^#{Regex.escape(hostname)}\./, "")
-        facts["ansible_domain"] = domain unless domain.empty?
-      end
+      # Real Ansible's own domain computation - Python's
+      # `'.'.join(fqdn.split('.')[1:])` - ALWAYS sets a value, defaulting
+      # to the empty string when the fqdn has no dot at all (exactly the
+      # dotless-fallback case just above); it never leaves ansible_domain
+      # completely undefined. The prior `if fqdn.includes?(".")` guard
+      # here skipped setting it AT ALL in that case, so a role directly
+      # referencing `{{ ansible_domain }}` (imntreal.smallstep_ca's own
+      # `Initialize CA` task, one line past the ansible_fqdn fix above)
+      # still failed "'ansible_domain' is undefined" instead of getting
+      # real Ansible's own empty-string default.
+      domain = fqdn.includes?(".") ? fqdn.sub(/^#{Regex.escape(hostname)}\./, "") : ""
+      facts["ansible_domain"] = domain
     end
 
     # Gather OS facts

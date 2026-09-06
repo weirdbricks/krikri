@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.780`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.781`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.27` (see `shard.yml`).
 
 ---
