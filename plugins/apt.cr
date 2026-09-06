@@ -120,10 +120,26 @@ module Krikri
             # approximate the same retry-on-lock-contention behavior;
             # non-lock errors (broken repo, network failure, signature
             # mismatch) still fail-fast on the first attempt.
+            #
+            # Real Ansible's own get_updated_cache_time() stats the same
+            # update-success-stamp/lists-dir mtime BEFORE and AFTER
+            # running `apt-get update`, and only reports changed=true if
+            # that mtime actually moved - apt itself leaves the on-disk
+            # lists untouched when the upstream repo content hasn't
+            # changed (conditional/hashsum-checked fetch), so a rerun
+            # against an already-fresh mirror is a genuine no-op. This
+            # plugin previously set changed=true unconditionally whenever
+            # it ran the update as the sole operation, regardless of
+            # whether anything on disk actually moved - found
+            # benchmarking claranet.users's own "Update APT cache" task
+            # on a freshly-imaged host (image already had a current
+            # cache from build): py reported `ok`, cr `changed`.
+            pre_update_mtime = cache_mtime
             update_result = apt_get_update_with_retry("apt-get update", update_cache_retries, update_cache_retry_max_delay, ->remote_exec(String))
             if update_result[:exit_code] == 0
               messages << "APT cache updated"
-              changed = true if cache_update_is_sole_operation
+              post_update_mtime = cache_mtime
+              changed = true if cache_update_is_sole_operation && post_update_mtime != pre_update_mtime
             else
               return PluginResult.new(
                 changed: false,
@@ -698,15 +714,25 @@ module Krikri
       # real Ansible correctly saw as still valid and left alone. Found
       # benchmarking Stouts.apt's own "Update apt cache" task (default
       # apt_cache_valid_time: 3600) - py reported `ok`, cr `changed`.
-      result = remote_exec(
-        "stat -c %Y /var/lib/apt/periodic/update-success-stamp 2>/dev/null || " \
-        "stat -c %Y /var/lib/apt/lists 2>/dev/null || echo 0"
-      )
-      last_update = result[:stdout].strip.to_i
+      last_update = cache_mtime
       current_time = Time.utc.to_unix
 
       age = current_time - last_update
       age > cache_valid_time
+    end
+
+    # Same mtime probe real Ansible's `get_cache_mtime()`/
+    # `get_updated_cache_time()` use: the update-success-stamp if
+    # present, else the /var/lib/apt/lists directory's own mtime.
+    # Shared by `should_update_cache?` (freshness check) and the
+    # before/after comparison around the actual `apt-get update` run
+    # (did it change anything on disk).
+    private def cache_mtime : Int32
+      result = remote_exec(
+        "stat -c %Y /var/lib/apt/periodic/update-success-stamp 2>/dev/null || " \
+        "stat -c %Y /var/lib/apt/lists 2>/dev/null || echo 0"
+      )
+      result[:stdout].strip.to_i
     end
 
     # Helper to convert string/bool to boolean

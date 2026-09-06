@@ -18,8 +18,8 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.781`.** Vendored `crinja` fork now at tag
-`crystal-play-0.9.27` (see `shard.yml`).
+**Currently at `0.9.782`.** Vendored `crinja` fork now at tag
+`crystal-play-0.9.29` (see `shard.yml`).
 
 ---
 
@@ -37,6 +37,33 @@ below - keep the two apart, or this list stops meaning anything.
   exist: /etc/nginx. Use state=touch to create it."). Not root-caused yet -
   needs a look at real Ansible's own `file` module semantics for a missing
   path combined with `recurse:` and no `state:`.
+
+---
+
+## Round 20000-20037 confirm batch (re-run of the 38 round-10000 divergences against the fully-fixed build, 0.9.782)
+
+Triaged the remaining items from the confirm batch. `deekayen.chocolatey` (Windows-only, same
+class as `jborean93.win_openssh`) and `gekmihesg.openwrt` (real `ansible-playbook` itself crashes
+with an internal Python unpacking error on this role - upstream role/ansible-core incompatibility,
+krikri gets further than real Ansible does) are not krikri bugs.
+
+- **`apt: update_cache: true` (no `name:`/`upgrade:`/`deb:`) always reported `changed: true`,
+  even when the cache was already fresh** (`claranet.users`'s own "Update APT cache" task,
+  round 20037): py showed `ok`, cr showed `changed`. Real Ansible's apt module doesn't treat
+  "we ran `apt-get update`" as "changed" - it stats the update-success-stamp (or, absent that,
+  the `/var/lib/apt/lists` directory) **before and after** the update and only reports changed
+  if that mtime actually moved (`get_updated_cache_time()` in `apt.py`). This plugin folded
+  "ran the update as the sole operation" straight into `changed = true` unconditionally. Fixed
+  by adding the same before/after mtime comparison (`AptPlugin#cache_mtime`, shared with the
+  existing `should_update_cache?` freshness check). No unit spec - real dpkg/apt mutation over
+  SSH has no spec by design (see `should_update_cache?`'s own sibling helpers); verified live
+  against a fresh Kata VM instead. Note: this task carries an upstream
+  `molecule-idempotence-notest` tag, i.e. even the role's own author knows this exact check is
+  not reliably idempotent against real `apt-get update` (repo metadata timestamps change on
+  every real fetch) - the fix makes krikri's algorithm match real Ansible's exactly, but a
+  network-timing false "changed" can still occur on either engine when the upstream Debian
+  mirror's `Release` metadata genuinely differs between the mtime snapshots. Not chasing this
+  further; it isn't a krikri-specific behavior gap.
 
 ---
 
