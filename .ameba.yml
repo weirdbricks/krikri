@@ -38,6 +38,14 @@ Layout/TrailingWhitespace:
   - src/krikri/template_action_plugin.cr
   - src/krikri/task_executor/result_display.cr
   - src/krikri/task_executor/executor.cr
+  - src/krikri/task_executor/executor_run_loop.cr
+  - src/krikri/task_executor/executor_task_exec.cr
+  - src/krikri/task_executor/executor_blocks_includes.cr
+  - src/krikri/task_executor/executor_loops.cr
+  - src/krikri/task_executor/executor_handlers.cr
+  - src/krikri/task_executor/executor_vars_context.cr
+  - src/krikri/task_executor/executor_facts_register.cr
+  - src/krikri/task_executor/executor_display_misc.cr
   - src/krikri/task_executor/handler_runner.cr
   - src/krikri/task_executor/variable_context.cr
   - src/krikri/base_plugin.cr
@@ -103,6 +111,14 @@ Lint/Formatting:
   - src/krikri/template_action_plugin.cr
   - src/krikri/task_executor/result_display.cr
   - src/krikri/task_executor/executor.cr
+  - src/krikri/task_executor/executor_run_loop.cr
+  - src/krikri/task_executor/executor_task_exec.cr
+  - src/krikri/task_executor/executor_blocks_includes.cr
+  - src/krikri/task_executor/executor_loops.cr
+  - src/krikri/task_executor/executor_handlers.cr
+  - src/krikri/task_executor/executor_vars_context.cr
+  - src/krikri/task_executor/executor_facts_register.cr
+  - src/krikri/task_executor/executor_display_misc.cr
   - src/krikri/task_executor/handler_runner.cr
   - src/krikri/task_executor/variable_context.cr
   - src/krikri/base_plugin.cr
@@ -174,6 +190,14 @@ Metrics/CyclomaticComplexity:
   - src/krikri/conditional_evaluator.cr
   - src/krikri/task_executor/result_display.cr
   - src/krikri/task_executor/executor.cr
+  - src/krikri/task_executor/executor_run_loop.cr
+  - src/krikri/task_executor/executor_task_exec.cr
+  - src/krikri/task_executor/executor_blocks_includes.cr
+  - src/krikri/task_executor/executor_loops.cr
+  - src/krikri/task_executor/executor_handlers.cr
+  - src/krikri/task_executor/executor_vars_context.cr
+  - src/krikri/task_executor/executor_facts_register.cr
+  - src/krikri/task_executor/executor_display_misc.cr
   - src/krikri/variable_substitutor/array_slicer.cr
   - src/krikri/variable_substitutor/comparison_evaluator.cr
   - src/krikri/variable_substitutor/filter_engine.cr
@@ -255,6 +279,14 @@ Naming/QueryBoolMethods:
   - src/krikri/base_action_plugin.cr
   - src/krikri/ssh_config.cr
   - src/krikri/task_executor/executor.cr
+  - src/krikri/task_executor/executor_run_loop.cr
+  - src/krikri/task_executor/executor_task_exec.cr
+  - src/krikri/task_executor/executor_blocks_includes.cr
+  - src/krikri/task_executor/executor_loops.cr
+  - src/krikri/task_executor/executor_handlers.cr
+  - src/krikri/task_executor/executor_vars_context.cr
+  - src/krikri/task_executor/executor_facts_register.cr
+  - src/krikri/task_executor/executor_display_misc.cr
   - src/krikri/base_plugin.cr
   - src/krikri/playbook_parser.cr
   Enabled: true
