@@ -1,4 +1,5 @@
 require "json"
+require "./filter_core"
 require "time"
 require "yaml"
 require "base64"
@@ -33,13 +34,13 @@ module Krikri
       class UnknownFilterError < Exception
       end
 
-      # Precompiled regexes and process-wide dynamic regex cache.
       REGEX_FILTER_CALL = /^(\w+)\s*\((.*)\)$/m
-      @@compiled_regex_cache = Hash(Tuple(String, Regex::Options), Regex).new
 
+      # The compiled-regex cache itself lives in FilterCore (both
+      # evaluators share it); this delegates so every existing
+      # FilterEngine.cached_regex call site keeps working.
       def self.cached_regex(pattern : String, options : Regex::Options = Regex::Options::None) : Regex
-        key = {pattern, options}
-        @@compiled_regex_cache[key] ||= Regex.new(pattern, options)
+        FilterCore.cached_regex(pattern, options)
       end
 
       # Optional variable context, needed only to resolve a `default(...)`
@@ -187,9 +188,9 @@ module Krikri
           # mysql.err") rather than its parent ("/var/log/mysql"), so
           # mysqld's own attempt to open its error log at that same path
           # found a directory instead of a file and failed to start.
-          transform_string(value, &->File.dirname(String))
+          JSON::Any.new(FilterCore.dirname(as_string(value)))
         when "basename"
-          transform_string(value, &->File.basename(String))
+          JSON::Any.new(FilterCore.basename(as_string(value)))
         when "length", "count"
           JSON::Any.new(length_of(value).to_i64)
         when "replace"
@@ -651,10 +652,7 @@ module Krikri
           pattern = args[0]?.try { |arg| as_string(resolve_expression(arg)) } || ""
           replacement = args[1]?.try { |arg| as_string(resolve_expression(arg)) } || ""
 
-          result = as_string(value).gsub(self.class.cached_regex(pattern)) do |_, mat|
-            replacement.gsub(/\\(\d)/) { mat[$1.to_i]? || "" }
-          end
-          JSON::Any.new(result)
+          JSON::Any.new(FilterCore.regex_replace(as_string(value), pattern, replacement))
         when "hash"
           # hash(algorithm='sha1') - real Ansible's own filter
           # (ansible.plugins.filter.core), wrapping Python's
@@ -667,19 +665,7 @@ module Krikri
           # reach this one.
           args = split_top_level_args(filter_args)
           algorithm = (args[0]?.try { |arg| as_string(resolve_expression(arg)) } || "sha1").downcase
-          openssl_name = case algorithm
-                         when "md5"    then "MD5"
-                         when "sha1"   then "SHA1"
-                         when "sha224" then "SHA224"
-                         when "sha256" then "SHA256"
-                         when "sha384" then "SHA384"
-                         when "sha512" then "SHA512"
-                         else
-                           raise "hash: unsupported algorithm '#{algorithm}'"
-                         end
-          digest = OpenSSL::Digest.new(openssl_name)
-          digest.update(as_string(value))
-          JSON::Any.new(digest.final.hexstring)
+          JSON::Any.new(FilterCore.hash(as_string(value), algorithm))
         when "password_hash"
           # password_hash(hashtype='sha512', salt=None, rounds=None) -
           # real Ansible's own filter (passlib-backed), a salted crypt(3)
@@ -696,21 +682,8 @@ module Krikri
           # the htpasswd plugin's own crypt_scheme handling.
           args = split_top_level_args(filter_args)
           hashtype = (args[0]?.try { |arg| as_string(resolve_expression(arg)) } || "sha512").downcase
-          openssl_flag = case hashtype
-                         when "md5"    then "-1"
-                         when "sha256" then "-5"
-                         when "sha512" then "-6"
-                         else
-                           raise "password_hash: unsupported hashtype '#{hashtype}' (supported: md5, sha256, sha512)"
-                         end
           explicit_salt = args[1]?.try { |arg| as_string(resolve_expression(arg)) }
-          salt = explicit_salt.presence || Random::Secure.hex(8)
-
-          output = IO::Memory.new
-          status = Process.run("openssl", ["passwd", openssl_flag, "-salt", salt, "-stdin"],
-            input: IO::Memory.new(as_string(value)), output: output)
-          raise "password_hash: openssl passwd failed" unless status.success?
-          JSON::Any.new(output.to_s.strip)
+          JSON::Any.new(FilterCore.password_hash(as_string(value), hashtype, explicit_salt))
         when "type_debug"
           # type_debug - real Ansible/Jinja2's own filter, returns
           # Python's type name for the value (matching `type(x).
@@ -721,17 +694,7 @@ module Krikri
           # instead of a type name, so every one of these asserts failed
           # outright regardless of the actual (correct) variable type.
           # Found via robertdebock.httpd's own assert.yml (round 19).
-          type_name = case value.raw
-                      when Array   then "list"
-                      when Hash    then "dict"
-                      when String  then "str"
-                      when Int64   then "int"
-                      when Float64 then "float"
-                      when Bool    then "bool"
-                      when Nil     then "NoneType"
-                      else              "str"
-                      end
-          JSON::Any.new(type_name)
+          JSON::Any.new(FilterCore.type_debug(value))
         when "to_json"
           # to_json(**kwargs) - real Ansible's own filter, wraps Python's
           # json.dumps() (default ", "/": " item/key separators, not
@@ -740,7 +703,7 @@ module Krikri
           # side copy added for the same gap found via geerlingguy.
           # logstash's own 30-elasticsearch-output.conf.j2 (a `.j2`
           # template file, reaching Crinja not this evaluator).
-          JSON::Any.new(python_json_dump(value))
+          JSON::Any.new(FilterCore.to_json(value))
         when "b64encode"
           # b64encode(encoding='utf-8') - real Ansible's own filter,
           # standard base64 (not urlsafe). Entirely unimplemented before
@@ -749,36 +712,24 @@ module Krikri
           # separately in jinja_filters.cr) fell through to the
           # unknown-filter passthrough, silently returning the plaintext
           # value unencoded.
-          JSON::Any.new(Base64.strict_encode(as_string(value)))
+          JSON::Any.new(FilterCore.b64encode(as_string(value)))
         when "b64decode"
           # b64decode() - inverse of the above. Real Ansible raises on
           # invalid input rather than silently passing it through;
           # matched here via Base64's own DecodeError.
-          begin
-            JSON::Any.new(Base64.decode_string(as_string(value)))
-          rescue
-            raise "b64decode: invalid base64 input"
-          end
+          JSON::Any.new(FilterCore.b64decode(as_string(value)))
         when "from_json"
           # from_json() - real Ansible's own filter, parses a JSON
           # string value into a real structure (the mirror of to_json
           # above) - commonly used on a registered command/uri result's
           # own stdout/content ("{{ result.stdout | from_json }}").
-          begin
-            JSON.parse(as_string(value))
-          rescue
-            raise "from_json: invalid JSON input"
-          end
+          FilterCore.from_json(as_string(value))
         when "from_yaml"
           # from_yaml() - real Ansible's own filter, parses a YAML
           # string into a real structure. Converts via YAML.parse ->
           # to_json -> JSON.parse (YAML's Any and JSON::Any aren't the
           # same type in Crystal) rather than hand-rolling a converter.
-          begin
-            JSON.parse(YAML.parse(as_string(value)).to_json)
-          rescue
-            raise "from_yaml: invalid YAML input"
-          end
+          FilterCore.from_yaml(value)
         when "json_query"
           # json_query(expr) - real Ansible's own filter (from
           # `community.general`, commonly reachable as a bare name), a
@@ -809,7 +760,7 @@ module Krikri
           # to_yaml (unlike to_nice_yaml) takes no such kwargs of its
           # own beyond the underlying yaml.dump()'s already-implied
           # defaults.
-          JSON::Any.new(YAML.parse(value.to_json).to_yaml)
+          JSON::Any.new(FilterCore.to_yaml(value))
         when "checksum"
           # checksum() - real Ansible's own filter (ansible.plugins.
           # filter.core), a plain sha1 hex digest - distinct from the
@@ -817,9 +768,7 @@ module Krikri
           # defaults to sha1 too, but accepts other algorithms);
           # checksum specifically always means sha1, matching Ansible's
           # own hard-coded `hashlib.sha1(...)`.
-          digest = OpenSSL::Digest.new("SHA1")
-          digest.update(as_string(value))
-          JSON::Any.new(digest.final.hexstring)
+          JSON::Any.new(FilterCore.checksum(as_string(value)))
         when "union"
           # union(other) - real Ansible's own filter, set union
           # preserving first-seen order (matches Ansible's own
@@ -833,30 +782,24 @@ module Krikri
           # that takes another list as its argument, not specific to
           # union.
           other = resolve_expression(filter_args)
-          left = value.as_a? || [] of JSON::Any
-          right = other.as_a? || [] of JSON::Any
-          combined = (left + right).uniq(&.to_json)
-          JSON::Any.new(combined)
+          JSON::Any.new(FilterCore.union(value.as_a? || [] of JSON::Any, other.as_a? || [] of JSON::Any))
         when "path_join"
           # path_join(list) - real Ansible filter: joins a list of path
           # components with os.path.join semantics (an absolute
           # component resets the accumulated path rather than appending
           # to it - Crystal's own File.join has no such reset).
           parts = as_array(value).compact_map(&.as_s?)
-          joined = parts.reduce("") { |acc, part| part.starts_with?('/') ? part : File.join(acc, part) }
-          JSON::Any.new(joined)
+          JSON::Any.new(FilterCore.path_join(parts))
         when "splitext"
           # splitext() - real Ansible filter, mirrors Python's
           # os.path.splitext: [root, ext] (ext includes the leading '.',
           # empty string if there's no extension).
-          str = as_string(value)
-          ext = File.extname(str)
-          root = ext.empty? ? str : str[0, str.size - ext.size]
+          root, ext = FilterCore.splitext(as_string(value))
           JSON::Any.new([JSON::Any.new(root), JSON::Any.new(ext)])
         when "urldecode"
           # urldecode() - real Ansible filter, percent-decodes a URL-
           # encoded string.
-          JSON::Any.new(URI.decode(as_string(value)))
+          JSON::Any.new(FilterCore.urldecode(as_string(value)))
         when "urlsplit"
           # urlsplit(query='') - real Ansible filter: parses value as a
           # URL. With no argument, returns the full breakdown dict; with
@@ -909,7 +852,7 @@ module Krikri
           # regex_escape(re_type='python') - real Ansible filter, escapes
           # regex special characters so the value can be embedded
           # literally into a larger pattern.
-          JSON::Any.new(Regex.escape(as_string(value)))
+          JSON::Any.new(FilterCore.regex_escape(as_string(value)))
         when "to_nice_json"
           # to_nice_json(indent=4, sort_keys=True) - real Ansible filter,
           # a pretty-printed JSON dump (the mirror of to_nice_yaml).
@@ -919,51 +862,39 @@ module Krikri
           # correct, same scope limit to_nice_yaml's own indent= already
           # documents.
           sort_keys = (kw = parse_kwarg_expr(filter_args, "sort_keys")) ? truthy?(kw) : true
-          sorted = sort_keys ? sort_json_keys(value) : value
-          JSON::Any.new(sorted.to_pretty_json)
+          JSON::Any.new(FilterCore.to_nice_json(value, sort_keys))
         when "human_readable"
           # human_readable(isbits=False, unit=None) - real Ansible
           # filter, formats a byte count as e.g. "1.00 KB" (1024-based).
           bytes = value.as_i64? || value.as_f?.try(&.to_i64) || 0_i64
           isbits = (kw = parse_kwarg_expr(filter_args, "isbits")) ? truthy?(kw) : false
-          JSON::Any.new(format_human_readable(bytes, isbits))
+          JSON::Any.new(FilterCore.format_human_readable(bytes, isbits))
         when "human_to_bytes"
           # human_to_bytes(default_unit=None, isbits=False) - real
           # Ansible filter, the inverse of human_readable: parses
           # "10GB"/"1.5 MB" etc back into a raw byte count.
-          JSON::Any.new(parse_human_to_bytes(as_string(value)))
+          JSON::Any.new(FilterCore.parse_human_to_bytes(as_string(value)))
         when "md5"
-          digest = OpenSSL::Digest.new("MD5")
-          digest.update(as_string(value))
-          JSON::Any.new(digest.final.hexstring)
+          JSON::Any.new(FilterCore.md5(as_string(value)))
         when "sha1"
-          digest = OpenSSL::Digest.new("SHA1")
-          digest.update(as_string(value))
-          JSON::Any.new(digest.final.hexstring)
+          JSON::Any.new(FilterCore.sha1(as_string(value)))
         when "expanduser"
           # expanduser() - real Ansible filter, mirrors Python's
           # os.path.expanduser: a leading `~` (or `~user`, not
           # supported here - only the current-user shorthand) expands
           # to $HOME.
-          str = as_string(value)
-          home = ENV["HOME"]? || ""
-          JSON::Any.new(str.starts_with?("~/") ? File.join(home, str[2..]) : (str == "~" ? home : str))
+          JSON::Any.new(FilterCore.expanduser(as_string(value)))
         when "expandvars"
           # expandvars() - real Ansible filter, mirrors Python's
           # os.path.expandvars: `$VAR`/`${VAR}` references replaced from
           # the CONTROLLER's own environment (unset -> left as-is,
           # matching Python's own behavior).
-          str = as_string(value)
-          expanded = str.gsub(/\$\{(\w+)\}|\$(\w+)/) do |mat|
-            name = $1? || $2?
-            name ? (ENV[name]? || mat) : mat
-          end
-          JSON::Any.new(expanded)
+          JSON::Any.new(FilterCore.expandvars(as_string(value)))
         when "normpath"
           # normpath() - real Ansible filter, mirrors Python's
           # os.path.normpath: collapses `.`/`..`/redundant `/` without
           # making the path absolute (relative stays relative).
-          JSON::Any.new(normalize_path(as_string(value)))
+          JSON::Any.new(FilterCore.normpath(as_string(value)))
         when "relpath"
           # relpath(start='.') - real Ansible filter, mirrors Python's
           # os.path.relpath: value expressed relative to *start*.
@@ -975,7 +906,7 @@ module Krikri
           # os.path.commonpath: the longest common directory prefix of
           # value (a list of paths).
           paths = as_array(value).compact_map(&.as_s?)
-          JSON::Any.new(common_path(paths))
+          JSON::Any.new(FilterCore.commonpath(paths))
         when "log"
           # log(base=math.e) - real Ansible filter: natural log with no
           # argument, log base *base* otherwise.
@@ -996,16 +927,12 @@ module Krikri
           # produces the same UUID. Ansible's own default namespace
           # ('361E6D51-FAEC-444A-9079-341386DA8E2E'), not the standard
           # DNS namespace real uuid5() implementations default to.
-          JSON::Any.new(UUID.v5(as_string(value), UUID.new("361E6D51-FAEC-444A-9079-341386DA8E2E")).to_s)
+          JSON::Any.new(FilterCore.to_uuid(as_string(value)))
         when "symmetric_difference"
           # symmetric_difference(other) - real Ansible filter: elements
           # in exactly one of value/other, not both.
           other = resolve_expression(filter_args)
-          left = (value.as_a? || [] of JSON::Any).uniq(&.to_json)
-          right = (other.as_a? || [] of JSON::Any).uniq(&.to_json)
-          result = (left.reject { |i| right.any? { |rval| rval.to_json == i.to_json } }) +
-                   (right.reject { |i| left.any? { |lval| lval.to_json == i.to_json } })
-          JSON::Any.new(result)
+          JSON::Any.new(FilterCore.symmetric_difference(value.as_a? || [] of JSON::Any, other.as_a? || [] of JSON::Any))
         when "combinations"
           # combinations(n) - real Ansible filter, Python's own
           # itertools.combinations(value, n): every n-length combination
@@ -1131,8 +1058,7 @@ module Krikri
           # each blocklisted package" loop into "attempt to
           # apt-get-remove every installed package one at a time" -
           # correctness bug and a multi-hour hang, not just wrong data.
-          other = as_array(resolve_expression(filter_args)).to_set
-          JSON::Any.new(as_array(value).uniq.select { |item| other.includes?(item) })
+          JSON::Any.new(FilterCore.intersect(as_array(value), as_array(resolve_expression(filter_args))))
         when "difference"
           # difference(other) - real Ansible's own filter: elements of
           # *value* that do NOT appear in *other*, deduplicated, order
@@ -1148,8 +1074,7 @@ module Krikri
           # PLAY RECAP divergence (task counted as "ok" instead of
           # "skipped") that would recur in any role using this common
           # required-facts guard pattern.
-          other_set = as_array(resolve_expression(filter_args)).to_set
-          JSON::Any.new(as_array(value).uniq.reject { |item| other_set.includes?(item) })
+          JSON::Any.new(FilterCore.difference(as_array(value), as_array(resolve_expression(filter_args))))
         else
           # Unknown filter - real Ansible raises ("Syntax error in
           # template: No filter named 'bodsch.core.type'.", verified
@@ -1915,10 +1840,6 @@ module Krikri
         end
       end
 
-      private def python_json_dump(value : JSON::Any) : String
-        String.build { |io| python_json_dump(value, io) }
-      end
-
       private def python_json_dump(value : JSON::Any, io : IO)
         case raw = value.raw
         when Nil
@@ -2054,93 +1975,8 @@ module Krikri
       # Recursively sorts a JSON object's keys - the JSON counterpart of
       # #sort_yaml_keys-style helpers already used for to_nice_yaml's own
       # Crinja copy, needed here for to_nice_json's sort_keys= default.
-      private def sort_json_keys(value : JSON::Any) : JSON::Any
-        case raw = value.raw
-        when Hash
-          sorted = raw.to_a.sort_by { |(k, _)| k }
-          JSON::Any.new(sorted.to_h { |(k, v)| {k, sort_json_keys(v)} })
-        when Array
-          JSON::Any.new(raw.map { |v| sort_json_keys(v) })
-        else
-          value
-        end
-      end
-
-      HUMAN_READABLE_SUFFIXES     = {"Bytes", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"}
-      HUMAN_READABLE_BIT_SUFFIXES = {"bits", "Kb", "Mb", "Gb", "Tb", "Pb", "Eb", "Zb", "Yb"}
-
-      # Mirrors real Ansible's own bytes_to_human/human_to_bytes
-      # (module_utils.common.text.formatters) closely enough for the
-      # common cases - both base-1024, `isbits:` selects the bit-count
-      # suffix table (and multiplies the byte count by 8 first) rather
-      # than switching to a base-1000 divisor, matching real Ansible's
-      # own implementation exactly (a common misconception is that
-      # "bits" implies decimal/SI units - it doesn't, here).
-      private def format_human_readable(bytes : Int64, isbits : Bool) : String
-        value = isbits ? bytes.to_f * 8 : bytes.to_f
-        suffixes = isbits ? HUMAN_READABLE_BIT_SUFFIXES : HUMAN_READABLE_SUFFIXES
-        suffixes.each_with_index do |suffix, i|
-          unit = 1024.0 ** i
-          next_unit = 1024.0 ** (i + 1)
-          if value < next_unit || i == suffixes.size - 1
-            return i == 0 ? "#{value.to_i} #{suffix}" : "%.2f %s" % [value / unit, suffix]
-          end
-        end
-        "#{bytes} Bytes"
-      end
-
-      private def parse_human_to_bytes(str : String) : Int64
-        match = str.strip.match(/^([\d.]+)\s*([A-Za-z]*)$/)
-        return str.to_i64? || 0_i64 unless match
-
-        number = match[1].to_f
-        unit = match[2].downcase
-        multiplier = case unit
-                     when "", "b", "bytes" then 1_i64
-                     when "kb"             then 1024_i64
-                     when "mb"             then 1024_i64 ** 2
-                     when "gb"             then 1024_i64 ** 3
-                     when "tb"             then 1024_i64 ** 4
-                     when "pb"             then 1024_i64 ** 5
-                     else                       1_i64
-                     end
-        (number * multiplier).to_i64
-      end
-
       # Mirrors Python's os.path.normpath: collapses `.`/`..`/redundant
       # `/` segments without ever making a relative path absolute.
-      private def normalize_path(path : String) : String
-        return "." if path.empty?
-        absolute = path.starts_with?('/')
-        parts = path.split('/').reject { |pth| pth.empty? || pth == "." }
-
-        result = [] of String
-        parts.each do |part|
-          if part == ".." && !result.empty? && result.last != ".."
-            result.pop
-          elsif part == ".." && !absolute
-            result << part
-          elsif part != ".."
-            result << part
-          end
-        end
-
-        joined = result.join("/")
-        absolute ? "/#{joined}" : (joined.empty? ? "." : joined)
-      end
-
-      # Mirrors Python's os.path.commonpath: the longest shared leading
-      # sequence of path SEGMENTS (not a naive character prefix) across
-      # every path in *paths*.
-      private def common_path(paths : Array(String)) : String
-        return "" if paths.empty?
-        segments = paths.map { |pth| pth.split('/').reject(&.empty?) }
-        first = segments.first
-        common = first.each_with_index.take_while { |seg, i| segments.all? { |str| str[i]? == seg } }.map(&.[0])
-        prefix = paths.first.starts_with?('/') ? "/" : ""
-        "#{prefix}#{common.join("/")}"
-      end
-
       # itertools.combinations(array, n) - every n-length combination,
       # order-independent, no element reused within one combination.
       private def combinations(array : Array(JSON::Any), n : Int32) : Array(Array(JSON::Any))
