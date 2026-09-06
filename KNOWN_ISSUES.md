@@ -1,11 +1,23 @@
 # Known Issues — 120 new-Galaxy-author roles, kata-pair round (raw findings)
 
+**RESOLVED (2026-09-06).** Every genuinely-open item below has been fixed and
+live-reverified (`igor_nikiforov.etcd`, `lablabs.rke2`, `rvm.ruby` — see
+`KNOWN_MISSING.md`'s round 43000-43201 narrative for the fix details); every
+other entry was already FIXED or RETRACTED at the time it was logged. All 120
+roles in `shortlist120.txt` have now been run (119 have a row in
+`ROLES_TESTED.md`; the 120th, `wpninfra.fluent_bit`, is an Ansible Galaxy 404 —
+not installable, no comparison possible) — the remaining ~96 roles this file's
+own "Progress" note once called out as not-yet-run were picked up later by the
+overnight 150-role batch (`KNOWN_MISSING.md`'s round 10000-10149), which
+explicitly continued this same shortlist. Nothing further to do against this
+file; kept as a historical record rather than deleted, same as other closed
+rounds.
+
 Raw discovery-phase findings from a round testing 120 Ansible Galaxy roles from
 authors NOT already covered in `ROLES_TESTED.md`, using local Kata VM pairs
-(`testing/kata/`) instead of Atlantic.net. **No fixes applied yet** — this file
-is input for a separate fix pass (possibly a different model/session). Each
-entry: role, what diverged, root-cause hypothesis, and whether it's a real
-engine bug vs. an environment/upstream-role artifact.
+(`testing/kata/`) instead of Atlantic.net. Each entry: role, what diverged,
+root-cause hypothesis, and whether it's a real engine bug vs. an environment/
+upstream-role artifact.
 
 Shortlist, per-role logs, and running notes: `testing/kata/round_new_authors/`
 (`shortlist120.txt`, `results/<role>/`, `findings.md`).
@@ -308,13 +320,15 @@ match solo).
 
 ## Progress
 
-24 / 120 roles run as of this note (some required a solo re-run to rule out
-the plugin-upload race above before their result could be trusted). Stepped
-back down from 8-wide to 4-wide concurrency after confirming 8-wide degrades
-the host in a way that doesn't fully recover even once concurrency drops
-back down (swap stayed pinned near its 8GB ceiling for a long time after).
-4-wide is what's actually reliable on this box. Any `UNREACHABLE` result
-from here on gets a solo re-run before being trusted (the harness itself now
-retries up to 3x with jitter as a stopgap — see above — but a solo re-run is
-still the real confirmation). Remaining roles:
-`testing/kata/round_new_authors/shortlist120.txt` from line 25 on.
+**DONE (2026-09-06): all 120/120 roles in `shortlist120.txt` have been run.**
+24/120 were run under this file's own round (some required a solo re-run to
+rule out the plugin-upload race above before their result could be trusted,
+stepping down from 8-wide to 4-wide concurrency after confirming 8-wide
+degrades the host in a way that doesn't fully recover once concurrency drops
+back down). The remaining ~96 were picked up later by the overnight 150-role
+batch (`KNOWN_MISSING.md`'s round 10000-10149), which explicitly continued
+this same shortlist rather than starting a separate one. Verified by
+cross-referencing every unique name in `shortlist120.txt` against
+`ROLES_TESTED.md`: 119/120 have a row there; the 120th
+(`wpninfra.fluent_bit`) is the documented Galaxy 404 above, untestable by
+design, not an outstanding gap.
