@@ -285,6 +285,23 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("query('first_found', params)").should eq("[]")
   end
 
+  it "query('<unimplemented lookup type>', ...) returns an empty list, not [\"undefined\"]" do
+    # Real bug found in a 150-role overnight round (manala.cron): its
+    # own `loop: "{{ query('manala_cron_files_env', manala_cron_files)
+    # }}"` uses a role-local CUSTOM Python lookup plugin (a real,
+    # understood scope limit - krikri can't execute one). #evaluate_lookup
+    # falls back to the literal string "undefined" for any lookup type
+    # it doesn't implement; the generic (non-first_found) branch of
+    # #evaluate_query then wrapped that AS DATA into a one-element
+    # ["undefined"] array instead of treating it as "nothing resolved"
+    # the way the first_found branch above already does - the loop ran
+    # ONCE with a bogus string `item` instead of skipping (real Ansible
+    # skips: manala_cron_files is empty by default, so the role's own
+    # lookup plugin - which krikri can't run - would itself return []).
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any).new)
+    evaluator.evaluate("query('totally_custom_unimplemented_lookup', [])").should eq("[]")
+  end
+
   it "resolves a first_found paths: entry relative to the role's tasks/ dir, not just role_path itself" do
     # buluma.confluence's own idiom: `paths: ['../vars']`, meant to be
     # interpreted relative to the INCLUDING TASK FILE's own directory

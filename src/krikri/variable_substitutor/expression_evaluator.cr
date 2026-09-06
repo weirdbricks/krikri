@@ -2285,6 +2285,18 @@ module Krikri
         end
 
         raw = evaluate_lookup(args)
+        # The same "undefined" sentinel #evaluate_lookup falls back to
+        # for any lookup type it doesn't implement (most commonly a
+        # role-local CUSTOM Python lookup plugin - manala.cron's own
+        # lookup_plugins/manala_cron_files_env.py, a real, understood
+        # scope limit) - wrapping it as a single-element ["undefined"]
+        # array below would make a `loop: "{{ query(...) }}"` run ONCE
+        # with a bogus string item instead of the empty list real
+        # Ansible's own query() falls back to when nothing resolves.
+        # Same special case the first_found branch above already has;
+        # this is its generic-fallback equivalent.
+        return "[]" if raw == "undefined"
+
         parsed = (JSON.parse(raw) rescue nil)
         parsed.try(&.as_a?) ? raw : [raw].to_json
       end
