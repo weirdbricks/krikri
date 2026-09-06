@@ -108,12 +108,49 @@ module Krikri
 
       # Handle cache update
       if update_cache || has_cache_valid_time
+        # Real Ansible's apt module cannot run at all in check mode when
+        # it can't see the python3-apt bindings (its auto-install fallback
+        # is a real mutation, so check mode fails fast instead) - mirror
+        # that refusal. On hosts WITH python3-apt nothing changes here.
+        if @check_mode && !python_apt_present?
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "python3-apt must be installed to use check mode. If run normally this module can auto-install it, see the auto_install_module_deps option."
+          )
+        end
         if should_update_cache?(cache_valid_time)
           if @check_mode
             messages << "Would update apt cache"
             changed = true if cache_update_is_sole_operation
+          elsif !python_apt_present?
+            # On a host WITHOUT python3-apt, real Ansible auto-installs it
+            # before its measurement window even opens - and that auto-install
+            # step runs a full `apt-get update` first (apt.py's "Updating cache
+            # and auto-installing missing dependency" path), then RESPAWNS the
+            # module, so the before/after mtime pair is read entirely AFTER
+            # that prefetch. A cache-refresh-only invocation therefore reports
+            # `ok` on such hosts even when the prefetch genuinely fetched new
+            # lists (verified live: deleting a lists file + aging the dir
+            # mtime, real Ansible fetched - /var/lib/apt/lists's mtime moved -
+            # and still reported changed=False while python3-apt was absent,
+            # and changed=True once it was present). Since this plugin shells
+            # out to the CLI and never installs python3-apt, emulate real
+            # Ansible's observable behavior: run the update for its side
+            # effects, but keep changed=false for the sole-operation case
+            # regardless of mtime movement.
+            update_result = apt_get_update_with_retry("apt-get update", update_cache_retries, update_cache_retry_max_delay, ->remote_exec(String))
+            if update_result[:exit_code] == 0
+              messages << "APT cache updated"
+            else
+              return PluginResult.new(
+                changed: false,
+                failed: true,
+                msg: "Failed to update apt cache: #{update_result[:stderr]}"
+              )
+            end
           else
-            # Real Ansible's apt module wraps `apt-get update` with
+            # Real Ansible's apt module wraps the cache update with
             # `update_cache_retries` + `update_cache_retry_max_delay`
             # (defaults 5 and 12): retries on failure with exponential
             # backoff, doubled each attempt, capped at the max delay. We
@@ -123,17 +160,20 @@ module Krikri
             #
             # Real Ansible's own get_updated_cache_time() stats the same
             # update-success-stamp/lists-dir mtime BEFORE and AFTER
-            # running `apt-get update`, and only reports changed=true if
-            # that mtime actually moved - apt itself leaves the on-disk
-            # lists untouched when the upstream repo content hasn't
-            # changed (conditional/hashsum-checked fetch), so a rerun
-            # against an already-fresh mirror is a genuine no-op. This
-            # plugin previously set changed=true unconditionally whenever
-            # it ran the update as the sole operation, regardless of
-            # whether anything on disk actually moved - found
-            # benchmarking claranet.users's own "Update APT cache" task
-            # on a freshly-imaged host (image already had a current
-            # cache from build): py reported `ok`, cr `changed`.
+            # running the cache update, and only reports changed=true if
+            # that mtime actually moved - with python3-apt present, both
+            # python-apt's Cache().update() and the CLI `apt-get update`
+            # leave the on-disk lists untouched when the upstream repo
+            # content hasn't changed (conditional/hashsum-checked fetch;
+            # verified live: an all-Hit `apt-get update` run does NOT
+            # bump /var/lib/apt/lists's mtime), so a rerun against an
+            # already-fresh mirror is a genuine no-op. This plugin
+            # previously set changed=true unconditionally whenever it ran
+            # the update as the sole operation, regardless of whether
+            # anything on disk actually moved - found benchmarking
+            # claranet.users's own "Update APT cache" task on a
+            # freshly-imaged host (image already had a current cache from
+            # build): py reported `ok`, cr `changed`.
             pre_update_mtime = cache_mtime
             update_result = apt_get_update_with_retry("apt-get update", update_cache_retries, update_cache_retry_max_delay, ->remote_exec(String))
             if update_result[:exit_code] == 0
@@ -733,6 +773,21 @@ module Krikri
         "stat -c %Y /var/lib/apt/lists 2>/dev/null || echo 0"
       )
       result[:stdout].strip.to_i
+    end
+
+    # Can the target's Python see the python3-apt bindings? Same two
+    # interpreters real Ansible's apt module probes
+    # (probe_interpreters_for_module(['/usr/bin/python3', '/usr/bin/python'],
+    # 'apt')) before deciding whether to auto-install python3-apt and
+    # respawn under an interpreter that can see it. The answer decides
+    # which changed-reporting path the cache update takes (see the long
+    # comment in #execute) and whether check mode fails outright.
+    private def python_apt_present? : Bool
+      result = remote_exec(
+        "/usr/bin/python3 -c 'import apt' 2>/dev/null || " \
+        "/usr/bin/python -c 'import apt' 2>/dev/null"
+      )
+      result[:exit_code] == 0
     end
 
     # Helper to convert string/bool to boolean

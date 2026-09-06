@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.784`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.785`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
@@ -56,28 +56,48 @@ below - keep the two apart, or this list stops meaning anything.
   themselves are Ansible 1.x filters removed from modern ansible-core, so
   the role itself is stale; that's why real Ansible errors here at all.
 
-- **`apt: update_cache: true` (with or without `cache_valid_time:`) still reports `changed: true`
-  on a fresh Kata VM where real Ansible reports `ok`** (`claranet.users` round 20037,
-  `ckaserer.tftp` round 20008/41000 - reproduced again after the 0.9.782 fix below, on a
-  freshly-rebuilt binary, so this is a real remaining gap, not a one-off timing flake). 0.9.782
-  replaced the previous "always changed" bug with a before/after mtime comparison
-  (`AptPlugin#cache_mtime`, matching real Ansible's own `get_updated_cache_time()` in `apt.py`
-  exactly on paper: stat the update-success-stamp, else the `/var/lib/apt/lists` directory,
-  before and after `apt-get update`). That fix is still correct as far as it goes (it replaced a
-  bug that was unconditionally wrong with a check that's at least sometimes right), but on live
-  Kata VMs the directory mtime consistently DOES move after shelling out to the `apt-get update`
-  CLI (verified manually: `/var/lib/apt/lists`' own mtime changed after a plain manual run), while
-  real Ansible's apt module - which calls python-apt's `Cache().update()` library function, not
-  the `apt-get` binary - consistently reports `ok` on the exact same host at the exact same time.
-  Suspect python-apt's internal fetcher has finer-grained content/hash-based change detection
-  (APT's acquire-by-hash caching can leave already-current by-hash files untouched even when the
-  top-level lists directory's own mtime moves for unrelated reasons) that a directory-mtime diff
-  around a shelled-out `apt-get update` can't replicate. Not root-caused to an exact fix yet -
-  would need to either shell out to something that exposes the same by-hash-aware "did content
-  actually change" signal apt-get itself doesn't surface, or accept this as a structural limit of
-  not linking against libapt-pkg. `claranet.users`'s own task carries an upstream
-  `molecule-idempotence-notest` tag, i.e. even its role author already knows this exact check
-  isn't reliably idempotent in real Ansible either.
+---
+
+## Round 30001: apt `update_cache:` false-`changed` root-caused and fixed (0.9.785)
+
+Closed the long-standing `apt: {update_cache: true}` false-`changed` divergence
+(`claranet.users` round 20037, `ckaserer.tftp` rounds 20008/41000) by finally
+root-causing it live on a fresh Kata VM, and the answer is not what the
+0.9.782-era mtime-diff analysis assumed:
+
+- **The CLI-vs-library discrepancy was a red herring.** A fresh Kata VM's
+  `apt-get update` CLI does NOT bump `/var/lib/apt/lists`'s mtime on an
+  all-Hit (nothing-to-fetch) run - verified by running it twice back to back
+  and stat-ing between; the mtime only moves when something is actually
+  fetched (a `Get:` line). So the before/after mtime-diff krikri has used
+  since 0.9.782 IS a faithful "did anything get fetched" signal for the CLI
+  path, and on hosts WITH python3-apt it matches real Ansible exactly
+  (re-verified: forced-fetch + python3-apt present → both engines
+  `changed=True`; all-Hit rerun → both `ok`).
+- **The real mechanism: real Ansible's python3-apt auto-install prefetch.**
+  On hosts WITHOUT python3-apt (every fresh Kata VM), apt.py can't run at all
+  until it auto-installs python3-apt and respawns the module under an
+  interpreter that can see it - and the auto-install step runs a full
+  `apt-get update` FIRST (the "Updating cache and auto-installing missing
+  dependency" path). The respawn then re-reads the cache mtime entirely AFTER
+  that prefetch, so a cache-refresh-only invocation reports `ok` even when the
+  prefetch genuinely fetched new lists. Verified live: delete a lists file +
+  age the dir mtime, real Ansible fetched (mtime moved) and still reported
+  `changed=False` while python3-apt was absent, `changed=True` once present.
+- **The fix** (`plugins/apt.cr`): probe the same two interpreters real
+  Ansible probes (`/usr/bin/python3`, `/usr/bin/python`) for the `apt` module.
+  Without python3-apt, run the update but keep `changed=false` for the
+  sole-operation case regardless of mtime movement (emulating the prefetch's
+  invisible-to-its-own-measurement window); with it, keep the existing
+  mtime-diff logic. Also mirrors real Ansible's check-mode refusal on
+  python3-apt-less hosts (fails with the same "python3-apt must be installed
+  to use check mode" message - byte-identical live). One known asymmetry
+  remains, deliberate: real Ansible's first run *installs* python3-apt, so
+  its SECOND run switches to mtime-diff semantics, while krikri never
+  installs it and stays on the prefetch-emulation path; in practice
+  indistinguishable (a warm rerun seconds later can't have new upstream
+  content), and installing a system package from a module side effect is not
+  something krikri should do.
 
 ---
 
