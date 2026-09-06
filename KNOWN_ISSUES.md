@@ -107,10 +107,9 @@ level diff before this is actionable - not done yet, logged here as
 `testing/kata/round_new_authors/results/xanmanning.k3s/` (solo re-run,
 octets 120/121).
 
-### `igor_nikiforov.journald` — real divergence, diagnosis incomplete
-Confirmed real (4-wide batch, not an UNREACHABLE case). Logged for the fix
-pass without a task-level diff yet.
-`testing/kata/round_new_authors/results/igor_nikiforov.journald/`.
+### `igor_nikiforov.journald` — NOT a real divergence (re-verified, 0.9.772)
+
+**RETRACTED**: re-run on a fresh Kata pair against the current build - `ok=1 failed=1` identical on both engines, cold and warm. The original log's extra krikri-only "Gathering Facts... Plugin execution failed on remote" failure was the concurrent plugin-upload race (already fixed 0.9.770, see the HIGH PRIORITY section above) masking what both engines actually agree on: the role's own `journald_config` template var is genuinely undefined (an upstream-role bug, both engines fail identically at the same task with the same message). This entry was logged from a 4-wide batch run before that race was understood as the explanation for exactly this shape of extra failure.
 
 ### `kyl191.openvpn` — missing role-name prefix on `|`-named tasks (again) + earlier real failure
 
@@ -123,6 +122,8 @@ firewall detected" - an image gap, not an engine bug) while krikri fails
 much earlier with "Missing required parameter: cmd" - a different, real,
 unresolved divergence upstream of the firewall check. Diagnosis incomplete.
 `testing/kata/round_new_authors/results/kyl191.openvpn/`.
+
+**Re-test attempt (2026-09-06) inconclusive - blocked by a local environment gap, not re-diagnosed**: this machine's Kata VMs currently have NO internet egress at all (`net.ipv4.ip_forward=0` and no host-side NAT rule - see `testing/kata/README.md`'s own documented one-time manual prerequisite, confirmed broken via `getent hosts`/`curl` timeouts against 3 independent fresh VMs on unrelated octets). A fresh re-run both cold and warm timed out at ~500-504s on BOTH engines (`ok=5 failed=1`, skipped 16 vs 17) - consistent with both engines stalling on the same network-dependent step rather than a real behavioral difference, but not conclusive either way without working internet. Needs re-verification once the host's NAT/ip_forward prerequisite is restored.
 
 ### `lablabs.rke2` / `rvm.ruby` — same failed=1, unrelated causes (not real matches)
 - `lablabs.rke2`: ansible fails on a real upstream role bug
@@ -138,11 +139,13 @@ unresolved divergence upstream of the firewall check. Diagnosis incomplete.
   retry-handling gap in krikri's `command`/gpg-key task, not confirmed.
 `testing/kata/round_new_authors/results/{lablabs.rke2,rvm.ruby}/`.
 
-### `evrardjp.keepalived` — real divergence (re-verified solo)
-`ok=3` (krikri) vs `ok=12` (ansible), both cold and warm, both `failed=1`
-matching. skipped differs (5 vs 21). Diagnosis incomplete - logged for the
-fix pass. Logs: `testing/kata/round_new_authors/results/evrardjp.keepalived/`
-(solo re-run, octets 110/111).
+**`lablabs.rke2` diagnosed (2026-09-06), same class as `igor_nikiforov.etcd` below - NOT a drive-by fix**: the role's `meta/argument_specs.yml` default expression `groups[rke2_servers_group_name]` (`rke2_servers_group_name` defaults to the string `"masters"`, and this test inventory has no `masters` group) triggers a genuine Jinja2 quirk in real Ansible - a dict `[]` subscript that raises `KeyError` falls back to `getattr()`, and a plain dict has no `.masters` attribute, so real `validate_argument_spec` raises `AttributeError` immediately while resolving the arg spec's own default. krikri's arg-spec validation doesn't replicate that subscript-falls-back-to-getattr semantic (or the strict-raise-on-default-error behavior) - it resolves the bracket lookup leniently to undefined and passes the task, only failing three tasks later when `groups[rke2_servers_group_name]` is referenced directly in a `when:`. Both engines ultimately fail the role either way; this is the same lenient-vs-strict-undefined design tradeoff already deferred for `igor_nikiforov.etcd`, not a bug with an isolated fix - moved to "Deliberate limits" territory rather than "Open gaps".
+
+**`rvm.ruby` re-test attempt (2026-09-06) inconclusive - blocked by the same broken-Kata-network environment gap as `kyl191.openvpn` above**: with no internet egress, krikri's fresh re-run failed at "Install rvm installer" with `Hostname lookup for raw.githubusercontent.com failed: Temporary failure in name resolution` (confirmed reproducible against 3 independent fresh Kata VMs regardless of role) - this specific failure is the environment gap, not a krikri defect. Real Ansible's fresh re-run failed even earlier, at the role's very first task, with an unrelated `become`/temp-file-ownership pipelining error ("Failed to change ownership of the temporary files Ansible... needs to create despite connecting as a privileged user") - a separate real-Ansible-side quirk when becoming root while already connected as root, also not a krikri-relevant gap. Both fail for reasons unrelated to each other and unrelated to real engine behavior; the original gpg-keyserver-fetch failure noted above may or may not still be real but can't be re-confirmed until the host's NAT/ip_forward prerequisite is restored.
+
+### `evrardjp.keepalived` — NOT a real divergence (re-verified)
+
+**RETRACTED**: re-run against a podman container with working internet (this role's octet in the original round had no internet egress at all - the Kata host-side NAT rule + `net.ipv4.ip_forward=1` documented as a manual one-time prerequisite in `testing/kata/README.md` wasn't set up when this round ran, so `apt-get install keepalived` silently had nothing to install and krikri's own `Output keepalived version` task correctly failed with "No such file or directory" - a real, correct failure given the actual on-disk state, just for an unrelated reason). With internet available, both engines install keepalived fine and reach the exact same task - `ok=12 failed=1 skipped=21` on both, both failing at "Ensuring keepalived is enabled and started" with the identical message ("Job for keepalived.service failed because a timeout was exceeded") - a container/VM VRRP-networking limitation (not an engine difference). Confirmed match, not a krikri bug.
 
 ### `0x0i.systemd` — meta-task recap-counting + missing role-name prefix
 
