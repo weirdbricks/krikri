@@ -37,8 +37,22 @@ module Krikri
     # a truly dead connection in ~3 minutes regardless of this value.
     DEFAULT_EXEC_TIMEOUT_SECONDS = 3600
 
-    # Control socket directory
-    @@control_path_dir = "/tmp/.krikri-playbook-ssh"
+    # Control socket directory - PER-PROCESS (pid-suffixed). A shared
+    # directory made concurrent krikri-playbook processes race on the
+    # same `ControlMaster=auto` handshake for different target hosts:
+    # when several processes start a batch simultaneously, two clients
+    # can find no live master and race to spawn/bind the master socket,
+    # and the loser's session reads mux-handshake garbage as transfer
+    # data - surfacing as `@@@@@@...` scp stderr and a spurious
+    # UNREACHABLE (confirmed via isolation during the 120-author kata
+    # round: concurrent batches hit it reproducibly, solo runs were
+    # clean 3/3). Cross-PROCESS mux reuse saved one TCP/TLS handshake
+    # per host per batch - not worth the corruption; each process now
+    # owns its own masters exclusively, and within a process the
+    # per-host muxing (the actual reuse that matters during a run)
+    # still works. close_all likewise only ever touches this process's
+    # own directory.
+    @@control_path_dir = "/tmp/.krikri-playbook-ssh-#{Process.pid}"
 
     # Connection pool statistics
     @@stats = {
