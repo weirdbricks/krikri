@@ -56,6 +56,29 @@ below - keep the two apart, or this list stops meaning anything.
   themselves are Ansible 1.x filters removed from modern ansible-core, so
   the role itself is stale; that's why real Ansible errors here at all.
 
+- **`apt: update_cache: true` (with or without `cache_valid_time:`) still reports `changed: true`
+  on a fresh Kata VM where real Ansible reports `ok`** (`claranet.users` round 20037,
+  `ckaserer.tftp` round 20008/41000 - reproduced again after the 0.9.782 fix below, on a
+  freshly-rebuilt binary, so this is a real remaining gap, not a one-off timing flake). 0.9.782
+  replaced the previous "always changed" bug with a before/after mtime comparison
+  (`AptPlugin#cache_mtime`, matching real Ansible's own `get_updated_cache_time()` in `apt.py`
+  exactly on paper: stat the update-success-stamp, else the `/var/lib/apt/lists` directory,
+  before and after `apt-get update`). That fix is still correct as far as it goes (it replaced a
+  bug that was unconditionally wrong with a check that's at least sometimes right), but on live
+  Kata VMs the directory mtime consistently DOES move after shelling out to the `apt-get update`
+  CLI (verified manually: `/var/lib/apt/lists`' own mtime changed after a plain manual run), while
+  real Ansible's apt module - which calls python-apt's `Cache().update()` library function, not
+  the `apt-get` binary - consistently reports `ok` on the exact same host at the exact same time.
+  Suspect python-apt's internal fetcher has finer-grained content/hash-based change detection
+  (APT's acquire-by-hash caching can leave already-current by-hash files untouched even when the
+  top-level lists directory's own mtime moves for unrelated reasons) that a directory-mtime diff
+  around a shelled-out `apt-get update` can't replicate. Not root-caused to an exact fix yet -
+  would need to either shell out to something that exposes the same by-hash-aware "did content
+  actually change" signal apt-get itself doesn't surface, or accept this as a structural limit of
+  not linking against libapt-pkg. `claranet.users`'s own task carries an upstream
+  `molecule-idempotence-notest` tag, i.e. even its role author already knows this exact check
+  isn't reliably idempotent in real Ansible either.
+
 ---
 
 ## Round 20000-20037 confirm batch (re-run of the 38 round-10000 divergences against the fully-fixed build, 0.9.782 -> 0.9.784)
@@ -103,24 +126,6 @@ gets further, then fails later for an unrelated, genuine role-config reason:
   `detect_virtualization`'s own spec); live-verified with a standalone repro against a fresh Kata
   VM - krikri now fails the same task real Ansible does (recap `failed=1` either way), closing the
   divergence even though the exact error text differs.
-
-- **`apt: update_cache: true` (no `name:`/`upgrade:`/`deb:`) always reported `changed: true`,
-  even when the cache was already fresh** (`claranet.users`'s own "Update APT cache" task,
-  round 20037): py showed `ok`, cr showed `changed`. Real Ansible's apt module doesn't treat
-  "we ran `apt-get update`" as "changed" - it stats the update-success-stamp (or, absent that,
-  the `/var/lib/apt/lists` directory) **before and after** the update and only reports changed
-  if that mtime actually moved (`get_updated_cache_time()` in `apt.py`). This plugin folded
-  "ran the update as the sole operation" straight into `changed = true` unconditionally. Fixed
-  by adding the same before/after mtime comparison (`AptPlugin#cache_mtime`, shared with the
-  existing `should_update_cache?` freshness check). No unit spec - real dpkg/apt mutation over
-  SSH has no spec by design (see `should_update_cache?`'s own sibling helpers); verified live
-  against a fresh Kata VM instead. Note: this task carries an upstream
-  `molecule-idempotence-notest` tag, i.e. even the role's own author knows this exact check is
-  not reliably idempotent against real `apt-get update` (repo metadata timestamps change on
-  every real fetch) - the fix makes krikri's algorithm match real Ansible's exactly, but a
-  network-timing false "changed" can still occur on either engine when the upstream Debian
-  mirror's `Release` metadata genuinely differs between the mtime snapshots. Not chasing this
-  further; it isn't a krikri-specific behavior gap.
 
 ---
 
