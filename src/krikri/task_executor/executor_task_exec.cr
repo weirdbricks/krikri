@@ -742,10 +742,36 @@ module Krikri
     private def stage_unarchive_remote_src(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String)
       return params unless task.module_name == "ansible.builtin.unarchive"
       return params if ["true", "yes", "1", "on"].includes?(params["remote_src"]?.try(&.downcase))
-      return params if PluginManager.local_connection?(host, vars_context)
 
       src = params["src"]?
-      return params unless src && src.starts_with?('/') && File.exists?(src)
+      return params if src.nil? || src.empty?
+      # URL sources are downloaded by the plugin itself - never stage.
+      return params if src.starts_with?("http://") || src.starts_with?("https://")
+
+      # A bare relative src: names a controller-side file in the role's
+      # own files/ dir (real Ansible's unarchive action plugin searches
+      # there via _find_needle, same convention copy:/template:/script:
+      # use). Previously only an ABSOLUTE controller path was staged, so
+      # `unarchive: src: "{{ package_name }}"` with
+      # package_name="minio.tar.gz" handed the plugin a bare name that
+      # failed remote_file_exists? - "Source 'minio.tar.gz' failed to
+      # transfer" (wezhai.minio on Debian trixie, where tar exists and
+      # the gap actually surfaces).
+      unless src.starts_with?('/') && File.exists?(src)
+        resolved_local = resolve_script_path(src, task)
+        return params unless resolved_local
+        src = resolved_local
+      end
+      return params unless File.exists?(src)
+
+      # A local connection runs the plugin on the controller itself -
+      # hand it the resolved ABSOLUTE path, no staging (the transfer-
+      # related remote_src/__cleanup flags below are meaningless there).
+      if PluginManager.local_connection?(host, vars_context)
+        resolved = params.dup
+        resolved["src"] = src
+        return resolved
+      end
 
       connection_host = PluginManager.get_connection_host(host, vars_context)
       remote_tmp = "/tmp/.krikri-playbook-unarchive-src-#{Random::Secure.hex(8)}-#{File.basename(src)}"

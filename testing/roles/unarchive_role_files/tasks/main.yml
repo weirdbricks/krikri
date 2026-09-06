@@ -1,0 +1,15 @@
+---
+- name: Ensure dest dir exists (real Ansible's unarchive requires it)
+  ansible.builtin.file:
+    path: /tmp/krikri-unarchive-test
+    state: directory
+
+- name: Unpack bare relative src from role files/
+  ansible.builtin.unarchive:
+    src: "minio.tar.gz"
+    dest: /tmp/krikri-unarchive-test
+  register: unpack_result
+
+- name: Show unpack result
+  ansible.builtin.debug:
+    msg: "changed={{ unpack_result.changed }} failed={{ unpack_result.failed }}"

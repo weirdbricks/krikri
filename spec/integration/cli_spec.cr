@@ -1834,3 +1834,25 @@ describe "a halted host after a task failure" do
     output.should match(/skipped=1/)
   end
 end
+
+describe "an unarchive with a bare relative src" do
+  # Regression (wezhai.minio, 120-author kata round): a bare relative
+  # `unarchive: src:` (no remote_src, no files/ prefix) must resolve
+  # against the role's own files/ dir - real Ansible's unarchive action
+  # plugin searches there via _find_needle - and be transferred to the
+  # target. Only an ABSOLUTE controller path was staged before, so the
+  # plugin got the bare name and failed "Source 'minio.tar.gz' failed
+  # to transfer". Runs WITHOUT --check (unarchive can't run in check
+  # mode) and needs local tar; the unpacked payload proves the transfer
+  # carried the right file.
+  it "resolves a bare relative unarchive src against the role's files/ dir" do
+    # fresh dest per run: unarchive is idempotent, a second run would
+    # report changed=False
+    FileUtils.rm_rf("/tmp/krikri-unarchive-test")
+
+    status, output = run_playbook("test-unarchive-role-files.yml", [] of String)
+
+    status.success?.should be_true
+    output.should contain("changed=True failed=False")
+  end
+end
