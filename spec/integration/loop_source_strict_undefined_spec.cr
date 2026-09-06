@@ -384,3 +384,143 @@ describe "undefined loop: source is strict" do
     output.should contain("failed=1")
   end
 end
+
+# Strict-undefined semantics for the loop-source LIST's own literal
+# entries (not just a whole-source `loop: "{{ var }}"`), and the
+# dict-subscript-miss message shape. All captured live against
+# ansible-core 2.19.4 (2026-09-06, igor_nikiforov.etcd /
+# lablabs.rke2 investigation):
+# - `loop: ["{{ d['missing'] }}"]` on a dict missing that key fails the
+#   task with "object of type 'dict' has no attribute 'missing'" (real
+#   Ansible templates the loop list with module-arg strictness before any
+#   iteration runs; krikri used to render the literal string "undefined"
+#   and mkdir directories named "undefined" - rc=0 warm where real
+#   Ansible can never get past the task).
+# - `when: false` + an undefined loop item is a plain SKIP (real Ansible
+#   evaluates the task-level when: before ever templating the loop list).
+# - `when: item is defined` + an undefined loop item is also a skip
+#   (item unbound → lenient False).
+# - `{{ d['missing'] | default('x') }}` still renders (default() stays
+#   tolerant of a dict-subscript miss, exactly as of a bare undefined).
+describe "strict-undefined loop ITEM entries and dict-subscript-miss messages" do
+  it "fails the task with the attribute-error message for a dict-miss loop item" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          d: {a: 1}
+        tasks:
+          - name: looped
+            ansible.builtin.file:
+              path: "{{ item }}"
+              state: directory
+            loop:
+              - "/tmp/ok-dir"
+              - "{{ d['missing'] }}"
+          - name: sentinel
+            ansible.builtin.debug:
+              msg: "SENTINEL-SHOULD-NOT-RUN"
+      YAML
+
+    status.exit_code.should eq(2)
+    output.should contain("object of type 'dict' has no attribute 'missing'")
+    output.should_not contain("SENTINEL-SHOULD-NOT-RUN")
+    output.should contain("failed=1")
+  end
+
+  it "uses the same attribute-error message for a dynamic bracket key" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          d: {a: 1}
+          key_name: missing
+        tasks:
+          - name: looped
+            ansible.builtin.debug:
+              msg: "{{ item }}"
+            loop: ["{{ d[key_name] }}"]
+      YAML
+
+    status.exit_code.should eq(2)
+    output.should contain("object of type 'dict' has no attribute 'missing'")
+  end
+
+  it "skips (never fails) when when: is false and a loop item is undefined" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: looped
+            ansible.builtin.debug:
+              msg: "{{ item }}"
+            when: false
+            loop: ["{{ totally_undefined_var }}"]
+      YAML
+
+    status.success?.should be_true
+    output.should contain("skipping:")
+    output.should contain("skipped=1")
+    output.should_not contain("'totally_undefined_var' is undefined")
+  end
+
+  it "skips `when: item is defined` with an undefined loop item" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          d: {a: 1}
+        tasks:
+          - name: looped
+            ansible.builtin.debug:
+              msg: "got {{ item }}"
+            when: item is defined
+            loop: ["{{ d['missing'] }}"]
+      YAML
+
+    status.success?.should be_true
+    output.should contain("skipping:")
+    output.should_not contain("object of type 'dict'")
+  end
+
+  it "keeps default() tolerant of a dict-miss loop item" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          d: {a: 1}
+        tasks:
+          - name: looped
+            ansible.builtin.debug:
+              msg: "{{ item }}"
+            loop: ["{{ d['missing'] | default('fallback') }}"]
+      YAML
+
+    status.success?.should be_true
+    output.should contain("fallback")
+  end
+
+  it "carries the attribute-error message into a bare when: conditional" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          d: {a: 1}
+        tasks:
+          - name: gated
+            ansible.builtin.debug:
+              msg: "yes"
+            when: d['missing']
+      YAML
+
+    status.exit_code.should eq(2)
+    output.should contain("Error while evaluating conditional: object of type 'dict' has no attribute 'missing'")
+    output.should contain("failed=1")
+  end
+end

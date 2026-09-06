@@ -386,7 +386,7 @@ module Krikri
         # item isn't appended, a narrower gap than the fully generic
         # looped-module path.
         item_results = [] of JSON::Any
-        rendered_items = loop_items.map { |item| deep_render_item(item, vars_context, host.name) }
+        rendered_items = loop_items.map { |item| deep_render_item(item, vars_context, host.name, strict: false) }
         rendered_items = flatten_with_items_one_level(rendered_items) if task.loop_items_needs_flatten?
         rendered_items.each_with_index do |item, loop_index|
           item_context = vars_context.dup
@@ -856,7 +856,7 @@ module Krikri
           # real array it resolves to) - flatten only makes sense against
           # the rendered values.
           loop_items = flatten_with_items_one_level(
-            loop_items.map { |item| deep_render_item(item, base_vars_context, host.name) }
+            loop_items.map { |item| deep_render_item(item, base_vars_context, host.name, strict: false) }
           )
         end
         loop_items.each_with_index do |item, idx|
@@ -868,7 +868,7 @@ module Krikri
           # `{{ }}` for ConditionalEvaluator to render through) sees the
           # literal unrendered "{{ os_mnt_tmp_enabled }}" text, which the
           # `bool` filter treats as truthy regardless of the real value.
-          rendered_item = deep_render_item(item, vars_context, host.name)
+          rendered_item = deep_render_item(item, vars_context, host.name, strict: false)
           vars_context["item"] = rendered_item
           vars_context[loop_var] = rendered_item if loop_var
           vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
@@ -1082,7 +1082,7 @@ module Krikri
         index_var = task.index_var
         if task.loop_items_needs_flatten?
           loop_items = flatten_with_items_one_level(
-            loop_items.map { |item| deep_render_item(item, base_vars_context, host.name) }
+            loop_items.map { |item| deep_render_item(item, base_vars_context, host.name, strict: false) }
           )
         end
         loop_items.each_with_index do |item, idx|

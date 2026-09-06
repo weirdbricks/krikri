@@ -117,10 +117,24 @@ module Krikri
         # resolve_loop_items_or_raise, so the round174 skip-vs-fail-by-
         # when: matrix applies unchanged.
         if undefined_name = Krikri.undefined_filter_chain_source(bare, vars_context)
-          raise UndefinedVariableError.new("'#{undefined_name}' is undefined")
+          raise UndefinedVariableError.new(Krikri.strict_undefined_message(undefined_name, vars_context))
         end
 
         result = expression_evaluator_for(vars_context).evaluate(bare)
+
+        # A whole-source template whose expression ultimately renders to the
+        # "undefined" sentinel is strictly fatal for loop:/with_items: (the
+        # round174 matrix), and the message follows the same dict-miss
+        # refinement as everywhere else (live-verified against 2.19.4: a
+        # single-element array-wrapped source `loop: ["{{ d['missing'] }}"]`
+        # fails with "object of type 'dict' has no attribute 'missing'", body
+        # referencing item or not - 2.19 templates the whole loop list
+        # up-front). Without this, the array-wrapped fallback below turned
+        # the sentinel into ONE loop item equal to the literal string
+        # "undefined" and ran the task with it.
+        if result == "undefined"
+          raise UndefinedVariableError.new(Krikri.strict_undefined_message(bare, vars_context))
+        end
 
         if kind == "with_dict"
           # A with_dict: filter chain (dev-sec os_hardening's sysctl
@@ -497,6 +511,38 @@ module Krikri
     # community.postgresql.postgresql_db, looped over the (empty-by-
     # default) postgres_databases, with the community.postgresql
     # collection not installed.
+    # Renders every loop item strictly (deep_render_item's default), with
+    # real Ansible's when:-before-loop ordering on failure: a task-level
+    # `when:` that evaluates False leniently (including the `when: item is
+    # defined` idiom with `item` unbound) means the task is SKIPPED before
+    # any item would ever have been templated (live-verified against
+    # 2.19.4: `when: false` + undefined loop item → skipping, never an
+    # error; `when: true` + undefined item → task failed). Returns nil for
+    # that skip case; raises WhenEvaluationError for the genuine failure
+    # (the execute_looped_task call site turns it into one clean failed
+    # task, same as a loop-source resolution failure).
+    private def render_loop_items_strict_or_raise(
+      task : Task,
+      loop_items : Array(JSON::Any),
+      vars_context : Hash(String, JSON::Any),
+      host_name : String,
+    ) : Array(JSON::Any)?
+      begin
+        loop_items.map { |item| deep_render_item(item, vars_context, host_name) }
+      rescue ex : UndefinedVariableError
+        if when_condition = task.when_condition
+          substitutor = VarSubstitutor.new(vars: vars_context, host_name: host_name)
+          skippable = begin
+            !ConditionalEvaluator.evaluate(substitutor.substitute(when_condition), vars_context)
+          rescue
+            false
+          end
+          return nil if skippable
+        end
+        raise WhenEvaluationError.new(ex.message)
+      end
+    end
+
     private def execute_looped_task(
       task : Task,
       host : Host,
@@ -524,7 +570,18 @@ module Krikri
       # non-empty string regardless of what it would have rendered to,
       # so `item != ""` was always true and a should-have-been-skipped
       # item ran for real, on a bogus literal path.
-      rendered_items = loop_items.map { |item| deep_render_item(item, base_vars_context, host.name) }
+      rendered_items = render_loop_items_strict_or_raise(task, loop_items, base_vars_context, host.name)
+      if rendered_items.nil?
+        # Strict item templating failed but the task's own when: evaluates
+        # False without `item` bound - real Ansible evaluates the when:
+        # before ever templating the loop list, so this is a plain skip
+        # (live-verified: `when: false` + an undefined loop item prints
+        # "skipping:" and counts skipped=1, never an error).
+        @results[host.name]["skipped"] += 1
+        puts "skipping: [#{host.connection_host}]".colorize(:cyan)
+        register_skip_result(task, host)
+        return
+      end
       rendered_items = flatten_with_items_one_level(rendered_items) if task.loop_items_needs_flatten?
 
       # Per-item fact target, for delegate_to:/delegate_facts: - only ever

@@ -463,7 +463,19 @@ module Krikri
       end
 
       if loop_items
-        execute_looped_task(task, host, vars_context, loop_items, exec_host)
+        begin
+          execute_looped_task(task, host, vars_context, loop_items, exec_host)
+        rescue ex : WhenEvaluationError
+          # Strict loop-ITEM templating failure (deep_render_item) - same
+          # degrade-to-one-clean-failed-task shape as the loop-SOURCE
+          # resolution failure rescue above: real Ansible templates the
+          # loop list with module-arg strictness before any iteration runs
+          # (igor_nikiforov.etcd's `{{ etcd_config['data-dir'] }}` on a
+          # dict missing that key), so this is one failed task, recapped
+          # failed=1, with register/notify/halt/ignore_errors applied.
+          finish_single_task(task, host, when_error_result(ex))
+          return
+        end
         return
       end
 

@@ -324,7 +324,7 @@ module Krikri
     ) : JSON::Any
       if handler.loop_items_needs_flatten?
         loop_items = flatten_with_items_one_level(
-          loop_items.map { |item| deep_render_item(item, base_vars_context, host.name) }
+          loop_items.map { |item| deep_render_item(item, base_vars_context, host.name, strict: false) }
         )
       end
       loop_var = handler.loop_var

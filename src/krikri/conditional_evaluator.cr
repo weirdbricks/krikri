@@ -1495,7 +1495,12 @@ module Krikri
           return "object of type 'dict' has no attribute '#{attr}'" if parent && parent.as_h?
         end
       end
-      "'#{expr}' is undefined"
+      # The shared walker extends the same real-Ansible wording to the
+      # bracket forms this dot-only check never covered (`d['missing']`,
+      # and a dynamic key like rke2's `groups[rke2_servers_group_name]`
+      # → "... no attribute 'masters'") - same message real Ansible
+      # raises there (live-verified against 2.19.4).
+      Krikri.strict_undefined_message(expr, vars)
     end
 
     # Evaluate a value (variable lookup or literal)

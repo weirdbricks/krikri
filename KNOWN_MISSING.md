@@ -18,8 +18,64 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.785`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.786`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## Round 43000-43201: strict-undefined dict-subscript misses fixed (0.9.786)
+
+Closed the deferred `igor_nikiforov.etcd` / `lablabs.rke2` strict-undefined
+class and re-verified `rvm.ruby` end to end, all three live on fresh Kata
+pairs against ansible-core 2.19.4:
+
+- **`igor_nikiforov.etcd` FIXED.** A dict-subscript miss on a resolvable
+  chain (`etcd_config['data-dir']`) inside the loop-source list now fails
+  the task the way real Ansible's strict module-arg/loop templating does -
+  "object of type 'dict' has no attribute 'data-dir'" - instead of
+  rendering the literal string "undefined" and mkdir-ing directories named
+  "undefined" to a warm rc=0. Round 43000: byte-identical recaps both
+  engines, cold (ok=4 changed=3 failed=1) and warm (ok=4 failed=1).
+- **`lablabs.rke2` FIXED.** `meta/argument_specs.yml` `default:` expressions
+  are now templated strictly (real Ansible templates the ENTIRE spec when
+  finalizing the validate_argument_spec call args - live-verified that it
+  fails even with the option passed explicitly). rke2's ternary/filter
+  defaults needed a compound-expression scan (`scan_strict_expression_refs`)
+  beyond the bare-ref/chained checks; its failure now lands on the same
+  task with the same message ("object of type 'dict' has no attribute
+  'masters'"). Round 43200: identical recaps both engines, cold and warm
+  (ok=1 failed=1).
+- **`rvm.ruby` re-verified - no krikri gap.** With the host's Kata
+  NAT/egress restored, a fresh differential with the role's
+  `rvm1_user: ubuntu` default worked around (`-e rvm1_user=root`) because
+  that user doesn't exist on a Debian Kata host and real Ansible fails at
+  the role's second task on the become/temp-file-ownership quirk:
+  - the "gpg-keyserver-fetch failure" originally noted against krikri is an
+    ARTIFACT - with working internet, both engines fail the exact same
+    keyserver loop with the exact same per-item errors
+    (pool.sks-keyservers.net "Server indicated a failure" - the SKS pool is
+    decommissioned; pgp.mit.edu "No keyserver available";
+    keyserver.pgp.com timeout), and both run the role's rvm.io fallback;
+  - it exposed ONE real (small) gap, fixed: krikri's `command:` module
+    didn't expand a leading `~` in the executable path
+    (`command: '{{ rvm1_rvm }} autolibs ...'` with
+    `rvm1_rvm: ~/.rvm/bin/rvm` - real Ansible's
+    `AnsibleModule.run_command(expand_user=True)` expanduser's it, this
+    engine failed with "Error executing process: '~/.rvm/bin/rvm'").
+  - remaining ok/changed recap difference in the final differential
+    (py ok=7 changed=4 vs cr ok=8 changed=3) traces to one flaky external
+    keyserver item (pgp.mit.edu failed under py, succeeded under cr) -
+    environmental, not engine semantics.
+
+Model verified live against 2.19.4 before implementing: a dict-subscript
+miss behaves like strict-undefined - raises in module args and bare
+`when:` use, SKIPS on `is defined`/`| default()` - with the attribute-error
+message for bracket AND dot forms; a task-level `when:` is evaluated BEFORE
+the loop list is templated (`when: false` + undefined loop item → plain
+skip; `when: item is defined` → skip; `when: true` → fail). Handler and
+include_tasks loop-item rendering is deliberately left lenient (strict:
+false at those call sites - no failure plumbing there yet); the main
+looped-task flow is strict with real-Ansible when:-before-loop ordering.
 
 ---
 

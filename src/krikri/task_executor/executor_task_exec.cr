@@ -85,14 +85,54 @@ module Krikri
     private def execute_validate_argument_spec(task : Task, host : Host) : Nil
       vars_context = build_vars_context(task, host)
       options = task.validate_argument_spec_options || Hash(String, JSON::Any).new
+      substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
       errors = [] of String
       options.each do |option_name, spec|
+        # Real Ansible templates the ENTIRE argument spec - `default:`
+        # expressions included - when finalizing the
+        # validate_argument_spec call's own args, BEFORE ever looking at
+        # whether the option itself was provided (live-verified against
+        # 2.19.4: lablabs.rke2's `default: "{{ groups[rke2_servers_
+        # group_name] }}"` fails the task with "Error while resolving
+        # value for 'argument_spec': object of type 'dict' has no
+        # attribute 'masters'" even with the option passed on the command
+        # line). So a default whose own lookup fails fails THIS task,
+        # regardless of the option's presence - this engine used to
+        # resolve it leniently to undefined, pass the task, and only
+        # fail three tasks later at a `when:` on the same expression.
+        resolved_default = nil
+        if (default = spec["default"]?) && (raw_default = default.raw).is_a?(String) && raw_default.includes?("{{")
+          begin
+            # The strict substitute only reaches bare refs and simple
+            # chains - argument-spec defaults are arbitrary compound
+            # expressions (rke2's `'server' if inventory_hostname in
+            # groups[rke2_servers_group_name] else ...` ternary), so run
+            # the dict-miss/undefined-ref scan over the whole expression
+            # as well.
+            substitutor.scan_strict_expression_refs(raw_default)
+            rendered = substitutor.substitute(raw_default, strict: true)
+            resolved_default = Krikri.parse_json_or_python_literal(rendered)
+          rescue ex : UndefinedVariableError
+            errors << "Error while resolving value for 'argument_spec': #{ex.message}"
+            next
+          end
+        elsif default = spec["default"]?
+          resolved_default = default
+        end
+
         value = vars_context[option_name]?
 
         if value.nil?
-          errors << "missing required argument: #{option_name}" if spec["required"]?.try(&.as_bool?) == true
-          next
+          # A spec default stands in for a missing option during
+          # validation (real Ansible applies it before type-checking);
+          # only an option with NO default can be "missing required".
+          if resolved_default
+            value = resolved_default
+          else
+            errors << "missing required argument: #{option_name}" if spec["required"]?.try(&.as_bool?) == true
+            next
+          end
         end
 
         if declared_type = spec["type"]?.try(&.as_s?)
@@ -447,16 +487,16 @@ module Krikri
     # unconditionally, re-applying the halt afterward if the block ultimately
     # failed (unrescued, or rescue itself failed, or always: introduced a new
     # failure) unless the block itself has ignore_errors:.
-    private def deep_render_item(item : JSON::Any, vars_context : Hash(String, JSON::Any), host_name : String, depth : Int32 = 0) : JSON::Any
+    private def deep_render_item(item : JSON::Any, vars_context : Hash(String, JSON::Any), host_name : String, depth : Int32 = 0, strict : Bool = true) : JSON::Any
       return item if depth > 10
       case raw = item.raw
       when Hash
         rendered = raw.each_with_object({} of String => JSON::Any) do |(key, value), acc|
-          acc[key] = deep_render_item(value, vars_context, host_name)
+          acc[key] = deep_render_item(value, vars_context, host_name, strict: strict)
         end
         JSON::Any.new(rendered)
       when Array
-        JSON::Any.new(raw.map { |value| deep_render_item(value, vars_context, host_name) })
+        JSON::Any.new(raw.map { |value| deep_render_item(value, vars_context, host_name, strict: strict) })
       when String
         return item unless raw.includes?("{{")
 
@@ -509,14 +549,24 @@ module Krikri
               # nested-hash dotted lookup) correctly reported
               # "undefined" against a value that was never actually a
               # Hash to begin with.
-              return deep_render_item(JSON::Any.new(raw2), vars_context, host_name, depth + 1)
+              return deep_render_item(JSON::Any.new(raw2), vars_context, host_name, depth + 1, strict: strict)
             end
             return native
           end
         end
 
         substitutor = VarSubstitutor.new(vars: vars_context, host_name: host_name)
-        JSON::Any.new(substitutor.substitute(raw))
+        # strict: true - real Ansible templates the loop-source list itself
+        # with module-arg (strict-undefined) semantics BEFORE any iteration
+        # runs (igor_nikiforov.etcd: `loop: ["{{ etcd_conf_dir }}/certs",
+        # "{{ etcd_config['data-dir'] }}"]` on a dict missing that key
+        # fails the task with "object of type 'dict' has no attribute
+        # 'data-dir'" - live-verified - where this engine used to render
+        # the literal string "undefined" and run the whole play to
+        # completion, rc=0, mkdir-ing directories named "undefined").
+        # Callers that can't safely propagate the failure pass strict:
+        # false (see each site's own comment).
+        JSON::Any.new(substitutor.substitute(raw, strict: strict))
       else
         item
       end

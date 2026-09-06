@@ -187,6 +187,16 @@ module Krikri
         # but works for most cases
         cmd_parts = argv_parts || (cmd ? parse_command(cmd) : [] of String)
         command_name = cmd_parts.first
+        # Real Ansible's AnsibleModule.run_command (expand_user=True, the
+        # default) os.path.expanduser's the executable, so
+        # `command: '~/.rvm/bin/rvm autolibs 4'` runs the binary at the
+        # invoking user's home (rvm.ruby's own "Configure rvm" task:
+        # `command: '{{ rvm1_rvm }} autolibs ...'` with
+        # `rvm1_rvm: ~/.rvm/bin/rvm` - real Ansible changed, this engine
+        # failed with "Error executing process: '~/.rvm/bin/rvm': No such
+        # file or directory"). expand_tilde is the same HOME-first
+        # expansion Python's own expanduser does.
+        command_name = expand_tilde(command_name)
         args = cmd_parts[1..]
 
         # Process.new's `env:` sets the CHILD's environment, but the

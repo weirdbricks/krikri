@@ -915,7 +915,7 @@ module Krikri
       # Nil, not Crystal nil) does NOT hit this branch - see bump-2's
       # list-type check in resolve_loop_template for what real Ansible
       # does with a defined-but-null loop source instead.
-      raise UndefinedVariableError.new("'#{match[1]}' is undefined") if current.nil?
+      raise UndefinedVariableError.new(Krikri.strict_undefined_message(match[1], vars_context)) if current.nil?
 
       current
     end

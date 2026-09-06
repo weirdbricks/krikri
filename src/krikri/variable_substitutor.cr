@@ -243,6 +243,89 @@ module Krikri
     rendered == "undefined"
   end
 
+  # For a chained lookup expression (`d['missing']`, `d.missing`,
+  # `groups[rke2_servers_group_name]`, `pkg[ver]["update"]`) that rendered to
+  # the "undefined" sentinel: if some step of the chain subscripts a
+  # RESOLVABLE dict with a key it doesn't have, real Ansible's error names
+  # the dict and the key - "object of type 'dict' has no attribute 'missing'"
+  # - not "'<whole expr>' is undefined" (both live-verified against
+  # ansible-core 2.19.4, for bracket access, dot access, and a dynamic-key
+  # bracket like rke2's `groups[rke2_servers_group_name]` where the key
+  # itself is a defined variable resolving to "masters"). Returns the
+  # missing attribute name when that's the shape, nil for every other
+  # undefined shape (root variable missing, array index out of range -
+  # message not live-verified, keep the generic text - key expression itself
+  # undefined, non-dict intermediate, nested brackets this simple walker
+  # doesn't parse).
+  def self.dict_attribute_miss_name(expr : String, vars : Hash(String, JSON::Any)) : String?
+    return nil unless expr.matches?(/\A[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[[^\[\]]+\])*\z/)
+
+    base_end = expr.index(/\.|\[/) || expr.size
+    current = VariableSubstitutor::VariableLookup.new(vars).resolve(expr[0...base_end])
+    return nil unless current
+
+    expr[base_end..].scan(/\.[A-Za-z_][A-Za-z0-9_]*|\[[^\[\]]+\]/).each do |match|
+      miss, next_value = dict_chain_step(current, match[0], vars)
+      return miss if miss
+      return nil unless next_value
+      current = next_value
+    end
+    nil
+  end
+
+  # One chain step for dict_attribute_miss_name: returns {missing_key, nil}
+  # when this step subscripts a resolvable dict with a key it doesn't have,
+  # {nil, next_value} when it resolves, {nil, nil} when this walker can't
+  # name the miss (generic message territory).
+  private def self.dict_chain_step(current : JSON::Any, token : String, vars : Hash(String, JSON::Any)) : {String?, JSON::Any?}
+    case raw = current.raw
+    when Hash
+      key = dict_chain_key(token, vars)
+      return {nil, nil} unless key
+      return {key, nil} unless raw.has_key?(key)
+      {nil, raw[key]}
+    when Array
+      # An out-of-range list index raises with different wording in real
+      # Ansible ("list index out of range") - not live-verified, so stay
+      # on the generic message rather than guess.
+      return {nil, nil} unless token.starts_with?('[') && (idx = token[1..-2].strip.to_i32?)
+      return {nil, nil} if idx.negative? || idx >= raw.size
+      {nil, raw[idx]}
+    else
+      {nil, nil}
+    end
+  end
+
+  # The lookup key one chain step addresses: a `.attr`/`['key']`/`["key"]`
+  # literal, or a dynamic bracket key (`groups[rke2_servers_group_name]`)
+  # resolved against the vars - nil when the key expression is itself
+  # undefined (not a dict-attribute miss this helper can name).
+  private def self.dict_chain_key(token : String, vars : Hash(String, JSON::Any)) : String?
+    if token.starts_with?('.')
+      return token[1..]
+    end
+
+    inner = token[1..-2].strip
+    if (inner.starts_with?('"') && inner.ends_with?('"')) ||
+       (inner.starts_with?('\'') && inner.ends_with?('\''))
+      return inner[1..-2]
+    end
+
+    rendered = VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate(inner)
+    rendered == "undefined" ? nil : rendered
+  end
+
+  # The full strict-undefined error message for a failed lookup: a
+  # dict-subscript miss on a resolvable chain gets real Ansible's
+  # attribute-error wording, everything else the classic "'x' is undefined".
+  def self.strict_undefined_message(expr : String, vars : Hash(String, JSON::Any)) : String
+    if missing_key = dict_attribute_miss_name(expr, vars)
+      "object of type 'dict' has no attribute '#{missing_key}'"
+    else
+      "'#{expr}' is undefined"
+    end
+  end
+
   # The ONE shared "recursive re-templating" helper: re-renders *value*
   # when its raw form is still a String containing Jinja markers. This
   # used to exist as four independently-maintained copies
@@ -878,6 +961,111 @@ module Krikri
       cond_no_strings[match_end]? == '=' && cond_no_strings[match_end + 1]? != '='
     end
 
+    # `x is defined` / `x is not undefined` - the tolerance idiom. A chain
+    # feeding an `is defined`-family test never raises regardless of its
+    # own resolution (live-verified against 2.19.4: `when: d['missing']
+    # is defined` skips, never errors).
+    private def block_tag_ref_is_defined_test(cond : String, match_end : Int32) : Bool
+      rest = cond[match_end..].lstrip
+      rest.starts_with?("is ") && (rest.includes?(" defined") || rest.includes?(" undefined"))
+    end
+
+    # Spans of *text* inside single/double-quoted string literals (no
+    # escape handling beyond \-x - Jinja string contents never contain
+    # real variable references, so their exact text is irrelevant to the
+    # scan below; only their EXTENT matters).
+    private def quoted_string_regions(text : String) : Array({Int32, Int32})
+      regions = [] of {Int32, Int32}
+      quote = nil
+      start = 0
+      i = 0
+      while i < text.size
+        ch = text[i]
+        if quote
+          if ch == '\\'
+            i += 2
+            next
+          end
+          if ch == quote
+            regions << {start, i + 1}
+            quote = nil
+          end
+        elsif ch == '\'' || ch == '"'
+          quote = ch
+          start = i
+        end
+        i += 1
+      end
+      regions
+    end
+
+    private def in_quoted_region?(regions : Array({Int32, Int32}), pos : Int32) : Bool
+      regions.any? { |region| pos >= region[0] && pos < region[1] }
+    end
+
+    # Strict scan of a bare Jinja expression (a `{{ }}` span's inner text,
+    # no surrounding braces) for variable references that real Ansible
+    # fails on when templating it strictly: a chain-shaped reference
+    # (`d['k']`, `d.attr`, `groups[name].x`) whose ROOT is undefined, or
+    # whose resolution bottoms out in a dict-subscript miss on a
+    # resolvable dict ("object of type 'dict' has no attribute 'k'").
+    # Written for meta/argument_specs.yml `default:` templating - real
+    # Ansible templates the entire spec strictly, and its expressions are
+    # arbitrary compound shapes (rke2's `'server' if inventory_hostname in
+    # groups[rke2_servers_group_name] else ...` ternary) that the bare/
+    # chained checks in raise_if_strict_undefined don't reach. Tolerance
+    # idioms are honored exactly like the block-tag scan: `| default(...)`,
+    # `is defined`/`is undefined`, filter calls, function calls, kwarg
+    # names. Quoted string literals are skipped as reference sources but
+    # keep their contents (a bracket key is a string literal).
+    def scan_strict_expression_refs(text : String) : Nil
+      # Scan each `{{ }}` span's inner expression - the literal text
+      # between spans (and the braces themselves) is not Jinja and must
+      # never contribute reference tokens (`"{{ group_name }}-suffix"`'s
+      # trailing "-suffix" is a literal, not a variable).
+      expand_mustache_spans(text) do |inner|
+        scan_inner_expression_refs(inner)
+        inner
+      end
+    end
+
+    private def scan_inner_expression_refs(expr : String) : Nil
+      regions = quoted_string_regions(expr)
+      expr.scan(/\b[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[[^\[\]]+\])*/) do |mat|
+        next if in_quoted_region?(regions, mat.begin(0))
+        next if scan_inner_ref_skippable?(expr, mat[0], mat.end)
+        scan_inner_ref_failure(mat[0])
+      end
+    end
+
+    # The full tolerance-guard chain for one scanned reference: true when
+    # the token is a keyword, a filter/function/kwarg name, or guarded by
+    # `| default(...)` / `is defined`-family tests.
+    private def scan_inner_ref_skippable?(expr : String, ident : String, match_end : Int32) : Bool
+      root = block_tag_ref_root(ident)
+      return true if SCAN_STRICT_BLOCK_TAG_KEYWORDS.includes?(ident) || SCAN_STRICT_BLOCK_TAG_KEYWORDS.includes?(root)
+      return true if SCAN_STRICT_BLOCK_TAG_BUILTIN_FILTERS.includes?(ident)
+      return true if block_tag_ref_is_function_call(expr, match_end)
+      return true if block_tag_ref_is_kwarg_name(expr, match_end)
+      return true if block_tag_ref_is_defaulted(expr, match_end)
+      return true if block_tag_ref_is_defined_test(expr, match_end)
+      return true if block_tag_ref_is_filter_call(expr, ident)
+      false
+    end
+
+    # One scanned reference that survived every tolerance guard: raise the
+    # strict-undefined error real Ansible would - the root-missing shape
+    # ("'x' is undefined"), or the dict-subscript-miss shape ("object of
+    # type 'dict' has no attribute 'k'") when the root resolves and a
+    # bracket/dot step misses. A fully-resolving chain raises nothing.
+    private def scan_inner_ref_failure(ident : String) : Nil
+      root = block_tag_ref_root(ident)
+      raise UndefinedVariableError.new("'#{root}' is undefined") unless @vars.has_key?(root)
+      if missing_key = Krikri.dict_attribute_miss_name(ident, @vars)
+        raise UndefinedVariableError.new("object of type 'dict' has no attribute '#{missing_key}'")
+      end
+    end
+
     private def scan_strict_block_tags_for_undefined(text : String) : Nil
       i = 0
       while i < text.size
@@ -941,7 +1129,7 @@ module Krikri
         # Ansible as the bare reference itself (see
         # Krikri.undefined_filter_chain_source).
         if undefined_name = Krikri.undefined_filter_chain_source(inner, @vars)
-          raise UndefinedVariableError.new("'#{undefined_name}' is undefined")
+          raise UndefinedVariableError.new(Krikri.strict_undefined_message(undefined_name, @vars))
         end
         # A chained-subscript/dot expression whose actual lookup would
         # fail - `pkg_upgrade_update_cmds[ansible_distribution_major_
@@ -996,7 +1184,7 @@ module Krikri
            (inner.includes?('.') || inner.includes?('[')) &&
            !inner.includes?('(') && !inner.includes?('|') &&
            Krikri.expression_resolves_to_undefined?(inner, @vars)
-          raise UndefinedVariableError.new("'#{inner}' is undefined")
+          raise UndefinedVariableError.new(Krikri.strict_undefined_message(inner, @vars))
         end
         # Every other shape (literals, function calls, operators,
         # filter chains whose source is defined, ...) is left alone
@@ -1012,7 +1200,7 @@ module Krikri
       # ansible-core 2.19.4: `msg: "[{{ omit }}]"` prints "[]".
       return if inner == "omit"
       resolved = VariableSubstitutor::VariableLookup.new(@vars).resolve(inner)
-      raise UndefinedVariableError.new("'#{inner}' is undefined") unless resolved
+      raise UndefinedVariableError.new(Krikri.strict_undefined_message(inner, @vars)) unless resolved
       raise_if_nested_value_undefined(resolved)
     end
 
