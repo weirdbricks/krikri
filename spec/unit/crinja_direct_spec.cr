@@ -167,6 +167,25 @@ describe "raw Crinja (rebase canary)" do
     crinja_render("{{ m.endswith('.j2') }}", {"m" => "config.j2"}).should eq("True")
   end
 
+  # Real bug found in a 150-role overnight round (jdauphant.nginx's own
+  # nginx.conf.j2: `{% if v.find('\n') != -1 %}`, checking a config
+  # line for an embedded newline before deciding how to quote it -
+  # ".find is undefined" failed the whole template). crystal-play-0.9.28.
+  it "supports .find() as a real Python string method" do
+    crinja_render("{{ s.find('\\n') }}", {"s" => "hello\nworld"}).should eq("5")
+    crinja_render("{{ s.find('xyz') }}", {"s" => "hello world"}).should eq("-1")
+    crinja_render("{{ s.find('o', 5) }}", {"s" => "hello world"}).should eq("7")
+  end
+
+  # Same round as .find() above (jdauphant.nginx's nginx.conf.j2),
+  # chained one line later: `v.replace(";", ";\n").replace(" {", " {\n
+  # ")...`, rewriting a config line's punctuation into indented
+  # multi-line form. crystal-play-0.9.28.
+  it "supports .replace() as a real Python string method" do
+    crinja_render(%({{ s.replace(";", ";\\n") }}), {"s" => "a;b;c"}).should eq("a;\nb;\nc")
+    crinja_render(%({{ s.replace("a", "X", 1) }}), {"s" => "aaa"}).should eq("Xaa")
+  end
+
   it "keeps first/list/join lenient on Undefined input" do
     crinja_render("{{ missing | first }}").should eq("")
     crinja_render("{{ missing | join(',') }}").should eq("")
