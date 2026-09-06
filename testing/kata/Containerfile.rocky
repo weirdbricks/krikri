@@ -1,0 +1,21 @@
+# RHEL-family test host image for the Kata harness, alongside the Debian
+# one (Containerfile) - same real systemd/sshd/kernel deal, different
+# package family (dnf/rpm, SELinux enabled) so roles that branch on
+# ansible_os_family get real RHEL-family coverage instead of only Debian's.
+FROM docker.io/library/rockylinux:9
+# Deliberately does NOT clean the dnf cache afterwards, same reasoning as
+# the Debian image: a role's very first plain package install (no
+# update_cache: true) needs a real, non-empty cache to find anything at
+# all, and an empty one fails identically on both engines regardless of
+# which is actually being tested.
+RUN dnf makecache -y && dnf install -y --allowerasing \
+        systemd \
+        openssh-server python3 python3-libselinux \
+        iproute kmod procps-ng \
+        curl gnupg2 unzip ca-certificates sudo \
+    && mkdir -p /root/.ssh && chmod 700 /root/.ssh \
+    && systemctl enable sshd
+COPY key.pub /root/.ssh/authorized_keys
+RUN chmod 600 /root/.ssh/authorized_keys && \
+    sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+CMD ["/sbin/init"]
