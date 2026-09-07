@@ -320,22 +320,87 @@ Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
+- **A real string value that happens to equal the literal text
+  "undefined" gets misread as a genuinely undefined reference on dotted
+  numeric-index access (`x.0`, `x.1`, ...).** `ExpressionEvaluator`
+  represents "this reference has no value" as the plain string
+  `"undefined"` throughout (120+ call sites in
+  `variable_substitutor/expression_evaluator.cr` alone - a real
+  architectural choice, not a one-off), and the dotted-access path
+  (`evaluate_expr_dotted` / `@lookup.nested`) re-checks its own result
+  against that same literal string to decide whether to raise
+  strict-undefined. When the real value at that index genuinely IS the
+  text "undefined", the check can't tell it apart from an actual miss.
+  Minimal repro (verified live, not assumed):
+  ```yaml
+  - command: "printf 'undefined'"
+    register: s2
+  - debug: {msg: "{{ s2.stdout_lines[0] }}"}   # -> "undefined" - bracket form, fine
+  - debug: {msg: "{{ s2.stdout_lines.0 }}"}    # -> "'s2.stdout_lines.0' is undefined" - WRONG, dotted form
+  ```
+  Found via `juju4.pocketid`'s own `secret: "{{ s2.stdout_lines.0 }}"`
+  (RHEL-family round 60151) - though the *actual* stored content there
+  traces to a separate, adjacent gap: `lookup('community.general.
+  random_string', ...)` is unimplemented and silently resolves to the
+  literal string `"undefined"` instead of failing the task (a lookup
+  should fail as clearly as an unsupported module does - see this
+  file's own long-standing convention for exactly that), so the
+  generated "secret" this role writes to disk is coincidentally the
+  string this bug collides with. Fixing the dotted-index sentinel
+  collision needs a real undefined TYPE threaded through
+  `ExpressionEvaluator` instead of a comparable string, which the
+  method's own `String` return type doesn't currently carry - broader
+  than a quick patch; revisit alongside `community.general.
+  random_string` support (also unimplemented, not attempted here).
+- **`unarchive:` with `remote_src: true` + `mode:` reported `changed`
+  on a warm (idempotent) re-run where real Ansible reported `ok`.**
+  Found via `juju4.polarproxy` (RHEL-family round 60152): the cold run
+  matched exactly (`ok=11 changed=7 failed=1 skipped=3`, both engines
+  hitting the identical, real, environment-side dnf `curl`/
+  `curl-minimal` conflict on the "Testing | Install testing tools"
+  task - unrelated to this engine), but the WARM re-run diverged one
+  task earlier, at "Unarchive PolarProxy" (`ansible.builtin.unarchive:
+  {src: .../polarproxy.tar.gz, dest: .../PolarProxy, mode: '0755',
+  remote_src: true}`): real Ansible reports `ok` (no re-extraction
+  needed), this engine reports `changed`. `tar_changed?`
+  (`plugins/unarchive.cr`) already has a deliberate, previously-fixed
+  `mode:`-was-set exemption for `tar --compare`'s own `Mode differs`
+  lines (round 134, prometheus.alertmanager) - this looks like a
+  DIFFERENT `tar --compare` diff line tripping the still-unconditional
+  `ALWAYS_MEANINGFUL_DIFF_PATTERNS` set (`Mod time differs`/`Invalid
+  owner`/`Invalid group`/`Symlink differs`), but the Atlantic host was
+  torn down before the exact `tar --compare` output could be captured
+  live, so the specific line is unconfirmed - re-run this role's warm
+  phase with output preserved (or `tar --compare` by hand against a
+  fresh Rocky guest) before attempting a fix.
 - **`local_action:` (and its `action:` cousin) is not parsed at all** -
-  treated as an unimplemented plugin literally named `local_action`
-  instead of the legacy free-form directive it is (`local_action:
-  wait_for port=22 ...` means "run `wait_for` with these args,
-  delegated to localhost" - `delegate_to: localhost`'s older spelling).
-  Found via `mrlesmithjr.lsi-megaraid` (RHEL-family round 60186): a
-  `local_action: wait_for ...` task next to a legacy `sudo:` key hits
-  the same conflicting-action-statements parser abort as a real module
-  key would (rc=4 matches real Ansible now - see git log), but reports
-  the wrong module name in the message (`local_action, sudo` instead of
-  real Ansible's `wait_for, sudo`, which resolves the free-form string's
-  first word) because `local_action` itself is being treated as the
-  module name rather than parsed. No role in the corpus has been found
-  yet using `local_action:` in a way that would otherwise succeed - only
-  this one conflicting-key case - so the parsing itself is unverified
-  need, not just the error message's wording.
+  treated as an unimplemented plugin literally named `local_action`/
+  `action` instead of the legacy free-form directive it is
+  (`action: "{{ ansible_pkg_mgr }} state=present name={{ item }}"`
+  means "run whatever `ansible_pkg_mgr` resolves to, with these
+  free-form args" - `local_action:` is the same idea plus
+  `delegate_to: localhost`). Two independent, confirming roles in the
+  RHEL-family batch:
+  - `jdauphant.intellij` (round 60104): `action: "{{ ansible_pkg_mgr }}
+    state=present name={{ item }}"` installing `tar`/`unzip` - this
+    engine SKIPS the task entirely (rc=0, no failure, no packages
+    installed) where real Ansible resolves and runs the real package
+    module, installing both. Not cosmetic: the role's own later
+    "Download intellij" task then fails for a completely different
+    reason (missing `tar`/`unzip`) than real Ansible's own recap shows,
+    so the two engines' recaps diverge past this point for an
+    unrelated-looking reason unless traced back here.
+  - `mrlesmithjr.lsi-megaraid` (round 60186): `local_action: wait_for
+    port=22 ...` next to a legacy `sudo:` key hits the
+    conflicting-action-statements parser abort a real module key would
+    (rc=4 matches real Ansible - see git log), but reports the wrong
+    module name in the message (`local_action, sudo` instead of real
+    Ansible's `wait_for, sudo`, which resolves the free-form string's
+    first word) because `local_action` itself is being treated as the
+    module name rather than parsed.
+  Implementing this means parsing the free-form `"<module> k=v k=v"`
+  string (or a bare module name, or a dict form) into a real module
+  dispatch - a genuine feature gap, not attempted here.
 
 ---
 
