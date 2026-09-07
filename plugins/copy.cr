@@ -141,7 +141,12 @@ module Krikri
           existing_md5 = Digest::MD5.hexdigest(existing_content)
 
           if existing_md5 == content_md5
-            # Content is identical - return early!
+            # Content is identical - reconcile mode/owner/group like the
+            # src: path does, then return. The bare early-return used to
+            # skip attribute reconciliation entirely, so `mode: "0600"`
+            # on an already-0644-content file reported ok forever
+            # (apply_file_attributes below was never reached).
+            apply_file_attributes(dest)
             return PluginResult.new(
               changed: false,
               failed: false,
@@ -421,7 +426,10 @@ module Krikri
       changed = false
       copied = 0
 
-      Dir.glob(File.join(src, "**", "*"), follow_symlinks: false).sort.each do |entry|
+      # match_hidden: real Ansible walks the whole tree with os.walk,
+      # dotfiles included - the default glob silently dropped `.env`,
+      # `.gitignore`, `.ssh/` etc. from a directory copy.
+      Dir.glob(File.join(src, "**", "*"), match_hidden: true, follow_symlinks: false).sort.each do |entry|
         relative = entry.sub(src.rstrip('/') + "/", "")
         dest_path = File.join(dest_root, relative)
 

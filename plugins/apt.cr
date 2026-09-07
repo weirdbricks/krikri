@@ -667,8 +667,11 @@ module Krikri
     # Handle upgrading packages to latest
     private def handle_latest(packages : Array(String), messages : Array(String), changed : Bool, lock_timeout : Int32) : PluginResult
       if @check_mode
-        # Check if any upgrades are available
-        check_cmds = packages.map { |pkg| "apt-get install --simulate #{pkg} 2>&1 | grep -i upgrade" }
+        # `grep -i upgrade` matched the ALWAYS-present "N upgraded, M newly
+        # installed" summary line of simulate output, so check mode never
+        # converged to ok. `^Inst` only matches an actual install/upgrade
+        # action line.
+        check_cmds = packages.map { |pkg| "apt-get install --simulate #{shell_single_quote(pkg)} 2>&1 | grep '^Inst'" }
         check_result = remote_exec(check_cmds.join(" || "))
         if check_result[:exit_code] == 0
           messages << "Would upgrade #{packages.join(", ")} to latest"

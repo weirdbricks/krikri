@@ -73,6 +73,10 @@ module Krikri
     def self.init : Nil
       return if @@control_dir_ready
       Dir.mkdir_p(@@control_path_dir) unless Dir.exists?(@@control_path_dir)
+      # Control sockets live here; a predictable /tmp path must never be
+      # group/world-readable (0700 also blocks another local user
+      # pre-creating the dir before we do and hijacking the sockets).
+      File.chmod(@@control_path_dir, 0o700)
       @@control_dir_ready = true
     end
 
@@ -153,6 +157,15 @@ module Krikri
       end
     end
 
+    # Process::Status#exit_code raises RuntimeError for a signal-killed
+    # process - the run_with_timeout SIGKILL path is exactly that case,
+    # so a killed child used to blow up the result block instead of
+    # reporting a status. Map a signal death to the conventional
+    # 128+signal value; anything else passes through unchanged.
+    private def self.signal_safe_exit_code(status : Process::Status) : Int32
+      status.normal_exit? ? status.exit_code : 128 + status.exit_signal.to_i
+    end
+
     # Reset statistics
     def self.reset_stats : Nil
       @@stats.each_key do |key|
@@ -213,7 +226,7 @@ module Krikri
           run_with_timeout(process, timeout) do |proc|
             status = proc.wait
             {
-              exit_code: status.exit_code,
+              exit_code: signal_safe_exit_code(status),
               stdout:    stdout.to_s,
               stderr:    stderr.to_s,
             }
@@ -287,7 +300,7 @@ module Krikri
 
             status = proc.wait
             {
-              exit_code: status.exit_code,
+              exit_code: signal_safe_exit_code(status),
               stdout:    stdout.to_s,
               stderr:    stderr.to_s,
             }
@@ -682,6 +695,7 @@ module Krikri
         "-o", "ControlMaster=auto",
         "-o", "ControlPath=#{control_path}",
         "-o", "ControlPersist=600",
+        "-o", "ConnectTimeout=#{CliOptions.timeout}",
         "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
       ] + (recursive ? ["-r"] : [] of String) + identity_args(identity_file) +
                 CliOptions.extra_scp_args + [
@@ -701,7 +715,7 @@ module Krikri
         )
       end
 
-      unless result.exit_code == 0
+      unless result.exit_code? == 0
         detail = (err_io.to_s + out_io.to_s).strip
         detail = detail.empty? ? "no output" : detail
         raise "Failed to upload #{local_path} to #{host}:#{remote_path}: #{detail}"
@@ -743,17 +757,21 @@ module Krikri
         local_path,
       ]
 
+      out_io = IO::Memory.new
+      err_io = IO::Memory.new
       result = TimingProfile.measure("transport.scp_download", "transport") do
         Process.run(
           scp_cmd[0],
           scp_cmd[1..],
-          output: Process::Redirect::Pipe,
-          error: Process::Redirect::Pipe
+          output: out_io,
+          error: err_io
         )
       end
 
-      unless result.exit_code == 0
-        raise "Failed to download #{host}:#{remote_path} to #{local_path}"
+      unless result.exit_code? == 0
+        detail = (err_io.to_s + out_io.to_s).strip
+        detail = detail.empty? ? "no output" : detail
+        raise "Failed to download #{host}:#{remote_path} to #{local_path}: #{detail}"
       end
     end
 
@@ -770,7 +788,7 @@ module Krikri
         output: Process::Redirect::Close,
         error: Process::Redirect::Close
       )
-      @@rsync_available = result.exit_code == 0
+      @@rsync_available = result.exit_code? == 0
     end
 
     # Upload file using rsync (more efficient for incremental updates)
@@ -795,21 +813,23 @@ module Krikri
         "rsync",
         "-az",                     # archive mode, compress
         "--chmod=#{mode.to_s(8)}", # set permissions
-        "-e", "ssh -o ControlMaster=auto -o ControlPath=#{control_path} -o ControlPersist=600 -o StrictHostKeyChecking=#{strict_host_key_checking}#{identity_ssh_opt(identity_file)} -p #{port}",
+        "-e", "ssh -o ControlMaster=auto -o ControlPath=#{control_path} -o ControlPersist=600 -o ConnectTimeout=#{CliOptions.timeout} -o StrictHostKeyChecking=#{strict_host_key_checking}#{identity_ssh_opt(identity_file)} -p #{port}",
         local_path,
         "#{user}@#{host}:#{remote_path}",
       ]
 
+      out_io = IO::Memory.new
+      err_io = IO::Memory.new
       result = TimingProfile.measure("transport.rsync", "transport") do
         Process.run(
           rsync_cmd[0],
           rsync_cmd[1..],
-          output: Process::Redirect::Pipe,
-          error: Process::Redirect::Pipe
+          output: out_io,
+          error: err_io
         )
       end
 
-      if result.exit_code == 0
+      if result.exit_code? == 0
         @@stats["files_uploaded"] += 1
         true
       else
@@ -842,7 +862,7 @@ module Krikri
         "rsync",
         "-az",
         "--chmod=#{mode.to_s(8)}",
-        "-e", "ssh -o ControlMaster=auto -o ControlPath=#{control_path} -o ControlPersist=600 -o StrictHostKeyChecking=#{strict_host_key_checking}#{identity_ssh_opt(identity_file)} -p #{port}",
+        "-e", "ssh -o ControlMaster=auto -o ControlPath=#{control_path} -o ControlPersist=600 -o ConnectTimeout=#{CliOptions.timeout} -o StrictHostKeyChecking=#{strict_host_key_checking}#{identity_ssh_opt(identity_file)} -p #{port}",
       ] + local_files + ["#{user}@#{host}:#{remote_dir}/"]
 
       result = TimingProfile.measure("transport.rsync", "transport") do
@@ -854,7 +874,7 @@ module Krikri
         )
       end
 
-      if result.exit_code == 0
+      if result.exit_code? == 0
         @@stats["files_uploaded"] += local_files.size
         true
       else

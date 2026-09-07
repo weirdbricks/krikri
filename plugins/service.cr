@@ -292,7 +292,7 @@ module Krikri
     # where systemd is installed but isn't PID 1 (any container, a
     # chroot, a sysvinit host with the systemd package pulled in).
     private def probe_output(name : String) : String
-      quoted = shell_quote(name)
+      quoted = shell_single_quote(name)
       script = <<-SH
       for b in #{TOOL_BINARIES.join(' ')}; do
         found=""
@@ -340,13 +340,13 @@ module Krikri
     end
 
     private def enable_via_systemctl(name : String, should_enable : Bool) : NamedTuple(changed: Bool, message: String, failure: PluginResult?)
-      is_enabled = remote_exec("systemctl is-enabled #{name} 2>/dev/null")[:exit_code] == 0
+      is_enabled = remote_exec("systemctl is-enabled #{shell_single_quote(name)} 2>/dev/null")[:exit_code] == 0
       return unchanged if should_enable == is_enabled
 
       action = should_enable ? "enable" : "disable"
       return would("#{action} #{name}") if @check_mode
 
-      result = remote_exec("systemctl #{action} #{name}")
+      result = remote_exec("systemctl #{action} #{shell_single_quote(name)}")
       if result[:exit_code] == 0
         changed("Service #{should_enable ? "enabled" : "disabled"}")
       else
@@ -569,7 +569,7 @@ module Krikri
       result =
         case @manager
         when Manager::Systemd
-          remote_exec("systemctl #{action} #{name}")
+          remote_exec("systemctl #{action} #{shell_single_quote(name)}")
         when Manager::OpenRC
           # Every OpenRC service supports restart natively.
           remote_exec("#{@svc_cmd} #{name} #{action}")
@@ -630,10 +630,6 @@ module Krikri
     private def failure(msg : String) : NamedTuple(changed: Bool, message: String, failure: PluginResult?)
       {changed: false, message: "",
        failure: PluginResult.new(changed: false, failed: true, msg: msg).as(PluginResult?)}
-    end
-
-    private def shell_quote(value : String) : String
-      "'" + value.gsub("'", "'\\''") + "'"
     end
 
     # Helper to convert string/bool to boolean

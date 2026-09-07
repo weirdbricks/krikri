@@ -144,11 +144,20 @@ module Krikri
       #
       # Skipped entirely for an expression with a side effect
       # (`lookup('pipe', ...)` and friends), which must never run twice.
+      # The side-effect test matches a pipe lookup/query CALL specifically
+      # - the old bare `expr.includes?("pipe")` skipped structural
+      # resolution for any expression merely containing those letters
+      # (`mypipeline_list`).
+      private def side_effecting_call?(expr : String) : Bool
+        expr.includes?("lookup(") || expr.includes?("query(") ||
+          expr.matches?(/(lookup|query|q)\s*\(\s*['"]pipe/)
+      end
+
       private def structured_container(expr : String) : JSON::Any?
         value =
           if expr.matches?(REGEX_PLAIN_REFERENCE)
             @lookup.resolve(expr)
-          elsif expr.includes?("lookup(") || expr.includes?("query(") || expr.includes?("pipe")
+          elsif side_effecting_call?(expr)
             nil
           else
             render_via_crinja_value(expr)

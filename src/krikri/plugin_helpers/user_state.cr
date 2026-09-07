@@ -1,3 +1,5 @@
+require "../shell"
+
 module Krikri
   module PluginHelpers
     # UserState - pure logic for parsing `getent passwd` output and
@@ -57,15 +59,33 @@ module Krikri
         # special-case the empty-list text here rather than building a
         # general string-to-list arg coercion for a single call site.
         args = [] of String
-        args << "-u #{uid}" if uid.presence
-        args << "-g #{gid}" if gid.presence
-        args << "-G #{groups}" if groups.presence && groups != "[]"
-        args << "-s #{shell}" if shell.presence
-        args << "-d #{home}" if home.presence
-        args << "-c #{comment.inspect}" if comment.presence
+        # Every value is single-quoted for the /bin/bash -c it will be
+        # embedded in: comment:/home:/shell: are task-controlled strings
+        # and unquoted interpolation let a `$(...)`/backtick inside one
+        # execute as root (String#inspect, previously used for the
+        # comment, does NOT escape $ or backticks).
+        if u = uid.presence
+          args << "-u #{Shell.single_quote(u)}"
+        end
+        if g = gid.presence
+          args << "-g #{Shell.single_quote(g)}"
+        end
+        groups_val = groups.presence
+        if groups_val && groups_val != "[]"
+          args << "-G #{Shell.single_quote(groups_val)}"
+        end
+        if sh = shell.presence
+          args << "-s #{Shell.single_quote(sh)}"
+        end
+        if h = home.presence
+          args << "-d #{Shell.single_quote(h)}"
+        end
+        if com = comment.presence
+          args << "-c #{Shell.single_quote(com)}"
+        end
         args << "-r" if system
         args << (create_home ? "-m" : "-M")
-        args << name
+        args << Shell.single_quote(name)
         args
       end
 
@@ -80,17 +100,21 @@ module Krikri
         home : String?,
         comment : String?,
       ) : Array(String)
-        [
+        flags = [
           changed_flag("-u", uid, current.uid),
           changed_flag("-g", gid, current.gid),
           changed_flag("-s", shell, current.shell),
           changed_flag("-d", home, current.home),
-          comment.presence && comment != current.comment ? "-c #{comment.inspect}" : nil,
         ].compact
+        com = comment.presence
+        if com && com != current.comment
+          flags << "-c #{Shell.single_quote(com)}"
+        end
+        flags
       end
 
       def self.userdel_args(name : String, remove_home : Bool) : Array(String)
-        remove_home ? ["-r", name] : [name]
+        remove_home ? ["-r", Shell.single_quote(name)] : [Shell.single_quote(name)]
       end
 
       # `/etc/shadow`'s own password-ageing fields (min/max/warn - the 4th/
@@ -244,7 +268,8 @@ module Krikri
       end
 
       private def self.changed_flag(flag : String, desired : String?, current : String) : String?
-        desired.presence && desired != current ? "#{flag} #{desired}" : nil
+        return nil if desired.nil? || desired.empty? || desired == current
+        "#{flag} #{Shell.single_quote(desired)}"
       end
     end
   end

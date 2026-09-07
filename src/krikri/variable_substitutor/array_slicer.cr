@@ -71,18 +71,11 @@ module Krikri
           # Slice the array
           sliced = array[start_idx...end_idx]
 
-          # Format as JSON array
-          sliced_strings = sliced.map { |item|
-            case item.raw
-            when String
-              item.as_s
-            else
-              item.to_s
-            end
-          }
-
-          # Return as JSON array
-          sliced_strings.to_json
+          # Return as JSON array - JSON::Any#to_s on a non-String element
+          # used to emit Crystal's own inspect spelling (`{"key" =>
+          # "val"}`) inside what is documented as a JSON array; the
+          # elements are already JSON::Any, so serialize them as JSON.
+          sliced.to_json
         else
           "undefined"
         end

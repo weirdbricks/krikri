@@ -288,6 +288,14 @@ module Krikri
     # server, this would need explicit shutdown signaling.
     @host_worker_pool : Hash(String, Channel(WorkMessage)) = {} of String => Channel(WorkMessage)
 
+    # run_once: per-task election of the one host that actually executes
+    # it (keyed by Task object - a Task shared across hosts is the same
+    # reference). The first host to reach execute_task for the task wins;
+    # every other host copies the winner's registered value instead of
+    # executing. Elected on arrival rather than pinned to @hosts.first so
+    # an unreachable/halted first host doesn't leave the task unexecuted.
+    @run_once_elected : Hash(Task, String) = {} of Task => String
+
     # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #22: message payload
     # sent through each host's persistent worker channel. A class (not
     # a record) because the worker mutates state via the shared

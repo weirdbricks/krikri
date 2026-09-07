@@ -27,22 +27,22 @@ describe UserState do
   describe ".useradd_args" do
     it "includes only the flags that were specified" do
       args = UserState.useradd_args("bob", "1002", nil, nil, "/bin/zsh", nil, nil, false, true)
-      args.should eq(["-u 1002", "-s /bin/zsh", "-m", "bob"])
+      args.should eq(["-u '1002'", "-s '/bin/zsh'", "-m", "'bob'"])
     end
 
     it "uses -M when create_home is false" do
       args = UserState.useradd_args("bob", nil, nil, nil, nil, nil, nil, false, false)
-      args.should eq(["-M", "bob"])
+      args.should eq(["-M", "'bob'"])
     end
 
     it "includes -r for a system account" do
       args = UserState.useradd_args("svc", nil, nil, nil, nil, nil, nil, true, false)
-      args.should eq(["-r", "-M", "svc"])
+      args.should eq(["-r", "-M", "'svc'"])
     end
 
     it "includes supplementary groups and a quoted comment" do
       args = UserState.useradd_args("bob", nil, nil, "sudo,docker", nil, nil, "Bob Q", false, true)
-      args.should eq(["-G sudo,docker", "-c \"Bob Q\"", "-m", "bob"])
+      args.should eq(["-G 'sudo,docker'", "-c 'Bob Q'", "-m", "'bob'"])
     end
 
     it "omits a flag whose value is an empty string, not just nil" do
@@ -57,7 +57,7 @@ describe UserState do
       # were "-G"'s value, producing useradd's own confusing "group
       # '-c' does not exist".
       args = UserState.useradd_args("vault", nil, "bin", "", nil, nil, "Vault user", true, false)
-      args.should eq(["-g bin", "-c \"Vault user\"", "-r", "-M", "vault"])
+      args.should eq(["-g 'bin'", "-c 'Vault user'", "-r", "-M", "'vault'"])
     end
 
     it "omits -G when groups renders to the empty-list text \"[]\"" do
@@ -72,7 +72,7 @@ describe UserState do
       # into a real list via `ast.literal_eval` before ever reaching
       # useradd, so it passes no `-G` at all for an empty list.
       args = UserState.useradd_args("runner", nil, nil, "[]", nil, nil, nil, false, true)
-      args.should eq(["-m", "runner"])
+      args.should eq(["-m", "'runner'"])
     end
   end
 
@@ -90,13 +90,13 @@ describe UserState do
     it "flags only the attributes that differ" do
       current = SAMPLE_USER
       flags = UserState.usermod_flags(current, "1001", "1001", "/bin/zsh", "/home/alice", "Alice Example")
-      flags.should eq(["-s /bin/zsh"])
+      flags.should eq(["-s '/bin/zsh'"])
     end
 
     it "flags multiple differing attributes" do
       current = SAMPLE_USER
       flags = UserState.usermod_flags(current, "2002", "1001", "/bin/bash", "/home/alice2", "Alice Example")
-      flags.should eq(["-u 2002", "-d /home/alice2"])
+      flags.should eq(["-u '2002'", "-d '/home/alice2'"])
     end
 
     it "does not flag an empty-string desired value as a change, matching useradd_args' same fix" do
@@ -107,11 +107,11 @@ describe UserState do
 
   describe ".userdel_args" do
     it "adds -r when the home directory should be removed too" do
-      UserState.userdel_args("alice", true).should eq(["-r", "alice"])
+      UserState.userdel_args("alice", true).should eq(["-r", "'alice'"])
     end
 
     it "is just the username otherwise" do
-      UserState.userdel_args("alice", false).should eq(["alice"])
+      UserState.userdel_args("alice", false).should eq(["'alice'"])
     end
   end
 

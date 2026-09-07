@@ -39,17 +39,23 @@ module Krikri
       first = terms.first
       result = (first.starts_with?('!') || first.starts_with?('&')) ? @hosts.values.dup : [] of Host
 
+      seen = Set(String).new
       terms.each do |term|
         case term[0]?
         when '!'
           excluded = single_pattern_hosts(term[1..]).map(&.name).to_set
           result.reject! { |host| excluded.includes?(host.name) }
+          seen.clear
+          result.each { |host| seen.add(host.name) }
         when '&'
           required = single_pattern_hosts(term[1..]).map(&.name).to_set
           result.select! { |host| required.includes?(host.name) }
+          seen.clear
+          result.each { |host| seen.add(host.name) }
         else
           single_pattern_hosts(term).each do |host|
-            result << host unless result.any? { |existing| existing.name == host.name }
+            next unless seen.add?(host.name)
+            result << host
           end
         end
       end
@@ -93,9 +99,11 @@ module Krikri
       return [] of Host unless seen.add?(name)
 
       hosts = group.hosts.values.dup
+      seen_hosts = Set(String).new(hosts.map(&.name))
       group.children.each do |child|
         hosts_in_group(child, seen).each do |host|
-          hosts << host unless hosts.any? { |existing| existing.name == host.name }
+          next unless seen_hosts.add?(host.name)
+          hosts << host
         end
       end
       hosts
@@ -219,7 +227,10 @@ module Krikri
         @groups_index_fingerprint = fingerprint
       end
 
-      (index[host_name]? || [] of String).sort!
+      # `.sort` (not `.sort!`): the arrays are the memoized index's own
+      # entries - sort! would mutate the cache in place and hand the
+      # caller a live reference into it.
+      (index[host_name]? || [] of String).sort
     end
 
     private def groups_index_fingerprint : UInt64
@@ -642,9 +653,17 @@ module Krikri
         return InventoryPlugins.parse_plugin(path, yaml, name)
       end
 
-      # YAML inventory structure
-      if all_group = yaml["all"]?
-        parse_yaml_group("all", all_group, inventory)
+      # YAML inventory structure: every top-level key is a group (real
+      # Ansible's yaml inventory plugin iterates them all) - not just
+      # `all:`, which silently produced an empty inventory for the legal
+      # top-level `webservers:` group-file shape. Skip non-mapping values
+      # (`plugin: yaml` markers and the like) and the plugin key itself.
+      if root = yaml.as_h?
+        root.each do |group_name, group_def|
+          next if group_name == "plugin"
+          next unless group_def.as_h?
+          parse_yaml_group(group_name.to_s, group_def, inventory)
+        end
       end
 
       # group_vars/host_vars directory files, then the inventory's own

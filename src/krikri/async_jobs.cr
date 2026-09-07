@@ -21,12 +21,14 @@ module Krikri
     end
 
     # Atomic (write-then-rename) so a concurrent reader never sees a
-    # half-written file.
+    # half-written file. Written 0600 - status payloads can carry module
+    # output, and the DIR path is predictable.
     def self.write_status(jid : String, data : JSON::Any) : Nil
       Dir.mkdir_p(DIR)
       path = status_path(jid)
       tmp = "#{path}.tmp"
       File.write(tmp, data.to_json)
+      File.chmod(tmp, 0o600)
       File.rename(tmp, path)
     end
 

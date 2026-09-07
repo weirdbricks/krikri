@@ -18,8 +18,93 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.794`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.795`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## Round 60200: security/robustness review batch (0.9.795)
+
+A broad review pass across plugins and the executor core, unrelated to
+the RHEL-family round above - reviewed, verified live (build + full
+`crystal spec` + several manual repros against a real Kata host), and
+merged in from a parallel worktree. Highlights:
+
+- **Shell-injection fixes**: `user:`/`plugin_helpers/user_state.cr`
+  quoted every value (`comment:`/`shell:`/`home:`/`groups:`/etc.) via a
+  new shared `Shell.single_quote` instead of `String#inspect` (which
+  does NOT escape `$`/backticks) - a `comment: 'a$(cmd)b'` used to run
+  `cmd` as root. Verified live: the payload now lands as literal GECOS
+  text, no command execution. Same `shell_single_quote` treatment
+  extended to `service:`/`file:`/`cron:`'s own remote_exec calls.
+- **Predictable-tmpfile races**: `cron:`'s crontab install, plugin
+  local-staging (`plugin_manager.cr`), and async job status
+  (`async_jobs.cr`) all moved to `Random::Secure`-named temp files with
+  atomic rename and 0600/0700 perms - a local user could previously
+  pre-create/symlink a numerically-predictable path.
+- **A genuine YAML-inventory bug**: only the top-level `all:` group was
+  ever parsed - a legal inventory file whose top-level key is a plain
+  group name (`webservers: {hosts: ...}`, no `all:` wrapper) silently
+  produced an empty inventory. Now iterates every top-level mapping key.
+- **A dispatcher hang**: an exception escaping `execute_task` inside the
+  per-host worker-pool fiber used to never signal completion back to
+  the dispatcher - the whole run hung forever instead of aborting.
+- **`run_once:` pinned to `@hosts.first`**: if that host was
+  unreachable/halted, a `run_once:` task never ran anywhere. Now
+  elected on first arrival among active hosts.
+- **`until:`/`retries:` silently dropped on a looped task** - the
+  loop-items branch returned before the until: branch was ever reached;
+  each loop item now retries independently, matching real Ansible.
+- **Filter/templating correctness**: `min`/`max` now compare natively
+  (numbers by value, strings lexicographically) instead of coercing
+  every item through `numeric()` (`['b','a'] | min` returned `'b'`);
+  `sum([1,2,3])` stays an int (`6`, not `6.0`) unless a float is
+  involved; `default(True)` (Python's capital-T spelling) now honored;
+  a quote-aware operator split fixes `!=`/`==` embedded inside a quoted
+  operand being misparsed as the comparison itself; `join()` no longer
+  raises `TypeCastError` on a non-string list element.
+- **`package:`'s `state: latest` + `check_mode`**: `dnf check-update X
+  || yum check-update X` swallowed dnf's exit-100 (falls through to the
+  yum branch, whose own exit code then wins) - a pending update
+  reported "already at latest" in check mode.
+- **`apt:`'s `state: latest` + `check_mode`**: `grep -i upgrade`
+  matched the always-present "N upgraded, M newly installed..." summary
+  line of `--simulate` output, so check mode never converged to `ok`.
+- **`copy:`**: identical-content short-circuit skipped `mode:`/`owner:`/
+  `group:` reconciliation entirely (a content-matching file with the
+  wrong mode stayed wrong forever); directory copy used a
+  hidden-file-excluding glob, silently dropping dotfiles (`.env`,
+  `.gitignore`, `.ssh/`) that real Ansible's `os.walk` includes.
+- **`file:`**: `state: touch` check-mode verdict was unconditionally
+  "changed" instead of mirroring the real run's `attrs_changed ||
+  times_changed`; `state: absent` used `File.exists?` alone, which
+  follows symlinks and so never removed a dangling one (real Ansible
+  removes broken symlinks too).
+- **Signal-killed child processes**: `Process::Status#exit_code` raises
+  for a signal-terminated process - both `ssh_manager.cr` and
+  `local_executor.cr`'s `run_with_timeout`/SIGKILL paths used to crash
+  on this instead of reporting a result; mapped to the conventional
+  128+signal value.
+- **SSH transport**: `ConnectTimeout` was missing from the scp/rsync
+  command lines entirely (only the interactive-ssh path had it); scp/
+  rsync failures now include actual stdout/stderr in the raised error
+  instead of a bare "failed to upload/download".
+- **`inventory_parser.cr` perf**: two O(n²) host-dedup loops
+  (`existing.name == host.name` linear scans) replaced with `Set`-based
+  dedup; a `.sort!` on the memoized group-index cache was mutating the
+  cache's own array in place.
+- **`playbook_parser.cr` perf**: the ~110-entry `special_keys` array
+  (plus two `.map` copies) was rebuilt from scratch on every single
+  parsed task - hoisted into a `Set` constant built once at load.
+- **`gather_facts:`/`delegate_facts:`/`run_once:`** now accept the same
+  string-boolean forms (`"yes"`/`"no"`/etc.) `become:` already did via
+  `parse_become_value`, instead of requiring a literal YAML boolean.
+- **`group_by:`/`set_stats:`** (controller-side, no plugin binary) were
+  missing from the same skip-list `reboot:` and the `debug:`-family
+  action plugins already have - would have crashed the first time
+  either ran on a non-local host ("Plugin binary not found").
+- Removed a stray `STDERR.puts "MULTI-PROPAGATE..."` debug line that
+  had been shipping in every real run's output.
 
 ---
 

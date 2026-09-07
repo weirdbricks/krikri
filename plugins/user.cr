@@ -73,7 +73,7 @@ module Krikri
     end
 
     private def lookup(name : String) : PluginHelpers::UserState::User?
-      result = remote_exec("getent passwd #{name}")
+      result = remote_exec("getent passwd #{shell_single_quote(name)}")
       return nil unless result[:exit_code] == 0
       PluginHelpers::UserState.parse(result[:stdout])
     end
@@ -158,7 +158,7 @@ module Krikri
       return PluginResult.new(changed: false, failed: false, msg: "Password ageing already up to date") if flags.empty?
       return PluginResult.new(changed: true, failed: false, msg: "Would update password ageing (check mode)") if check_mode
 
-      result = remote_exec("chage #{flags.join(" ")} #{name}")
+      result = remote_exec("chage #{flags.join(" ")} #{shell_single_quote(name)}")
       return command_failure("update password ageing", result) unless result[:exit_code] == 0
 
       PluginResult.new(changed: true, failed: false, msg: "Password ageing updated")
@@ -300,7 +300,7 @@ module Krikri
     end
 
     private def remote_dir_exists?(path : String) : Bool
-      remote_exec("test -d #{path}")[:exit_code] == 0
+      remote_exec("test -d #{shell_single_quote(path)}")[:exit_code] == 0
     end
 
     # Mirrors what real ansible-core's user module does for a MODIFY-path
@@ -310,15 +310,17 @@ module Krikri
     # files into a freshly-relocated home right after this task), not a
     # byte-for-byte port of every corner of CreateHomeDir/chown_homedir.
     private def create_home_directory(home : String, name : String, gid : String) : PluginResult
-      mkdir = remote_exec("mkdir -p #{home}")
+      q_home = shell_single_quote(home)
+      q_name = shell_single_quote(name)
+      mkdir = remote_exec("mkdir -p #{q_home}")
       return command_failure("create home directory", mkdir) unless mkdir[:exit_code] == 0
 
-      remote_exec("cp -a /etc/skel/. #{home}/ 2>/dev/null")
+      remote_exec("cp -a /etc/skel/. #{q_home}/ 2>/dev/null")
 
-      chown = remote_exec("chown -R #{name}:#{gid} #{home}")
+      chown = remote_exec("chown -R #{q_name}:#{shell_single_quote(gid)} #{q_home}")
       return command_failure("set home directory ownership", chown) unless chown[:exit_code] == 0
 
-      remote_exec("chmod 0700 #{home}")
+      remote_exec("chmod 0700 #{q_home}")
       PluginResult.new(changed: true, failed: false, msg: "Home directory created")
     end
 
@@ -336,14 +338,14 @@ module Krikri
     # accepts a GID just as well as a name, so this resolved value is
     # correct for both the comparison and the eventual usermod call.
     private def group_exists?(group : String) : Bool
-      remote_exec("getent group #{group}")[:exit_code] == 0
+      remote_exec("getent group #{shell_single_quote(group)}")[:exit_code] == 0
     end
 
     private def resolve_gid(group : String?) : String?
       return nil unless group
       return group if group.matches?(/\A\d+\z/)
 
-      result = remote_exec("getent group #{group}")
+      result = remote_exec("getent group #{shell_single_quote(group)}")
       return group unless result[:exit_code] == 0
 
       result[:stdout].strip.split(':')[2]? || group
@@ -368,11 +370,7 @@ module Krikri
     # `/bin/bash -c` would otherwise try to expand as a variable,
     # silently corrupting the password being set.
     private def quote_password_flag(flags : Array(String)) : Array(String)
-      flags.map_with_index { |flag, i| i > 0 && flags[i - 1] == "-p" ? shell_quote(flag) : flag }
-    end
-
-    private def shell_quote(s : String) : String
-      "'" + s.gsub("'", "'\\''") + "'"
+      flags.map_with_index { |flag, i| i > 0 && flags[i - 1] == "-p" ? shell_single_quote(flag) : flag }
     end
 
     private def command_failure(action : String, result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : PluginResult

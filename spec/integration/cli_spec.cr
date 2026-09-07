@@ -156,7 +156,7 @@ describe "krikri-playbook CLI (--check mode)" do
     # `changed`, which only happens if `item` is the real scalar path.
     dirs = [File.join(PROJECT_ROOT, "spec", "tmp", "flatten-a"),
             File.join(PROJECT_ROOT, "spec", "tmp", "flatten-b")]
-    dirs.each { |d| FileUtils.rm_rf(d) }
+    dirs.each { |dir| FileUtils.rm_rf(dir) }
     tmp = write_notify_playbook("with_items_filter_chain.yml", <<-YAML)
       - hosts: localhost
         connection: local
@@ -187,7 +187,7 @@ describe "krikri-playbook CLI (--check mode)" do
       status2.success?.should be_true
       captured2.to_s.should contain("changed=0")
     ensure
-      dirs.each { |d| FileUtils.rm_rf(d) }
+      dirs.each { |dir| FileUtils.rm_rf(dir) }
       File.delete(tmp) rescue nil
     end
   end

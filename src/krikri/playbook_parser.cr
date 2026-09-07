@@ -830,6 +830,32 @@ module Krikri
 
   # Parser for Ansible YAML playbooks
   class PlaybookParser
+    # Task-level special (non-module) keywords parse_task must skip when
+    # hunting for the module key, plus the same names fully qualified
+    # (directive() accepts either spelling) and the ansible.legacy.*
+    # spellings of the structural directives. A Set constant built once
+    # at load: this used to be rebuilt as a ~110-element array with two
+    # map copies per parsed task, then linear-scanned per key.
+    SPECIAL_KEYS = begin
+      keys = Set{
+        "name", "when", "register", "ignore_errors", "check_mode",
+        "diff", "become", "become_user", "tags", "args", "listen", "with_items", "loop",
+        "with_dict", "with_fileglob", "with_file", "with_first_found", "with_nested", "with_sequence",
+        "with_flattened", "with_community.general.flattened", "with_subelements", "with_indexed_items", "until", "retries", "delay",
+        "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "delegate_facts", "run_once", "connection",
+        "async", "poll", "vars", "environment", "no_log", "module_defaults", "ignore_unreachable", "throttle", "remote_user", "debugger",
+        "block", "rescue", "always", "import_tasks", "include_tasks", "include_role",
+        "import_role", "meta", "include_vars",
+      }
+      keys.to_a.each { |k| keys.add("ansible.builtin.#{k}") }
+      keys.add("ansible.legacy.import_tasks")
+      keys.add("ansible.legacy.include_tasks")
+      keys.add("ansible.legacy.include_role")
+      keys.add("ansible.legacy.include_vars")
+      keys.add("ansible.legacy.meta")
+      keys
+    end
+
     # List of available (implemented) plugins - using FQCN. Almost all of
     # these are ansible.builtin.* (bundled with ansible-core); two
     # exceptions verified against a real ansible-core install (not
@@ -1319,7 +1345,8 @@ module Krikri
       play.become = parse_become_value(yaml["become"]?) || false
       play.become_user = yaml["become_user"]?.try(&.as_s)
       gather_facts_yaml = yaml["gather_facts"]?
-      play.gather_facts = gather_facts_yaml ? gather_facts_yaml.as_bool : true
+      gather_facts_parsed = parse_become_value(gather_facts_yaml)
+      play.gather_facts = gather_facts_parsed.nil? ? true : gather_facts_parsed
       play.gather_facts_set = !gather_facts_yaml.nil?
       play.force_handlers = parse_become_value(yaml["force_handlers"]?) || false
 
@@ -1824,22 +1851,11 @@ module Krikri
         return parse_include_vars_task(name || "include_vars", task_hash, include_vars_yaml)
       end
 
-      # Find the module (first key that's not a special keyword)
-      special_keys = ["name", "when", "register", "ignore_errors", "check_mode",
-                      "diff", "become", "become_user", "tags", "args", "listen", "with_items", "loop",
-                      "with_dict", "with_fileglob", "with_file", "with_first_found", "with_nested", "with_sequence",
-                      "with_flattened", "with_community.general.flattened", "with_subelements", "with_indexed_items", "until", "retries", "delay",
-                      "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "delegate_facts", "run_once", "connection",
-                      "async", "poll", "vars", "environment", "no_log", "module_defaults", "ignore_unreachable", "throttle", "remote_user", "debugger",
-                      "block", "rescue", "always", "import_tasks", "include_tasks", "include_role",
-                      "import_role", "meta", "include_vars"]
-      # ... and the same names fully qualified, since directive() accepts
-      # either spelling and neither form is a module to dispatch on.
-      special_keys += special_keys.map { |k| "ansible.builtin.#{k}" }
-      special_keys += ["ansible.legacy.import_tasks", "ansible.legacy.include_tasks",
-                       "ansible.legacy.include_role", "ansible.legacy.include_vars",
-                       "ansible.legacy.meta"]
-
+      # Find the module (first key that's not a special keyword). Built
+      # once as a frozen Set constant (SPECIAL_KEYS above) - this used to
+      # allocate a ~110-element array plus two map copies per parsed task,
+      # then linear-scan them per key.
+      #
       # Pre-2.0 Ansible top-level task attributes, removed for a long time
       # now but still found verbatim in old roles sitting alongside a real
       # module key (nickjj.mariadb/.postgres/.phpfpm's own tasks/main.yml,
@@ -1863,7 +1879,7 @@ module Krikri
         key_str = key.to_s
         if legacy_conflicting_keys.includes?(key_str)
           legacy_conflict_key = key_str
-        elsif !special_keys.includes?(key_str) && !module_name
+        elsif !SPECIAL_KEYS.includes?(key_str) && !module_name
           module_name = key_str
           module_params = value
         end
@@ -2120,8 +2136,8 @@ module Krikri
       # Parse delegate_to / run_once
       task.delegate_to = task_hash["delegate_to"]?.try { |v| safe_yaml_to_string(v) }
       task.connection = task_hash["connection"]?.try { |v| safe_yaml_to_string(v) }
-      task.delegate_facts = task_hash["delegate_facts"]?.try(&.as_bool) || false
-      task.run_once = task_hash["run_once"]?.try(&.as_bool) || false
+      task.delegate_facts = parse_become_value(task_hash["delegate_facts"]?) || false
+      task.run_once = parse_become_value(task_hash["run_once"]?) || false
 
       # Parse async / poll
       task.async_seconds = task_hash["async"]?.try { |v| safe_yaml_to_string(v).to_i? }

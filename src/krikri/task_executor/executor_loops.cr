@@ -675,7 +675,17 @@ module Krikri
                          item_exec_host = task.delegate_to ? resolve_delegate_host(task, host, vars_context) : exec_host
                          fact_hosts[idx] = item_exec_host if task.delegate_facts? && task.delegate_to
 
-                         result = execute_task_once(task, host, vars_context, item_label: item_label_for(task, item, vars_context, host), exec_host: item_exec_host, defer_loop_stats: true)
+                         item_label = item_label_for(task, item, vars_context, host)
+                         result = if (until_condition = task.until_condition) && !resolve_task_check_mode(task, vars_context)
+                           # Real Ansible retries each loop item
+                           # independently under until:/retries: - the
+                           # loop_items branch used to return before the
+                           # until branch in execute_task, silently
+                           # dropping retries for looped tasks.
+                           run_until_retries(task, host, vars_context, until_condition, item_exec_host, defer_loop_stats: true, item_label: item_label)
+                         else
+                           execute_task_once(task, host, vars_context, item_label: item_label, exec_host: item_exec_host, defer_loop_stats: true)
+                         end
                          if result && (facts = result["ansible_facts"]?) && (facts_hash = facts.as_h?)
                            facts_hash.each { |key, value| running_vars_context[key] = value }
                          end
@@ -719,6 +729,7 @@ module Krikri
       return false unless exec_host == host
       return false if task.module_name.ends_with?("set_fact")
       return false if task.delegate_to
+      return false if task.until_condition
       return false if PluginManager.local_connection?(exec_host, vars_context)
       true
     end
@@ -934,19 +945,26 @@ module Krikri
     # loop_control.label - what the per-item line shows instead of the
     # raw item. Rendered against that item's own context, so it can name
     # a field of the item.
-    private def execute_task_with_retries(
+    # Shared `until:` retry core - drives task.retries/task.delay attempts
+    # of execute_task_once until the rendered condition passes. Used both
+    # by execute_task_with_retries (single task, displays its final result)
+    # and, per item, by execute_looped_task's non-batched path (real
+    # Ansible retries each loop item independently).
+    private def run_until_retries(
       task : Task,
       host : Host,
       vars_context : Hash(String, JSON::Any),
       until_condition : String,
       exec_host : Host = host,
-    )
+      defer_loop_stats : Bool = false,
+      item_label : String? = nil,
+    ) : JSON::Any?
       register_name = task.register
       attempts = task.retries.clamp(1..)
       result = nil
 
       attempts.times do |attempt|
-        result = execute_task_once(task, host, vars_context, exec_host: exec_host)
+        result = execute_task_once(task, host, vars_context, item_label: item_label, exec_host: exec_host, defer_loop_stats: defer_loop_stats)
         break unless result
 
         if register_name && !register_name.empty?
@@ -960,6 +978,18 @@ module Krikri
 
         sleep(task.delay.seconds) if attempt < attempts - 1
       end
+
+      result
+    end
+
+    private def execute_task_with_retries(
+      task : Task,
+      host : Host,
+      vars_context : Hash(String, JSON::Any),
+      until_condition : String,
+      exec_host : Host = host,
+    )
+      result = run_until_retries(task, host, vars_context, until_condition, exec_host)
 
       return unless result
 

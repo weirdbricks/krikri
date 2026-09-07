@@ -106,7 +106,7 @@ module Krikri
       await(stderr_pipe, stderr_done)
 
       {
-        exit_code: exit_status.exit_code,
+        exit_code: signal_safe_exit_code(exit_status),
         stdout:    stdout.to_s,
         stderr:    stderr.to_s,
       }
@@ -116,6 +116,13 @@ module Krikri
         stdout:    "",
         stderr:    "Local execution failed: #{ex.message}",
       }
+    end
+
+    # Process::Status#exit_code raises RuntimeError for a signal-killed
+    # process; map that to the conventional 128+signal value instead of
+    # crashing the shell/command module's result handling.
+    private def self.signal_safe_exit_code(status : Process::Status) : Int32
+      status.normal_exit? ? status.exit_code : 128 + status.exit_signal.to_i
     end
 
     # Copies *pipe* into *buffer* on a separate fiber, signaling completion

@@ -346,14 +346,33 @@ module Krikri
             msg.gate.receive
             buffer = IO::Memory.new
             OutputRouting.redirect_current_fiber_to(buffer)
+            escaped : Exception? = nil
             begin
               execute_task(msg.task, msg.host)
+            rescue ex
+              escaped = ex
             ensure
+              # The dispatcher blocks on done.receive until this host's
+              # name arrives, so the result handoff MUST happen even when
+              # execute_task raises - sending outside the ensure turned
+              # any escaping exception into a permanent dispatcher hang
+              # (the worker fiber died silently and the run never
+              # finished).
               OutputRouting.clear_current_fiber_redirect
+              msg.results[msg.host.name] = buffer
+              msg.done_signal.send(msg.host.name)
+              msg.gate.send(nil)
             end
-            msg.results[msg.host.name] = buffer
-            msg.done_signal.send(msg.host.name)
-            msg.gate.send(nil)
+            if ex = escaped
+              # The worker is still alive (the ensure above completed the
+              # handshake), but its per-task contract was broken by the
+              # exception, so retire it - the next ensure_host_worker_pool
+              # call respawns a fresh fiber - and let the exception escape
+              # as this fiber's uncaught exception, aborting the run the
+              # same way the single-host path would.
+              @host_worker_pool.delete(msg.host.name)
+              raise ex
+            end
           end
         end
       end
@@ -407,13 +426,23 @@ module Krikri
       return execute_include_vars(task, host) if task.include_vars?
       return execute_validate_argument_spec(task, host) if task.validate_argument_spec?
 
-      # run_once: only the first host in the play actually executes it;
-      # later hosts get no output/stats at all, matching real Ansible - but
-      # still pick up whatever it registered, so later tasks on those hosts
-      # can reference the same variable.
-      if task.run_once? && host.name != @hosts.first.name
-        copy_run_once_register(task, host)
-        return
+      # run_once: only ONE host in the play actually executes it; later
+      # hosts get no output/stats at all, matching real Ansible - but
+      # still pick up whatever it registered, so later tasks on those
+      # hosts can reference the same variable. Which host executes is
+      # elected on first arrival (the first host to reach this point for
+      # this task) rather than pinned to the literal first inventory
+      # host - if that host is unreachable/halted the task used to never
+      # run anywhere, while real Ansible runs it on the first *active*
+      # host. Election is safe under cooperative scheduling: the
+      # check-and-set below has no yield point between the read and the
+      # write.
+      if task.run_once?
+        @run_once_elected[task] ||= host.name
+        if @run_once_elected[task] != host.name
+          copy_run_once_register(task, host)
+          return
+        end
       end
 
       # An earlier group member's trigger may have already built this

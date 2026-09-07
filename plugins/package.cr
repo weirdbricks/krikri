@@ -422,8 +422,18 @@ module Krikri
         end
       when "latest"
         if @check_mode
-          check_update = remote_exec("dnf check-update #{shell_pkg} || yum check-update #{shell_pkg}")
-          # check-update returns 100 if updates are available
+          # check-update returns 100 if updates are available. The old
+          # `dnf check-update X || yum check-update X` swallowed dnf's
+          # exit-100 (non-zero runs the yum fallback, whose own exit code
+          # then replaced it), so a pending update looked like
+          # "already at latest". Capture dnf's rc explicitly and only
+          # fall through to yum when dnf itself failed (e.g. not
+          # installed); yum's own 100 then propagates as the exit code.
+          check_update = remote_exec(
+            "dnf check-update #{shell_pkg}; rc=$?; " \
+            "if [ $rc -eq 100 ]; then exit 100; fi; " \
+            "if [ $rc -ne 0 ]; then yum check-update #{shell_pkg} || exit $?; fi"
+          )
           if check_update[:exit_code] == 100
             return PluginResult.new(
               changed: true,

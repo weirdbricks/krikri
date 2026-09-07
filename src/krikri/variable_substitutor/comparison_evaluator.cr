@@ -37,10 +37,11 @@ module Krikri
         operators = ["==", "!=", "<=", ">=", ">", "<"]
 
         operators.each do |op|
-          if expr.includes?(op)
-            parts = expr.split(op, 2)
-            next if parts.size != 2
-
+          # Quote-aware split: an operator inside a quoted operand
+          # (`msg != "x == y"`) must not be treated as the comparison -
+          # the old `expr.includes?(op)` + `split(op, 2)` split inside
+          # the quotes and compared garbage.
+          if parts = split_outside_quotes(expr, op)
             left = evaluate_simple_value(parts[0].strip)
             right = evaluate_simple_value(parts[1].strip)
 
@@ -66,6 +67,32 @@ module Krikri
         end
 
         "false"
+      end
+
+      # Splits *expr* on the first occurrence of *op* outside single/
+      # double quotes, or nil if there is none. Byte-level scan: quotes
+      # and every operator character are ASCII, so multibyte characters
+      # can never alias a quote or operator byte.
+      private def split_outside_quotes(expr : String, op : String) : {String, String}?
+        bytes = expr.bytes
+        op_bytes = op.bytes
+        in_single = false
+        in_double = false
+        i = 0
+        while i + op_bytes.size <= bytes.size
+          case bytes[i]
+          when 0x22 # double quote
+            in_double = !in_double unless in_single
+          when 0x27 # single quote
+            in_single = !in_single unless in_double
+          else
+            if !in_single && !in_double && op_bytes.each_with_index.all? { |op_byte, j| bytes[i + j] == op_byte }
+              return {expr[0...i], expr[(i + op_bytes.size)..]}
+            end
+          end
+          i += 1
+        end
+        nil
       end
 
       # Evaluate a simple value (literal or variable reference)

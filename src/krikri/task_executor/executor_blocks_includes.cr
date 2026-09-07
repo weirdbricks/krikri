@@ -148,7 +148,6 @@ module Krikri
             included_task.name = name_substitutor.substitute(included_task.name)
           end
 
-          STDERR.puts "MULTI-PROPAGATE included_tasks=" + included_tasks.size.to_s + " block_children=" + (included_tasks[0].block_tasks || [] of Task).size.to_s
           propagate_role_context(task, included_tasks)
 
           connection_names = group_hosts.map { |host| host.vars["ansible_host"]?.try(&.as_s?) || host.name }

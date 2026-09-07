@@ -458,6 +458,15 @@ module Krikri
         # raise outright the first time a real remote host used it.
         next if task.module_name == "ansible.builtin.reboot"
 
+        # group_by:/set_stats: have no plugin binary at all - both are
+        # handled entirely controller-side (group_by: mutates the shared
+        # Inventory, set_stats: writes the final-recap accumulator), the
+        # same category as reboot: above. Same crash shape if left in
+        # required_plugins: get_local_plugin_path would raise "Plugin
+        # binary not found" the first time a non-local host used either.
+        next if task.module_name == "ansible.builtin.group_by" ||
+                task.module_name == "ansible.builtin.set_stats"
+
         # debug:/assert:/fail:/set_fact:/pause: - now controller-side
         # action plugins that always produce the whole result themselves
         # (see ActionPluginManager::CONTROLLER_ONLY_MODULES) - no module
@@ -1372,8 +1381,21 @@ module Krikri
       Dir.mkdir_p(REMOTE_PLUGIN_DIR)
       File.chmod(File.dirname(REMOTE_PLUGIN_DIR), 0o755)
       File.chmod(REMOTE_PLUGIN_DIR, 0o755)
-      FileUtils.cp(source_path, staged_path)
-      File.chmod(staged_path, 0o755)
+      # Copy to a temp name and rename into place: a plain cp can be
+      # observed half-written by a concurrent local `become:` exec under
+      # --forks>1 (the memo below is only added after the copy, so two
+      # fibers can both be mid-copy) - rename(2) is atomic, so an
+      # executing binary is always fully-formed. Temp name uses
+      # Random::Secure so a local user can't pre-empt it.
+      tmp_path = "#{staged_path}.tmp.#{Random::Secure.hex(8)}"
+      begin
+        FileUtils.cp(source_path, tmp_path)
+        File.chmod(tmp_path, 0o755)
+        File.rename(tmp_path, staged_path)
+      rescue ex
+        File.delete(tmp_path) if File.exists?(tmp_path)
+        raise ex
+      end
       @@staged_local_plugins << plugin_name
       staged_path
     end

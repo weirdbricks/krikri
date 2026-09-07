@@ -549,7 +549,10 @@ module Krikri
           # choosing a package name or ''), stored raw/unrendered in
           # @vars the same way every other lazily-evaluated default is.
           rendered = items.map { |item| rerender_if_templated(item) }
-          return JSON::Any.new(rendered.map(&.as_s).join(current.as_s))
+          # Coerce non-string elements via format_value instead of a bare
+          # .as_s (which raised TypeCastError for ints/dicts) - real
+          # Jinja2's join str()s each element.
+          return JSON::Any.new(rendered.map { |item| item.as_s? ? item.as_s : format_value(item) }.join(current.as_s))
         end
 
         nil

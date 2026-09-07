@@ -344,9 +344,9 @@ module Krikri
             JSON::Any.new(nil)
           end
         when "min"
-          as_array(value).min_by? { |v| numeric(v) } || JSON::Any.new(nil)
+          jinja_extreme(as_array(value), prefer_less: true) || JSON::Any.new(nil)
         when "max"
-          as_array(value).max_by? { |v| numeric(v) } || JSON::Any.new(nil)
+          jinja_extreme(as_array(value), prefer_less: false) || JSON::Any.new(nil)
         when "int"
           # Real Jinja2's own `int` filter (do_int) truncates a native
           # float/int directly (Python's `int(42.5) == 42`) - going
@@ -505,8 +505,15 @@ module Krikri
             JSON::Any.new(result)
           else
             total = numeric(start_value)
-            items.each { |item| total += numeric(item) }
-            JSON::Any.new(total)
+            any_float = start_value.raw.is_a?(Float64)
+            items.each do |item|
+              any_float ||= item.raw.is_a?(Float64)
+              total += numeric(item)
+            end
+            # Real Jinja2 keeps sum() of all-int items an int (`[1,2,3] |
+            # sum` renders "6", not "6.0") - only a float input makes the
+            # result a float.
+            any_float ? JSON::Any.new(total) : JSON::Any.new(total.to_i64)
           end
         when "combine"
           # combine(other1, other2, ..., recursive=False, list_merge='replace')
@@ -1204,9 +1211,11 @@ module Krikri
       # present and true - a bare `true` literal, the only spelling real
       # roles use for this filter's own boolean arg (unlike a general
       # expression, which could also be a variable reference, but no
-      # real usage seen so far needs that).
+      # real usage seen so far needs that). Python's capital-T `True`
+      # spelling is accepted too - it was previously silently ignored
+      # (treated as false), which real Jinja2 would honor.
       private def default_boolean_arg?(args : String) : Bool
-        split_top_level_args(args)[1]?.try(&.strip) == "true"
+        split_top_level_args(args)[1]?.try(&.strip).in?("true", "True")
       end
 
       private def resolve_default_arg(args : String) : JSON::Any
@@ -1938,6 +1947,40 @@ module Krikri
         end
       end
 
+      # Real Jinja2's min/max compare items natively: numbers by value,
+      # strings lexicographically. The old min_by/max_by over numeric()
+      # coerced every non-numeric item to 0.0, so `['b','a'] | min`
+      # returned 'b'. Python 3 would raise TypeError on a mixed
+      # number/string comparison; ordering numbers before strings keeps
+      # homogeneous-list behavior identical and gives mixed lists a
+      # deterministic order instead of a crash.
+      private def jinja_extreme(array : Array(JSON::Any), prefer_less : Bool) : JSON::Any?
+        return nil if array.empty?
+        best = array.first
+        array.each do |item|
+          cmp = jinja_native_compare(item, best)
+          better = prefer_less ? cmp < 0 : cmp > 0
+          best = item if better
+        end
+        best
+      end
+
+      private def jinja_native_compare(a : JSON::Any, b : JSON::Any) : Int32
+        a_num = a.raw.is_a?(Int64 | Int32 | Float64)
+        b_num = b.raw.is_a?(Int64 | Int32 | Float64)
+        if a_num && b_num
+          # Float#<=> is nilable (NaN); compare by difference instead.
+          diff = numeric(a) - numeric(b)
+          diff < 0 ? -1 : diff > 0 ? 1 : 0
+        elsif a_num
+          -1
+        elsif b_num
+          1
+        else
+          as_string(a) <=> as_string(b)
+        end
+      end
+
       # Unescapes the common backslash escape sequences a real Python/
       # Jinja2 single- or double-quoted string LITERAL supports (`\\` ->
       # `\`, `\'`/`\"` -> the literal quote, `\n`/`\t` -> real newline/
@@ -2058,11 +2101,22 @@ module Krikri
         result
       end
 
+      # Interpolated regex literals are recompiled on every call (Crystal
+      # does not cache them) - this sits on the map/sum/flatten/dict2items
+      # hot path, so build the pattern once per name in a cache keyed by
+      # the (fixed) set of kwarg names callers use.
       private def parse_kwarg(args : String, name : String) : String?
-        if match = args.match(/#{name}\s*=\s*(['"])(.*?)\1/)
+        pattern = KWARG_PATTERNS[name]?
+        unless pattern
+          pattern = Regex.new("#{Regex.escape(name)}\\s*=\\s*(['\"])(.*?)\\1")
+          KWARG_PATTERNS[name] = pattern
+        end
+        if match = args.match(pattern)
           match[2]
         end
       end
+
+      private KWARG_PATTERNS = Hash(String, Regex).new
 
       # Same as parse_kwarg, but for a kwarg whose value isn't necessarily
       # a quoted string - `start=[]` (sum()'s own list-accumulator kwarg)

@@ -523,7 +523,6 @@ module Krikri
 
     # Handle state=touch
     private def handle_touch(path : String) : PluginResult
-      # Check if file exists
       exists = File.exists?(path)
 
       if exists
@@ -536,17 +535,14 @@ module Krikri
         # create-if-missing-else-fix-attributes op) must be genuinely
         # idempotent on a second run, not unconditionally bump the
         # timestamps to now and report changed regardless.
-        if @check_mode
-          return PluginResult.new(
-            changed: true,
-            failed: false,
-            msg: "Would touch file (check mode)"
-          )
-        end
-
         attrs_changed = update_attributes_if_needed(path, is_directory: false)
         times_changed = touch_times_would_change?(path)
         changed = attrs_changed || times_changed
+
+        # Check mode verdict mirrors the non-check path: the real verdict
+        # is attrs_changed || times_changed, not an unconditional
+        # "changed".
+        return touch_existing_result(path, attrs_changed, times_changed) if @check_mode
 
         if changed
           apply_file_attributes(path) if attrs_changed
@@ -597,10 +593,25 @@ module Krikri
       )
     end
 
+    # Check-mode verdict for an existing file under state=touch - shares
+    # the non-check path's own attrs_changed || times_changed computation
+    # (update_attributes_if_needed/touch_times_would_change? are both
+    # read-only, so safe to run in check mode).
+    private def touch_existing_result(path : String, attrs_changed : Bool, times_changed : Bool) : PluginResult
+      PluginResult.new(
+        changed: attrs_changed || times_changed,
+        failed: false,
+        msg: (attrs_changed || times_changed) ? "Would touch file (check mode)" : "File already up to date (check mode)",
+        path: path
+      )
+    end
+
     # Handle state=absent
     private def handle_absent(path : String) : PluginResult
-      # Check if path exists
-      unless File.exists?(path)
+      # lexists semantics: a DANGLING symlink (target gone) reports
+      # File.exists? == false (it follows links) but still needs removing
+      # - real Ansible's state=absent removes broken symlinks too.
+      unless File.exists?(path) || File.symlink?(path)
         # Path doesn't exist, nothing to do
         if @check_mode
           return PluginResult.new(
@@ -917,7 +928,7 @@ module Krikri
         File.chmod(path, numeric)
       else
         # Symbolic mode (e.g. "u+x", "go-w") - see the class doc comment.
-        remote_exec("chmod #{mode} #{path}")
+        remote_exec("chmod #{shell_single_quote(mode)} #{shell_single_quote(path)}")
       end
     end
 
