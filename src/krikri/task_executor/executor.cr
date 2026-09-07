@@ -338,6 +338,17 @@ module Krikri
       @forks = 5,
       @smart_gathering = false,
       fact_store : Hash(String, Hash(String, JSON::Any))? = nil,
+      # Run-scoped store for `set_fact:`-produced high-tier vars. Real
+      # Ansible ranks set_facts near the very top of the precedence ladder
+      # and keeps them for the WHOLE RUN - a play-2 play var must not
+      # shadow a play-1 set_fact (verified against real ansible-core
+      # 2.19: a two-play repro prints play 1's set_fact value in play 2
+      # even though play 2 declares a same-named vars: entry). This used
+      # to be per-play unconditionally, so exactly that shadowing
+      # happened whenever plays re-declared the var. The caller passes
+      # the same store to every play's executor; per-play isolation
+      # remains the default when nil (specs, ad-hoc use).
+      set_fact_store : Hash(String, Hash(String, JSON::Any))? = nil,
       @adhoc = false,
       # -e/--extra-vars. Real Ansible's HIGHEST-precedence scope: they
       # beat play vars, role vars, task vars, inventory and facts, and
@@ -385,7 +396,7 @@ module Krikri
       # in play 1 are still there in play 4. With no store passed (the
       # default), this is per-play exactly as before.
       @facts = fact_store || Hash(String, Hash(String, JSON::Any)).new
-      @set_facts = Hash(String, Hash(String, JSON::Any)).new
+      @set_facts = set_fact_store || Hash(String, Hash(String, JSON::Any)).new
       @halted_hosts = Set(String).new
       @ended_hosts = Set(String).new
       @cleared_error_hosts = Set(String).new
@@ -411,7 +422,9 @@ module Krikri
         # host's facts from an earlier play, and pre-seeding must not
         # wipe them. Registered vars deliberately stay per-play.
         @facts[host.name] ||= {} of String => JSON::Any
-        @set_facts[host.name] = {} of String => JSON::Any
+        # ||= for set_facts too - same reasoning, same run scope (real
+        # Ansible keeps a play-1 set_fact above play vars in play 2).
+        @set_facts[host.name] ||= {} of String => JSON::Any
       end
 
       # See flatten_handler_blocks's own comment: a block:-wrapped

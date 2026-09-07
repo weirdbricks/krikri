@@ -731,6 +731,13 @@ combined_results = Hash(String, Hash(String, Int32)).new
 # discard.
 _ = flush_cache
 run_fact_store = gathering == "smart" ? Hash(String, Hash(String, JSON::Any)).new : nil
+# Run-scoped set_fact store, shared by every play's TaskExecutor in every
+# gathering mode: real Ansible ranks set_facts near the top of the
+# precedence ladder and keeps them for the whole run, so a play-2 play
+# var must not shadow a play-1 set_fact (verified against real
+# ansible-core 2.19 with a two-play repro). Facts themselves stay
+# per-play under implicit gathering - only set_facts carry across.
+run_set_fact_store = Hash(String, Hash(String, JSON::Any)).new
 # Hosts that hard-failed (a task failed without ignore_errors:) in an
 # earlier play this run - excluded from every *remaining* play's host
 # list too, matching real Ansible's own behavior (a failure removes a
@@ -889,6 +896,7 @@ playbook.plays.each_with_index do |play, _play_index|
       forks: forks,
       smart_gathering: gathering == "smart",
       fact_store: run_fact_store,
+      set_fact_store: run_set_fact_store,
       extra_vars: extra_vars,
       force_handlers: force_handlers || play.force_handlers?,
       vars_files: play.vars_files,
