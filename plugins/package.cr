@@ -161,6 +161,28 @@ module Krikri
     # own space-joining of a templated list var - see the JSON-array
     # handling in #execute above). True only if *every* one is installed,
     # not merely one of them.
+    # One `dpkg-query` round trip for the whole package list (see
+    # apt.cr's dpkg_installed_status for the full rationale - duplicated
+    # here because apt.cr and package.cr are separate plugin binaries).
+    private def dpkg_installed_status(packages : Array(String)) : Hash(String, {Bool, String?})
+      statuses = Hash(String, {Bool, String?}).new
+      return statuses if packages.empty?
+
+      bare_names = packages.map { |pkg| pkg.split('=').first }
+      name_list = bare_names.map { |pkg| shell_single_quote(pkg) }.join(" ")
+      result = remote_exec("dpkg-query -W -f='${db:Status-Abbrev} ${Version} ${Package}
+' #{name_list} 2>/dev/null")
+      result[:stdout].each_line do |line|
+        parts = line.split(/\s+/, 3)
+        next unless parts.size == 3
+        bare = parts[2].strip.split(":").first
+        next if statuses.has_key?(bare)
+        installed = parts[0].starts_with?("ii")
+        statuses[bare] = {installed, installed ? parts[1] : nil}
+      end
+      statuses
+    end
+
     private def all_packages_installed?(name : String, single_name : Bool, & : String -> Bool) : Bool
       names = single_name ? [name] : name.split(' ').reject(&.empty?)
       names.all? { |pkg| yield pkg }
@@ -473,7 +495,16 @@ module Krikri
       # (see handle_dnf's own comment for why: a single combined `dpkg -l
       # pkg1 pkg2 | grep '^ii'` matches as soon as *any* one of them is
       # installed, not all of them).
-      is_installed = all_packages_installed?(name, single_name) { |pkg| remote_exec("dpkg -l #{pkg} 2>/dev/null | grep '^ii'")[:exit_code] == 0 }
+      # One batched dpkg-query for the whole list instead of one
+      # `dpkg -l <pkg>` per package (mirrors apt.cr's own
+      # dpkg_installed_status; the two are separate plugin binaries, so
+      # the helper is duplicated rather than shared).
+      apt_names = single_name ? [name] : name.split(' ').reject(&.empty?)
+      installed_status = dpkg_installed_status(apt_names)
+      is_installed = apt_names.all? do |pkg|
+        base_name = pkg.split('=').first
+        installed_status[base_name]?.try { |pair| pair[0] } || false
+      end
       shell_pkg = shell_name(name, single_name)
       # Matches apt.cr's own lock_timeout retry (default 60s, same
       # param name as real Ansible's apt module) - this OS-agnostic

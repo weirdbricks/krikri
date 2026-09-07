@@ -432,6 +432,31 @@ module Krikri
       dpkg_line.split(/\s+/)[2]?
     end
 
+    # One `dpkg-query` round trip for the WHOLE package list instead of
+    # one `dpkg -l <pkg>` per package (N+1 remote commands on every
+    # multi-package apt task). Returns installed-ness and the installed
+    # version per requested base name; a name dpkg has never heard of
+    # (never installed) simply has no line. Keys are the bare name with
+    # any `:arch` suffix dpkg-query appends for multi-arch packages
+    # stripped.
+    private def dpkg_installed_status(packages : Array(String)) : Hash(String, {Bool, String?})
+      statuses = Hash(String, {Bool, String?}).new
+      return statuses if packages.empty?
+
+      name_list = packages.map { |pkg| shell_single_quote(split_name_version(pkg)[0]) }.join(" ")
+      result = remote_exec("dpkg-query -W -f='${db:Status-Abbrev} ${Version} ${Package}
+' #{name_list} 2>/dev/null")
+      result[:stdout].each_line do |line|
+        parts = line.split(/\s+/, 3)
+        next unless parts.size == 3
+        bare = parts[2].strip.split(":").first
+        next if statuses.has_key?(bare)
+        installed = parts[0].starts_with?("ii")
+        statuses[bare] = {installed, installed ? parts[1] : nil}
+      end
+      statuses
+    end
+
     # Parses apt-get's own end-of-run summary line ("0 upgraded, 0 newly
     # installed, 0 to remove and N not upgraded.") to tell a genuine
     # no-op apart from real work done - the "0 upgraded, 0 newly
@@ -524,11 +549,13 @@ module Krikri
       to_install = [] of String
       already_installed = [] of String
 
-      # Check which packages need installation
+      # Check which packages need installation - one batched query for
+      # the whole list (see dpkg_installed_status).
+      installed_status = dpkg_installed_status(packages)
       packages.each do |pkg|
         base_name, pinned_version = split_name_version(pkg)
-        check_result = remote_exec("dpkg -l #{base_name} 2>/dev/null | grep '^ii'")
-        if check_result[:exit_code] == 0 && (pinned_version.nil? || installed_version(check_result[:stdout]) == pinned_version)
+        installed, installed_ver = installed_status[base_name]?.try { |pair| pair } || {false, nil}
+        if installed && (pinned_version.nil? || installed_ver == pinned_version)
           already_installed << pkg
         else
           to_install << pkg
@@ -613,11 +640,13 @@ module Krikri
 
       # Check which packages need removal - state: absent removes by
       # NAME regardless of any `=version` pin (matching real apt-get
-      # remove semantics), so only the base name is checked here.
+      # remove semantics), so only the base name is checked here. One
+      # batched query for the whole list (see dpkg_installed_status).
+      installed_status = dpkg_installed_status(packages)
       packages.each do |pkg|
         base_name, _ = split_name_version(pkg)
-        check_result = remote_exec("dpkg -l #{base_name} 2>/dev/null | grep '^ii'")
-        if check_result[:exit_code] == 0
+        installed, _ = installed_status[base_name]?.try { |pair| pair } || {false, nil}
+        if installed
           to_remove << pkg
         else
           already_absent << pkg
