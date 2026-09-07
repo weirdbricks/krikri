@@ -729,6 +729,11 @@ module Krikri
       return false unless exec_host == host
       return false if task.module_name.ends_with?("set_fact")
       return false if task.delegate_to
+      # A templated action:/local_action: resolves per item inside
+      # execute_task_once; the batched-loop path pre-builds every
+      # iteration's step from the parse-time params, which don't exist
+      # for it yet.
+      return false if task.templated_action
       return false if task.until_condition
       return false if PluginManager.local_connection?(exec_host, vars_context)
       true
