@@ -794,6 +794,12 @@ module Krikri
       return {false, nil} unless @batching_enabled
       return {false, nil} unless exec_host == host
       return {false, nil} if PluginManager.local_connection?(exec_host, vars_context)
+      # A templated action:/local_action: resolves its real module only
+      # inside execute_task_once; the batch script path has no such
+      # resolution (and breaks_run? below only keeps the task out of
+      # NEIGHBORS' groups - it would still batch as its own size-1
+      # group), so it always takes the solo path.
+      return {false, nil} if task.templated_action
 
       group = @task_group[task]?
       return {false, nil} unless group
@@ -1173,6 +1179,39 @@ module Krikri
     # Run one attempt of a task (when: check + param substitution + action
     # plugin + module execution). Returns nil if the when: condition skipped
     # it (the skipped counter is already updated in that case).
+    # Runtime resolution of a templated action:/local_action: module name
+    # (see Task#templated_action): substitute the whole free-form string,
+    # take the first token as the module name (FQCN-resolved the same as
+    # parse time), re-parse the rest as that module's params. Returns a
+    # shallow copy - Task is shared across hosts and loop iterations, so
+    # the resolved name/params must never be written back onto it. A
+    # resolution failure raises (caught by the caller's "finalization of
+    # task args failed" rescue) as one clean failed task - real Ansible's
+    # own "couldn't resolve module/action 'x'" verdict for a templated
+    # name that renders to something unknown.
+    private def resolve_templated_action(task : Task, substitutor : VarSubstitutor) : Task
+      raw = task.templated_action || return task
+
+      rendered = substitutor.substitute(raw).strip
+      tokens = rendered.split(/\s+/, 2)
+      raw_name = tokens[0]
+      resolved = PlaybookParser.resolve_module_name(raw_name)
+      raise "couldn't resolve module/action '#{raw_name}'" unless resolved
+
+      rest = tokens[1]?
+      parsed = rest && !rest.strip.empty? ? PlaybookParser.parse_free_form_params(rest, resolved) : Hash(String, String).new
+      # A sibling args: dict was already merged into task.params at parse
+      # time - same precedence as the non-templated flow, args: win over
+      # free-form k=v keys.
+      merged = task.params.dup
+      parsed.each { |key, value| merged[key] = value unless merged.has_key?(key) }
+
+      resolved_task = task.dup
+      resolved_task.module_name = resolved
+      resolved_task.params = merged
+      resolved_task
+    end
+
     private def execute_task_once(
       task : Task,
       host : Host,
@@ -1201,6 +1240,7 @@ module Krikri
       end
 
       begin
+        task = resolve_templated_action(task, substitutor)
         substituted_params = substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"), module_name: task.module_name)
       rescue ex
         # A raised exception during param substitution (e.g. lookup('url',

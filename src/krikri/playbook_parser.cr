@@ -29,6 +29,17 @@ module Krikri
     # so far), and a smaller, more visible divergence than vanishing
     # entirely in the rare case the condition would have been true.
     property unavailable_module : String?
+    # A legacy `action:`/`local_action:` free-form directive whose module
+    # name is itself a `{{ }}` template (`action: "{{ ansible_pkg_mgr }}
+    # state=present name={{ item }}"`, jdauphant.intellij) can't resolve
+    # at parse time - the raw free-form string is kept here and resolved
+    # at execution (TaskExecutor#resolve_templated_action): the
+    # substituted first token names the real module, the rest re-parses
+    # as its params. Deliberately distinct from unavailable_module: a
+    # module name that is only resolvable at run time must FAIL the task
+    # when it doesn't resolve (real Ansible: "couldn't resolve
+    # module/action 'x'"), never be skipped like an unknown module.
+    property templated_action : String?
     property params : Hash(String, String)
     property vars : Hash(String, JSON::Any)
     # environment: - per-task env vars (real Ansible keyword). Raw,
@@ -855,6 +866,15 @@ module Krikri
       keys.add("ansible.legacy.meta")
       keys
     end
+
+    # Legacy action-directive keywords (`action:`/`local_action:` and
+    # their FQCN spellings) - parsed as free-form module directives, not
+    # module names (see parse_task). Deliberately NOT in SPECIAL_KEYS:
+    # they have to be captured as the task's module key to be rewritten.
+    ACTION_DIRECTIVE_KEYS = Set{
+      "action", "ansible.builtin.action", "ansible.legacy.action",
+      "local_action", "ansible.builtin.local_action", "ansible.legacy.local_action",
+    }
 
     # List of available (implemented) plugins - using FQCN. Almost all of
     # these are ansible.builtin.* (bundled with ansible-core); two
@@ -1885,28 +1905,40 @@ module Krikri
         end
       end
 
-      if module_name && legacy_conflict_key
-        raise ConflictingActionStatementsError.new("conflicting action statements: #{module_name}, #{legacy_conflict_key}")
-      end
-
-      unless module_name
-        raise "No module found in task '#{name || "at index #{index + 1}"}'"
-      end
-
-      # Legacy `action:` directive (round 192 - stefangweichinger.ansible_
-      # rclone's handler `action: ansible.builtin.setup` crashed the whole
-      # run). Real Ansible treats `action:` as "run this module", NOT as a
-      # module name: the value is `<module> [k=v args]` free-form, or
-      # `{module: ..., args: {...}}`. Previously `action` itself became the
-      # module name, the plugin lookup failed ("Plugin binary not found:
-      # action") and the exception escaped as an unhandled crash of the
-      # entire binary instead of a task-level failure.
-      if module_name == "action" || module_name == "ansible.builtin.action"
+      # Legacy `action:`/`local_action:` directives (round 192 -
+      # stefangweichinger.ansible_rclone's handler `action: ansible.builtin.
+      # setup` crashed the whole run). Real Ansible treats these as "run
+      # this module", NOT as module names: the value is `<module> [k=v
+      # args]` free-form (or a bare module name), or `{module: ...,
+      # args: {...}}`; `local_action:` is the same idea plus
+      # delegate-to-the-controller (applied after task.delegate_to's own
+      # parse below). Resolving BEFORE the legacy-conflicting-keys check
+      # is deliberate: real Ansible's ModuleArgsParser resolves the
+      # directive first, so `local_action: wait_for port=22` next to a
+      # legacy `sudo:` reports "conflicting action statements: wait_for,
+      # sudo" (mrlesmithjr.lsi-megaraid), not the literal directive key.
+      is_local_action = false
+      templated_action_string = nil.as(String?)
+      if module_name && ACTION_DIRECTIVE_KEYS.includes?(module_name)
+        is_local_action = module_name.includes?("local_action")
         if (mp = module_params) && (s = mp.as_s?)
           tokens = s.strip.split(/\s+/, 2)
-          module_name = tokens[0]
-          rest = tokens[1]?
-          module_params = rest && !rest.strip.empty? ? YAML::Any.new(rest) : YAML::Any.new(Hash(YAML::Any, YAML::Any).new)
+          if tokens[0].includes?("{{")
+            # The module NAME is a template (jdauphant.intellij's `action:
+            # "{{ ansible_pkg_mgr }} state=present name={{ item }}"`) -
+            # only resolvable at run time, so keep the whole free-form
+            # string for the executor (Task#templated_action) instead of
+            # pretending the raw text is an unimplemented plugin. The
+            # raw template text still becomes module_name (the fallback
+            # task name and any pre-execution inspection see the
+            # as-written spelling, like the dict form below).
+            templated_action_string = s.strip
+            module_name = tokens[0]
+          else
+            module_name = tokens[0]
+            rest = tokens[1]?
+            module_params = rest && !rest.strip.empty? ? YAML::Any.new(rest) : YAML::Any.new(Hash(YAML::Any, YAML::Any).new)
+          end
         elsif (mp2 = module_params) && (h = mp2.as_h?)
           mod = ""
           args = nil.as(YAML::Any?)
@@ -1916,9 +1948,18 @@ module Krikri
             args = v if ks == "args"
           end
           raise "action: is missing 'module' in task '#{name || "at index #{index + 1}"}'" if mod.empty?
+          templated_action_string = mod if mod.includes?("{{")
           module_name = mod
           module_params = args || YAML::Any.new(Hash(YAML::Any, YAML::Any).new)
         end
+      end
+
+      if module_name && legacy_conflict_key
+        raise ConflictingActionStatementsError.new("conflicting action statements: #{module_name}, #{legacy_conflict_key}")
+      end
+
+      unless module_name
+        raise "No module found in task '#{name || "at index #{index + 1}"}'"
       end
 
       # `include:` (bare, ansible.builtin.include, or ansible.legacy.
@@ -1943,19 +1984,27 @@ module Krikri
       # FQCN-resolved one - real Ansible's `TASK [debug]` banner echoes
       # the source spelling, not `ansible.builtin.debug`.
       as_written_module_name = module_name
-      resolved_module_name = resolve_module_name(module_name)
-      unavailable_module_name = resolved_module_name ? nil : module_name
+      if templated_action_string
+        # Never unavailable/skipped - resolved (or failed) at run time.
+        resolved_module_name = nil
+        unavailable_module_name = nil
+      else
+        resolved_module_name = resolve_module_name(module_name)
+        unavailable_module_name = resolved_module_name ? nil : module_name
+      end
       module_name = resolved_module_name || module_name
 
       task = Task.new(name || as_written_module_name, module_name)
-      task.unavailable_module = unavailable_module_name
-
-      # Parse module parameters - skipped for an unavailable module: this
-      # task can only ever end up skipped (see `unavailable_module`'s own
-      # doc), so its params are never read, and `parse_module_params`
-      # dispatches its own shaping (list-vs-scalar, etc) on module_name,
-      # which isn't meaningful for a module this engine doesn't recognize.
-      task.params = unavailable_module_name ? Hash(String, String).new : parse_module_params((module_params || raise "BUG: module_params missing"), module_name)
+      if templated_action_string
+        task.templated_action = templated_action_string
+        # A dict-form directive's args: payload is static (only the module
+        # name is templated), so it can still be shaped at parse time; the
+        # string form's params only exist once the module name resolves.
+        task.params = (mp3 = module_params) && mp3.as_h? ? parse_module_params(mp3, module_name) : Hash(String, String).new
+      else
+        task.unavailable_module = unavailable_module_name
+        task.params = unavailable_module_name ? Hash(String, String).new : parse_module_params((module_params || raise "BUG: module_params missing"), module_name)
+      end
 
       # args: - a sibling keyword (not nested inside the module's own
       # key) for extra params on a free-form module, real Ansible's own
@@ -2136,6 +2185,13 @@ module Krikri
       # Parse delegate_to / run_once
       task.delegate_to = task_hash["delegate_to"]?.try { |v| safe_yaml_to_string(v) }
       task.connection = task_hash["connection"]?.try { |v| safe_yaml_to_string(v) }
+      # local_action: forces the task onto the controller (real Ansible
+      # sets delegate_to: localhost for it), overriding any explicit
+      # delegate_to: - running elsewhere defeats the directive's whole
+      # point. Rides the existing delegate machinery: resolve_delegate_
+      # host maps localhost to a local-connection host, and batching
+      # already excludes delegate_to: tasks.
+      task.delegate_to = "localhost" if is_local_action
       task.delegate_facts = parse_become_value(task_hash["delegate_facts"]?) || false
       task.run_once = parse_become_value(task_hash["run_once"]?) || false
 
@@ -2972,6 +3028,15 @@ module Krikri
     # free-form value with no key=value pairs anywhere) is skipped, not
     # raised on - callers already fall back to `_raw_params` for that
     # case.
+    # Public entry point for the executor's runtime re-parse of a
+    # templated action:/local_action: free-form string (see
+    # Task#templated_action / TaskExecutor#resolve_templated_action):
+    # the module name is only known after substitution, so the rest of
+    # the string can't be shaped into params at parse time.
+    def self.parse_free_form_params(s : String, module_name : String) : Hash(String, String)
+      parse_module_params(YAML::Any.new(s), module_name)
+    end
+
     private def self.parse_inline_kv_params(s : String) : Hash(String, String)
       params = Hash(String, String).new
       split_shell_like(s).each do |token, _end_offset|
@@ -3416,6 +3481,10 @@ module Krikri
 
         # Check for unimplemented plugins (recursing into block/rescue/always)
         flatten_tasks(play.tasks).each do |task|
+          # A templated action:/local_action: module name only resolves at
+          # run time (Task#templated_action) - the raw `{{ }}` text here is
+          # expected, not an unimplemented plugin.
+          next if task.templated_action
           unless AVAILABLE_PLUGINS.includes?(task.module_name)
             warnings << "Task '#{task.name}' uses unimplemented plugin: #{task.module_name}"
           end

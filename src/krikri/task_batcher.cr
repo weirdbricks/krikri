@@ -110,15 +110,30 @@ module Krikri
     #   from batches entirely avoids the whole class of bug.
     private def self.breaks_run?(task : Task) : Bool
       structural_or_dynamic?(task) || needs_controller_control_flow?(task) ||
-        !!task.delegate_to || !!task.connection || task.run_once? || retroactive_verdict?(task) ||
+        runs_off_the_target?(task) || task.run_once? || retroactive_verdict?(task) ||
         produces_ansible_facts?(task) || runs_as_action_plugin?(task) ||
-        reconfigures_firewall?(task) ||
+        reconfigures_firewall?(task) || resolves_module_at_runtime?(task) ||
         # group_by:/set_stats: - same category as reboot: above: no
         # uploaded plugin binary at all, handled entirely controller-side
         # (group_by: mutates the shared Inventory; set_stats: writes into
         # a controller-side accumulator for the final recap) - neither
         # can run as a remote batch script step.
         {"ansible.builtin.reboot", "ansible.builtin.group_by", "ansible.builtin.set_stats"}.includes?(task.module_name)
+    end
+
+    # A templated action:/local_action: (see Task#templated_action)
+    # resolves its real module name only at execution - the batch script
+    # path has no such resolution, and a module name that is still a raw
+    # `{{ }}` template would fail plugin lookup there.
+    private def self.resolves_module_at_runtime?(task : Task) : Bool
+      !!task.templated_action
+    end
+
+    # delegate_to: may execute against a different host than the batch
+    # group's shared connection; connection: re-routes the task the same
+    # way. Both always run solo.
+    private def self.runs_off_the_target?(task : Task) : Bool
+      !!task.delegate_to || !!task.connection
     end
 
     # ufw: (community.general.ufw) applies live firewall rules - real
@@ -231,6 +246,10 @@ module Krikri
       haystacks = [] of String
       haystacks << task.when_condition.to_s if task.when_condition
       task.params.each_value { |v| haystacks << v }
+      # A templated action:/local_action: carries its whole free-form
+      # string here instead of in params - a `{{ r.stdout }}` reference
+      # to an earlier member's register: lives in that raw text.
+      haystacks << task.templated_action.to_s if task.templated_action
 
       seen.each_value.any? do |pattern|
         haystacks.any?(&.matches?(pattern))
