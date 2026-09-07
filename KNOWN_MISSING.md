@@ -18,10 +18,82 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.808`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.809`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
+
+## `imntreal.smallstep_ca` open lead closed: `/dev/tty` + `lookup('password', '/dev/null')` (0.9.808 -> 0.9.809)
+
+The round-60300-60499 open lead ("`step ca init` fails with *error
+allocating terminal: open /dev/tty*") turned out to be **two** independent
+defects stacked on each other. Both are fixed; the role now runs
+end-to-end and is idempotent.
+
+- **`lookup('password', '/dev/null')` returned the empty string** - and
+  this, not the tty, is what actually broke the role. `/dev/null` is real
+  Ansible's own documented idiom for "generate a fresh random password and
+  do NOT persist it"; its password lookup plugin special-cases that exact
+  path for both the read-back and the write. Both of this engine's
+  independent lookup implementations (`ExpressionEvaluator#
+  evaluate_password_lookup` and `JinjaFilters.password_lookup`) had only
+  the generic "file exists -> read it back" branch, and `/dev/null` does
+  exist and reads as `""`. The role's CA and provisioner passwords come
+  from exactly that idiom, so it wrote two EMPTY password files, and
+  `step ca init --password-file=<empty>` then fell back to prompting for a
+  password interactively - which is why it wanted a terminal at all. Real
+  ansible-playbook never reaches the prompt because its password files are
+  never empty. Fixed in both implementations. Regressions:
+  `spec/unit/expression_evaluator_spec.cr` and
+  `spec/unit/crinja_renderer_spec.cr` (the two evaluators do not share
+  code, so the case is pinned in each).
+- **No `/dev/tty` for anything a `command:`/`shell:` task spawns.** Real
+  ansible-core's ssh connection plugin requests a remote pty for ordinary
+  module dispatch (`ssh.py`: `if not in_data and sudoable and use_tty:
+  args = ('-tt', self.host, cmd)`, and `sudoable` is True for everything
+  except its internal `dd`-based put_file/fetch_file helpers), so the whole
+  remote process tree there has a controlling terminal. Confirmed live on
+  ansible-core 2.19.4 against a Rocky 9.6 Kata host: with default config a
+  remote `echo x > /dev/tty` succeeds, and with `ANSIBLE_PIPELINING=True`
+  (which sets `in_data`, suppressing `-tt`) the same task reports
+  `/dev/tty: No such device or address` - i.e. real Ansible's own default
+  is the tty-present behavior. `SSHManager` passes no `-t`/`-tt` anywhere
+  and deliberately still doesn't: that same channel carries every plugin's
+  JSON `PluginResult` on all three transports (one-shot exec, the `bash -s`
+  batch script, and the length-prefixed persistent-daemon pipe), and a pty
+  merges stderr into stdout, can translate LF to CRLF, and changes
+  buffering - a result-protocol corruption risk for all 107 plugins rather
+  than for the one that needs a terminal. Fixed instead entirely on the
+  target, inside the plugin process: new
+  `src/krikri/plugin_helpers/controlling_tty.cr` manufactures its own pty
+  (`posix_openpt` -> `setsid` -> `TIOCSCTTY`) so the process and everything
+  it spawns has a controlling terminal, while stdin/stdout/stderr stay
+  exactly the pipes the transport handed over. `command:` and `shell:` call
+  it before spawning; it is idempotent (the persistent daemon serves many
+  tasks from one process and acquires at most one), a no-op when a terminal
+  already exists (local connection from a real shell), and silently leaves
+  today's behavior in place if any step fails. The pty master is drained
+  and discarded - real Ansible's equivalent bytes end up mixed into ssh's
+  stdout and are thrown away when the module JSON is parsed out of it -
+  and the slave is put in non-canonical mode with `VMIN=0`/`VTIME=0` so a
+  read of `/dev/tty` returns immediately rather than blocking. That last
+  part is best-effort: a program that puts the terminal into raw mode
+  itself (`step` does) can still block waiting for input it will never get
+  - exactly as it does under real Ansible's `-tt`, verified live (a real
+  `ansible-playbook` task reading `/dev/tty` hits its own task timeout).
+  Live-verified on a fresh Rocky 9.6 Kata host, both directions: the role
+  fails at `Initialize CA` before the fix and runs clean after
+  (`ok=28 changed=19` cold, `ok=26 changed=0` warm), and a purpose-built
+  21-task `command:`/`shell:` no-regression play (multi-line stdout with
+  separate stderr, byte-exact base64 comparison of both streams, a 16k-line
+  stdout, `argv:`/quoted args, `stdin:`, a 1 MB write to `/dev/tty`, and an
+  `isatty(stdout)` check) passes identically under krikri-playbook and real
+  ansible-playbook, and under krikri on all three transports (default
+  batching, `--no-batching`, `--persistent-daemon`). Regression:
+  `spec/unit/controlling_tty_spec.cr` covers the plugin-side half; the
+  transport half (no pty requested, results uncorrupted across the three
+  paths) has no spec and is verified live instead, same convention as the
+  real dpkg/apt/crontab-mutation cases.
 
 ## Two RHEL-family open leads closed: template include-path + set_fact self-reference (0.9.807 -> 0.9.808)
 
@@ -133,10 +205,6 @@ real engine bugs found and fixed, plus new open leads.
     name (`item.var_name` used to reference e.g. `apache_daemon`) resolves
     under real Ansible but is reported undefined here - likely an
     `ExpressionEvaluator` indirect-lookup gap.
-  - `imntreal.smallstep_ca`: a `command:`/`shell:` task invoking `step ca
-    init` fails here with "error allocating terminal: open /dev/tty" while
-    real ansible-playbook succeeds on the identical task - a possible
-    stdin/pty handling difference in the command plugin's remote exec.
   - Several roles (`inmotionhosting.mysql/.apache/.php_fpm`,
     `geerlingguy.php-tideways`, `GROG.fqdn`, `criecm.common`,
     `CTL-Fed-Security.freeipa-client`, `lenovo.lxca-config`,

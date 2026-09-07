@@ -214,6 +214,18 @@ module Krikri
           command_name = resolved if resolved
         end
 
+        # Give this process (and therefore the command spawned below,
+        # and everything under it) a controlling terminal, the way real
+        # ansible-core's `ssh -tt` does for the whole remote process
+        # tree - see ControllingTty's own comment for why the tty is
+        # manufactured here rather than requested from ssh. stdin/
+        # stdout/stderr of the spawned command are untouched by this:
+        # the tty is reachable only by explicitly opening /dev/tty, so
+        # stdout and stderr stay the separate pipes they already were
+        # (real Ansible's own module keeps them separate too - only its
+        # ssh-level channel is merged by -tt).
+        ControllingTty.ensure
+
         process = Process.new(
           command_name,
           args,
@@ -422,7 +434,6 @@ module Krikri
       parts << current.to_s if started
       parts
     end
-
   end
 end
 

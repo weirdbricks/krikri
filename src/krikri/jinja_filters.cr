@@ -2132,6 +2132,14 @@ module Krikri
         length = token[7..].to_i? || length if token.starts_with?("length=")
       end
 
+      # `/dev/null` means "fresh random password, don't persist it" -
+      # real Ansible's own password lookup special-cases that exact path
+      # for both the read-back and the write. See
+      # ExpressionEvaluator#evaluate_password_lookup's own comment for
+      # how the missing case was found (imntreal.smallstep_ca wrote
+      # empty password files, and `step ca init` then prompted).
+      return Array.new(length) { PASSWORD_CHARS.sample }.join if path == "/dev/null"
+
       return File.read(resolved_path).chomp if File.exists?(resolved_path)
 
       password = Array.new(length) { PASSWORD_CHARS.sample }.join

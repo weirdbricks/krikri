@@ -480,6 +480,26 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     File.delete(path)
   end
 
+  # `/dev/null` is real Ansible's own "generate one, don't save it"
+  # idiom. The generic "file exists -> read it back" branch used to win
+  # (that path does exist and reads empty), so every such lookup
+  # returned "" - imntreal.smallstep_ca then wrote empty password files
+  # and `step ca init --password-file=<empty>` prompted interactively.
+  it "evaluates lookup('password', '/dev/null') as a fresh unsaved password" do
+    v = Hash(String, JSON::Any).new
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    first = evaluator.evaluate(%(lookup('password', '/dev/null')))
+    first.should_not be_empty
+    first.size.should eq(20)
+
+    second = evaluator.evaluate(%(lookup('password', '/dev/null')))
+    second.should_not eq(first)
+
+    evaluator.evaluate(%(lookup('password', '/dev/null length=12'))).size.should eq(12)
+    File.size("/dev/null").should eq(0)
+  end
+
   it "evaluates lookup('password', ...) honoring length=" do
     path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "lookup_password_length_test.txt")
     File.delete(path) if File.exists?(path)

@@ -137,6 +137,15 @@ module Krikri
         full_cmd = "cd #{chdir} && #{full_cmd}"
       end
 
+      # Give this process (and therefore the shell it is about to
+      # spawn, and everything under it) a controlling terminal, the way
+      # real ansible-core's `ssh -tt` does for the whole remote process
+      # tree - see ControllingTty's own comment for why the tty is
+      # manufactured here rather than requested from ssh. No-op when one
+      # already exists (local connection from a real terminal), and a
+      # no-op fallback to today's behavior if it cannot be arranged.
+      ControllingTty.ensure
+
       # Execute command
       # Note: remote_exec() already executes through a shell, so we don't need to
       # wrap the command in another shell invocation. This allows shell operators
