@@ -25,11 +25,21 @@ module Krikri
       # is the bottom of the dependency graph - both evaluators require
       # it, so it must not itself depend on FilterEngine);
       # FilterEngine.cached_regex delegates to this.
+      # Bounded: patterns can arrive from task data (`regex_replace` on
+      # loop-varying text), so the cache can grow without bound over a
+      # long run. A compiled Regex is a pure function of the pattern,
+      # so a reset is always safe - it only costs recompilation.
       @@compiled_regex_cache = Hash(Tuple(String, Regex::Options), Regex).new
+      private REGEX_CACHE_MAX_ENTRIES = 1_000
 
       def self.cached_regex(pattern : String, options : Regex::Options = Regex::Options::None) : Regex
         key = {pattern, options}
-        @@compiled_regex_cache[key] ||= Regex.new(pattern, options)
+        cached = @@compiled_regex_cache[key]?
+        return cached if cached
+
+        regex = Regex.new(pattern, options)
+        @@compiled_regex_cache.clear if @@compiled_regex_cache.size >= REGEX_CACHE_MAX_ENTRIES
+        @@compiled_regex_cache[key] = regex
       end
 
       # regex_replace(pattern, replacement='') - Python re.sub semantics:
