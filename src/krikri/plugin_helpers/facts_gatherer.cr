@@ -415,6 +415,20 @@ module Krikri
       sys_vendor = capture("cat", ["/sys/class/dmi/id/sys_vendor"]).strip
       facts["ansible_system_vendor"] = sys_vendor.empty? ? "NA" : sys_vendor
 
+      # product_version - same DMI class as system_vendor above, read from
+      # /sys/class/dmi/id/product_version, "NA" fallback matching real
+      # Ansible's own DMI fact collector exactly. Entirely missing before -
+      # found benchmarking robertdebock.bios_update: the role's own
+      # rescue: block references `ansible_product_version` in a debug:
+      # msg, which real Ansible resolves (even to a virtualized "NA"-ish
+      # placeholder like "pc-q35-...", but resolves) while this engine
+      # raised "'ansible_product_version' is undefined" instead - ironic,
+      # since that's the exact strict-undefined behavior round 161 added
+      # on purpose for module-arg rendering, just tripped by a fact this
+      # engine never gathered rather than the role's own genuine bug.
+      product_version = capture("cat", ["/sys/class/dmi/id/product_version"]).strip
+      facts["ansible_product_version"] = product_version.empty? ? "NA" : product_version
+
       # apparmor.status - real Ansible's own ApparmorFactCollector just
       # checks for /sys/kernel/security/apparmor's existence (not whether any
       # profile is actually enforcing) - "enabled" if present, "disabled"

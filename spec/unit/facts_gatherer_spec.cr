@@ -49,6 +49,15 @@ describe Krikri::FactsGatherer do
     facts["ansible_system_vendor"].as_s.should_not be_empty
   end
 
+  it "always sets ansible_product_version, even when DMI info isn't readable" do
+    # Same class as ansible_system_vendor above - robertdebock.bios_update's
+    # own rescue: block references ansible_product_version in a debug: msg,
+    # which must always resolve to something rather than raise "undefined".
+    facts = JSON.parse(Krikri::FactsGatherer.run(nil))["ansible_facts"].as_h
+    facts["ansible_product_version"]?.should_not be_nil
+    facts["ansible_product_version"].as_s.should_not be_empty
+  end
+
   it "honours gather_subset from the config it is handed" do
     # The daemon hands over an already-parsed JSON::Any rather than a
     # STDIN string, so this is the shape that matters now.
