@@ -118,5 +118,27 @@ describe Krikri::PlaybookParser do
       # empty; parse-time splice is what we care about here.)
       pb.plays.size.should eq 1
     end
+
+    it "rejects notify: on include_tasks: like real ansible" do
+      # notify: was on TASK_INCLUDE_VALID_KEYWORDS until
+      # juju4.ansible_role_mattermost's own `include_tasks: selinux.yml`
+      # with a notify: on the include line itself (RHEL-family round
+      # 60113) turned out to hit exactly this predicted gap live -
+      # real ansible-core's actual VALID_INCLUDE_KEYWORDS (verified
+      # directly, not assumed) does not include it. A task's own
+      # notify: elsewhere (on an ordinary task, including one inside
+      # an included file) is unaffected - only the include directive
+      # line itself notifying anything is invalid.
+      expect_raises(Krikri::PlaybookParser::InvalidIncludeAttributeError, /'notify' is not a valid attribute for a TaskInclude/) do
+        Krikri::PlaybookParser.parse_string(<<-YAML)
+          - name: t
+            hosts: all
+            gather_facts: false
+            tasks:
+              - include_tasks: /dev/null
+                notify: restart something
+          YAML
+      end
+    end
   end
 end

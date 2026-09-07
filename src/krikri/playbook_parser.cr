@@ -2501,7 +2501,17 @@ module Krikri
     # `with_first_found` and the block-level attrs) with the same
     # error; that's a separate gap from this round-194 fix, not
     # one any role in ROLES_TESTED.md currently depends on
-    # behaving the ansible way.
+    # behaving the ansible way. `notify` WAS on this allowlist too,
+    # until juju4.ansible_role_mattermost's own `include_tasks:
+    # selinux.yml` carrying a `notify:` key on the include line itself
+    # (RHEL-family round 60113) hit exactly this predicted gap live -
+    # real ansible-core's actual VALID_INCLUDE_KEYWORDS (verified via
+    # `python3 -c "import ansible.playbook.task_include as ti;
+    # print(sorted(ti.TaskInclude.VALID_INCLUDE_KEYWORDS))"`,
+    # ansible-core 2.19.4) does not include it - a task's OWN `notify:`
+    # is always valid (handled entirely separately, by the regular Task
+    # parser, not this one); notifying anything from the include
+    # directive line itself is not real Ansible's syntax at all.
     TASK_INCLUDE_VALID_KEYWORDS = Set{
       # Real ansible-core 2.19's TaskInclude.VALID_INCLUDE_KEYWORDS
       # (lib/ansible/playbook/task_include.py).
@@ -2529,7 +2539,7 @@ module Krikri
       # marathon, etc.).
       "with_first_found", "with_items", "with_dict", "with_nested",
       "with_sequence", "with_indexed_items", "with_fileglob", "with_file",
-      "notify", "listen", "environment", "changed_when",
+      "listen", "environment", "changed_when",
       "failed_when", "until", "retries", "delay", "check_mode",
       "diff", "delegate_to", "delegate_facts", "connection",
       "ignore_unreachable", "throttle", "remote_user",

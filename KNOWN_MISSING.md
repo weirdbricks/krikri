@@ -18,8 +18,26 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.792`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.793`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## Round 60113: `notify:` on `include_tasks:`/`include_role:` wrongly accepted (0.9.793)
+
+The round-194 `TASK_INCLUDE_VALID_KEYWORDS` allowlist fix (see its own
+entry above) deliberately kept `notify` on the accepted list "not one
+any role in ROLES_TESTED.md currently depends on behaving the ansible
+way" - `juju4.ansible_role_mattermost`'s own `include_tasks:
+selinux.yml` with a `notify:` on the include line itself (RHEL-family
+round 60113) is exactly that predicted case. Verified directly against
+real ansible-core 2.19.4's own `TaskInclude.VALID_INCLUDE_KEYWORDS` /
+`IncludeRole.VALID_INCLUDE_KEYWORDS` (neither lists `notify`) rather
+than assumed, then removed it from the allowlist - a task's own
+`notify:` elsewhere (including inside an included file) is unaffected,
+only the include directive line itself notifying anything is now
+correctly rejected with `'notify' is not a valid attribute for a
+TaskInclude`, rc=4.
 
 ---
 
