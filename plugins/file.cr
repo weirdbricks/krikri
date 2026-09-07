@@ -307,13 +307,13 @@ module Krikri
         )
       end
 
-      unless File.file?(path)
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Path exists but is neither a regular file nor a directory: #{path}"
-        )
-      end
+      # Anything that exists and isn't a directory (socket, fifo, device
+      # node, ...) still gets its owner/group/mode managed here - real
+      # Ansible's own `get_state()` defaults every non-directory,
+      # non-symlink path to "file" for exactly this reason (its own comment:
+      # "could be many other things, but defaulting to file"), which is why
+      # `file: path=/var/run/docker.sock group=docker` on a Unix socket
+      # works against real ansible-playbook.
 
       # File exists, update attributes if needed
       changed = update_attributes_if_needed(path, is_directory: false)

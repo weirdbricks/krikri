@@ -1,6 +1,7 @@
 require "../spec_helper"
 require "file_utils"
 require "system/user"
+require "socket"
 
 private TMP_DIR = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "file")
 
@@ -102,6 +103,23 @@ describe "file plugin" do
       result["failed"].as_bool.should be_false
       result["changed"].as_bool.should be_true
       (File.info(path, follow_symlinks: false).permissions.value & 0o777).should eq(0o700)
+    end
+
+    it "updates group ownership on a Unix socket (real Ansible's own default-to-file behavior for any non-directory path)" do
+      # robertdebock.docker's own "Change group for docker socket" handler
+      # does exactly this against a real dockerd-created /var/run/docker.sock.
+      path = tmp_path("real.sock")
+      File.delete(path) if File.exists?(path)
+      server = UNIXServer.new(path)
+      begin
+        own_gid = File.info(path, follow_symlinks: false).group_id.to_s
+        result = PluginSpecHelper.run("file", {"path" => path, "state" => "file", "group" => own_gid})
+
+        result["failed"].as_bool.should be_false
+      ensure
+        server.close
+        File.delete(path) if File.exists?(path)
+      end
     end
 
     it "updates mode on an existing file and is idempotent afterward" do
