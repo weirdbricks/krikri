@@ -1794,10 +1794,17 @@ describe "a task combining a module with a pre-2.0 legacy directive" do
     # and a pre-2.0 Ansible top-level attribute (always_run:, sudo_user:,
     # etc.) that was removed a long time ago. Real ansible-core's
     # ModuleArgsParser refuses to even START the run for this
-    # ("[ERROR]: conflicting action statements: shell, always_run",
-    # rc=1) - this engine previously just silently ignored the legacy
-    # key (or, if it happened to appear first in the YAML, mistook it
-    # for the module name outright) and ran the task normally instead.
+    # ("[ERROR]: conflicting action statements: shell, always_run") -
+    # this engine previously just silently ignored the legacy key (or,
+    # if it happened to appear first in the YAML, mistook it for the
+    # module name outright) and ran the task normally instead. rc=4 (a
+    # genuine PARSER error), not rc=1 - verified live against
+    # ansible-core 2.19.4 via jdauphant.ssh-config's own equivalent
+    # task (RHEL-family round 60105); this spec's own exit_code
+    # assertion was wrong (never itself verified live) until then, since
+    # this engine's ConflictingActionStatementsError was misclassified
+    # as RemovedActionError's rc=1 (the removed-action-PLUGIN case,
+    # `include:`, a different real Ansible error class entirely).
     write_notify_playbook("conflicting_action_statements.yml", <<-YAML)
       - hosts: localhost
         connection: local
@@ -1814,7 +1821,7 @@ describe "a task combining a module with a pre-2.0 legacy directive" do
       inventory: EXPLICIT_LOCALHOST_INVENTORY,
     )
 
-    status.exit_code.should eq(1)
+    status.exit_code.should eq(4)
     output.should contain("[ERROR]: conflicting action statements: shell, always_run")
     output.should_not contain("PLAY RECAP")
   end

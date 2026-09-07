@@ -535,6 +535,13 @@ rescue ex : Krikri::RemovedActionError
   # legacy bare `include:` directive.
   puts "[ERROR]: #{ex.message}".colorize(:red)
   exit 1
+rescue ex : Krikri::ConflictingActionStatementsError
+  # A legacy top-level task attribute (sudo/su/always_run/etc.) beside a
+  # real module key is real Ansible's own ModuleArgsParser PARSER error -
+  # rc=4, not RemovedActionError's rc=1 (verified against ansible-core
+  # 2.19.4: jdauphant.ssh-config's own `shell: ... always_run:` task).
+  puts "[ERROR]: #{ex.message}".colorize(:red)
+  exit 4
 rescue ex : Krikri::RoleNotFoundError
   # A `roles:` entry (play-level or a role's own meta/main.yml
   # dependency) naming a role not found on disk is real Ansible's own

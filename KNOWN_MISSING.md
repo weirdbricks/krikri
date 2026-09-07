@@ -18,8 +18,25 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.791`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.792`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## Round 60105: `conflicting action statements` had the wrong exit code (0.9.792)
+
+`jdauphant.ssh-config`'s `shell:`+`always_run:` task (the same
+conflicting-action-statements parser abort documented in an earlier
+round) exited 1, not real Ansible's own rc=4 for this class of error -
+`playbook_parser.cr` raised the shared `RemovedActionError` for it,
+which is correct for the removed-action-PLUGIN case (`include:`, real
+Ansible's own rc=1) but wrong here: ModuleArgsParser's "conflicting
+action statements" is a genuine PARSER error. Split into its own
+`ConflictingActionStatementsError` (rc=4), propagated through all three
+of `RemovedActionError`'s existing per-task/per-play/import bypass
+sites the same way. The existing regression spec for this case had
+never itself been verified live and asserted the wrong exit code
+(1) - corrected along with the fix.
 
 ---
 
@@ -259,6 +276,23 @@ looped-task flow is strict with real-Ansible when:-before-loop ordering.
 Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
+
+- **`local_action:` (and its `action:` cousin) is not parsed at all** -
+  treated as an unimplemented plugin literally named `local_action`
+  instead of the legacy free-form directive it is (`local_action:
+  wait_for port=22 ...` means "run `wait_for` with these args,
+  delegated to localhost" - `delegate_to: localhost`'s older spelling).
+  Found via `mrlesmithjr.lsi-megaraid` (RHEL-family round 60186): a
+  `local_action: wait_for ...` task next to a legacy `sudo:` key hits
+  the same conflicting-action-statements parser abort as a real module
+  key would (rc=4 matches real Ansible now - see git log), but reports
+  the wrong module name in the message (`local_action, sudo` instead of
+  real Ansible's `wait_for, sudo`, which resolves the free-form string's
+  first word) because `local_action` itself is being treated as the
+  module name rather than parsed. No role in the corpus has been found
+  yet using `local_action:` in a way that would otherwise succeed - only
+  this one conflicting-key case - so the parsing itself is unverified
+  need, not just the error message's wording.
 
 ---
 
@@ -1822,6 +1856,22 @@ gaps" rather than arguing with the note in place.
   deliberately avoided - for a shape nothing in the role corpus hits
   (`| string` on a tuple-bearing var read back out of storage). Revisit
   only if a real role is found relying on it.
+- **A dotted/bracketed attribute miss on a defined object stays lenient
+  in `.j2` template renders**, unlike a bare-name miss (`crinja_strict_undefined.cr`
+  only makes `Resolver#resolve`, the bare-name lookup, strict). Found via
+  `mrlesmithjr.ansible_consul_client` (RHEL-family round 60175):
+  `hostvars[inventory_hostname]['ansible_'+consul_client_bind_interface]`
+  with a bind interface (`enp0s8`, a Vagrant-style default) that doesn't
+  exist on the real host - real Ansible's `HostVarsVars` raises
+  `object of type 'HostVarsVars' has no attribute 'ansible_enp0s8'`,
+  krikri's Crinja render resolves it leniently and renders an
+  empty/wrong value instead of failing the task. The dotted-access
+  path (`Resolver.resolve_with_hash_accessor`) is also the fallback for
+  method-call dispatch and this engine's own fact-coverage gaps -
+  making it strict risks false positives across the whole template
+  corpus (per that file's own header comment), so it was deliberately
+  left lenient when the bare-name fix landed. Revisit only with a
+  hostvars-specific strict path, not a blanket change to that resolver.
 
 ### Cosmetic differences (both engines fail; only the wording differs)
 

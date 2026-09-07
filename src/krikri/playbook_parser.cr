@@ -734,6 +734,18 @@ module Krikri
   class RemovedActionError < Exception
   end
 
+  # A pre-2.0 legacy top-level task attribute (`sudo`/`su`/`always_run`/
+  # etc.) sitting alongside a real module key. Real ansible-core's
+  # ModuleArgsParser refuses to even start the run with "[ERROR]:
+  # conflicting action statements: <module>, <legacy_key>" - a genuine
+  # PARSER error (rc=4), NOT the removed-action-plugin rc=1
+  # RemovedActionError models (verified against ansible-core 2.19.4:
+  # jdauphant.ssh-config's own `shell: ... always_run: true` task exits
+  # 4, not 1 - this used to raise RemovedActionError and got the wrong
+  # exit code because of it).
+  class ConflictingActionStatementsError < Exception
+  end
+
   # A `roles:` entry (play-level, or a role's own `meta/main.yml`
   # `dependencies:` list) naming a role this engine can't find on disk
   # at all. Real Ansible refuses the WHOLE run immediately with a plain
@@ -1115,6 +1127,8 @@ module Krikri
             playbook.plays.concat(imported.plays)
           rescue ex : RemovedActionError
             raise ex
+          rescue ex : ConflictingActionStatementsError
+            raise ex
           rescue ex : HandlerNotFoundError
             raise ex
           rescue ex : StaticImportRoleUndefinedError
@@ -1136,6 +1150,9 @@ module Krikri
           # Bypasses the graceful per-play degradation below - see its
           # own comment. Propagates to the top-level "Error parsing
           # playbook:" handler, matching real Ansible's whole-run abort.
+          raise ex
+        rescue ex : ConflictingActionStatementsError
+          # Same bypass, same reason - see that class's own comment.
           raise ex
         rescue ex : HandlerNotFoundError
           # Same bypass as RemovedActionError above - see that class's
@@ -1452,6 +1469,9 @@ module Krikri
           # Bypasses the graceful per-task degradation below - see its
           # own comment. Propagates all the way up to abort the whole
           # playbook, matching real Ansible.
+          raise ex
+        rescue ex : ConflictingActionStatementsError
+          # Same bypass, same reason - see that class's own comment.
           raise ex
         rescue ex : StaticImportRoleUndefinedError
           raise ex
@@ -1826,8 +1846,10 @@ module Krikri
       # all three independently) - real ansible-core's ModuleArgsParser
       # recognizes this specific set and refuses to even START the run
       # ("[ERROR]: conflicting action statements: <module>, <legacy_key>"),
-      # the same whole-playbook-abort class as RemovedActionError above,
-      # not a per-task failure. Excluded from the module-name search below
+      # a whole-playbook-abort like RemovedActionError above but at the
+      # PARSER's own rc=4, not RemovedActionError's rc=1 - see
+      # ConflictingActionStatementsError's own comment. Not a per-task
+      # failure. Excluded from the module-name search below
       # (rather than added to special_keys) so one of these appearing
       # BEFORE the real module key in the YAML can't get mistaken for the
       # module itself either.
@@ -1848,7 +1870,7 @@ module Krikri
       end
 
       if module_name && legacy_conflict_key
-        raise RemovedActionError.new("conflicting action statements: #{module_name}, #{legacy_conflict_key}")
+        raise ConflictingActionStatementsError.new("conflicting action statements: #{module_name}, #{legacy_conflict_key}")
       end
 
       unless module_name
