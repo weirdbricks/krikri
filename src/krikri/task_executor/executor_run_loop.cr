@@ -1401,7 +1401,7 @@ module Krikri
       eval_context = vars_context
       if (register_name = task.register) && !register_name.empty?
         eval_context = vars_context.dup
-        eval_context[register_name] = result
+        eval_context[register_name] = with_command_lines_augmented(result)
       end
 
       # set_fact:'s own result carries the facts it just set under

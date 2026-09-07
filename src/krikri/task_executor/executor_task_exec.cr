@@ -1085,25 +1085,36 @@ module Krikri
       lines
     end
 
-    # Register task result as a variable
-    private def register_result(host : Host, register_name : String, result : JSON::Any) : Nil
-      # Create a mutable copy of the result to add stdout_lines/stderr_lines
+    # Adds stdout_lines/stderr_lines (real Ansible behavior - each module
+    # that has stdout/stderr sets these itself; krikri derives them
+    # centrally here instead) to a plugin result. Shared by register_result
+    # below (for later tasks referencing the registered var) AND
+    # apply_changed_failed_when (executor_run_loop.cr) building its own
+    # eval_context for the SAME task's own changed_when:/failed_when: -
+    # those must see the identical augmented shape, not the plugin's raw
+    # result, or a changed_when: like buluma.netdata's own `... not in
+    # netdata_requirements_install.stderr_lines` raises "object of type
+    # 'dict' has no attribute 'stderr_lines'" even though a LATER task
+    # referencing the same registered var would have seen it fine.
+    private def with_command_lines_augmented(result : JSON::Any) : JSON::Any
       result_hash = result.as_h.dup
 
-      # Add stdout_lines by splitting stdout on newlines (Ansible behavior)
       if stdout = result_hash["stdout"]?.try(&.as_s)
         stdout_lines = ansible_splitlines(stdout).map { |line| JSON::Any.new(line) }
         result_hash["stdout_lines"] = JSON::Any.new(stdout_lines)
       end
 
-      # Add stderr_lines by splitting stderr on newlines (Ansible behavior)
       if stderr = result_hash["stderr"]?.try(&.as_s)
         stderr_lines = ansible_splitlines(stderr).map { |line| JSON::Any.new(line) }
         result_hash["stderr_lines"] = JSON::Any.new(stderr_lines)
       end
 
-      # Store the enhanced result
-      @registered_vars[host.name][register_name] = JSON::Any.new(result_hash)
+      JSON::Any.new(result_hash)
+    end
+
+    # Register task result as a variable
+    private def register_result(host : Host, register_name : String, result : JSON::Any) : Nil
+      @registered_vars[host.name][register_name] = with_command_lines_augmented(result)
       @hv_generation += 1
     end
 
