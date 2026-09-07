@@ -18,10 +18,64 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.809`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.811`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
+
+## A crash found investigating the unarchive: fix, unrelated to it (0.9.810 -> 0.9.811)
+
+`TaskExecutor#inline_copy_source_content`'s `Dir.exists?(src)` check for a
+controller-local `copy:` (no `remote_src:`) crashed the ENTIRE binary
+with an unhandled `File::AccessDeniedError` when `src:` names a path this
+process can't even stat (found live, by accident, while building a test
+fixture for the unarchive: fix below: a `copy:` task pointed at a path
+under `/root` while running as a non-root controller user). Real Ansible
+fails just that one task with a permission error; every OTHER exists/
+size check in this same function already had a `rescue` (the very next
+line, `File.size(src) rescue nil`) - `Dir.exists?` was the one call that
+didn't. Fixed by rescuing it the same way and falling through to the
+already-rescued size check and the module's own src-open attempt, which
+produce the normal per-task failure instead. No unit spec - the crashing
+path only triggers for a REMOTE (non-`ansible_connection=local`) host,
+which `inline_copy_source_content` itself early-returns for on local
+connections, and `PluginSpecHelper` (this repo's plugin-level spec
+harness) always runs locally - verified live instead (a real remote
+Kata-host playbook run went from an unhandled-exception crash trace to a
+clean `failed: [...]` task).
+
+## `unarchive:` warm-rerun open gap closed: Uid/Gid differs as non-root (0.9.809 -> 0.9.810)
+
+Re-root-caused `juju4.polarproxy`'s own divergence (RHEL-family round
+60152) live against a fresh Rocky 9.6 Kata host with the real PolarProxy
+tarball, since the original round's Atlantic.net host was torn down
+before the exact `tar --compare` output could be captured. Reproduced
+exactly: extracting as a non-root `become_user:` (matching the role's own
+task, which sets `mode: '0755'` and `remote_src: true` but no owner:/
+group:) and running `tar --compare` produces `Uid differs`/`Gid differs`
+lines for every file, alongside the already-handled `Mode differs`.
+
+Root cause: real Ansible's own `TgzArchive#is_unarchived` (unarchive.py)
+only treats a Uid/Gid-differs line as meaningful when `is_unarchived`
+itself is running AS ROOT (`if run_uid == 0 and not
+self.file_args['owner'] and OWNER_DIFF_RE...` - note the `run_uid == 0`
+half, not just the owner:/group: check the previously-fixed round-134
+exemption already covered). Extracting as a non-root user can never set
+arbitrary file ownership anyway - every extracted file ends up owned by
+the extracting user regardless of what the archive itself records - so a
+Uid/Gid mismatch against the archive's embedded owner is neither a real
+change nor fixable, and real Ansible ignores it entirely in that case.
+`tar_changed?` (`plugins/unarchive.cr`) never checked the extracting
+user's own uid, so it treated every such line as meaningful regardless,
+making any `remote_src: true` unarchive task with no owner:/group: given
+permanently non-idempotent under `become_user:` to a non-root account -
+true of essentially every real-world release-tarball install role. Fixed
+by gating the Uid/Gid exemptions on `LibC.getuid == 0`, matching real
+Ansible's own check exactly. Live-reverified on a fresh Rocky 9.6 Kata
+host: `ok=4 changed=4` cold, `ok=4 changed=0` warm - byte-identical to
+real ansible-playbook's own recap on the same host. Regression:
+`spec/integration/unarchive_spec.cr` (a `tar --owner=/--group=` fixture
+that fakes a foreign embedded owner without needing real root to build).
 
 ## `imntreal.smallstep_ca` open lead closed: `/dev/tty` + `lookup('password', '/dev/null')` (0.9.808 -> 0.9.809)
 
@@ -634,27 +688,6 @@ below - keep the two apart, or this list stops meaning anything.
   method's own `String` return type doesn't currently carry - broader
   than a quick patch; revisit alongside `community.general.
   random_string` support (also unimplemented, not attempted here).
-- **`unarchive:` with `remote_src: true` + `mode:` reported `changed`
-  on a warm (idempotent) re-run where real Ansible reported `ok`.**
-  Found via `juju4.polarproxy` (RHEL-family round 60152): the cold run
-  matched exactly (`ok=11 changed=7 failed=1 skipped=3`, both engines
-  hitting the identical, real, environment-side dnf `curl`/
-  `curl-minimal` conflict on the "Testing | Install testing tools"
-  task - unrelated to this engine), but the WARM re-run diverged one
-  task earlier, at "Unarchive PolarProxy" (`ansible.builtin.unarchive:
-  {src: .../polarproxy.tar.gz, dest: .../PolarProxy, mode: '0755',
-  remote_src: true}`): real Ansible reports `ok` (no re-extraction
-  needed), this engine reports `changed`. `tar_changed?`
-  (`plugins/unarchive.cr`) already has a deliberate, previously-fixed
-  `mode:`-was-set exemption for `tar --compare`'s own `Mode differs`
-  lines (round 134, prometheus.alertmanager) - this looks like a
-  DIFFERENT `tar --compare` diff line tripping the still-unconditional
-  `ALWAYS_MEANINGFUL_DIFF_PATTERNS` set (`Mod time differs`/`Invalid
-  owner`/`Invalid group`/`Symlink differs`), but the Atlantic host was
-  torn down before the exact `tar --compare` output could be captured
-  live, so the specific line is unconfirmed - re-run this role's warm
-  phase with output preserved (or `tar --compare` by hand against a
-  fresh Rocky guest) before attempting a fix.
 
 ---
 

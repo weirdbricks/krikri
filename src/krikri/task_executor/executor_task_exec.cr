@@ -623,7 +623,16 @@ module Krikri
       src = params["src"]?
       return params unless src && src.starts_with?('/')
 
-      return stage_directory_copy_source(params, src, host, vars_context) if Dir.exists?(src)
+      # `Dir.exists?` raises (not just returns false) when src exists but
+      # isn't readable by this process (a controller-local `copy: {src:
+      # /root/...}` run as a non-root user - found live while
+      # investigating an unrelated unarchive: bug). Real Ansible fails
+      # just that ONE task with a permission error; this crashed the
+      # entire binary. Falling through here lets the size check below
+      # (already rescued) and the module's own src-open attempt produce
+      # the normal per-task failure instead.
+      is_directory = Dir.exists?(src) rescue false
+      return stage_directory_copy_source(params, src, host, vars_context) if is_directory
 
       size = File.size(src) rescue nil
       return params unless size

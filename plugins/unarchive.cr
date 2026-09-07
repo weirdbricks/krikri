@@ -342,18 +342,46 @@ module Krikri
       # re-extracted (changed: true) on every single rerun purely because
       # LICENSE/NOTICE/alertmanager.yml's archived mode (0644) differed
       # from the 0755 krikri-playbook (correctly) chmod'd them to.
+      #
+      # A Uid/Gid-differs line is furthermore only meaningful at ALL when
+      # `is_unarchived` itself is running as root (`if run_uid == 0 and
+      # not self.file_args['owner'] and OWNER_DIFF_RE...` in unarchive.py -
+      # note the `run_uid == 0` half, not just the owner/group check).
+      # Extracting as a non-root user can never set arbitrary file
+      # ownership anyway (every extracted file ends up owned by the
+      # extracting user regardless of what the archive itself records),
+      # so a Uid/Gid mismatch against the archive's OWN embedded owner is
+      # neither a real change nor fixable - real Ansible ignores it
+      # entirely in that case. Found via `juju4.polarproxy` (RHEL-family
+      # round 60152), whose `unarchive: {mode: '0755', remote_src: true}`
+      # (no owner:/group: given) runs under `become_user:` (a non-root
+      # system user): this engine reported `changed: true` on every warm
+      # rerun purely from "Uid differs"/"Gid differs" lines against the
+      # archive's embedded (irrelevant, unreachable-as-non-root) owner,
+      # while real ansible-playbook, running as that same non-root user,
+      # never even looks at them. Verified live: extracting the real
+      # PolarProxy tarball as a non-root become_user and running `tar
+      # --compare` reproduces exactly these two line kinds alongside
+      # `Mode differs`, on every single file.
       owner_set = !@params["owner"]?.nil?
       group_set = !@params["group"]?.nil?
       mode_set = !@params["mode"]?.nil?
+      running_as_root = LibC.getuid == 0
 
-      lines.any? do |line|
-        next false if EMPTY_FILE_WARNING.matches?(line)
-        next true if ALWAYS_MEANINGFUL_DIFF_PATTERNS.any?(&.matches?(line)) || MISSING_FILE_WARNING.matches?(line)
-        next true if !owner_set && UID_DIFF_PATTERN.matches?(line)
-        next true if !group_set && GID_DIFF_PATTERN.matches?(line)
-        next true if !mode_set && MODE_DIFF_PATTERN.matches?(line)
-        false
-      end
+      exempt_from_diff = {
+        UID_DIFF_PATTERN  => !running_as_root || owner_set,
+        GID_DIFF_PATTERN  => !running_as_root || group_set,
+        MODE_DIFF_PATTERN => mode_set,
+      }
+
+      lines.any? { |line| meaningful_diff_line?(line, exempt_from_diff) }
+    end
+
+    private def meaningful_diff_line?(line : String, exempt_from_diff : Hash(Regex, Bool)) : Bool
+      return false if EMPTY_FILE_WARNING.matches?(line)
+      return true if ALWAYS_MEANINGFUL_DIFF_PATTERNS.any?(&.matches?(line)) || MISSING_FILE_WARNING.matches?(line)
+
+      exempt_from_diff.any? { |pattern, exempt| !exempt && pattern.matches?(line) }
     end
 
     private def extract_tar(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool, extra_opts : Array(String) = [] of String) : Bool

@@ -27,6 +27,15 @@ Spec.before_suite do
   Dir.mkdir_p(File.join(TMP_DIR, "wrapped", "myproject-1.0"))
   File.write(File.join(TMP_DIR, "wrapped", "myproject-1.0", "index.php"), "<?php")
   `tar czf #{File.join(TMP_DIR, "wrapped.tar.gz")} -C #{File.join(TMP_DIR, "wrapped")} myproject-1.0`
+
+  # An archive whose embedded owner (99999:99999, `tar --owner=`/`--group=`
+  # fake the recorded metadata without needing real root) never matches
+  # the extracting (non-root) user - exactly what a real release tarball
+  # built on someone else's machine looks like. Doesn't need real root to
+  # build.
+  Dir.mkdir_p(File.join(TMP_DIR, "foreign_owner_src"))
+  File.write(File.join(TMP_DIR, "foreign_owner_src", "bin.txt"), "payload")
+  `tar --owner=99999 --group=99999 -czf #{File.join(TMP_DIR, "foreign_owner.tar.gz")} -C #{File.join(TMP_DIR, "foreign_owner_src")} bin.txt`
 end
 
 # A tiny local HTTP server serving the tar.gz built above, plus a
@@ -225,6 +234,35 @@ describe "unarchive plugin" do
     PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.tar.gz"), "dest" => dest, "mode" => "0755"})
 
     result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.tar.gz"), "dest" => dest, "mode" => "0755"})
+
+    result["changed"].as_bool.should be_false
+  end
+
+  it "is idempotent on a warm rerun as a non-root user despite tar --compare's own Uid/Gid differs lines" do
+    # Real bug found benchmarking juju4.polarproxy (RHEL-family round
+    # 60152): its own `unarchive: {mode: '0755', remote_src: true}` task
+    # (no owner:/group: given) runs under `become_user:` - a non-root
+    # system user. Extracting as a non-root user can never set arbitrary
+    # ownership anyway (everything ends up owned by the extracting user
+    # regardless of what the archive records), so a Uid/Gid mismatch
+    # against the archive's own embedded (unreachable-as-non-root) owner
+    # is neither a real change nor fixable. Real Ansible's own
+    # TgzArchive#is_unarchived (unarchive.py) only treats a Uid/Gid-
+    # differs line as meaningful when running AS ROOT (`if run_uid == 0
+    # and not self.file_args['owner'] and OWNER_DIFF_RE...`) - previously
+    # this engine ignored that half of the check and treated every such
+    # line as meaningful regardless of the extracting user, making the
+    # task permanently non-idempotent for any archive whose embedded
+    # owner isn't the extracting user (true of essentially every
+    # real-world release tarball). This spec runs as whatever non-root
+    # user `crystal spec` itself runs as - skip it if that's ever not
+    # true, since the real bug only reproduces as non-root.
+    pending! "must run as non-root to reproduce/verify this" if LibC.getuid == 0
+
+    dest = fresh_dest("tar-foreign-owner-idempotent")
+    PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "foreign_owner.tar.gz"), "dest" => dest, "mode" => "0755"})
+
+    result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "foreign_owner.tar.gz"), "dest" => dest, "mode" => "0755"})
 
     result["changed"].as_bool.should be_false
   end
