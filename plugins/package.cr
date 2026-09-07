@@ -168,7 +168,7 @@ module Krikri
       statuses = Hash(String, {Bool, String?}).new
       return statuses if packages.empty?
 
-      bare_names = packages.map { |pkg| pkg.split('=').first }
+      bare_names = packages.map(&.split('=').first)
       name_list = bare_names.map { |pkg| shell_single_quote(pkg) }.join(" ")
       result = remote_exec("dpkg-query -W -f='${db:Status-Abbrev} ${Version} ${Package}
 ' #{name_list} 2>/dev/null")

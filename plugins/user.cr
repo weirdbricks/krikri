@@ -152,7 +152,7 @@ module Krikri
       return nil unless min || max || warn
 
       content = shadow_content
-      return PluginResult.new(changed: false, failed: true, msg: "Could not read /etc/shadow") unless content
+      return PluginResult.new(changed: false, failed: true, msg: "Could not read /etc/shadow") if content.nil?
 
       current = PluginHelpers::UserState.shadow_ageing(content, name)
       flags = PluginHelpers::UserState.chage_flags(current, min, max, warn)
@@ -379,12 +379,14 @@ module Krikri
     end
 
     private def shadow_password(name : String) : String?
-      return nil unless (content = shadow_content)
+      content = shadow_content
+      return nil if content.nil?
       PluginHelpers::UserState.shadow_password(content, name)
     end
 
     private def shadow_expire_days(name : String) : Int32?
-      return nil unless (content = shadow_content)
+      content = shadow_content
+      return nil if content.nil?
       PluginHelpers::UserState.shadow_expire_days(content, name)
     end
 
