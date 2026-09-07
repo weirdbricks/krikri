@@ -353,18 +353,84 @@ module Krikri
   # a deliberate behavioral difference fixed after real-host bugs - see
   # its own comments before even thinking about unifying that one too.
   module VariableSubstitutor
+    # Raised when re-templating a value's own `{{ }}` text exceeds
+    # MAX_RETEMPLATING_DEPTH - the shape of a mutually-templated variable
+    # pair (`a: "{{ b }}"` / `b: "{{ a }}"`), where resolving a re-renders
+    # b, whose value re-resolves a, forever. Real ansible-core fails the
+    # task with "Recursive loop detected in template"; this engine
+    # previously blew the C stack and crashed the whole process.
+    class TemplateRecursionError < Exception
+    end
+
+    # The ONE shared dotted-path walker for plain hash navigation
+    # (`result.rc`, `ansible_facts.os_family`) - resolves *parts* (the
+    # split of a dotted expression) against *base* by successive Hash
+    # lookups, nil on the first miss or on a non-Hash hop. Used to exist
+    # as three divergent copies (VariableLookup, ComparisonEvaluator,
+    # ArraySlicer); VariableLookup keeps its own richer walker ON
+    # PURPOSE (it also handles list indexing, numeric dot-indexing and
+    # method calls - see its own comments), but the two simple
+    # consumers now share this one so a fix lands once for both.
+    def self.walk_dotted_path(base : JSON::Any, parts : Indexable(String)) : JSON::Any?
+      current = base
+      parts.each do |part|
+        hash = current.as_h?
+        return nil unless hash
+        current = hash[part]?
+        return nil unless current
+      end
+      current
+    end
+
     module Rerender
+      # Process-wide, not per-instance: every recursion level constructs
+      # fresh evaluator/substitutor objects, exactly like the block-tag
+      # escalation guard below (same reasoning, same limit). Cooperative
+      # scheduling makes the check-and-increment race-free.
+      @@retemplating_depth = 0
+      MAX_RETEMPLATING_DEPTH = 50
+
+      # Runs *block* under the re-templating depth guard. Every entry
+      # point that re-renders a variable's own unrendered `{{ }}` value
+      # must go through this - a cycle can re-enter through any of them
+      # (Rerender.if_templated, VariableLookup#rerender_if_templated,
+      # VarSubstitutor#substitute), so the counter has to be shared.
+      def self.with_depth_guard(&)
+        enter_retemplating
+        begin
+          yield
+        ensure
+          exit_retemplating
+        end
+      end
+
+      # Manual enter/exit pair for call sites whose body can't be a block
+      # (VarSubstitutor#substitute_impl wraps a long multi-return body in
+      # a method-level ensure instead).
+      def self.enter_retemplating : Nil
+        if @@retemplating_depth >= MAX_RETEMPLATING_DEPTH
+          raise TemplateRecursionError.new("Recursive loop detected in template: mutually-templated variable values (e.g. a: \"{{ b }}\" / b: \"{{ a }}\") never converge")
+        end
+        @@retemplating_depth += 1
+      end
+
+      def self.exit_retemplating : Nil
+        @@retemplating_depth -= 1
+      end
+
       def self.if_templated(vars : Hash(String, JSON::Any)?, value : JSON::Any?) : JSON::Any?
         return value unless value
         return value unless vars
         return value unless (raw = value.raw).is_a?(String) && (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#"))
 
-        if raw.includes?("{%") || raw.includes?("{#")
-          rendered = CrinjaRenderer.new(vars).render(raw)
-          return Krikri.parse_json_or_python_literal(rendered)
-        end
+        with_depth_guard do
+          if raw.includes?("{%") || raw.includes?("{#")
+            rendered = CrinjaRenderer.new(vars).render(raw)
+            next Krikri.parse_json_or_python_literal(rendered)
+          end
 
-        Krikri.parse_json_or_python_literal(render_raw(vars, raw))
+          Krikri.parse_json_or_python_literal(render_raw(vars, raw))
+        end
       end
 
       # Renders *raw* (known to contain `{{`) back to its real value:
@@ -744,6 +810,21 @@ module Krikri
       # shell command as a package name.
       return text unless text.includes?("{{") || text.includes?("{%") || text.includes?("{#")
 
+      # Re-templating a variable's own unrendered value re-enters
+      # substitute for that value's text - a mutually-templated var pair
+      # (`a: "{{ b }}"` / `b: "{{ a }}"`) recursed through here forever
+      # and blew the C stack, crashing the whole process. The shared
+      # depth guard (same counter Rerender.if_templated and
+      # VariableLookup#rerender_if_templated use) turns that into a
+      # clean task failure, matching real ansible-core's own "Recursive
+      # loop detected in template".
+      VariableSubstitutor::Rerender.enter_retemplating
+      substitute_impl_guarded(text, strict, output, native)
+    ensure
+      VariableSubstitutor::Rerender.exit_retemplating
+    end
+
+    private def substitute_impl_guarded(text : String, strict : Bool = false, output : Bool = false, native : Bool = false) : String
       if text.includes?("{%") || text.includes?("{#")
         return render_block_tag_text(text, strict, renderer)
       end

@@ -81,30 +81,15 @@ module Krikri
         end
       end
 
-      # Look up a nested variable (e.g., result.stdout_lines)
+      # Look up a nested variable (e.g., result.stdout_lines) - the
+      # shared plain-hash walker (see VariableSubstitutor.walk_dotted_
+      # path); this was its own copy that could drift.
       private def lookup_nested_variable(expr : String) : JSON::Any?
         parts = expr.split(".")
+        base = @vars[parts[0]]?
+        return nil unless base
 
-        current = @vars[parts[0]]?
-
-        unless current
-          return nil
-        end
-
-        # Navigate through nested structure
-        parts[1..-1].each do |part|
-          case current.raw
-          when Hash
-            current = current[part]?
-            unless current
-              return nil
-            end
-          else
-            return nil
-          end
-        end
-
-        current
+        VariableSubstitutor.walk_dotted_path(base, parts[1..])
       end
     end
   end

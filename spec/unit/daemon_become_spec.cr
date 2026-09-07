@@ -44,9 +44,9 @@ describe "daemon become eligibility" do
 
   it "builds the same sudo wrapper for a become: target as the one-shot path" do
     Krikri::PluginManager.remote_plugin_target("command", true, "deploy")
-      .should eq("sudo -n -u deploy -- #{Krikri::PluginManager::REMOTE_PLUGIN_DIR}/command")
+      .should eq("sudo -n -u deploy -- #{Krikri::PluginManager.remote_plugin_dir(nil)}/command")
     Krikri::PluginManager.remote_plugin_target("command", false, nil)
-      .should eq("#{Krikri::PluginManager::REMOTE_PLUGIN_DIR}/command")
+      .should eq("#{Krikri::PluginManager.remote_plugin_dir(nil)}/command")
   end
 
   it "treats a host with no failures as available for every become_user" do

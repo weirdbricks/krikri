@@ -946,7 +946,7 @@ module Krikri
       # rebuilt behind the same address - the binary is missing and the
       # group fails.
       #
-      # Caught by deliberately deleting REMOTE_PLUGIN_DIR behind the
+           # Caught by deliberately deleting the remote staging dir behind the
       # cache's back on a live host: without this the first run
       # afterwards lost a task (ok=4 failed=1) where the pre-item-6a
       # engine completed cleanly, because that engine always did the
@@ -957,7 +957,8 @@ module Krikri
       # Re-running the whole group is safe here specifically because a
       # missing binary means NOTHING in it ran: every step dispatches
       # the same binary, and the script fail-fasts at the first one.
-      if interpreted.any? { |_, step| PluginManager.missing_remote_binary_for_spec?(step) }
+      ssh_user = host.user || "root"
+      if interpreted.any? { |_, step| PluginManager.missing_remote_binary_on_host?(step, "#{PluginManager.remote_plugin_dir(ssh_user)}/#{steps.first.module_name}", ssh_user) }
         PluginManager.recover_missing_plugins!(host, steps.map(&.module_name).uniq!, host.vars)
         return interpret_batch_script(host, connection_host, steps)
       end
@@ -1022,7 +1023,7 @@ module Krikri
           connection_host,
           ssh_user,
           host.port,
-          "#{PluginManager::REMOTE_PLUGIN_DIR}/#{steps.first.module_name}",
+          "#{PluginManager.remote_plugin_dir(ssh_user)}/#{steps.first.module_name}",
           payload,
           identity_file: host.vars["ansible_ssh_private_key_file"]?.try(&.as_s?),
           become_user: become_user

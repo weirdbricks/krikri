@@ -328,12 +328,25 @@ module Krikri
       @@split_ternary_no_else_cache = Hash(String, {String, String}?).new
       @@boolean_logic_cache = Hash(String, Bool).new
 
+      # All three caches are keyed on raw expression TEXT, and an
+      # expression can legitimately vary per loop item (`assert:`'s
+      # `that: "{{ item.a }} == 'x'"` finalizes to different text per
+      # item) - unbounded growth over a long run. The memoized values
+      # are PURE functions of the text, so resetting is always safe; a
+      # reset only costs re-computation.
+      MEMO_CACHE_MAX_ENTRIES = 10_000
+
+      private def memo_cache_full?(*caches : Hash) : Bool
+        caches.any?(&.size.>=(MEMO_CACHE_MAX_ENTRIES))
+      end
+
       private def boolean_logic?(expr : String) : Bool
         return @@boolean_logic_cache[expr] if @@boolean_logic_cache.has_key?(expr)
 
         result = !top_level_keyword_index(expr, " or ").nil? ||
                  !top_level_keyword_index(expr, " and ").nil? ||
                  !top_level_keyword_index(expr, " is ").nil?
+        @@boolean_logic_cache.clear if memo_cache_full?(@@boolean_logic_cache)
         @@boolean_logic_cache[expr] = result
         result
       end
@@ -1136,6 +1149,7 @@ module Krikri
                    end
                  end
 
+        @@split_ternary_cache.clear if memo_cache_full?(@@split_ternary_cache, @@split_ternary_no_else_cache)
         @@split_ternary_cache[expr] = result
         result
       end
@@ -1159,6 +1173,7 @@ module Krikri
                    (truthy.empty? || cond.empty?) ? nil : {truthy, cond}
                  end
 
+        @@split_ternary_no_else_cache.clear if memo_cache_full?(@@split_ternary_cache, @@split_ternary_no_else_cache)
         @@split_ternary_no_else_cache[expr] = result
         result
       end

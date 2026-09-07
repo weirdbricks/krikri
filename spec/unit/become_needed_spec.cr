@@ -42,12 +42,12 @@ describe Krikri::PluginManager do
   describe ".remote_plugin_target" do
     it "omits the sudo wrapper for a same-user become" do
       Krikri::PluginManager.remote_plugin_target("copy", true, "root", "root")
-        .should eq("#{Krikri::PluginManager::REMOTE_PLUGIN_DIR}/copy")
+        .should eq("#{Krikri::PluginManager.remote_plugin_dir(nil)}/copy")
     end
 
     it "keeps it for a genuine escalation" do
       Krikri::PluginManager.remote_plugin_target("copy", true, "appuser", "root")
-        .should eq("sudo -n -u appuser -- #{Krikri::PluginManager::REMOTE_PLUGIN_DIR}/copy")
+        .should eq("sudo -n -u appuser -- #{Krikri::PluginManager.remote_plugin_dir(nil)}/copy")
     end
   end
 end

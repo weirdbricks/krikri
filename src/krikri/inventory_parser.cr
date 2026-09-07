@@ -367,7 +367,7 @@ module Krikri
       # sources in the directory rather than contributing hosts of their
       # own, so they are applied after everything else is merged - same
       # order real Ansible processes inventory sources in.
-      deferred_constructed = [] of String
+      deferred_constructed = [] of {String, YAML::Any}
 
       sources = Dir.children(path).sort!.map { |child| File.join(path, child) }
       sources.each do |source|
@@ -375,16 +375,24 @@ module Krikri
         next if File.basename(source).starts_with?('.')
         next if IGNORED_INVENTORY_EXTENSIONS.any? { |extension| source.ends_with?(extension) }
 
-        if InventoryPlugins.constructed_source?(source)
-          deferred_constructed << source
+        # Parse each YAML source exactly once: the constructed sniff and
+        # the real parse both used to read + YAML.parse the same file.
+        # A YAML parse failure here is NOT fatal - it falls through to
+        # parse(source), whose own rescue raises the user-facing
+        # "Invalid YAML in inventory file" message (and for a
+        # non-YAML-extension source, parse routes to the INI parser).
+        is_yaml_source = source.ends_with?(".yml") || source.ends_with?(".yaml")
+        doc = is_yaml_source ? (YAML.parse(File.read(source)) rescue nil) : nil
+
+        if doc && InventoryPlugins.plugin_name(doc) == "constructed"
+          deferred_constructed << {source, doc}
           next
         end
 
-        merge_inventory(merged, parse(source))
+        merge_inventory(merged, doc ? parse_yaml(source, doc) : parse(source))
       end
 
-      deferred_constructed.each do |source|
-        doc = YAML.parse(File.read(source))
+      deferred_constructed.each do |(source, doc)|
         InventoryPlugins.apply_constructed_options(merged, doc)
       end
 
@@ -637,13 +645,16 @@ module Krikri
 
     # Parse YAML format inventory
     def self.parse_yaml(path : String) : Inventory
-      inventory = Inventory.new
+      parse_yaml(path, YAML.parse(File.read(path)))
+    rescue ex : YAML::ParseException
+      raise "Invalid YAML in inventory file: #{ex.message}"
+    end
 
-      begin
-        yaml = YAML.parse(File.read(path))
-      rescue ex : YAML::ParseException
-        raise "Invalid YAML in inventory file: #{ex.message}"
-      end
+    # Overload taking an already-parsed document - parse_directory hands
+    # over the doc it already read for its constructed-source sniff, so
+    # each directory source is read + parsed once, not twice.
+    def self.parse_yaml(path : String, yaml : YAML::Any) : Inventory
+      inventory = Inventory.new
 
       # YAML-defined inventory plugin source (`plugin: <name>` at the top
       # level) - dispatched to InventoryPlugins unless it is the `yaml`

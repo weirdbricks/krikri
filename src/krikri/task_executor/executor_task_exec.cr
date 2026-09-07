@@ -62,6 +62,17 @@ module Krikri
       end
 
       @vars_files_cache[cache_key] = merged
+      # Only a host's CURRENT generation entry is ever looked up (the key
+      # embeds the generation, which only ever increases), so older
+      # entries for this host are unreachable garbage. Every register:/
+      # fact write bumps the generation - without this sweep the cache
+      # grows one full vars_files set per bump for the whole run. Other
+      # hosts' latest entries are kept; they still serve if their own
+      # generation hasn't moved.
+      prefix = "#{host.name}\u0000"
+      @vars_files_cache.keys.each do |key|
+        @vars_files_cache.delete(key) if key.starts_with?(prefix) && key != cache_key
+      end
       merged
     end
 
