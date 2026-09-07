@@ -277,23 +277,16 @@ module Krikri
         nil
       end
 
-      # Look up a nested variable (e.g., result.rc)
+      # Look up a nested variable (e.g., result.rc) - the shared
+      # plain-hash walker (see VariableSubstitutor.walk_dotted_path);
+      # this was its own copy that could drift.
       private def lookup_nested_variable(expr : String) : String
         parts = expr.split(".")
-        current = @vars[parts[0]]?
+        base = @vars[parts[0]]?
+        return "undefined" unless base
 
+        current = VariableSubstitutor.walk_dotted_path(base, parts[1..])
         return "undefined" unless current
-
-        # Navigate through nested structure
-        parts[1..-1].each do |part|
-          case current.raw
-          when Hash
-            current = current[part]?
-            return "undefined" unless current
-          else
-            return "undefined"
-          end
-        end
 
         rerender_if_templated(current).to_s
       end
@@ -306,15 +299,11 @@ module Krikri
       private def resolve_json(expr : String) : JSON::Any?
         expr = expr.strip
         parts = expr.split(".")
-        current = @vars[parts[0]]?
-        return nil unless current
+        base = @vars[parts[0]]?
+        return nil unless base
 
-        parts[1..].each do |part|
-          return nil unless current.raw.is_a?(Hash)
-          next_value = current[part]?
-          return nil unless next_value
-          current = next_value
-        end
+        current = VariableSubstitutor.walk_dotted_path(base, parts[1..])
+        return nil unless current
 
         rerender_if_templated(current)
       end

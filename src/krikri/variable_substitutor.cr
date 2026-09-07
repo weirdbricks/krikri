@@ -362,6 +362,26 @@ module Krikri
     class TemplateRecursionError < Exception
     end
 
+    # The ONE shared dotted-path walker for plain hash navigation
+    # (`result.rc`, `ansible_facts.os_family`) - resolves *parts* (the
+    # split of a dotted expression) against *base* by successive Hash
+    # lookups, nil on the first miss or on a non-Hash hop. Used to exist
+    # as three divergent copies (VariableLookup, ComparisonEvaluator,
+    # ArraySlicer); VariableLookup keeps its own richer walker ON
+    # PURPOSE (it also handles list indexing, numeric dot-indexing and
+    # method calls - see its own comments), but the two simple
+    # consumers now share this one so a fix lands once for both.
+    def self.walk_dotted_path(base : JSON::Any, parts : Indexable(String)) : JSON::Any?
+      current = base
+      parts.each do |part|
+        hash = current.as_h?
+        return nil unless hash
+        current = hash[part]?
+        return nil unless current
+      end
+      current
+    end
+
     module Rerender
       # Process-wide, not per-instance: every recursion level constructs
       # fresh evaluator/substitutor objects, exactly like the block-tag
