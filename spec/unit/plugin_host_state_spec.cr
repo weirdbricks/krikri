@@ -66,7 +66,7 @@ describe "plugin host-state cache (item 6a)" do
     missing = JSON.parse({
       "failed" => true,
       "stdout" => "",
-      "stderr" => "bash: line 1: #{Krikri::PluginManager::REMOTE_PLUGIN_DIR}/command: No such file or directory",
+      "stderr" => "bash: line 1: #{Krikri::PluginManager.remote_plugin_dir(nil)}/command: No such file or directory",
     }.to_json)
     Krikri::PluginManager.missing_remote_binary_for_spec?(missing).should be_true
   end

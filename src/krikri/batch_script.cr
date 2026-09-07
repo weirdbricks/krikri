@@ -28,7 +28,7 @@ module Krikri
   # the target - consistent with this project's existing assumption of a
   # Debian/RHEL-family Linux target elsewhere (dpkg/rpm detection, etc.).
   module BatchScript
-    # `/var/tmp`, not `/tmp` - see PluginManager::REMOTE_PLUGIN_DIR for
+    # `/var/tmp`, not `/tmp` - see PluginManager.remote_plugin_dir for
     # why (some hardening roles remount `/tmp` as a fresh, empty tmpfs
     # mid-play, which would silently wipe this batch's own per-step
     # output files out from under it).

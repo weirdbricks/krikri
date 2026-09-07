@@ -1,5 +1,6 @@
 require "json"
 require "base64"
+require "digest"
 require "digest/md5"
 require "colorize"
 require "file_utils"
@@ -27,7 +28,31 @@ module Krikri
     # generally redirect their own `$TMPDIR`/`$TMP` to `/var/tmp` for
     # exactly this reason (konstruktoid-hardening's tmp.mount task does),
     # which is survivable across a tmpfs remount the way `/tmp` isn't.
-    REMOTE_PLUGIN_DIR = "/var/tmp/.krikri-playbook/plugins"
+    #
+    # The directory is PER-CONNECTING-USER (`.krikri-playbook-<user>-<hash>`),
+    # not one shared world-traversable path: /var/tmp is sticky-world, so
+    # without the per-user component any local user could pre-create the
+    # (entirely predictable) directory before krikri's first run and plant
+    # binaries later executed via `sudo -n` - the CVE-2014-3498 class that
+    # pushed real Ansible to per-user temp dirs. The bootstrap in
+    # #upload_plugins_to_host additionally VERIFIES ownership (and
+    # symlink-freedom) of every component before use and fails the run
+    # loudly on a mismatch, and the directories themselves are mode 0711:
+    # traversable (a `become_user:` exec needs to reach the binary through
+    # them) but never listable or writable by anyone else.
+    def self.remote_plugin_dir(remote_user : String?) : String
+      user = remote_user.presence || "root"
+      "/var/tmp/.krikri-playbook-#{staging_dir_tag(user)}/plugins"
+    end
+
+    # Stable, collision-proof directory-name tag for a connecting user:
+    # the sanitized name stays human-readable, the hash suffix guarantees
+    # two distinct users never map to one directory (and that a hostile
+    # username can't alias an existing path).
+    private def self.staging_dir_tag(user : String) : String
+      safe = user.gsub(/[^a-zA-Z0-9._-]/, "-")
+      "#{safe}-#{Digest::SHA1.hexdigest(user)[0, 8]}"
+    end
 
     # Cache of plugins already uploaded to remote hosts
     @@uploaded_plugins = Hash(String, Set(String)).new
@@ -44,7 +69,7 @@ module Krikri
     # have too few tasks to batch.
     #
     # This removes the first of those two. The remote binaries already
-    # persist between runs (REMOTE_PLUGIN_DIR is under /var/tmp), so the
+    # persist between runs (the staging dirs are under /var/tmp), so the
     # listing round trip is pure re-verification of something that was
     # true when we last looked. Recording the verified md5 set on the
     # CONTROLLER lets a later run skip it.
@@ -153,7 +178,7 @@ module Krikri
       # Never let a cache write failure affect the run.
     end
 
-    # Plugins already staged to REMOTE_PLUGIN_DIR for a *local*-connection
+    # Plugins already staged to the staging dir for a *local*-connection
     # become_user execution this process - see #staged_local_plugin_path.
     @@staged_local_plugins = Set(String).new
 
@@ -570,7 +595,7 @@ module Krikri
       # Initialize plugin cache for this host
       @@uploaded_plugins[host_key] ||= Set(String).new
 
-      remote_plugin_dir = REMOTE_PLUGIN_DIR
+      staging_dir = remote_plugin_dir(user)
 
       candidates = plugin_names.reject { |name| @@uploaded_plugins[host_key].includes?(name) }
       return if candidates.empty?
@@ -585,17 +610,46 @@ module Krikri
         return
       end
 
-      # Round trip 1: create the dir and dump every existing remote .md5
-      # in one pass, so we don't need one `cat` per plugin to check it.
+      # Round trip 1: create the staging hierarchy and dump every existing
+      # remote .md5 in one pass, so we don't need one `cat` per plugin to
+      # check it. The creation is HARDENED, not a bare mkdir: /var/tmp is
+      # sticky-world, so a pre-existing foreign-owned or symlinked
+      # component means a local user planted (or could plant) binaries
+      # here - fail the run loudly rather than execute anything from it.
+      # On a clean host the checks are two stat calls; mode 0711 keeps the
+      # dir traversable for a `become_user:` exec but never listable or
+      # writable by anyone but the connecting user.
+      staging_base = File.dirname(staging_dir)
+      q_dir = shell_single_quote(staging_dir)
+      q_base = shell_single_quote(staging_base)
       list_script = <<-SCRIPT
-        mkdir -p #{remote_plugin_dir}
-        for f in #{remote_plugin_dir}/*.md5; do
+        for D in #{q_base} #{q_dir}; do
+          if [ -L "$D" ] || { [ -e "$D" ] && [ "$(stat -c %u "$D")" != "$(id -u)" ]; }; then
+            echo "KRIKRI-STAGING-UNSAFE: #{q_base} is foreign-owned or a symlink on this host" >&2
+            exit 75
+          fi
+        done
+        mkdir -p #{q_dir}
+        for D in #{q_base} #{q_dir}; do
+          if [ "$(stat -c %u "$D")" != "$(id -u)" ]; then
+            echo "KRIKRI-STAGING-UNSAFE: #{q_base} changed owner mid-setup" >&2
+            exit 75
+          fi
+          chmod 711 "$D"
+        done
+        for f in #{q_dir}/*.md5; do
           [ -f "$f" ] && echo "$(basename "$f" .md5) $(cat "$f")"
         done
         true
         SCRIPT
       remote_md5s = Hash(String, String).new
-      SSHManager.exec_script(connection_host, user, list_script, host.port, identity_file: identity_file)[:stdout]
+      list_result = SSHManager.exec_script(connection_host, user, list_script, host.port, identity_file: identity_file)
+      if list_result[:exit_code] == 75
+        raise "Refusing to use plugin staging dir #{staging_base} on #{connection_host}: " \
+              "a local user appears to have planted it (foreign-owned or symlinked). " \
+              "Remove it manually after verifying, then re-run."
+      end
+      list_result[:stdout]
         .each_line do |line|
           name, _, md5 = line.strip.partition(' ')
           remote_md5s[name] = md5 unless name.empty?
@@ -682,7 +736,7 @@ module Krikri
           connection_host,
           user,
           local_plugin_paths,
-          remote_plugin_dir,
+          staging_dir,
           host.port,
           mode: 0o755,
           identity_file: identity_file
@@ -699,7 +753,7 @@ module Krikri
               connection_host,
               user,
               local_paths[plugin_name],
-              "#{remote_plugin_dir}/#{plugin_name}",
+              "#{staging_dir}/#{plugin_name}",
               host.port,
               mode: nil,
               identity_file: identity_file
@@ -711,7 +765,7 @@ module Krikri
       # Round trip 3: materialize every non-source name from its group's
       # source - either a pre-existing remote name found above (no
       # transfer needed at all) or the freshly-uploaded representative
-      # (`ln` first, since REMOTE_PLUGIN_DIR is one directory so a
+      # (`ln` first, since the staging dir is one directory so a
       # hardlink always applies; `cp -p` only as a fallback for whatever
       # non-POSIX-hardlink edge case might exist on an unusual remote
       # filesystem) - write every name's own .md5 (so a later run's
@@ -722,18 +776,18 @@ module Krikri
       write_script = String.build do |str|
         if !rsync_ok && !representatives.empty?
           representatives.each do |plugin_name|
-            str << "chmod 755 #{remote_plugin_dir}/#{plugin_name}\n"
+            str << "chmod 755 #{staging_dir}/#{plugin_name}\n"
           end
         end
         by_md5.each do |md5, names|
           source = remote_name_by_md5[md5]? || names.first
           names.each do |name|
             next if name == source
-            str << "ln -f #{remote_plugin_dir}/#{source} #{remote_plugin_dir}/#{name} 2>/dev/null || cp -p #{remote_plugin_dir}/#{source} #{remote_plugin_dir}/#{name}\n"
+            str << "ln -f #{staging_dir}/#{source} #{staging_dir}/#{name} 2>/dev/null || cp -p #{staging_dir}/#{source} #{staging_dir}/#{name}\n"
           end
         end
         plugins_to_upload.each do |plugin_name|
-          str << "echo '#{local_md5s[plugin_name]}' > #{remote_plugin_dir}/#{plugin_name}.md5\n"
+          str << "echo '#{local_md5s[plugin_name]}' > #{staging_dir}/#{plugin_name}.md5\n"
         end
       end
       SSHManager.exec_script(connection_host, user, write_script, host.port, identity_file: identity_file)
@@ -1003,7 +1057,7 @@ module Krikri
             connection_host,
             host.user || "root",
             host.port,
-            "#{REMOTE_PLUGIN_DIR}/#{simple_plugin_name(plugin_name)}",
+            "#{remote_plugin_dir(host.user || "root")}/#{simple_plugin_name(plugin_name)}",
             simple_plugin_name(plugin_name),
             JSON.parse(config),
             identity_file: vars["ansible_ssh_private_key_file"]?.try(&.as_s?),
@@ -1070,14 +1124,14 @@ module Krikri
       # trusting that a binary recorded as present still IS present. It
       # might not be: /var/tmp gets swept, a host gets rebuilt behind
       # the same address, or a hardening role remounts /tmp mid-play
-      # (the reason REMOTE_PLUGIN_DIR lives under /var/tmp at all).
+      # (the reason the staging dir lives under /var/tmp at all).
       #
       # Rather than let that surface as an inscrutable task failure -
       # which is what happened BEFORE this item too, since nothing
       # re-uploaded mid-run either - detect it, drop the stale belief,
       # upload for real, and retry once. Bounded to a single retry so a
       # genuinely broken target still fails instead of looping.
-      if missing_remote_binary?(interpreted, target)
+      if missing_remote_binary?(interpreted, target, remote_plugin_dir(host.user || "root"))
         recover_missing_plugin!(host, plugin_name, vars)
         retry_result = SSHManager.exec_script(
           connection_host,
@@ -1100,14 +1154,22 @@ module Krikri
     # this class should be making these decisions; these exist so the
     # two properties the safety argument rests on can be pinned.
     def self.missing_remote_binary_for_spec?(result : JSON::Any) : Bool
-      missing_remote_binary?(result, "#{REMOTE_PLUGIN_DIR}/command")
+      dir = remote_plugin_dir(nil)
+      missing_remote_binary?(result, "#{dir}/command", dir)
+    end
+
+    # Host-aware variant for TaskExecutor's batch path: the staging dir is
+    # per-connecting-user now, so the check needs the same user the batch
+    # was uploaded/executed with.
+    def self.missing_remote_binary_on_host?(result : JSON::Any, target : String, remote_user : String?) : Bool
+      missing_remote_binary?(result, target, remote_plugin_dir(remote_user))
     end
 
     def self.host_state_satisfies_for_spec?(host_key : String, names : Array(String)) : Bool
       host_state_satisfies?(host_key, names)
     end
 
-    private def self.missing_remote_binary?(result : JSON::Any, target : String) : Bool
+    private def self.missing_remote_binary?(result : JSON::Any, target : String, staging_dir : String) : Bool
       return false unless result["failed"]?.try(&.as_bool?)
 
       text = "#{result["stdout"]?.try(&.as_s?)}#{result["stderr"]?.try(&.as_s?)}"
@@ -1117,7 +1179,7 @@ module Krikri
 
       # The message has to be about OUR binary, not about some path the
       # module itself was asked to operate on.
-      text.includes?(REMOTE_PLUGIN_DIR) || target.includes?(REMOTE_PLUGIN_DIR)
+      text.includes?(staging_dir) || target.includes?(staging_dir)
     end
 
     # Batch-path counterpart: one invalidation, one upload covering
@@ -1144,7 +1206,7 @@ module Krikri
       upload_plugins_to_host(host, [simple_name])
     end
 
-    # Resolves a plugin's remote path (`REMOTE_PLUGIN_DIR/<simple name>`)
+    # Resolves a plugin's remote path (`remote_plugin_dir/<simple name>`)
     # and, if `become`, wraps it in `sudo -n -u <become_user> --`.
     # Shared by the normal one-task-at-a-time remote path above and by
     # TaskExecutor's batch script generation (batching, on by default),
@@ -1162,7 +1224,7 @@ module Krikri
     # a file that may itself be templated, so their contents are unknown
     # until they actually run. A module used *only* inside one therefore
     # reached the target with no binary present and failed with a bare
-    # "REMOTE_PLUGIN_DIR/set_fact: No such file or directory",
+    # "staging_dir/set_fact: No such file or directory",
     # which is both confusing and, for a role like dev-sec's
     # os_hardening, fatal on the first included task.
     #
@@ -1203,7 +1265,7 @@ module Krikri
 
     def self.remote_plugin_target(plugin_name : String, become : Bool, become_user : String?, remote_user : String? = nil) : String
       simple_name = simple_plugin_name(plugin_name)
-      remote_plugin_path = "#{REMOTE_PLUGIN_DIR}/#{simple_name}"
+      remote_plugin_path = "#{remote_plugin_dir(remote_user)}/#{simple_name}"
       become_needed?(become, become_user, remote_user) ? "sudo -n -u #{become_user} -- #{remote_plugin_path}" : remote_plugin_path
     end
 
@@ -1350,8 +1412,15 @@ module Krikri
     end
 
     # Stages *source_path* (the compiled plugin binary, resolved next to
-    # krikri-playbook's own executable) into the world-traversable
-    # REMOTE_PLUGIN_DIR before a local-connection `become_user:` exec.
+    # krikri-playbook's own executable) into a per-user staging dir under
+    # /var/tmp before a local-connection `become_user:` exec.
+    #
+    # The dir is per-invoking-user (`.krikri-playbook-<user>-<hash>`,
+    # mirroring remote_plugin_dir's remote layout) and hardened against
+    # the same pre-creation attack /var/tmp's sticky-world bit enables:
+    # ownership + symlink checks on every component, mode 0711 on the
+    # dirs (traversable so the become_user can reach the binary, never
+    # listable or writable by anyone else), 0755 on the staged binary.
     #
     # Real Ansible never executes its own module files in place - it
     # always copies them to a tmp location the target user can reach
@@ -1374,13 +1443,37 @@ module Krikri
     # Copies once per plugin per process (mirrors upload_plugins_to_
     # host's own memoization for the SSH path) - the local binary can't
     # change mid-run.
+    # Owner uid of *path* via a raw stat, or nil when it doesn't exist.
+    # File::Info exposes no uid, and the ownership check is the whole
+    # point of the staging-dir hardening.
+    private def self.staging_path_uid(path : String) : UInt32?
+      stat = LibC::Stat.new
+      return nil unless LibC.stat(path, pointerof(stat)) == 0
+      stat.st_uid
+    end
+
     private def self.staged_local_plugin_path(plugin_name : String, source_path : String) : String
-      staged_path = File.join(REMOTE_PLUGIN_DIR, File.basename(source_path))
+      staging_base = "/var/tmp/.krikri-playbook-#{staging_dir_tag(local_username || "u#{LibC.getuid}")}"
+      staging_dir = File.join(staging_base, "plugins")
+      staged_path = File.join(staging_dir, File.basename(source_path))
       return staged_path if @@staged_local_plugins.includes?(plugin_name)
 
-      Dir.mkdir_p(REMOTE_PLUGIN_DIR)
-      File.chmod(File.dirname(REMOTE_PLUGIN_DIR), 0o755)
-      File.chmod(REMOTE_PLUGIN_DIR, 0o755)
+      refuse = ->(reason : String) {
+        raise "Refusing to use local plugin staging dir #{staging_base}: #{reason}. " \
+              "Remove it manually after verifying, then re-run."
+      }
+      refuse.call("symlinked") if File.symlink?(staging_base) || File.symlink?(staging_dir)
+      if (base_uid = staging_path_uid(staging_base)) && base_uid != LibC.getuid
+        refuse.call("foreign-owned (a local user appears to have planted it)")
+      end
+
+      Dir.mkdir_p(staging_dir)
+      [staging_base, staging_dir].each do |dir|
+        if (uid = staging_path_uid(dir)) && uid != LibC.getuid
+          refuse.call("changed owner mid-setup")
+        end
+        File.chmod(dir, 0o711)
+      end
       # Copy to a temp name and rename into place: a plain cp can be
       # observed half-written by a concurrent local `become:` exec under
       # --forks>1 (the memo below is only added after the copy, so two

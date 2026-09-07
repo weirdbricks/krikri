@@ -1321,7 +1321,7 @@ describe "krikri-playbook CLI (--check mode)" do
     # user root is not allowed to execute '/root/.../plugins/command'
     # as solr`, really a plain EACCES on /root's own 0700 mode, not an
     # actual sudoers policy denial. A become: task must stage a
-    # world-traversable copy of the plugin binary at REMOTE_PLUGIN_DIR
+    # world-traversable copy of the plugin binary at the staging dir
     # before sudo-ing to it, which the forced run above exercises.
     staged_command_plugin = "/var/tmp/.krikri-playbook/plugins/command"
     File.exists?(staged_command_plugin).should be_true
