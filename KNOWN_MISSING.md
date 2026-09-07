@@ -18,10 +18,43 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.807`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.808`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
+
+## Two RHEL-family open leads closed: template include-path + set_fact self-reference (0.9.807 -> 0.9.808)
+
+- **A `{% include %}`/`{% extends %}` path given relative to the ROLE ROOT
+  (e.g. `{% include 'templates/base.j2' %}` from a template that itself
+  lives directly in `templates/`) wasn't found.** `TemplateActionPlugin`'s
+  Crinja loader searchpath climbed from the including template's own
+  directory up to and including the role's `templates/` root (fixed for
+  the sibling-file case in round 196), but never added the role root
+  itself - real Ansible's Jinja2 loader searches both. Found via
+  `smlloyd.authselect` (RHEL-family round 60487): `RedHat-9-user-
+  nsswitch.conf.j2` (living directly in `templates/`) does `{% include
+  'templates/base-user-nsswitch.conf.j2' %}`, which only resolves if the
+  loader also searches the role root. Fixed by adding the templates root's
+  parent directory to the searchpath. Live-reverified against the actual
+  role on a fresh Rocky 9.6 Kata host: the role now runs to completion
+  (`ok=7 changed=2` cold, idempotent `changed=0` warm) instead of failing
+  at the template task. Regression: `spec/integration/
+  template_include_search_path_spec.cr`.
+- **A `set_fact:` task's own `changed_when:`/`failed_when:` couldn't see
+  the fact that same task had just set.** `apply_changed_failed_when`
+  evaluates against `vars_context` plus a `register:` result if any, but a
+  `set_fact:` result's own newly-set facts (carried under
+  `ansible_facts`, see `SetFactActionPlugin`) were only merged into
+  `vars_context` by the caller AFTER this function returns - real Ansible
+  evaluates `changed_when:` against a context that already has them. Found
+  via the same `smlloyd.authselect` live run once the template bug above
+  was fixed: `set_fact: {authselect_current_profile: ...}` with
+  `changed_when: ... or authselect_current_profile != ...` raised
+  `'authselect_current_profile' is undefined` where real Ansible resolves
+  it. Fixed by merging a set_fact result's `ansible_facts` into the
+  evaluation context before evaluating `changed_when:`/`failed_when:`.
+  Regression: `spec/integration/set_fact_changed_when_self_reference_spec.cr`.
 
 ## Perf/security hardening batch from a parallel worktree (0.9.797 -> 0.9.806)
 

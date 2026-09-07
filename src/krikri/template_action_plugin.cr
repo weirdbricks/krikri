@@ -122,9 +122,27 @@ module Krikri
          tpl_dir.starts_with?("/")
         searchpaths = [tpl_dir]
         dir = tpl_dir
-        while (dir = File.dirname(dir)) != "/" && dir.split("/").includes?("templates")
+        templates_root = File.basename(tpl_dir) == "templates" ? tpl_dir : nil
+        while templates_root.nil? && (dir = File.dirname(dir)) != "/" && dir.split("/").includes?("templates")
           searchpaths << dir
-          break if File.basename(dir) == "templates"
+          if File.basename(dir) == "templates"
+            templates_root = dir
+            break
+          end
+        end
+        # Real Ansible's role template search path also includes the ROLE
+        # ROOT itself (the templates/ dir's own parent), not just
+        # directories inside templates/ - a role can `{% include
+        # 'templates/other.j2' %}` a sibling by a path relative to the
+        # role root instead of a bare filename. Found via
+        # smlloyd.authselect's own `{% include 'templates/base-user-
+        # nsswitch.conf.j2' %}` (RHEL-family round 60487): the including
+        # template lives directly in templates/, so without this the
+        # loader only ever searched templates/ itself and never found
+        # "templates/base-user-nsswitch.conf.j2" under it.
+        if templates_root
+          role_root = File.dirname(templates_root)
+          searchpaths << role_root unless searchpaths.includes?(role_root)
         end
         env.loader = Crinja::Loader::FileSystemLoader.new(searchpaths)
       end

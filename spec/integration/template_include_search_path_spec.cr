@@ -57,4 +57,49 @@ describe "template:'s {% include %} resolves against the role's templates/ root,
   ensure
     FileUtils.rm_rf(src_dir) if src_dir
   end
+
+  it "finds a {% include %} target given as a path relative to the role root (e.g. 'templates/other.j2')" do
+    # Real bug found via smlloyd.authselect (RHEL-family round 60487):
+    # a template living directly in templates/ (not a subdirectory) does
+    # `{% include 'templates/base-user-nsswitch.conf.j2' %}` - a path
+    # relative to the ROLE ROOT, resolved fine by real Ansible's own
+    # Jinja2 FileSystemLoader (whose searchpath includes the role root
+    # itself), but Crinja's loader here only ever searched the templates/
+    # directory and never found the "templates/..."-prefixed name inside
+    # it. Fixed by also adding the role root (templates/'s own parent) to
+    # the loader's searchpath.
+    src_dir = File.tempname("template-include-role-root-path")
+    Dir.mkdir_p(File.join(src_dir, "roles", "myrole", "templates"))
+    Dir.mkdir_p(File.join(src_dir, "roles", "myrole", "tasks"))
+    File.write(File.join(src_dir, "roles", "myrole", "templates", "nsswitch.conf.j2"), <<-J2)
+      top
+      {% include 'templates/base.j2' %}
+      bottom
+      J2
+    File.write(File.join(src_dir, "roles", "myrole", "templates", "base.j2"), "middle\n")
+    File.write(File.join(src_dir, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+      - name: render
+        template:
+          src: nsswitch.conf.j2
+          dest: #{File.join(src_dir, "out.conf")}
+      YAML
+
+    playbook = File.join(src_dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - myrole
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: src_dir)
+
+    status.success?.should be_true, output.to_s
+    output.to_s.should_not contain("could not be found")
+    File.read(File.join(src_dir, "out.conf")).should eq("top\nmiddlebottom\n")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
 end

@@ -1404,6 +1404,21 @@ module Krikri
         eval_context[register_name] = result
       end
 
+      # set_fact:'s own result carries the facts it just set under
+      # "ansible_facts" (see SetFactActionPlugin), applied into the real
+      # vars_context by the caller only AFTER this returns - but real
+      # Ansible evaluates changed_when:/failed_when: against the task's
+      # OWN result, which for set_fact already has those facts merged in.
+      # Found via smlloyd.authselect (RHEL-family round 60487): `set_fact:
+      # {authselect_current_profile: ...}` with a `changed_when:` that
+      # references `authselect_current_profile` right back - real Ansible
+      # resolves it fine, this engine raised "'authselect_current_profile'
+      # is undefined" without this merge.
+      if (facts = result.as_h?.try(&.[]?("ansible_facts"))) && (facts_hash = facts.as_h?)
+        eval_context = eval_context.dup if eval_context.same?(vars_context)
+        facts_hash.each { |key, value| eval_context[key] = value }
+      end
+
       hash = result.as_h.dup
 
       # changed_when/failed_when share one substitutor: VarSubstitutor is
