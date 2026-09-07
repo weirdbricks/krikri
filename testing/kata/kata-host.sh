@@ -24,6 +24,18 @@ gw_of()   { echo "$SUBNET.$2.1"; }
 # over the sandbox network; if that network is gone (say the netns was
 # recreated under a live VM) the call hangs forever rather than failing. So:
 # ask nicely with a timeout, then kill the shim/VMM processes directly.
+#
+# The shim-child lookup (`pgrep -P "$shim"`) is not reliable on its own: if
+# containerd-shim-kata-v2 has already exited (e.g. after `ctr task rm`) or
+# the pgrep pattern just misses it, qemu-system-x86_64 and its virtiofsd
+# helpers get reparented and orphaned - each qemu process pins a
+# `mem-path=/dev/shm,size=2G,share=on` backing segment via
+# `--runtime io.containerd.kata.v2`'s memory-backend-file, so a handful of
+# leaked VMs is enough to fill /dev/shm on the host and start breaking every
+# local `ansible-playbook` run (it needs /dev/shm for multiprocessing) with
+# an unrelated-looking "No space left on device" error. So: ALWAYS also kill
+# any qemu/virtiofsd processes for this name directly by their own argv,
+# regardless of whether the shim-based kill above found anything.
 force_down() {
   local name="$1"
   timeout 20 sudo -n ctr task kill -a -s SIGKILL "$name" >/dev/null 2>&1
@@ -41,6 +53,12 @@ force_down() {
   timeout 20 sudo -n ctr task rm -f "$name"      >/dev/null 2>&1
   timeout 20 sudo -n ctr container rm "$name"    >/dev/null 2>&1
   timeout 20 sudo -n ctr snapshot rm "$name"     >/dev/null 2>&1
+  local leaked
+  leaked=$(pgrep -f "sandbox-$name |virtiofsd.*/$name/root" 2>/dev/null | tr '\n' ' ')
+  if [ -n "${leaked// /}" ]; then
+    # shellcheck disable=SC2086
+    sudo -n kill -9 $leaked >/dev/null 2>&1
+  fi
 }
 
 net_down() {
