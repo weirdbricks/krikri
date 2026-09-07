@@ -18,8 +18,37 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.789`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.790`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## Round 60086: `package:` rejected `state: installed`/`removed` (0.9.790)
+
+First round run against the new Rocky/RHEL-family Kata+Atlantic backend
+(200 roles, `ROLES_TESTED.md`). `bertvv.rh-base`'s `package: state:
+installed` task failed with this engine's own "Invalid state: installed.
+Must be present, absent, or latest" instead of installing - the generic
+`package:` module (`plugins/package.cr`) never normalized the
+`installed`/`removed` aliases real Ansible's package/dnf/yum modules
+document (`state: absent, installed, latest, present, removed`); `dnf:`/
+`yum:` already did this correctly via their shared `RpmPackage#normalized_state`
+helper, `package:` just never called it. Fixed by normalizing at the top
+of `package.cr#execute`, same as the RPM-family plugins. 2 new specs
+(check_mode, no real package manager assumed for the "not installed"
+side).
+
+Also fixed the round's own environment, not the engine: the new Rocky
+kata image's `dnf install` baked NetworkManager's podman-build-time
+resolver into `/etc/resolv.conf`, meaningless inside the kata guest's
+real static network - every dnf op on a booted Rocky guest failed DNS
+resolution, which made `juju4.upgrade_pkgs`'s `until:`-guarded package
+install hang past the harness's 15-minute timeout where real Ansible
+failed fast. See `testing/kata/README.md`'s Rocky section for the fix
+(a boot-time tmpfiles.d symlink, since a Containerfile `RUN` write to
+that exact path doesn't survive the build - podman bind-mounts its own
+resolv.conf over it for `RUN`'s duration and excludes it from the
+committed layer).
 
 ---
 

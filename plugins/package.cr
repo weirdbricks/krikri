@@ -120,6 +120,13 @@ module Krikri
       end
 
       state = @params["state"]? || "present"
+      # Real Ansible's package/dnf/yum modules accept "installed"/"removed"
+      # as synonyms for "present"/"absent" (documented state choices:
+      # absent, installed, latest, present, removed) - found via
+      # bertvv.rh-base's own `package: state: installed` failing here with
+      # "Invalid state" instead of installing.
+      state = "present" if state == "installed"
+      state = "absent" if state == "removed"
 
       # Detect package manager
       package_manager = detect_package_manager()
