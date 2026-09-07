@@ -1,4 +1,5 @@
 require "json"
+require "base64"
 require "http/client"
 require "uri"
 require "../conditional_evaluator"
@@ -1828,6 +1829,12 @@ module Krikri
         # actually existed.
         lookup_type = lookup_type.try(&.sub(/^ansible\.(builtin|legacy)\./, ""))
 
+        # Same treatment for community.general.* - `lookup('community.
+        # general.random_string', ...)` (juju4.pocketid's own secret
+        # generation) must reach the bare-name case below rather than
+        # falling through every dispatch to the "undefined" fallback.
+        lookup_type = lookup_type.try(&.sub(/^community\.general\./, ""))
+
         evaluate_lookup_scalar(lookup_type, parts) ||
           evaluate_lookup_file(lookup_type, parts) ||
           evaluate_lookup_list(lookup_type, parts) ||
@@ -2237,7 +2244,127 @@ module Krikri
           @lookup.format_value(items.sample)
         when "subelements"
           lookup_subelements(parts)
+        when "random_string"
+          lookup_random_string(parts)
         end
+      end
+
+      # lookup('community.general.random_string', length=N, base64=bool, ...)
+      # - community.general's random_string lookup: generates a random
+      # string on the CONTROLLER for secrets/salts, entirely
+      # unimplemented before (fell through to the "undefined"
+      # fallback, so juju4.pocketid's own `secret: "{{
+      # lookup('community.general.random_string', length=secretlength,
+      # base64=secretbase64) }}"` wrote the literal sentinel text to
+      # disk as the secret). Mirrors the real plugin's full option set
+      # and generation pipeline: build the character pool from the
+      # upper/lower/numbers/special flags, draw the guaranteed-minimum
+      # characters FIRST (min_numeric/min_lower/min_upper/min_special,
+      # in that fixed order), fill the rest from the full pool, shuffle
+      # (only when unseeded - the real plugin skips the shuffle when
+      # seed= is given, leaving min_* characters clustered at the
+      # front, a documented quirk this replicates), then optional
+      # base64. No positional terms: real Ansible's own
+      # check_for_no_terms errors on them, this raises likewise rather
+      # than silently ignoring the term.
+      private def lookup_random_string(parts : Array(String)) : String
+        terms = parts[1..].map(&.strip)
+        unless terms.all?(&.includes?('='))
+          raise "The lookup plugin 'random_string' does not accept search terms, only keyword arguments"
+        end
+        opts = terms.compact_map do |term|
+          key, sep, value = term.partition('=')
+          sep.empty? ? nil : {key.strip, evaluate(value)}
+        end.to_h
+
+        length = opts["length"]?.try(&.to_i?) || 8
+        seed = opts["seed"]?
+        rng = seed ? Random.new(seed.hash) : nil
+        pick = ->(n : Int32) {
+          r = rng
+          r ? r.rand(n) : Random::Secure.rand(n)
+        }
+
+        char_classes = random_string_char_classes(opts)
+        available_chars_set, values = random_string_pool_and_minimums(opts, char_classes, pick)
+
+        values += draw_random_chars(pick, available_chars_set, length - values.size)
+        # Only reached when seed is nil (the `unless seed` guard) - rng is
+        # always nil there too, so this always shuffles with a fresh RNG.
+        values = values.chars.shuffle!(Random.new).join unless seed
+        lookup_flag(opts, "base64", false) ? Base64.strict_encode(values) : values
+      end
+
+      # The four base character-class pools for #lookup_random_string,
+      # with ignore_similar_chars: filtering already applied (matching
+      # the real plugin's ordering - this filtering happens BEFORE
+      # override_special/override_all are ever considered, so an
+      # override bypasses it entirely, same as the real plugin's own
+      # `special_chars = override_special` REPLACING the filtered value).
+      private def random_string_char_classes(opts : Hash(String, String)) : Tuple(String, String, String, String)
+        number_chars = "0123456789"
+        lower_chars = "abcdefghijklmnopqrstuvwxyz"
+        upper_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        special_chars = "!\\\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
+        return {number_chars, lower_chars, upper_chars, special_chars} unless lookup_flag(opts, "ignore_similar_chars", false)
+
+        similar = opts["similar_chars"]? || "il1LoO0"
+        {number_chars.delete(similar), lower_chars.delete(similar), upper_chars.delete(similar), special_chars.delete(similar)}
+      end
+
+      # override_all: bypasses everything below it (upper:/lower:/
+      # numbers:/special:/override_special:/min_*) entirely, matching
+      # the real plugin's own `if override_all: ... else: ...` shape -
+      # nothing in this branch runs at all when it's set, min_* draws
+      # included. Returns {available_chars_set, values-drawn-so-far}.
+      private def random_string_pool_and_minimums(opts : Hash(String, String), char_classes : Tuple(String, String, String, String), pick : Proc(Int32, Int32)) : Tuple(String, String)
+        if override_all = opts["override_all"]?.presence
+          return {override_all, ""}
+        end
+
+        number_chars, lower_chars, upper_chars, special_chars = char_classes
+        special_chars = opts["override_special"]?.presence || special_chars
+
+        available_chars_set = String.build do |io|
+          io << upper_chars if lookup_flag(opts, "upper", true)
+          io << lower_chars if lookup_flag(opts, "lower", true)
+          io << number_chars if lookup_flag(opts, "numbers", true)
+          io << special_chars if lookup_flag(opts, "special", true)
+        end
+
+        minimums = {
+          {number_chars, "min_numeric"}, {lower_chars, "min_lower"},
+          {upper_chars, "min_upper"}, {special_chars, "min_special"},
+        }
+        values = String.build do |io|
+          minimums.each do |(pool, key)|
+            io << draw_random_chars(pick, pool, opts[key]?.try(&.to_i?) || 0)
+          end
+        end
+
+        {available_chars_set, values}
+      end
+
+      # One guaranteed-minimum/remainder draw for #lookup_random_string.
+      # Mirrors the real plugin's get_random(): an empty pool raises
+      # ("Available characters cannot be None, please change
+      # constraints") BEFORE the count check, so a negative/zero count
+      # still raises when the pool itself is empty (all four class
+      # flags false with nothing to draw from), while a zero count
+      # against a live pool draws nothing.
+      private def draw_random_chars(pick : Proc(Int32, Int32), pool : String, count : Int32) : String
+        raise "Available characters cannot be None, please change constraints" if pool.empty?
+        return "" if count <= 0
+        String.build(count) { |io| count.times { io << pool[pick.call(pool.size)] } }
+      end
+
+      # Ansible-style boolean coercion for a random_string keyword's
+      # evaluated text (a bare `true` variable renders "True"/"False"
+      # via format_value, so both cases must be accepted).
+      private def lookup_flag(opts : Hash(String, String), key : String, default : Bool) : Bool
+        raw = opts[key]?
+        return default unless raw
+        raw.downcase.in?("true", "1", "yes", "on")
       end
 
       private def lookup_subelements(parts : Array(String)) : String

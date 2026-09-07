@@ -18,8 +18,36 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.812`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.813`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## The last open gap closed: `lookup('community.general.random_string', ...)` implemented (0.9.812 -> 0.9.813)
+
+Closed the long-standing open gap (juju4.pocketid, round 60151): the
+lookup was entirely unimplemented and silently resolved to the literal
+string `"undefined"`, which the role's `secret:` then wrote to disk as
+the real secret - cold recaps were byte-identical (`ok=23 changed=14
+failed=0 skipped=7` both engines), so nothing looked broken while the
+value on disk was the sentinel text. `ExpressionEvaluator` now
+implements the lookup with the real plugin's full option set and
+pipeline: pool built from the `upper`/`lower`/`numbers`/`special`
+flags (all default true), `ignore_similar_chars`/`similar_chars`
+filtering, `override_all`/`override_special` pool replacement,
+`min_numeric`/`min_lower`/`min_upper`/`min_special` guaranteed-
+minimum characters drawn FIRST in the real plugin's fixed order,
+remainder filled from the full pool, shuffle skipped when `seed=` is
+given (the real plugin's documented quirk - seeded output keeps min_*
+characters clustered at the front), then optional `base64` encoding.
+The fully-qualified `community.general.` name is stripped to the bare
+name the same way `ansible.builtin.` already was, and the real
+plugin's empty-pool raise ("Available characters cannot be None,
+please change constraints" - which fires even at zero remaining
+count) is mirrored exactly. Regression specs in
+`spec/unit/expression_evaluator_spec.cr` (FQCN + variable kwargs
+base64 shape, default length, seed reproducibility, min_* guarantees,
+empty-pool raise).
 
 ---
 
@@ -683,16 +711,8 @@ Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
-- **`lookup('community.general.random_string', ...)` is unimplemented and
-  silently resolves to the literal string `"undefined"` instead of failing
-  the task.** A lookup should fail as clearly as an unsupported module
-  does - see this file's own long-standing convention for exactly that.
-  Found via `juju4.pocketid`'s own `secret: "{{ s2.stdout_lines.0 }}"`
-  (RHEL-family round 60151): the role generates a "secret" with that
-  lookup, so the string written to disk was coincidentally the sentinel
-  text - which is also what surfaced the dotted-index sentinel collision
-  (fixed in 0.9.812 by threading a real undefined TYPE through
-  `ExpressionEvaluator`'s strict-decision seam; narrative in git log).
+None - `lookup('community.general.random_string', ...)` (the last one,
+found via juju4.pocketid round 60151) is implemented as of 0.9.813.
 
 ---
 

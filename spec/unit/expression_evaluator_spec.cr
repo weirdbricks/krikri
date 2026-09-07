@@ -608,6 +608,57 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("lookup('random_choice', l)").should eq("only")
   end
 
+  it "evaluates lookup('community.general.random_string', ...) generating a base64 secret" do
+    # juju4.pocketid's own idiom: length=secretlength, base64=secretbase64,
+    # both variables - the FQ collection name must reach the bare-name
+    # dispatch, and the kwargs' VALUES may be variable references.
+    v = Hash(String, JSON::Any).new
+    v["secretlength"] = JSON::Any.new(64_i64)
+    v["secretbase64"] = JSON.parse("true")
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    result = evaluator.evaluate("lookup('community.general.random_string', length=secretlength, base64=secretbase64)")
+    decoded = Base64.decode_string(result)
+    decoded.size.should eq(64)
+    decoded.each_char.all? { |chr| chr.ascii_alphanumeric? || ('!'..'~').covers?(chr) }.should be_true
+  end
+
+  it "evaluates lookup('random_string', ...) with default length 8" do
+    v = Hash(String, JSON::Any).new
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("lookup('random_string')").size.should eq(8)
+  end
+
+  it "evaluates lookup('random_string', seed=...) reproducibly" do
+    v = Hash(String, JSON::Any).new
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    first = evaluator.evaluate(%(lookup('random_string', length=16, seed='abc')))
+    second = evaluator.evaluate(%(lookup('random_string', length=16, seed='abc')))
+    first.size.should eq(16)
+    first.should eq(second)
+  end
+
+  it "evaluates lookup('random_string', ...) honoring min_* guarantees against a restricted pool" do
+    v = Hash(String, JSON::Any).new
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    result = evaluator.evaluate(%(lookup('random_string', length=5, min_upper=2, min_numeric=1, lower=false, numbers=false, special=false)))
+    result.size.should eq(5)
+    result.count(&.ascii_uppercase?).should eq(4)
+    result.count(&.ascii_number?).should eq(1)
+  end
+
+  it "raises lookup('random_string', ...) on an empty character pool like real Ansible" do
+    # The real plugin's get_random() is called unconditionally with the
+    # built pool and raises even when the remaining count is zero, so
+    # disabling every class flag fails the task there too - this mirrors
+    # that rather than papering over it.
+    v = Hash(String, JSON::Any).new
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    expect_raises(Exception, "Available characters cannot be None, please change constraints") do
+      evaluator.evaluate(%(lookup('random_string', length=3, upper=false, lower=false, numbers=false, special=false)))
+    end
+  end
+
   it "evaluates lookup('subelements', ...) yielding [parent, child] pairs" do
     v = Hash(String, JSON::Any).new
     v["users"] = JSON.parse(%([{"name": "alice", "groups": ["a", "b"]}, {"name": "bob", "groups": ["c"]}]))
