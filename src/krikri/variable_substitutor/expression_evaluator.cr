@@ -7,6 +7,7 @@ require "./filter_engine"
 require "./array_slicer"
 require "./variable_lookup"
 require "./crinja_renderer"
+require "./undefined"
 require "../variable_substitutor"
 
 module Krikri
@@ -127,6 +128,35 @@ module Krikri
           return @lookup.format_value_output(value)
         end
         rendered
+      end
+
+      # The undefined-typed form of #evaluate: Undefined::INSTANCE when the
+      # expression genuinely does not resolve to any value, the rendered
+      # String otherwise - which may itself be the literal text
+      # "undefined" when a real stored value collides with the sentinel.
+      #
+      # This is the seam the "undefined"-string sentinel architecture
+      # could not cross (KNOWN_MISSING.md's dotted-index collision entry):
+      # #evaluate's String return type cannot distinguish a genuine miss
+      # from a real value that happens to BE the text "undefined", so any
+      # caller that re-checks its own output (`rendered == "undefined"`)
+      # misreads the collision as a miss and, under strict-undefined,
+      # fails a task real Ansible runs. The disambiguation here never
+      # compares strings: a rendered "undefined" is demoted to Undefined
+      # only when the undefined-typed structural resolver
+      # (VariableLookup#resolve - nil on a miss, JSON::Any otherwise)
+      # ALSO finds no value. For the plain dotted/bracket chain shapes
+      # its strict-undefined and dynamic-dict-key callers feed it, that
+      # resolver is complete (quoted/integer/bare/bracket index keys,
+      # numeric dot-indexing into lists, dynamic keys via recursion,
+      # recursive re-templating of templated bases). Shapes resolve can't
+      # parse degrade to the old behavior rather than to a regression:
+      # they only reach the ambiguous branch when the render was already
+      # the sentinel text.
+      def evaluate_or_undefined(expr : String) : String | Undefined
+        rendered = evaluate(expr)
+        return rendered unless rendered == "undefined"
+        @lookup.resolve(expr).nil? ? Undefined::INSTANCE : rendered
       end
 
       private def container_shaped?(rendered : String) : Bool

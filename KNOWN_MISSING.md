@@ -18,8 +18,35 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.811`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.812`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## The dotted-index "undefined"-string collision closed with a real undefined type (0.9.811 -> 0.9.812)
+
+Closed the long-standing open gap: a real string value that happens to
+equal the literal text "undefined" was misread as a genuinely undefined
+reference on dotted numeric-index access (`s2.stdout_lines.0` after
+`command: printf 'undefined'` + `register: s2` - juju4.pocketid, round
+60151), failing the task under strict-undefined where real Ansible
+renders the string, while the bracket form `s2.stdout_lines[0]` was
+always fine. Root cause: `ExpressionEvaluator`'s String return type
+represents "no value" as the sentinel text itself, and the
+strict-decision seam re-checked its own rendered output against that
+same comparable string. The fix threads a real `Undefined` marker type
+(`variable_substitutor/undefined.cr`) through that seam:
+`ExpressionEvaluator#evaluate_or_undefined` returns `Undefined::INSTANCE`
+only when the render was the sentinel AND the undefined-typed
+structural resolver (`VariableLookup#resolve`, nil on a miss) also
+finds no value - never a string comparison - and
+`Krikri.expression_resolves_to_undefined?` (strict chained-subscript
+raise) and `dict_chain_key` (dynamic dict-key rendering, which also
+upgrades a real "undefined"-keyed dict's error message to real
+Ansible's attribute-miss wording) both consume it. Shapes `resolve`
+can't parse degrade to the old behavior, not to a regression.
+Regression specs in `spec/unit/undefined_sentinel_collision_spec.cr`
+(dotted/bracket, strict/lenient, and genuinely-undefined-still-raises).
 
 ---
 
@@ -656,38 +683,16 @@ Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
-- **A real string value that happens to equal the literal text
-  "undefined" gets misread as a genuinely undefined reference on dotted
-  numeric-index access (`x.0`, `x.1`, ...).** `ExpressionEvaluator`
-  represents "this reference has no value" as the plain string
-  `"undefined"` throughout (120+ call sites in
-  `variable_substitutor/expression_evaluator.cr` alone - a real
-  architectural choice, not a one-off), and the dotted-access path
-  (`evaluate_expr_dotted` / `@lookup.nested`) re-checks its own result
-  against that same literal string to decide whether to raise
-  strict-undefined. When the real value at that index genuinely IS the
-  text "undefined", the check can't tell it apart from an actual miss.
-  Minimal repro (verified live, not assumed):
-  ```yaml
-  - command: "printf 'undefined'"
-    register: s2
-  - debug: {msg: "{{ s2.stdout_lines[0] }}"}   # -> "undefined" - bracket form, fine
-  - debug: {msg: "{{ s2.stdout_lines.0 }}"}    # -> "'s2.stdout_lines.0' is undefined" - WRONG, dotted form
-  ```
+- **`lookup('community.general.random_string', ...)` is unimplemented and
+  silently resolves to the literal string `"undefined"` instead of failing
+  the task.** A lookup should fail as clearly as an unsupported module
+  does - see this file's own long-standing convention for exactly that.
   Found via `juju4.pocketid`'s own `secret: "{{ s2.stdout_lines.0 }}"`
-  (RHEL-family round 60151) - though the *actual* stored content there
-  traces to a separate, adjacent gap: `lookup('community.general.
-  random_string', ...)` is unimplemented and silently resolves to the
-  literal string `"undefined"` instead of failing the task (a lookup
-  should fail as clearly as an unsupported module does - see this
-  file's own long-standing convention for exactly that), so the
-  generated "secret" this role writes to disk is coincidentally the
-  string this bug collides with. Fixing the dotted-index sentinel
-  collision needs a real undefined TYPE threaded through
-  `ExpressionEvaluator` instead of a comparable string, which the
-  method's own `String` return type doesn't currently carry - broader
-  than a quick patch; revisit alongside `community.general.
-  random_string` support (also unimplemented, not attempted here).
+  (RHEL-family round 60151): the role generates a "secret" with that
+  lookup, so the string written to disk was coincidentally the sentinel
+  text - which is also what surfaced the dotted-index sentinel collision
+  (fixed in 0.9.812 by threading a real undefined TYPE through
+  `ExpressionEvaluator`'s strict-decision seam; narrative in git log).
 
 ---
 

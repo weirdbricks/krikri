@@ -232,15 +232,18 @@ module Krikri
   # raise_if_strict_undefined's chained-subscript branch (which has
   # to decide whether the inner expression ultimately renders to
   # "undefined" without itself recursing into substitute_impl). The
-  # detection is the same one ExpressionEvaluator's lenient render
-  # path uses: just evaluate the expression and check whether the
-  # rendered string is exactly "undefined" - the sentinel this
-  # codebase hands back from any missing inner-most bare-ref lookup.
-  # Doesn't apply to the bare-ref or filter-chain shapes the OTHER
-  # raise_if_strict_undefined branches already cover.
+  # detection is ExpressionEvaluator's undefined-typed
+  # #evaluate_or_undefined, not a string comparison against its own
+  # rendered output: the older rendered == "undefined" check could not
+  # tell a genuine miss from a REAL value that happens to be the text
+  # "undefined" (`printf 'undefined'` + `register: s2`, then
+  # `{{ s2.stdout_lines.0 }}` - juju4.pocketid round 60151 - failed the
+  # task where real Ansible renders the string; the bracket form,
+  # decided structurally, was never affected). Doesn't apply to the
+  # bare-ref or filter-chain shapes the OTHER raise_if_strict_undefined
+  # branches already cover.
   def self.expression_resolves_to_undefined?(expr : String, vars : Hash(String, JSON::Any)) : Bool
-    rendered = VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate(expr)
-    rendered == "undefined"
+    VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate_or_undefined(expr).is_a?(VariableSubstitutor::Undefined)
   end
 
   # For a chained lookup expression (`d['missing']`, `d.missing`,
@@ -311,8 +314,8 @@ module Krikri
       return inner[1..-2]
     end
 
-    rendered = VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate(inner)
-    rendered == "undefined" ? nil : rendered
+    rendered = VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate_or_undefined(inner)
+    rendered.is_a?(VariableSubstitutor::Undefined) ? nil : rendered
   end
 
   # The full strict-undefined error message for a failed lookup: a
