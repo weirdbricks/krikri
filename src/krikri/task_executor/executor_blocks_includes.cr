@@ -997,6 +997,17 @@ module Krikri
           if loop_var = task.loop_var
             included_task.vars[loop_var] = item
           end
+          # loop_control.index_var (e.g. riemers.gitlab-runner's own
+          # `index_var: runner_config_index`) was never propagated here -
+          # only loop_var/item were. The include_tasks: task's own vars:/
+          # name still resolved it fine (both render against vars_context
+          # directly, which DOES have it bound a few lines up), but any
+          # included task referencing it directly (config-runner.yml's own
+          # `prefix: gitlab-runner.{{ runner_config_index }}.`) saw
+          # "'runner_config_index' is undefined" instead.
+          if (index_var = task.index_var) && (bound = vars_context[index_var]?)
+            included_task.vars[index_var] = bound
+          end
         end
       end
       name_substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
@@ -1281,6 +1292,11 @@ module Krikri
           included_task.vars["item"] = item
           if (loop_var = task.loop_var) && (bound = vars_context[loop_var]?)
             included_task.vars[loop_var] = bound
+          end
+          # Same index_var propagation gap as run_include_tasks_once's
+          # identical fix above.
+          if (index_var = task.index_var) && (bound = vars_context[index_var]?)
+            included_task.vars[index_var] = bound
           end
         end
       end
