@@ -2030,3 +2030,223 @@ This round also surfaced and fixed a serious, separate infrastructure issue whil
 | weehal.sssd | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 58.35s vs cr 57.14s; warm py 5.80s vs cr 0.77s |
 | yutannihilation.module-cran | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 4.26s vs cr 3.68s; warm py 2.84s vs cr 0.44s |
 | zauberpony.mysql-query | ubuntu | ✅ clean, identical both cold and warm. Times: cold py 3.55s vs cr 4.52s; warm py 2.46s vs cr 0.24s |
+
+## Round 60300-60499 (RHEL-family 200-role batch via krikri-role-tester, 0.9.795 -> 0.9.797)
+
+200 previously-untested Galaxy roles (picked from Galaxy's live API, ordered by
+download count, cross-checked against every role name already in this file),
+run against RHEL family (Rocky 9.6) via `krikri-role-tester` across both the
+Kata (154 roles) and Atlantic.net (46 roles) backends concurrently, cold+warm
+on both engines. Result: 146 CLEAN, 46 DIVERGENT, 8 GALAXY_MISSING (404 on
+Galaxy). Two real engine bugs found, fixed, and live-reverified on a fresh
+Rocky 9.6 Kata host (0.9.796, 0.9.797); full `crystal spec` clean except the
+one pre-existing Docker-daemon-required integration failure (unrelated).
+Triage of the remaining divergences found several already-documented
+scope-cut/open-gap classes recurring (role-private custom modules/filter
+plugins, `local_action:`, out-of-scope Windows/SUSE modules) and a handful of
+genuinely new open leads (a `length` filter / `None` mismatch, a Crinja
+template include-path gap, an indirect-variable-lookup gap) flagged below for
+a future round rather than fixed here.
+
+| Role | OS | Status |
+|---|---|---|
+| lean_delivery.java | rocky | ✅ clean, identical both cold and warm. Times: cold py 62.01s vs cr 48.94s; warm py 19.52s vs cr 1.86s |
+| GROG.management-user | rocky | ✅ clean, identical both cold and warm. Times: cold py 7.35s vs cr 1.02s; warm py 1.79s vs cr 0.66s |
+| uoi-io.haproxy | rocky | ✅ clean, identical both cold and warm. Times: cold py 15.44s vs cr 15.40s; warm py 10.03s vs cr 1.68s |
+| inviqa.jumpcloud | rocky | ✅ clean, identical both cold and warm. Times: cold py 6.86s vs cr 9.04s; warm py 5.72s vs cr 1.15s |
+| clay584.parse_genie | rocky | ✅ clean, identical both cold and warm. Times: cold py 4.05s vs cr 8.32s; warm py 3.69s vs cr 1.14s |
+| skoneka.anxs-postgresql | rocky | ✅ clean, identical both cold and warm. Times: cold py 7.59s vs cr 9.35s; warm py 5.70s vs cr 1.01s |
+| lrk.sonarqube | rocky | ✅ clean, identical both cold and warm. Times: cold py 9.23s vs cr 6.76s; warm py 7.50s vs cr 5.82s |
+| inmotionhosting.nginx_proxy | rocky | ✅ clean, identical both cold and warm. Times: cold py 29.35s vs cr 10.40s; warm py 17.73s vs cr 1.84s |
+| orachide.fluentbit | rocky | ✅ clean, identical both cold and warm. Times: cold py 5.09s vs cr 3.55s; warm py 4.18s vs cr 2.45s |
+| troykinsella.concourse | rocky | ✅ clean, identical both cold and warm. Times: cold py 0.57s vs cr 0.01s; warm py 0.56s vs cr 0.01s |
+| pacifica.ansible_pacifica | rocky | ✅ clean, identical both cold and warm. Times: cold py 29.54s vs cr 9.89s; warm py 26.69s vs cr 2.28s |
+| inmotionhosting.letsencrypt | rocky | ✅ clean, identical both cold and warm. Times: cold py 8.17s vs cr 4.86s; warm py 18.43s vs cr 1.86s |
+| ome.deploy_archive | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.64s vs cr 1.32s; warm py 2.00s vs cr 0.62s |
+| rockandska.erlang | rocky | ✅ clean, identical both cold and warm. Times: cold py 12.75s vs cr 10.01s; warm py 7.93s vs cr 1.60s |
+| kevinquick.ansible_role_squid | rocky | ✅ clean, identical both cold and warm. Times: cold py 69.78s vs cr 50.32s; warm py 30.56s vs cr 1.47s |
+| ocha.yarn | rocky | ✅ clean, identical both cold and warm. Times: cold py 25.69s vs cr 12.13s; warm py 6.67s vs cr 3.24s |
+| kostyrev.openswan | rocky | ✅ clean, identical both cold and warm. Times: cold py 4.24s vs cr 2.82s; warm py 3.98s vs cr 2.40s |
+| webofmars.dummy | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.74s vs cr 1.47s; warm py 3.85s vs cr 0.85s |
+| bdellegrazie.haproxy_exporter | rocky | ✅ clean, identical both cold and warm. Times: cold py 5.12s vs cr 1.88s; warm py 3.82s vs cr 0.80s |
+| mkayontour.icingaweb2 | rocky | ✅ clean, identical both cold and warm. Times: cold py 0.66s vs cr 0.01s; warm py 0.65s vs cr 0.01s |
+| arubanetworks.aruba_central_role | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.72s vs cr 1.33s; warm py 2.59s vs cr 0.93s |
+| hispanico.nginx_revproxy | rocky | ✅ clean, identical both cold and warm. Times: cold py 134.41s vs cr 111.42s; warm py 139.65s vs cr 111.83s |
+| patrickjahns.openvpn_exporter | rocky | ✅ clean, identical both cold and warm. Times: cold py 0.53s vs cr 0.01s; warm py 0.52s vs cr 0.01s |
+| xe0nic.ansible_vprotect_node | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.22s vs cr 1.14s; warm py 1.87s vs cr 0.62s |
+| rtshome.pgsql | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.04s vs cr 1.08s; warm py 1.72s vs cr 0.61s |
+| jlund.golang | rocky | ✅ clean, identical both cold and warm. Times: cold py 9.53s vs cr 10.24s; warm py 5.87s vs cr 1.58s |
+| pgolm.monit | rocky | ✅ clean, identical both cold and warm. Times: cold py 0.48s vs cr 0.01s; warm py 0.49s vs cr 0.01s |
+| manala.apt | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.43s vs cr 1.15s; warm py 1.83s vs cr 0.67s |
+| l3d.akku_warning | rocky | ✅ clean, identical both cold and warm. Times: cold py 7.87s vs cr 3.09s; warm py 5.77s vs cr 2.18s |
+| peopledoc.oracle-java | rocky | ✅ clean, identical both cold and warm. Times: cold py 3.23s vs cr 1.18s; warm py 2.82s vs cr 0.75s |
+| manala.motd | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.34s vs cr 1.36s; warm py 1.79s vs cr 0.78s |
+| nephelaiio.plugins | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.72s vs cr 1.68s; warm py 4.16s vs cr 1.30s |
+| evandam.conda | rocky | ✅ clean, identical both cold and warm. Times: cold py 3.02s vs cr 1.83s; warm py 1.86s vs cr 0.74s |
+| manala.influxdb | rocky | ✅ clean, identical both cold and warm. Times: cold py 3.36s vs cr 1.20s; warm py 4.51s vs cr 1.37s |
+| peopledoc.jenkins-api | rocky | ✅ clean, identical both cold and warm. Times: cold py 3.02s vs cr 1.15s; warm py 4.78s vs cr 0.63s |
+| l3d.acmetool | rocky | ✅ clean, identical both cold and warm. Times: cold py 7.11s vs cr 6.01s; warm py 3.27s vs cr 2.51s |
+| monolithprojects.user_management | rocky | ✅ clean, identical both cold and warm. Times: cold py 7.86s vs cr 9.62s; warm py 6.97s vs cr 1.32s |
+| ome.selinux_utils | rocky | ✅ clean, identical both cold and warm. Times: cold py 8.19s vs cr 2.57s; warm py 3.75s vs cr 1.22s |
+| christiangda.awscli | rocky | ✅ clean, identical both cold and warm. Times: cold py 5.42s vs cr 2.87s; warm py 2.81s vs cr 0.99s |
+| andrewrothstein.packer | rocky | ✅ clean, identical both cold and warm. Times: cold py 18.32s vs cr 9.39s; warm py 4.87s vs cr 5.87s |
+| maxhoesel.postfix_nullclient | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.49s vs cr 1.37s; warm py 2.05s vs cr 0.68s |
+| RedHatOfficial.rhel8_stig | rocky | ✅ clean, identical both cold and warm. Times: cold py 99.67s vs cr 52.48s; warm py 91.45s vs cr 5.34s |
+| ome.java | rocky | ✅ clean, identical both cold and warm. Times: cold py 82.07s vs cr 72.55s; warm py 3.70s vs cr 1.02s |
+| maxhoesel.ddclient | rocky | ✅ clean, identical both cold and warm. Times: cold py 3.71s vs cr 1.27s; warm py 3.08s vs cr 0.64s |
+| dj-wasabi.zabbix-proxy | rocky | ✅ clean, identical both cold and warm. Times: cold py 0.85s vs cr 0.01s; warm py 0.61s vs cr 0.01s |
+| jasonheecs.ubuntu-fail2ban | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.99s vs cr 1.59s; warm py 2.44s vs cr 0.87s |
+| MindPointGroup.rhel7_cis | rocky | ✅ clean, identical both cold and warm. Times: cold py 4.34s vs cr 2.19s; warm py 2.92s vs cr 0.70s |
+| ecgalaxy.common_packages | rocky | ✅ clean, identical both cold and warm. Times: cold py 14.98s vs cr 17.98s; warm py 7.66s vs cr 1.28s |
+| manala.bind | rocky | ✅ clean, identical both cold and warm. Times: cold py 3.69s vs cr 1.15s; warm py 3.68s vs cr 0.72s |
+| systemli.apt_repositories | rocky | ✅ clean, identical both cold and warm. Times: cold py 5.06s vs cr 1.20s; warm py 5.55s vs cr 0.91s |
+| gabops.logrotate | rocky | ✅ clean, identical both cold and warm. Times: cold py 7.40s vs cr 3.81s; warm py 3.38s vs cr 0.75s |
+| dj-wasabi.zabbix-server | rocky | ✅ clean, identical both cold and warm. Times: cold py 0.63s vs cr 0.01s; warm py 0.52s vs cr 0.01s |
+| sdarwin.vnc | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.33s vs cr 1.16s; warm py 1.79s vs cr 0.60s |
+| roots.mailpit | rocky | ✅ clean, identical both cold and warm. Times: cold py 9.38s vs cr 3.27s; warm py 8.67s vs cr 3.07s |
+| ome.postgresql | rocky | ✅ clean, identical both cold and warm. Times: cold py 8.93s vs cr 3.79s; warm py 18.35s vs cr 13.11s |
+| ome.postgresql_client | rocky | ✅ clean, identical both cold and warm. Times: cold py 8.27s vs cr 3.40s; warm py 34.40s vs cr 13.90s |
+| ome.nginx | rocky | ✅ clean, identical both cold and warm. Times: cold py 28.37s vs cr 5.93s; warm py 11.81s vs cr 3.46s |
+| devoinc.rsyslog | rocky | ✅ clean, identical both cold and warm. Times: cold py 0.60s vs cr 0.02s; warm py 0.62s vs cr 0.01s |
+| ns1.ns1 | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.69s vs cr 1.47s; warm py 2.24s vs cr 0.91s |
+| nicolai86.finalize-release | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.22s vs cr 1.06s; warm py 2.22s vs cr 0.66s |
+| ovirt.vm-infra | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.48s vs cr 1.23s; warm py 1.82s vs cr 0.61s |
+| ecgalaxy.bootstrap | rocky | ✅ clean, identical both cold and warm. Times: cold py 6.08s vs cr 3.85s; warm py 9.35s vs cr 3.48s |
+| lean_delivery.jmeter | rocky | ✅ clean, identical both cold and warm. Times: cold py 5.08s vs cr 3.07s; warm py 6.25s vs cr 2.49s |
+| manageiq.manageiq_vmdb | rocky | ✅ clean, identical both cold and warm. Times: cold py 3.02s vs cr 1.36s; warm py 3.24s vs cr 1.64s |
+| ableton.pkg_mgr_path | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.20s vs cr 1.14s; warm py 2.13s vs cr 0.68s |
+| idealista.java_role | rocky | ✅ clean, identical both cold and warm. Times: cold py 4.92s vs cr 8.07s; warm py 3.54s vs cr 1.10s |
+| ome.omero_web | rocky | ✅ clean, identical both cold and warm. Times: cold py 42.69s vs cr 33.46s; warm py 12.73s vs cr 3.67s |
+| manala.ohmyzsh | rocky | ✅ clean, identical both cold and warm. Times: cold py 12.04s vs cr 1.73s; warm py 5.28s vs cr 1.04s |
+| devoinc.users | rocky | ✅ clean, identical both cold and warm. Times: cold py 0.68s vs cr 0.01s; warm py 0.60s vs cr 0.01s |
+| devoinc.systemd_service | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.43s vs cr 1.04s; warm py 2.04s vs cr 0.66s |
+| nertwork.ansible_openvpnas | rocky | ✅ clean, identical both cold and warm. Times: cold py 7.10s vs cr 1.42s; warm py 5.95s vs cr 1.04s |
+| ableton.prometheus_node_exporter | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.95s vs cr 1.47s; warm py 2.13s vs cr 0.65s |
+| ome.ssl_certificate | rocky | ✅ clean, identical both cold and warm. Times: cold py 13.39s vs cr 1.41s; warm py 10.84s vs cr 0.90s |
+| ichundu.squid | rocky | ✅ clean, identical both cold and warm. Times: cold py 50.87s vs cr 49.84s; warm py 7.11s vs cr 1.40s |
+| sbaerlocher.traefik | rocky | ✅ clean, identical both cold and warm. Times: cold py 4.16s vs cr 1.38s; warm py 4.24s vs cr 0.98s |
+| bdellegrazie.postgres_exporter | rocky | ✅ clean, identical both cold and warm. Times: cold py 0.88s vs cr 0.02s; warm py 0.83s vs cr 0.01s |
+| sansible.users_and_groups | rocky | ✅ clean, identical both cold and warm. Times: cold py 0.62s vs cr 0.01s; warm py 0.58s vs cr 0.01s |
+| indigo-dc.nfs | rocky | ✅ clean, identical both cold and warm. Times: cold py 0.54s vs cr 0.01s; warm py 0.53s vs cr 0.01s |
+| nertwork.librenms_containerized | rocky | ✅ clean, identical both cold and warm. Times: cold py 7.82s vs cr 1.21s; warm py 7.62s vs cr 1.21s |
+| ableton.jenkins_swarm_client | rocky | ✅ clean, identical both cold and warm. Times: cold py 3.09s vs cr 1.78s; warm py 2.33s vs cr 0.90s |
+| influxdata.chronograf | rocky | ✅ clean, identical both cold and warm. Times: cold py 0.68s vs cr 0.01s; warm py 0.82s vs cr 0.01s |
+| pescobar.apache_tomcat | rocky | ✅ clean, identical both cold and warm. Times: cold py 0.59s vs cr 0.01s; warm py 0.59s vs cr 0.01s |
+| ome.omero_user | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.30s vs cr 1.09s; warm py 2.14s vs cr 0.67s |
+| deekayen.repo_ius | rocky | ✅ clean, identical both cold and warm. Times: cold py 8.37s vs cr 4.31s; warm py 3.44s vs cr 0.66s |
+| torian.filebeat | rocky | ✅ clean, identical both cold and warm. Times: cold py 0.67s vs cr 0.01s; warm py 0.63s vs cr 0.01s |
+| William-Yeh.oracle_java | rocky | ✅ clean, identical both cold and warm. Times: cold py 0.59s vs cr 0.01s; warm py 0.74s vs cr 0.01s |
+| ansible-lockdown.ubuntu24_cis | rocky | ✅ clean, identical both cold and warm. Times: cold py 8.24s vs cr 1.95s; warm py 7.85s vs cr 1.30s |
+| pescobar.upgrade_all_packages | rocky | ✅ clean, identical both cold and warm. Times: cold py 23.11s vs cr 21.11s; warm py 3.06s vs cr 1.12s |
+| devoinc.openjdk | rocky | ✅ clean, identical both cold and warm. Times: cold py 9.26s vs cr 12.40s; warm py 7.90s vs cr 6.43s |
+| Jimdo.fastly | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.40s vs cr 1.32s; warm py 2.22s vs cr 0.81s |
+| ypsman.ipv6_disable | rocky | ✅ clean, identical both cold and warm. Times: cold py 5.31s vs cr 2.55s; warm py 3.74s vs cr 0.71s |
+| monolithprojects.hashicorp_tools | rocky | ✅ clean, identical both cold and warm. Times: cold py 8.66s vs cr 1.84s; warm py 5.66s vs cr 0.84s |
+| monolithprojects.system_update | rocky | ✅ clean, identical both cold and warm. Times: cold py 4.52s vs cr 8.59s; warm py 3.20s vs cr 0.94s |
+| yilativs.postgresql_tuning | rocky | ✅ clean, identical both cold and warm. Times: cold py 0.54s vs cr 0.01s; warm py 0.58s vs cr 0.01s |
+| MindPointGroup.kubernetes_stig | rocky | ✅ clean, identical both cold and warm. Times: cold py 6.21s vs cr 1.55s; warm py 9.01s vs cr 2.48s |
+| monolithprojects.hassio | rocky | ✅ clean, identical both cold and warm. Times: cold py 4.21s vs cr 1.74s; warm py 3.83s vs cr 0.96s |
+| monolithprojects.homeassistant_compliance | rocky | ✅ clean, identical both cold and warm. Times: cold py 4.22s vs cr 8.06s; warm py 3.60s vs cr 1.12s |
+| ome.omero_server | rocky | ✅ clean, identical both cold and warm. Times: cold py 12.36s vs cr 3.13s; warm py 5.74s vs cr 1.09s |
+| viasite-ansible.zsh | rocky | ✅ clean, identical both cold and warm. Times: cold py 42.91s vs cr 21.29s; warm py 20.22s vs cr 3.39s |
+| infothrill.lynis | rocky | ✅ clean, identical both cold and warm. Times: cold py 13.12s vs cr 8.83s; warm py 6.22s vs cr 2.82s |
+| Topface.chronos_task | rocky | ✅ clean, identical both cold and warm. Times: cold py 3.70s vs cr 1.24s; warm py 3.47s vs cr 5.94s |
+| johnpion.bind | rocky | ✅ clean, identical both cold and warm. Times: cold py 3.85s vs cr 1.26s; warm py 3.96s vs cr 1.23s |
+| diodonfrost.git_lfs | rocky | ✅ clean, identical both cold and warm. Times: cold py 24.00s vs cr 22.98s; warm py 10.23s vs cr 1.23s |
+| idealista.prometheus_apache_exporter_role | rocky | ✅ clean, identical both cold and warm. Times: cold py 0.64s vs cr 0.01s; warm py 0.82s vs cr 0.01s |
+| nephelaiio.elastic_repo | rocky | ✅ clean, identical both cold and warm. Times: cold py 4.46s vs cr 1.64s; warm py 4.04s vs cr 1.01s |
+| amtega.select_hostvars | rocky | ✅ clean, identical both cold and warm. Times: cold py 3.36s vs cr 8.39s; warm py 2.54s vs cr 0.96s |
+| idealista.prometheus_jmx_exporter-role | rocky | ✅ clean, identical both cold and warm. Times: cold py 22.80s vs cr 9.63s; warm py 22.19s vs cr 2.14s |
+| justereseau.nfs_mount | rocky | ✅ clean, identical both cold and warm. Times: cold py 14.89s vs cr 12.06s; warm py 3.46s vs cr 0.91s |
+| ezamriy.acpid | rocky | ✅ clean, identical both cold and warm. Times: cold py 6.67s vs cr 4.04s; warm py 5.28s vs cr 1.69s |
+| ome.iptables_raw | rocky | ✅ clean, identical both cold and warm. Times: cold py 12.17s vs cr 7.83s; warm py 7.60s vs cr 3.20s |
+| ableton.nix | rocky | ✅ clean, identical both cold and warm. Times: cold py 6.56s vs cr 2.03s; warm py 4.69s vs cr 0.68s |
+| Dell-Networking.dellos-vlan | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.23s vs cr 1.35s; warm py 2.12s vs cr 0.70s |
+| ezamriy.cloudlinux_extras | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.66s vs cr 1.41s; warm py 2.48s vs cr 0.74s |
+| cmprescott.xml | rocky | ✅ clean, identical both cold and warm. Times: cold py 3.54s vs cr 1.14s; warm py 1.90s vs cr 0.57s |
+| CSCfi.apache | rocky | ✅ clean, identical both cold and warm. Times: cold py 0.52s vs cr 0.01s; warm py 0.54s vs cr 0.01s |
+| deekayen.schannel | rocky | ✅ clean, identical both cold and warm. Times: cold py 4.97s vs cr 8.73s; warm py 4.39s vs cr 1.07s |
+| idealista.zookeeper_role | rocky | ✅ clean, identical both cold and warm. Times: cold py 3.12s vs cr 1.20s; warm py 2.59s vs cr 0.62s |
+| wcm_io_devops.aem_service | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.56s vs cr 1.54s; warm py 2.24s vs cr 0.78s |
+| rossmcdonald.telegraf | rocky | ✅ clean, identical both cold and warm. Times: cold py 0.50s vs cr 0.01s; warm py 0.54s vs cr 0.01s |
+| ome.docker | rocky | ✅ clean, identical both cold and warm. Times: cold py 56.52s vs cr 49.14s; warm py 20.84s vs cr 4.88s |
+| wcm_io_devops.aem_security | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.50s vs cr 1.40s; warm py 1.87s vs cr 0.63s |
+| wtanaka.haproxy | rocky | ✅ clean, identical both cold and warm. Times: cold py 0.55s vs cr 0.01s; warm py 0.56s vs cr 0.01s |
+| cjw296.createtag | rocky | ✅ clean, identical both cold and warm. Times: cold py 3.13s vs cr 1.17s; warm py 2.73s vs cr 0.83s |
+| fedelemantuano.kibana | rocky | ✅ clean, identical both cold and warm. Times: cold py 0.52s vs cr 0.01s; warm py 0.52s vs cr 0.01s |
+| wcm_io_devops.aem_dispatcher_flush | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.23s vs cr 1.12s; warm py 2.00s vs cr 0.64s |
+| f5devcentral.f5ansible | rocky | ✅ clean, identical both cold and warm. Times: cold py 4.67s vs cr 8.17s; warm py 3.27s vs cr 1.20s |
+| hifis.netplan | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.29s vs cr 1.17s; warm py 1.84s vs cr 0.67s |
+| ahuffman.sudoers | rocky | ✅ clean, identical both cold and warm. Times: cold py 5.04s vs cr 1.21s; warm py 4.36s vs cr 0.91s |
+| ericsysmin.kubectl | rocky | ✅ clean, identical both cold and warm. Times: cold py 4.71s vs cr 2.96s; warm py 4.22s vs cr 1.58s |
+| ome.cli_utils | rocky | ✅ clean, identical both cold and warm. Times: cold py 27.10s vs cr 25.08s; warm py 32.84s vs cr 4.85s |
+| idiv-biodiversity.ssl_certificates | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.77s vs cr 1.38s; warm py 2.60s vs cr 0.71s |
+| lmickh.sysctl | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.73s vs cr 1.33s; warm py 2.68s vs cr 0.79s |
+| ctorgalson.files | rocky | ✅ clean, identical both cold and warm. Times: cold py 4.74s vs cr 2.77s; warm py 2.88s vs cr 0.92s |
+| stackhpc.dell-powerconnect-switch | rocky | ✅ clean, identical both cold and warm. Times: cold py 4.28s vs cr 1.32s; warm py 6.24s vs cr 1.43s |
+| stackhpc.mellanox-switch | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.99s vs cr 1.34s; warm py 3.15s vs cr 1.08s |
+| diodonfrost.terragrunt | rocky | ✅ clean, identical both cold and warm. Times: cold py 11.94s vs cr 10.94s; warm py 7.00s vs cr 1.77s |
+| nephelaiio.filebeat | rocky | ✅ clean, identical both cold and warm. Times: cold py 5.21s vs cr 8.19s; warm py 3.83s vs cr 0.92s |
+| wcm_io_devops.conga_bundle_files | rocky | ✅ clean, identical both cold and warm. Times: cold py 4.73s vs cr 1.60s; warm py 3.36s vs cr 1.15s |
+| ome.prometheus_node | rocky | ✅ clean, identical both cold and warm. Times: cold py 17.13s vs cr 5.45s; warm py 9.60s vs cr 1.86s |
+| ome.nginx_proxy | rocky | ✅ clean, identical both cold and warm. Times: cold py 23.41s vs cr 6.43s; warm py 22.92s vs cr 3.51s |
+| ome.omero_web_django_prometheus | rocky | ✅ clean, identical both cold and warm. Times: cold py 39.92s vs cr 25.42s; warm py 20.48s vs cr 3.38s |
+| ome.versioncontrol_utils | rocky | ✅ clean, identical both cold and warm. Times: cold py 51.35s vs cr 34.09s; warm py 11.06s vs cr 3.86s |
+| l3d.ntp | rocky | ✅ clean, identical both cold and warm. Times: cold py 8.23s vs cr 12.18s; warm py 6.91s vs cr 3.27s |
+| fubarhouse.golang | rocky | ✅ clean, identical both cold and warm. Times: cold py 68.20s vs cr 24.71s; warm py 20.30s vs cr 1.39s |
+| ome.network | rocky | ✅ clean, identical both cold and warm. Times: cold py 5.28s vs cr 9.61s; warm py 3.37s vs cr 1.17s |
+| centinel.dnf_automatic | rocky | ✅ clean, identical both cold and warm. Times: cold py 2.49s vs cr 1.09s; warm py 2.39s vs cr 0.72s |
+| inmotionhosting.mysql | rocky | ⚠️ not yet root-caused this round - recap diverges across a larger mysql/apache/php_fpm install chain; needs isolated re-run. Times: cold py 46.72s vs cr 48.15s; warm py 15.42s vs cr 1.34s. |
+| inmotionhosting.apache | rocky | ⚠️ largely environmental (dnf `cpio: cap_set_file` unpack error installing `httpd-core`, hit identically as a real-Ansible failure too) with a residual recap-count divergence not yet isolated. Times: cold py 7.60s vs cr 31.61s; warm py 17.10s vs cr 1.56s. |
+| inmotionhosting.php_fpm | rocky | ⚠️ not yet root-caused this round - needs isolated re-run. Times: cold py 4.58s vs cr 121.79s; warm py 4.06s vs cr 9.44s. |
+| MindPointGroup.rhel9_stig | rocky | ⚠️ `ansible.posix.acl` unimplemented (unavailable-module gap, gracefully degraded). Times: cold py 71.86s vs cr 4.56s; warm py 5.17s vs cr 2.57s. |
+| imntreal.smallstep_ca | rocky | ⚠️ OPEN LEAD (not yet fixed) - a `command:`/`shell:` task invoking `step ca init` fails under krikri with "error allocating terminal: open /dev/tty" while real ansible-playbook succeeds; likely a stdin/pty handling difference in the command plugin's remote exec. Times: cold py 32.59s vs cr 11.49s; warm py 31.06s vs cr 7.97s. |
+| deekayen.chocolatey | rocky | ⚠️ Windows-only role (`win_stat`) - out of this project's Linux scope. Times: cold py 3.58s vs cr 1.53s; warm py 2.77s vs cr 1.13s. |
+| inmotionhosting.monit | rocky | ⚠️ OPEN LEAD (not yet fixed) - a looped task does an indirect variable lookup by name (`item.var_name` used to reference e.g. `apache_daemon`) that real Ansible resolves but krikri reports undefined. Needs tracing in ExpressionEvaluator's indirect-lookup path. Times: cold py 51.43s vs cr 39.04s; warm py 12.08s vs cr 1.67s. |
+| istvano.microk8s | rocky | ⚠️ `pacman` (SUSE-only) - out of this project's Ubuntu/RHEL scope. Times: cold py 4.64s vs cr 3.14s; warm py 3.44s vs cr 2.22s. |
+| gekmihesg.openwrt | rocky | ⚠️ same-fail candidate - real ansible fails inside the role's own custom Python code ("not enough values to unpack", a role-side bug); krikri skips the equivalent unimplemented custom action. Not yet confirmed as the identical root cause. Times: cold py 2.06s vs cr 8.55s; warm py 1.08s vs cr 0.97s. |
+| xe0nic.ansible_vprotect_server | rocky | ⚠️ environmental - `systemd` service dependency failure starting `vprotect-server` on this Rocky 9.6 image, hit by real ansible-playbook too; residual recap-count divergence not yet isolated. Times: cold py 178.69s vs cr 17.88s; warm py 37.60s vs cr 4.49s. |
+| oasis_roles.system_repositories | rocky | ⚠️ role-private Python filter plugin (`filter_plugins/exclude.py`) - already-documented scope cut (KNOWN_MISSING, same class as role-local custom modules). Times: cold py 4.22s vs cr 8.10s; warm py 2.61s vs cr 0.96s. |
+| jonaspammer.core_dependencies | rocky | ⚠️ unconfirmed - an RPM transaction failure ("Error unpacking rpm package shadow-utils") on this specific host; not yet reproduced independently, may be host-state noise rather than an engine bug. Times: cold py 20.89s vs cr 15.86s; warm py 6.80s vs cr 1.13s. |
+| Dell-Networking.dellos-system | rocky | ⚠️ role/environment mismatch, not a krikri bug - `dellos9_config` was removed from ansible-core into an uninstalled legacy collection; real ansible-playbook itself fails to resolve the module (rc=4, no recap) while krikri's own built-in implementation runs happily. Confirmed identically on 3 sibling `Dell-Networking.dellos-*` roles. Times: cold py 0.72s vs cr 1.03s; warm py 0.71s vs cr 0.65s. |
+| ome.python3_virtualenv | rocky | ⚠️ engine-difference class, not yet formally scoped - real ansible's `pip:` module fails when the target's system Python lacks the `packaging` library; krikri's compiled plugin has no such target-side dependency and succeeds. Same shape as `nertwork.nextcloud_containerized` below. Times: cold py 16.77s vs cr 13.61s; warm py 13.39s vs cr 2.06s. |
+| Dell-Networking.dellos-logging | rocky | ⚠️ same `dellos9_config`/missing-collection mismatch as `.dellos-system`. Times: cold py 0.63s vs cr 8.80s; warm py 0.60s vs cr 1.32s. |
+| Dell-Networking.dellos-ntp | rocky | ⚠️ same `dellos9_config`/missing-collection mismatch as `.dellos-system`. Times: cold py 0.76s vs cr 9.37s; warm py 0.93s vs cr 1.04s. |
+| danielweeber.windows_exporter | rocky | ⚠️ Windows-only role (`win_command`) - out of scope. Times: cold py 3.19s vs cr 1.52s; warm py 2.62s vs cr 0.75s. |
+| Dell-Networking.dellos-snmp | rocky | ⚠️ same `dellos9_config`/missing-collection mismatch as `.dellos-system`. Times: cold py 0.80s vs cr 1.21s; warm py 0.67s vs cr 0.74s. |
+| libre_ops.metabase | rocky | ⚠️ environmental - both engines race a Metabase service that isn't accepting connections yet on `localhost:3000`; residual recap-count divergence not yet isolated. Times: cold py 112.00s vs cr 15.44s; warm py 93.87s vs cr 55.89s. |
+| levonet.ci_github_pr_description | rocky | ⚠️ OPEN LEAD (not yet fixed) - real ansible's `length` filter fails on a `None` input ("object of type 'NoneType' has no len()"); krikri's `length` filter appears to tolerate `None` and lets the task pass instead of failing. Needs a fix in the filter engine. Times: cold py 2.81s vs cr 1.46s; warm py 2.28s vs cr 0.80s. |
+| manageiq.manageiq_automate | rocky | ⚠️ `manageiq_automate` (uncommon collection module) unimplemented. Times: cold py 5.34s vs cr 1.69s; warm py 6.66s vs cr 1.29s. |
+| criecm.common | rocky | ⚠️ not yet root-caused - real ansible's `first_found` lookup fails to find a file that krikri's own recap suggests it partially handles differently; needs isolated re-run. Times: cold py 4.40s vs cr 9.30s; warm py 3.63s vs cr 1.06s. |
+| nertwork.nextcloud_containerized | rocky | ⚠️ same engine-difference class as `ome.python3_virtualenv` - real ansible's module needs the target's Python to have `requests` installed; krikri's compiled plugin doesn't. Times: cold py 7.31s vs cr 1.73s; warm py 7.16s vs cr 0.68s. |
+| mongrelion.docker | rocky | ⚠️ environmental - both engines ultimately fail installing a pinned, no-longer-available `docker-ce-17.06*`; cold py took 189s (retrying) vs cr's near-instant failure, otherwise same class of both-fail. Times: cold py 189.03s vs cr 0.96s; warm py 181.23s vs cr 0.74s. |
+| alvistack.openjdk | rocky | ✅ **FIXED 0.9.796** - `dnf:`/`yum: state: latest` unconditionally ran `dnf update <pkg>`, which fails outright for a not-yet-installed package ("No match for argument"); real Ansible installs it. Live-reverified idempotent on Rocky 9.6. Times: cold py 73.27s vs cr 59.54s; warm py 21.43s vs cr 52.80s. |
+| gabops.cron | rocky | ✅ **FIXED 0.9.797** - a blank `enablerepo:`/`disablerepo:` (e.g. an unrendered var defaulting to `''`) produced a literal `--enablerepo=` flag, and dnf's `Error: Unknown repo: ''` didn't match the existing unknown-repo-retry regex (required 1+ chars). Now skipped like real Ansible. Live-reverified on Rocky 9.6. Times: cold py 5.99s vs cr 1.52s; warm py 5.71s vs cr 2.13s. |
+| geerlingguy.php-tideways | rocky | ⚠️ not yet root-caused this round - needs isolated re-run. Times: cold py 50.38s vs cr 31.19s; warm py 12.40s vs cr 1.13s. |
+| ableton.fastbuild | rocky | ⚠️ Windows-only role (`ansible.windows.win_shell`) - out of scope. Times: cold py 2.89s vs cr 1.25s; warm py 2.62s vs cr 0.63s. |
+| ome.lvm_partition | rocky | ⚠️ `ansible.builtin.lvol` unimplemented. Times: cold py 2.98s vs cr 1.85s; warm py 1.77s vs cr 0.61s. |
+| amtega.etc_hosts | rocky | ⚠️ role-private custom module `_check_platform` (library/*.py) - documented scope cut, same class as `wcm_io_devops.conga_facts`. Times: cold py 2.21s vs cr 1.03s; warm py 2.07s vs cr 0.71s. |
+| amtega.mounts | rocky | ⚠️ role-private custom module `_check_platform` - same documented scope cut. Times: cold py 2.33s vs cr 1.22s; warm py 2.03s vs cr 0.66s. |
+| wcm_io_devops.conga_files | rocky | ⚠️ role-private custom module `conga_facts` (action_plugins/conga_facts.py) - documented scope cut (KNOWN_MISSING round197). Times: cold py 5.23s vs cr 8.55s; warm py 3.22s vs cr 1.09s. |
+| GROG.fqdn | rocky | ⚠️ not yet root-caused this round - needs isolated re-run. Times: cold py 6.38s vs cr 1.24s; warm py 3.98s vs cr 0.72s. |
+| amtega.proxy_client | rocky | ⚠️ role-private custom module `_check_platform` - same documented scope cut. Times: cold py 5.14s vs cr 8.61s; warm py 3.06s vs cr 1.09s. |
+| wcm_io_devops.conga_aem_dispatcher_smoke_test | rocky | ⚠️ role-private custom module `conga_facts` - same documented scope cut. Times: cold py 3.04s vs cr 1.64s; warm py 2.33s vs cr 0.84s. |
+| RedHatOfficial.rhel8_pci_dss | rocky | ⚠️ not yet root-caused - a very large STIG-style role; cr's recap (`ok=20 skipped=96`) suggests it stopped expanding much earlier than py's (`ok=87 skipped=2236`), likely one early unimplemented plugin short-circuiting a huge shared include tree. Needs the specific task identified. Times: cold py 244.45s vs cr 9.05s; warm py 182.58s vs cr 4.40s. |
+| tecnativa.hetzner_rescue_installimage | rocky | ⚠️ environmental - role expects Hetzner's real bare-metal rescue-system `installimage` tool, absent on this Kata/Atlantic Rocky image; both engines fail, exact shape not yet diffed. Times: cold py 5.00s vs cr 1.17s; warm py 5.02s vs cr 0.84s. |
+| xlab_si.nuage_remove_entity | rocky | ⚠️ `local_action:` not parsed - already-documented open gap (KNOWN_MISSING), 3rd confirming role. Times: cold py 3.04s vs cr 1.59s; warm py 2.29s vs cr 0.73s. |
+| xlab_si.nuage_create_entity | rocky | ⚠️ `local_action:` not parsed - same already-documented open gap, 4th confirming role. Times: cold py 2.54s vs cr 1.25s; warm py 2.31s vs cr 0.75s. |
+| wcm_io_devops.conga_aem_cms | rocky | ⚠️ role-private custom module `conga_facts` - same documented scope cut. Times: cold py 5.23s vs cr 8.16s; warm py 4.80s vs cr 1.33s. |
+| CTL-Fed-Security.freeipa-client | rocky | ⚠️ not yet root-caused - real ansible fails an `assert:`, krikri fails differently; needs isolated re-run. Times: cold py 4.38s vs cr 2.59s; warm py 3.38s vs cr 1.01s. |
+| collivier.xtesting | rocky | ⚠️ `community.docker.current_container_facts` unimplemented. Times: cold py 678.63s vs cr 48.60s; warm py 223.29s vs cr 3.87s. |
+| smlloyd.authselect | rocky | ⚠️ OPEN LEAD (not yet fixed) - a `.j2` template's relative include/extends path (`templates/base-user-nsswitch.conf.j2`) resolves under real Jinja2 but Crinja's `FileSystemLoader` can't find it. Likely a CrinjaRenderer template-search-path gap. Times: cold py 18.04s vs cr 15.78s; warm py 7.35s vs cr 1.05s. |
+| wcm_io_devops.conga_aem_smoke_test | rocky | ⚠️ role-private custom module `conga_facts` - same documented scope cut. Times: cold py 3.21s vs cr 1.85s; warm py 2.60s vs cr 0.74s. |
+| amtega.packages | rocky | ⚠️ role-private custom module `_check_platform` - same documented scope cut. Times: cold py 2.61s vs cr 1.31s; warm py 2.01s vs cr 0.84s. |
+| lenovo.lxca-config | rocky | ⚠️ not yet root-caused - both engines fail on an undefined `lxca_url` var (role requires external Lenovo XClarity connection details never supplied), differing failure text; needs isolated re-run. Times: cold py 2.20s vs cr 1.15s; warm py 1.93s vs cr 0.64s. |
+| wpninfra_fluent_bit | rocky | ❌ untestable - not on Ansible Galaxy (404) |
+| stackhpc_drac-facts | rocky | ❌ untestable - not on Ansible Galaxy (404) |
+| FGtatsuro_python-requirements | rocky | ❌ untestable - not on Ansible Galaxy (404) |
+| pescobar_katello_client | rocky | ❌ untestable - not on Ansible Galaxy (404) |
+| pescobar_labkey | rocky | ❌ untestable - not on Ansible Galaxy (404) |
+| devoinc_graalvm_ce | rocky | ❌ untestable - not on Ansible Galaxy (404) |
+| metfan1981_ansible_role_strongswan | rocky | ❌ untestable - not on Ansible Galaxy (404) |
+| ansible-network_juniper_junos | rocky | ❌ untestable - not on Ansible Galaxy (404) |

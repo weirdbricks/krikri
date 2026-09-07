@@ -18,10 +18,84 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.795`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.797`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
+
+## Round 60300-60499: RHEL-family 200-role batch (0.9.795 -> 0.9.797)
+
+200 previously-untested Galaxy roles (sourced live from Galaxy's own API,
+ranked by download count, cross-checked against every role name already in
+`ROLES_TESTED.md`) run against Rocky 9.6 via `krikri-role-tester`, split
+across the Kata and Atlantic.net backends concurrently. 146 CLEAN, 46
+DIVERGENT, 8 GALAXY_MISSING. Full per-role detail and timings are in
+`ROLES_TESTED.md`'s own round table - this narrative covers only the two
+real engine bugs found and fixed, plus new open leads.
+
+- **`dnf:`/`yum: state: latest` failed outright on a not-yet-installed
+  package.** `handle_update` (shared by both plugins via
+  `PluginHelpers::RpmPackage`) unconditionally shelled out to
+  `dnf/yum update <name>` for every requested name regardless of whether it
+  was already installed - `update` only ever applies to an already-present
+  package, so a fresh `dnf update temurin-21-jdk` on a host that's never
+  had it hard-fails ("No match for argument", "No packages marked for
+  upgrade") where real Ansible's dnf module treats `state: latest` as
+  "install if absent, else upgrade" and succeeds. Found via
+  `alvistack.openjdk` (round 60420). `package.cr`'s own separate dnf/yum
+  dispatch already had this right (its own comment names an earlier,
+  independently-fixed instance of the identical bug class in `apt.cr`) -
+  only the standalone `dnf.cr`/`yum.cr` plugins' shared helper had the
+  live bug. Fixed by reusing the same `classify_install_packages`/
+  `run_install_batch`/`run_update_batch` helpers `handle_install` already
+  used correctly, routing "not installed" to an install batch instead of
+  an update batch. Live-reverified on a fresh Rocky 9.6 Kata host: installs
+  cleanly, idempotent warm rerun (`ok` not `changed`). No unit spec (real
+  dnf mutation against a live package manager, same class as the existing
+  apt-mutation exemption) - verified live instead.
+- **A blank `enablerepo:`/`disablerepo:` value crashed the task instead of
+  being a no-op.** `build_dnf_options` passed an empty string straight
+  through as a bare `--enablerepo=` flag, and dnf's resulting `Error:
+  Unknown repo: ''` didn't match the existing unknown-repo-tolerance retry
+  (`/Unknown repo: '([^']+)'/` requires at least one character inside the
+  quotes) - so the task hard-failed instead of the retry stripping the
+  flag and continuing, which is what happens for a NAMED unknown repo
+  (the buluma.elasticsearch_curator fix this retry exists for in the
+  first place). Real Ansible's dnf module simply omits a blank repo name
+  entirely. Found via `gabops.cron` (round 60447, an `enablerepo:` sourced
+  from a var that resolves empty on this role's default path). Fixed by
+  skipping blank entries in `build_dnf_options` before they ever reach the
+  command line. Live-reverified on a fresh Rocky 9.6 Kata host.
+- **New open leads, not fixed this round** (see `ROLES_TESTED.md`'s round
+  table for the exact role/evidence):
+  - `levonet.ci_github_pr_description`: real Ansible's `length` filter
+    fails on a `None` input; krikri's own `length` filter appears to
+    tolerate it and lets the task pass instead of failing the same way.
+  - `smlloyd.authselect`: a `.j2` template's relative include/extends path
+    resolves under real Jinja2 but Crinja's `FileSystemLoader` reports it
+    not found - a template-search-path gap in `CrinjaRenderer`.
+  - `inmotionhosting.monit`: a looped task's indirect variable lookup by
+    name (`item.var_name` used to reference e.g. `apache_daemon`) resolves
+    under real Ansible but is reported undefined here - likely an
+    `ExpressionEvaluator` indirect-lookup gap.
+  - `imntreal.smallstep_ca`: a `command:`/`shell:` task invoking `step ca
+    init` fails here with "error allocating terminal: open /dev/tty" while
+    real ansible-playbook succeeds on the identical task - a possible
+    stdin/pty handling difference in the command plugin's remote exec.
+  - Several roles (`inmotionhosting.mysql/.apache/.php_fpm`,
+    `geerlingguy.php-tideways`, `GROG.fqdn`, `criecm.common`,
+    `CTL-Fed-Security.freeipa-client`, `lenovo.lxca-config`,
+    `RedHatOfficial.rhel8_pci_dss`) diverged but weren't individually
+    root-caused this round - flagged in `ROLES_TESTED.md` for a follow-up
+    pass rather than guessed at here.
+- Confirmed, not new: `local_action:`/`action:` not being parsed (already
+  an open gap above) hit again via `xlab_si.nuage_remove_entity`/
+  `.nuage_create_entity` - 3rd and 4th confirming roles, no new evidence
+  needed. Role-private custom Python modules/filter plugins (already a
+  deliberate limit below) hit again via `amtega.*`'s own `_check_platform`
+  and `wcm_io_devops.conga_*`'s own `conga_facts` (both already documented
+  under `wcm_io_devops.aem_dispatcher` in `ROLES_TESTED.md`) and
+  `oasis_roles.system_repositories`'s own `filter_plugins/exclude.py`.
 
 ## Round 60200: security/robustness review batch (0.9.795)
 

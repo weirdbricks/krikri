@@ -277,39 +277,70 @@ module Krikri
         end
       end
 
+      # Real Ansible's dnf/yum module `state: latest` installs a not-yet-
+      # installed package (there is nothing to "update" yet) and upgrades
+      # one that's already present - it never runs a bare `dnf/yum update
+      # <name>` unconditionally, which fails outright ("No match for
+      # argument", "No packages marked for upgrade") for any name not
+      # already installed. Found via alvistack.openjdk (RHEL-family round
+      # 60420): `dnf: {name: temurin-21-jdk, state: latest}` on a fresh
+      # host installed fine under real ansible-playbook but failed here.
+      # Reuses the same classify/batch helpers `handle_install` already
+      # gets right, just routing "not installed" to an install batch
+      # instead of `already_installed`.
       private def handle_update(names : Array(String), options : String) : PluginResult
-        pkg_list = names.map { |pth| quote_package(pth) }.join(" ")
-        cmd = "#{pkg_manager_binary} update #{options} #{pkg_list}"
+        to_install = [] of String
+        to_update = [] of String
 
-        result = remote_exec_tolerating_unknown_repo(cmd)
-
-        success = result[:exit_code] == 0
-
-        if success
-          # Check if anything was actually updated
-          changed = result[:stdout].includes?("Upgraded:") ||
-                    result[:stdout].includes?("Installed:") ||
-                    result[:stdout].includes?("Obsoleted:")
-
-          msg = changed ? "Packages updated to latest version" : "Packages already at latest version"
-
-          PluginResult.new(
-            changed: changed,
-            failed: false,
-            msg: msg,
-            stdout: result[:stdout],
-            exit_code: 0
-          )
-        else
-          PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "Failed to update packages",
-            stdout: result[:stdout],
-            stderr: result[:stderr],
-            exit_code: result[:exit_code]
-          )
+        names.each do |pkg|
+          if package_group?(pkg) || url_or_file?(pkg)
+            to_install << pkg
+          elsif package_installed?(pkg)
+            to_update << pkg
+          else
+            to_install << pkg
+          end
         end
+
+        changed = false
+        messages = [] of String
+        all_output = [] of String
+
+        unless to_install.empty?
+          outcome = run_install_batch(to_install, options)
+          all_output << outcome[:output]
+
+          failure = outcome[:failure]
+          return failure if failure
+
+          changed ||= outcome[:changed]
+          if message = outcome[:message]
+            messages << message
+          end
+        end
+
+        unless to_update.empty?
+          outcome = run_update_batch(to_update, options)
+          all_output << outcome[:output]
+
+          failure = outcome[:failure]
+          return failure if failure
+
+          changed ||= outcome[:changed]
+          if message = outcome[:message]
+            messages << message
+          end
+        end
+
+        msg = messages.empty? ? "Packages already at latest version" : messages.join("; ")
+
+        PluginResult.new(
+          changed: changed,
+          failed: false,
+          msg: msg,
+          stdout: all_output.join("\n"),
+          exit_code: 0
+        )
       end
 
       private def run_install_batch(to_install : Array(String), options : String) : BatchOutcome
@@ -497,16 +528,22 @@ module Krikri
         # Always use -y for non-interactive
         options << "-y"
 
-        # Enable/disable repos
+        # Enable/disable repos - a blank entry (e.g. `enablerepo: "{{ some_var
+        # | default('') }}"` resolving empty) is real Ansible's own no-op,
+        # not a repo named "". Passing it through as `--enablerepo=` instead
+        # makes dnf hard-fail with `Error: Unknown repo: ''` - found via
+        # gabops.cron (RHEL-family round 60447).
         if enablerepo = @params["enablerepo"]?
           enablerepo.split(",").each do |repo|
-            options << "--enablerepo=#{repo.strip}"
+            repo = repo.strip
+            options << "--enablerepo=#{repo}" unless repo.empty?
           end
         end
 
         if disablerepo = @params["disablerepo"]?
           disablerepo.split(",").each do |repo|
-            options << "--disablerepo=#{repo.strip}"
+            repo = repo.strip
+            options << "--disablerepo=#{repo}" unless repo.empty?
           end
         end
 
