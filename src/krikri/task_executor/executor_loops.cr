@@ -693,7 +693,7 @@ module Krikri
                        end
                      end
 
-      finish_looped_task(task, host, rendered_items, item_results, fact_hosts)
+      finish_looped_task(task, host, rendered_items, item_results, fact_hosts, base_vars_context)
     end
 
     # Whether execute_looped_task can send every surviving item through
@@ -816,7 +816,7 @@ module Krikri
     # both the batched and one-at-a-time paths) so register:/notify:/
     # stats/halt bookkeeping stays byte-identical regardless of which
     # transport produced the results.
-    private def finish_looped_task(task : Task, host : Host, loop_items : Array(JSON::Any), item_results : Array(JSON::Any?), fact_hosts : Array(Host)? = nil) : Nil
+    private def finish_looped_task(task : Task, host : Host, loop_items : Array(JSON::Any), item_results : Array(JSON::Any?), fact_hosts : Array(Host)? = nil, base_vars_context : Hash(String, JSON::Any)? = nil) : Nil
       results = [] of JSON::Any
       any_changed = false
       any_failed = false
@@ -831,7 +831,16 @@ module Krikri
       # fact changes are not reflected in a LATER item's loop_control.
       # label - display-only, and consistent with this file's established
       # "first host" precedent for banner rendering.
-      label_base_context = build_vars_context(task, host)
+      # Reuse the caller's own context (built just before the loop ran)
+      # instead of rebuilding it here, and skip the per-item copies
+      # entirely when the task has no loop_control.label - item_label_for
+      # falls straight through to item_display unless a label is
+      # configured, so the context was pure waste in the common case.
+      # Tradeoff, documented: a looped set_fact:'s mid-loop fact changes
+      # are not reflected in a LATER item's loop_control.label -
+      # display-only, and consistent with this file's established "first
+      # host" precedent for banner rendering.
+      label_base_context = task.loop_label ? (base_vars_context || build_vars_context(task, host)) : nil
       loop_items.each_with_index do |item, idx|
         result = item_results[idx]
         next unless result
@@ -846,14 +855,20 @@ module Krikri
 
         # loop_control.label renders against this item, so it needs a
         # context carrying it - this method is handed only the results.
-        label_context = label_base_context.dup
-        label_context["item"] = item
-        if loop_var = task.loop_var
-          label_context[loop_var] = item
-        end
-        label_context["ansible_loop"] = ansible_loop_vars(loop_items, idx) if task.loop_extended?
+        # No label configured -> no context needed at all.
+        item_label = if base = label_base_context
+                       label_context = base.dup
+                       label_context["item"] = item
+                       if loop_var = task.loop_var
+                         label_context[loop_var] = item
+                       end
+                       label_context["ansible_loop"] = ansible_loop_vars(loop_items, idx) if task.loop_extended?
+                       item_label_for(task, item, label_context, host)
+                     else
+                       item_display(item)
+                     end
 
-        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_label_for(task, item, label_context, host), ignore_errors: task.ignore_errors?, no_log: task.no_log?)
+        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_label, ignore_errors: task.ignore_errors?, no_log: task.no_log?)
 
         result_hash = result.as_h.dup
         result_hash["item"] = item
