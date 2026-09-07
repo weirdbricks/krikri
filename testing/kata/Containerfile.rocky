@@ -18,4 +18,28 @@ RUN dnf makecache -y && dnf install -y --allowerasing \
 COPY key.pub /root/.ssh/authorized_keys
 RUN chmod 600 /root/.ssh/authorized_keys && \
     sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+# `dnf install` above ran under podman's own build-time network (a
+# libvirt-style 192.168.122.0/24 bridge), and NetworkManager baked that
+# network's resolver into the image layer. That address is meaningless
+# inside the kata guest's actual runtime network (the static 10.99.x.x
+# veth/netns kata-host.sh sets up, no DHCP) - real ansible-playbook and
+# krikri-playbook then differ only in how they FAIL a DNS lookup (one
+# gives up in ~15s via `until:`'s default retry count, the other can
+# retry far longer), which reads exactly like a real engine divergence
+# until traced back to this.
+#
+# A plain `RUN printf ... > /etc/resolv.conf` does NOT fix this: podman
+# (like Docker/buildah) bind-mounts its own resolv.conf over that exact
+# path for the duration of every RUN step so builds have network access,
+# and excludes it from the committed layer diff - confirmed by
+# extracting the built image's own tar, which still carried the
+# original NetworkManager content, not this file's write. So the fix
+# has to land at guest BOOT instead, once real disk content is all
+# that's left: a tmpfiles.d rule forces /etc/resolv.conf to be a symlink
+# to a path that actually stays on disk. Masking NetworkManager (rather
+# than just leaving it enabled) keeps it from re-winning the symlink at
+# boot - it isn't needed here, the network is fully static already.
+RUN systemctl mask NetworkManager && \
+    printf 'nameserver 1.1.1.1\nnameserver 1.0.0.1\n' > /etc/resolv.conf.kata && \
+    printf 'L+ /etc/resolv.conf - - - - /etc/resolv.conf.kata\n' > /etc/tmpfiles.d/resolv-kata.conf
 CMD ["/sbin/init"]
