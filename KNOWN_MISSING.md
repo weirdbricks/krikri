@@ -18,10 +18,32 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.797`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.806`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
+
+## Perf/security hardening batch from a parallel worktree (0.9.797 -> 0.9.806)
+
+Ten commits developed in a sibling worktree (`remaining-fixes` branch),
+reviewed and merged into `main`: plugin binaries now stage under a
+per-connecting-user directory (mode 0711, ownership/symlink-verified before
+use) instead of one shared predictable `/var/tmp` path - closes a
+CVE-2014-3498-class local-tampering issue. `set_fact` results are now kept
+for the whole run instead of being reset per play, matching real Ansible's
+precedence (a two-play repro against ansible-core 2.19.4 confirmed play 2
+should see play 1's `set_fact`, not a same-named `vars:` entry). A
+mutually-templated variable pair (`a: "{{ b }}"` / `b: "{{ a }}"`) now fails
+the one task cleanly instead of crashing the whole process. Perf-only:
+per-loop vars-context rebuilding and a `vars_files` cache leak fixed, the
+expression/regex memoization caches are now bounded instead of growing
+without limit over a long run, `apt:`/`package:` batch their `dpkg-query`
+into one round trip instead of one per package, `user:` reads `/etc/shadow`
+once per task instead of up to three times, directory-inventory sources are
+parsed once instead of per-lookup, and three divergent copies of a
+dotted-path hash walker are down to one shared implementation. Full spec
+suite clean (2651 examples, only the pre-existing Docker-daemon-required
+integration failure, unrelated) after the merge.
 
 ## Round 60300-60499: RHEL-family 200-role batch (0.9.795 -> 0.9.797)
 
