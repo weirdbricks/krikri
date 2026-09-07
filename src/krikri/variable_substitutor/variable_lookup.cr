@@ -205,6 +205,19 @@ module Krikri
       private def rerender_if_templated(value : JSON::Any) : JSON::Any
         return value unless (raw = value.raw).is_a?(String) && templated_value?(raw)
 
+        # Depth guard shared with Rerender.if_templated - a cycle can
+        # re-enter through either entry point (this method and the
+        # Rerender module's), so the counter has to be the same one.
+        # Without it a mutually-templated var pair (`a: "{{ b }}"` /
+        # `b: "{{ a }}"`) blew the C stack and crashed the whole process;
+        # real ansible-core fails the task with "Recursive loop detected
+        # in template" instead.
+        Rerender.with_depth_guard do
+          rerender_if_templated_inner(raw)
+        end
+      end
+
+      private def rerender_if_templated_inner(raw : String) : JSON::Any
         # A raw value containing `{%`/`{#` (block tags/comments, not just
         # a plain `{{ }}` expression) needs the FULL Crinja renderer -
         # ExpressionEvaluator has no concept of block tags at all. Real
